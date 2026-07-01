@@ -13,13 +13,15 @@ The orchestrator thread should:
 1. Keep project intent and architecture stable.
 2. Choose the next smallest useful implementation slice.
 3. Start worker conversations in a branch/worktree when code work should be isolated.
-4. Give each worker a bounded task, expected deliverables, and completion-report instructions.
-5. Ask each worker to log results in the repository.
-6. Ask each worker to send a completion prompt back to this orchestrator thread when finished.
-7. Review completed work before starting dependent tasks.
-8. Create correction tasks when needed.
-9. Merge or clean up branches/worktrees only after review.
-10. Pause and ask the user when the implementation drifts too far from the stated intention or needs a product decision.
+4. Re-ingest `docs/orchestration-learnings.md` before launching workers.
+5. Give each worker a bounded task, expected deliverables, branch/commit expectations, and completion-report instructions.
+6. Ask each worker to log results in the repository.
+7. Ask implementation workers to commit their completed slice on a dedicated task branch unless the task is explicitly exploratory.
+8. Ask each worker to send a completion prompt back to this orchestrator thread when finished.
+9. Review completed work before starting dependent tasks.
+10. Create correction tasks when needed.
+11. Merge or clean up branches/worktrees only after review.
+12. Pause and ask the user when the implementation drifts too far from the stated intention or needs a product decision.
 
 ## Reasoning-Level Guidance
 
@@ -51,6 +53,7 @@ If two or more answers are "no", pause the orchestration and course-correct befo
 - Starting state: greenfield repository.
 - Existing artifact: `docs/implementation-roadmap.md`
 - This file records the orchestration protocol.
+- Learning file: `docs/orchestration-learnings.md`
 
 ## Near-Term Implementation Queue
 
@@ -68,16 +71,23 @@ Each worker task should finish by:
 
 1. Running appropriate verification.
 2. Writing a short result log under `docs/task-logs/`.
-3. Leaving clear notes about changed files, verification, and unresolved issues.
-4. Prompting the orchestrator thread with:
+3. For implementation tasks, creating or using a dedicated task branch before edits.
+4. For implementation tasks, committing the completed slice after verification unless the task is explicitly exploratory or blocked.
+5. Leaving clear notes about changed files, verification, and unresolved issues.
+6. Prompting the orchestrator thread with:
 
 ```text
 Task complete: <task title>
 Branch/worktree: <branch or worktree details>
+Commit: <commit SHA or intentionally uncommitted reason>
+Base: <main SHA or note if behind>
+Git status: <git status --short --branch>
 Result log: <path>
 Summary: <brief summary>
-Verification: <commands/results>
-Needs review: <specific review points>
+Changed files: <short grouped list>
+Verification: <command -> pass/fail>
+Blockers: <none or exact blocker>
+Needs review: <specific files, decisions, or risks>
 ```
 
 ## First Worker Slice
