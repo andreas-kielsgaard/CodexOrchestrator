@@ -174,3 +174,5 @@
 - Accepted decision: made `Repo.defaultBranch` optional so unknown default-branch facts can flow from Git scan facts through planning and applier layers without inventing `main`.
 - Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
 - Drift check: still local-first, task-centered, Git sync remains a technical-anchor layer, no Codex credentials or runtime integration were introduced, and persistence remains simulated/in-memory pending SQLite.
+- Cleanup: removed Git worktree registration and deleted merged branch `worker/006-repo-sync-plan-applier`.
+- Cleanup note: Windows kept a physical leftover directory locked at `C:\Users\user\.codex\worktrees\16a6\Codex Orchestrator`; retry later after the app releases the handle.
