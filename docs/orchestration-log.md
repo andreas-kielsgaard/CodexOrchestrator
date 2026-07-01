@@ -184,11 +184,12 @@
 
 ### Worker 007: Repo Sync Service Facade
 
-- Status: completed by worker; pending orchestration review
+- Status: reviewed and merged
 - Worker thread: `019f1fd6-8771-7002-baf2-2f76db440f6e`
 - Pending worktree id: `local:30f9f199-85dd-4cf2-be0c-f7469aaa4d95`
 - Worker branch: `worker/007-repo-sync-service`
 - Worker commit: `e45d24edb64645a97ad5d6e4d611c1f6068d867a`
+- Merge commit: `cb10694`
 - Reasoning effort: `medium`
 - Context reuse decision: started fresh because Worker 005 and Worker 006 are merged and cleaned up; the new worker should use current `main`, the merged plan/apply modules, and their result logs rather than carrying prior conversational state.
 - UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
@@ -197,7 +198,12 @@
 - Orchestrator thread id for completion prompt: `019f1fba-a58f-7863-afc5-7194a6420844`
 - Success signal: committed worker branch with service-level tests from `GitRepoScanDomainFacts` to applied `DomainRecords`, including new repo insertion, existing repo updates, explicit worktree clears, stale worktree reporting, and no invented default branch.
 - Worker verification: `npm run test -- src/domain/repoSyncService.test.ts`, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed in the worker worktree.
-- Handoff note: context compaction triggered before orchestration review; Worker 007 should be reviewed by the next orchestration thread before merge.
+- Review accepted: `syncRepoFromScan` is a narrow persistence-neutral facade, returns both the generated plan and applied in-memory result, and keeps plan/apply semantics visible for future persistence/UI callers.
+- Orchestrator verification before merge: `git diff --check main...worker/007-repo-sync-service`, `npm run test -- src/domain/repoSyncService.test.ts`, and `npm run build` passed in the worker worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
+- Drift check: still local-first, task-centered, Git sync remains a technical-anchor layer, no Codex credentials or runtime integration were introduced, and the slice prepares persistence callers without adding SQLite yet.
+- Cleanup: removed Git worktree registration and deleted merged branch `worker/007-repo-sync-service`.
+- Cleanup note: Windows kept a physical leftover directory locked at `C:\Users\user\.codex\worktrees\08d3\Codex Orchestrator`; retry later after the app releases the handle.
 
 ### Orchestration Handoff After Compaction
 
