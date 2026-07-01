@@ -158,10 +158,12 @@
 
 ### Worker 006: Repo Sync Plan Applier
 
-- Status: launched
+- Status: reviewed and merged
 - Worker thread: `019f1fcb-a5de-7170-a845-9c72766daf69`
 - Pending worktree id: `local:26cb14d0-c3ec-4c62-8e81-21fcf3088d2a`
 - Worker branch: `worker/006-repo-sync-plan-applier`
+- Worker commit: `973acbe`
+- Merge commit: `0dcc82b`
 - Reasoning effort: `medium`
 - Context reuse decision: started fresh because Worker 005's Git worktree/branch was cleaned up; the new worker should use current `main`, Worker 005's result log, and the merged planning files rather than carrying the prior conversation state.
 - UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
@@ -169,3 +171,6 @@
 - Expected result log: `docs/task-logs/worker-006-repo-sync-plan-applier.md`
 - Orchestrator thread id for completion prompt: `019f1fba-a58f-7863-afc5-7194a6420844`
 - Success signal: committed worker branch with tests for new repo insertion, existing repo updates, worktree `null` clears, branch/worktree planned-ref resolution, stale worktree reporting, and no invented default branch.
+- Accepted decision: made `Repo.defaultBranch` optional so unknown default-branch facts can flow from Git scan facts through planning and applier layers without inventing `main`.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
+- Drift check: still local-first, task-centered, Git sync remains a technical-anchor layer, no Codex credentials or runtime integration were introduced, and persistence remains simulated/in-memory pending SQLite.
