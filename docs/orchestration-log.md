@@ -51,6 +51,8 @@
 - Accepted decision: `running` plus `waiting_on_agent` projects to `Working`; non-running `waiting_on_agent` projects to `Waiting`.
 - Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
 - Context reuse note: Worker 002 was started fresh because the domain projection slice was independent from Worker 001's bootstrap context; future correction/debug tasks may continue an existing worker when that context is useful.
+- Cleanup: archived worker thread `019f1f99-5c3f-7961-874e-6af58a7c3ec5`, pruned stale Git worktree registration, and deleted merged branch `worker/002-domain-model`.
+- Cleanup note: physical Codex worktree folders remain at `C:\Users\user\.codex\worktrees\eaeb\Codex Orchestrator` and `C:\Users\user\.codex\worktrees\15ac\Codex Orchestrator`; Git no longer tracks them as worktrees.
 
 ### Admin Correction: Worker Context Reuse Rule
 
