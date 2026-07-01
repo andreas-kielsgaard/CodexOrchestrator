@@ -83,6 +83,20 @@
 - Cleanup: removed Git worktree registration and deleted merged branch `worker/003-git-adapter-foundation`.
 - Cleanup note: Windows kept an empty leftover directory locked at `C:\Users\user\.codex\worktrees\af5b\Codex Orchestrator`; retry later after the app releases the handle.
 
+### Worker 004: Git Scan Mapping
+
+- Status: started
+- Pending worktree id: `local:e0327f46-78d9-4750-a692-1217a72e8eee`
+- Starting branch: `main`
+- Base commit: `5513852`
+- Planned worker branch: `worker/004-git-scan-mapping`
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 003's parser context is useful but its worktree was already cleaned/unregistered; Worker 004 prompt points to Worker 003's result log and current parser files instead.
+- Scope: add pure TypeScript Git scan assembly, `git remote -v` parsing, scan result builder, domain-facing mapping helpers/facts, and tests without executing Git or adding Tauri/Rust/persistence.
+- Expected result log: `docs/task-logs/worker-004-git-scan-mapping.md`
+- Traceability: worker thread should remain unarchived.
+- Orchestrator thread id for completion prompt: `019f1f79-0e23-7e13-9518-d31dfe843dc9`
+
 ### Admin Correction: Worker Chat Traceability
 
 - Status: applied
