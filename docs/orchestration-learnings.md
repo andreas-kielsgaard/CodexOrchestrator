@@ -34,6 +34,12 @@ Worker prompts should pass compact visible context only:
 
 Do not serialize hidden model context into files or prompts.
 
+Before launching each task, decide whether prior worker context is useful:
+
+- Start a fresh conversation when the next task is independent, when old implementation details could bias the worker, or when the previous worker's context is mostly noise.
+- Continue an existing worker conversation when the next task directly corrects, extends, or debugs that worker's own changes and its local context is valuable.
+- Record the choice in the orchestration log so context carryover is intentional.
+
 ### Completion reports
 
 Every worker completion should include:
