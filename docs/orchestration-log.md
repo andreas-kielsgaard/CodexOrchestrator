@@ -102,6 +102,8 @@
 - Accepted decision: non-root worktrees use `dirtyState: "unknown"` because the scan only includes root status output.
 - Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
 - Traceability: worker thread `019f1fb1-15ca-7713-bdec-a003aa24abb1` remains unarchived.
+- Cleanup: removed Git worktree registration and deleted merged branch `worker/004-git-scan-mapping`.
+- Cleanup note: Windows kept an empty leftover directory locked at `C:\Users\user\.codex\worktrees\fe6a\Codex Orchestrator`; retry later after the app releases the handle.
 
 ### Admin Correction: Context Handoff Trigger
 
