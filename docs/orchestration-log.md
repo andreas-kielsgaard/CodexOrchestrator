@@ -214,15 +214,31 @@
 
 ### Worker 008: Repo Sync Store Boundary
 
-- Status: launched
+- Status: reviewed and merged
 - Worker thread: `019f1fe0-5a80-7b80-9811-b51654edacd8`
 - Pending worktree id: `local:26e863da-ca93-4889-8929-7d445728640a`
 - Worktree path: `C:\Users\user\.codex\worktrees\b7d3\Codex Orchestrator`
-- Expected worker branch: `worker/008-repo-sync-store-boundary`
+- Worker branch: `worker/008-repo-sync-store-boundary`
+- Worker commit: `8c33842`
+- Merge commit: `ebce738`
 - Launch base: `ab3e217`
+- Final base after worker rebase: `f683d64`
 - Reasoning effort: `medium`
 - Context reuse decision: started fresh because Worker 007's implementation is merged and the persistence/store boundary should use current `main` and repo-sync source files rather than continuing the service-facade worker context.
 - UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
 - Scope: add a pure TypeScript repo sync store/use-case boundary that composes through `syncRepoFromScan`, with an in-memory implementation or test helper for verification, without SQLite, Tauri/Rust commands, Git execution, Codex runtime integration, UI work, or new dependencies unless absolutely necessary.
 - Expected result log: `docs/task-logs/worker-008-repo-sync-store-boundary.md`
 - Success signal: committed worker branch with tests for loading existing records, applying scan facts through the store path, persisting applied repo/branch/worktree state, preserving unrelated records, explicit worktree clears, non-destructive stale-worktree reporting, and no invented default branch.
+- Review correction: normalized `facts.repo.rootPath` before calling `loadRepoSyncRecords` so future persistence keys use the same forward-slash domain path format as repo sync planning; added a regression test for Windows-style scan root paths.
+- Accepted decision: `RepoSyncStore` is async-capable for future SQLite but remains pure TypeScript; the store-backed use case loads full `DomainRecords` for the existing facade and persists only repo/branch/worktree arrays from the applied result.
+- Orchestrator verification before merge: `git diff --check main...worker/008-repo-sync-store-boundary`, `npm run test -- src/domain/repoSyncStore.test.ts`, and `npm run build` passed in the worker worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
+- Drift check: still local-first, task-centered, Git sync remains a technical-anchor layer, no Codex credentials or runtime integration were introduced, and SQLite remains a future implementation behind the new store boundary.
+- Cleanup: removed Git worktree registration and deleted merged branch `worker/008-repo-sync-store-boundary`.
+- Cleanup note: Windows kept a physical leftover directory locked at `C:\Users\user\.codex\worktrees\b7d3\Codex Orchestrator`; retry later after the app releases the handle.
+
+### Explicit Checkpoint: Pause Before Next Task
+
+- Status: active pause
+- Reason: the user said they are going to bed and asked the orchestrator to pause after reviewing the last implementation instead of starting a new task.
+- Next intended slice when resumed: continue from the clean post-Worker-008 checkpoint and choose the next smallest useful persistence-oriented slice, likely actual SQLite schema/repository groundwork or a narrower repository implementation plan behind `RepoSyncStore`.
