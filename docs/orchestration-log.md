@@ -211,3 +211,18 @@
 - Handoff report: `docs/handoffs/orchestration-handoff-2026-07-02-after-compaction.md`
 - Trigger: context compaction occurred while monitoring Worker 007.
 - Instruction: this compressed orchestration thread should not launch or review further implementation slices; continue orchestration in the next fresh `xhigh` control-room thread after it re-ingests the handoff and context files.
+
+### Worker 008: Repo Sync Store Boundary
+
+- Status: launched
+- Worker thread: `019f1fe0-5a80-7b80-9811-b51654edacd8`
+- Pending worktree id: `local:26e863da-ca93-4889-8929-7d445728640a`
+- Worktree path: `C:\Users\user\.codex\worktrees\b7d3\Codex Orchestrator`
+- Expected worker branch: `worker/008-repo-sync-store-boundary`
+- Launch base: `ab3e217`
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 007's implementation is merged and the persistence/store boundary should use current `main` and repo-sync source files rather than continuing the service-facade worker context.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Scope: add a pure TypeScript repo sync store/use-case boundary that composes through `syncRepoFromScan`, with an in-memory implementation or test helper for verification, without SQLite, Tauri/Rust commands, Git execution, Codex runtime integration, UI work, or new dependencies unless absolutely necessary.
+- Expected result log: `docs/task-logs/worker-008-repo-sync-store-boundary.md`
+- Success signal: committed worker branch with tests for loading existing records, applying scan facts through the store path, persisting applied repo/branch/worktree state, preserving unrelated records, explicit worktree clears, non-destructive stale-worktree reporting, and no invented default branch.
