@@ -176,3 +176,21 @@
 - Drift check: still local-first, task-centered, Git sync remains a technical-anchor layer, no Codex credentials or runtime integration were introduced, and persistence remains simulated/in-memory pending SQLite.
 - Cleanup: removed Git worktree registration and deleted merged branch `worker/006-repo-sync-plan-applier`.
 - Cleanup note: Windows kept a physical leftover directory locked at `C:\Users\user\.codex\worktrees\16a6\Codex Orchestrator`; retry later after the app releases the handle.
+
+### Admin Correction: Continue Unless Blocked
+
+- Status: applied
+- Summary: clarified orchestration behavior after the control thread paused despite a clear next slice. After a worker is reviewed, merged, verified, logged, and Git-cleaned, the orchestrator should continue to the next smallest useful slice unless there is a concrete blocker, product decision, failed review correction, context handoff trigger, or explicitly stated checkpoint.
+
+### Worker 007: Repo Sync Service Facade
+
+- Status: launched
+- Pending worktree id: `local:30f9f199-85dd-4cf2-be0c-f7469aaa4d95`
+- Worker branch: `worker/007-repo-sync-service`
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 005 and Worker 006 are merged and cleaned up; the new worker should use current `main`, the merged plan/apply modules, and their result logs rather than carrying prior conversational state.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Scope: add a pure TypeScript repo sync service/use-case facade that composes `planRepoSync` and `applyRepoSyncPlan` into one stable operation for future persistence/UI callers, without SQLite, Tauri/Rust Git execution, Codex runtime integration, or UI work.
+- Expected result log: `docs/task-logs/worker-007-repo-sync-service.md`
+- Orchestrator thread id for completion prompt: `019f1fba-a58f-7863-afc5-7194a6420844`
+- Success signal: committed worker branch with service-level tests from `GitRepoScanDomainFacts` to applied `DomainRecords`, including new repo insertion, existing repo updates, explicit worktree clears, stale worktree reporting, and no invented default branch.

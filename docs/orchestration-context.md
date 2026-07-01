@@ -24,10 +24,12 @@ The orchestrator thread should:
 12. Create correction tasks when needed.
 13. Merge or clean up branches/worktrees only after review.
 14. Keep worker/admin conversations visible for traceability unless the user explicitly asks to archive them.
-15. For UI-facing slices, make an explicit design-discipline decision before launch: whether the slice needs reusable component structure, component-level verification, Storybook-style isolated review, or a separate usability-review pass.
-16. Use fresh usability-review worker conversations when appropriate, asking them to behave like realistic users and report confusing flows, visual bugs, missing affordances, and unexpected behavior before the UI hardens.
-17. At 75% context-window usage, write a handoff report and start a fresh orchestration thread with `xhigh` reasoning.
-18. Pause and ask the user when the implementation drifts too far from the stated intention or needs a product decision.
+15. Continue orchestration after each reviewed worker when there is a clear next smallest useful slice, no product decision is needed, no blocker is present, and no handoff/context-pressure trigger has fired.
+16. Pause only for a concrete reason: user/product decision, blocker, review failure needing correction, context handoff, or an explicitly stated checkpoint. If pausing, state the exact reason and the next intended slice.
+17. For UI-facing slices, make an explicit design-discipline decision before launch: whether the slice needs reusable component structure, component-level verification, Storybook-style isolated review, or a separate usability-review pass.
+18. Use fresh usability-review worker conversations when appropriate, asking them to behave like realistic users and report confusing flows, visual bugs, missing affordances, and unexpected behavior before the UI hardens.
+19. At 75% context-window usage, write a handoff report and start a fresh orchestration thread with `xhigh` reasoning.
+20. Pause and ask the user when the implementation drifts too far from the stated intention or needs a product decision.
 
 ## Reasoning-Level Guidance
 

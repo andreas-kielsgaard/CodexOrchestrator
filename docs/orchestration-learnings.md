@@ -49,6 +49,15 @@ When launching a new work slice, summarize the orchestration decision in the mai
 - what branch/worktree shape is expected
 - what completion/review signal will count as success
 
+After a worker is reviewed, merged, verified, logged, and Git-cleaned, the orchestrator should continue directly to the next smallest useful slice when all of these are true:
+
+- the next slice is clear from the roadmap, handoff, or just-completed work
+- no product/user decision is needed
+- there is no blocker or failed review requiring correction
+- context pressure has not reached the handoff threshold
+
+Do not stop merely because the repo is at a clean checkpoint. A clean checkpoint is the place to make the next orchestration decision. Pause only for a concrete reason, and if pausing, state that reason plus the next intended slice.
+
 At 75% context-window usage, the orchestrator should write a handoff report and start a new orchestration thread with `xhigh` reasoning. The handoff report should live under `docs/handoffs/` and point to:
 
 - `docs/implementation-roadmap.md`
@@ -164,3 +173,13 @@ Correction:
 - Worker prompts should clearly distinguish the saved project path from the assigned Codex worktree path when both are visible.
 - When a worker thread is created in a Codex worktree, the worker should treat the thread `cwd` or explicitly assigned worktree path as authoritative for edits.
 - The orchestrator should check both the main checkout and worker worktree shortly after launch when a worker's first status messages suggest it may have changed directories.
+
+### 2026-07-02: Orchestrator paused after Worker 006 despite a clear next slice
+
+After Worker 005 and Worker 006 were reviewed, merged, verified, logged, and cleaned up, the orchestrator identified the next useful slice but stopped instead of launching it. The user correctly pointed out that the operating model expects continued orchestration unless there is a concrete pause reason.
+
+Correction:
+
+- A clean post-merge checkpoint is not by itself a reason to pause.
+- If the next smallest useful slice is clear and no decision/blocker/handoff trigger exists, summarize the slice and continue.
+- If pausing anyway, state the exact pause reason and the next intended slice so the user can challenge the decision.
