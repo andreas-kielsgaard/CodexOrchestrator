@@ -148,6 +148,8 @@
 - Accepted decision: `WorktreeUpsertPlan` uses `null` for explicit optional-field clears (`lockReason` and `branchRef`) while absent optional repo/branch fields remain preserve-or-omit semantics.
 - Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
 - Drift check: still local-first, task-centered, Git facts remain technical anchors, no Codex credentials or runtime integration were introduced, and the slice prepares persistence without adding SQLite yet.
+- Cleanup: removed Git worktree registration and deleted merged branch `worker/005-repo-sync-planning`.
+- Cleanup note: Windows kept a physical leftover directory locked at `C:\Users\user\.codex\worktrees\e56f\Codex Orchestrator`; retry later after the app releases the handle.
 
 ### Admin Correction: UI Design Discipline And Usability Review
 
