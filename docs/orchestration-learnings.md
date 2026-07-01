@@ -71,6 +71,14 @@ Needs review: <specific files/decisions/risks>
 
 If integration, merge, cleanup, or branch repair becomes nontrivial, consider using a dedicated admin worker conversation rather than embedding the work inside an implementation task.
 
+For Windows worktree cleanup:
+
+1. Verify the worktree is clean and merged.
+2. Archive the completed worker thread first if appropriate.
+3. Run `git worktree remove` from the main checkout.
+4. Delete the merged branch only after the worktree is unregistered or known to be safe.
+5. If an empty directory remains locked, log it and retry later instead of escalating blindly.
+
 ## Incident Notes
 
 ### 2026-07-01: Worker 001 left bootstrap changes uncommitted
@@ -84,3 +92,13 @@ Correction:
 - Future workers should report whether their branch includes the current `main` and provide `git status --short --branch`.
 - Future prompts should ask for specific changed-file and verification summaries, not broad "please review everything" notes.
 - The orchestrator should still review before merging, but should not have to reconstruct the worker's intended integration unit.
+
+### 2026-07-01: Windows held an empty Codex worktree directory locked after cleanup
+
+After Worker 001 was merged, `git worktree remove --force` unregistered the worktree but Windows denied deletion of the empty worktree directory. The merged branch was deleted successfully.
+
+Correction:
+
+- Treat worktree removal and branch deletion as separate admin steps.
+- Check `git worktree list --porcelain`, `git branch --merged main`, and the physical directory state after cleanup.
+- If only an empty locked directory remains, record the path and retry later rather than force-killing unknown processes.

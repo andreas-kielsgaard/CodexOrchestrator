@@ -18,6 +18,8 @@
 - Review correction: tightened dashboard CSS so all five attention groups fit at 1280px without internal horizontal scroll.
 - Verification after merge: `npm install`, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
 - Known blocker: `npm run build:tauri` fails because `cargo` is not installed or not on `PATH`.
+- Cleanup: archived worker thread `019f1f86-6f0d-7753-a1d1-f6fd3414a67d`, removed Git worktree registration, and deleted merged branch `worker/001-bootstrap`.
+- Cleanup note: Windows kept an empty leftover directory locked at `C:\Users\user\.codex\worktrees\15ac\Codex Orchestrator`; retry later after the app releases the handle.
 
 ### Admin Correction: Worker Reporting Contract
 
