@@ -1,6 +1,7 @@
 import {
   gitBranchSummaryFormat,
   parseGitBranchSummary,
+  parseGitRemoteVerbose,
   parseGitStatusPorcelainV1Z,
   parseGitWorktreeListPorcelainZ,
 } from './parsers';
@@ -133,6 +134,41 @@ describe('parseGitBranchSummary', () => {
         worktreePath: 'C:/Repos/App Worktrees/003',
       },
     ]);
+  });
+});
+
+describe('parseGitRemoteVerbose', () => {
+  it('groups fetch and push URLs by remote name', () => {
+    const output = [
+      'origin\tgit@github.com:andreas-kielsgaard/CodexOrchestrator.git (fetch)',
+      'origin\tgit@github.com:andreas-kielsgaard/CodexOrchestrator.git (push)',
+      'upstream\thttps://github.com/openai/example.git (fetch)',
+      'upstream\tgit@github.com:openai/example.git (push)',
+      'backup\tssh://backup.example.com/repos/orchestrator.git (push)',
+      '',
+    ].join('\n');
+
+    expect(parseGitRemoteVerbose(output)).toEqual([
+      {
+        name: 'origin',
+        fetchUrl: 'git@github.com:andreas-kielsgaard/CodexOrchestrator.git',
+        pushUrl: 'git@github.com:andreas-kielsgaard/CodexOrchestrator.git',
+      },
+      {
+        name: 'upstream',
+        fetchUrl: 'https://github.com/openai/example.git',
+        pushUrl: 'git@github.com:openai/example.git',
+      },
+      {
+        name: 'backup',
+        pushUrl: 'ssh://backup.example.com/repos/orchestrator.git',
+      },
+    ]);
+  });
+
+  it('ignores non-remote lines and supports empty output', () => {
+    expect(parseGitRemoteVerbose('not remote output\n')).toEqual([]);
+    expect(parseGitRemoteVerbose('')).toEqual([]);
   });
 });
 

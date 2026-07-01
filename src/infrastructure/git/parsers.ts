@@ -1,5 +1,6 @@
 import type {
   GitBranchSummary,
+  GitRemoteSummary,
   GitStatusCode,
   GitStatusEntryKind,
   GitStatusSnapshot,
@@ -76,6 +77,35 @@ export function parseGitBranchSummary(output: string): GitBranchSummary[] {
       ...(worktreePath ? { worktreePath: normalizeGitPath(worktreePath) } : {}),
     };
   });
+}
+
+export function parseGitRemoteVerbose(output: string): GitRemoteSummary[] {
+  const remotesByName = new Map<string, GitRemoteSummary>();
+
+  for (const line of output.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    const match = /^(?<name>\S+)\s+(?<url>.+?)\s+\((?<direction>fetch|push)\)$/.exec(trimmed);
+    if (!match?.groups) {
+      continue;
+    }
+
+    const { name, url, direction } = match.groups;
+    const remote = remotesByName.get(name) ?? { name };
+
+    if (direction === 'fetch') {
+      remote.fetchUrl = url;
+    } else {
+      remote.pushUrl = url;
+    }
+
+    remotesByName.set(name, remote);
+  }
+
+  return [...remotesByName.values()];
 }
 
 export function parseGitWorktreeListPorcelainZ(output: string): GitWorktreeSummary[] {
