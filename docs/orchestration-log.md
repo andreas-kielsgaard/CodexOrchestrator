@@ -80,6 +80,8 @@
 - Accepted decision: parser output normalizes Windows separators to forward slashes for stable downstream comparisons.
 - Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
 - Traceability: worker thread `019f1fa8-69b6-7c52-86e5-c72fc8b8aaf4` remains unarchived.
+- Cleanup: removed Git worktree registration and deleted merged branch `worker/003-git-adapter-foundation`.
+- Cleanup note: Windows kept an empty leftover directory locked at `C:\Users\user\.codex\worktrees\af5b\Codex Orchestrator`; retry later after the app releases the handle.
 
 ### Admin Correction: Worker Chat Traceability
 
