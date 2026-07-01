@@ -131,10 +131,12 @@
 
 ### Worker 005: Repo Sync/Upsert Planning
 
-- Status: launched
+- Status: reviewed and merged
 - Worker thread: `019f1fbc-76d5-7261-bb73-66d70d3e00c0`
 - Pending worktree id: `local:852efaf8-5e4d-44ca-a598-30f1861df5b7`
 - Worker branch: `worker/005-repo-sync-planning`
+- Worker commits: `a71937f`, `c25d89d`, `5d41ea2`
+- Merge commit: `b92a041`
 - Reasoning effort: `medium`
 - Context reuse decision: started fresh because the sync planning layer builds on the current domain and Git scan facts, plus Worker 004's result log, but does not need Worker 004's conversational state.
 - Scope: add a pure TypeScript planning layer that maps `DomainRecords` and `GitRepoScanDomainFacts` into persistence-neutral repo, branch, and worktree upsert plans without SQLite, Tauri/Rust Git execution, Codex runtime integration, or UI work.
@@ -142,7 +144,10 @@
 - Orchestrator thread id for completion prompt: `019f1fba-a58f-7863-afc5-7194a6420844`
 - Success signal: committed worker branch with tests for new repo discovery, existing repo updates, branch intent/base preservation, worktree branch linking, stale/missing worktree handling, and no invented default branch when scan facts omit one.
 - Coordination correction: after launch, untracked implementation files appeared in the main checkout while the assigned worker worktree was still detached/clean. The orchestrator sent Worker 005 a correction to work only in `C:\Users\user\.codex\worktrees\e56f\Codex Orchestrator`, create/use `worker/005-repo-sync-planning` there, and leave the main checkout clean.
-- Review correction requested: make worktree plan optional-field clearing explicit so future persistence cannot accidentally preserve stale `lockReason` or stale branch links when Git scan facts show a worktree is now unlocked or detached.
+- Review correction: made worktree plan optional-field clearing explicit so future persistence cannot accidentally preserve stale `lockReason` or stale branch links when Git scan facts show a worktree is now unlocked or detached.
+- Accepted decision: `WorktreeUpsertPlan` uses `null` for explicit optional-field clears (`lockReason` and `branchRef`) while absent optional repo/branch fields remain preserve-or-omit semantics.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
+- Drift check: still local-first, task-centered, Git facts remain technical anchors, no Codex credentials or runtime integration were introduced, and the slice prepares persistence without adding SQLite yet.
 
 ### Admin Correction: UI Design Discipline And Usability Review
 
