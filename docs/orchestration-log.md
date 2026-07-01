@@ -64,16 +64,22 @@
 
 ### Worker 003: Git Adapter Foundation
 
-- Status: started
+- Status: reviewed and merged
 - Pending worktree id: `local:972c8b3e-1412-4bf1-9a95-2fc1035919c6`
 - Starting branch: `main`
 - Base commit: `ea10a46`
-- Planned worker branch: `worker/003-git-adapter-foundation`
+- Worker branch: `worker/003-git-adapter-foundation`
+- Worker commit: `10b6f39`
+- Merge commit: `9d9ed99`
 - Reasoning effort: `medium`
 - Context reuse decision: started fresh because the Git parser/adapter task should depend on current code/docs and domain types, not Worker 002's detailed projection context.
 - Scope: add pure TypeScript Git porcelain/worktree/branch parsers, normalized scan result types, tests with realistic fixtures including Windows paths, and a future command-execution adapter boundary without Tauri/Rust execution.
 - Expected result log: `docs/task-logs/worker-003-git-adapter-foundation.md`
 - Orchestrator thread id for completion prompt: `019f1f79-0e23-7e13-9518-d31dfe843dc9`
+- Review correction: fixed `git status --porcelain=v1 -z` conflict classification so all unmerged pairs (`DD`, `AU`, `UD`, `UA`, `DU`, `AA`, `UU`) map to `unmerged`.
+- Accepted decision: parser output normalizes Windows separators to forward slashes for stable downstream comparisons.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
+- Traceability: worker thread `019f1fa8-69b6-7c52-86e5-c72fc8b8aaf4` remains unarchived.
 
 ### Admin Correction: Worker Chat Traceability
 
