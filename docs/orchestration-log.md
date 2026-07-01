@@ -155,3 +155,16 @@
 
 - Status: applied
 - Summary: encoded the user's UI preference into orchestration behavior: UI-facing slices should explicitly consider reusable/testable component boundaries, Radix/Storybook/Vite-style workflows when appropriate, and fresh usability-review worker chats that act as realistic users before substantial UI changes harden.
+
+### Worker 006: Repo Sync Plan Applier
+
+- Status: launched
+- Pending worktree id: `local:26cb14d0-c3ec-4c62-8e81-21fcf3088d2a`
+- Worker branch: `worker/006-repo-sync-plan-applier`
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 005's Git worktree/branch was cleaned up; the new worker should use current `main`, Worker 005's result log, and the merged planning files rather than carrying the prior conversation state.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Scope: add a pure TypeScript applier/resolver that applies `RepoSyncPlan` to `DomainRecords` in memory with deterministic ID generation, planned-ref resolution, explicit optional-field clears, and non-destructive stale worktree reporting, without SQLite, Tauri/Rust Git execution, Codex runtime integration, or UI work.
+- Expected result log: `docs/task-logs/worker-006-repo-sync-plan-applier.md`
+- Orchestrator thread id for completion prompt: `019f1fba-a58f-7863-afc5-7194a6420844`
+- Success signal: committed worker branch with tests for new repo insertion, existing repo updates, worktree `null` clears, branch/worktree planned-ref resolution, stale worktree reporting, and no invented default branch.
