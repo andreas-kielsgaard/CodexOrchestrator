@@ -32,3 +32,16 @@
 - Status: applied
 - Commit: `19bfe9e`
 - Summary: added `.gitattributes` so Prettier checks stay stable on Windows with `core.autocrlf=true`.
+
+### Worker 002: Domain Model And Dashboard Projection
+
+- Status: started
+- Pending worktree id: `local:43eae478-1db6-4d6b-8e7b-03c3ff0a91d9`
+- Starting branch: `main`
+- Base commit: `4d9af770677d444122cac31a3e18876ff051933b`
+- Planned worker branch: `worker/002-domain-model`
+- Reasoning effort: `medium`
+- Scope: add TypeScript domain types, seed/demo records, dashboard projection logic, and tests without SQLite, Tauri persistence commands, or Codex runtime integration.
+- Context policy: worker prompt used concise visible context plus pointers to `docs/orchestration-context.md`, `docs/orchestration-learnings.md`, and `docs/implementation-roadmap.md`; no hidden model context was serialized.
+- Expected result log: `docs/task-logs/worker-002-domain-model.md`
+- Orchestrator thread id for completion prompt: `019f1f79-0e23-7e13-9518-d31dfe843dc9`
