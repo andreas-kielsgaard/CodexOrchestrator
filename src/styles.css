@@ -1,0 +1,254 @@
+:root {
+  color: #17211b;
+  background: #f6f7f4;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  font-synthesis: none;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 224px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.sidebar {
+  border-right: 1px solid #d8ddd5;
+  background: #fffdf8;
+  padding: 24px 18px;
+}
+
+.brand-mark {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 36px;
+  place-items: center;
+  border: 1px solid #17211b;
+  border-radius: 8px;
+  background: #f2ca52;
+  color: #17211b;
+  font-weight: 800;
+}
+
+nav {
+  display: grid;
+  gap: 8px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 0 12px;
+  border-radius: 8px;
+  color: #516058;
+  font-weight: 650;
+}
+
+.nav-item.active,
+.nav-item:hover {
+  background: #e7ebe4;
+  color: #17211b;
+}
+
+.workspace {
+  padding: 24px;
+  overflow: hidden;
+}
+
+.topbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  color: #66736c;
+  font-size: 0.78rem;
+  font-weight: 750;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(1.9rem, 3vw, 2.55rem);
+  line-height: 1;
+}
+
+.status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: 8px;
+  color: #4a564f;
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.status-strip span {
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid #d8ddd5;
+  border-radius: 8px;
+  background: #fffdf8;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(168px, 1fr));
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 12px;
+}
+
+.task-column {
+  min-height: 470px;
+  border: 1px solid #d8ddd5;
+  border-radius: 8px;
+  background: #eef1eb;
+}
+
+.column-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 50px;
+  padding: 0 12px;
+  border-bottom: 1px solid #d8ddd5;
+}
+
+.column-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+h2 {
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
+}
+
+.count {
+  display: grid;
+  min-width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 999px;
+  background: #17211b;
+  color: #fffdf8;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.task-list {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+}
+
+.task-card {
+  display: grid;
+  gap: 14px;
+  min-height: 132px;
+  padding: 12px;
+  border: 1px solid #d8ddd5;
+  border-radius: 8px;
+  background: #fffdf8;
+  box-shadow: 0 1px 1px rgb(23 33 27 / 5%);
+}
+
+h3 {
+  margin-bottom: 7px;
+  font-size: 0.95rem;
+  line-height: 1.2;
+}
+
+.task-card p {
+  color: #59655e;
+  font-size: 0.86rem;
+}
+
+.task-card footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-self: end;
+  color: #516058;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.task-card footer span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #e7ebe4;
+}
+
+@media (max-width: 860px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    border-right: 0;
+    border-bottom: 1px solid #d8ddd5;
+  }
+
+  .brand-mark {
+    margin-bottom: 0;
+  }
+
+  nav {
+    grid-auto-flow: column;
+    overflow-x: auto;
+  }
+
+  .topbar {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .status-strip {
+    justify-content: start;
+  }
+}
