@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+src-tauri/target/
+package-lock.json
+
+# Pre-existing planning docs keep their original formatting until explicitly edited.
+docs/implementation-roadmap.md
+docs/orchestration-context.md
+
