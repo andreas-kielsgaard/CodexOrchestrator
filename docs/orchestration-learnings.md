@@ -49,6 +49,16 @@ When launching a new work slice, summarize the orchestration decision in the mai
 - what branch/worktree shape is expected
 - what completion/review signal will count as success
 
+At 75% context-window usage, the orchestrator should write a handoff report and start a new orchestration thread with `xhigh` reasoning. The handoff report should live under `docs/handoffs/` and point to:
+
+- `docs/implementation-roadmap.md`
+- `docs/orchestration-context.md`
+- `docs/orchestration-learnings.md`
+- `docs/orchestration-log.md`
+- current worker result logs under `docs/task-logs/`
+
+The new orchestration thread prompt should include the handoff report path, explicitly say it is taking over orchestration, and require re-ingesting the overall task overview and learnings before launching or reviewing work. If exact context usage is unavailable, trigger conservatively when the thread becomes large enough that auditability or compaction risk is a concern.
+
 ### Completion reports
 
 Every worker completion should include:

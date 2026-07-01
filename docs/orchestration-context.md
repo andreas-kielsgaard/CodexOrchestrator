@@ -24,7 +24,8 @@ The orchestrator thread should:
 12. Create correction tasks when needed.
 13. Merge or clean up branches/worktrees only after review.
 14. Keep worker/admin conversations visible for traceability unless the user explicitly asks to archive them.
-15. Pause and ask the user when the implementation drifts too far from the stated intention or needs a product decision.
+15. At 75% context-window usage, write a handoff report and start a fresh orchestration thread with `xhigh` reasoning.
+16. Pause and ask the user when the implementation drifts too far from the stated intention or needs a product decision.
 
 ## Reasoning-Level Guidance
 
@@ -48,6 +49,19 @@ After each worker completion, check:
 - Are unreviewed branches/worktrees accumulating?
 
 If two or more answers are "no", pause the orchestration and course-correct before continuing.
+
+## Context Handoff
+
+When this orchestration thread reaches 75% of its context window, the orchestrator should:
+
+1. Write a handoff report under `docs/handoffs/`.
+2. Include the overall project goal, current implementation state, open worker tasks, recent merges/corrections, cleanup leftovers, known blockers, and next recommended slice.
+3. Reference `docs/implementation-roadmap.md`, `docs/orchestration-context.md`, `docs/orchestration-learnings.md`, and `docs/orchestration-log.md`.
+4. Start a new orchestration conversation with `xhigh` reasoning.
+5. Instruct the new orchestration thread to re-ingest the handoff report and the context/learning files before taking action.
+6. Keep the old orchestration and worker chats visible for traceability.
+
+If exact context-window usage is not available, use a conservative judgment trigger: after substantial worker cycles, when the conversation becomes difficult to audit, or before expected compaction risk.
 
 ## Current State
 
