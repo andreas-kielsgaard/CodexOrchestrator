@@ -111,6 +111,17 @@
 - Commits: `d85eeaa`, `6f9040c`
 - Summary: added the 75% context-window handoff rule and clarified that context compression/compaction is an immediate handoff trigger.
 
+### Orchestration Handoff
+
+- Status: completed
+- Handoff report: `docs/handoffs/orchestration-handoff-2026-07-02.md`
+- Handoff commit: `5140bf7`
+- Successor orchestration thread: `019f1fba-a58f-7863-afc5-7194a6420844`
+- Successor thread title: `Codex Orchestrator continuation`
+- Reasoning effort: `xhigh`
+- Trigger: conservative context-pressure handoff after four worker cycles and new handoff behavior was established.
+- Instruction: this original thread should stop launching new implementation slices; continue orchestration in the successor thread.
+
 ### Admin Correction: Worker Chat Traceability
 
 - Status: applied
