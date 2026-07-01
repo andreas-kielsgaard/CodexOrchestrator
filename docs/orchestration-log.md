@@ -142,6 +142,7 @@
 - Orchestrator thread id for completion prompt: `019f1fba-a58f-7863-afc5-7194a6420844`
 - Success signal: committed worker branch with tests for new repo discovery, existing repo updates, branch intent/base preservation, worktree branch linking, stale/missing worktree handling, and no invented default branch when scan facts omit one.
 - Coordination correction: after launch, untracked implementation files appeared in the main checkout while the assigned worker worktree was still detached/clean. The orchestrator sent Worker 005 a correction to work only in `C:\Users\user\.codex\worktrees\e56f\Codex Orchestrator`, create/use `worker/005-repo-sync-planning` there, and leave the main checkout clean.
+- Review correction requested: make worktree plan optional-field clearing explicit so future persistence cannot accidentally preserve stale `lockReason` or stale branch links when Git scan facts show a worktree is now unlocked or detached.
 
 ### Admin Correction: UI Design Discipline And Usability Review
 
