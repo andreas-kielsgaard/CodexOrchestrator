@@ -33,6 +33,8 @@ SQLite migrations, Rust database commands, Git scanning, and Codex runtime integ
 
 Git output parsing lives under `src/infrastructure/git/` as pure TypeScript infrastructure code. The current adapter foundation normalizes parseable command output from `git status --porcelain=v1 -z`, `git branch --format=...`, and `git worktree list --porcelain -z` into scan facts that can later feed the domain `Repo`, `Branch`, and `Worktree` records.
 
+Repo scan assembly is also pure TypeScript: raw command outputs, a root path, optional default branch, and scan timestamp are composed into `GitRepoScanResult` without executing Git. A thin domain-facing mapping layer derives normalized repo, branch, and worktree facts from that scan while keeping non-root worktree dirtiness explicit as `unknown` until each worktree can be scanned directly.
+
 React components should not invoke Git or parse Git output directly. Future Tauri/Rust or sidecar command execution should enter through the thin Git adapter boundary and hand raw command output to these parsers.
 
 ## Tooling Note
