@@ -85,17 +85,29 @@
 
 ### Worker 004: Git Scan Mapping
 
-- Status: started
+- Status: reviewed and merged
 - Pending worktree id: `local:e0327f46-78d9-4750-a692-1217a72e8eee`
 - Starting branch: `main`
 - Base commit: `5513852`
-- Planned worker branch: `worker/004-git-scan-mapping`
+- Worker branch: `worker/004-git-scan-mapping`
+- Worker commit: `806a0ad`
+- Merge commit: `2d09ce3`
 - Reasoning effort: `medium`
 - Context reuse decision: started fresh because Worker 003's parser context is useful but its worktree was already cleaned/unregistered; Worker 004 prompt points to Worker 003's result log and current parser files instead.
 - Scope: add pure TypeScript Git scan assembly, `git remote -v` parsing, scan result builder, domain-facing mapping helpers/facts, and tests without executing Git or adding Tauri/Rust/persistence.
 - Expected result log: `docs/task-logs/worker-004-git-scan-mapping.md`
 - Traceability: worker thread should remain unarchived.
 - Orchestrator thread id for completion prompt: `019f1f79-0e23-7e13-9518-d31dfe843dc9`
+- Review correction: made `GitRepoDomainFacts.defaultBranch` optional and removed the hard-coded `main` fallback when scan facts cannot identify a default branch.
+- Accepted decision: non-root worktrees use `dirtyState: "unknown"` because the scan only includes root status output.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
+- Traceability: worker thread `019f1fb1-15ca-7713-bdec-a003aa24abb1` remains unarchived.
+
+### Admin Correction: Context Handoff Trigger
+
+- Status: applied
+- Commits: `d85eeaa`, `6f9040c`
+- Summary: added the 75% context-window handoff rule and clarified that context compression/compaction is an immediate handoff trigger.
 
 ### Admin Correction: Worker Chat Traceability
 
