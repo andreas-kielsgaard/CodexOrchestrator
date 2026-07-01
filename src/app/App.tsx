@@ -64,6 +64,7 @@ export function App() {
                       <footer>
                         <span>{task.project}</span>
                         <span>{task.executionState}</span>
+                        <span>{task.attentionState}</span>
                       </footer>
                     </section>
                   ))}

@@ -14,9 +14,20 @@ The current Rust side exposes only an `app_metadata` command. It exists to prove
 
 ## Local-First Boundary
 
-The UI treats tasks as the unit of attention. Technical anchors such as repos, branches, worktrees, conversations, and artifacts are reserved for later slices. Frontend code lives under `src/`, while local runtime commands live under `src-tauri/`.
+The UI treats tasks as the unit of attention. Technical anchors such as repos, branches, worktrees, conversations, validation runs, events, and artifacts are modeled separately so project/repo drilldowns can explain where work lives without becoming the dashboard's primary organizing shape.
 
 Future slices should keep filesystem/process-heavy behavior behind Tauri commands or adapter modules instead of calling Git, SQLite, or Codex directly from React components.
+
+## Domain Boundary
+
+The TypeScript domain layer lives under `src/domain/`:
+
+- `model.ts` defines the core product records: Project, Repo, Branch, Worktree, Conversation, Task, TaskRun, Artifact, ValidationRun, and Event.
+- `Task.executionState` tracks what the work is doing, while `Task.attentionState` tracks what kind of human attention it needs.
+- `dashboardProjection.ts` derives the Open Tasks dashboard groups from domain records. React components should consume this projection instead of owning grouping rules directly.
+- `seedData.ts` provides demo records until SQLite persistence and repository APIs are introduced.
+
+SQLite migrations, Rust database commands, Git scanning, and Codex runtime integration are intentionally outside this slice.
 
 ## Tooling Note
 
