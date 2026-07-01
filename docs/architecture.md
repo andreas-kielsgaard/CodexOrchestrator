@@ -29,6 +29,12 @@ The TypeScript domain layer lives under `src/domain/`:
 
 SQLite migrations, Rust database commands, Git scanning, and Codex runtime integration are intentionally outside this slice.
 
+## Git Adapter Boundary
+
+Git output parsing lives under `src/infrastructure/git/` as pure TypeScript infrastructure code. The current adapter foundation normalizes parseable command output from `git status --porcelain=v1 -z`, `git branch --format=...`, and `git worktree list --porcelain -z` into scan facts that can later feed the domain `Repo`, `Branch`, and `Worktree` records.
+
+React components should not invoke Git or parse Git output directly. Future Tauri/Rust or sidecar command execution should enter through the thin Git adapter boundary and hand raw command output to these parsers.
+
 ## Tooling Note
 
 Rust/Cargo were not available on the worker PATH during bootstrap, so desktop verification could not run in this environment. Frontend build, lint, formatting, and tests remain independently verifiable through npm scripts.
