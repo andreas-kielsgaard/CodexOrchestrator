@@ -40,6 +40,15 @@ Before launching each task, decide whether prior worker context is useful:
 - Continue an existing worker conversation when the next task directly corrects, extends, or debugs that worker's own changes and its local context is valuable.
 - Record the choice in the orchestration log so context carryover is intentional.
 
+When launching a new work slice, summarize the orchestration decision in the main thread. The summary should say:
+
+- what the work slice is attempting to accomplish
+- why it is the next useful slice
+- whether the worker is fresh or continued, and why
+- what reasoning level is being used and why
+- what branch/worktree shape is expected
+- what completion/review signal will count as success
+
 ### Completion reports
 
 Every worker completion should include:
@@ -77,6 +86,8 @@ Needs review: <specific files/decisions/risks>
 
 If integration, merge, cleanup, or branch repair becomes nontrivial, consider using a dedicated admin worker conversation rather than embedding the work inside an implementation task.
 
+Do not archive worker or admin conversations by default. The user wants those chats visible as part of the trace of the orchestration work. Archive only when the user explicitly asks for it.
+
 For Windows worktree cleanup:
 
 1. Verify the worktree is clean and merged.
@@ -108,3 +119,13 @@ Correction:
 - Treat worktree removal and branch deletion as separate admin steps.
 - Check `git worktree list --porcelain`, `git branch --merged main`, and the physical directory state after cleanup.
 - If only an empty locked directory remains, record the path and retry later rather than force-killing unknown processes.
+
+### 2026-07-01: Worker chats were archived too aggressively
+
+The orchestrator archived Worker 001 and Worker 002 after merge/cleanup. The user clarified that worker chats should remain visible so the work can be traced.
+
+Correction:
+
+- Worker 001 and Worker 002 were unarchived.
+- Future worker/admin conversations should remain visible unless the user explicitly asks to archive them.
+- Cleanup should focus on Git branches/worktrees and logs, not hiding the conversation trail.

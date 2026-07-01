@@ -15,14 +15,16 @@ The orchestrator thread should:
 3. Start worker conversations in a branch/worktree when code work should be isolated.
 4. Re-ingest `docs/orchestration-learnings.md` before launching workers.
 5. Decide whether the next task should continue an existing worker conversation or start fresh based on context usefulness.
-6. Give each worker a bounded task, expected deliverables, branch/commit expectations, and completion-report instructions.
-7. Ask each worker to log results in the repository.
-8. Ask implementation workers to commit their completed slice on a dedicated task branch unless the task is explicitly exploratory.
-9. Ask each worker to send a completion prompt back to this orchestrator thread when finished.
-10. Review completed work before starting dependent tasks.
-11. Create correction tasks when needed.
-12. Merge or clean up branches/worktrees only after review.
-13. Pause and ask the user when the implementation drifts too far from the stated intention or needs a product decision.
+6. Summarize each new work-slice decision in the main thread before or immediately after launch.
+7. Give each worker a bounded task, expected deliverables, branch/commit expectations, and completion-report instructions.
+8. Ask each worker to log results in the repository.
+9. Ask implementation workers to commit their completed slice on a dedicated task branch unless the task is explicitly exploratory.
+10. Ask each worker to send a completion prompt back to this orchestrator thread when finished.
+11. Review completed work before starting dependent tasks.
+12. Create correction tasks when needed.
+13. Merge or clean up branches/worktrees only after review.
+14. Keep worker/admin conversations visible for traceability unless the user explicitly asks to archive them.
+15. Pause and ask the user when the implementation drifts too far from the stated intention or needs a product decision.
 
 ## Reasoning-Level Guidance
 

@@ -18,7 +18,8 @@
 - Review correction: tightened dashboard CSS so all five attention groups fit at 1280px without internal horizontal scroll.
 - Verification after merge: `npm install`, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
 - Known blocker: `npm run build:tauri` fails because `cargo` is not installed or not on `PATH`.
-- Cleanup: archived worker thread `019f1f86-6f0d-7753-a1d1-f6fd3414a67d`, removed Git worktree registration, and deleted merged branch `worker/001-bootstrap`.
+- Cleanup: originally archived worker thread `019f1f86-6f0d-7753-a1d1-f6fd3414a67d`, removed Git worktree registration, and deleted merged branch `worker/001-bootstrap`.
+- Traceability correction: worker thread `019f1f86-6f0d-7753-a1d1-f6fd3414a67d` was later unarchived because worker chats should remain visible unless explicitly archived by the user.
 - Cleanup note: Windows kept an empty leftover directory locked at `C:\Users\user\.codex\worktrees\15ac\Codex Orchestrator`; retry later after the app releases the handle.
 
 ### Admin Correction: Worker Reporting Contract
@@ -51,7 +52,8 @@
 - Accepted decision: `running` plus `waiting_on_agent` projects to `Working`; non-running `waiting_on_agent` projects to `Waiting`.
 - Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
 - Context reuse note: Worker 002 was started fresh because the domain projection slice was independent from Worker 001's bootstrap context; future correction/debug tasks may continue an existing worker when that context is useful.
-- Cleanup: archived worker thread `019f1f99-5c3f-7961-874e-6af58a7c3ec5`, pruned stale Git worktree registration, and deleted merged branch `worker/002-domain-model`.
+- Cleanup: originally archived worker thread `019f1f99-5c3f-7961-874e-6af58a7c3ec5`, pruned stale Git worktree registration, and deleted merged branch `worker/002-domain-model`.
+- Traceability correction: worker thread `019f1f99-5c3f-7961-874e-6af58a7c3ec5` was later unarchived because worker chats should remain visible unless explicitly archived by the user.
 - Cleanup note: physical Codex worktree folders remain at `C:\Users\user\.codex\worktrees\eaeb\Codex Orchestrator` and `C:\Users\user\.codex\worktrees\15ac\Codex Orchestrator`; Git no longer tracks them as worktrees.
 
 ### Admin Correction: Worker Context Reuse Rule
@@ -72,3 +74,8 @@
 - Scope: add pure TypeScript Git porcelain/worktree/branch parsers, normalized scan result types, tests with realistic fixtures including Windows paths, and a future command-execution adapter boundary without Tauri/Rust execution.
 - Expected result log: `docs/task-logs/worker-003-git-adapter-foundation.md`
 - Orchestrator thread id for completion prompt: `019f1f79-0e23-7e13-9518-d31dfe843dc9`
+
+### Admin Correction: Worker Chat Traceability
+
+- Status: applied
+- Summary: unarchived Worker 001 and Worker 002 chats and updated orchestration behavior so worker/admin conversations remain visible unless the user explicitly asks to archive them.
