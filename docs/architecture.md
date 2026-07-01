@@ -26,6 +26,7 @@ The TypeScript domain layer lives under `src/domain/`:
 - `Task.executionState` tracks what the work is doing, while `Task.attentionState` tracks what kind of human attention it needs.
 - `dashboardProjection.ts` derives the Open Tasks dashboard groups from domain records. React components should consume this projection instead of owning grouping rules directly.
 - `repoSyncPlanning.ts`, `repoSyncPlanApplier.ts`, and `repoSyncService.ts` keep Git scan reconciliation persistence-neutral: scans become explicit repo/branch/worktree upsert plans, then those plans can be applied to in-memory `DomainRecords` with injected deterministic IDs before a future repository layer persists them. The service facade returns both the plan and the applied result so persistence/UI callers can inspect the plan without duplicating scan-to-plan-to-record choreography.
+- `repoSyncStore.ts` defines the narrow async persistence boundary for repo sync. A store loads the current domain snapshot for a scan and persists only the applied repo, branch, and worktree records produced by `syncRepoFromScan`; it does not duplicate plan/apply logic. The included in-memory implementation is a test helper and placeholder for a future SQLite-backed store.
 - `seedData.ts` provides demo records until SQLite persistence and repository APIs are introduced.
 
 SQLite migrations, Rust database commands, Git scanning, and Codex runtime integration are intentionally outside this slice.
