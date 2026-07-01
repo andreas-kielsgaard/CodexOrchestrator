@@ -126,3 +126,17 @@
 
 - Status: applied
 - Summary: unarchived Worker 001 and Worker 002 chats and updated orchestration behavior so worker/admin conversations remain visible unless the user explicitly asks to archive them.
+
+## 2026-07-02
+
+### Worker 005: Repo Sync/Upsert Planning
+
+- Status: launched
+- Pending worktree id: `local:852efaf8-5e4d-44ca-a598-30f1861df5b7`
+- Worker branch: `worker/005-repo-sync-planning`
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because the sync planning layer builds on the current domain and Git scan facts, plus Worker 004's result log, but does not need Worker 004's conversational state.
+- Scope: add a pure TypeScript planning layer that maps `DomainRecords` and `GitRepoScanDomainFacts` into persistence-neutral repo, branch, and worktree upsert plans without SQLite, Tauri/Rust Git execution, Codex runtime integration, or UI work.
+- Expected result log: `docs/task-logs/worker-005-repo-sync-planning.md`
+- Orchestrator thread id for completion prompt: `019f1fba-a58f-7863-afc5-7194a6420844`
+- Success signal: committed worker branch with tests for new repo discovery, existing repo updates, branch intent/base preservation, worktree branch linking, stale/missing worktree handling, and no invented default branch when scan facts omit one.
