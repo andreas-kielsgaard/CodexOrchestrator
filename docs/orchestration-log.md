@@ -132,6 +132,7 @@
 ### Worker 005: Repo Sync/Upsert Planning
 
 - Status: launched
+- Worker thread: `019f1fbc-76d5-7261-bb73-66d70d3e00c0`
 - Pending worktree id: `local:852efaf8-5e4d-44ca-a598-30f1861df5b7`
 - Worker branch: `worker/005-repo-sync-planning`
 - Reasoning effort: `medium`
