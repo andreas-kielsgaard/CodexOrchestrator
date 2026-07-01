@@ -1,6 +1,6 @@
 # Codex Orchestrator
 
-Codex Orchestrator is a local-first desktop control plane for Codex-driven work. The first slice is intentionally small: it establishes a Tauri v2 + React + TypeScript + Vite skeleton and an attention-first Open Tasks dashboard placeholder.
+Codex Orchestrator is a local-first desktop control plane for Codex-driven work. The current slice establishes a Tauri v2 + React + TypeScript + Vite skeleton plus an attention-first Open Tasks dashboard driven by TypeScript domain records and projection logic.
 
 ## Prerequisites
 
@@ -34,7 +34,7 @@ The Vite dev server runs on `http://localhost:1420`.
 ```text
 src/
   app/                 React application shell
-  domain/              Frontend-safe domain placeholders
+  domain/              Domain types, seed records, and dashboard projection
   infrastructure/      Tauri command adapters
   test/                Test setup
 src-tauri/             Tauri v2 Rust shell and command boundary
@@ -45,12 +45,14 @@ docs/
 
 ## Current Scope
 
-The app currently shows placeholder task groups for:
+The app currently shows demo task records projected into:
 
 - Needs action now
 - Review / decide
 - Working
 - Waiting
 - Later
+
+The domain model includes projects, repos, branches, worktrees, conversations, tasks, task runs, artifacts, validation runs, and events. Execution state and attention state are separate fields on tasks so a completed task can still need review, and a running task can be tracked as waiting on an agent.
 
 Codex protocol integration, Git scanning, SQLite persistence, and workflow execution are intentionally left for follow-up slices.
