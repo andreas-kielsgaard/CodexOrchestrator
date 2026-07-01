@@ -57,7 +57,7 @@ At 75% context-window usage, the orchestrator should write a handoff report and 
 - `docs/orchestration-log.md`
 - current worker result logs under `docs/task-logs/`
 
-The new orchestration thread prompt should include the handoff report path, explicitly say it is taking over orchestration, and require re-ingesting the overall task overview and learnings before launching or reviewing work. If exact context usage is unavailable, trigger conservatively when the thread becomes large enough that auditability or compaction risk is a concern.
+The new orchestration thread prompt should include the handoff report path, explicitly say it is taking over orchestration, and require re-ingesting the overall task overview and learnings before launching or reviewing work. If exact context usage is unavailable, trigger conservatively when the thread becomes large enough that auditability or compaction risk is a concern. If context compression/compaction is triggered, or the orchestrator resumes from a compressed summary, hand off immediately instead of continuing to accumulate orchestration state in the compressed thread.
 
 ### Completion reports
 

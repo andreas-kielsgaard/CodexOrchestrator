@@ -61,7 +61,7 @@ When this orchestration thread reaches 75% of its context window, the orchestrat
 5. Instruct the new orchestration thread to re-ingest the handoff report and the context/learning files before taking action.
 6. Keep the old orchestration and worker chats visible for traceability.
 
-If exact context-window usage is not available, use a conservative judgment trigger: after substantial worker cycles, when the conversation becomes difficult to audit, or before expected compaction risk.
+If exact context-window usage is not available, use a conservative judgment trigger: after substantial worker cycles, when the conversation becomes difficult to audit, or before expected compaction risk. If context compression/compaction is triggered, or the orchestrator resumes from a compressed summary, treat that as an immediate handoff trigger.
 
 ## Current State
 
