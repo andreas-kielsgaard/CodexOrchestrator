@@ -62,17 +62,17 @@ export interface WorktreeUpsertPlan {
     path: string;
   };
   existing?: Worktree;
-  branchRef?: BranchPlanRef;
+  branchRef: BranchPlanRef | null;
   values: {
     repo: RepoPlanRef;
     path: string;
     isMain: boolean;
     isDirty: boolean;
-    lockReason?: string;
+    lockReason: string | null;
     lastScannedAt: IsoDateTime;
     updatedAt: IsoDateTime;
     createdAt?: IsoDateTime;
-    branchRef?: BranchPlanRef;
+    branchRef: BranchPlanRef | null;
   };
 }
 
@@ -252,17 +252,17 @@ function planWorktreeUpsert(
       path,
     },
     ...(existingWorktree ? { existing: existingWorktree } : {}),
-    ...(branchRef ? { branchRef } : {}),
+    branchRef: branchRef ?? null,
     values: {
       repo: repoRef,
       path,
       isMain,
       isDirty,
-      ...(lockReason ? { lockReason } : {}),
+      lockReason: lockReason ?? null,
       lastScannedAt,
       updatedAt: plannedAt,
       ...(existingWorktree ? {} : { createdAt: plannedAt }),
-      ...(branchRef ? { branchRef } : {}),
+      branchRef: branchRef ?? null,
     },
   };
 }

@@ -18,6 +18,14 @@ implementation was recreated in the assigned worker worktree
 `worker/005-repo-sync-planning`. The accidental untracked implementation files were removed from
 the main checkout and were not committed there.
 
+## Review Correction
+
+Updated worktree upsert plans to make optional field clearing explicit for future persistence
+appliers. `WorktreeUpsertPlan.values.lockReason` is now `string | null`, and
+`WorktreeUpsertPlan.values.branchRef` plus the top-level plan `branchRef` are now
+`BranchPlanRef | null`. Current Git scan facts therefore distinguish "set this value" from
+"clear the existing value" when a worktree becomes unlocked or detached.
+
 ## Changed Files
 
 - `src/domain/repoSyncPlanning.ts`: added persistence-neutral planning types and `planRepoSync`.
@@ -32,6 +40,8 @@ the main checkout and were not committed there.
   head SHA, worktree dirty state, lock reason, and scan time.
 - Existing branch `intent` and `baseBranch` are preserved from domain records.
 - Worktrees link to existing or planned branch refs by branch name when available.
+- Worktree plans explicitly clear stale `lockReason` and branch association with `null` values
+  when current scan facts no longer provide those optional fields.
 - Domain worktrees absent from the current scan are represented with the non-destructive
   `mark_missing_from_scan` action.
 - Missing default branch facts do not synthesize `main`; existing repo defaults are preserved on

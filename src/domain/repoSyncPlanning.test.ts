@@ -354,6 +354,133 @@ describe('planRepoSync', () => {
     });
   });
 
+  it('explicitly clears lockReason when an existing locked worktree becomes unlocked', () => {
+    const records = emptyRecords();
+    records.repos = [
+      {
+        id: 'repo-1',
+        projectId,
+        name: 'Codex Orchestrator',
+        rootPath: 'C:/Repos/Codex Orchestrator',
+        defaultBranch: 'main',
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+    records.worktrees = [
+      {
+        id: 'worktree-1',
+        repoId: 'repo-1',
+        path: 'C:/Repos/Codex Orchestrator Worktrees/005',
+        isMain: false,
+        isDirty: false,
+        lockReason: 'active worker',
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+
+    const plan = planRepoSync({
+      records,
+      projectId,
+      plannedAt: now,
+      facts: {
+        repo: {
+          name: 'Codex Orchestrator',
+          rootPath: 'C:/Repos/Codex Orchestrator',
+          defaultBranch: 'main',
+        },
+        branches: [],
+        worktrees: [
+          {
+            path: 'C:/Repos/Codex Orchestrator Worktrees/005',
+            isMain: false,
+            dirtyState: 'clean',
+            isDirty: false,
+            isBare: false,
+            isDetached: false,
+            isLocked: false,
+            isPrunable: false,
+            lastScannedAt: now,
+          },
+        ],
+      },
+    });
+
+    expect(plan.worktrees[0].values.lockReason).toBeNull();
+  });
+
+  it('explicitly clears branchRef when an existing branch-linked worktree becomes detached', () => {
+    const records = emptyRecords();
+    records.repos = [
+      {
+        id: 'repo-1',
+        projectId,
+        name: 'Codex Orchestrator',
+        rootPath: 'C:/Repos/Codex Orchestrator',
+        defaultBranch: 'main',
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+    records.branches = [
+      {
+        id: 'branch-1',
+        repoId: 'repo-1',
+        name: 'worker/005-repo-sync-planning',
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+    records.worktrees = [
+      {
+        id: 'worktree-1',
+        repoId: 'repo-1',
+        branchId: 'branch-1',
+        path: 'C:/Repos/Codex Orchestrator Worktrees/005',
+        isMain: false,
+        isDirty: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+
+    const plan = planRepoSync({
+      records,
+      projectId,
+      plannedAt: now,
+      facts: {
+        repo: {
+          name: 'Codex Orchestrator',
+          rootPath: 'C:/Repos/Codex Orchestrator',
+          defaultBranch: 'main',
+        },
+        branches: [
+          {
+            name: 'worker/005-repo-sync-planning',
+            isCurrent: false,
+          },
+        ],
+        worktrees: [
+          {
+            path: 'C:/Repos/Codex Orchestrator Worktrees/005',
+            isMain: false,
+            dirtyState: 'clean',
+            isDirty: false,
+            isBare: false,
+            isDetached: true,
+            isLocked: false,
+            isPrunable: false,
+            lastScannedAt: now,
+          },
+        ],
+      },
+    });
+
+    expect(plan.worktrees[0].branchRef).toBeNull();
+    expect(plan.worktrees[0].values.branchRef).toBeNull();
+  });
+
   it('marks existing worktrees missing from the scan without planning destructive deletion', () => {
     const records = emptyRecords();
     records.repos = [
