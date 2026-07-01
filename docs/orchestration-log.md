@@ -35,13 +35,25 @@
 
 ### Worker 002: Domain Model And Dashboard Projection
 
-- Status: started
+- Status: reviewed and merged
 - Pending worktree id: `local:43eae478-1db6-4d6b-8e7b-03c3ff0a91d9`
 - Starting branch: `main`
 - Base commit: `4d9af770677d444122cac31a3e18876ff051933b`
-- Planned worker branch: `worker/002-domain-model`
+- Worker branch: `worker/002-domain-model`
+- Worker commit: `8550e77`
+- Merge commit: `39b4eb4`
 - Reasoning effort: `medium`
 - Scope: add TypeScript domain types, seed/demo records, dashboard projection logic, and tests without SQLite, Tauri persistence commands, or Codex runtime integration.
 - Context policy: worker prompt used concise visible context plus pointers to `docs/orchestration-context.md`, `docs/orchestration-learnings.md`, and `docs/implementation-roadmap.md`; no hidden model context was serialized.
 - Expected result log: `docs/task-logs/worker-002-domain-model.md`
 - Orchestrator thread id for completion prompt: `019f1f79-0e23-7e13-9518-d31dfe843dc9`
+- Review correction: changed `Task.conversationId` to `Task.conversationIds` so tasks can link to multiple conversations; corrected the Worker 002 seed conversation thread id.
+- Accepted decision: `running` plus `waiting_on_agent` projects to `Working`; non-running `waiting_on_agent` projects to `Waiting`.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
+- Context reuse note: Worker 002 was started fresh because the domain projection slice was independent from Worker 001's bootstrap context; future correction/debug tasks may continue an existing worker when that context is useful.
+
+### Admin Correction: Worker Context Reuse Rule
+
+- Status: applied
+- Commit: `5693f14`
+- Summary: updated orchestration behavior notes to require an explicit fresh-vs-continued worker conversation decision based on context usefulness.
