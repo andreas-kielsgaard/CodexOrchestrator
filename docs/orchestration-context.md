@@ -24,8 +24,10 @@ The orchestrator thread should:
 12. Create correction tasks when needed.
 13. Merge or clean up branches/worktrees only after review.
 14. Keep worker/admin conversations visible for traceability unless the user explicitly asks to archive them.
-15. At 75% context-window usage, write a handoff report and start a fresh orchestration thread with `xhigh` reasoning.
-16. Pause and ask the user when the implementation drifts too far from the stated intention or needs a product decision.
+15. For UI-facing slices, make an explicit design-discipline decision before launch: whether the slice needs reusable component structure, component-level verification, Storybook-style isolated review, or a separate usability-review pass.
+16. Use fresh usability-review worker conversations when appropriate, asking them to behave like realistic users and report confusing flows, visual bugs, missing affordances, and unexpected behavior before the UI hardens.
+17. At 75% context-window usage, write a handoff report and start a fresh orchestration thread with `xhigh` reasoning.
+18. Pause and ask the user when the implementation drifts too far from the stated intention or needs a product decision.
 
 ## Reasoning-Level Guidance
 
@@ -35,6 +37,16 @@ Use the lowest reasoning level that fits the risk:
 - Medium: normal implementation slices, schema work, adapters with tests.
 - High: architecture decisions, Codex integration changes, workflow engine design, recovery logic, security-sensitive work.
 - XHigh: only for difficult cross-cutting failures or major redesigns.
+
+## UI Design Discipline
+
+The app should work well for users, not merely expose working code. For UI-heavy work, the orchestrator should preserve interface quality as an implementation concern:
+
+- Prefer reusable, individually testable UI components when the UI surface grows enough to benefit from them.
+- Consider tools and patterns such as Radix primitives, Storybook-style component isolation, and Vite-powered component tests when they fit the current slice; these are preferences to evaluate, not mandatory stack directives.
+- Keep screens operational and scannable, especially for control-plane workflows where repeated use matters more than decorative presentation.
+- Before merging substantial UI changes, consider a fresh usability-review chat that acts as a relatively clueless user or a specific user profile, navigates through the app controls, and reports confusing experiences, discrepancies, visual issues, and missing feedback.
+- Treat usability-review output as review evidence: convert real issues into correction tasks, but do not let a review worker expand product scope without an orchestration decision.
 
 ## Drift Checks
 
@@ -46,6 +58,7 @@ After each worker completion, check:
 - Are Codex integrations still behind an adapter boundary?
 - Is workflow customizability being built into the backend, not only the UI?
 - Is the implementation still local-first?
+- For UI changes, does the experience remain clear, reusable, testable, and usable for someone who did not build it?
 - Are unreviewed branches/worktrees accumulating?
 
 If two or more answers are "no", pause the orchestration and course-correct before continuing.

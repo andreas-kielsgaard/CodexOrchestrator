@@ -92,6 +92,21 @@ Blockers: <none or exact blocker>
 Needs review: <specific files/decisions/risks>
 ```
 
+### UI design discipline and usability review
+
+The user values strong UI design discipline and is still building their own UI-design judgment, so the orchestration process should protect the user experience early instead of treating polish as a final pass.
+
+For UI-facing implementation slices, the orchestrator should:
+
+- Decide explicitly whether the slice needs reusable component boundaries, component-level tests, isolated component review, or Storybook-style stories.
+- Consider Radix primitives, Storybook, and Vite-based component workflows when they naturally support reusable and individually testable UI, without treating them as mandatory technology choices.
+- Keep UI worker prompts focused on the target user's workflow, density, scanability, affordances, states, and feedback.
+- Avoid letting implementation workers ship only the happy-path surface; ask for empty/loading/error/disabled/overflow states when the control naturally needs them.
+- Before or after substantial UI slices, consider launching a fresh usability-review worker that does not implement code and instead acts like a relatively clueless user or a named user profile. That worker should navigate the app with available UI controls, report bugs, confusing copy, missing feedback, visual hierarchy problems, and expectation mismatches.
+- Convert usability-review findings into bounded correction tasks. Keep the reviewer chat visible for traceability.
+
+This is an orchestration preference, not a hard stack directive. The project can adopt component tooling incrementally when the UI surface justifies it.
+
 ### Admin work
 
 If integration, merge, cleanup, or branch repair becomes nontrivial, consider using a dedicated admin worker conversation rather than embedding the work inside an implementation task.
@@ -139,3 +154,13 @@ Correction:
 - Worker 001 and Worker 002 were unarchived.
 - Future worker/admin conversations should remain visible unless the user explicitly asks to archive them.
 - Cleanup should focus on Git branches/worktrees and logs, not hiding the conversation trail.
+
+### 2026-07-02: Worker 005 initially wrote implementation files in the main checkout
+
+After Worker 005 launched in a Codex worktree, untracked implementation files appeared in the main checkout while the assigned worker worktree was still detached and clean. The orchestrator sent an immediate correction to the worker thread requiring Worker 005 to work only in its assigned worktree and leave the main checkout clean.
+
+Correction:
+
+- Worker prompts should clearly distinguish the saved project path from the assigned Codex worktree path when both are visible.
+- When a worker thread is created in a Codex worktree, the worker should treat the thread `cwd` or explicitly assigned worktree path as authoritative for edits.
+- The orchestrator should check both the main checkout and worker worktree shortly after launch when a worker's first status messages suggest it may have changed directories.

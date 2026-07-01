@@ -141,3 +141,9 @@
 - Expected result log: `docs/task-logs/worker-005-repo-sync-planning.md`
 - Orchestrator thread id for completion prompt: `019f1fba-a58f-7863-afc5-7194a6420844`
 - Success signal: committed worker branch with tests for new repo discovery, existing repo updates, branch intent/base preservation, worktree branch linking, stale/missing worktree handling, and no invented default branch when scan facts omit one.
+- Coordination correction: after launch, untracked implementation files appeared in the main checkout while the assigned worker worktree was still detached/clean. The orchestrator sent Worker 005 a correction to work only in `C:\Users\user\.codex\worktrees\e56f\Codex Orchestrator`, create/use `worker/005-repo-sync-planning` there, and leave the main checkout clean.
+
+### Admin Correction: UI Design Discipline And Usability Review
+
+- Status: applied
+- Summary: encoded the user's UI preference into orchestration behavior: UI-facing slices should explicitly consider reusable/testable component boundaries, Radix/Storybook/Vite-style workflows when appropriate, and fresh usability-review worker chats that act as realistic users before substantial UI changes harden.
