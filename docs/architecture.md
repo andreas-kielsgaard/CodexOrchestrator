@@ -25,6 +25,7 @@ The TypeScript domain layer lives under `src/domain/`:
 - `model.ts` defines the core product records: Project, Repo, Branch, Worktree, Conversation, Task, TaskRun, Artifact, ValidationRun, and Event.
 - `Task.executionState` tracks what the work is doing, while `Task.attentionState` tracks what kind of human attention it needs.
 - `dashboardProjection.ts` derives the Open Tasks dashboard groups from domain records. React components should consume this projection instead of owning grouping rules directly.
+- `repoSyncPlanning.ts` and `repoSyncPlanApplier.ts` keep Git scan reconciliation persistence-neutral: scans become explicit repo/branch/worktree upsert plans, then those plans can be applied to in-memory `DomainRecords` with injected deterministic IDs before a future repository layer persists them.
 - `seedData.ts` provides demo records until SQLite persistence and repository APIs are introduced.
 
 SQLite migrations, Rust database commands, Git scanning, and Codex runtime integration are intentionally outside this slice.

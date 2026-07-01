@@ -50,7 +50,7 @@ export interface Repo {
   projectId: EntityId;
   name: string;
   rootPath: string;
-  defaultBranch: string;
+  defaultBranch?: string;
   remoteUrl?: string;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
