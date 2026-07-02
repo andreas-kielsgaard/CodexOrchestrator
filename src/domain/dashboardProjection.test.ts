@@ -49,6 +49,21 @@ describe('projectOpenTaskDashboard', () => {
     expect(groups.find((group) => group.id === 'review_decide')?.tasks[0]).toMatchObject({
       executionState: 'completed',
       attentionState: 'needs_review',
+      priority: 'normal',
+    });
+  });
+
+  it('projects task priority for dashboard edit flows', () => {
+    const groups = projectOpenTaskDashboard(
+      recordsWithTask({
+        ...baseTask,
+        priority: 'high',
+      }),
+    );
+
+    expect(groups.find((group) => group.id === 'later')?.tasks[0]).toMatchObject({
+      id: 'task-test',
+      priority: 'high',
     });
   });
 

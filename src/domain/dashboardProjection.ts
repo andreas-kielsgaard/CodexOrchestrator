@@ -10,6 +10,7 @@ export interface DashboardTask {
   project: string;
   executionState: ExecutionState;
   attentionState: Task['attentionState'];
+  priority: Task['priority'];
   repo?: string;
   branch?: string;
   worktreePath?: string;
@@ -58,9 +59,10 @@ export function projectOpenTaskDashboard(records: DomainRecords): DashboardGroup
       project: project?.name ?? 'Unassigned project',
       executionState: task.executionState,
       attentionState: task.attentionState,
-      repo: repo?.name,
-      branch: branch?.name,
-      worktreePath: worktree?.path,
+      priority: task.priority,
+      ...(repo === undefined ? {} : { repo: repo.name }),
+      ...(branch === undefined ? {} : { branch: branch.name }),
+      ...(worktree === undefined ? {} : { worktreePath: worktree.path }),
       updatedAt: task.updatedAt,
     });
   }
