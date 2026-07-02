@@ -96,6 +96,12 @@ the task through `OpenTaskWriteStore.updateTask` with repo, worktree, and availa
 It intentionally does not run Git commands directly, delete worktrees, start Codex runs, collect
 diffs, run validations, or own UI behavior.
 
+`diffCollection.ts` coordinates post-run worktree diff capture over existing stores and an injected
+`GitDiffProvider`. It preflights the task, optional task run, and worktree path through
+`OpenTaskDashboardStore` records, stores the diff body as a `diff` artifact even when empty, and
+emits one compact `artifact_created` event with diff size/empty metadata. It does not execute Git
+directly, mutate task/run lifecycle state, run validation commands, or wire UI/Tauri behavior.
+
 `taskDashboardClient.ts` is the Open Tasks application/client boundary. It composes
 `OpenTaskDashboardStore` and `OpenTaskWriteStore` into async load/create/update/archive operations
 that return a dashboard snapshot for UI callers. The client is verified against in-memory stores
