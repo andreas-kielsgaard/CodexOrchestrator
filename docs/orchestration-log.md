@@ -646,7 +646,7 @@
 
 ### Worker 017: Artifact/ValidationRun SQLite Schema
 
-- Status: launched/in progress; not reviewed or merged
+- Status: launched; later reviewed and merged
 - Pending worktree id: `local:ade7f6f3-23e4-47f1-bfbb-923d7b431609`
 - Expected worker branch: `worker/017-artifact-validation-sqlite-schema`
 - Launch base: `e27e761cc12fdcfc56641e5af4e062b1870e5e12`
@@ -669,3 +669,36 @@
   `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` verification, followed
   by a completion report sent back to the orchestration thread or an explicit note that cross-posting
   was unavailable.
+
+### Worker 017 Review And Merge: Artifact/ValidationRun SQLite Schema
+
+- Status: reviewed, merged, verified, logged, and Git-cleaned
+- Worker commit: `36b813a89cb7bf4ed911801b241f2ea9f080d079`
+- Merge commit: `8f6b08fbf4563041dfb518f95e5626a62278ee3f`
+- Result log: `docs/task-logs/worker-017-artifact-validation-sqlite-schema.md`
+- Accepted decision: artifact and validation-run links are nullable and use `ON DELETE SET NULL` so
+  durable local outputs and validation history survive cleanup of related task, run, conversation,
+  or output-artifact rows.
+- Accepted decision: `validation_runs.output_artifact_id` is nullable, preserving the practical
+  insertion flow where a validation run is inserted first, its output artifact is recorded later,
+  and the validation row is updated with the artifact ID.
+- Accepted decision: the new migration composes after repo-sync, Open Tasks, and
+  TaskRun/Conversation migrations in the app-level migration coordinator; production code remains
+  pure TypeScript with `node:sqlite` confined to tests.
+- Orchestrator verification before merge:
+  `git diff --check main...worker/017-artifact-validation-sqlite-schema`,
+  `npm run test -- src/infrastructure/sqlite/artifactValidationSchema.test.ts src/infrastructure/sqlite/migrationCoordinator.test.ts`,
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed in the worker
+  worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed.
+- Verification note: `node:sqlite` emits Node's expected experimental warning during SQLite tests.
+- Drift check: still local-first and task-centered; Artifact and ValidationRun persistence adds
+  durable review/validation provenance without introducing Codex credentials, Codex runtime
+  integration, Tauri/Rust runtime database wiring, Git execution, React/UI work, event persistence,
+  or new dependencies.
+- Cleanup: `git worktree remove` unregistered the worker worktree and the merged branch
+  `worker/017-artifact-validation-sqlite-schema` was deleted.
+- Cleanup note: Windows kept the physical worker folder locked at
+  `C:\Users\user\.codex\worktrees\1957\Codex Orchestrator`; retry later after the app releases the
+  handle.
