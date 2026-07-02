@@ -133,7 +133,11 @@ export class InMemoryOpenTaskWriteStore implements OpenTaskWriteStore, OpenTaskD
   }
 }
 
-function applyTaskUpdate(task: Task, input: UpdateOpenTaskInput, updatedAt: IsoDateTime): Task {
+export function applyTaskUpdate(
+  task: Task,
+  input: UpdateOpenTaskInput,
+  updatedAt: IsoDateTime,
+): Task {
   const updatedTask: Task = {
     ...task,
     ...(input.projectId === undefined ? {} : { projectId: input.projectId }),

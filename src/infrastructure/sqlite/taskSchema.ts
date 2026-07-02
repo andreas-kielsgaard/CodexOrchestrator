@@ -141,12 +141,15 @@ export function taskFromRow(
   };
 }
 
-export function taskConversationLinksToRows(task: Task): TaskConversationLinkRow[] {
+export function taskConversationLinksToRows(
+  task: Task,
+  createdAt: string = task.createdAt,
+): TaskConversationLinkRow[] {
   return task.conversationIds.map((conversationId, position) => ({
     task_id: task.id,
     conversation_id: conversationId,
     position,
-    created_at: task.createdAt,
+    created_at: createdAt,
   }));
 }
 
