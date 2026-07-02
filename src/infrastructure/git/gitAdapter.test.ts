@@ -1,4 +1,131 @@
-import { buildGitRepoScanResult, mapGitRepoScanToDomainFacts } from './gitAdapter';
+import {
+  buildGitBranchSummaryArgs,
+  buildGitRemoteVerboseArgs,
+  buildGitRepoScanResult,
+  buildGitStatusPorcelainV1ZArgs,
+  buildGitWorktreeListPorcelainZArgs,
+  createGitRepoScanner,
+  mapGitRepoScanToDomainFacts,
+} from './gitAdapter';
+import type { GitCommandInput, GitCommandResult } from './types';
+
+describe('Git scan command argument builders', () => {
+  it('builds the parser-compatible scan command arguments', () => {
+    expect(buildGitStatusPorcelainV1ZArgs()).toEqual(['status', '--porcelain=v1', '-z']);
+    expect(buildGitBranchSummaryArgs()).toEqual([
+      'branch',
+      '--format=%(HEAD)%1f%(refname:short)%1f%(objectname)%1f%(upstream:short)%1f%(upstream:track)%1f%(worktreepath)%00',
+    ]);
+    expect(buildGitRemoteVerboseArgs()).toEqual(['remote', '-v']);
+    expect(buildGitWorktreeListPorcelainZArgs()).toEqual(['worktree', 'list', '--porcelain', '-z']);
+  });
+});
+
+describe('createGitRepoScanner', () => {
+  it('runs the scan commands and assembles a repo scan from command output', async () => {
+    const rootPath = 'C:\\Repos\\Codex Orchestrator';
+    const scannedAt = '2026-07-02T10:30:00.000Z';
+    const statusPorcelainV1Z = [' M src/app/App.tsx', ''].join('\0');
+    const branchSummary = [
+      [
+        '*',
+        'main',
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        'origin/main',
+        '',
+        'C:\\Repos\\Codex Orchestrator',
+      ].join('\x1f'),
+      '',
+    ].join('\0');
+    const remoteVerbose = [
+      'origin\tgit@github.com:andreas-kielsgaard/CodexOrchestrator.git (fetch)',
+      'origin\tgit@github.com:andreas-kielsgaard/CodexOrchestrator.git (push)',
+      '',
+    ].join('\n');
+    const worktreeListPorcelainZ = [
+      'worktree C:\\Repos\\Codex Orchestrator',
+      'HEAD aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      'branch refs/heads/main',
+      '',
+    ].join('\0');
+    const runner = new FakeGitCommandRunner([
+      { stdout: statusPorcelainV1Z, stderr: '', exitCode: 0 },
+      { stdout: branchSummary, stderr: '', exitCode: 0 },
+      { stdout: remoteVerbose, stderr: '', exitCode: 0 },
+      { stdout: worktreeListPorcelainZ, stderr: '', exitCode: 0 },
+    ]);
+    const scanner = createGitRepoScanner({
+      commandRunner: runner,
+      clock: () => new Date(scannedAt),
+    });
+
+    const scan = await scanner.scanRepo({ rootPath, defaultBranch: 'main' });
+
+    expect(runner.inputs).toEqual([
+      {
+        cwd: rootPath,
+        args: ['status', '--porcelain=v1', '-z'],
+      },
+      {
+        cwd: rootPath,
+        args: buildGitBranchSummaryArgs(),
+      },
+      {
+        cwd: rootPath,
+        args: ['remote', '-v'],
+      },
+      {
+        cwd: rootPath,
+        args: ['worktree', 'list', '--porcelain', '-z'],
+      },
+    ]);
+    expect(scan).toMatchObject({
+      rootPath: 'C:/Repos/Codex Orchestrator',
+      currentBranch: 'main',
+      defaultBranch: 'main',
+      scannedAt,
+      status: {
+        isDirty: true,
+        entries: [
+          {
+            path: 'src/app/App.tsx',
+            indexStatus: ' ',
+            worktreeStatus: 'M',
+            kind: 'modified',
+          },
+        ],
+      },
+      remotes: [
+        {
+          name: 'origin',
+          fetchUrl: 'git@github.com:andreas-kielsgaard/CodexOrchestrator.git',
+          pushUrl: 'git@github.com:andreas-kielsgaard/CodexOrchestrator.git',
+        },
+      ],
+      branches: [
+        {
+          name: 'main',
+          headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          isCurrent: true,
+          upstreamName: 'origin/main',
+          worktreePath: 'C:/Repos/Codex Orchestrator',
+        },
+      ],
+      worktrees: [
+        {
+          path: 'C:/Repos/Codex Orchestrator',
+          headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          branchName: 'main',
+          state: 'branch',
+          isBare: false,
+          isDetached: false,
+          isLocked: false,
+          isPrunable: false,
+        },
+      ],
+    });
+  });
+});
 
 describe('buildGitRepoScanResult', () => {
   it('assembles a repo scan from raw Git command outputs', () => {
@@ -152,6 +279,27 @@ describe('buildGitRepoScanResult', () => {
     });
   });
 });
+
+class FakeGitCommandRunner {
+  readonly inputs: GitCommandInput[] = [];
+
+  constructor(private readonly results: GitCommandResult[]) {}
+
+  async runGit(input: GitCommandInput): Promise<GitCommandResult> {
+    this.inputs.push({
+      cwd: input.cwd,
+      args: [...input.args],
+    });
+
+    const result = this.results.shift();
+
+    if (result === undefined) {
+      throw new Error('Unexpected git command');
+    }
+
+    return { ...result };
+  }
+}
 
 describe('mapGitRepoScanToDomainFacts', () => {
   it('maps scan facts into domain-facing repo, branch, and worktree facts', () => {

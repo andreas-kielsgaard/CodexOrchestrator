@@ -1,4 +1,5 @@
 import {
+  gitBranchSummaryArgs,
   parseGitBranchSummary,
   parseGitRemoteVerbose,
   parseGitStatusPorcelainV1Z,
@@ -32,6 +33,59 @@ export interface GitScanCommandOutputs {
   branchSummary: string;
   remoteVerbose: string;
   worktreeListPorcelainZ: string;
+}
+
+export function buildGitStatusPorcelainV1ZArgs(): string[] {
+  return ['status', '--porcelain=v1', '-z'];
+}
+
+export function buildGitBranchSummaryArgs(): string[] {
+  return [...gitBranchSummaryArgs];
+}
+
+export function buildGitRemoteVerboseArgs(): string[] {
+  return ['remote', '-v'];
+}
+
+export function buildGitWorktreeListPorcelainZArgs(): string[] {
+  return ['worktree', 'list', '--porcelain', '-z'];
+}
+
+export function createGitRepoScanner(dependencies: GitAdapterDependencies): GitRepoScanner {
+  const clock = dependencies.clock ?? (() => new Date());
+
+  return {
+    async scanRepo(input) {
+      const status = await dependencies.commandRunner.runGit({
+        cwd: input.rootPath,
+        args: buildGitStatusPorcelainV1ZArgs(),
+      });
+      const branches = await dependencies.commandRunner.runGit({
+        cwd: input.rootPath,
+        args: buildGitBranchSummaryArgs(),
+      });
+      const remotes = await dependencies.commandRunner.runGit({
+        cwd: input.rootPath,
+        args: buildGitRemoteVerboseArgs(),
+      });
+      const worktrees = await dependencies.commandRunner.runGit({
+        cwd: input.rootPath,
+        args: buildGitWorktreeListPorcelainZArgs(),
+      });
+
+      return buildGitRepoScanResult({
+        rootPath: input.rootPath,
+        defaultBranch: input.defaultBranch,
+        scannedAt: input.scannedAt ?? clock().toISOString(),
+        outputs: {
+          statusPorcelainV1Z: status.stdout,
+          branchSummary: branches.stdout,
+          remoteVerbose: remotes.stdout,
+          worktreeListPorcelainZ: worktrees.stdout,
+        },
+      });
+    },
+  };
 }
 
 export function currentBranch(branches: GitBranchSummary[]): string | undefined {
