@@ -705,7 +705,7 @@
 
 ### Worker 018: Event SQLite Schema
 
-- Status: launched/in progress; not reviewed or merged
+- Status: launched; later reviewed and merged
 - Pending worktree id: `local:eb757981-b7e3-4c3a-acdc-9714f8af14f0`
 - Expected worker branch: `worker/018-event-sqlite-schema`
 - Launch base: `54c60a3f90cf2bc87b08fbc0a1a938e589c8eb3d`
@@ -728,3 +728,39 @@
   `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` verification, followed
   by a completion report sent back to the orchestration thread or an explicit note that cross-posting
   was unavailable.
+
+### Worker 018 Review And Merge: Event SQLite Schema
+
+- Status: reviewed, merged, verified, logged, and Git-cleaned
+- Worker commit: `64e642689c8a6613058cccaffa7e11bddd810751`
+- Merge commit: `cf6369b62c6a539b8394ee359646db0dac395fe5`
+- Result log: `docs/task-logs/worker-018-event-sqlite-schema.md`
+- Accepted decision: events are stored as durable local provenance records with checked `kind`,
+  required `occurred_at`, required `payload_json`, and optional links to project, task, task run,
+  conversation, artifact, and validation-run rows.
+- Accepted decision: event foreign keys are nullable and use `ON DELETE SET NULL` so audit/history
+  rows survive cleanup of related work records while preserving referential integrity for links that
+  still exist.
+- Accepted decision: row mapping serializes event payloads with deterministic sorted object keys and
+  rejects invalid persisted JSON or non-object payloads, keeping the schema JSON policy explicit
+  before an event append/query store exists.
+- Accepted decision: the new migration composes after repo-sync, Open Tasks, TaskRun/Conversation,
+  and Artifact/ValidationRun migrations in the app-level migration coordinator; production code
+  remains pure TypeScript with `node:sqlite` confined to tests.
+- Orchestrator verification before merge:
+  `git diff --check main...worker/018-event-sqlite-schema`,
+  `npm run test -- src/infrastructure/sqlite/eventSchema.test.ts src/infrastructure/sqlite/migrationCoordinator.test.ts`,
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed in the worker
+  worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed.
+- Verification note: `node:sqlite` emits Node's expected experimental warning during SQLite tests.
+- Drift check: still local-first and task-centered; Event persistence adds appendable audit
+  provenance for tasks, runs, conversations, artifacts, and validation results without introducing
+  Codex credentials, Codex runtime integration, Tauri/Rust runtime database wiring, Git execution,
+  React/UI work, event-sourced projections, or new dependencies.
+- Cleanup: `git worktree remove` unregistered the worker worktree and the merged branch
+  `worker/018-event-sqlite-schema` was deleted.
+- Cleanup note: Windows kept the physical worker folder locked at
+  `C:\Users\user\.codex\worktrees\85b4\Codex Orchestrator`; retry later after the app releases the
+  handle.
