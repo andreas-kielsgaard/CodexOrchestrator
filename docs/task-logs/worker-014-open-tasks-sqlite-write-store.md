@@ -52,3 +52,10 @@ None.
 - Review the small exported domain helper `applyTaskUpdate`; it keeps SQLite mutation behavior
   aligned with the in-memory Worker 013 contract.
 - The tests use `node:sqlite`, which emits Node's experimental feature warning during test runs.
+
+## Orchestrator Review Addendum
+
+The orchestrator added one focused regression test before merge: replacing `conversationIds` with
+an empty list deletes all persisted `task_conversation_links` for that task and returns an empty
+ordered list. Focused verification after the correction passed with
+`npm run test -- src/infrastructure/sqlite/openTaskWriteStore.test.ts`.
