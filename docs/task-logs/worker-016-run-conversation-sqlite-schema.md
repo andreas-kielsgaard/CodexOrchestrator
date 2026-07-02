@@ -58,3 +58,13 @@ None.
 - Review the bidirectional optional foreign-key decision in
   `src/infrastructure/sqlite/runConversationSchema.ts`; tests cover the intended insert/update flow.
 - The tests use `node:sqlite`, which emits Node's experimental feature warning during test runs.
+
+## Orchestrator Review Addendum
+
+The orchestrator made two small review corrections before merge:
+
+- Clarified `docs/architecture.md` so `task_conversation_links.conversation_id` is described as an
+  intentionally text-only dashboard link even after the new `conversations` table exists, pending a
+  future link-integrity/backfill migration.
+- Added a cleanup assertion proving that deleting a task cascades its task runs and also clears both
+  `conversations.task_id` and `conversations.task_run_id`.

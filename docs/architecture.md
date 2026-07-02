@@ -95,10 +95,12 @@ foreign-key parents. Deleting a project cascades to its tasks. Deleting optional
 sets `tasks.repo_id`, `tasks.branch_id`, or `tasks.worktree_id` to `NULL` so task intent survives
 technical cleanup. Deleting a task cascades to its conversation links.
 
-Conversation referential integrity is intentionally deferred until a future conversation schema
-slice. For now, `task_conversation_links.conversation_id` is persisted as a stable text identifier
-without a foreign key. Mapper helpers convert between `Task` records and SQLite rows, preserving
-optional fields as SQL `NULL` and preserving `conversationIds` by `position`.
+`task_conversation_links.conversation_id` is still persisted as a stable text identifier without a
+foreign key. The later TaskRun/Conversation schema introduces the `conversations` table for
+provenance records, but this ordered dashboard link table intentionally remains text-only until a
+future link-integrity/backfill migration decides how strictly task dashboard conversation IDs should
+reference conversation rows. Mapper helpers convert between `Task` records and SQLite rows,
+preserving optional fields as SQL `NULL` and preserving `conversationIds` by `position`.
 
 ## Open Tasks SQLite Read Store
 

@@ -90,7 +90,10 @@ describe('task run and conversation SQLite schema', () => {
       db.prepare('DELETE FROM tasks WHERE id = ?').run('task-1');
 
       expect(selectAll<TaskRunRow>(db, 'task_runs')).toEqual([]);
-      expect(selectOne<ConversationRow>(db, 'conversations', 'conversation-1').task_id).toBeNull();
+      expect(selectOne<ConversationRow>(db, 'conversations', 'conversation-1')).toMatchObject({
+        task_id: null,
+        task_run_id: null,
+      });
     } finally {
       db.close();
     }
