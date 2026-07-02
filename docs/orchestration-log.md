@@ -1739,3 +1739,21 @@ orchestration thread`)
   folder deletion at `C:\Users\user\.codex\worktrees\a518\Codex Orchestrator`; the merged branch
   `worker/029-run-composition-service` was deleted and the locked physical folder was left in
   place.
+
+### Worker 030 Launch: Repo Registry / Scan Service Boundary
+
+- Status: launched in a fresh worktree worker
+- Pending worktree id: `local:180e2980-5302-49a3-bd40-809cfe73d402`
+- Expected branch: `worker/030-repo-registry-scan-service`
+- Launch base: `c9fbb5696983411e5866a19ff1658dada372f3c2` (`Log Worker 029 merge`)
+- Goal: add the narrow application boundary for registering/scanning repositories into persisted
+  repo, branch, and worktree records using the existing Git scanner/parser and repo sync store
+  contracts.
+- Explicitly deferred: React UI, worktree creation and task-worktree linking, dashboard
+  persistence, Codex runtime/run composition, diff collection, validation execution, review UI,
+  workflow-engine behavior, broad schema redesign, and forced cleanup of locked worktree folders.
+- Required result log: `docs/task-logs/worker-030-repo-registry-scan-service.md`
+- Required verification: `git diff --check main...worker/030-repo-registry-scan-service`,
+  focused service/store tests, `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build`.
+- Report-back instruction: included in the worker prompt.

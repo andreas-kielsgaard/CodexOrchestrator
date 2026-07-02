@@ -12,7 +12,14 @@ otherwise resolve it.
 
 ## Active Tasks
 
-None.
+- Worker 030: Repo Registry / Scan Service Boundary
+  - Status: launched; awaiting worker completion report
+  - Pending worktree id: `local:180e2980-5302-49a3-bd40-809cfe73d402`
+  - Expected branch: `worker/030-repo-registry-scan-service`
+  - Launch base: `c9fbb5696983411e5866a19ff1658dada372f3c2`
+  - Result log target: `docs/task-logs/worker-030-repo-registry-scan-service.md`
+  - Next orchestration action: inspect worker report/worktree, review branch, independently
+    verify, then merge or request correction.
 
 ## Blockers
 
