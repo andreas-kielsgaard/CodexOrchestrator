@@ -1027,3 +1027,33 @@
   handoff and required context files. The successor should verify Git state before launching Worker
   022 and should treat the recommended ValidationRun Store Boundary slice as a recommendation, not
   as already-launched work.
+
+### Worker 022: ValidationRun Store Boundary
+
+- Status: launched
+- Pending worktree id: `local:1434fdc5-fec3-4c54-9b31-c780175bb584`
+- Worker thread: `019f23aa-3613-7103-b106-9747626089d4`
+- Worktree path: `C:\Users\user\.codex\worktrees\cea2\Codex Orchestrator`
+- Expected worker branch: `worker/022-validation-run-store-boundary`
+- Launch base: `629a519` (`Record Worker 021 successor orchestration thread`)
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 021's Artifact store boundary is merged,
+  verified, logged, and cleaned; the ValidationRun store should use current `main`, the merged
+  Artifact/ValidationRun schema and mapper files, and existing Event/TaskRun/Artifact store
+  patterns rather than carrying Worker 021's implementation context.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Report-back instruction: included explicitly in the worker prompt as a dedicated requirement,
+  separate from the completion report shape.
+- Scope: add a narrow pure TypeScript ValidationRun create/update/query store boundary plus SQLite
+  implementation using the existing ValidationRun schema and app migration coordinator, with
+  deterministic create/update behavior and focused query support over validation-run filters.
+- Out of scope: runtime validation command execution, event emission, event-sourced projections,
+  Codex runtime integration, Codex JSONL parsing, Conversation store behavior, UI/React work,
+  Tauri/Rust database commands, Git execution, runtime database file opening, package dependencies,
+  and broad CRUD stores for other record families.
+- Expected result log: `docs/task-logs/worker-022-validation-run-store-boundary.md`
+- Success signal: committed worker branch with focused domain and SQLite ValidationRun store tests
+  plus feasible `git diff --check main...worker/022-validation-run-store-boundary`,
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` verification,
+  followed by a completion report sent back to the orchestration thread or an explicit note that
+  cross-posting was unavailable.
