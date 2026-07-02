@@ -509,7 +509,7 @@
 
 ### Worker 015: SQLite Migration Coordinator
 
-- Status: launched/in progress; not reviewed or merged
+- Status: launched; later reviewed and merged
 - Pending worktree id: `local:bcb810f3-f261-428b-b316-99b1c7fc78a9`
 - Expected worker branch: `worker/015-sqlite-migration-coordinator`
 - Launch base: `9fe1c14a8ad8679e0a331b4084c5ea6488b40dce`
@@ -531,3 +531,51 @@
   ordered migration records, idempotent reruns, duplicate ID rejection, failed-migration handling,
   and foreign-key enforcement, plus feasible `npm run lint`, `npm run format:check`,
   `npm run test`, and `npm run build` verification.
+
+### Admin Correction: Explicit Worker Report-Back Requirement
+
+- Status: applied
+- Commit: `cf0b6cb`
+- Trigger: Worker 015 completed and committed its branch but did not cross-post a completion report
+  to the orchestration thread because its launch prompt included a report shape without an explicit
+  report-back instruction.
+- Summary: updated `docs/orchestration-context.md` and `docs/orchestration-learnings.md` so worker
+  launch prompts must include a dedicated report-back instruction, handoffs must state whether
+  active workers received that instruction, and successors must inspect worker state directly if no
+  completion prompt arrives.
+
+### Worker 015 Review And Merge: SQLite Migration Coordinator
+
+- Status: reviewed, merged, verified, logged, and Git-cleaned
+- Worker commit: `f15829b`
+- Orchestrator review addendum commit: `85c3a8b`
+- Merge commit: `0209a1ec243285f270414f569cab00ba663c83b3`
+- Result log: `docs/task-logs/worker-015-sqlite-migration-coordinator.md`
+- Accepted decision: `migrationCoordinator.ts` composes current app schema migrations in stable
+  order, creates an auditable `schema_migrations` table, rejects duplicate migration IDs before any
+  SQL runs, and applies each unapplied migration plus its audit-row insert inside a transaction.
+- Accepted decision: production migration coordination stays behind an injected SQLite-like
+  `exec`/`prepare` interface and does not import `node:sqlite`; tests use `node:sqlite` only for
+  executable coverage.
+- Accepted decision: runtime database file opening remains out of scope; future runtime callers
+  should enable foreign keys with `enableAppSqliteForeignKeys`, then call
+  `applyAppSqliteMigrations`, then construct store adapters.
+- Review note: Worker 015 only logged the focused coordinator test and did not report back to the
+  orchestration thread. The orchestrator added a result-log addendum and ran the full requested
+  verification suite before merge.
+- Orchestrator verification before merge:
+  `git diff --check main...worker/015-sqlite-migration-coordinator`,
+  `npm run test -- src/infrastructure/sqlite/migrationCoordinator.test.ts`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` passed in the worker worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed.
+- Verification note: `node:sqlite` emits Node's expected experimental warning during SQLite tests.
+- Drift check: still local-first and task-centered; the slice coordinates SQLite schema setup for
+  existing repo-sync and Open Tasks tables while keeping Git repo/branch/worktree as technical
+  anchors, and introduces no Codex credentials, Codex runtime integration, Tauri/Rust runtime
+  database wiring, Git execution, React/UI work, or new dependencies.
+- Cleanup: `git worktree remove` unregistered the worker worktree and the merged branch
+  `worker/015-sqlite-migration-coordinator` was deleted.
+- Cleanup note: Windows kept the physical worker folder locked at
+  `C:\Users\user\.codex\worktrees\06f6\Codex Orchestrator`; retry later after the app releases the
+  handle.
