@@ -185,6 +185,19 @@ runs with its audit-row insert in a transaction, so failed migrations are not re
 is rolled back by SQLite. Tests inject deterministic applied timestamps for auditability while
 future runtime wiring can provide its own clock.
 
+## App SQLite Store Bundle
+
+The app-level SQLite store bundle lives in `src/infrastructure/sqlite/appStore.ts` as a small
+assembly boundary for runtime callers that already have a SQLite-like connection. It exports a
+narrow `AppSqliteDatabase` interface, `initializeAppSqliteStoreDatabase` to enable foreign keys and
+apply coordinated app migrations, and `createAppSqliteStoreBundle` to construct the existing
+repo-sync, Open Tasks read/write, Event, TaskRun, Conversation, Artifact, and ValidationRun SQLite
+adapters over the same injected connection.
+
+The bundle does not open database files, choose paths, import `node:sqlite` in production code,
+reach into Tauri/Rust, or add workflow services. Write-capable stores still receive explicit named
+ID and time providers so runtime wiring remains deterministic and testable.
+
 ## TaskRun and Conversation SQLite Schema Foundation
 
 The TaskRun and Conversation persistence schema foundation lives under
