@@ -108,6 +108,13 @@ that return a dashboard snapshot for UI callers. The client is verified against 
 and the local SQLite app store bundle, but it does not open SQLite files or import Node-only modules
 itself.
 
+`validationCommandRunner.ts` coordinates one configured validation command over injected task,
+validation-run, artifact, event, and command-runtime boundaries. It preflights the task and
+worktree/cwd, creates a running `ValidationRun`, executes the injected runtime, stores a
+`validation_log` artifact with stdout/stderr/process metadata, updates the validation outcome, and
+emits validation lifecycle events. It does not execute processes directly, collect diffs, compose
+Codex runs, or wire UI behavior.
+
 ## Infrastructure Layer
 
 ### Git
@@ -208,7 +215,8 @@ The first usable runtime loop still needs:
    providers into the repo registry scan service.
 5. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
 6. Concrete Git worktree creation and scanning adapters for the task worktree selection service.
-7. Diff and validation runners that store their outputs as artifacts/validation runs.
+7. Diff collection and concrete validation command runtime wiring that store their outputs as
+   artifacts/validation runs.
 8. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.
 
 ## Testing And Verification
