@@ -114,6 +114,24 @@ so dashboard rules stay centralized in the domain projection instead of being du
 Optional technical anchors may be `NULL`; missing repo, branch, or worktree rows simply produce
 dashboard tasks without those optional labels.
 
+## Open Tasks SQLite Write Store
+
+The Open Tasks SQLite write adapter lives in `src/infrastructure/sqlite/openTaskWriteStore.ts`.
+It implements the domain `OpenTaskWriteStore` boundary with an injected SQLite-like
+database/statement interface and does not import `node:sqlite` in production infrastructure code.
+
+The adapter creates tasks with deterministic `IdProvider` and `TimeProvider` inputs, persists
+optional technical anchors and due/snooze timestamps as SQL `NULL`, and stores ordered
+`Task.conversationIds` in `task_conversation_links`. Updates reuse the domain task-update helper so
+omitted fields remain unchanged, `null` explicitly clears optional anchors or timestamps, and
+conversation IDs replace the full ordered link list only when provided. `archiveTask` sets
+`executionState` to `archived`; dashboard omission remains centralized in
+`projectOpenTaskDashboard`.
+
+When the injected database supports `exec`, create/update/archive writes run inside
+`BEGIN`/`COMMIT` with rollback on failure. Missing update/archive targets throw the typed
+`OpenTaskNotFoundError`.
+
 ## Git Adapter Boundary
 
 Git output parsing lives under `src/infrastructure/git/` as pure TypeScript infrastructure code. The current adapter foundation normalizes parseable command output from `git status --porcelain=v1 -z`, `git branch --format=...`, and `git worktree list --porcelain -z` into scan facts that can later feed the domain `Repo`, `Branch`, and `Worktree` records.
