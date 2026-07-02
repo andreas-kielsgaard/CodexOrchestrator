@@ -1359,3 +1359,47 @@ orchestration thread`)
   `npm run format:check`, `npm run test`, and `npm run build` verification, followed by a
   completion report sent back to the orchestration thread or an explicit note that cross-posting was
   unavailable.
+
+### Worker 025 Completion Report: Task Run Lifecycle Recorder
+
+- Status: complete, awaiting orchestrator review
+- Worker thread: `019f23d9-88e3-7922-b161-e1efdf8902c6`
+- Worker commit: `54234f5d6be3b9b4a6f2b6d69dfd5051777ce4b5`
+- Worker branch: `worker/025-task-run-lifecycle-recorder`
+- Worker worktree:
+  `C:\Users\user\.codex\worktrees\dc3c\Codex Orchestrator`
+- Result log: `docs/task-logs/worker-025-task-run-lifecycle-recorder.md` on the worker branch
+- Summary: added a pure TypeScript application-layer task-run lifecycle recorder that coordinates
+  existing Open Tasks, TaskRun, Conversation, Artifact, and Event store boundaries for start,
+  success completion, and failure completion paths. It preflights task existence, preserves task
+  conversation links, links optional Codex conversation metadata, records optional final-response
+  artifacts, and emits run lifecycle events with linked IDs and JSON-object payloads.
+- Worker-reported verification:
+  `git diff --check main...worker/025-task-run-lifecycle-recorder`,
+  `npm run test -- src/application/taskRunLifecycle.test.ts`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` passed.
+- Review still required: inspect `src/application/taskRunLifecycle.ts` for the intended non-atomic
+  multi-store coordination boundary and the choice to require both `taskId` and `taskRunId` on
+  terminal paths because `TaskRunStore` currently has no direct get-by-id query.
+- Orchestrator note: context compression occurred immediately after Worker 025 reported completion.
+  Per the operating model, this compressed thread must hand off instead of reviewing or merging the
+  worker branch.
+
+### Orchestration Handoff After Worker 025 Completion Compaction
+
+- Status: handoff prepared; successor initiation pending
+- Handoff:
+  `docs/handoffs/orchestration-handoff-2026-07-02-after-worker-025-completion-compaction.md`
+- Trigger: this orchestration thread hit context compression immediately after Worker 025 reported
+  completion. Per the operating model, compaction is an immediate handoff trigger, so review and
+  merge must move to a fresh successor thread.
+- Verified main state before the handoff/log package: `a334c4b` (`Log Worker 025 launch`), clean
+  except pre-existing `origin/main [gone]`.
+- Verified Worker 025 state before the handoff/log package:
+  `54234f5d6be3b9b4a6f2b6d69dfd5051777ce4b5` on
+  `worker/025-task-run-lifecycle-recorder`, clean.
+- Handoff/log package commit: to be recorded after this entry is committed.
+- Successor thread: to be initiated after this handoff/log package is committed.
+- Instruction: continue in a fresh `xhigh` successor orchestration thread after it re-ingests the
+  handoff and required context files. The successor should inspect Worker 025 directly, then review
+  and independently verify it before any merge.
