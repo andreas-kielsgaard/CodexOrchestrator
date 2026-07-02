@@ -506,3 +506,28 @@
 - Cleanup note: Windows kept the physical worker folder locked at
   `C:\Users\user\.codex\worktrees\8f3a\Codex Orchestrator`; retry later after the app releases the
   handle.
+
+### Worker 015: SQLite Migration Coordinator
+
+- Status: launched/in progress; not reviewed or merged
+- Pending worktree id: `local:bcb810f3-f261-428b-b316-99b1c7fc78a9`
+- Expected worker branch: `worker/015-sqlite-migration-coordinator`
+- Launch base: `9fe1c14a8ad8679e0a331b4084c5ea6488b40dce`
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 014's SQLite write adapter is merged,
+  verified, and cleaned; the migration-coordinator slice should use current `main`, the merged
+  SQLite schema/store files, and recent worker logs rather than carrying Worker 014's review
+  context.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Scope: add a pure TypeScript app-level SQLite migration coordinator that composes existing
+  repo-sync and task migrations in stable order, records applied migration IDs for idempotent and
+  auditable setup, coordinates foreign-key setup, and stays behind an injected SQLite-like
+  interface with `node:sqlite` confined to tests.
+- Out of scope: Tauri/Rust runtime database commands, database file-path/connection wiring, Git
+  execution, Codex runtime integration, React/UI work, new package dependencies, or broad rewrites
+  of existing schema tables.
+- Expected result log: `docs/task-logs/worker-015-sqlite-migration-coordinator.md`
+- Success signal: committed worker branch with focused coordinator tests for app-table creation,
+  ordered migration records, idempotent reruns, duplicate ID rejection, failed-migration handling,
+  and foreign-key enforcement, plus feasible `npm run lint`, `npm run format:check`,
+  `npm run test`, and `npm run build` verification.
