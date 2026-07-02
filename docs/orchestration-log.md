@@ -308,3 +308,24 @@
 - Drift check: still local-first, task-centered, Git repo/branch/worktree persistence remains a technical-anchor subset, no Codex credentials or runtime integration were introduced, and no Tauri/Rust runtime database wiring was added.
 - Cleanup: removed Git worktree registration and deleted merged branch `worker/010-repo-sync-sqlite-store`.
 - Cleanup note: Windows kept a physical leftover directory locked at `C:\Users\user\.codex\worktrees\8dd6\Codex Orchestrator`; retry later after the app releases the handle.
+
+### Admin Correction: Repo Sync Adapter Documentation
+
+- Status: applied
+- Commit: `aa4dddd`
+- Summary: clarified `docs/architecture.md` so the domain-boundary note no longer describes the SQLite-backed `RepoSyncStore` as future work after Worker 010 landed the concrete adapter.
+
+### Worker 011: Open Tasks SQLite Schema Foundation
+
+- Status: launched
+- Worker thread: `019f221d-52e0-7a73-91b5-ec2f752b50cc`
+- Pending worktree id: `local:a0386967-8bd5-4299-a5ff-d9da3f242701`
+- Worktree path: `C:\Users\user\.codex\worktrees\de96\Codex Orchestrator`
+- Expected worker branch: `worker/011-open-tasks-sqlite-schema`
+- Launch base: `aa4dddd`
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 010's repo-sync adapter is merged and the Open Tasks dashboard persistence schema should use current `main`, the merged SQLite schema/store files, and the domain/dashboard projection files rather than carrying Worker 010's adapter-specific context.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Scope: add a pure TypeScript SQLite schema foundation for the Open Tasks dashboard persistence subset, focused on `tasks` and persisted `Task.conversationIds` links, with row mappers and executable in-memory SQLite tests. No CRUD/store implementation, app runtime DB wiring, Tauri/Rust work, Codex runtime integration, React/UI work, package dependencies, or full Phase 1 event/conversation persistence.
+- Expected result log: `docs/task-logs/worker-011-open-tasks-sqlite-schema.md`
+- Success signal: committed worker branch with tests for task table creation, execution/attention/priority checks, required project foreign-key behavior, optional repo/branch/worktree `ON DELETE SET NULL`, conversation ID link round-trip, task-to-link cascade deletion, and enough mapper coverage to feed `projectOpenTaskDashboard` from persisted task rows.
