@@ -16,10 +16,10 @@ The orchestrator thread should:
 4. Re-ingest `docs/orchestration-learnings.md` before launching workers.
 5. Decide whether the next task should continue an existing worker conversation or start fresh based on context usefulness.
 6. Summarize each new work-slice decision in the main thread before or immediately after launch.
-7. Give each worker a bounded task, expected deliverables, branch/commit expectations, and completion-report instructions.
+7. Give each worker a bounded task, expected deliverables, branch/commit expectations, and explicit report-back instructions.
 8. Ask each worker to log results in the repository.
 9. Ask implementation workers to commit their completed slice on a dedicated task branch unless the task is explicitly exploratory.
-10. Ask each worker to send a completion prompt back to this orchestrator thread when finished.
+10. Ask each worker to send a completion prompt back to this orchestrator thread when finished, and make that a separate explicit requirement in the worker launch prompt rather than relying on the report template alone.
 11. Review completed work before starting dependent tasks.
 12. Create correction tasks when needed.
 13. Merge or clean up branches/worktrees only after review.
@@ -74,7 +74,8 @@ When this orchestration thread reaches 75% of its context window, the orchestrat
 3. Reference `docs/implementation-roadmap.md`, `docs/orchestration-context.md`, `docs/orchestration-learnings.md`, and `docs/orchestration-log.md`.
 4. Start a new orchestration conversation with `xhigh` reasoning.
 5. Instruct the new orchestration thread to re-ingest the handoff report and the context/learning files before taking action.
-6. Keep the old orchestration and worker chats visible for traceability.
+6. For any active worker, include the worker thread id or pending worktree id, expected branch, expected result log, whether the launch prompt included explicit report-back instructions, and the instruction that the successor must inspect the worker state directly if no completion prompt has arrived.
+7. Keep the old orchestration and worker chats visible for traceability.
 
 If exact context-window usage is not available, use a conservative judgment trigger: after substantial worker cycles, when the conversation becomes difficult to audit, or before expected compaction risk. If context compression/compaction is triggered, or the orchestrator resumes from a compressed summary, treat that as an immediate handoff trigger.
 
@@ -106,7 +107,18 @@ Each worker task should finish by:
 3. For implementation tasks, creating or using a dedicated task branch before edits.
 4. For implementation tasks, committing the completed slice after verification unless the task is explicitly exploratory or blocked.
 5. Leaving clear notes about changed files, verification, and unresolved issues.
-6. Prompting the orchestrator thread with:
+6. Sending the completion report back to the orchestrator thread. This is required even when the result log and commit are complete.
+
+Every worker launch prompt must include a dedicated "Report back" instruction, not just the report
+shape. Use wording like:
+
+```text
+When complete, send a new message back to the orchestration/control-room thread with the completion
+report below. If your environment cannot cross-post to that thread, say that explicitly in your
+final worker-thread message and still include the full report so the orchestrator can retrieve it.
+```
+
+The completion report should use this shape:
 
 ```text
 Task complete: <task title>

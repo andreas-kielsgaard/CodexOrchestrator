@@ -30,7 +30,8 @@ Worker prompts should pass compact visible context only:
 - the current task brief
 - relevant user instructions
 - pointers to project docs
-- specific completion/reporting requirements
+- specific completion/reporting requirements, including an explicit instruction to report back to
+  the orchestration/control-room thread when finished
 
 Do not serialize hidden model context into files or prompts.
 
@@ -69,6 +70,15 @@ At 75% context-window usage, the orchestrator should write a handoff report and 
 The new orchestration thread prompt should include the handoff report path, explicitly say it is taking over orchestration, and require re-ingesting the overall task overview and learnings before launching or reviewing work. If exact context usage is unavailable, trigger conservatively when the thread becomes large enough that auditability or compaction risk is a concern. If context compression/compaction is triggered, or the orchestrator resumes from a compressed summary, hand off immediately instead of continuing to accumulate orchestration state in the compressed thread.
 
 ### Completion reports
+
+Report-back is part of the worker contract, not just the report's format. Every worker launch
+prompt should contain a dedicated "Report back" section telling the worker to send a new message
+back to the orchestration/control-room thread when complete. If a direct cross-post is unavailable,
+the worker should say so explicitly in its final worker-thread message and still include the full
+report there. For active workers listed in a handoff, include the worker thread id or pending
+worktree id, expected branch, expected result log, and whether explicit report-back instructions
+were included; the successor must inspect worker state directly if no completion prompt has
+arrived.
 
 Every worker completion should include:
 
@@ -183,3 +193,20 @@ Correction:
 - A clean post-merge checkpoint is not by itself a reason to pause.
 - If the next smallest useful slice is clear and no decision/blocker/handoff trigger exists, summarize the slice and continue.
 - If pausing anyway, state the exact pause reason and the next intended slice so the user can challenge the decision.
+
+### 2026-07-02: Worker 015 finished without reporting back to orchestration
+
+Worker 015 was launched with a completion report shape but without an explicit instruction to send
+that report back to the orchestration/control-room thread. The worker completed and committed its
+branch, but the orchestrator had to discover completion by inspecting the worktree.
+
+Correction:
+
+- Completion report shape is not enough; every worker launch prompt needs a dedicated report-back
+  instruction.
+- The prompt should ask the worker to send a new message to the orchestration/control-room thread
+  when finished, and to state clearly in its own final message if cross-posting is unavailable.
+- Handoff reports for active workers should say whether explicit report-back instructions were
+  included, so the successor knows whether to wait for a prompt or inspect the worker directly.
+- The orchestrator should still periodically inspect active worker worktrees instead of relying
+  solely on message delivery.
