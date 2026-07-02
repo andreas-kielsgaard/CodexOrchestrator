@@ -270,11 +270,13 @@
 
 ### Worker 010: Repo Sync SQLite Store Adapter
 
-- Status: launched
+- Status: launched; later reviewed and merged by successor orchestration thread
 - Worker thread: `019f2211-ee6a-7ab0-bea4-01360a60189b`
 - Pending worktree id: `local:66b65fad-ef37-4a05-bd23-d078ba76a953`
 - Worktree path: `C:\Users\user\.codex\worktrees\8dd6\Codex Orchestrator`
-- Expected worker branch: `worker/010-repo-sync-sqlite-store`
+- Worker branch: `worker/010-repo-sync-sqlite-store`
+- Worker commit: `4126aa3`
+- Merge commit: `9f9724c`
 - Launch base: `e772b0e`
 - Reasoning effort: `medium`
 - Context reuse decision: started fresh because Worker 009's implementation is merged and cleaned; the SQLite store adapter should use current `main`, Worker 008/009 result logs, and the merged store/schema modules rather than carrying the prior worker conversation.
@@ -290,3 +292,19 @@
 - Trigger: this orchestration thread resumed from compressed context after Worker 010 was launched.
 - Worker 010 status at handoff: active/in progress, not reviewed or merged.
 - Instruction: this compressed orchestration thread should not review or merge Worker 010; continue orchestration in a fresh `xhigh` control-room thread after it re-ingests the handoff and context files.
+
+### Worker 010 Review And Merge: Repo Sync SQLite Store Adapter
+
+- Status: reviewed, merged, verified, logged, and Git-cleaned
+- Worker thread: `019f2211-ee6a-7ab0-bea4-01360a60189b`
+- Worker commit: `4126aa3e353b6aa81bdfeb6d193c33e7a6f2d9ac`
+- Merge commit: `9f9724c`
+- Result log: `docs/task-logs/worker-010-repo-sync-sqlite-store.md`
+- Accepted decision: `SqliteRepoSyncStore` implements the existing async `RepoSyncStore` boundary with a small injected SQLite-like database interface, keeps production code independent from `node:sqlite`, scopes loads to the requested `(projectId, rootPath)`, and persists applied scoped repo-sync records without deleting stale worktrees.
+- Accepted decision: persistence uses primary-key upserts because the domain sync flow first loads by natural key and preserves existing IDs for updates; optional fields continue to round-trip through SQL `NULL`, including explicit worktree branch and lock clears.
+- Orchestrator verification before merge: `git diff --check main...worker/010-repo-sync-sqlite-store`, `npm run test -- src/infrastructure/sqlite`, and `npm run build` passed in the worker worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
+- Verification note: `node:sqlite` emits Node's expected experimental warning during schema/store tests.
+- Drift check: still local-first, task-centered, Git repo/branch/worktree persistence remains a technical-anchor subset, no Codex credentials or runtime integration were introduced, and no Tauri/Rust runtime database wiring was added.
+- Cleanup: removed Git worktree registration and deleted merged branch `worker/010-repo-sync-sqlite-store`.
+- Cleanup note: Windows kept a physical leftover directory locked at `C:\Users\user\.codex\worktrees\8dd6\Codex Orchestrator`; retry later after the app releases the handle.
