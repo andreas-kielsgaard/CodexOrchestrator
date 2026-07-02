@@ -198,6 +198,23 @@ The bundle does not open database files, choose paths, import `node:sqlite` in p
 reach into Tauri/Rust, or add workflow services. Write-capable stores still receive explicit named
 ID and time providers so runtime wiring remains deterministic and testable.
 
+## Task Run Lifecycle Recorder
+
+The task-run lifecycle recorder lives in `src/application/taskRunLifecycle.ts` as a pure
+TypeScript application coordination boundary. It depends only on the existing Open Tasks read/write,
+TaskRun, Conversation, Artifact, and Event store interfaces. The start path preflights that the task
+exists, creates a running task run, optionally creates and links a Codex conversation record,
+updates the task to running and waiting on agent, preserves existing task conversation links, and
+appends a `run_started` event. Terminal paths require both task and run IDs, verify that the run is
+linked to the task before mutation, mark runs completed or failed, move the task to the appropriate
+review/action attention state, optionally persist a `final_response` artifact for successful runs,
+and append `run_completed` events with linked IDs and JSON-object outcome payloads.
+
+This boundary intentionally does not execute Codex, parse Codex output, run validation commands,
+open databases, import SQLite, touch Tauri/Rust commands, or add transaction abstractions. Future
+runtime/database wiring can decide how to make the multi-store write sequence atomic when all stores
+share one durable connection.
+
 ## TaskRun and Conversation SQLite Schema Foundation
 
 The TaskRun and Conversation persistence schema foundation lives under
