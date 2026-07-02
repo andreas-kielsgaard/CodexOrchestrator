@@ -1329,3 +1329,33 @@ orchestration thread`)
 - Cleanup: `git worktree remove` unregistered the Worker 024 worktree, but Windows denied physical
   folder deletion at `C:\Users\user\.codex\worktrees\ab51\Codex Orchestrator`; the merged branch
   `worker/024-sqlite-store-bundle` was deleted and the locked physical folder was left in place.
+
+### Worker 025: Task Run Lifecycle Recorder
+
+- Status: launched
+- Pending worktree id: `local:4056df0d-c7ef-45db-93b2-9a99b3c4b3a0`
+- Worker thread: `019f23d9-88e3-7922-b161-e1efdf8902c6`
+- Worktree path: `C:\Users\user\.codex\worktrees\dc3c\Codex Orchestrator`
+- Expected worker branch: `worker/025-task-run-lifecycle-recorder`
+- Launch base: `374dcf8` (`Log Worker 024 merge`)
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 024's app SQLite store bundle is merged,
+  verified, logged, and Git-cleaned; the lifecycle recorder should use current `main`, the merged
+  store bundle and store contracts, and recent task-run/conversation/artifact/event result logs
+  rather than carrying Worker 024's assembly implementation context.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Report-back instruction: included explicitly in the worker prompt as a dedicated requirement,
+  separate from the completion report shape.
+- Scope: add a pure TypeScript application-layer task-run lifecycle recorder that coordinates
+  existing Open Tasks read/write, TaskRun, Conversation, Artifact, and Event store boundaries for
+  start/completion/failure persistence.
+- Out of scope: Codex CLI/SDK/app-server execution, Codex JSONL/event parsing, process
+  supervision, workflow engine rules, validation command execution, runtime database file opening,
+  SQLite adapter changes, Tauri/Rust commands, React/UI work, Git command execution,
+  package/dependency changes, broad CRUD stores, and cross-store transaction abstractions.
+- Expected result log: `docs/task-logs/worker-025-task-run-lifecycle-recorder.md`
+- Success signal: committed worker branch with focused in-memory lifecycle-recorder tests plus
+  feasible `git diff --check main...worker/025-task-run-lifecycle-recorder`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` verification, followed by a
+  completion report sent back to the orchestration thread or an explicit note that cross-posting was
+  unavailable.
