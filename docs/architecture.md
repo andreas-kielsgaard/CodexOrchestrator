@@ -25,6 +25,7 @@ The TypeScript domain layer lives under `src/domain/`:
 - `model.ts` defines the core product records: Project, Repo, Branch, Worktree, Conversation, Task, TaskRun, Artifact, ValidationRun, and Event.
 - `Task.executionState` tracks what the work is doing, while `Task.attentionState` tracks what kind of human attention it needs.
 - `dashboardProjection.ts` derives the Open Tasks dashboard groups from domain records. React components should consume this projection instead of owning grouping rules directly.
+- `openTaskDashboardStore.ts` defines the read-side boundary for the Open Tasks dashboard. Stores load the minimal `DomainRecords` snapshot needed by `projectOpenTaskDashboard`, and the facade returns projected dashboard groups so callers do not duplicate grouping, sorting, or closed-task omission rules.
 - `repoSyncPlanning.ts`, `repoSyncPlanApplier.ts`, and `repoSyncService.ts` keep Git scan reconciliation persistence-neutral: scans become explicit repo/branch/worktree upsert plans, then those plans can be applied to in-memory `DomainRecords` with injected deterministic IDs before a future repository layer persists them. The service facade returns both the plan and the applied result so persistence/UI callers can inspect the plan without duplicating scan-to-plan-to-record choreography.
 - `repoSyncStore.ts` defines the narrow async persistence boundary for repo sync. A store loads the current domain snapshot for a scan and persists only the applied repo, branch, and worktree records produced by `syncRepoFromScan`; it does not duplicate plan/apply logic. The included in-memory implementation is a test helper, and the concrete SQLite adapter lives under `src/infrastructure/sqlite/`.
 - `seedData.ts` provides demo records until SQLite persistence and repository APIs are introduced.
@@ -97,6 +98,20 @@ Conversation referential integrity is intentionally deferred until a future conv
 slice. For now, `task_conversation_links.conversation_id` is persisted as a stable text identifier
 without a foreign key. Mapper helpers convert between `Task` records and SQLite rows, preserving
 optional fields as SQL `NULL` and preserving `conversationIds` by `position`.
+
+## Open Tasks SQLite Read Store
+
+The Open Tasks dashboard read store lives in `src/infrastructure/sqlite/openTaskDashboardStore.ts`.
+It implements the domain `OpenTaskDashboardStore` boundary with a small injected
+database/statement interface compatible with `node:sqlite` tests and does not import `node:sqlite`
+from production infrastructure code.
+
+The reader loads task rows, ordered `task_conversation_links`, and only the linked parent
+`projects`, `repos`, `branches`, and `worktrees` referenced by those tasks. It intentionally loads
+archived and abandoned task rows too, then relies on `projectOpenTaskDashboard` to omit closed tasks
+so dashboard rules stay centralized in the domain projection instead of being duplicated in SQL.
+Optional technical anchors may be `NULL`; missing repo, branch, or worktree rows simply produce
+dashboard tasks without those optional labels.
 
 ## Git Adapter Boundary
 
