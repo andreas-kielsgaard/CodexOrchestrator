@@ -245,11 +245,13 @@
 
 ### Worker 009: Repo Sync SQLite Schema Foundation
 
-- Status: launched
+- Status: reviewed and merged
 - Worker thread: `019f2208-9102-74d1-9160-99bb0c418297`
 - Pending worktree id: `local:bde77e38-538f-4bcc-ac01-154931a6c94e`
 - Worktree path: `C:\Users\user\.codex\worktrees\f0e3\Codex Orchestrator`
-- Expected worker branch: `worker/009-repo-sync-sqlite-schema`
+- Worker branch: `worker/009-repo-sync-sqlite-schema`
+- Worker commit: `a51a8cc`
+- Merge commit: `4d553d0`
 - Launch base: `f586451`
 - Reasoning effort: `medium`
 - Context reuse decision: started fresh because Worker 008's implementation is merged and cleaned; the schema foundation should use current `main`, Worker 008's result log, and the merged `RepoSyncStore` boundary rather than carrying the prior worker conversation.
@@ -257,3 +259,11 @@
 - Scope: add a pure TypeScript SQLite schema foundation for the repo-sync persistence subset (`projects`, `repos`, `branches`, and `worktrees`) with ordered migration SQL, row/mapping helpers where useful, and executable in-memory SQLite tests using no new dependencies if possible.
 - Expected result log: `docs/task-logs/worker-009-repo-sync-sqlite-schema.md`
 - Success signal: committed worker branch with tests that execute the migration SQL and cover foreign keys, uniqueness constraints, optional-field `NULL` behavior, boolean round-trips, and branch deletion leaving worktrees intact through `ON DELETE SET NULL` or equivalent behavior.
+- Accepted decision: `worktrees.branch_id` uses `ON DELETE SET NULL` so deleting a branch row does not delete a worktree; project and repo deletes cascade to owned repo-sync records.
+- Accepted decision: row mappers encode optional fields as SQL `NULL` and worktree booleans as checked SQLite `0`/`1` integers.
+- Verification note: tests use Node's experimental `node:sqlite` only for no-dependency executable schema verification; the warning is expected and logged.
+- Orchestrator verification before merge: `git diff --check main...worker/009-repo-sync-sqlite-schema`, `npm run test -- src/infrastructure/sqlite/repoSyncSchema.test.ts`, and `npm run build` passed in the worker worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
+- Drift check: still local-first, task-centered, Git repo/branch/worktree data remains a technical-anchor persistence subset, no Codex credentials or runtime integration were introduced, and no Tauri/Rust runtime DB wiring was added.
+- Cleanup: removed Git worktree registration and deleted merged branch `worker/009-repo-sync-sqlite-schema`.
+- Cleanup note: Windows kept a physical leftover directory locked at `C:\Users\user\.codex\worktrees\f0e3\Codex Orchestrator`; retry later after the app releases the handle.
