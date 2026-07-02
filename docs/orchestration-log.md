@@ -905,3 +905,40 @@
 - Instruction: continue in a fresh `xhigh` successor orchestration thread after it re-ingests the
   handoff and required context files. The successor should review Worker 020 before any merge and
   should not launch Worker 021 first.
+
+### Worker 020 Review And Merge: TaskRun Store Boundary
+
+- Status: reviewed, merged, verified, logged, and Git-cleaned
+- Worker thread: `019f22d3-9016-7861-a37e-b9582e46e616`
+- Worker commit: `8bf5b4a156950689b2361c1917ffdc7ddce4579f`
+- Merge commit: `1a6ffb2e34cc545e8d79ad1d2ffbd637e0800fc4`
+- Result log: `docs/task-logs/worker-020-task-run-store-boundary.md`
+- Accepted decision: `TaskRunStore` defines a narrow create/update/query boundary with
+  deterministic ID/time providers, immutable `taskId` and `createdAt`, typed
+  `TaskRunNotFoundError` for missing updates, omitted update fields left unchanged, and `null`
+  update fields treated as explicit optional-field clears.
+- Accepted decision: TaskRun queries filter by optional `taskId`, `conversationId`, `worktreeId`,
+  and `executionState`, order by `createdAt` plus stable `id` tie-breaker, and keep the Worker 019
+  query contract where `limit: 0` returns an empty result list while invalid negative or
+  non-integer limits throw a clear error.
+- Accepted decision: `SqliteTaskRunStore` uses the Worker 016 `taskRunToRow` and `taskRunFromRow`
+  mappers behind an injected SQLite-like interface; production code does not import `node:sqlite`.
+- Accepted decision: SQLite query behavior currently loads ordered task-run rows and applies the
+  shared domain query helper in memory, centralizing filter/limit behavior until task-run volume
+  justifies SQL pushdown.
+- Orchestrator verification before merge:
+  `git diff --check main...worker/020-task-run-store-boundary`,
+  `npm run test -- src/domain/taskRunStore.test.ts src/infrastructure/sqlite/taskRunStore.test.ts`,
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed in the worker
+  worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed.
+- Verification note: `node:sqlite` emits Node's expected experimental warning during SQLite tests.
+- Drift check: still local-first and task-centered; TaskRun persistence records execution attempts
+  behind a narrow store boundary and introduce no Codex credentials, Codex runtime integration,
+  event emission, event-sourced projections, workflow engine behavior, Conversation CRUD/store
+  work, Artifact/Validation stores, Tauri/Rust runtime database wiring, Git execution, React/UI
+  work, or package dependencies.
+- Cleanup: `git worktree remove` removed the Worker 020 registered worktree and physical worktree
+  folder at `C:\Users\user\.codex\worktrees\a979\Codex Orchestrator`; the merged branch
+  `worker/020-task-run-store-boundary` was deleted.
