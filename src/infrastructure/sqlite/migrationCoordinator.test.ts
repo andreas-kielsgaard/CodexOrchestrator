@@ -17,10 +17,12 @@ describe('SQLite migration coordinator', () => {
 
       expect(tableNames(db)).toEqual([
         'branches',
+        'conversations',
         'projects',
         'repos',
         'schema_migrations',
         'task_conversation_links',
+        'task_runs',
         'tasks',
         'worktrees',
       ]);
@@ -61,10 +63,12 @@ describe('SQLite migration coordinator', () => {
       expect(loadSchemaMigrationRows(db)).toEqual(firstRows);
       expect(tableNames(db)).toEqual([
         'branches',
+        'conversations',
         'projects',
         'repos',
         'schema_migrations',
         'task_conversation_links',
+        'task_runs',
         'tasks',
         'worktrees',
       ]);
