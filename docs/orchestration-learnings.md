@@ -2,7 +2,7 @@
 
 Date started: 2026-07-01
 
-This file records practical lessons from running the implementation as a control-room conversation plus delegated worker conversations. Re-ingest this file alongside `docs/orchestration-context.md` and `docs/implementation-roadmap.md` before launching new workers and during periodic drift reviews.
+This file records practical lessons from running the implementation as a control-room conversation plus delegated worker conversations. Re-ingest this file alongside `docs/orchestration-context.md`, `docs/implementation-roadmap.md`, and the active task map at the top of `docs/orchestration-log.md` before launching new workers and during periodic drift reviews.
 
 ## Standing Rules
 
@@ -52,22 +52,31 @@ When launching a new work slice, summarize the orchestration decision in the mai
 
 After a worker is reviewed, merged, verified, logged, and Git-cleaned, the orchestrator should continue directly to the next smallest useful slice when all of these are true:
 
-- the next slice is clear from the roadmap, handoff, or just-completed work
+- the next slice is clear from the roadmap, active task map, or just-completed work
 - no product/user decision is needed
 - there is no blocker or failed review requiring correction
-- context pressure has not reached the handoff threshold
+- the active task map is current enough for compaction recovery
 
 Do not stop merely because the repo is at a clean checkpoint. A clean checkpoint is the place to make the next orchestration decision. Pause only for a concrete reason, and if pausing, state that reason plus the next intended slice.
 
-At 75% context-window usage, the orchestrator should write a handoff report and initiate a new orchestration thread with `xhigh` reasoning. The handoff report should live under `docs/handoffs/` and point to:
+Compaction recovery should use the current orchestration docs and active task map, not a chain of
+handoff reports. When context pressure is high, or after resuming from a compressed summary,
+re-ingest only:
 
 - `docs/implementation-roadmap.md`
 - `docs/orchestration-context.md`
 - `docs/orchestration-learnings.md`
 - `docs/orchestration-log.md`
-- current worker result logs under `docs/task-logs/`
 
-The new orchestration thread prompt should include the handoff report path, explicitly say it is taking over orchestration, and require re-ingesting the overall task overview and learnings before launching or reviewing work. The handoff is not complete merely because the report exists; after committing the report, use the available Codex thread tool to create or hand off to the successor thread, record the successor thread id when feasible, and tell the user explicitly if tool failure prevented initiation. If exact context usage is unavailable, trigger conservatively when the thread becomes large enough that auditability or compaction risk is a concern. If context compression/compaction is triggered, or the orchestrator resumes from a compressed summary, hand off immediately instead of continuing to accumulate orchestration state in the compressed thread.
+Read the active task map at the top of `docs/orchestration-log.md` before older log entries. The
+map should contain only currently relevant orchestration state: active workers, completed but
+unreviewed branches, review corrections, merge cleanup, blockers, and pending user decisions. Move
+finished tasks out of the active map once they are reviewed, merged or rejected, verified, logged,
+and Git-cleaned; archived entries should point to worker result logs under `docs/task-logs/`
+instead of duplicating old detail.
+
+Historical files under `docs/handoffs/` are archival. Do not re-ingest them during normal
+compaction recovery unless the user explicitly asks or a specific old incident needs auditing.
 
 ### Completion reports
 
@@ -75,10 +84,10 @@ Report-back is part of the worker contract, not just the report's format. Every 
 prompt should contain a dedicated "Report back" section telling the worker to send a new message
 back to the orchestration/control-room thread when complete. If a direct cross-post is unavailable,
 the worker should say so explicitly in its final worker-thread message and still include the full
-report there. For active workers listed in a handoff, include the worker thread id or pending
-worktree id, expected branch, expected result log, and whether explicit report-back instructions
-were included; the successor must inspect worker state directly if no completion prompt has
-arrived.
+report there. For active workers in the active task map, include the worker thread id or pending
+worktree id, expected branch, expected result log, whether explicit report-back instructions were
+included, and whether the orchestrator must inspect worker state directly because no completion
+prompt has arrived.
 
 Every worker completion should include:
 
@@ -191,7 +200,7 @@ After Worker 005 and Worker 006 were reviewed, merged, verified, logged, and cle
 Correction:
 
 - A clean post-merge checkpoint is not by itself a reason to pause.
-- If the next smallest useful slice is clear and no decision/blocker/handoff trigger exists, summarize the slice and continue.
+- If the next smallest useful slice is clear and no decision/blocker/context-recovery checkpoint exists, summarize the slice and continue.
 - If pausing anyway, state the exact pause reason and the next intended slice so the user can challenge the decision.
 
 ### 2026-07-02: Worker 015 finished without reporting back to orchestration
@@ -206,25 +215,47 @@ Correction:
   instruction.
 - The prompt should ask the worker to send a new message to the orchestration/control-room thread
   when finished, and to state clearly in its own final message if cross-posting is unavailable.
-- Handoff reports for active workers should say whether explicit report-back instructions were
-  included, so the successor knows whether to wait for a prompt or inspect the worker directly.
+- The active task map should say whether active workers received explicit report-back
+  instructions, so the orchestrator knows whether to wait for a prompt or inspect the worker
+  directly.
 - The orchestrator should still periodically inspect active worker worktrees instead of relying
   solely on message delivery.
 
 ### 2026-07-02: Handoff report was written but successor thread was not initiated
+
+Superseded current rule: as of 2026-07-02 later orchestration guidance, compaction recovery no
+longer requires writing handoff reports or initiating successor threads. This incident remains as
+historical context for why older handoff files exist, not as the current recovery process.
 
 After Worker 018 was reviewed, merged, verified, logged, and Git-cleaned, the orchestration thread
 correctly wrote a compaction handoff report but stopped before creating or handing off to the
 successor orchestration thread. The user clarified that a handoff must be active, not just
 documentary.
 
+Historical correction at the time, now superseded by active task map recovery:
+
+- The old rule treated handoff reports as insufficient unless a successor thread was also
+  initiated.
+- The old rule used `xhigh` reasoning for successor prompts caused by context pressure or
+  compaction.
+- The old rule required reporting thread-tool failure if the handoff was written but not initiated.
+- This historical correction explains older handoff files; it is not the current compaction
+  recovery process.
+
+### 2026-07-02: Handoff-heavy compaction recovery was replaced by active task map recovery
+
+The user clarified that re-ingesting every orchestration handoff after compaction is unnecessary and
+counterproductive. Current recovery should re-read the original orchestration docs only:
+`docs/implementation-roadmap.md`, `docs/orchestration-context.md`,
+`docs/orchestration-learnings.md`, and `docs/orchestration-log.md`.
+
 Correction:
 
-- Handoff reports are necessary but insufficient; the orchestrator must also initiate the successor
-  thread with the handoff prompt before ending the turn.
-- The successor prompt should use `xhigh` reasoning when the handoff is caused by context pressure
-  or compaction.
-- If thread tooling is unavailable or fails, the orchestrator must explicitly report that the
-  handoff is written but not initiated, with the exact blocker.
-- Future handoff instructions should include the successor-thread creation step, not only the file
-  writing step.
+- Maintain an active task map at the top of `docs/orchestration-log.md`.
+- Keep only currently relevant tasks in that map.
+- Archive completed tasks from the active map once their review/merge/rejection, verification,
+  logging, and cleanup are done.
+- Archived tasks should point to worker result logs under `docs/task-logs/` rather than forcing
+  future threads to re-ingest historical handoff files or all old task details.
+- On compaction or compressed-summary resume, re-ingest the four current orchestration docs and
+  continue from the active task map.

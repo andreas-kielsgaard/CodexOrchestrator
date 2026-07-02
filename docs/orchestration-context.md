@@ -24,12 +24,13 @@ The orchestrator thread should:
 12. Create correction tasks when needed.
 13. Merge or clean up branches/worktrees only after review.
 14. Keep worker/admin conversations visible for traceability unless the user explicitly asks to archive them.
-15. Continue orchestration after each reviewed worker when there is a clear next smallest useful slice, no product decision is needed, no blocker is present, and no handoff/context-pressure trigger has fired.
-16. Pause only for a concrete reason: user/product decision, blocker, review failure needing correction, context handoff, or an explicitly stated checkpoint. If pausing, state the exact reason and the next intended slice.
+15. Continue orchestration after each reviewed worker when there is a clear next smallest useful slice, no product decision is needed, no blocker is present, and no context-recovery checkpoint is needed.
+16. Pause only for a concrete reason: user/product decision, blocker, review failure needing correction, context recovery, or an explicitly stated checkpoint. If pausing, state the exact reason and the next intended slice.
 17. For UI-facing slices, make an explicit design-discipline decision before launch: whether the slice needs reusable component structure, component-level verification, Storybook-style isolated review, or a separate usability-review pass.
 18. Use fresh usability-review worker conversations when appropriate, asking them to behave like realistic users and report confusing flows, visual bugs, missing affordances, and unexpected behavior before the UI hardens.
-19. At 75% context-window usage, write a handoff report and initiate a fresh orchestration thread with `xhigh` reasoning before ending the current turn.
-20. Pause and ask the user when the implementation drifts too far from the stated intention or needs a product decision.
+19. Maintain the active task map at the top of `docs/orchestration-log.md`; archive completed tasks there by pointing to their worker result logs instead of carrying their full details forward.
+20. When context compression/compaction is triggered, or the orchestrator resumes from a compressed summary, re-ingest only the current orchestration docs listed in "Context Recovery" before continuing.
+21. Pause and ask the user when the implementation drifts too far from the stated intention or needs a product decision.
 
 ## Reasoning-Level Guidance
 
@@ -65,31 +66,38 @@ After each worker completion, check:
 
 If two or more answers are "no", pause the orchestration and course-correct before continuing.
 
-## Context Handoff
+## Context Recovery
 
-When this orchestration thread reaches 75% of its context window, the orchestrator should initiate
-an active handoff, not merely write a handoff document. A handoff is not complete until a successor
-thread has been created or the current thread has explicitly reported why thread initiation failed.
+Compaction recovery is now state-map based, not handoff based. Historical files under
+`docs/handoffs/` are archival records only; do not re-ingest them during normal recovery unless the
+user explicitly asks or a specific old incident must be audited.
 
-The orchestrator should:
+When context compression/compaction is triggered, or the orchestrator resumes from a compressed
+summary, first re-ingest only the current orchestration instructions:
 
-1. Write a handoff report under `docs/handoffs/`.
-2. Include the overall project goal, current implementation state, open worker tasks, recent merges/corrections, cleanup leftovers, known blockers, and next recommended slice.
-3. Reference `docs/implementation-roadmap.md`, `docs/orchestration-context.md`, `docs/orchestration-learnings.md`, and `docs/orchestration-log.md`.
-4. Commit the handoff and any orchestration-log update needed to make the transition auditable.
-5. Start or hand off to a new orchestration conversation with `xhigh` reasoning using the available Codex thread tool.
-6. Instruct the new orchestration thread to re-ingest the handoff report and the context/learning files before taking action.
-7. Record the successor thread id in the current thread's final response, and in the repository log or handoff file when feasible without creating a circular handoff loop.
-8. If the thread tool fails or is unavailable, say so explicitly in the final response and state that the handoff file is written but not initiated.
-9. For any active worker, include the worker thread id or pending worktree id, expected branch, expected result log, whether the launch prompt included explicit report-back instructions, and the instruction that the successor must inspect the worker state directly if no completion prompt has arrived.
-10. Keep the old orchestration and worker chats visible for traceability.
+1. `docs/implementation-roadmap.md`
+2. `docs/orchestration-context.md`
+3. `docs/orchestration-learnings.md`
+4. `docs/orchestration-log.md`, starting with the active task map at the top
 
-If exact context-window usage is not available, use a conservative judgment trigger: after substantial
-worker cycles, when the conversation becomes difficult to audit, or before expected compaction risk.
-If context compression/compaction is triggered, or the orchestrator resumes from a compressed
-summary, treat that as an immediate handoff trigger and still initiate the successor thread after
-stabilizing any already-started merge/logging work that would otherwise leave the repository in an
-ambiguous state.
+The active task map is the canonical recovery surface. Keep it current whenever worker state
+changes:
+
+1. List only tasks that still require orchestration attention, such as launched workers,
+   completed-but-unreviewed branches, review corrections, merge cleanup, blockers, or pending
+   user decisions.
+2. For each active task, record the worker thread id or pending worktree id, branch, worktree path,
+   latest commit, result-log path, current status, and the next orchestration action.
+3. Archive tasks once they are reviewed, merged or rejected, verified, logged, and Git-cleaned.
+   Archived entries should point to `docs/task-logs/` and the relevant merge/log commits rather
+   than duplicating full historical detail.
+4. Keep persistent cleanup leftovers and known environment blockers in the active map only while
+   they can affect current work.
+
+At high context pressure, stabilize already-started state by updating the active task map and
+orchestration log, then continue from the compacted summary after re-reading the four files above.
+Do not create a successor orchestration thread, write a new handoff report, or require `xhigh`
+reasoning solely because compaction happened unless the user explicitly requests it.
 
 ## Current State
 
