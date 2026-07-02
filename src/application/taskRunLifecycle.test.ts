@@ -10,6 +10,7 @@ import {
   failTaskRunLifecycle,
   startTaskRunLifecycle,
   TaskRunLifecycleTaskNotFoundError,
+  TaskRunLifecycleTaskRunNotFoundForTaskError,
   type TaskRunLifecycleRecorder,
 } from './taskRunLifecycle';
 
@@ -27,6 +28,13 @@ const baseTask: Task = {
   priority: 'normal',
   createdAt: '2026-07-02T08:00:00.000Z',
   updatedAt: '2026-07-02T08:00:00.000Z',
+};
+
+const otherTask: Task = {
+  ...baseTask,
+  id: 'task-other',
+  conversationIds: [],
+  title: 'Other lifecycle task',
 };
 
 describe('task run lifecycle recorder', () => {
@@ -186,6 +194,72 @@ describe('task run lifecycle recorder', () => {
         error: 'Codex process exited non-zero.',
       },
     });
+  });
+
+  it('rejects successful completion when the task run is not linked to the task', async () => {
+    const fixture = createRecorderFixture({ tasks: [baseTask, otherTask] });
+    const otherRun = await fixture.taskRunStore.createTaskRun({
+      taskId: 'task-other',
+      executionState: 'running',
+    });
+
+    await expect(
+      completeTaskRunLifecycle(fixture.recorder, {
+        taskId: 'task-lifecycle',
+        taskRunId: otherRun.id,
+        completedAt: '2026-07-02T10:30:00.000Z',
+        finalResponse: { content: 'Should not be stored.' },
+      }),
+    ).rejects.toThrow(TaskRunLifecycleTaskRunNotFoundForTaskError);
+
+    expect(fixture.taskRunStore.snapshot()).toEqual([
+      expect.objectContaining({
+        id: otherRun.id,
+        taskId: 'task-other',
+        executionState: 'running',
+      }),
+    ]);
+    expect(
+      fixture.taskStore.snapshot().tasks.find((task) => task.id === 'task-lifecycle'),
+    ).toMatchObject({
+      executionState: 'queued',
+      attentionState: 'consider_later',
+    });
+    expect(fixture.artifactStore.snapshot()).toEqual([]);
+    expect(fixture.eventStore.snapshot()).toEqual([]);
+  });
+
+  it('rejects failure completion when the task run is not linked to the task', async () => {
+    const fixture = createRecorderFixture({ tasks: [baseTask, otherTask] });
+    const otherRun = await fixture.taskRunStore.createTaskRun({
+      taskId: 'task-other',
+      executionState: 'running',
+    });
+
+    await expect(
+      failTaskRunLifecycle(fixture.recorder, {
+        taskId: 'task-lifecycle',
+        taskRunId: otherRun.id,
+        completedAt: '2026-07-02T10:20:00.000Z',
+        error: 'Should not be stored.',
+      }),
+    ).rejects.toThrow(TaskRunLifecycleTaskRunNotFoundForTaskError);
+
+    expect(fixture.taskRunStore.snapshot()).toEqual([
+      expect.objectContaining({
+        id: otherRun.id,
+        taskId: 'task-other',
+        executionState: 'running',
+      }),
+    ]);
+    expect(
+      fixture.taskStore.snapshot().tasks.find((task) => task.id === 'task-lifecycle'),
+    ).toMatchObject({
+      executionState: 'queued',
+      attentionState: 'consider_later',
+    });
+    expect(fixture.artifactStore.snapshot()).toEqual([]);
+    expect(fixture.eventStore.snapshot()).toEqual([]);
   });
 
   it('preflights missing tasks before creating dependent records', async () => {

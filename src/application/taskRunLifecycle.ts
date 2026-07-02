@@ -77,6 +77,13 @@ export class TaskRunLifecycleTaskNotFoundError extends Error {
   }
 }
 
+export class TaskRunLifecycleTaskRunNotFoundForTaskError extends Error {
+  constructor(taskId: EntityId, taskRunId: EntityId) {
+    super(`Task run lifecycle task run not found for task: ${taskRunId} for ${taskId}`);
+    this.name = 'TaskRunLifecycleTaskRunNotFoundForTaskError';
+  }
+}
+
 export async function startTaskRunLifecycle(
   recorder: TaskRunLifecycleRecorder,
   input: StartTaskRunLifecycleInput,
@@ -135,6 +142,7 @@ export async function completeTaskRunLifecycle(
   input: CompleteTaskRunLifecycleInput,
 ): Promise<CompletedTaskRunLifecycle> {
   const existingTask = await requireTask(recorder.openTaskDashboardStore, input.taskId);
+  await requireTaskRunForTask(recorder.taskRunStore, existingTask.id, input.taskRunId);
   const taskRun = await recorder.taskRunStore.updateTaskRun(input.taskRunId, {
     executionState: 'completed',
     ...(input.completedAt === undefined ? {} : { completedAt: input.completedAt }),
@@ -182,6 +190,7 @@ export async function failTaskRunLifecycle(
   input: FailTaskRunLifecycleInput,
 ): Promise<FailedTaskRunLifecycle> {
   const existingTask = await requireTask(recorder.openTaskDashboardStore, input.taskId);
+  await requireTaskRunForTask(recorder.taskRunStore, existingTask.id, input.taskRunId);
   const taskRun = await recorder.taskRunStore.updateTaskRun(input.taskRunId, {
     executionState: 'failed',
     ...(input.completedAt === undefined ? {} : { completedAt: input.completedAt }),
@@ -222,6 +231,19 @@ async function requireTask(store: OpenTaskDashboardStore, taskId: EntityId): Pro
     ...task,
     conversationIds: [...task.conversationIds],
   };
+}
+
+async function requireTaskRunForTask(
+  store: TaskRunStore,
+  taskId: EntityId,
+  taskRunId: EntityId,
+): Promise<void> {
+  const taskRuns = await store.queryTaskRuns({ taskId });
+  const taskRun = taskRuns.find((candidate) => candidate.id === taskRunId);
+
+  if (taskRun === undefined) {
+    throw new TaskRunLifecycleTaskRunNotFoundForTaskError(taskId, taskRunId);
+  }
 }
 
 function createLifecycleConversationInput(

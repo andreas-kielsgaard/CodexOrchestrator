@@ -49,3 +49,10 @@ None known.
   connection.
 - Completion inputs require both `taskId` and `taskRunId` because the current `TaskRunStore` query
   boundary does not expose a direct lookup by run ID.
+
+## Orchestrator Review Addendum
+
+The orchestrator added one review correction before merge: terminal completion paths now query
+task runs for the supplied task and reject mismatched `taskId`/`taskRunId` pairs before updating
+the run, task, artifacts, or events. Focused regression coverage was added for both successful and
+failed completion paths.

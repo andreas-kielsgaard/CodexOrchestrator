@@ -205,9 +205,10 @@ TypeScript application coordination boundary. It depends only on the existing Op
 TaskRun, Conversation, Artifact, and Event store interfaces. The start path preflights that the task
 exists, creates a running task run, optionally creates and links a Codex conversation record,
 updates the task to running and waiting on agent, preserves existing task conversation links, and
-appends a `run_started` event. Terminal paths mark runs completed or failed, move the task to the
-appropriate review/action attention state, optionally persist a `final_response` artifact for
-successful runs, and append `run_completed` events with linked IDs and JSON-object outcome payloads.
+appends a `run_started` event. Terminal paths require both task and run IDs, verify that the run is
+linked to the task before mutation, mark runs completed or failed, move the task to the appropriate
+review/action attention state, optionally persist a `final_response` artifact for successful runs,
+and append `run_completed` events with linked IDs and JSON-object outcome payloads.
 
 This boundary intentionally does not execute Codex, parse Codex output, run validation commands,
 open databases, import SQLite, touch Tauri/Rust commands, or add transaction abstractions. Future
