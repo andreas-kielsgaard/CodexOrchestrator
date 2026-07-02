@@ -2118,3 +2118,37 @@ orchestration thread`)
   `npm run build`, `cargo --version`, `rustc --version`, and Rust/Tauri checks if Cargo is
   available.
 - Report-back instruction: included in the worker prompt.
+
+### Worker 037 Review And Merge: Open Tasks Tauri SQLite Backend
+
+- Status: reviewed, merged, verified within environment limits, logged, and Git-cleaned
+- Worker commit: `7ac4764e9a45bd18c79135629aa37752567bf812`
+  (`Implement Tauri SQLite open tasks backend`)
+- Merge commit: `d2a4fbab754558e91fa44873ddf4dc91f97939be`
+- Result log: `docs/task-logs/worker-037-open-tasks-tauri-sqlite-backend.md`
+- Accepted decision: the Rust backend replaces backend-pending Open Tasks command stubs with
+  durable SQLite handlers for load/create/update/archive, using the Tauri app data directory and
+  returning the existing `TaskDashboardSnapshot` shape.
+- Accepted decision: the Rust side duplicates the app schema migrations and the small dashboard
+  projection needed at the command boundary. This keeps browser code away from Node-only TypeScript
+  SQLite modules but creates a schema/projection drift point to watch.
+- Accepted limitation: an empty database returns an empty dashboard and no seed/demo project. Task
+  creation requires a real persisted `project_id`; the Rust snapshot returns all persisted projects
+  so a first task can be created once a real project exists.
+- Review note: the command argument names and `serde(rename_all = "camelCase")` response fields
+  match the existing `src/infrastructure/tauriCommands.ts` browser contract.
+- Orchestrator verification before merge: `git diff --check`, manual Rust/schema/contract review,
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed in the worker
+  worktree. `cargo --version` and `rustc --version` failed because Rust/Cargo are not on `PATH`.
+  `npm run build:tauri` failed at `cargo metadata` for the same reason, so Rust formatting/tests
+  and compile checks were not run.
+- Verification after merge: `git diff --check HEAD^..HEAD`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` passed on main. `npm run build:tauri`
+  still failed at `cargo metadata` because Cargo is unavailable.
+- Drift check: the slice did not build React UI redesign, Codex execution, run controls,
+  task/run detail UI, Git runtime wiring, repo/worktree UI, diff/validation runtime triggers,
+  workflow-engine behavior, cleanup policy, or seed/demo fallback.
+- Cleanup: `git worktree remove` unregistered the Worker 037 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\35fe\Codex Orchestrator`; the merged branch
+  `worker/037-open-tasks-tauri-sqlite-backend` was deleted and the locked physical folder was left
+  in place.

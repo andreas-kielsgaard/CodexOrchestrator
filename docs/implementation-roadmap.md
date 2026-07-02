@@ -52,6 +52,8 @@ Already built on `main`:
   and Git worktree creator boundaries.
 - Application-layer Open Tasks dashboard client and React/Tauri command boundary for
   load/create/update/archive, with the visible dashboard no longer importing seed data directly.
+- Rust-side SQLite backend for the Open Tasks Tauri commands, choosing the app data database and
+  returning the existing dashboard snapshot shape.
 - Application-layer diff collection service over injected stores and `GitDiffProvider`.
 - Application-layer validation command runner service over injected stores and command runtime.
 - Node-side validation command runtime adapter over `child_process.spawn`.
@@ -60,14 +62,13 @@ Already built on `main`:
 
 Important gaps:
 
-- No Rust-side SQLite backend for the registered Open Tasks Tauri commands, so default WebView
-  persistence still returns an explicit backend-pending error.
 - No broader UI/runtime composition that chooses the app database path and exposes all stores to
   application services.
 - No repo/worktree UI or runtime composition that injects the local Git adapters into user flows.
 - No task/run detail view.
 - No runtime triggers for post-run diff/validation artifacts.
-- `npm run build:tauri` is blocked until Rust/Cargo are installed or on `PATH`.
+- The Rust/Tauri backend is not compile-verified locally until Rust/Cargo are installed or on
+  `PATH`; `npm run build:tauri` currently fails at `cargo metadata`.
 
 ## Guiding Decisions
 
@@ -87,11 +88,11 @@ events, diff, and validation result in the app.
 
 Current planned sequence:
 
-1. Implement the Rust-side Open Tasks Tauri command backend when Rust verification is practical.
-2. Wire repo/worktree runtime composition using the local Git adapters.
-3. Wire run controls and task/run detail UI to the composed run service.
-4. Add runtime triggers for diff and validation capture.
-5. Add the review surface that combines final response, diff, validation, and next action.
+1. Wire repo/worktree runtime composition using the local Git adapters.
+2. Wire run controls and task/run detail UI to the composed run service.
+3. Add runtime triggers for diff and validation capture.
+4. Add the review surface that combines final response, diff, validation, and next action.
+5. Install Rust/Cargo and verify the Tauri build path.
 
 ## Later Roadmap
 

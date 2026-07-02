@@ -29,6 +29,8 @@ Already merged:
   and Git worktree creator boundaries.
 - Application-layer Open Tasks dashboard client over injected read/write task stores, plus a
   browser-safe React/Tauri command boundary and dashboard UI controls for create/edit/state/archive.
+- Rust-side SQLite backend for the Open Tasks Tauri commands, choosing the app data database and
+  returning the existing dashboard snapshot shape.
 - Application-layer diff collection service over injected stores and `GitDiffProvider`, storing
   `diff` artifacts and compact `artifact_created` metadata.
 - Application-layer validation command runner service over injected stores and command runtime,
@@ -39,29 +41,28 @@ Already merged:
 
 Known blockers / remaining runtime wiring:
 
-- `npm run build:tauri` is blocked until Rust/Cargo are installed or on `PATH`.
-- The default Tauri WebView path has registered Open Tasks command stubs, but still needs a Rust
-  SQLite backend adapter before the UI can persist task dashboard changes at runtime.
+- Rust/Cargo are unavailable on `PATH`, so the Rust/Tauri backend is not compile-verified locally
+  and `npm run build:tauri` fails at `cargo metadata`.
 
 ## Remaining Tasks
 
-| ID    | Task                           | Output                                                                                                                   | Depends On                          |
-| ----- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
-| FS-05 | Persisted Open Tasks dashboard | Application client and React boundary are in place; next backend wiring must implement the Tauri SQLite commands durably | Merged database opener              |
-| FS-08 | Run controls in UI             | User can start a Codex run for a task in a selected worktree and see running/completed/failed state                      | Merged task worktree service, FS-05 |
-| FS-09 | Task/run detail view           | Show task anchors, run history, final response, raw JSONL artifact link/summary, and event timeline                      | FS-05, merged run composition       |
-| FS-10 | Diff collector                 | Service boundary and local Git diff provider are merged; runtime trigger still needed for live post-run capture          | Merged task worktree service        |
-| FS-11 | Validation command runner      | Service boundary and Node runtime adapter are merged; runtime trigger still needed for live validation capture           | Merged task worktree service        |
-| FS-12 | Review surface MVP             | Show final response, diff state, validation status, and next action for completed/failed runs                            | FS-09, FS-10, FS-11                 |
-| FS-13 | Tauri build environment        | Rust/Cargo available; `npm run build:tauri` can be verified                                                              | External environment                |
+| ID    | Task                           | Output                                                                                                                                            | Depends On                          |
+| ----- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| FS-05 | Persisted Open Tasks dashboard | Application client, React boundary, and Rust SQLite command backend are merged; Rust compile/Tauri build verification remains environment-blocked | Merged database opener              |
+| FS-08 | Run controls in UI             | User can start a Codex run for a task in a selected worktree and see running/completed/failed state                                               | Merged task worktree service, FS-05 |
+| FS-09 | Task/run detail view           | Show task anchors, run history, final response, raw JSONL artifact link/summary, and event timeline                                               | FS-05, merged run composition       |
+| FS-10 | Diff collector                 | Service boundary and local Git diff provider are merged; runtime trigger still needed for live post-run capture                                   | Merged task worktree service        |
+| FS-11 | Validation command runner      | Service boundary and Node runtime adapter are merged; runtime trigger still needed for live validation capture                                    | Merged task worktree service        |
+| FS-12 | Review surface MVP             | Show final response, diff state, validation status, and next action for completed/failed runs                                                     | FS-09, FS-10, FS-11                 |
+| FS-13 | Tauri build environment        | Rust/Cargo available; `npm run build:tauri` can be verified                                                                                       | External environment                |
 
 ## Dependency Shape
 
 Critical path:
 
-1. FS-05: finish durable Open Tasks persistence in the default WebView path.
+1. Runtime composition for repo/worktree selection and post-run diff/validation capture.
 2. FS-08 and FS-09: expose run start and run review in the UI.
-3. FS-12 plus remaining FS-10/FS-11 runtime wiring: add review-grade validation and live diff capture.
+3. FS-12: add review-grade validation and live diff capture to the review flow.
 
 Repo/worktree path:
 
@@ -72,9 +73,10 @@ Repo/worktree path:
 
 Dashboard path:
 
-1. FS-05 has moved the dashboard off direct seed-data imports and still needs durable Tauri command
+1. FS-05 has moved the dashboard off direct seed-data imports and added Rust-side durable command
    handling.
-2. FS-08 and FS-09 add runtime-specific controls and detail.
+2. Rust/Cargo installation is still needed before the Tauri backend can be compiled locally.
+3. FS-08 and FS-09 add runtime-specific controls and detail.
 
 Review path:
 
@@ -87,8 +89,6 @@ Review path:
 
 Safe immediately:
 
-- FS-05 backend work can start when a Rust/Tauri worker is practical, with verification limits noted
-  while Rust/Cargo are unavailable.
 - Repo/worktree runtime composition can now use the merged local Git adapters.
 - Diff and validation runtime wiring can now use the merged local Git and validation adapters.
 - FS-13 can run anytime.
@@ -101,12 +101,11 @@ Should wait:
 
 ## Recommended Worker Sequencing
 
-1. Finish the FS-05 backend gap when a Rust/Tauri worker is practical: implement durable SQLite
-   command handling for the registered Open Tasks commands.
-2. Add runtime composition for repo/worktree selection and post-run diff/validation capture using
+1. Add runtime composition for repo/worktree selection and post-run diff/validation capture using
    the merged local adapters.
-3. Launch FS-08 and FS-09 after persisted dashboard runtime behavior is real enough for UI flows.
-4. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
+2. Launch FS-08 and FS-09 after persisted dashboard runtime behavior is real enough for UI flows.
+3. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
+4. Install Rust/Cargo and verify the merged Tauri backend with Rust tests and `npm run build:tauri`.
 
 ## Orchestration Notes
 

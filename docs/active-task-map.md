@@ -12,23 +12,12 @@ otherwise resolve it.
 
 ## Active Tasks
 
-- Worker 037: Open Tasks Tauri SQLite Backend
-  - Status: launched; awaiting worker completion report
-  - Thread: `019f24af-434e-7510-8e91-9cf8db0b1755`
-  - Pending worktree id: `local:bd9eb9b9-806d-433f-ab7d-65120c4586fe`
-  - Worktree: `C:\Users\user\.codex\worktrees\35fe\Codex Orchestrator`
-  - Branch: `worker/037-open-tasks-tauri-sqlite-backend`
-  - Launch base: `aa4d687` (`Log Worker 035 merge`)
-  - Result log target: `docs/task-logs/worker-037-open-tasks-tauri-sqlite-backend.md`
-  - Next orchestration action: inspect worker report/worktree, review branch, independently
-    verify within the Rust/Cargo limits of the environment, then merge or request correction.
+- None.
 
 ## Pending Blockers / Follow-Up
 
-- FS-05 backend persistence gap: the Open Tasks dashboard client/UI boundary is merged, but the
-  registered Tauri commands still return an explicit backend-pending error. Durable default WebView
-  persistence needs a Rust-side SQLite command adapter.
-- `npm run build:tauri` is blocked until Rust/Cargo are installed or available on `PATH`.
+- Rust/Cargo are unavailable on `PATH`, so the merged Rust/Tauri backend cannot yet be compile
+  verified and `npm run build:tauri` fails at `cargo metadata`.
 
 ## Recently Archived
 
@@ -42,6 +31,8 @@ otherwise resolve it.
   `docs/task-logs/worker-035-local-git-runtime-adapters.md`.
 - Worker 036: reviewed, merged, verified, and Git-cleaned. See
   `docs/task-logs/worker-036-validation-command-runtime-adapter.md`.
+- Worker 037: reviewed, merged, verified within environment limits, and Git-cleaned. See
+  `docs/task-logs/worker-037-open-tasks-tauri-sqlite-backend.md`.
 
 ## Blockers
 
@@ -69,3 +60,4 @@ launched:
 - Worker 034: `C:\Users\user\.codex\worktrees\d19f\Codex Orchestrator`
 - Worker 035: `C:\Users\user\.codex\worktrees\46d5\Codex Orchestrator`
 - Worker 036: `C:\Users\user\.codex\worktrees\478e\Codex Orchestrator`
+- Worker 037: `C:\Users\user\.codex\worktrees\35fe\Codex Orchestrator`
