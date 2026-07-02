@@ -12,7 +12,16 @@ otherwise resolve it.
 
 ## Active Tasks
 
-- None.
+- Worker 037: Open Tasks Tauri SQLite Backend
+  - Status: launched; awaiting worker completion report
+  - Thread: `019f24af-434e-7510-8e91-9cf8db0b1755`
+  - Pending worktree id: `local:bd9eb9b9-806d-433f-ab7d-65120c4586fe`
+  - Worktree: `C:\Users\user\.codex\worktrees\35fe\Codex Orchestrator`
+  - Branch: `worker/037-open-tasks-tauri-sqlite-backend`
+  - Launch base: `aa4d687` (`Log Worker 035 merge`)
+  - Result log target: `docs/task-logs/worker-037-open-tasks-tauri-sqlite-backend.md`
+  - Next orchestration action: inspect worker report/worktree, review branch, independently
+    verify within the Rust/Cargo limits of the environment, then merge or request correction.
 
 ## Pending Blockers / Follow-Up
 

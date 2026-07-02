@@ -2096,3 +2096,25 @@ orchestration thread`)
   folder deletion at `C:\Users\user\.codex\worktrees\46d5\Codex Orchestrator`; the merged branch
   `worker/035-local-git-runtime-adapters` was deleted and the locked physical folder was left in
   place.
+
+### Worker 037 Launch: Open Tasks Tauri SQLite Backend
+
+- Status: launched in a fresh worktree worker
+- Thread: `019f24af-434e-7510-8e91-9cf8db0b1755`
+- Pending worktree id: `local:bd9eb9b9-806d-433f-ab7d-65120c4586fe`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\35fe\Codex Orchestrator`
+- Target branch: `worker/037-open-tasks-tauri-sqlite-backend`
+- Launch base observed in worktree: `aa4d687` (`Log Worker 035 merge`), detached until the worker
+  creates the target branch
+- Goal: replace the Rust backend-pending Open Tasks command stubs with a narrow durable SQLite
+  backend for the default Tauri WebView path.
+- Explicitly deferred: React UI redesign, Codex execution, run controls, task/run detail UI, Git
+  runtime wiring, repo/worktree UI, diff/validation runtime triggers, workflow-engine behavior,
+  cleanup policy, seed/demo fallback, and importing Node-only TypeScript runtime modules into
+  browser or Rust code.
+- Required result log: `docs/task-logs/worker-037-open-tasks-tauri-sqlite-backend.md`
+- Required verification: `git diff --check main...worker/037-open-tasks-tauri-sqlite-backend`,
+  focused tests for new behavior, `npm run lint`, `npm run format:check`, `npm run test`,
+  `npm run build`, `cargo --version`, `rustc --version`, and Rust/Tauri checks if Cargo is
+  available.
+- Report-back instruction: included in the worker prompt.
