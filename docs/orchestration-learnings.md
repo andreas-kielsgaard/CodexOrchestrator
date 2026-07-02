@@ -59,7 +59,7 @@ After a worker is reviewed, merged, verified, logged, and Git-cleaned, the orche
 
 Do not stop merely because the repo is at a clean checkpoint. A clean checkpoint is the place to make the next orchestration decision. Pause only for a concrete reason, and if pausing, state that reason plus the next intended slice.
 
-At 75% context-window usage, the orchestrator should write a handoff report and start a new orchestration thread with `xhigh` reasoning. The handoff report should live under `docs/handoffs/` and point to:
+At 75% context-window usage, the orchestrator should write a handoff report and initiate a new orchestration thread with `xhigh` reasoning. The handoff report should live under `docs/handoffs/` and point to:
 
 - `docs/implementation-roadmap.md`
 - `docs/orchestration-context.md`
@@ -67,7 +67,7 @@ At 75% context-window usage, the orchestrator should write a handoff report and 
 - `docs/orchestration-log.md`
 - current worker result logs under `docs/task-logs/`
 
-The new orchestration thread prompt should include the handoff report path, explicitly say it is taking over orchestration, and require re-ingesting the overall task overview and learnings before launching or reviewing work. If exact context usage is unavailable, trigger conservatively when the thread becomes large enough that auditability or compaction risk is a concern. If context compression/compaction is triggered, or the orchestrator resumes from a compressed summary, hand off immediately instead of continuing to accumulate orchestration state in the compressed thread.
+The new orchestration thread prompt should include the handoff report path, explicitly say it is taking over orchestration, and require re-ingesting the overall task overview and learnings before launching or reviewing work. The handoff is not complete merely because the report exists; after committing the report, use the available Codex thread tool to create or hand off to the successor thread, record the successor thread id when feasible, and tell the user explicitly if tool failure prevented initiation. If exact context usage is unavailable, trigger conservatively when the thread becomes large enough that auditability or compaction risk is a concern. If context compression/compaction is triggered, or the orchestrator resumes from a compressed summary, hand off immediately instead of continuing to accumulate orchestration state in the compressed thread.
 
 ### Completion reports
 
@@ -210,3 +210,21 @@ Correction:
   included, so the successor knows whether to wait for a prompt or inspect the worker directly.
 - The orchestrator should still periodically inspect active worker worktrees instead of relying
   solely on message delivery.
+
+### 2026-07-02: Handoff report was written but successor thread was not initiated
+
+After Worker 018 was reviewed, merged, verified, logged, and Git-cleaned, the orchestration thread
+correctly wrote a compaction handoff report but stopped before creating or handing off to the
+successor orchestration thread. The user clarified that a handoff must be active, not just
+documentary.
+
+Correction:
+
+- Handoff reports are necessary but insufficient; the orchestrator must also initiate the successor
+  thread with the handoff prompt before ending the turn.
+- The successor prompt should use `xhigh` reasoning when the handoff is caused by context pressure
+  or compaction.
+- If thread tooling is unavailable or fails, the orchestrator must explicitly report that the
+  handoff is written but not initiated, with the exact blocker.
+- Future handoff instructions should include the successor-thread creation step, not only the file
+  writing step.

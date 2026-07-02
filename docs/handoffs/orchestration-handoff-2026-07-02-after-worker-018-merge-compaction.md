@@ -10,8 +10,10 @@ compression/compaction is an immediate handoff trigger.
 
 The compressed thread completed only the already-in-progress stabilization work: verified the
 Worker 018 merge, cleaned safe Git state, updated `docs/orchestration-log.md`, and wrote this
-handoff. It did not launch Worker 019 or make a new implementation decision beyond recommending
-the next likely slice.
+handoff. The user then clarified that a handoff must also be initiated, not merely written. The
+orchestration instructions were updated accordingly before the successor was started. This thread
+did not launch Worker 019 or make a new implementation decision beyond recommending the next likely
+slice.
 
 This is not a project pause. The next orchestration thread should use `xhigh` reasoning,
 re-ingest the required context, then continue from the clean post-Worker-018 checkpoint.
@@ -204,6 +206,9 @@ Do not aggressively force-delete those leftover physical folders. Retry later on
 - Decide fresh versus continued worker context explicitly for every slice.
 - Summarize each new work slice in the orchestration thread before or immediately after launch.
 - Require worker branch, commit, result log, verification, and concise completion report.
+- Handoff reports must be active: after writing and committing the handoff, the orchestrator must
+  initiate the successor thread with the handoff prompt before ending the current turn, or explicitly
+  report the tooling failure that prevented initiation.
 - Every worker launch prompt must include a dedicated "Report back" section instructing the worker
   to send a completion report back to the orchestration/control-room thread.
 - Review worker branches before merging.

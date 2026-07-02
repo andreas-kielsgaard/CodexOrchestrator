@@ -767,7 +767,7 @@
 
 ### Orchestration Handoff After Worker 018 Merge Compaction
 
-- Status: handoff prepared; no further workers launched from the compressed thread
+- Status: handoff prepared; successor initiation required before ending the compressed thread
 - Handoff:
   `docs/handoffs/orchestration-handoff-2026-07-02-after-worker-018-merge-compaction.md`
 - Trigger: the orchestration thread resumed from compressed context while stabilizing Worker 018.
@@ -776,5 +776,9 @@
   pre-existing `origin/main [gone]`.
 - Worker state: no active worker branches or registered worker worktrees remain; Worker 018 was
   reviewed, merged, verified, logged, and Git-cleaned before this handoff.
+- Process correction: the user clarified that writing a handoff report is insufficient by itself.
+  `docs/orchestration-context.md`, `docs/orchestration-learnings.md`, and the handoff report now
+  explicitly require initiating the successor thread with the handoff prompt, or reporting the exact
+  tooling failure that prevented initiation.
 - Instruction: continue in a fresh `xhigh` successor orchestration thread after it re-ingests the
   handoff and required context files. Do not launch Worker 019 from this compressed thread.

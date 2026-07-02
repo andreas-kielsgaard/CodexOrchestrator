@@ -28,7 +28,7 @@ The orchestrator thread should:
 16. Pause only for a concrete reason: user/product decision, blocker, review failure needing correction, context handoff, or an explicitly stated checkpoint. If pausing, state the exact reason and the next intended slice.
 17. For UI-facing slices, make an explicit design-discipline decision before launch: whether the slice needs reusable component structure, component-level verification, Storybook-style isolated review, or a separate usability-review pass.
 18. Use fresh usability-review worker conversations when appropriate, asking them to behave like realistic users and report confusing flows, visual bugs, missing affordances, and unexpected behavior before the UI hardens.
-19. At 75% context-window usage, write a handoff report and start a fresh orchestration thread with `xhigh` reasoning.
+19. At 75% context-window usage, write a handoff report and initiate a fresh orchestration thread with `xhigh` reasoning before ending the current turn.
 20. Pause and ask the user when the implementation drifts too far from the stated intention or needs a product decision.
 
 ## Reasoning-Level Guidance
@@ -67,17 +67,29 @@ If two or more answers are "no", pause the orchestration and course-correct befo
 
 ## Context Handoff
 
-When this orchestration thread reaches 75% of its context window, the orchestrator should:
+When this orchestration thread reaches 75% of its context window, the orchestrator should initiate
+an active handoff, not merely write a handoff document. A handoff is not complete until a successor
+thread has been created or the current thread has explicitly reported why thread initiation failed.
+
+The orchestrator should:
 
 1. Write a handoff report under `docs/handoffs/`.
 2. Include the overall project goal, current implementation state, open worker tasks, recent merges/corrections, cleanup leftovers, known blockers, and next recommended slice.
 3. Reference `docs/implementation-roadmap.md`, `docs/orchestration-context.md`, `docs/orchestration-learnings.md`, and `docs/orchestration-log.md`.
-4. Start a new orchestration conversation with `xhigh` reasoning.
-5. Instruct the new orchestration thread to re-ingest the handoff report and the context/learning files before taking action.
-6. For any active worker, include the worker thread id or pending worktree id, expected branch, expected result log, whether the launch prompt included explicit report-back instructions, and the instruction that the successor must inspect the worker state directly if no completion prompt has arrived.
-7. Keep the old orchestration and worker chats visible for traceability.
+4. Commit the handoff and any orchestration-log update needed to make the transition auditable.
+5. Start or hand off to a new orchestration conversation with `xhigh` reasoning using the available Codex thread tool.
+6. Instruct the new orchestration thread to re-ingest the handoff report and the context/learning files before taking action.
+7. Record the successor thread id in the current thread's final response, and in the repository log or handoff file when feasible without creating a circular handoff loop.
+8. If the thread tool fails or is unavailable, say so explicitly in the final response and state that the handoff file is written but not initiated.
+9. For any active worker, include the worker thread id or pending worktree id, expected branch, expected result log, whether the launch prompt included explicit report-back instructions, and the instruction that the successor must inspect the worker state directly if no completion prompt has arrived.
+10. Keep the old orchestration and worker chats visible for traceability.
 
-If exact context-window usage is not available, use a conservative judgment trigger: after substantial worker cycles, when the conversation becomes difficult to audit, or before expected compaction risk. If context compression/compaction is triggered, or the orchestrator resumes from a compressed summary, treat that as an immediate handoff trigger.
+If exact context-window usage is not available, use a conservative judgment trigger: after substantial
+worker cycles, when the conversation becomes difficult to audit, or before expected compaction risk.
+If context compression/compaction is triggered, or the orchestrator resumes from a compressed
+summary, treat that as an immediate handoff trigger and still initiate the successor thread after
+stabilizing any already-started merge/logging work that would otherwise leave the repository in an
+ambiguous state.
 
 ## Current State
 
