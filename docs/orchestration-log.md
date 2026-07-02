@@ -382,9 +382,13 @@
 
 ### Worker 013: Open Tasks Write Boundary
 
-- Status: launched/in progress; not reviewed or merged
+- Status: reviewed, merged, verified, logged, and Git-cleaned
+- Worker thread: `019f2236-aa3d-7bc1-ba65-ba185eb25204`
 - Pending worktree id: `local:70b5b4c5-fb0c-4689-bb54-cbd6a892a4da`
+- Worktree path: `C:\Users\user\.codex\worktrees\c139\Codex Orchestrator`
 - Worker branch: `worker/013-open-tasks-write-boundary`
+- Worker commit: `908f5940a420af8c485614342392242b9e050a46`
+- Merge commit: `b259f3f13b003c790592b532a0bf4d94a3f6d5d9`
 - Launch base: `c239cc87558071dd619226bdcdf487e37f87c8f5`
 - Reasoning effort: `medium`
 - Context reuse decision: started fresh because Worker 012's read-store implementation is merged
@@ -401,3 +405,26 @@
 - Expected result log: `docs/task-logs/worker-013-open-tasks-write-boundary.md`
 - Success signal: committed worker branch with focused tests plus feasible `npm run lint`,
   `npm run format:check`, `npm run test`, and `npm run build` verification.
+- Accepted decision: `OpenTaskWriteStore` defines create, update, and archive-style close behavior
+  in the domain layer, with deterministic ID/time providers for adapters and tests; the in-memory
+  implementation also satisfies the dashboard read-store boundary for projection verification.
+- Accepted decision: update inputs use omitted fields to mean unchanged and `null` to explicitly
+  clear optional repo/branch/worktree anchors or due/snooze timestamps; `conversationIds` replacement
+  preserves caller-provided order.
+- Accepted decision: `archiveTask` only sets `executionState` to `archived`, leaving
+  `attentionState` unchanged and keeping closed-task omission centralized in
+  `projectOpenTaskDashboard`.
+- Orchestrator verification before merge: `git diff --check main...worker/013-open-tasks-write-boundary`,
+  `npm run test -- src/domain/openTaskWriteStore.test.ts`, and `npm run build` passed in the worker
+  worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed.
+- Drift check: still local-first and task-centered; Open Tasks writes mutate `Task` records while
+  Git repo/branch/worktree IDs remain optional technical anchors, dashboard grouping remains in the
+  projection layer, and no Codex credentials, Codex runtime integration, Tauri/Rust runtime database
+  wiring, SQLite write adapter, Git execution, or UI work was introduced.
+- Cleanup: `git worktree remove` unregistered the worker worktree and the merged branch
+  `worker/013-open-tasks-write-boundary` was deleted.
+- Cleanup note: Windows kept the physical worker folder locked at
+  `C:\Users\user\.codex\worktrees\c139\Codex Orchestrator`; retry later after the app releases the
+  handle.
