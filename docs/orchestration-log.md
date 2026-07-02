@@ -876,3 +876,30 @@
   `npm run format:check`, `npm run test`, and `npm run build` verification, followed by a
   completion report sent back to the orchestration thread or an explicit note that cross-posting was
   unavailable.
+
+### Orchestration Handoff After Worker 020 Resume Compaction
+
+- Status: handoff prepared; successor initiation required before ending the compressed thread
+- Handoff:
+  `docs/handoffs/orchestration-handoff-2026-07-02-after-worker-020-resume-compaction.md`
+- Trigger: this orchestration thread resumed Worker 020 after the user asked to continue work, then
+  hit context compression while checking Worker 020 status. Per the operating model, compaction is
+  an immediate handoff trigger.
+- Main state before this handoff commit: `63e53b969837dd364735d160ab5ef978326be0c8`, clean except
+  pre-existing `origin/main [gone]` and the pending handoff/log changes.
+- Worker 019 state: reviewed, merged, verified, logged, and Git-cleaned. Merge commit:
+  `8c3c3d6733c0405a10418b5750b0f9d496c09ecc`; merge log commit:
+  `74fdd122aa3d4f178bae9a79cb0d65b21313e57f`.
+- Worker 020 state: completed and needs orchestration review; not merged.
+- Worker 020 thread: `019f22d3-9016-7861-a37e-b9582e46e616`
+- Worker 020 branch: `worker/020-task-run-store-boundary`
+- Worker 020 worktree:
+  `C:\Users\user\.codex\worktrees\a979\Codex Orchestrator`
+- Worker 020 commit: `8bf5b4a156950689b2361c1917ffdc7ddce4579f`
+- Worker 020 result log: `docs/task-logs/worker-020-task-run-store-boundary.md`
+- Worker 020 reported verification: `git diff --check main...worker/020-task-run-store-boundary`,
+  focused TaskRun store tests, `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed.
+- Instruction: continue in a fresh `xhigh` successor orchestration thread after it re-ingests the
+  handoff and required context files. The successor should review Worker 020 before any merge and
+  should not launch Worker 021 first.
