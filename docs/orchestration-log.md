@@ -365,3 +365,17 @@
 - Drift check: still local-first and task-centered; the dashboard read path centers `Task` as the attention unit, keeps Git repo/branch/worktree as technical anchors, and introduces no Codex credentials, Codex runtime integration, Tauri/Rust runtime DB wiring, write APIs, or UI work.
 - Cleanup: removed Git worktree registration and deleted merged branch `worker/012-open-tasks-sqlite-read-store`.
 - Cleanup note: Windows kept a physical leftover directory locked at `C:\Users\user\.codex\worktrees\c15d\Codex Orchestrator`; retry later after the app releases the handle.
+
+### Orchestration Handoff After Worker 012 Merge Context Pressure
+
+- Status: prepared
+- Handoff report: `docs/handoffs/orchestration-handoff-2026-07-02-after-worker-012-merge-context-pressure.md`
+- Trigger: after completing Worker 010, Worker 011, and Worker 012 review/merge cycles, the
+  orchestration thread hit context pressure and resumed from compressed context while preparing the
+  next handoff.
+- Current main before handoff document: `14070da79bdb5753160240d6e57bc74f9eaddf60`
+- Git state before handoff document: clean except pre-existing `origin/main [gone]`; no registered
+  worker worktrees.
+- Instruction: this compressed orchestration thread should not launch Worker 013 or new
+  implementation work. Continue orchestration in a fresh `xhigh` control-room thread after it
+  re-ingests the new handoff and required context files.
