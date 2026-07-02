@@ -78,6 +78,13 @@ about that coordination boundary: it does not open the app database, import conc
 infrastructure, execute child processes directly, choose database paths, collect diffs, run
 validation commands, manage worktrees, or wire UI behavior.
 
+`repoRegistryScan.ts` coordinates repo registration/scanning over injected Git and persistence
+boundaries. It calls an injected `GitRepoScanner`, maps the scan through the Git infrastructure
+facts mapper, persists the resulting repo/branch/worktree state through `RepoSyncStore`, and returns
+the synced records plus compact scan/change metadata suitable for future UI/runtime wiring. It does
+not list or remove registered repos, create worktrees, choose database paths, execute Git directly,
+link tasks to worktrees, or expose raw command output as its primary API.
+
 ## Infrastructure Layer
 
 ### Git
@@ -87,6 +94,10 @@ Location: `src/infrastructure/git/`
 The Git infrastructure parses raw command output for status, branch, and worktree facts and
 assembles normalized scan results. It does not execute Git yet. Future command execution should feed
 raw output into these parsers rather than duplicating parsing in UI or application code.
+
+`GitRepoScanner` is the current scanner interface consumed by application services. Concrete local
+runtime wiring still needs to provide an implementation that gathers the raw Git command outputs and
+feeds them into the existing parser/mapper functions.
 
 ### Codex
 
@@ -158,8 +169,12 @@ The first usable runtime loop still needs:
    bundle to application services.
 2. Runtime wiring that passes the SQLite-backed store bundle and concrete Codex runtime adapter into
    the run composition service.
-3. Diff and validation runners that store their outputs as artifacts/validation runs.
-4. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.
+3. Runtime wiring that passes a concrete `GitRepoScanner`, `RepoSyncStore`, and repo-sync ID/clock
+   providers into the repo registry scan service.
+4. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
+5. Worktree creation/selection for task anchoring.
+6. Diff and validation runners that store their outputs as artifacts/validation runs.
+7. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.
 
 ## Testing And Verification
 
