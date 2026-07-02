@@ -1655,3 +1655,37 @@ orchestration thread`)
   optional live CLI smoke only if the worker environment can execute `codex` without credentials or
   user interaction.
 - Report-back instruction: included in the worker prompt.
+
+### Worker 028 Review And Merge: Codex Exec Runtime Adapter
+
+- Status: reviewed, corrected, merged, verified, logged, and Git-cleaned
+- Worker commit: `6780dcd2313335e8d2270837e5ced6061255b6e5`
+- Orchestrator review correction commit:
+  `78210bbf846fb4033a524c70487093bbb103b383` (`Review Worker 028 runtime classification tests`)
+- Merge commit: `31fce56b0292f9070e1c67fba46215f50c06941c`
+- Result log: `docs/task-logs/worker-028-codex-exec-runtime-adapter.md`
+- Accepted decision: `codexRuntime.ts` is a narrow Node/local runtime adapter for
+  `codex exec --json`. It builds args as an array, invokes Codex through an injectable process
+  runner, captures raw stdout JSONL and stderr, parses/summarizes JSONL output, and returns command,
+  args, cwd, exit code, signal, status, reason, raw output, parsed events, and summary.
+- Accepted decision: non-zero process exits return structured failed results when stdout is
+  parseable. Launch/runner failures and parser failures still throw because the adapter cannot
+  return trustworthy parsed output.
+- Review correction: added tests for parseable output with no terminal event and process signal
+  exits; adjusted the fake process runner so explicit `null` exit codes can be tested.
+- Orchestrator verification before merge: `git diff --check main...worker/028-codex-exec-runtime-adapter`,
+  focused Codex parser/runtime tests, `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed in the worker worktree after the review correction.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed on main. `node:sqlite` emitted the expected experimental warning during
+  SQLite tests.
+- Live smoke: skipped because both orchestration and Worker 028 saw `codex --help` fail with
+  `Access is denied` for the WindowsApps `codex.exe`; this is an environment limitation, not an
+  implementation blocker.
+- Drift check: the slice did not compose lifecycle/store behavior, persist artifacts/events,
+  manage credentials, wire UI/Tauri, add repo/worktree behavior, add validation/diff execution, or
+  add dependencies.
+- Cleanup: `git worktree remove` unregistered the Worker 028 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\c12f\Codex Orchestrator`; the merged branch
+  `worker/028-codex-exec-runtime-adapter` was deleted and the locked physical folder was left in
+  place.

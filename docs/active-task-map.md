@@ -12,19 +12,7 @@ otherwise resolve it.
 
 ## Active Tasks
 
-### Worker 028: Codex Exec Runtime Adapter
-
-- Status: launched; awaiting worker completion report
-- Pending worktree id: `local:2f2404b6-9661-47f1-b292-353ee1fc809e`
-- Expected branch: `worker/028-codex-exec-runtime-adapter`
-- Worktree: `C:\Users\user\.codex\worktrees\c12f\Codex Orchestrator`
-- Launch base: `15d2efddbc273a49f397c28f7a8f537cb4bbc097` (`Log Worker 027 merge`)
-- Expected result log: `docs/task-logs/worker-028-codex-exec-runtime-adapter.md`
-- Report-back instruction: included in the worker prompt
-- Known environment note: orchestration saw `codex --help` and `codex exec --help` fail with
-  `Access is denied` for the WindowsApps `codex.exe`; live smoke may be blocked.
-- Next action: wait for Worker 028 completion, then inspect the worker branch/result log directly,
-  review source, run independent verification, and merge only accepted work.
+None.
 
 ## Blockers
 
@@ -43,3 +31,4 @@ launched:
 - Worker 025: `C:\Users\user\.codex\worktrees\dc3c\Codex Orchestrator`
 - Worker 026: `C:\Users\user\.codex\worktrees\9747\Codex Orchestrator`
 - Worker 027: `C:\Users\user\.codex\worktrees\04d6\Codex Orchestrator`
+- Worker 028: `C:\Users\user\.codex\worktrees\c12f\Codex Orchestrator`
