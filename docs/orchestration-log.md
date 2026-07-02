@@ -702,3 +702,29 @@
 - Cleanup note: Windows kept the physical worker folder locked at
   `C:\Users\user\.codex\worktrees\1957\Codex Orchestrator`; retry later after the app releases the
   handle.
+
+### Worker 018: Event SQLite Schema
+
+- Status: launched/in progress; not reviewed or merged
+- Pending worktree id: `local:eb757981-b7e3-4c3a-acdc-9714f8af14f0`
+- Expected worker branch: `worker/018-event-sqlite-schema`
+- Launch base: `54c60a3f90cf2bc87b08fbc0a1a938e589c8eb3d`
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 017's Artifact/ValidationRun schema
+  foundation is merged, verified, and cleaned; the Event schema slice should use current `main`, the
+  merged migration coordinator, and existing domain model rather than carrying Worker 017's
+  implementation context.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Report-back instruction: included explicitly in the worker prompt as a dedicated requirement,
+  separate from the completion report shape.
+- Scope: add pure TypeScript SQLite schema/migration support for domain `Event` records, compose the
+  new migration after Artifact/ValidationRun, add row mappers with JSON payload handling and
+  `node:sqlite` tests, and document the schema boundary.
+- Out of scope: event append/query store, event-sourced projections, CRUD stores for other records,
+  runtime database file opening, Tauri/Rust commands, Codex runtime integration, Git execution,
+  React/UI work, and package dependencies.
+- Expected result log: `docs/task-logs/worker-018-event-sqlite-schema.md`
+- Success signal: committed worker branch with focused schema/coordinator tests plus feasible
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` verification, followed
+  by a completion report sent back to the orchestration thread or an explicit note that cross-posting
+  was unavailable.
