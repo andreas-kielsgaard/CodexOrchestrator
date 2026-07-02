@@ -46,13 +46,15 @@ Already built on `main`:
 - Runtime-facing local SQLite database opener over the app store bundle.
 - Codex exec runtime adapter for non-interactive JSONL runs.
 - Application-layer run composition service over injected stores and Codex runtime.
+- Application-layer repo registry scan service over injected Git scanner and repo sync store
+  boundaries.
 
 Important gaps:
 
 - No UI/runtime composition that chooses the app database path and exposes stores to application
   services.
 - No persisted dashboard UI; the visible app is still seed/demo driven.
-- No repo registration/worktree creation UI path.
+- No concrete Git command scanner or repo/worktree UI path.
 - No task/run detail view.
 - No diff collector or validation command runner.
 - `npm run build:tauri` is blocked until Rust/Cargo are installed or on `PATH`.
@@ -75,7 +77,7 @@ events, diff, and validation result in the app.
 
 Current planned sequence:
 
-1. Add repo registration/scanning and worktree selection/creation.
+1. Add concrete Git scanner/runtime wiring and worktree selection/creation.
 2. Replace seed dashboard behavior with persisted task CRUD.
 3. Wire run controls and task/run detail UI to the composed run service.
 4. Add diff capture and validation command execution.

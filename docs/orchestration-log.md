@@ -1758,3 +1758,35 @@ orchestration thread`)
   focused service/store tests, `npm run lint`, `npm run format:check`, `npm run test`, and
   `npm run build`.
 - Report-back instruction: included in the worker prompt.
+
+### Worker 030 Review And Merge: Repo Registry / Scan Service Boundary
+
+- Status: reviewed, corrected, merged, verified, logged, and Git-cleaned
+- Worker commit: `0e5f2766e721ef827df4547f4e1a658cc4e49d1e` (`Add repo registry scan service`)
+- Orchestrator review correction commit:
+  `c30dc3dc048fd6c3b33420b2c70356fd878fc58e` (`Review Worker 030 scan result records`)
+- Merge commit: `a73d390ac8d9c1eb9584d3aa942ae5bd71abbfd1`
+- Result log: `docs/task-logs/worker-030-repo-registry-scan-service.md`
+- Accepted decision: `repoRegistryScan.ts` is an application boundary over injected
+  `GitRepoScanner`, `RepoSyncStore`, repo-sync ID providers, and clock. It scans, maps through the
+  existing Git facts mapper, persists through `syncRepoFromScanWithStore`, and returns the scanned
+  repo records plus compact scan/change metadata.
+- Accepted decision: list/remove repo registry behavior remains deferred until a concrete
+  UI/runtime caller needs it. The slice did not extend the SQLite store contract.
+- Review correction: result branch/worktree arrays now include only records touched by the current
+  scan; same-repo worktrees absent from the scan stay in the explicit stale worktree report.
+- Orchestrator verification before merge: `git diff --check main...worker/030-repo-registry-scan-service`,
+  `npm run test -- src/application/repoRegistryScan.test.ts`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` passed in the worker worktree after
+  the review correction. `cargo --version` and `rustc --version` failed because Rust/Cargo are not
+  on `PATH`.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed on main. `node:sqlite` emitted the expected experimental warning during
+  SQLite tests.
+- Drift check: the slice did not build React UI, create worktrees, link tasks to worktrees, wire
+  dashboard persistence, run Codex, collect diffs, execute validation commands, add review UI, or
+  add workflow-engine behavior.
+- Cleanup: `git worktree remove` unregistered the Worker 030 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\0d6b\Codex Orchestrator`; the merged branch
+  `worker/030-repo-registry-scan-service` was deleted and the locked physical folder was left in
+  place.

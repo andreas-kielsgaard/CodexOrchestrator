@@ -23,6 +23,8 @@ Already merged:
 - Runtime-facing local SQLite database opener over the app store bundle.
 - Codex exec runtime adapter for non-interactive JSONL runs.
 - Application-layer run composition service over injected stores and Codex runtime.
+- Application-layer repo registry scan service over injected Git scanner and repo sync store
+  boundaries.
 
 Known blocker:
 
@@ -32,8 +34,7 @@ Known blocker:
 
 | ID    | Task                           | Output                                                                                                      | Depends On                                |
 | ----- | ------------------------------ | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| FS-03 | Repo registry UI/service path  | Add/list/remove repos through persisted stores; scan selected repo into repo/branch/worktree records        | Existing Git parsers and repo sync stores |
-| FS-04 | Worktree creation for a task   | Create/select app-managed task worktree and link it to task/branch/repo records                             | FS-03                                     |
+| FS-04 | Worktree creation for a task   | Create/select app-managed task worktree and link it to task/branch/repo records                             | Merged repo registry scan service         |
 | FS-05 | Persisted Open Tasks dashboard | Dashboard reads/writes SQLite-backed tasks instead of seed data; supports create/edit/archive/state changes | Merged database opener                    |
 | FS-08 | Run controls in UI             | User can start a Codex run for a task in a selected worktree and see running/completed/failed state         | FS-04, FS-05, merged run composition      |
 | FS-09 | Task/run detail view           | Show task anchors, run history, final response, raw JSONL artifact link/summary, and event timeline         | FS-05, merged run composition             |
@@ -46,14 +47,14 @@ Known blocker:
 
 Critical path:
 
-1. FS-03 and FS-04: register repos and create/select task worktrees.
+1. FS-04: create/select task worktrees using the merged repo registry scan service.
 2. FS-05: replace seed tasks with persisted task CRUD.
 3. FS-08 and FS-09: expose run start and run review in the UI.
 4. FS-10, FS-11, FS-12: add review-grade diff and validation.
 
 Repo/worktree path:
 
-1. FS-03 registers and scans repos.
+1. Merged repo registry scan service registers/scans repos through injected Git and persistence boundaries.
 2. FS-04 creates or selects worktrees for tasks.
 3. FS-08, FS-10, and FS-11 rely on a concrete worktree path.
 
@@ -73,14 +74,10 @@ Review path:
 
 Safe immediately:
 
-- FS-03 can proceed at the service/store boundary.
+- FS-04 can proceed now that the repo registry scan service is merged.
 - FS-05 can start now that the database opener is merged, if it keeps browser/runtime boundaries
   explicit.
 - FS-13 can run anytime.
-
-Safe after FS-03:
-
-- FS-04 can proceed while FS-05 continues.
 
 Should wait:
 
@@ -91,12 +88,10 @@ Should wait:
 
 ## Recommended Worker Sequencing
 
-1. Launch FS-03 as a repo registration/scanning service/UI-boundary worker.
-2. Launch FS-05 once the runtime/database boundary for UI consumption is clear.
-3. Launch FS-04 after FS-03.
-4. Launch FS-08 and FS-09 as UI workers after FS-04/FS-05.
-5. Launch FS-10 and FS-11 in parallel after FS-04.
-6. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
+1. Launch FS-04 and FS-05 as independent workers if capacity allows.
+2. Launch FS-08 and FS-09 as UI workers after FS-04/FS-05.
+3. Launch FS-10 and FS-11 in parallel after FS-04.
+4. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
 
 ## Orchestration Notes
 
