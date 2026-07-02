@@ -36,7 +36,7 @@ any review or merge decision.
 ### Parent Traceability Commit
 
 - The parent orchestration thread created this successor and then committed `629a519` (`Record
-  Worker 021 successor orchestration thread`).
+Worker 021 successor orchestration thread`).
 - That commit recorded this thread id in `docs/orchestration-log.md` and
   `docs/handoffs/orchestration-handoff-2026-07-02-after-worker-021-merge-compaction.md`.
 - It did not launch Worker 022 or change implementation state.

@@ -1170,3 +1170,48 @@
 - Instruction: continue in a fresh `xhigh` successor orchestration thread after it re-ingests the
   handoff and required context files. The successor should inspect Worker 023 directly, then review
   and independently verify it before any merge.
+
+### Worker 023 Review And Merge: Conversation Store Boundary
+
+- Status: reviewed, merged, verified, logged, and Git-cleaned
+- Successor traceability checkpoint before review: `66bb0d8` (`Record Worker 023 successor
+orchestration thread`)
+- Worker thread: `019f23b4-93bc-7dd0-926d-199a0120e91e`
+- Worker commit: `1fb1b486435ffe6d512b20514b4df6f41eaec4a6`
+- Merge commit: `f994e2946c09ee844a4a2870d56a2bc6b839bbe7`
+- Result log: `docs/task-logs/worker-023-conversation-store-boundary.md`
+- Accepted decision: `ConversationStore` defines a narrow create/update/query boundary with
+  deterministic ID/time providers, immutable `id`, `provider`, and `createdAt`, typed
+  `ConversationNotFoundError` for missing updates, omitted update fields left unchanged, and `null`
+  update fields treated as explicit optional-field clears.
+- Accepted decision: mutable optional `taskId`, `taskRunId`, `externalThreadId`, and `summary`
+  fields are acceptable for this slice, matching the recent optional-link update contract and the
+  Worker 016 nullable `ON DELETE SET NULL` durability behavior.
+- Accepted decision: Conversation queries filter by optional `provider`, `taskId`, `taskRunId`, and
+  `externalThreadId`, order by `createdAt` plus stable `id` tie-breaker, return an empty result list
+  for `limit: 0`, and throw clear errors for invalid negative or non-integer limits.
+- Accepted decision: `SqliteConversationStore` uses the Worker 016 `conversationToRow` and
+  `conversationFromRow` mappers behind an injected SQLite-like interface; production code does not
+  import `node:sqlite`.
+- Accepted decision: the SQLite test fixture for the optional circular TaskRun/Conversation link
+  correctly follows Worker 016's nullable insert-then-link pattern.
+- Orchestrator verification before merge:
+  `git diff --check main...worker/023-conversation-store-boundary`,
+  `npm run test -- src/domain/conversationStore.test.ts src/infrastructure/sqlite/conversationStore.test.ts`,
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed in the worker
+  worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed on main. `format:check` initially flagged the parent handoff document, so
+  the orchestrator ran Prettier on
+  `docs/handoffs/orchestration-handoff-2026-07-02-after-worker-023-completion-compaction.md` before
+  rerunning the check successfully.
+- Verification note: `node:sqlite` emits Node's expected experimental warning during SQLite tests.
+- Drift check: still local-first and task-centered; Conversation persistence records task/run
+  conversation provenance behind a narrow store boundary and introduces no Codex credentials, Codex
+  runtime integration, transcript/message storage, ChatGPT export import, event emission,
+  event-sourced projections, workflow engine behavior, runtime database wiring, UI/React work, Git
+  execution, or package dependencies.
+- Cleanup: `git worktree remove` unregistered the Worker 023 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\14b0\Codex Orchestrator`; the merged branch
+  `worker/023-conversation-store-boundary` was deleted and the locked physical folder was left in
+  place.
