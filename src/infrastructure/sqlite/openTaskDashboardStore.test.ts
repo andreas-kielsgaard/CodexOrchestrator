@@ -43,6 +43,7 @@ describe('SqliteOpenTaskDashboardStore', () => {
           project: 'Codex Orchestrator',
           executionState: 'completed',
           attentionState: 'needs_review',
+          priority: 'normal',
           repo: 'Codex Orchestrator',
           branch: 'worker/012-open-tasks-sqlite-read-store',
           worktreePath: 'C:/Repos/Codex Orchestrator Worker 012',
@@ -161,6 +162,7 @@ describe('SqliteOpenTaskDashboardStore', () => {
           project: 'Codex Orchestrator',
           executionState: 'running',
           attentionState: 'needs_action_now',
+          priority: 'normal',
           updatedAt: now,
         },
       ]);

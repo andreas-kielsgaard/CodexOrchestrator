@@ -61,6 +61,26 @@ describe('App open task dashboard', () => {
     expect(client.findTask('task-2')?.executionState).toBe('archived');
   });
 
+  it('preserves existing task priority when editing title and summary', async () => {
+    const client = new FakeTaskDashboardClient();
+
+    render(<App taskDashboardClient={client} />);
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Edit Existing task'));
+    fireEvent.change(screen.getByLabelText('Edit task title'), {
+      target: { value: 'Priority preserved task' },
+    });
+    fireEvent.change(screen.getByLabelText('Edit task summary'), {
+      target: { value: 'Editing text should not flatten priority.' },
+    });
+    fireEvent.click(screen.getByLabelText('Save task'));
+
+    expect(await screen.findByText('Priority preserved task')).toBeInTheDocument();
+    expect(client.findTask('task-1')?.priority).toBe('high');
+  });
+
   it('shows backend errors from the injected client without rendering seed tasks', async () => {
     const client: TaskDashboardClient = {
       loadDashboard: async () => {
@@ -103,7 +123,7 @@ class FakeTaskDashboardClient implements TaskDashboardClient {
         summary: 'Already loaded from persistence.',
         executionState: 'draft',
         attentionState: 'needs_action_now',
-        priority: 'normal',
+        priority: 'high',
         createdAt: now,
         updatedAt: now,
       },

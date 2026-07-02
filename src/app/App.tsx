@@ -161,7 +161,7 @@ export function App({ taskDashboardClient }: AppProps) {
       summary: task.summary,
       attentionState: task.attentionState,
       executionState: task.executionState,
-      priority: 'normal',
+      priority: task.priority,
     });
   };
 
@@ -397,6 +397,7 @@ export function App({ taskDashboardClient }: AppProps) {
                             </div>
                             <footer>
                               <span>{task.project}</span>
+                              <span>{task.priority}</span>
                               <span>{task.executionState}</span>
                               <span>{task.attentionState}</span>
                               {task.repo && <span>{task.repo}</span>}

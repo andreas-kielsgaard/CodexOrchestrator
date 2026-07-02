@@ -47,6 +47,8 @@ Date: 2026-07-02
 
 ## Review Notes
 
+- Orchestrator review correction: `DashboardTask` now carries task priority so inline edit saves do
+  not silently flatten high/low priority tasks to `normal`.
 - React/browser modules do not import `src/infrastructure/sqlite/localAppDatabase.ts` or Node-only
   modules.
 - The SQLite-backed verification lives in application tests, keeping Node SQLite isolated from the

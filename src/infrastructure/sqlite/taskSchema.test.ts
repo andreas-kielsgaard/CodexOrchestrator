@@ -211,6 +211,7 @@ describe('open tasks SQLite schema', () => {
           project: 'Codex Orchestrator',
           executionState: 'completed',
           attentionState: 'needs_review',
+          priority: 'high',
           repo: 'Codex Orchestrator',
           branch: 'main',
           worktreePath: 'C:/Repos/Codex Orchestrator',
