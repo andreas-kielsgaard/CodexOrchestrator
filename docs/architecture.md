@@ -54,6 +54,13 @@ The TypeScript domain layer lives under `src/domain/`:
   artifact and order by `createdAt` plus a stable ID tie-breaker. The included in-memory
   implementation is a test helper, and the concrete SQLite adapter lives under
   `src/infrastructure/sqlite/`.
+- `conversationStore.ts` defines the create/update/query boundary for durable Conversation records.
+  Creates require a provider and title, use injected ID/time providers, and leave optional task,
+  task-run, external-thread, and summary fields unset unless provided. Updates keep `id`,
+  `provider`, and `createdAt` immutable, treat omitted fields as unchanged, and treat `null` as an
+  explicit clear for optional fields. Queries filter by provider, task, task run, or external thread
+  and order by `createdAt` plus a stable ID tie-breaker. The included in-memory implementation is a
+  test helper, and the concrete SQLite adapter lives under `src/infrastructure/sqlite/`.
 - `seedData.ts` provides demo records until SQLite persistence and repository APIs are introduced.
 
 SQLite migrations, Rust database commands, Git scanning, and Codex runtime integration are intentionally outside this slice.
@@ -214,6 +221,19 @@ production code. It uses the Worker 016 `taskRunToRow` and `taskRunFromRow` mapp
 handling and domain row translation stay centralized in the schema layer. When the injected
 database supports `exec`, create/update writes run inside `BEGIN`/`COMMIT` with rollback on failure;
 missing updates throw the typed `TaskRunNotFoundError`.
+
+## Conversation SQLite Store Boundary
+
+The Conversation store boundary lives in `src/domain/conversationStore.ts`, with the SQLite adapter
+in `src/infrastructure/sqlite/conversationStore.ts`. It persists conversation provenance records
+without parsing transcripts, importing ChatGPT exports, appending events, managing task-run back
+links, or opening database files.
+
+The SQLite adapter depends on an injected SQLite-like interface and does not import `node:sqlite` in
+production code. It uses the Worker 016 `conversationToRow` and `conversationFromRow` mappers so
+optional SQL `NULL` handling and domain row translation stay centralized in the schema layer. When
+the injected database supports `exec`, create and update writes run inside `BEGIN`/`COMMIT` with
+rollback on failure; missing updates throw the typed `ConversationNotFoundError`.
 
 ## Artifact SQLite Store Boundary
 
