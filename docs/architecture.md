@@ -77,6 +77,27 @@ Schema helpers now expose `enableRepoSyncSqliteForeignKeys` and `applyRepoSyncSq
 tests and future runtime wiring can consistently enable foreign keys and apply the ordered
 repo-sync migrations.
 
+## Open Tasks SQLite Schema Foundation
+
+The Open Tasks dashboard persistence schema foundation lives under `src/infrastructure/sqlite/` as
+pure TypeScript infrastructure. It defines ordered migration SQL for the dashboard's task subset
+without adding a CRUD/store implementation or runtime database wiring:
+
+- `tasks`: durable task rows with separate execution state, attention state, priority, optional
+  due/snooze timestamps, and optional technical anchors.
+- `task_conversation_links`: ordered `Task.conversationIds` links using `(task_id,
+conversation_id)` as the key plus a deterministic `position` column.
+
+The task schema reuses the repo-sync `projects`, `repos`, `branches`, and `worktrees` tables as
+foreign-key parents. Deleting a project cascades to its tasks. Deleting optional technical anchors
+sets `tasks.repo_id`, `tasks.branch_id`, or `tasks.worktree_id` to `NULL` so task intent survives
+technical cleanup. Deleting a task cascades to its conversation links.
+
+Conversation referential integrity is intentionally deferred until a future conversation schema
+slice. For now, `task_conversation_links.conversation_id` is persisted as a stable text identifier
+without a foreign key. Mapper helpers convert between `Task` records and SQLite rows, preserving
+optional fields as SQL `NULL` and preserving `conversationIds` by `position`.
+
 ## Git Adapter Boundary
 
 Git output parsing lives under `src/infrastructure/git/` as pure TypeScript infrastructure code. The current adapter foundation normalizes parseable command output from `git status --porcelain=v1 -z`, `git branch --format=...`, and `git worktree list --porcelain -z` into scan facts that can later feed the domain `Repo`, `Branch`, and `Worktree` records.
