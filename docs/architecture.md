@@ -86,6 +86,14 @@ UI/runtime wiring. Stale same-repo worktrees are reported separately rather than
 scan worktrees. It does not list or remove registered repos, create worktrees, choose database paths,
 execute Git directly, link tasks to worktrees, or expose raw command output as its primary API.
 
+`taskWorktreeSelection.ts` coordinates selecting or creating the technical worktree anchor for a
+task. It preflights task existence through `OpenTaskDashboardStore`, optionally asks an injected
+`GitWorktreeCreator` to create one narrow Git worktree, scans/syncs the repo through
+`repoRegistryScan.ts`, selects a scanned worktree by normalized path and/or branch name, and links
+the task through `OpenTaskWriteStore.updateTask` with repo, worktree, and available branch records.
+It intentionally does not run Git commands directly, delete worktrees, start Codex runs, collect
+diffs, run validations, or own UI behavior.
+
 ## Infrastructure Layer
 
 ### Git
@@ -173,7 +181,7 @@ The first usable runtime loop still needs:
 3. Runtime wiring that passes a concrete `GitRepoScanner`, `RepoSyncStore`, and repo-sync ID/clock
    providers into the repo registry scan service.
 4. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
-5. Worktree creation/selection for task anchoring.
+5. Concrete Git worktree creation and scanning adapters for the task worktree selection service.
 6. Diff and validation runners that store their outputs as artifacts/validation runs.
 7. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.
 
