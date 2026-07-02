@@ -282,3 +282,11 @@
 - Scope: add a pure TypeScript SQLite-backed implementation of `RepoSyncStore` using a small injected database interface compatible with `node:sqlite` tests, plus migration/foreign-key helpers, without app runtime DB wiring, Tauri/Rust commands, Git execution, Codex runtime integration, UI work, or package dependencies.
 - Expected result log: `docs/task-logs/worker-010-repo-sync-sqlite-store.md`
 - Success signal: committed worker branch with integration-style tests through `syncRepoFromScanWithStore` covering new repo insertion, existing updates, optional-field `NULL` clears, stale worktree preservation/reporting, missing default branch behavior, and scoped loading that excludes unrelated repos.
+
+### Orchestration Handoff After Worker 010 Launch Compaction
+
+- Status: prepared
+- Handoff report: `docs/handoffs/orchestration-handoff-2026-07-02-after-worker-010-launch-compaction.md`
+- Trigger: this orchestration thread resumed from compressed context after Worker 010 was launched.
+- Worker 010 status at handoff: active/in progress, not reviewed or merged.
+- Instruction: this compressed orchestration thread should not review or merge Worker 010; continue orchestration in a fresh `xhigh` control-room thread after it re-ingests the handoff and context files.
