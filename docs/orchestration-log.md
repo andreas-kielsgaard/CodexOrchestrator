@@ -1387,7 +1387,7 @@ orchestration thread`)
 
 ### Orchestration Handoff After Worker 025 Completion Compaction
 
-- Status: handoff prepared; successor initiation pending
+- Status: handoff prepared and successor initiated
 - Handoff:
   `docs/handoffs/orchestration-handoff-2026-07-02-after-worker-025-completion-compaction.md`
 - Trigger: this orchestration thread hit context compression immediately after Worker 025 reported
@@ -1398,8 +1398,9 @@ orchestration thread`)
 - Verified Worker 025 state before the handoff/log package:
   `54234f5d6be3b9b4a6f2b6d69dfd5051777ce4b5` on
   `worker/025-task-run-lifecycle-recorder`, clean.
-- Handoff/log package commit: to be recorded after this entry is committed.
-- Successor thread: to be initiated after this handoff/log package is committed.
+- Handoff/log package commit: `a2278cf` (`Hand off after Worker 025 completion compaction`)
+- Successor thread initiated: `019f23e3-0145-7473-82c8-4a3f13d8d829`
+- Successor initiated from main commit: `a2278cf`
 - Instruction: continue in a fresh `xhigh` successor orchestration thread after it re-ingests the
   handoff and required context files. The successor should inspect Worker 025 directly, then review
   and independently verify it before any merge.

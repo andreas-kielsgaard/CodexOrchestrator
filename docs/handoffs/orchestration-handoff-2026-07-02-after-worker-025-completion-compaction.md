@@ -25,9 +25,9 @@ Worker 025. The successor must inspect Worker 025 directly before any merge deci
   - Worker 025 worktree on `worker/025-task-run-lifecycle-recorder` at
     `54234f5d6be3b9b4a6f2b6d69dfd5051777ce4b5`
 - Active worker branch: `worker/025-task-run-lifecycle-recorder`
-- Handoff/log package commit: to be recorded after this file is committed
-- Successor orchestration thread: to be initiated after this handoff/log package is committed
-- Successor initiated from main commit: to be recorded after successor initiation
+- Handoff/log package commit: `a2278cf` (`Hand off after Worker 025 completion compaction`)
+- Successor orchestration thread: `019f23e3-0145-7473-82c8-4a3f13d8d829`
+- Successor initiated from main commit: `a2278cf`
 
 ## Completed Since Prior Handoff
 
