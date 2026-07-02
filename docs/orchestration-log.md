@@ -1554,3 +1554,38 @@ orchestration thread`)
 - Update timing rule: update `docs/active-task-map.md` as the last step before ending an
   orchestration operation, so momentary work is not logged as pending if it is resolved in the same
   operation.
+
+### Worker 026 Review And Merge: Codex JSONL Event Parser Boundary
+
+- Status: reviewed, corrected, merged, verified, logged, and Git-cleaned
+- Worker thread: `019f23eb-cbbe-7e31-9e43-ac92770a7bed`
+- Worker commit: `4486bcc9d8b9705fc1dc7d173398b78cace58bd6`
+- Orchestrator review correction commit: `2e375b1` (`Review Worker 026 parser summary guard`)
+- Merge commit: `3640d28dc51eaf104742f34ab551dfdc5dfb7aa0`
+- Result log: `docs/task-logs/worker-026-codex-jsonl-event-parser.md`
+- Accepted decision: the parser is a pure TypeScript infrastructure boundary for captured
+  `codex exec --json` JSONL streams. It parses documented event/item envelopes, preserves raw JSON
+  and unknown fields/types, reports line-numbered parse errors, ignores blank lines, and provides a
+  neutral summary helper for thread id, final completed agent message, terminal status, token
+  usage, and item counts.
+- Accepted decision: `itemCountsByType` counts every valid `item.*` observation by nested
+  `item.type`, so started/completed records for the same logical item both count.
+- Review correction: hardened `summarizeCodexJsonlEvents` so exported unknown event variants with
+  an `item.*` type are not treated as item events unless they carry the parser-produced item
+  envelope; added a regression test.
+- Documentation correction: resolved the architecture-doc merge conflict by preserving the newer
+  concise architecture shape and adding the Codex parser boundary under infrastructure.
+- Orchestrator verification before merge:
+  `npm run test -- src/infrastructure/codex/jsonlEvents.test.ts`, `git diff --check`,
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed in the worker
+  worktree after the review correction.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed on main. `node:sqlite` emitted the expected experimental warning during
+  SQLite tests.
+- Drift check: still local-first and task-centered; the slice introduces no Codex process
+  execution, credential handling, store writes, lifecycle composition, validation execution, Tauri
+  commands, UI work, Git execution, or package dependencies.
+- Cleanup: `git worktree remove` unregistered the Worker 026 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\9747\Codex Orchestrator`; the merged branch
+  `worker/026-codex-jsonl-event-parser` was deleted and the locked physical folder was left in
+  place.

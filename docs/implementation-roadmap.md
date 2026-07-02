@@ -42,10 +42,7 @@ Already built on `main`:
 - SQLite schema, migrations, and store adapters for repo sync, open tasks, events, task runs,
   conversations, artifacts, validation runs, and the app store bundle.
 - Application-level task-run lifecycle recorder over existing store boundaries.
-
-Active but not yet merged:
-
-- Worker 026 Codex JSONL parser boundary. Review and merge it before runtime adapter work.
+- Codex JSONL parser boundary for captured `codex exec --json` streams.
 
 Important gaps:
 
@@ -75,15 +72,14 @@ events, diff, and validation result in the app.
 
 Current planned sequence:
 
-1. Review and merge Worker 026.
-2. Add app database opening around the existing SQLite store bundle.
-3. Add repo registration/scanning and worktree selection/creation.
-4. Replace seed dashboard behavior with persisted task CRUD.
-5. Add a `codex exec --json` runtime adapter.
-6. Compose runtime adapter, JSONL parser, lifecycle recorder, stores, artifacts, and events.
-7. Add run controls and task/run detail UI.
-8. Add diff capture and validation command execution.
-9. Add the review surface that combines final response, diff, validation, and next action.
+1. Add app database opening around the existing SQLite store bundle.
+2. Add repo registration/scanning and worktree selection/creation.
+3. Replace seed dashboard behavior with persisted task CRUD.
+4. Add a `codex exec --json` runtime adapter.
+5. Compose runtime adapter, JSONL parser, lifecycle recorder, stores, artifacts, and events.
+6. Add run controls and task/run detail UI.
+7. Add diff capture and validation command execution.
+8. Add the review surface that combines final response, diff, validation, and next action.
 
 ## Later Roadmap
 
