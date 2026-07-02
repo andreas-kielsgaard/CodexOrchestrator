@@ -972,3 +972,40 @@
   `npm run format:check`, `npm run test`, and `npm run build` verification, followed by a
   completion report sent back to the orchestration thread or an explicit note that cross-posting was
   unavailable.
+
+### Worker 021 Review And Merge: Artifact Store Boundary
+
+- Status: reviewed, merged, verified, logged, and Git-cleaned
+- Worker thread: `019f239a-20fc-7af2-8f8b-6da7fc7f3436`
+- Worker commit: `d41e29a33279ac8b4b4973a8809c5c43bff320ea`
+- Merge commit: `a51d58b595786bd9e42aef62188957fac4d44c79`
+- Result log: `docs/task-logs/worker-021-artifact-store-boundary.md`
+- Accepted decision: `ArtifactStore` defines a narrow create/query boundary with deterministic
+  ID/time providers, required `kind` and `title`, optional `taskId`, `taskRunId`, `conversationId`,
+  `uri`, and `content` only when provided, and no mutation or broad CRUD behavior.
+- Accepted decision: Artifact queries filter by optional `kind`, `taskId`, `taskRunId`, and
+  `conversationId`, order by `createdAt` plus stable `id` tie-breaker, return an empty result list
+  for `limit: 0`, and throw clear errors for invalid negative or non-integer limits.
+- Accepted decision: `SqliteArtifactStore` uses the Worker 017 `artifactToRow` and
+  `artifactFromRow` mappers behind an injected SQLite-like interface; production code does not
+  import `node:sqlite`.
+- Accepted decision: SQLite query behavior currently loads ordered artifact rows and applies the
+  shared domain query helper in memory, centralizing filter/limit behavior until artifact volume
+  justifies SQL pushdown.
+- Orchestrator verification before merge:
+  `git diff --check main...worker/021-artifact-store-boundary`,
+  `npm run test -- src/domain/artifactStore.test.ts src/infrastructure/sqlite/artifactStore.test.ts`,
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed in the worker
+  worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed.
+- Verification note: `node:sqlite` emits Node's expected experimental warning during SQLite tests.
+- Drift check: still local-first and task-centered; Artifact persistence records durable local
+  outputs behind a narrow store boundary and introduces no Codex credentials, Codex runtime
+  integration, event emission, event-sourced projections, workflow engine behavior,
+  ValidationRun/Conversation store work, runtime database wiring, UI/React work, Git execution, or
+  package dependencies.
+- Cleanup: `git worktree remove` unregistered the Worker 021 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\fae3\Codex Orchestrator`; the merged branch
+  `worker/021-artifact-store-boundary` was deleted and the locked physical folder was left in
+  place.
