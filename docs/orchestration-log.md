@@ -788,6 +788,7 @@
 
 - Status: launched
 - Pending worktree id: `local:213868c6-7b32-48c5-849b-36336399de1f`
+- Worker thread: `019f22c4-3351-70d1-a42c-d84e16f96a47`
 - Expected worker branch: `worker/019-event-store-boundary`
 - Launch base: `55493e145f3623c1c7ae3491c1878924243d1158`
 - Reasoning effort: `medium`
@@ -810,3 +811,38 @@
   `npm run format:check`, `npm run test`, and `npm run build` verification, followed by a
   completion report sent back to the orchestration thread or an explicit note that cross-posting was
   unavailable.
+
+### Worker 019 Review And Merge: Event Store Boundary
+
+- Status: reviewed, merged, verified, logged, and Git-cleaned
+- Worker thread: `019f22c4-3351-70d1-a42c-d84e16f96a47`
+- Worker commit: `10faeec66b7695a1b7fc88b1e11472a2d6a46f59`
+- Merge commit: `8c3c3d6733c0405a10418b5750b0f9d496c09ecc`
+- Result log: `docs/task-logs/worker-019-event-store-boundary.md`
+- Accepted decision: `EventStore` defines a narrow append/query boundary with deterministic ID/time
+  providers, JSON-object payload cloning, chronological query ordering, optional link filters, and a
+  small in-memory implementation for tests.
+- Accepted decision: `SqliteEventStore` uses the Worker 018 `eventToRow` and `eventFromRow`
+  mappers behind an injected SQLite-like interface; production code does not import `node:sqlite`.
+- Accepted decision: SQLite query behavior currently loads ordered event rows and applies the shared
+  domain query helper in memory, centralizing filter/limit behavior until event volume justifies SQL
+  pushdown.
+- Accepted decision: `limit: 0` returns an empty result list and invalid negative/non-integer limits
+  throw a clear error.
+- Orchestrator verification before merge:
+  `git diff --check main...worker/019-event-store-boundary`,
+  `npm run test -- src/domain/eventStore.test.ts src/infrastructure/sqlite/eventStore.test.ts`,
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed in the worker
+  worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed.
+- Verification note: `node:sqlite` emits Node's expected experimental warning during SQLite tests.
+- Drift check: still local-first and task-centered; Event persistence remains durable provenance
+  behind a narrow store boundary and introduces no Codex credentials, Codex runtime integration,
+  event-sourced projections, workflow engine behavior, Tauri/Rust runtime database wiring, Git
+  execution, React/UI work, or package dependencies.
+- Cleanup: `git worktree remove` unregistered the worker worktree and the merged branch
+  `worker/019-event-store-boundary` was deleted.
+- Cleanup note: Windows kept the physical worker folder locked at
+  `C:\Users\user\.codex\worktrees\282a\Codex Orchestrator`; retry later after the app releases the
+  handle.
