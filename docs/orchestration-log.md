@@ -851,6 +851,8 @@
 
 - Status: launched
 - Pending worktree id: `local:866a8c44-9bd5-44ff-b3f6-bc9c7c71a539`
+- Worker thread: `019f22d3-9016-7861-a37e-b9582e46e616`
+- Worktree path: `C:\Users\user\.codex\worktrees\a979\Codex Orchestrator`
 - Expected worker branch: `worker/020-task-run-store-boundary`
 - Launch base: `74fdd122aa3d4f178bae9a79cb0d65b21313e57f`
 - Reasoning effort: `medium`
