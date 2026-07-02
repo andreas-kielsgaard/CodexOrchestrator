@@ -79,6 +79,20 @@ The Git infrastructure parses raw command output for status, branch, and worktre
 assembles normalized scan results. It does not execute Git yet. Future command execution should feed
 raw output into these parsers rather than duplicating parsing in UI or application code.
 
+### Codex
+
+Location: `src/infrastructure/codex/`
+
+`jsonlEvents.ts` parses captured `codex exec --json` newline-delimited JSON streams into typed
+documented event envelopes while preserving each raw JSON object for future compatibility. It
+handles documented top-level events, documented item categories, unknown event/item passthrough,
+line-numbered parse errors, final agent-message extraction, terminal status, token usage, and item
+counts.
+
+This boundary does not execute Codex, read credentials, write stores, create artifacts/events, or
+own task lifecycle transitions. Future runtime composition should use it after capturing raw output
+and before updating task-run state.
+
 ### SQLite
 
 Location: `src/infrastructure/sqlite/`
@@ -117,13 +131,12 @@ before adding rich run review surfaces.
 
 The first usable runtime loop still needs:
 
-1. Review/merge the Codex JSONL parser currently on Worker 026.
-2. Runtime database opening and store-bundle construction.
-3. A `CodexRuntime` adapter that invokes `codex exec --json` and streams raw JSONL.
-4. A composition service that stores raw JSONL, extracts final response/thread metadata, updates
+1. Runtime database opening and store-bundle construction.
+2. A `CodexRuntime` adapter that invokes `codex exec --json` and streams raw JSONL.
+3. A composition service that stores raw JSONL, extracts final response/thread metadata, updates
    lifecycle state, and appends events.
-5. Diff and validation runners that store their outputs as artifacts/validation runs.
-6. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.
+4. Diff and validation runners that store their outputs as artifacts/validation runs.
+5. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.
 
 ## Testing And Verification
 
