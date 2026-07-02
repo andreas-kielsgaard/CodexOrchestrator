@@ -1744,6 +1744,7 @@ orchestration thread`)
 
 - Status: launched in a fresh worktree worker
 - Pending worktree id: `local:180e2980-5302-49a3-bd40-809cfe73d402`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\0d6b\Codex Orchestrator`
 - Expected branch: `worker/030-repo-registry-scan-service`
 - Launch base: `c9fbb5696983411e5866a19ff1658dada372f3c2` (`Log Worker 029 merge`)
 - Goal: add the narrow application boundary for registering/scanning repositories into persisted
