@@ -126,5 +126,5 @@ Should wait:
 - Keep Codex credentials owned by Codex. The app should invoke Codex, not inspect its auth state.
 - Store raw Codex JSONL as an artifact before relying on normalized summaries.
 - Treat state transitions as lifecycle-recorder behavior, not UI behavior.
-- Update the active task map whenever a task is active, blocked, complete-but-unreviewed, or cleaned
-  up.
+- Update `docs/active-task-map.md` as the last step before ending an orchestration operation, after
+  it is clear which tasks remain blocked, active, or complete-but-unreviewed.

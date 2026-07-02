@@ -1,8 +1,5 @@
 # Orchestration Learnings
 
-Date started: 2026-07-01
-Last pruned: 2026-07-02
-
 This file captures practical lessons for running the control-room plus worker-chat process. Treat
 "Guardrails" as authoritative. Treat "Skill Cues" and "Incident Cues" as prompts for better
 judgment, not extra procedure.
@@ -37,11 +34,12 @@ explicitly rejected.
 ### Context Recovery
 
 Recovery is active-task-map based. On compaction or compressed-summary resume, read the current
-orchestration docs and the active task map at the top of `docs/orchestration-log.md`; do not replay
-old handoff chains.
+orchestration docs and `docs/active-task-map.md`; do not replay old handoff chains or scan the
+orchestration log by default.
 
 Keep the active task map current and small. Remove tasks once they are reviewed, merged or rejected,
-verified, logged, and Git-cleaned.
+verified, logged, and Git-cleaned. Update it as the last step before ending an orchestration
+operation so it reflects unresolved work rather than momentary in-progress state.
 
 ### Visible Trace
 
@@ -101,5 +99,5 @@ Check registration and branch state before cleanup. If Windows keeps a physical 
 - Worker 006 showed that orchestration should not stop merely because a merge checkpoint is clean.
 - Worker 015 showed that report template alone is not enough; the prompt must explicitly say to
   report back.
-- Later compaction handling showed that handoff chains were too heavy; the active task map is the
-  current recovery mechanism.
+- Later compaction handling showed that handoff chains and the orchestration log were too heavy for
+  recovery; `docs/active-task-map.md` is the current recovery mechanism.

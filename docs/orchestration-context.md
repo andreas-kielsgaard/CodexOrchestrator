@@ -1,7 +1,5 @@
 # Codex Orchestrator Control Context
 
-Date: 2026-07-02
-
 ## Purpose
 
 This repository is building a local-first control plane for Codex-driven work. The orchestration
@@ -13,21 +11,22 @@ review results, merge accepted work, keep state recoverable, and prevent product
 ### Keep Work Moving
 
 - Choose the next smallest useful slice from `docs/first-slice-completion-plan.md`,
-  `docs/implementation-roadmap.md`, and the active task map in `docs/orchestration-log.md`.
+  `docs/implementation-roadmap.md`, and `docs/active-task-map.md`.
 - Continue after a clean reviewed merge when the next slice is clear and no blocker, user decision,
   or review correction is pending.
-- Pause only for a concrete reason: product decision, blocker, failed review, unclear next slice, or
-  drift from project intent. State the reason and the likely next step.
+- Pause only for a concrete reason: product decision, blocker, failed review, unclear next slice,
+  drift from project intent, or explicit user request. State the reason and the likely next step.
 
 ### Delegate Clearly
 
 Every implementation worker prompt must include:
 
-- task goal and explicit out-of-scope boundaries
-- context files to read, kept compact
-- expected branch/worktree
-- expected result log under `docs/task-logs/`
-- required verification commands
+- task goal
+- explicit boundaries for meaningful work that is intentionally deferred
+- context critical to intelligent completion of the task
+- targeted branch/worktree
+- targeted result log under `docs/task-logs/`
+- proposed verification commands
 - requirement to commit the completed slice unless blocked or exploratory
 - a dedicated "Report back" instruction telling the worker to message the orchestration thread when
   complete
@@ -46,21 +45,21 @@ Workers should receive enough context to act well, not a transcript dump.
 
 ### Keep Recovery Cheap
 
-The active task map at the top of `docs/orchestration-log.md` is the recovery surface.
+`docs/active-task-map.md` is the recovery surface. `docs/orchestration-log.md` is a historical audit
+trail; consult it only when a specific decision, commit, or incident needs investigation.
 
 When compaction happens or recovery starts from a compressed summary, re-ingest only:
 
 1. `docs/implementation-roadmap.md`
 2. `docs/orchestration-context.md`
 3. `docs/orchestration-learnings.md`
-4. `docs/orchestration-log.md`, starting with the active task map
-
-Do not re-ingest historical handoff files unless the user asks or a specific old incident must be
-audited.
+4. `docs/active-task-map.md`
 
 Keep the active task map limited to work that still needs attention: active workers,
 complete-but-unreviewed branches, corrections, merge cleanup, blockers, and pending decisions.
-Archive finished tasks by pointing to result logs instead of copying their details forward.
+Update it as the last step before ending an orchestration operation, after it is clear which tasks
+remain unresolved. Archive finished tasks by pointing to result logs instead of copying their
+details forward.
 
 ### Preserve Product Intent
 
@@ -77,23 +76,8 @@ If multiple checks fail, stop and course-correct before launching more implement
 
 ## Worker Completion Contract
 
-Workers should report:
-
-```text
-Task complete: <task title>
-Branch/worktree: <branch and path>
-Commit: <sha or intentionally uncommitted reason>
-Base: <main sha or note if behind>
-Git status: <short status>
-Result log: <path>
-Summary: <brief summary>
-Changed files: <short grouped list>
-Verification: <command -> pass/fail>
-Blockers: <none or exact blocker>
-Needs review: <specific files/decisions/risks>
-```
-
-The report-back instruction is mandatory; this report shape is only the template.
+Workers should at minimum report a brief summary of the work they completed. Ask for any additional
+details needed for post-work verification in the worker prompt.
 
 ## Judgment Cues
 
@@ -104,4 +88,5 @@ The report-back instruction is mandatory; this report shape is only the template
   redesign.
 - For UI-heavy slices, decide before launch whether the work needs reusable components, isolated
   review, or a separate usability pass.
-- If integration, cleanup, or branch repair becomes its own task, consider a focused admin worker.
+- If conceptually separate work can be done independently in parallel, you may launch several
+  workers in parallel.

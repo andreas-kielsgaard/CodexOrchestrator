@@ -1,80 +1,8 @@
 # Orchestration Log
 
-## Active Task Map
-
-Updated: 2026-07-02
-
-This is the canonical compaction-recovery map. On recovery, read this section before older log
-entries. Historical handoff files under `docs/handoffs/` are archival and are not part of normal
-recovery unless the user explicitly asks for an old incident audit.
-
-### Active
-
-#### Worker 026: Codex JSONL Event Parser Boundary
-
-- Status: complete, clean, unreviewed, and unmerged
-- Worker thread: `019f23eb-cbbe-7e31-9e43-ac92770a7bed`
-- Pending worktree id: `local:fa08fdf9-c2b5-453e-85af-9d2ab590d2e8`
-- Branch: `worker/026-codex-jsonl-event-parser`
-- Worktree: `C:\Users\user\.codex\worktrees\9747\Codex Orchestrator`
-- Launch base: `52c25d6839c8a7da7eaa2135ed5efcef6dd78448` (`Log Worker 025 merge`)
-- Current main after launch log: `572a947a714238d18e755b09a595b5070a266cd4`
-  (`Log Worker 026 launch`)
-- Worker commit: `4486bcc9d8b9705fc1dc7d173398b78cace58bd6`
-- Merge-base with main: `52c25d6839c8a7da7eaa2135ed5efcef6dd78448`
-- Result log: `docs/task-logs/worker-026-codex-jsonl-event-parser.md` on the worker branch
-- Worker-reported verification: `git diff --check main...worker/026-codex-jsonl-event-parser`,
-  focused parser tests, `npm run lint`, `npm run format:check`, `npm run test`, and
-  `npm run build` passed.
-- Review notes: inspect `itemCountsByType` semantics, which count every valid `item.*` observation
-  by nested `item.type`, and review intentionally minimal documented-envelope validation for future
-  Codex CLI compatibility.
-- Next orchestration action: inspect the worker branch/result log directly, review source before
-  any merge, run independent pre-merge verification, then merge, post-merge verify, log, and clean
-  branch/worktree state if accepted.
-
-### Current Operational Notes
-
-- `npm run build:tauri` remains blocked because Rust/Cargo are not installed or not on `PATH`.
-- Leave Windows-locked physical leftover worktree folders in place unless an explicit cleanup task
-  is launched. Known locked leftovers:
-  - Worker 019: `C:\Users\user\.codex\worktrees\282a\Codex Orchestrator`
-  - Worker 021: `C:\Users\user\.codex\worktrees\fae3\Codex Orchestrator`
-  - Worker 022: `C:\Users\user\.codex\worktrees\cea2\Codex Orchestrator`
-  - Worker 023: `C:\Users\user\.codex\worktrees\14b0\Codex Orchestrator`
-  - Worker 024: `C:\Users\user\.codex\worktrees\ab51\Codex Orchestrator`
-  - Worker 025: `C:\Users\user\.codex\worktrees\dc3c\Codex Orchestrator`
-
-### Archived Worker Result Logs
-
-These workers are no longer active orchestration tasks. Re-ingest their result logs only when a
-current review or implementation slice needs the specific historical detail.
-
-- Worker 001: `docs/task-logs/worker-001-bootstrap.md`
-- Worker 002: `docs/task-logs/worker-002-domain-model.md`
-- Worker 003: `docs/task-logs/worker-003-git-adapter-foundation.md`
-- Worker 004: `docs/task-logs/worker-004-git-scan-mapping.md`
-- Worker 005: `docs/task-logs/worker-005-repo-sync-planning.md`
-- Worker 006: `docs/task-logs/worker-006-repo-sync-plan-applier.md`
-- Worker 007: `docs/task-logs/worker-007-repo-sync-service.md`
-- Worker 008: `docs/task-logs/worker-008-repo-sync-store-boundary.md`
-- Worker 009: `docs/task-logs/worker-009-repo-sync-sqlite-schema.md`
-- Worker 010: `docs/task-logs/worker-010-repo-sync-sqlite-store.md`
-- Worker 011: `docs/task-logs/worker-011-open-tasks-sqlite-schema.md`
-- Worker 012: `docs/task-logs/worker-012-open-tasks-sqlite-read-store.md`
-- Worker 013: `docs/task-logs/worker-013-open-tasks-write-boundary.md`
-- Worker 014: `docs/task-logs/worker-014-open-tasks-sqlite-write-store.md`
-- Worker 015: `docs/task-logs/worker-015-sqlite-migration-coordinator.md`
-- Worker 016: `docs/task-logs/worker-016-run-conversation-sqlite-schema.md`
-- Worker 017: `docs/task-logs/worker-017-artifact-validation-sqlite-schema.md`
-- Worker 018: `docs/task-logs/worker-018-event-sqlite-schema.md`
-- Worker 019: `docs/task-logs/worker-019-event-store-boundary.md`
-- Worker 020: `docs/task-logs/worker-020-task-run-store-boundary.md`
-- Worker 021: `docs/task-logs/worker-021-artifact-store-boundary.md`
-- Worker 022: `docs/task-logs/worker-022-validation-run-store-boundary.md`
-- Worker 023: `docs/task-logs/worker-023-conversation-store-boundary.md`
-- Worker 024: `docs/task-logs/worker-024-sqlite-store-bundle.md`
-- Worker 025: `docs/task-logs/worker-025-task-run-lifecycle-recorder.md`
+This is a historical audit trail. It is useful when investigating a past decision, commit, or
+incident, but it is not the operational recovery surface. Current unresolved orchestration state
+lives in `docs/active-task-map.md`.
 
 ## 2026-07-01
 
@@ -1608,3 +1536,21 @@ orchestration thread`)
   their worker result logs under `docs/task-logs/`.
 - Superseded behavior: do not write new handoff reports, create successor orchestration threads, or
   re-ingest historical `docs/handoffs/` files solely because compaction occurred.
+
+### Admin Correction: Separate Active Task Map
+
+- Status: applied
+- Trigger: the user clarified that `docs/orchestration-log.md` is too bloated to be the recovery
+  surface and should remain a historical audit trail.
+- Updated files:
+  - `docs/active-task-map.md`
+  - `docs/orchestration-context.md`
+  - `docs/orchestration-learnings.md`
+  - `docs/orchestration-log.md`
+- Current recovery rule: use `docs/active-task-map.md` for unresolved tasks, blockers, unreviewed
+  branches, and cleanup that affects current work.
+- Current log rule: use `docs/orchestration-log.md` only when investigating a specific past
+  decision, commit, or incident.
+- Update timing rule: update `docs/active-task-map.md` as the last step before ending an
+  orchestration operation, so momentary work is not logged as pending if it is resolved in the same
+  operation.
