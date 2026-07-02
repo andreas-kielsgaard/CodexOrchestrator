@@ -1215,3 +1215,34 @@ orchestration thread`)
   folder deletion at `C:\Users\user\.codex\worktrees\14b0\Codex Orchestrator`; the merged branch
   `worker/023-conversation-store-boundary` was deleted and the locked physical folder was left in
   place.
+
+### Worker 024: App SQLite Store Bundle
+
+- Status: launched
+- Pending worktree id: `local:86a5431c-4b4f-4b6d-90ec-eeed89772a39`
+- Worker thread: `019f23c6-1c5a-7120-9b5d-cb5c6e1e9cc1`
+- Worktree path: `C:\Users\user\.codex\worktrees\ab51\Codex Orchestrator`
+- Expected worker branch: `worker/024-sqlite-store-bundle`
+- Launch base: `4e0ab46` (`Log Worker 023 merge`)
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 023's Conversation store boundary is
+  merged, verified, logged, and Git-cleaned; the store-bundle slice should use current `main`, the
+  merged store adapters, and the migration coordinator rather than carrying Worker 023's
+  implementation context.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Report-back instruction: included explicitly in the worker prompt as a dedicated requirement,
+  separate from the completion report shape.
+- Scope: add a pure TypeScript app-level SQLite store bundle/factory that enables app foreign keys,
+  applies migrations, and constructs the existing SQLite adapters for repo sync, Open Tasks
+  read/write, Event, TaskRun, Conversation, Artifact, and ValidationRun stores from one injected
+  database and explicit deterministic providers.
+- Out of scope: runtime database file opening, path selection, migrations-on-startup policy,
+  Tauri/Rust commands, React/UI work, Git execution, Codex runtime integration, Codex JSONL parsing,
+  workflow engine behavior, event emission automation, package/dependency changes, and new broad
+  CRUD stores beyond assembling existing adapters.
+- Expected result log: `docs/task-logs/worker-024-sqlite-store-bundle.md`
+- Success signal: committed worker branch with focused app-store-bundle tests plus feasible
+  `git diff --check main...worker/024-sqlite-store-bundle`,
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` verification,
+  followed by a completion report sent back to the orchestration thread or an explicit note that
+  cross-posting was unavailable.
