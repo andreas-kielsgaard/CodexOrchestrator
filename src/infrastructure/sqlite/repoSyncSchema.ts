@@ -5,6 +5,10 @@ export interface SqliteMigration {
   sql: string;
 }
 
+export interface SqliteMigrationDatabase {
+  exec(sql: string): unknown;
+}
+
 export const repoSyncSqliteMigrations: SqliteMigration[] = [
   {
     id: '001_repo_sync_schema',
@@ -64,6 +68,16 @@ CREATE TABLE IF NOT EXISTS worktrees (
 
 export function repoSyncSqliteSchemaSql(): string {
   return repoSyncSqliteMigrations.map((migration) => migration.sql).join('\n');
+}
+
+export function enableRepoSyncSqliteForeignKeys(db: SqliteMigrationDatabase): void {
+  db.exec('PRAGMA foreign_keys = ON;');
+}
+
+export function applyRepoSyncSqliteMigrations(db: SqliteMigrationDatabase): void {
+  for (const migration of repoSyncSqliteMigrations) {
+    db.exec(migration.sql);
+  }
 }
 
 export interface ProjectRow {
