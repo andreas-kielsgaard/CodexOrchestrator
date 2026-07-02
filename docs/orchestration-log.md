@@ -267,3 +267,18 @@
 - Drift check: still local-first, task-centered, Git repo/branch/worktree data remains a technical-anchor persistence subset, no Codex credentials or runtime integration were introduced, and no Tauri/Rust runtime DB wiring was added.
 - Cleanup: removed Git worktree registration and deleted merged branch `worker/009-repo-sync-sqlite-schema`.
 - Cleanup note: Windows kept a physical leftover directory locked at `C:\Users\user\.codex\worktrees\f0e3\Codex Orchestrator`; retry later after the app releases the handle.
+
+### Worker 010: Repo Sync SQLite Store Adapter
+
+- Status: launched
+- Worker thread: `019f2211-ee6a-7ab0-bea4-01360a60189b`
+- Pending worktree id: `local:66b65fad-ef37-4a05-bd23-d078ba76a953`
+- Worktree path: `C:\Users\user\.codex\worktrees\8dd6\Codex Orchestrator`
+- Expected worker branch: `worker/010-repo-sync-sqlite-store`
+- Launch base: `e772b0e`
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 009's implementation is merged and cleaned; the SQLite store adapter should use current `main`, Worker 008/009 result logs, and the merged store/schema modules rather than carrying the prior worker conversation.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Scope: add a pure TypeScript SQLite-backed implementation of `RepoSyncStore` using a small injected database interface compatible with `node:sqlite` tests, plus migration/foreign-key helpers, without app runtime DB wiring, Tauri/Rust commands, Git execution, Codex runtime integration, UI work, or package dependencies.
+- Expected result log: `docs/task-logs/worker-010-repo-sync-sqlite-store.md`
+- Success signal: committed worker branch with integration-style tests through `syncRepoFromScanWithStore` covering new repo insertion, existing updates, optional-field `NULL` clears, stale worktree preservation/reporting, missing default branch behavior, and scoped loading that excludes unrelated repos.
