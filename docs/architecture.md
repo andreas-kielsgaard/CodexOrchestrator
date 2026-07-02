@@ -139,7 +139,7 @@ When the injected database supports `exec`, create/update/archive writes run ins
 The app-level SQLite migration coordinator lives in
 `src/infrastructure/sqlite/migrationCoordinator.ts` as pure TypeScript infrastructure. It composes
 the current schema families in deterministic order: repo-sync migrations first, then Open Tasks
-migrations, then TaskRun/Conversation migrations.
+migrations, then TaskRun/Conversation migrations, then Artifact/ValidationRun migrations.
 
 The coordinator depends on an injected SQLite-like interface with `exec` and `prepare`; it does not
 open database files and does not import `node:sqlite` in production code. Runtime callers should use
@@ -176,6 +176,28 @@ insert a task run without a conversation, insert the conversation linked to that
 task run with the conversation ID. Row mappers convert `TaskRun` and `Conversation` records to and
 from SQLite rows, preserve optional fields as SQL `NULL`, and constrain execution/provider unions as
 checked text values.
+
+## Artifact and ValidationRun SQLite Schema Foundation
+
+The Artifact and ValidationRun persistence schema foundation lives under
+`src/infrastructure/sqlite/` as pure TypeScript infrastructure. It defines ordered migration SQL for
+durable local outputs and validation attempts:
+
+- `artifacts`: optional links to tasks, task runs, and conversations plus checked artifact kind,
+  title, optional URI/content, and creation timestamp.
+- `validation_runs`: optional links to tasks and task runs, command/status details, optional timing
+  and exit metadata, and an optional output artifact link.
+
+All links in this schema are nullable and use `ON DELETE SET NULL` so artifacts and validation
+history survive cleanup of related workflow/provenance rows. `validation_runs.output_artifact_id`
+references `artifacts(id)` when present and is nullable so callers can insert a validation run
+before its output artifact exists, then update the validation row after the artifact is recorded.
+Row mappers convert `Artifact` and `ValidationRun` records to and from SQLite rows, preserve
+optional fields as SQL `NULL`, and constrain artifact-kind/validation-status unions as checked text
+values.
+
+This slice does not add CRUD stores, runtime database file opening, Tauri/Rust commands, Codex
+runtime integration, Git execution, React/UI work, or event persistence.
 
 ## Git Adapter Boundary
 

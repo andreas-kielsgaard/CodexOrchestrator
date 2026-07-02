@@ -30,6 +30,7 @@ describe('task run and conversation SQLite schema', () => {
 
     try {
       expect(tableNames(db)).toEqual([
+        'artifacts',
         'branches',
         'conversations',
         'projects',
@@ -38,6 +39,7 @@ describe('task run and conversation SQLite schema', () => {
         'task_conversation_links',
         'task_runs',
         'tasks',
+        'validation_runs',
         'worktrees',
       ]);
     } finally {
