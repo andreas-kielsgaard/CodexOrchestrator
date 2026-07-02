@@ -1009,3 +1009,21 @@
   folder deletion at `C:\Users\user\.codex\worktrees\fae3\Codex Orchestrator`; the merged branch
   `worker/021-artifact-store-boundary` was deleted and the locked physical folder was left in
   place.
+
+### Orchestration Handoff After Worker 021 Merge Compaction
+
+- Status: handoff prepared and successor initiated
+- Handoff:
+  `docs/handoffs/orchestration-handoff-2026-07-02-after-worker-021-merge-compaction.md`
+- Trigger: this orchestration thread hit context compression immediately after Worker 021 was
+  reviewed, merged, verified, logged, and Git-cleaned. Per the operating model, compaction is an
+  immediate handoff trigger.
+- Main state before the handoff/log package: `a51d58b595786bd9e42aef62188957fac4d44c79`, clean
+  except pre-existing `origin/main [gone]` and the pending handoff/log changes.
+- Handoff/log package commit: `204e322` (`Hand off after Worker 021 merge compaction`)
+- Successor thread initiated: `019f23a6-ff13-7120-93bf-5275d8062359`
+- Successor initiated from main commit: `204e322`
+- Instruction: continue in a fresh `xhigh` successor orchestration thread after it re-ingests the
+  handoff and required context files. The successor should verify Git state before launching Worker
+  022 and should treat the recommended ValidationRun Store Boundary slice as a recommendation, not
+  as already-launched work.

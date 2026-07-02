@@ -13,6 +13,16 @@ This is not a project pause. The next orchestration thread should use `xhigh` re
 the required context, verify Git state, and continue orchestration from a clean checkpoint. Do not
 launch Worker 022 from the compressed thread.
 
+Successor initiation:
+
+- Successor thread id: `019f23a6-ff13-7120-93bf-5275d8062359`
+- Initiated from handoff/log package commit: `204e322` (`Hand off after Worker 021 merge
+compaction`)
+- This traceability update is expected to advance `main` by one commit after the successor has
+  already been initiated.
+- Successor prompt instructs the new thread to verify Git state, re-ingest the required context,
+  and continue orchestration from the clean post-Worker-021 checkpoint.
+
 ## Required Context Files
 
 Read these before launching workers, reviewing worker work, merging branches, or making new
