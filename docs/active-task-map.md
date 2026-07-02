@@ -12,7 +12,11 @@ otherwise resolve it.
 
 ## Active Tasks
 
-- None.
+- Worker 038: Local Runtime Service Composition is active in
+  `C:\Users\user\.codex\worktrees\c063\Codex Orchestrator` on target branch
+  `worker/038-local-runtime-service-composition`. Pending worktree id:
+  `local:00c6240a-28aa-4435-86d2-deb96e553627`. Await completion report and result log
+  `docs/task-logs/worker-038-local-runtime-service-composition.md`; review before merge.
 
 ## Pending Blockers / Follow-Up
 

@@ -2152,3 +2152,24 @@ orchestration thread`)
   folder deletion at `C:\Users\user\.codex\worktrees\35fe\Codex Orchestrator`; the merged branch
   `worker/037-open-tasks-tauri-sqlite-backend` was deleted and the locked physical folder was left
   in place.
+
+### Worker 038 Launch: Local Runtime Service Composition
+
+- Status: launched in a fresh worktree worker
+- Pending worktree id: `local:00c6240a-28aa-4435-86d2-deb96e553627`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\c063\Codex Orchestrator`
+- Target branch: `worker/038-local-runtime-service-composition`
+- Launch base observed in worktree: `7b6fbc9` (`Log Worker 037 merge`), detached until the worker
+  creates the target branch
+- Goal: add a narrow Node-only local runtime composition boundary that opens the local app SQLite
+  database and wires the existing application services to the merged concrete local Git, Codex, and
+  validation adapters.
+- Explicitly deferred: React UI controls, task/run detail UI, review surface UI, Tauri/Rust
+  commands, Rust/Cargo environment work, repo registry list/remove behavior, branch naming policy,
+  cleanup policy, workflow-engine behavior, live process supervision, and live Git/Codex process
+  execution in tests.
+- Required result log: `docs/task-logs/worker-038-local-runtime-service-composition.md`
+- Required verification: `git diff --check main...worker/038-local-runtime-service-composition`,
+  focused tests for the new module, `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build`.
+- Report-back instruction: included in the worker prompt.
