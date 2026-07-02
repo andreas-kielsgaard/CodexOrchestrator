@@ -137,7 +137,7 @@ When the injected database supports `exec`, create/update/archive writes run ins
 The app-level SQLite migration coordinator lives in
 `src/infrastructure/sqlite/migrationCoordinator.ts` as pure TypeScript infrastructure. It composes
 the current schema families in deterministic order: repo-sync migrations first, then Open Tasks
-migrations.
+migrations, then TaskRun/Conversation migrations.
 
 The coordinator depends on an injected SQLite-like interface with `exec` and `prepare`; it does not
 open database files and does not import `node:sqlite` in production code. Runtime callers should use
@@ -149,6 +149,31 @@ position. Duplicate migration IDs are rejected before any SQL is applied. Each u
 runs with its audit-row insert in a transaction, so failed migrations are not recorded and their DDL
 is rolled back by SQLite. Tests inject deterministic applied timestamps for auditability while
 future runtime wiring can provide its own clock.
+
+## TaskRun and Conversation SQLite Schema Foundation
+
+The TaskRun and Conversation persistence schema foundation lives under
+`src/infrastructure/sqlite/` as pure TypeScript infrastructure. It defines ordered migration SQL for
+the provenance records that connect a task to a concrete execution attempt and its conversation
+trace:
+
+- `task_runs`: task-owned execution attempts with optional conversation/worktree links, execution
+  state, optional start/completion timestamps, and optional exit code.
+- `conversations`: Codex, ChatGPT-export, or manual conversation records with optional task and
+  task-run links plus external thread metadata.
+
+`task_runs.task_id` references `tasks(id)` with `ON DELETE CASCADE` so task-owned run history is
+cleaned up with the task. Optional links use `ON DELETE SET NULL`: deleting a worktree does not
+delete a run, deleting a conversation clears `task_runs.conversation_id`, deleting a task run clears
+`conversations.task_run_id`, and deleting a task clears `conversations.task_id`. This keeps local
+provenance records durable when related technical or workflow records are cleaned up.
+
+The optional `TaskRun` to `Conversation` relationship is represented with nullable foreign keys on
+both tables. This preserves referential integrity while keeping insertion practical: callers can
+insert a task run without a conversation, insert the conversation linked to that run, then update the
+task run with the conversation ID. Row mappers convert `TaskRun` and `Conversation` records to and
+from SQLite rows, preserve optional fields as SQL `NULL`, and constrain execution/provider unions as
+checked text values.
 
 ## Git Adapter Boundary
 

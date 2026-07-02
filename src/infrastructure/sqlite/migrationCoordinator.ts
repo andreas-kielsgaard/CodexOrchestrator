@@ -1,4 +1,5 @@
 import { repoSyncSqliteMigrations, type SqliteMigration } from './repoSyncSchema';
+import { runConversationSqliteMigrations } from './runConversationSchema';
 import { taskSqliteMigrations } from './taskSchema';
 
 export interface AppSqliteMigrationStatement {
@@ -26,6 +27,7 @@ export interface ApplyAppSqliteMigrationsOptions {
 export const appSqliteMigrations: readonly SqliteMigration[] = [
   ...repoSyncSqliteMigrations,
   ...taskSqliteMigrations,
+  ...runConversationSqliteMigrations,
 ];
 
 export function enableAppSqliteForeignKeys(db: AppSqliteMigrationDatabase): void {
