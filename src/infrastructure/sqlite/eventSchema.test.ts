@@ -4,6 +4,7 @@ import type {
   Artifact,
   Branch,
   Conversation,
+  Event,
   Project,
   Repo,
   Task,
@@ -11,15 +12,8 @@ import type {
   ValidationRun,
   Worktree,
 } from '../../domain/model';
-import {
-  artifactFromRow,
-  artifactToRow,
-  artifactValidationSqliteMigrations,
-  type ArtifactRow,
-  validationRunFromRow,
-  type ValidationRunRow,
-  validationRunToRow,
-} from './artifactValidationSchema';
+import { artifactToRow, validationRunToRow } from './artifactValidationSchema';
+import { eventFromRow, eventSqliteMigrations, eventToRow, type EventRow } from './eventSchema';
 import { applyAppSqliteMigrations, enableAppSqliteForeignKeys } from './migrationCoordinator';
 import { branchToRow, projectToRow, repoToRow, worktreeToRow } from './repoSyncSchema';
 import { conversationToRow, taskRunToRow } from './runConversationSchema';
@@ -27,8 +21,8 @@ import { taskToRow } from './taskSchema';
 
 const now = '2026-07-02T10:00:00.000Z';
 
-describe('artifact and validation-run SQLite schema', () => {
-  it('creates artifact and validation-run tables through the app migration coordinator', () => {
+describe('event SQLite schema', () => {
+  it('creates the events table through the app migration coordinator', () => {
     const db = openMigratedDatabase();
 
     try {
@@ -51,33 +45,24 @@ describe('artifact and validation-run SQLite schema', () => {
     }
   });
 
-  it('keeps artifact/validation migrations separate from parent table definitions', () => {
-    const migrationSql = artifactValidationSqliteMigrations
-      .map((migration) => migration.sql)
-      .join('\n');
+  it('keeps event migrations separate from parent table definitions', () => {
+    const migrationSql = eventSqliteMigrations.map((migration) => migration.sql).join('\n');
 
-    expect(migrationSql).not.toContain('CREATE TABLE IF NOT EXISTS tasks');
-    expect(migrationSql).not.toContain('CREATE TABLE IF NOT EXISTS task_runs');
-    expect(migrationSql).toContain('CREATE TABLE IF NOT EXISTS artifacts');
-    expect(migrationSql).toContain('CREATE TABLE IF NOT EXISTS validation_runs');
+    expect(migrationSql).toContain('CREATE TABLE IF NOT EXISTS events');
+    expect(migrationSql).not.toContain('CREATE TABLE IF NOT EXISTS artifacts');
+    expect(migrationSql).not.toContain('CREATE TABLE IF NOT EXISTS validation_runs');
   });
 
-  it('enforces artifact-kind and validation-status check constraints', () => {
+  it('enforces event-kind check constraints', () => {
     const db = openMigratedDatabase();
 
     try {
-      insertProjectRepoBranchWorktreeTaskRunConversation(db);
+      insertFullParentGraph(db);
 
       expect(() =>
-        insertRow(db, 'artifacts', {
-          ...artifactToRow(artifact()),
-          kind: 'spreadsheet',
-        }),
-      ).toThrow();
-      expect(() =>
-        insertRow(db, 'validation_runs', {
-          ...validationRunToRow(validationRun({ outputArtifactId: undefined })),
-          status: 'paused',
+        insertRow(db, 'events', {
+          ...eventToRow(event()),
+          kind: 'repo_scanned',
         }),
       ).toThrow();
     } finally {
@@ -85,112 +70,84 @@ describe('artifact and validation-run SQLite schema', () => {
     }
   });
 
-  it('sets optional task, task-run, conversation, and output artifact links to NULL on cleanup', () => {
+  it('sets optional links to NULL when related records are cleaned up', () => {
     const db = openMigratedDatabase();
 
     try {
-      insertProjectRepoBranchWorktreeTaskRunConversation(db);
-      insertRow(db, 'artifacts', artifactToRow(artifact()));
-      insertRow(db, 'validation_runs', validationRunToRow(validationRun()));
+      insertFullParentGraph(db);
+      insertRow(db, 'events', eventToRow(event()));
+
+      db.prepare('DELETE FROM projects WHERE id = ?').run('project-1');
+
+      expect(selectOne<EventRow>(db, 'events', 'event-1')).toMatchObject({
+        project_id: null,
+        task_id: null,
+        task_run_id: null,
+      });
 
       db.prepare('DELETE FROM conversations WHERE id = ?').run('conversation-1');
-      expect(selectOne<ArtifactRow>(db, 'artifacts', 'artifact-1').conversation_id).toBeNull();
+      expect(selectOne<EventRow>(db, 'events', 'event-1').conversation_id).toBeNull();
 
       db.prepare('DELETE FROM artifacts WHERE id = ?').run('artifact-1');
-      expect(
-        selectOne<ValidationRunRow>(db, 'validation_runs', 'validation-1').output_artifact_id,
-      ).toBeNull();
+      expect(selectOne<EventRow>(db, 'events', 'event-1').artifact_id).toBeNull();
 
-      insertRow(
-        db,
-        'artifacts',
-        artifactToRow(artifact({ id: 'artifact-2', conversationId: undefined })),
-      );
-      db.prepare('DELETE FROM tasks WHERE id = ?').run('task-1');
-
-      expect(selectOne<ArtifactRow>(db, 'artifacts', 'artifact-2')).toMatchObject({
-        task_id: null,
-        task_run_id: null,
-      });
-      expect(selectOne<ValidationRunRow>(db, 'validation_runs', 'validation-1')).toMatchObject({
-        task_id: null,
-        task_run_id: null,
-      });
+      db.prepare('DELETE FROM validation_runs WHERE id = ?').run('validation-1');
+      expect(selectOne<EventRow>(db, 'events', 'event-1').validation_run_id).toBeNull();
     } finally {
       db.close();
     }
   });
 
-  it('round-trips optional fields as NULL through row mappers', () => {
+  it('round-trips optional fields as NULL and payload JSON through row mappers', () => {
     const db = openMigratedDatabase();
+    const minimalEvent: Event = {
+      id: 'event-1',
+      kind: 'run_event',
+      occurredAt: now,
+      payload: {
+        zeta: true,
+        alpha: {
+          second: 2,
+          first: 1,
+        },
+        list: [{ b: 'two', a: 'one' }],
+      },
+    };
 
     try {
-      const minimalArtifact = artifact({
-        taskId: undefined,
-        taskRunId: undefined,
-        conversationId: undefined,
-        uri: undefined,
-        content: undefined,
-      });
-      const minimalValidationRun = validationRun({
-        taskId: undefined,
-        taskRunId: undefined,
-        startedAt: undefined,
-        completedAt: undefined,
-        exitCode: undefined,
-        outputArtifactId: undefined,
-      });
+      insertRow(db, 'events', eventToRow(minimalEvent));
 
-      insertRow(db, 'artifacts', artifactToRow(minimalArtifact));
-      insertRow(db, 'validation_runs', validationRunToRow(minimalValidationRun));
+      const row = selectOne<EventRow>(db, 'events', 'event-1');
 
-      const artifactRow = selectOne<ArtifactRow>(db, 'artifacts', 'artifact-1');
-      const validationRunRow = selectOne<ValidationRunRow>(db, 'validation_runs', 'validation-1');
-
-      expect(artifactRow.task_id).toBeNull();
-      expect(artifactRow.task_run_id).toBeNull();
-      expect(artifactRow.conversation_id).toBeNull();
-      expect(artifactRow.uri).toBeNull();
-      expect(artifactRow.content).toBeNull();
-      expect(validationRunRow.task_id).toBeNull();
-      expect(validationRunRow.task_run_id).toBeNull();
-      expect(validationRunRow.started_at).toBeNull();
-      expect(validationRunRow.completed_at).toBeNull();
-      expect(validationRunRow.exit_code).toBeNull();
-      expect(validationRunRow.output_artifact_id).toBeNull();
-      expect(artifactFromRow(artifactRow)).toEqual(minimalArtifact);
-      expect(validationRunFromRow(validationRunRow)).toEqual(minimalValidationRun);
+      expect(row.project_id).toBeNull();
+      expect(row.task_id).toBeNull();
+      expect(row.task_run_id).toBeNull();
+      expect(row.conversation_id).toBeNull();
+      expect(row.artifact_id).toBeNull();
+      expect(row.validation_run_id).toBeNull();
+      expect(row.payload_json).toBe(
+        '{"alpha":{"first":1,"second":2},"list":[{"a":"one","b":"two"}],"zeta":true}',
+      );
+      expect(eventFromRow(row)).toEqual(minimalEvent);
     } finally {
       db.close();
     }
   });
 
-  it('supports inserting validation runs before attaching an output artifact', () => {
-    const db = openMigratedDatabase();
+  it('throws clear mapper errors for invalid JSON payload rows', () => {
+    expect(() =>
+      eventFromRow({
+        ...eventToRow(event()),
+        payload_json: '{not-json',
+      }),
+    ).toThrow('Invalid JSON payload for event event-1');
 
-    try {
-      insertProjectRepoBranchWorktreeTaskRunConversation(db);
-
-      insertRow(
-        db,
-        'validation_runs',
-        validationRunToRow(validationRun({ outputArtifactId: undefined })),
-      );
-      insertRow(db, 'artifacts', artifactToRow(artifact()));
-      db.prepare('UPDATE validation_runs SET output_artifact_id = ? WHERE id = ?').run(
-        'artifact-1',
-        'validation-1',
-      );
-
-      expect(artifactFromRow(selectOne<ArtifactRow>(db, 'artifacts', 'artifact-1'))).toEqual(
-        artifact(),
-      );
-      expect(
-        validationRunFromRow(selectOne<ValidationRunRow>(db, 'validation_runs', 'validation-1')),
-      ).toEqual(validationRun());
-    } finally {
-      db.close();
-    }
+    expect(() =>
+      eventFromRow({
+        ...eventToRow(event()),
+        payload_json: '["not", "an", "object"]',
+      }),
+    ).toThrow('Invalid JSON payload for event event-1: expected a JSON object');
   });
 });
 
@@ -201,7 +158,7 @@ function openMigratedDatabase(): DatabaseSync {
   return db;
 }
 
-function insertProjectRepoBranchWorktreeTaskRunConversation(db: DatabaseSync): void {
+function insertFullParentGraph(db: DatabaseSync): void {
   insertRow(db, 'projects', projectToRow(project()));
   insertRow(db, 'repos', repoToRow(repo()));
   insertRow(db, 'branches', branchToRow(branch()));
@@ -213,6 +170,8 @@ function insertProjectRepoBranchWorktreeTaskRunConversation(db: DatabaseSync): v
     'conversation-1',
     'run-1',
   );
+  insertRow(db, 'artifacts', artifactToRow(artifact()));
+  insertRow(db, 'validation_runs', validationRunToRow(validationRun()));
 }
 
 function insertRow(db: DatabaseSync, table: string, row: object): void {
@@ -299,8 +258,8 @@ function task(overrides: Partial<Task> = {}): Task {
     branchId: 'branch-main',
     worktreeId: 'worktree-main',
     conversationIds: ['conversation-1'],
-    title: 'Review SQLite schema',
-    summary: 'Confirm the artifact and validation persistence subset.',
+    title: 'Persist event schema',
+    summary: 'Add the event table and mapper foundation.',
     executionState: 'running',
     attentionState: 'waiting_on_agent',
     priority: 'high',
@@ -333,8 +292,8 @@ function conversation(overrides: Partial<Conversation> = {}): Conversation {
     taskRunId: 'run-1',
     provider: 'codex',
     externalThreadId: '019f224e-1225-7d52-8cb5-fddd1329b53f',
-    title: 'Worker 017 schema foundation',
-    summary: 'Artifact and ValidationRun schema work.',
+    title: 'Worker 018 schema foundation',
+    summary: 'Event schema work.',
     createdAt: '2026-07-02T09:30:00.000Z',
     updatedAt: now,
     ...overrides,
@@ -348,9 +307,9 @@ function artifact(overrides: Partial<Artifact> = {}): Artifact {
     taskRunId: 'run-1',
     conversationId: 'conversation-1',
     kind: 'validation_log',
-    title: 'Focused schema test output',
-    uri: 'file:///tmp/validation.log',
-    content: 'npm run test -- artifactValidationSchema.test.ts -> pass',
+    title: 'Event schema validation',
+    uri: 'file:///tmp/event-schema.log',
+    content: 'event schema tests pass',
     createdAt: now,
     ...overrides,
   };
@@ -361,7 +320,7 @@ function validationRun(overrides: Partial<ValidationRun> = {}): ValidationRun {
     id: 'validation-1',
     taskId: 'task-1',
     taskRunId: 'run-1',
-    command: 'npm run test -- src/infrastructure/sqlite/artifactValidationSchema.test.ts',
+    command: 'npm run test -- src/infrastructure/sqlite/eventSchema.test.ts',
     status: 'passed',
     startedAt: '2026-07-02T09:55:00.000Z',
     completedAt: now,
@@ -369,6 +328,25 @@ function validationRun(overrides: Partial<ValidationRun> = {}): ValidationRun {
     outputArtifactId: 'artifact-1',
     createdAt: '2026-07-02T09:55:00.000Z',
     updatedAt: now,
+    ...overrides,
+  };
+}
+
+function event(overrides: Partial<Event> = {}): Event {
+  return {
+    id: 'event-1',
+    kind: 'run_event',
+    occurredAt: now,
+    projectId: 'project-1',
+    taskId: 'task-1',
+    taskRunId: 'run-1',
+    conversationId: 'conversation-1',
+    artifactId: 'artifact-1',
+    validationRunId: 'validation-1',
+    payload: {
+      message: 'schema foundation created',
+      sequence: 1,
+    },
     ...overrides,
   };
 }

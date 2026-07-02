@@ -139,7 +139,8 @@ When the injected database supports `exec`, create/update/archive writes run ins
 The app-level SQLite migration coordinator lives in
 `src/infrastructure/sqlite/migrationCoordinator.ts` as pure TypeScript infrastructure. It composes
 the current schema families in deterministic order: repo-sync migrations first, then Open Tasks
-migrations, then TaskRun/Conversation migrations, then Artifact/ValidationRun migrations.
+migrations, then TaskRun/Conversation migrations, then Artifact/ValidationRun migrations, then
+Event migrations.
 
 The coordinator depends on an injected SQLite-like interface with `exec` and `prepare`; it does not
 open database files and does not import `node:sqlite` in production code. Runtime callers should use
@@ -196,8 +197,25 @@ Row mappers convert `Artifact` and `ValidationRun` records to and from SQLite ro
 optional fields as SQL `NULL`, and constrain artifact-kind/validation-status unions as checked text
 values.
 
-This slice does not add CRUD stores, runtime database file opening, Tauri/Rust commands, Codex
-runtime integration, Git execution, React/UI work, or event persistence.
+This slice did not add CRUD stores, runtime database file opening, Tauri/Rust commands, Codex
+runtime integration, Git execution, or React/UI work.
+
+## Event SQLite Schema Foundation
+
+The Event persistence schema foundation lives under `src/infrastructure/sqlite/` as pure TypeScript
+infrastructure. It defines ordered migration SQL for durable local audit/event records:
+
+- `events`: checked event kind, occurrence timestamp, optional links to project, task, task run,
+  conversation, artifact, and validation run rows, plus a deterministic JSON payload text column.
+
+All event links are nullable and use `ON DELETE SET NULL` so event records survive cleanup of
+related workflow, provenance, output, or validation rows. Row mappers convert between `Event`
+records and SQLite rows, preserve optional links as SQL `NULL`, constrain `Event.kind` as checked
+text, serialize payload objects with sorted keys for deterministic JSON text, and throw clear errors
+when a persisted row contains invalid JSON or a non-object payload.
+
+This slice does not add an event append/query store, runtime database file opening, Tauri/Rust
+commands, Codex runtime integration, Git execution, React/UI work, or package dependencies.
 
 ## Git Adapter Boundary
 
