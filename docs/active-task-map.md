@@ -12,7 +12,24 @@ otherwise resolve it.
 
 ## Active Tasks
 
-- None.
+- Worker 035: Local Git Runtime Adapters Bundle
+  - Status: launched; awaiting worker completion report
+  - Pending worktree id: `local:c9793b9d-cdfd-4f2c-9333-b28ed6a99ed6`
+  - Worktree: `C:\Users\user\.codex\worktrees\46d5\Codex Orchestrator`
+  - Branch: `worker/035-local-git-runtime-adapters`
+  - Launch base: `a54248c41d617b0c799c09b02d4f41d63864c6c5`
+  - Result log target: `docs/task-logs/worker-035-local-git-runtime-adapters.md`
+  - Next orchestration action: inspect worker report/worktree, review branch, independently
+    verify, then merge or request correction.
+- Worker 036: Validation Command Runtime Adapter
+  - Status: launched; awaiting worker completion report
+  - Pending worktree id: `local:52ac78b9-0540-429a-b109-6255e1a13362`
+  - Worktree: `C:\Users\user\.codex\worktrees\478e\Codex Orchestrator`
+  - Branch: `worker/036-validation-command-runtime-adapter`
+  - Launch base: `a54248c41d617b0c799c09b02d4f41d63864c6c5`
+  - Result log target: `docs/task-logs/worker-036-validation-command-runtime-adapter.md`
+  - Next orchestration action: inspect worker report/worktree, review branch, independently
+    verify, then merge or request correction.
 
 ## Pending Blockers / Follow-Up
 

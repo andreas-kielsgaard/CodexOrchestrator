@@ -2003,3 +2003,38 @@ orchestration thread`)
   folder deletion at `C:\Users\user\.codex\worktrees\d19f\Codex Orchestrator`; the merged branch
   `worker/034-validation-command-runner` was deleted and the locked physical folder was left in
   place.
+
+### Worker 035 Launch: Local Git Runtime Adapters Bundle
+
+- Status: launched in a fresh worktree worker
+- Pending worktree id: `local:c9793b9d-cdfd-4f2c-9333-b28ed6a99ed6`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\46d5\Codex Orchestrator`
+- Branch observed after launch: `worker/035-local-git-runtime-adapters`
+- Launch base: `a54248c41d617b0c799c09b02d4f41d63864c6c5` (`Log Worker 034 merge`)
+- Goal: add concrete local Git runtime adapters for repo scanning, worktree creation, and diff
+  collection behind the existing injected interfaces.
+- Explicitly deferred: React UI, Tauri command wiring, runtime composition calls, validation
+  command runtime, workflow-engine behavior, cleanup policies, branch naming policy, repo registry
+  UI, forced worktree-folder deletion, and unnecessary dependencies.
+- Required result log: `docs/task-logs/worker-035-local-git-runtime-adapters.md`
+- Required verification: `git diff --check main...worker/035-local-git-runtime-adapters`, focused
+  Git adapter tests, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build`.
+- Report-back instruction: included in the worker prompt.
+
+### Worker 036 Launch: Validation Command Runtime Adapter
+
+- Status: launched in a fresh worktree worker
+- Pending worktree id: `local:52ac78b9-0540-429a-b109-6255e1a13362`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\478e\Codex Orchestrator`
+- Branch observed after launch: `worker/036-validation-command-runtime-adapter`
+- Launch base: `a54248c41d617b0c799c09b02d4f41d63864c6c5` (`Log Worker 034 merge`)
+- Goal: add a concrete Node validation command runtime adapter compatible with the
+  application-layer validation command runtime shape.
+- Explicitly deferred: React UI, Tauri command wiring, runtime composition calls, Git diff/provider
+  work, Git runtime adapters, workflow-engine behavior, multi-command orchestration, and
+  unnecessary dependencies.
+- Required result log: `docs/task-logs/worker-036-validation-command-runtime-adapter.md`
+- Required verification: `git diff --check main...worker/036-validation-command-runtime-adapter`,
+  focused runtime adapter tests, `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build`.
+- Report-back instruction: included in the worker prompt.
