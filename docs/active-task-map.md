@@ -12,7 +12,15 @@ otherwise resolve it.
 
 ## Active Tasks
 
-None.
+- Worker 032: Persisted Open Tasks Dashboard Boundary
+  - Status: launched; awaiting worker completion report
+  - Pending worktree id: `local:fca18278-4136-4949-ba19-a9f7f0ae01eb`
+  - Worktree: `C:\Users\user\.codex\worktrees\9117\Codex Orchestrator`
+  - Expected branch: `worker/032-persisted-open-tasks-dashboard`
+  - Launch base: `71612f36d55ebd2325563aeb3abb6b04d8d7c8fc`
+  - Result log target: `docs/task-logs/worker-032-persisted-open-tasks-dashboard.md`
+  - Next orchestration action: inspect worker report/worktree, review branch, independently
+    verify, then merge or request correction.
 
 ## Blockers
 

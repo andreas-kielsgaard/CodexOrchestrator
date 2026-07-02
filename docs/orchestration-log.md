@@ -1846,3 +1846,25 @@ orchestration thread`)
 - Cleanup: `git worktree remove` unregistered the Worker 031 worktree, but Windows denied physical
   folder deletion at `C:\Users\user\.codex\worktrees\93b2\Codex Orchestrator`; the merged branch
   `worker/031-task-worktree-service` was deleted and the locked physical folder was left in place.
+
+### Worker 032 Launch: Persisted Open Tasks Dashboard Boundary
+
+- Status: launched in a fresh worktree worker
+- Pending worktree id: `local:fca18278-4136-4949-ba19-a9f7f0ae01eb`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\9117\Codex Orchestrator`
+- Initial observed state: detached at launch base; worker prompt instructs creation of
+  `worker/032-persisted-open-tasks-dashboard` before editing
+- Expected branch: `worker/032-persisted-open-tasks-dashboard`
+- Launch base: `71612f36d55ebd2325563aeb3abb6b04d8d7c8fc` (`Log Worker 031 merge`)
+- Goal: move the Open Tasks dashboard away from direct seed-data import toward persisted task CRUD
+  through a browser-safe dashboard client/application boundary, with SQLite-backed store behavior
+  verified in Node tests.
+- Explicitly deferred: importing Node-only SQLite code into React/browser modules, broad workflow
+  engine behavior, Codex runs, Git scanner/worktree creator adapters, task/run detail, diff
+  collection, validation execution, review UI, unnecessary dependencies, and forced cleanup of
+  locked worktree folders.
+- Required result log: `docs/task-logs/worker-032-persisted-open-tasks-dashboard.md`
+- Required verification: `git diff --check main...worker/032-persisted-open-tasks-dashboard`,
+  focused dashboard client/UI and SQLite-backed tests, `npm run lint`, `npm run format:check`,
+  `npm run test`, and `npm run build`.
+- Report-back instruction: included in the worker prompt.
