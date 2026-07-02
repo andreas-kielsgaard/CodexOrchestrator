@@ -1689,3 +1689,22 @@ orchestration thread`)
   folder deletion at `C:\Users\user\.codex\worktrees\c12f\Codex Orchestrator`; the merged branch
   `worker/028-codex-exec-runtime-adapter` was deleted and the locked physical folder was left in
   place.
+
+### Worker 029 Launch: Run Composition Service
+
+- Status: launched in a fresh worktree worker
+- Pending worktree id: `local:98e6d59a-eff6-4ebd-8636-6a8212fc4363`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\a518\Codex Orchestrator`
+- Expected branch: `worker/029-run-composition-service`
+- Launch base: `a5cae9c10fbc4adc484e90de609cefcc9dd6aa05` (`Log Worker 028 merge`)
+- Goal: add an application-layer service that composes the lifecycle recorder, injected Codex
+  runtime, raw JSONL artifact storage, final-response artifact storage, conversation metadata, and
+  run/artifact events into one persisted Codex run flow.
+- Explicitly deferred: React/Tauri UI, choosing or opening an app database path, repo registration,
+  worktree creation, diff collection, validation execution, workflow-engine behavior, real Codex
+  execution in tests, credential management, and package dependencies unless necessary.
+- Required result log: `docs/task-logs/worker-029-run-composition-service.md`
+- Required verification: `git diff --check main...worker/029-run-composition-service`, focused
+  composition service tests, `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build`.
+- Report-back instruction: included in the worker prompt.

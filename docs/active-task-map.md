@@ -12,7 +12,17 @@ otherwise resolve it.
 
 ## Active Tasks
 
-None.
+### Worker 029: Run Composition Service
+
+- Status: launched; awaiting worker completion report
+- Pending worktree id: `local:98e6d59a-eff6-4ebd-8636-6a8212fc4363`
+- Expected branch: `worker/029-run-composition-service`
+- Worktree: `C:\Users\user\.codex\worktrees\a518\Codex Orchestrator`
+- Launch base: `a5cae9c10fbc4adc484e90de609cefcc9dd6aa05` (`Log Worker 028 merge`)
+- Expected result log: `docs/task-logs/worker-029-run-composition-service.md`
+- Report-back instruction: included in the worker prompt
+- Next action: wait for Worker 029 completion, then inspect the worker branch/result log directly,
+  review source, run independent verification, and merge only accepted work.
 
 ## Blockers
 
