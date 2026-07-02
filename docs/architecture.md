@@ -93,6 +93,17 @@ This boundary does not execute Codex, read credentials, write stores, create art
 own task lifecycle transitions. Future runtime composition should use it after capturing raw output
 and before updating task-run state.
 
+`codexRuntime.ts` is the local runtime adapter boundary for non-interactive Codex execution. It
+builds `codex exec --json` arguments as an array, invokes Codex through an injectable process
+runner, preserves raw JSONL stdout and stderr, parses stdout with the JSONL parser, summarizes the
+event stream, and returns terminal metadata including exit code, signal, parsed events, summary,
+raw output, stderr, and a completed/failed/error classification. The default runner uses
+`node:child_process` and remains outside React/UI imports. Non-zero Codex exits return structured
+results when stdout is parseable; launch failures and untrustworthy JSONL still throw.
+
+This adapter does not compose task-run lifecycle state, persist artifacts, manage conversations,
+read or manage Codex credentials, run validation commands, collect diffs, or wire UI behavior.
+
 ### SQLite
 
 Location: `src/infrastructure/sqlite/`
@@ -136,11 +147,10 @@ The first usable runtime loop still needs:
 
 1. UI/runtime composition that chooses the local app database path and exposes the opened store
    bundle to application services.
-2. A `CodexRuntime` adapter that invokes `codex exec --json` and streams raw JSONL.
-3. A composition service that stores raw JSONL, extracts final response/thread metadata, updates
+2. A composition service that calls the Codex runtime adapter, stores raw JSONL, extracts final response/thread metadata, updates
    lifecycle state, and appends events.
-4. Diff and validation runners that store their outputs as artifacts/validation runs.
-5. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.
+3. Diff and validation runners that store their outputs as artifacts/validation runs.
+4. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.
 
 ## Testing And Verification
 
