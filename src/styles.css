@@ -128,6 +128,113 @@ h1 {
   background: #fffdf8;
 }
 
+.status-strip .icon-button {
+  background: #fffdf8;
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid #d8ddd5;
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #4a564f;
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.notice.error {
+  border-color: #d6afa4;
+  background: #fff5f2;
+  color: #7a2e20;
+}
+
+.task-composer {
+  display: grid;
+  grid-template-columns:
+    minmax(150px, 0.9fr) minmax(180px, 1.2fr) minmax(220px, 1.5fr) minmax(150px, 0.8fr)
+    auto;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 10px;
+  border: 1px solid #d8ddd5;
+  border-radius: 8px;
+  background: #eef1eb;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid #cbd2c7;
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #17211b;
+  font: inherit;
+  font-size: 0.84rem;
+}
+
+input,
+select {
+  padding: 0 10px;
+}
+
+textarea {
+  min-height: 74px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled,
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.primary-action,
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  border: 1px solid #17211b;
+  border-radius: 8px;
+  color: #17211b;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.primary-action {
+  gap: 7px;
+  padding: 0 12px;
+  background: #f2ca52;
+}
+
+.icon-button {
+  width: 36px;
+  padding: 0;
+  background: #e7ebe4;
+}
+
+.icon-button:hover,
+.primary-action:hover {
+  filter: brightness(0.98);
+}
+
+.icon-button.danger {
+  border-color: #7a2e20;
+  color: #7a2e20;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(168px, 1fr));
@@ -205,6 +312,12 @@ h3 {
   font-size: 0.86rem;
 }
 
+.task-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 36px 36px;
+  gap: 6px;
+}
+
 .task-card footer {
   display: flex;
   flex-wrap: wrap;
@@ -219,6 +332,23 @@ h3 {
   padding: 4px 8px;
   border-radius: 999px;
   background: #e7ebe4;
+}
+
+.edit-task-form {
+  display: grid;
+  gap: 8px;
+}
+
+.edit-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.edit-actions {
+  display: flex;
+  justify-content: end;
+  gap: 6px;
 }
 
 @media (max-width: 860px) {
@@ -250,5 +380,14 @@ h3 {
 
   .status-strip {
     justify-content: start;
+  }
+
+  .task-composer {
+    grid-template-columns: 1fr;
+  }
+
+  .task-controls,
+  .edit-grid {
+    grid-template-columns: 1fr;
   }
 }

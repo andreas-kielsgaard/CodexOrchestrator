@@ -27,22 +27,26 @@ Already merged:
   boundaries.
 - Application-layer task worktree selection/creation service over injected repo scan, task stores,
   and Git worktree creator boundaries.
+- Application-layer Open Tasks dashboard client over injected read/write task stores, plus a
+  browser-safe React/Tauri command boundary and dashboard UI controls for create/edit/state/archive.
 
-Known blocker:
+Known blockers / remaining runtime wiring:
 
 - `npm run build:tauri` is blocked until Rust/Cargo are installed or on `PATH`.
+- The default Tauri WebView path has registered Open Tasks command stubs, but still needs a Rust
+  SQLite backend adapter before the UI can persist task dashboard changes at runtime.
 
 ## Remaining Tasks
 
-| ID    | Task                           | Output                                                                                                      | Depends On                          |
-| ----- | ------------------------------ | ----------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| FS-05 | Persisted Open Tasks dashboard | Dashboard reads/writes SQLite-backed tasks instead of seed data; supports create/edit/archive/state changes | Merged database opener              |
-| FS-08 | Run controls in UI             | User can start a Codex run for a task in a selected worktree and see running/completed/failed state         | Merged task worktree service, FS-05 |
-| FS-09 | Task/run detail view           | Show task anchors, run history, final response, raw JSONL artifact link/summary, and event timeline         | FS-05, merged run composition       |
-| FS-10 | Diff collector                 | Capture worktree diff after a run and store it as an artifact                                               | Merged task worktree service        |
-| FS-11 | Validation command runner      | Run configured validation command(s), store output artifact and validation run status, and surface failures | Merged task worktree service        |
-| FS-12 | Review surface MVP             | Show final response, diff state, validation status, and next action for completed/failed runs               | FS-09, FS-10, FS-11                 |
-| FS-13 | Tauri build environment        | Rust/Cargo available; `npm run build:tauri` can be verified                                                 | External environment                |
+| ID    | Task                           | Output                                                                                                                   | Depends On                          |
+| ----- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
+| FS-05 | Persisted Open Tasks dashboard | Application client and React boundary are in place; next backend wiring must implement the Tauri SQLite commands durably | Merged database opener              |
+| FS-08 | Run controls in UI             | User can start a Codex run for a task in a selected worktree and see running/completed/failed state                      | Merged task worktree service, FS-05 |
+| FS-09 | Task/run detail view           | Show task anchors, run history, final response, raw JSONL artifact link/summary, and event timeline                      | FS-05, merged run composition       |
+| FS-10 | Diff collector                 | Capture worktree diff after a run and store it as an artifact                                                            | Merged task worktree service        |
+| FS-11 | Validation command runner      | Run configured validation command(s), store output artifact and validation run status, and surface failures              | Merged task worktree service        |
+| FS-12 | Review surface MVP             | Show final response, diff state, validation status, and next action for completed/failed runs                            | FS-09, FS-10, FS-11                 |
+| FS-13 | Tauri build environment        | Rust/Cargo available; `npm run build:tauri` can be verified                                                              | External environment                |
 
 ## Dependency Shape
 

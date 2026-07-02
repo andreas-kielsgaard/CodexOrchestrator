@@ -13,8 +13,10 @@ which boundaries should stay intact.
 - Rust currently only proves the Tauri command boundary with `app_metadata`.
 - SQLite infrastructure is written as pure TypeScript over injected SQLite-like interfaces.
 
-Current limitation: the app can open a local runtime database file through an infrastructure
-boundary, but it does not yet compose that database into the UI or execute Git/Codex from the UI.
+Current limitation: the app can open a local runtime database file through a Node-facing
+infrastructure boundary, and the Open Tasks UI now consumes an injected async dashboard client, but
+the Tauri WebView still needs a Rust-side SQLite command backend before the default desktop UI can
+mutate the durable app database at runtime.
 
 ## Boundary Rules
 
@@ -94,6 +96,12 @@ the task through `OpenTaskWriteStore.updateTask` with repo, worktree, and availa
 It intentionally does not run Git commands directly, delete worktrees, start Codex runs, collect
 diffs, run validations, or own UI behavior.
 
+`taskDashboardClient.ts` is the Open Tasks application/client boundary. It composes
+`OpenTaskDashboardStore` and `OpenTaskWriteStore` into async load/create/update/archive operations
+that return a dashboard snapshot for UI callers. The client is verified against in-memory stores
+and the local SQLite app store bundle, but it does not open SQLite files or import Node-only modules
+itself.
+
 ## Infrastructure Layer
 
 ### Git
@@ -151,39 +159,51 @@ SQLite infrastructure includes:
   store bundle with an explicit close/dispose path
 
 The pure SQLite adapters still do not open database files or import `node:sqlite`; runtime-facing
-opening is isolated in `localAppDatabase.ts`. UI composition still needs to choose the app database
-path and consume the resulting store bundle from an application/runtime boundary.
+opening is isolated in `localAppDatabase.ts`. Browser/React modules must not import this opener.
+The next runtime step is a Tauri/Rust backend that chooses the app database path and exposes the
+task dashboard command contract to the WebView.
 
 ### Tauri
 
 Location: `src/infrastructure/tauriCommands.ts` and `src-tauri/`
 
-The current Tauri bridge is minimal. Future filesystem/process-heavy operations may live behind
-Tauri commands or another explicit local runtime boundary, but React should not call those concerns
-directly.
+The Tauri bridge exposes browser-safe TypeScript functions over `@tauri-apps/api/core`. The Open
+Tasks dashboard command contract is:
+
+- `load_open_task_dashboard`
+- `create_open_task`
+- `update_open_task`
+- `archive_open_task`
+
+Those commands are registered in Rust as explicit backend-pending stubs. They intentionally return a
+clear error until a Rust SQLite adapter is added, rather than falling back to seed/demo data.
 
 ## UI Layer
 
 Location: `src/app/`, `src/main.tsx`, `src/styles.css`
 
-The current UI is a seed-data Open Tasks dashboard. It demonstrates the attention-first shape but
-is not yet backed by persisted stores. The next UI work should wire persisted task reads/writes
-before adding rich run review surfaces.
+The Open Tasks UI consumes an injected `TaskDashboardClient`, loads asynchronously, and provides
+visible create, edit, state-change, and archive controls. The default `src/main.tsx` wiring injects
+the Tauri command client, keeping React/browser code away from SQLite and Node-only modules. Tests
+exercise the UI against a fake client; durable behavior is covered at the application client/store
+boundary.
 
 ## Pending Runtime Architecture
 
 The first usable runtime loop still needs:
 
-1. UI/runtime composition that chooses the local app database path and exposes the opened store
-   bundle to application services.
-2. Runtime wiring that passes the SQLite-backed store bundle and concrete Codex runtime adapter into
+1. A Rust/Tauri SQLite command backend for the Open Tasks dashboard contract that chooses the local
+   app database path and implements load/create/update/archive durably for the WebView.
+2. UI/runtime composition that exposes the opened store bundle to the remaining application
+   services.
+3. Runtime wiring that passes the SQLite-backed store bundle and concrete Codex runtime adapter into
    the run composition service.
-3. Runtime wiring that passes a concrete `GitRepoScanner`, `RepoSyncStore`, and repo-sync ID/clock
+4. Runtime wiring that passes a concrete `GitRepoScanner`, `RepoSyncStore`, and repo-sync ID/clock
    providers into the repo registry scan service.
-4. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
-5. Concrete Git worktree creation and scanning adapters for the task worktree selection service.
-6. Diff and validation runners that store their outputs as artifacts/validation runs.
-7. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.
+5. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
+6. Concrete Git worktree creation and scanning adapters for the task worktree selection service.
+7. Diff and validation runners that store their outputs as artifacts/validation runs.
+8. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.
 
 ## Testing And Verification
 
