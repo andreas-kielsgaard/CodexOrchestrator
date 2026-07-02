@@ -579,3 +579,29 @@
 - Cleanup note: Windows kept the physical worker folder locked at
   `C:\Users\user\.codex\worktrees\06f6\Codex Orchestrator`; retry later after the app releases the
   handle.
+
+### Worker 016: TaskRun/Conversation SQLite Schema
+
+- Status: launched/in progress; not reviewed or merged
+- Pending worktree id: `local:c3bb9e49-c809-4f1a-a08f-9996394a99f5`
+- Expected worker branch: `worker/016-run-conversation-sqlite-schema`
+- Launch base: `55f3f4b7b4490448a79f3a7fdb1b423d35d79433`
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 015's migration coordinator is merged,
+  verified, and cleaned; the new provenance schema slice should use current `main`, the merged
+  migration coordinator, and existing domain model rather than carrying Worker 015's implementation
+  context.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Report-back instruction: included explicitly in the worker prompt as a dedicated requirement,
+  separate from the completion report shape.
+- Scope: add pure TypeScript SQLite schema/migration support for domain `TaskRun` and
+  `Conversation` records, compose the new migration into the app-level coordinator, add row mappers
+  and `node:sqlite` tests, and document the schema boundary.
+- Out of scope: CRUD stores, runtime database file opening, Tauri/Rust commands, Codex runtime
+  integration, Git execution, React/UI work, package dependencies, and artifact/validation/event
+  schemas.
+- Expected result log: `docs/task-logs/worker-016-run-conversation-sqlite-schema.md`
+- Success signal: committed worker branch with focused schema/coordinator tests plus feasible
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` verification, followed
+  by a completion report sent back to the orchestration thread or an explicit note that cross-posting
+  was unavailable.
