@@ -29,6 +29,11 @@ The TypeScript domain layer lives under `src/domain/`:
 - `openTaskWriteStore.ts` defines the write-side boundary for Open Tasks create, update, and archive-style close behavior. The contract keeps `Task` as the mutation unit, uses injected ID/time providers for deterministic adapters and tests, and treats omitted update fields as unchanged while `null` explicitly clears optional anchors or timestamps. Conversation IDs are replaced as an ordered list by the write boundary, while dashboard grouping, sorting, and closed-task omission remain centralized in `dashboardProjection.ts`.
 - `repoSyncPlanning.ts`, `repoSyncPlanApplier.ts`, and `repoSyncService.ts` keep Git scan reconciliation persistence-neutral: scans become explicit repo/branch/worktree upsert plans, then those plans can be applied to in-memory `DomainRecords` with injected deterministic IDs before a future repository layer persists them. The service facade returns both the plan and the applied result so persistence/UI callers can inspect the plan without duplicating scan-to-plan-to-record choreography.
 - `repoSyncStore.ts` defines the narrow async persistence boundary for repo sync. A store loads the current domain snapshot for a scan and persists only the applied repo, branch, and worktree records produced by `syncRepoFromScan`; it does not duplicate plan/apply logic. The included in-memory implementation is a test helper, and the concrete SQLite adapter lives under `src/infrastructure/sqlite/`.
+- `eventStore.ts` defines the append/query boundary for durable Event records. Appends use injected ID
+  and time providers, clone JSON payload objects at the boundary, and keep query behavior narrow:
+  optional filtering by event kind and linked IDs plus chronological ordering with an ID tie-breaker.
+  The included in-memory implementation is a test helper, and the concrete SQLite adapter lives
+  under `src/infrastructure/sqlite/`.
 - `seedData.ts` provides demo records until SQLite persistence and repository APIs are introduced.
 
 SQLite migrations, Rust database commands, Git scanning, and Codex runtime integration are intentionally outside this slice.
@@ -216,6 +221,25 @@ when a persisted row contains invalid JSON or a non-object payload.
 
 This slice does not add an event append/query store, runtime database file opening, Tauri/Rust
 commands, Codex runtime integration, Git execution, React/UI work, or package dependencies.
+
+## Event Store Boundary
+
+The Event append/query boundary lives in `src/domain/eventStore.ts`, with the SQLite adapter in
+`src/infrastructure/sqlite/eventStore.ts`. The boundary is intentionally append-only: callers
+provide checked domain event kinds, optional links, and a JSON-object payload, while injected ID and
+time providers create deterministic `Event.id` and `Event.occurredAt` values for adapters and
+tests.
+
+Queries stay narrow and useful for local audit reads. Callers can filter by event kind and optional
+linked IDs (`projectId`, `taskId`, `taskRunId`, `conversationId`, `artifactId`, and
+`validationRunId`), receive events ordered by `occurredAt` plus stable `id` tie-breaker, and apply a
+simple non-negative `limit`. Payloads are cloned/serialized at the store boundary so caller-side
+object mutation cannot change stored event payloads by reference.
+
+The SQLite adapter depends on an injected SQLite-like interface and does not import `node:sqlite` in
+production code. It uses the Worker 018 `eventToRow` and `eventFromRow` mappers, so payload
+serialization, optional SQL `NULL` links, and persisted-row validation remain centralized in the
+schema layer.
 
 ## Git Adapter Boundary
 
