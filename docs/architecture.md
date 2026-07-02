@@ -215,6 +215,22 @@ open databases, import SQLite, touch Tauri/Rust commands, or add transaction abs
 runtime/database wiring can decide how to make the multi-store write sequence atomic when all stores
 share one durable connection.
 
+## Codex JSONL Parser Boundary
+
+Codex `exec --json` event stream parsing lives in `src/infrastructure/codex/jsonlEvents.ts` as a
+small pure TypeScript normalization boundary. It parses newline-delimited JSON text into typed
+documented event envelopes for `thread.started`, `turn.started`, `turn.completed`, `turn.failed`,
+`item.*`, and `error`, while preserving each raw JSON object so future Codex CLI fields or unknown
+event types are not discarded.
+
+The parser ignores blank lines, reports stable line-numbered errors for invalid JSON, non-object
+lines, missing or non-string event types, and malformed known envelopes, and passes through unknown
+event or item types when their basic typed envelope is valid. A neutral summary helper extracts the
+Codex thread ID, final completed `agent_message` text, terminal status, token usage, and item counts
+without creating artifacts, events, conversations, task runs, database writes, processes, or runtime
+adapter behavior. Future Codex runtime wiring can use this boundary to preserve raw output and feed
+the task-run lifecycle recorder.
+
 ## TaskRun and Conversation SQLite Schema Foundation
 
 The TaskRun and Conversation persistence schema foundation lives under
