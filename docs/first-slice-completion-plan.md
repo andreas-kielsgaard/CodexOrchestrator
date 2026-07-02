@@ -52,7 +52,7 @@ Known blockers / remaining runtime wiring:
 
 Critical path:
 
-1. FS-05: replace seed tasks with persisted task CRUD.
+1. FS-05: finish durable Open Tasks persistence in the default WebView path.
 2. FS-08 and FS-09: expose run start and run review in the UI.
 3. FS-10, FS-11, FS-12: add review-grade diff and validation.
 
@@ -65,7 +65,8 @@ Repo/worktree path:
 
 Dashboard path:
 
-1. FS-05 replaces seed data with persisted task CRUD using the merged database opener.
+1. FS-05 has moved the dashboard off direct seed-data imports and still needs durable Tauri command
+   handling.
 2. FS-08 and FS-09 add runtime-specific controls and detail.
 
 Review path:
@@ -79,8 +80,8 @@ Review path:
 
 Safe immediately:
 
-- FS-05 can start now that the database opener is merged, if it keeps browser/runtime boundaries
-  explicit.
+- FS-05 backend work can start when a Rust/Tauri worker is practical, with verification limits noted
+  while Rust/Cargo are unavailable.
 - FS-10 and FS-11 can start at the service boundary now that task worktree selection and run
   composition are merged.
 - FS-13 can run anytime.

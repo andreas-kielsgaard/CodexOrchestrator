@@ -50,12 +50,15 @@ Already built on `main`:
   boundaries.
 - Application-layer task worktree selection/creation service over injected repo scan, task stores,
   and Git worktree creator boundaries.
+- Application-layer Open Tasks dashboard client and React/Tauri command boundary for
+  load/create/update/archive, with the visible dashboard no longer importing seed data directly.
 
 Important gaps:
 
-- No UI/runtime composition that chooses the app database path and exposes stores to application
-  services.
-- No persisted dashboard UI; the visible app is still seed/demo driven.
+- No Rust-side SQLite backend for the registered Open Tasks Tauri commands, so default WebView
+  persistence still returns an explicit backend-pending error.
+- No broader UI/runtime composition that chooses the app database path and exposes all stores to
+  application services.
 - No concrete Git command scanner/worktree creator adapters or repo/worktree UI path.
 - No task/run detail view.
 - No diff collector or validation command runner.
@@ -80,7 +83,7 @@ events, diff, and validation result in the app.
 Current planned sequence:
 
 1. Add concrete Git scanner/worktree adapters where runtime callers need them.
-2. Replace seed dashboard behavior with persisted task CRUD.
+2. Implement the Rust-side Open Tasks Tauri command backend when Rust verification is practical.
 3. Wire run controls and task/run detail UI to the composed run service.
 4. Add diff capture and validation command execution.
 5. Add the review surface that combines final response, diff, validation, and next action.
