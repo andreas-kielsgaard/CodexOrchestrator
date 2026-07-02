@@ -54,6 +54,29 @@ This slice does not add a SQLite-backed `RepoSyncStore`; future store implementa
 these migrations, enable SQLite foreign keys on each connection, and keep scan reconciliation behind
 the existing `RepoSyncStore` boundary.
 
+## Repo Sync SQLite Store Adapter
+
+The concrete repo-sync SQLite adapter lives in `src/infrastructure/sqlite/repoSyncStore.ts` and
+implements the domain `RepoSyncStore` boundary without importing `node:sqlite` in production code.
+It depends on a small injected database/statement interface with `prepare`, statement `get/all/run`,
+and optional `exec` support.
+
+`loadRepoSyncRecords({ projectId, rootPath })` normalizes the requested root path, loads the project
+row if present, loads only the repo matching `(project_id, root_path)`, and includes only that repo's
+branches and worktrees. Other domain record arrays are intentionally empty so repo sync receives the
+minimal snapshot it needs and cannot accidentally reason over unrelated repos.
+
+`persistRepoSyncRecords` upserts the applied repo, branch, and worktree records returned by the
+domain sync flow. It does not delete stale worktrees; stale records remain durable while the domain
+result reports them as missing from the current scan. Optional fields continue to round-trip through
+SQL `NULL`, including explicit clears for `worktrees.branch_id`, `worktrees.lock_reason`, and repo or
+branch optional columns. When the injected database supports `exec`, persistence runs inside
+`BEGIN`/`COMMIT` and rolls back the whole upsert batch on failure.
+
+Schema helpers now expose `enableRepoSyncSqliteForeignKeys` and `applyRepoSyncSqliteMigrations` so
+tests and future runtime wiring can consistently enable foreign keys and apply the ordered
+repo-sync migrations.
+
 ## Git Adapter Boundary
 
 Git output parsing lives under `src/infrastructure/git/` as pure TypeScript infrastructure code. The current adapter foundation normalizes parseable command output from `git status --porcelain=v1 -z`, `git branch --format=...`, and `git worktree list --porcelain -z` into scan facts that can later feed the domain `Repo`, `Branch`, and `Worktree` records.
