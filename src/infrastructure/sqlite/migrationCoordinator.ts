@@ -1,3 +1,4 @@
+import { artifactValidationSqliteMigrations } from './artifactValidationSchema';
 import { repoSyncSqliteMigrations, type SqliteMigration } from './repoSyncSchema';
 import { runConversationSqliteMigrations } from './runConversationSchema';
 import { taskSqliteMigrations } from './taskSchema';
@@ -28,6 +29,7 @@ export const appSqliteMigrations: readonly SqliteMigration[] = [
   ...repoSyncSqliteMigrations,
   ...taskSqliteMigrations,
   ...runConversationSqliteMigrations,
+  ...artifactValidationSqliteMigrations,
 ];
 
 export function enableAppSqliteForeignKeys(db: AppSqliteMigrationDatabase): void {

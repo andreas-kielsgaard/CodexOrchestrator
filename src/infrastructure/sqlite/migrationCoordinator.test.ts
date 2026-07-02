@@ -16,6 +16,7 @@ describe('SQLite migration coordinator', () => {
       applyAppSqliteMigrations(db, { appliedAt: deterministicAppliedAt });
 
       expect(tableNames(db)).toEqual([
+        'artifacts',
         'branches',
         'conversations',
         'projects',
@@ -24,6 +25,7 @@ describe('SQLite migration coordinator', () => {
         'task_conversation_links',
         'task_runs',
         'tasks',
+        'validation_runs',
         'worktrees',
       ]);
     } finally {
@@ -62,6 +64,7 @@ describe('SQLite migration coordinator', () => {
 
       expect(loadSchemaMigrationRows(db)).toEqual(firstRows);
       expect(tableNames(db)).toEqual([
+        'artifacts',
         'branches',
         'conversations',
         'projects',
@@ -70,6 +73,7 @@ describe('SQLite migration coordinator', () => {
         'task_conversation_links',
         'task_runs',
         'tasks',
+        'validation_runs',
         'worktrees',
       ]);
     } finally {
