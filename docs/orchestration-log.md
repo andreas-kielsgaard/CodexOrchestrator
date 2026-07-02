@@ -1404,3 +1404,48 @@ orchestration thread`)
 - Instruction: continue in a fresh `xhigh` successor orchestration thread after it re-ingests the
   handoff and required context files. The successor should inspect Worker 025 directly, then review
   and independently verify it before any merge.
+
+### Worker 025 Review And Merge: Task Run Lifecycle Recorder
+
+- Status: reviewed, corrected, merged, verified, logged, and Git-cleaned
+- Successor traceability checkpoint before review: `d04f423` (`Record Worker 025 successor
+orchestration thread`)
+- Worker thread: `019f23d9-88e3-7922-b161-e1efdf8902c6`
+- Worker commit: `54234f5d6be3b9b4a6f2b6d69dfd5051777ce4b5`
+- Orchestrator review correction commit: `415e42c` (`Review Worker 025 task-run identity guard`)
+- Merge commit: `9f44df5b74c4beba30c2c0edc9f1c70630144db2`
+- Result log: `docs/task-logs/worker-025-task-run-lifecycle-recorder.md`
+- Accepted decision: the lifecycle recorder is a pure TypeScript application coordination boundary
+  over existing Open Tasks read/write, TaskRun, Conversation, Artifact, and Event stores. It
+  intentionally does not execute Codex, parse Codex JSONL, run validations, open databases, add
+  SQLite adapters, add Tauri/Rust commands, touch UI, or introduce package dependencies.
+- Accepted decision: start records preflight task existence, create a running `TaskRun`, optionally
+  create Codex conversation metadata, link that conversation back to the run and task, update task
+  execution/attention state, preserve existing conversation IDs, and append a `run_started` event.
+- Accepted decision: terminal paths remain non-atomic multi-store coordination in this slice; future
+  runtime/database wiring can provide transactionality when concrete stores share one durable
+  connection.
+- Review correction: terminal completion paths now query task runs by supplied `taskId` and reject a
+  mismatched `taskId`/`taskRunId` pair before updating the run, task, artifacts, or events. This
+  keeps the required dual-ID terminal API safe despite the current `TaskRunStore` lacking a direct
+  get-by-id query.
+- Accepted decision: successful completion moves the task to `completed` plus `needs_review`,
+  optionally stores a `final_response` artifact, and appends `run_completed` with linked IDs and an
+  outcome payload; failure moves the task to `failed` plus `needs_action_now` and appends
+  `run_completed` with failure outcome details.
+- Orchestrator verification before merge:
+  `git diff --check main...worker/025-task-run-lifecycle-recorder`,
+  `npm run test -- src/application/taskRunLifecycle.test.ts`, `git diff --check`,
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed in the worker
+  worktree after the review correction.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed on main. `node:sqlite` emitted the expected experimental warning during
+  SQLite tests.
+- Drift check: still local-first and task-centered; the slice connects existing persistence
+  boundaries for run lifecycle capture and introduces no Codex credentials, Codex runtime
+  integration, workflow engine behavior, validation command execution, runtime database opening,
+  Tauri/Rust commands, React/UI work, Git execution, package dependencies, or broad CRUD stores.
+- Cleanup: `git worktree remove` unregistered the Worker 025 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\dc3c\Codex Orchestrator`; the merged branch
+  `worker/025-task-run-lifecycle-recorder` was deleted and the locked physical folder was left in
+  place.
