@@ -180,6 +180,19 @@ describe('summarizeCodexJsonlEvents', () => {
       lineNumber: 3,
     });
   });
+
+  it('ignores unknown event variants that use an item-prefixed type without an item envelope', () => {
+    expect(
+      summarizeCodexJsonlEvents([
+        {
+          type: 'item.future',
+          lineNumber: 1,
+          raw: { type: 'item.future', future_shape: true },
+          known: false,
+        },
+      ]),
+    ).toEqual({ itemCountsByType: {} });
+  });
 });
 
 function expectParseError(jsonl: string, lineNumber: number, message: string): void {

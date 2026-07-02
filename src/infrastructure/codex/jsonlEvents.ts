@@ -340,7 +340,7 @@ function optionalJsonObject(
 }
 
 function isCodexItemEvent(event: CodexJsonlEvent): event is CodexItemEvent {
-  return event.type.startsWith('item.');
+  return event.type.startsWith('item.') && !isUnknownCodexEvent(event) && 'item' in event;
 }
 
 function isCodexThreadStartedEvent(event: CodexJsonlEvent): event is CodexThreadStartedEvent {

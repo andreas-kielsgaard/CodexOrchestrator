@@ -50,3 +50,10 @@ None known.
   with both started and completed records for the same logical item will count both observations.
 - Known event validation is intentionally minimal and documented-envelope focused. Unknown event
   types pass through with raw preservation rather than failing the stream.
+
+## Orchestrator Review Addendum
+
+- Hardened `summarizeCodexJsonlEvents` so it does not treat structurally valid unknown
+  `CodexUnknownEvent` records with an `item.*` type as item events unless they actually carry the
+  parser-produced item envelope.
+- Added a focused regression test for that exported-union edge case.
