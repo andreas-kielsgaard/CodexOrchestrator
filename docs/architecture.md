@@ -154,6 +154,20 @@ results when stdout is parseable; launch failures and untrustworthy JSONL still 
 This adapter does not compose task-run lifecycle state, persist artifacts, manage conversations,
 read or manage Codex credentials, run validation commands, collect diffs, or wire UI behavior.
 
+### Validation
+
+Location: `src/infrastructure/validation/`
+
+`validationCommandRuntime.ts` is the Node-side runtime adapter for configured validation commands.
+It structurally satisfies the application-layer `ValidationCommandRuntime` contract through
+type-only imports, invokes exactly one configured command with argument arrays, cwd, and inherited
+environment plus caller overrides, and preserves raw stdout/stderr plus optional chunk callbacks.
+The default runner uses `node:child_process.spawn` with `shell: false` and hidden Windows process
+windows. It returns exit code and signal metadata without deciding whether validation passed.
+
+This adapter does not compose validation-run lifecycle state, persist artifacts/events, choose
+commands, run multiple commands, collect diffs, or wire UI/Tauri behavior.
+
 ### SQLite
 
 Location: `src/infrastructure/sqlite/`
@@ -215,8 +229,8 @@ The first usable runtime loop still needs:
    providers into the repo registry scan service.
 5. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
 6. Concrete Git worktree creation and scanning adapters for the task worktree selection service.
-7. Diff collection and concrete validation command runtime wiring that store their outputs as
-   artifacts/validation runs.
+7. Diff collection and runtime wiring that passes the concrete validation command runtime adapter
+   into the application validation service so outputs are stored as artifacts/validation runs.
 8. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.
 
 ## Testing And Verification
