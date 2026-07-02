@@ -1589,3 +1589,21 @@ orchestration thread`)
   folder deletion at `C:\Users\user\.codex\worktrees\9747\Codex Orchestrator`; the merged branch
   `worker/026-codex-jsonl-event-parser` was deleted and the locked physical folder was left in
   place.
+
+### Worker 027 Launch: App Database Opening
+
+- Status: launched in a fresh worktree worker
+- Pending worktree id: `local:ebc5e321-fadf-4c52-8106-bdfbf5cfac7c`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\04d6\Codex Orchestrator`
+- Expected branch: `worker/027-app-database-opening`
+- Launch base: `d5a0ac19c457e4640e562f6063f679176032f862` (`Log Worker 026 merge`)
+- Goal: add the smallest runtime-facing SQLite database opening boundary around the existing app
+  SQLite store bundle, opening a local database file, enabling foreign keys, applying migrations,
+  returning the app store bundle, and exposing a close/dispose path.
+- Explicitly deferred: React/UI wiring, replacing seed dashboard data, Tauri/Rust commands unless
+  the TypeScript boundary proves impossible, Codex or Git execution, run composition, repo registry
+  UI, validation, diff collection, workflow engine, and package dependencies unless necessary.
+- Required result log: `docs/task-logs/worker-027-app-database-opening.md`
+- Required verification: `git diff --check main...worker/027-app-database-opening`, focused opener
+  tests, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build`.
+- Report-back instruction: included in the worker prompt.
