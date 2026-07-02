@@ -342,11 +342,13 @@
 
 ### Worker 012: Open Tasks Dashboard SQLite Read Store
 
-- Status: launched
+- Status: launched; later reviewed and merged
 - Worker thread: `019f2228-0aba-7a33-9dc8-345a18fb36bf`
 - Pending worktree id: `local:a5b5f9a1-cea2-4e02-abdd-ad31f404ec93`
 - Worktree path: `C:\Users\user\.codex\worktrees\c15d\Codex Orchestrator`
-- Expected worker branch: `worker/012-open-tasks-sqlite-read-store`
+- Worker branch: `worker/012-open-tasks-sqlite-read-store`
+- Worker commit: `c1a4e60`
+- Merge commit: `6c70523`
 - Launch base: `65380ea`
 - Reasoning effort: `medium`
 - Context reuse decision: started fresh because Worker 011's schema foundation is merged and cleaned; the read-store slice should use current `main`, the merged task schema, and the dashboard projection code rather than carrying the schema worker's implementation context.
@@ -354,3 +356,12 @@
 - Scope: add a read-side store/query boundary for the Open Tasks dashboard plus a pure TypeScript SQLite read implementation using an injected database interface. The slice should load open tasks, ordered task conversation IDs, and linked project/repo/branch/worktree records needed by `projectOpenTaskDashboard`, without task write APIs, runtime DB wiring, Tauri/Rust work, Codex integration, React/UI work, package dependencies, or full Phase 1 stores.
 - Expected result log: `docs/task-logs/worker-012-open-tasks-sqlite-read-store.md`
 - Success signal: committed worker branch with tests proving dashboard groups are produced through the store facade, SQLite technical anchors resolve, archived/abandoned tasks do not appear, tasks sort by `updatedAt`, optional anchors tolerate `NULL`, and loaded task `conversationIds` preserve stored link order.
+- Accepted decision: `OpenTaskDashboardStore` is a small read-side domain boundary, and `loadOpenTaskDashboard` keeps grouping, sorting, and closed-task omission delegated to `projectOpenTaskDashboard`.
+- Accepted decision: `SqliteOpenTaskDashboardStore` intentionally loads archived/abandoned rows and lets the domain projection omit them, so dashboard rules remain centralized rather than duplicated in SQL.
+- Accepted decision: the SQLite reader loads only anchor rows referenced by loaded task rows instead of a full domain snapshot.
+- Orchestrator verification before merge: `git diff --check main...worker/012-open-tasks-sqlite-read-store`, `npm run test -- src/domain/openTaskDashboardStore.test.ts src/infrastructure/sqlite/openTaskDashboardStore.test.ts`, and `npm run build` passed in the worker worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
+- Verification note: `node:sqlite` emits Node's expected experimental warning during SQLite read-store tests.
+- Drift check: still local-first and task-centered; the dashboard read path centers `Task` as the attention unit, keeps Git repo/branch/worktree as technical anchors, and introduces no Codex credentials, Codex runtime integration, Tauri/Rust runtime DB wiring, write APIs, or UI work.
+- Cleanup: removed Git worktree registration and deleted merged branch `worker/012-open-tasks-sqlite-read-store`.
+- Cleanup note: Windows kept a physical leftover directory locked at `C:\Users\user\.codex\worktrees\c15d\Codex Orchestrator`; retry later after the app releases the handle.
