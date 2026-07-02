@@ -846,3 +846,31 @@
 - Cleanup note: Windows kept the physical worker folder locked at
   `C:\Users\user\.codex\worktrees\282a\Codex Orchestrator`; retry later after the app releases the
   handle.
+
+### Worker 020: TaskRun Store Boundary
+
+- Status: launched
+- Pending worktree id: `local:866a8c44-9bd5-44ff-b3f6-bc9c7c71a539`
+- Expected worker branch: `worker/020-task-run-store-boundary`
+- Launch base: `74fdd122aa3d4f178bae9a79cb0d65b21313e57f`
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 019's Event store boundary is merged,
+  verified, logged, and cleaned; the TaskRun store should use current `main`, the merged Event store
+  patterns, and the Worker 016 TaskRun schema/mappers rather than carrying Worker 019's event-store
+  implementation context.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Report-back instruction: included explicitly in the worker prompt as a dedicated requirement,
+  separate from the completion report shape.
+- Scope: add a narrow pure TypeScript TaskRun store boundary plus SQLite implementation using the
+  existing TaskRun schema and app migration coordinator, with deterministic create/update behavior
+  and focused query support over task-run filters.
+- Out of scope: Codex runtime integration, event emission, event-sourced projections, workflow
+  engine behavior, Conversation CRUD/store work, Artifact/Validation stores, UI/React work,
+  Tauri/Rust database commands, Git execution, runtime database file opening, package dependencies,
+  and broad CRUD stores for other record families.
+- Expected result log: `docs/task-logs/worker-020-task-run-store-boundary.md`
+- Success signal: committed worker branch with focused domain and SQLite TaskRun store tests plus
+  feasible `git diff --check main...worker/020-task-run-store-boundary`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` verification, followed by a
+  completion report sent back to the orchestration thread or an explicit note that cross-posting was
+  unavailable.
