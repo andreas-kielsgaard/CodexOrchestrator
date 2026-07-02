@@ -34,6 +34,13 @@ The TypeScript domain layer lives under `src/domain/`:
   optional filtering by event kind and linked IDs plus chronological ordering with an ID tie-breaker.
   The included in-memory implementation is a test helper, and the concrete SQLite adapter lives
   under `src/infrastructure/sqlite/`.
+- `taskRunStore.ts` defines the create/update/query boundary for durable TaskRun records. Creates
+  require the owning task ID and execution state, use injected ID/time providers, and leave optional
+  conversation, worktree, timing, and exit fields unset unless provided. Updates keep `taskId` and
+  `createdAt` immutable, treat omitted fields as unchanged, and treat `null` as an explicit clear
+  for optional fields. Queries filter by task, conversation, worktree, or execution state and order
+  by `createdAt` plus a stable ID tie-breaker. The included in-memory implementation is a test
+  helper, and the concrete SQLite adapter lives under `src/infrastructure/sqlite/`.
 - `seedData.ts` provides demo records until SQLite persistence and repository APIs are introduced.
 
 SQLite migrations, Rust database commands, Git scanning, and Codex runtime integration are intentionally outside this slice.
@@ -182,6 +189,18 @@ insert a task run without a conversation, insert the conversation linked to that
 task run with the conversation ID. Row mappers convert `TaskRun` and `Conversation` records to and
 from SQLite rows, preserve optional fields as SQL `NULL`, and constrain execution/provider unions as
 checked text values.
+
+## TaskRun SQLite Store Boundary
+
+The TaskRun store boundary lives in `src/domain/taskRunStore.ts`, with the SQLite adapter in
+`src/infrastructure/sqlite/taskRunStore.ts`. It persists concrete task execution attempts without
+starting runtime execution, appending events, managing conversations, or opening database files.
+
+The SQLite adapter depends on an injected SQLite-like interface and does not import `node:sqlite` in
+production code. It uses the Worker 016 `taskRunToRow` and `taskRunFromRow` mappers so SQL `NULL`
+handling and domain row translation stay centralized in the schema layer. When the injected
+database supports `exec`, create/update writes run inside `BEGIN`/`COMMIT` with rollback on failure;
+missing updates throw the typed `TaskRunNotFoundError`.
 
 ## Artifact and ValidationRun SQLite Schema Foundation
 
