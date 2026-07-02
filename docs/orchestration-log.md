@@ -428,3 +428,27 @@
 - Cleanup note: Windows kept the physical worker folder locked at
   `C:\Users\user\.codex\worktrees\c139\Codex Orchestrator`; retry later after the app releases the
   handle.
+
+### Worker 014: Open Tasks SQLite Write Store Adapter
+
+- Status: launched/in progress; not reviewed or merged
+- Worker thread: `019f2240-3425-7b50-8953-70d7e596571b`
+- Pending worktree id: `local:146bea77-5472-493a-acd6-04c003e95220`
+- Worktree path: `C:\Users\user\.codex\worktrees\8f3a\Codex Orchestrator`
+- Worker branch: `worker/014-open-tasks-sqlite-write-store`
+- Launch base: `4189b1bc0da30196ae5a0c7fe53bcf8c627094ff`
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 013's domain write boundary is merged; the
+  SQLite write adapter should use current `main`, the merged write/read/schema modules, and Worker
+  013's result log rather than carrying the domain-boundary worker conversation.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Scope: add a pure TypeScript SQLite-backed `OpenTaskWriteStore` implementation with an injected
+  SQLite-like database interface, deterministic ID/time providers, transaction behavior when
+  available, and tests for create, update, explicit optional clears, ordered conversation-link
+  replacement, archive behavior, missing-task errors, and unrelated task preservation.
+- Out of scope: app runtime database wiring, Tauri/Rust work, Codex runtime integration, Git
+  execution, React/UI work, full conversations/events/task_runs/artifacts stores, and new package
+  dependencies.
+- Expected result log: `docs/task-logs/worker-014-open-tasks-sqlite-write-store.md`
+- Success signal: committed worker branch with focused SQLite write-store tests plus feasible
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` verification.
