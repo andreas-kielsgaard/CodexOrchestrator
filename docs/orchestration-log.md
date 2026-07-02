@@ -1968,3 +1968,38 @@ orchestration thread`)
 - Cleanup: `git worktree remove` unregistered the Worker 033 worktree, but Windows denied physical
   folder deletion at `C:\Users\user\.codex\worktrees\6610\Codex Orchestrator`; the merged branch
   `worker/033-diff-collector-service` was deleted and the locked physical folder was left in place.
+
+### Worker 034 Review And Merge: Validation Command Runner Service Boundary
+
+- Status: reviewed, corrected, merged, verified, logged, and Git-cleaned
+- Worker commit: `1605a0a52235f61bf9212136f605f7066c91f1dd`
+  (`Add validation command runner service`)
+- Orchestrator review correction commit:
+  `3cb2a0735ae146c26c398b72c71ff3fb1e1768b2`
+  (`Review Worker 034 validation error boundaries`)
+- Merge commit: `2d31f01d0da01e3ad45c133acdd2d3201920dcbf`
+- Result log: `docs/task-logs/worker-034-validation-command-runner.md`
+- Accepted decision: `validationCommandRunner.ts` is an application boundary over task,
+  validation-run, artifact, event, and injected command-runtime dependencies. It creates a running
+  `ValidationRun`, emits lifecycle events, stores `validation_log` artifacts, and records passed or
+  failed outcomes for one command per call.
+- Accepted decision: concrete process execution, Tauri/UI wiring, multi-command orchestration, and
+  workflow-engine behavior remain deferred. Runtime wiring should inject the command runtime later.
+- Review correction: added task-run ownership preflight and narrowed runtime error handling so
+  store/event persistence failures propagate instead of being converted into failed validation
+  command outcomes. The result-log final status block was corrected to the committed clean branch
+  state.
+- Orchestrator verification before merge: `git diff --check`, focused validation-command tests,
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed in the worker
+  worktree after the review correction. `cargo --version` and `rustc --version` failed because
+  Rust/Cargo are not on `PATH`.
+- Verification after merge: `git diff --check HEAD^..HEAD`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` passed on main. `node:sqlite`
+  emitted the expected experimental warning during SQLite tests.
+- Drift check: the slice did not build a concrete process adapter, React UI, Tauri commands, Codex
+  execution, diff collection, multi-command workflow orchestration, or broad workflow-engine
+  behavior.
+- Cleanup: `git worktree remove` unregistered the Worker 034 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\d19f\Codex Orchestrator`; the merged branch
+  `worker/034-validation-command-runner` was deleted and the locked physical folder was left in
+  place.
