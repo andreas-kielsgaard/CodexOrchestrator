@@ -5,6 +5,7 @@ import { InMemoryOpenTaskDashboardStore } from '../domain/openTaskDashboardStore
 import {
   collectTaskDiff,
   DiffCollectionTaskNotFoundError,
+  DiffCollectionTaskRunNotFoundForTaskError,
   DiffCollectionWorktreeNotFoundError,
   DiffCollectionWorktreeNotResolvedError,
   type DiffCollectionService,
@@ -117,6 +118,20 @@ describe('diff collection service', () => {
       }),
     ).rejects.toThrow(DiffCollectionTaskNotFoundError);
 
+    const mismatchedTaskRunFixture = createFixture({
+      records: recordsWith({
+        taskRuns: [baseTaskRun({ taskId: 'task-other' })],
+      }),
+      provider,
+    });
+
+    await expect(
+      collectTaskDiff(mismatchedTaskRunFixture.service, {
+        taskId,
+        taskRunId,
+      }),
+    ).rejects.toThrow(DiffCollectionTaskRunNotFoundForTaskError);
+
     const noWorktreeFixture = createFixture({
       records: recordsWith({
         tasks: [baseTask({ worktreeId: undefined })],
@@ -148,9 +163,11 @@ describe('diff collection service', () => {
 
     expect(provider.inputs).toEqual([]);
     expect(missingTaskFixture.artifactStore.snapshot()).toEqual([]);
+    expect(mismatchedTaskRunFixture.artifactStore.snapshot()).toEqual([]);
     expect(noWorktreeFixture.artifactStore.snapshot()).toEqual([]);
     expect(missingWorktreeFixture.artifactStore.snapshot()).toEqual([]);
     expect(missingTaskFixture.eventStore.snapshot()).toEqual([]);
+    expect(mismatchedTaskRunFixture.eventStore.snapshot()).toEqual([]);
     expect(noWorktreeFixture.eventStore.snapshot()).toEqual([]);
     expect(missingWorktreeFixture.eventStore.snapshot()).toEqual([]);
   });

@@ -48,6 +48,8 @@ None.
 
 ## Review Notes
 
+- Orchestrator review correction: added focused coverage for rejecting a `taskRunId` that exists
+  but belongs to a different task before diff provider execution.
 - The event payload intentionally stays compact: artifact kind/id, diff length, empty flag,
   normalized worktree path, and worktree id when known.
 - This service does not mutate task/run lifecycle state; callers should invoke it after an
