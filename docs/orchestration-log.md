@@ -643,3 +643,29 @@
 - Cleanup note: Windows kept the physical worker folder locked at
   `C:\Users\user\.codex\worktrees\c628\Codex Orchestrator`; retry later after the app releases the
   handle.
+
+### Worker 017: Artifact/ValidationRun SQLite Schema
+
+- Status: launched/in progress; not reviewed or merged
+- Pending worktree id: `local:ade7f6f3-23e4-47f1-bfbb-923d7b431609`
+- Expected worker branch: `worker/017-artifact-validation-sqlite-schema`
+- Launch base: `e27e761cc12fdcfc56641e5af4e062b1870e5e12`
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 016's provenance schema foundation is
+  merged, verified, and cleaned; the Artifact/ValidationRun schema slice should use current `main`,
+  the merged migration coordinator, and existing domain model rather than carrying Worker 016's
+  implementation context.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Report-back instruction: included explicitly in the worker prompt as a dedicated requirement,
+  separate from the completion report shape.
+- Scope: add pure TypeScript SQLite schema/migration support for domain `Artifact` and
+  `ValidationRun` records, compose the new migration after TaskRun/Conversation, add row mappers and
+  `node:sqlite` tests, and document the schema boundary.
+- Out of scope: event schema/event append API, CRUD stores for artifacts or validation runs,
+  runtime database file opening, Tauri/Rust commands, Codex runtime integration, Git execution,
+  React/UI work, and package dependencies.
+- Expected result log: `docs/task-logs/worker-017-artifact-validation-sqlite-schema.md`
+- Success signal: committed worker branch with focused schema/coordinator tests plus feasible
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` verification, followed
+  by a completion report sent back to the orchestration thread or an explicit note that cross-posting
+  was unavailable.
