@@ -25,6 +25,8 @@ Already merged:
 - Application-layer run composition service over injected stores and Codex runtime.
 - Application-layer repo registry scan service over injected Git scanner and repo sync store
   boundaries.
+- Application-layer task worktree selection/creation service over injected repo scan, task stores,
+  and Git worktree creator boundaries.
 
 Known blocker:
 
@@ -32,30 +34,29 @@ Known blocker:
 
 ## Remaining Tasks
 
-| ID    | Task                           | Output                                                                                                      | Depends On                           |
-| ----- | ------------------------------ | ----------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| FS-04 | Worktree creation for a task   | Create/select app-managed task worktree and link it to task/branch/repo records                             | Merged repo registry scan service    |
-| FS-05 | Persisted Open Tasks dashboard | Dashboard reads/writes SQLite-backed tasks instead of seed data; supports create/edit/archive/state changes | Merged database opener               |
-| FS-08 | Run controls in UI             | User can start a Codex run for a task in a selected worktree and see running/completed/failed state         | FS-04, FS-05, merged run composition |
-| FS-09 | Task/run detail view           | Show task anchors, run history, final response, raw JSONL artifact link/summary, and event timeline         | FS-05, merged run composition        |
-| FS-10 | Diff collector                 | Capture worktree diff after a run and store it as an artifact                                               | FS-04, merged run composition        |
-| FS-11 | Validation command runner      | Run configured validation command(s), store output artifact and validation run status, and surface failures | FS-04, merged run composition        |
-| FS-12 | Review surface MVP             | Show final response, diff state, validation status, and next action for completed/failed runs               | FS-09, FS-10, FS-11                  |
-| FS-13 | Tauri build environment        | Rust/Cargo available; `npm run build:tauri` can be verified                                                 | External environment                 |
+| ID    | Task                           | Output                                                                                                      | Depends On                          |
+| ----- | ------------------------------ | ----------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| FS-05 | Persisted Open Tasks dashboard | Dashboard reads/writes SQLite-backed tasks instead of seed data; supports create/edit/archive/state changes | Merged database opener              |
+| FS-08 | Run controls in UI             | User can start a Codex run for a task in a selected worktree and see running/completed/failed state         | Merged task worktree service, FS-05 |
+| FS-09 | Task/run detail view           | Show task anchors, run history, final response, raw JSONL artifact link/summary, and event timeline         | FS-05, merged run composition       |
+| FS-10 | Diff collector                 | Capture worktree diff after a run and store it as an artifact                                               | Merged task worktree service        |
+| FS-11 | Validation command runner      | Run configured validation command(s), store output artifact and validation run status, and surface failures | Merged task worktree service        |
+| FS-12 | Review surface MVP             | Show final response, diff state, validation status, and next action for completed/failed runs               | FS-09, FS-10, FS-11                 |
+| FS-13 | Tauri build environment        | Rust/Cargo available; `npm run build:tauri` can be verified                                                 | External environment                |
 
 ## Dependency Shape
 
 Critical path:
 
-1. FS-04: create/select task worktrees using the merged repo registry scan service.
-2. FS-05: replace seed tasks with persisted task CRUD.
-3. FS-08 and FS-09: expose run start and run review in the UI.
-4. FS-10, FS-11, FS-12: add review-grade diff and validation.
+1. FS-05: replace seed tasks with persisted task CRUD.
+2. FS-08 and FS-09: expose run start and run review in the UI.
+3. FS-10, FS-11, FS-12: add review-grade diff and validation.
 
 Repo/worktree path:
 
-1. Merged repo registry scan service registers/scans repos through injected Git and persistence boundaries.
-2. FS-04 creates or selects worktrees for tasks.
+1. Merged repo registry scan service registers/scans repos through injected Git and persistence
+   boundaries.
+2. Merged task worktree selection service links tasks to selected or created worktree records.
 3. FS-08, FS-10, and FS-11 rely on a concrete worktree path.
 
 Dashboard path:
@@ -74,23 +75,23 @@ Review path:
 
 Safe immediately:
 
-- FS-04 can proceed now that the repo registry scan service is merged.
 - FS-05 can start now that the database opener is merged, if it keeps browser/runtime boundaries
   explicit.
+- FS-10 and FS-11 can start at the service boundary now that task worktree selection and run
+  composition are merged.
 - FS-13 can run anytime.
 
 Should wait:
 
-- FS-08 should wait for FS-04, FS-05, and merged run composition.
+- FS-08 should wait for FS-05 and concrete runtime wiring.
 - FS-09 should wait for persisted tasks and real run records unless built as a UI shell only.
-- FS-10 and FS-11 should wait for FS-04 and merged run composition.
 - FS-12 should wait for real run, diff, and validation records.
 
 ## Recommended Worker Sequencing
 
-1. Launch FS-04 and FS-05 as independent workers if capacity allows.
-2. Launch FS-08 and FS-09 as UI workers after FS-04/FS-05.
-3. Launch FS-10 and FS-11 in parallel after FS-04.
+1. Launch FS-05 next so the visible dashboard stops depending on seed data.
+2. Launch FS-10 and FS-11 as service-boundary workers in parallel if capacity allows.
+3. Launch FS-08 and FS-09 as UI workers after FS-05.
 4. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
 
 ## Orchestration Notes

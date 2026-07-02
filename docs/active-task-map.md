@@ -12,15 +12,7 @@ otherwise resolve it.
 
 ## Active Tasks
 
-- Worker 031: Task Worktree Creation / Selection Service Boundary
-  - Status: launched; awaiting worker completion report
-  - Pending worktree id: `local:f4ba4057-cc4e-4902-ace0-961d821c734c`
-  - Worktree: `C:\Users\user\.codex\worktrees\93b2\Codex Orchestrator`
-  - Expected branch: `worker/031-task-worktree-service`
-  - Launch base: `b252e7a241563a6f13bcad1ea067c91518f741fe`
-  - Result log target: `docs/task-logs/worker-031-task-worktree-service.md`
-  - Next orchestration action: inspect worker report/worktree, review branch, independently
-    verify, then merge or request correction.
+None.
 
 ## Blockers
 
@@ -42,3 +34,4 @@ launched:
 - Worker 028: `C:\Users\user\.codex\worktrees\c12f\Codex Orchestrator`
 - Worker 029: `C:\Users\user\.codex\worktrees\a518\Codex Orchestrator`
 - Worker 030: `C:\Users\user\.codex\worktrees\0d6b\Codex Orchestrator`
+- Worker 031: `C:\Users\user\.codex\worktrees\93b2\Codex Orchestrator`

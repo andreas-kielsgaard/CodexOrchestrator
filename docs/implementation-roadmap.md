@@ -48,13 +48,15 @@ Already built on `main`:
 - Application-layer run composition service over injected stores and Codex runtime.
 - Application-layer repo registry scan service over injected Git scanner and repo sync store
   boundaries.
+- Application-layer task worktree selection/creation service over injected repo scan, task stores,
+  and Git worktree creator boundaries.
 
 Important gaps:
 
 - No UI/runtime composition that chooses the app database path and exposes stores to application
   services.
 - No persisted dashboard UI; the visible app is still seed/demo driven.
-- No concrete Git command scanner or repo/worktree UI path.
+- No concrete Git command scanner/worktree creator adapters or repo/worktree UI path.
 - No task/run detail view.
 - No diff collector or validation command runner.
 - `npm run build:tauri` is blocked until Rust/Cargo are installed or on `PATH`.
@@ -77,7 +79,7 @@ events, diff, and validation result in the app.
 
 Current planned sequence:
 
-1. Add concrete Git scanner/runtime wiring and worktree selection/creation.
+1. Add concrete Git scanner/worktree adapters where runtime callers need them.
 2. Replace seed dashboard behavior with persisted task CRUD.
 3. Wire run controls and task/run detail UI to the composed run service.
 4. Add diff capture and validation command execution.

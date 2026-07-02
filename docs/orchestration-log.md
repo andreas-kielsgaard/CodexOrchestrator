@@ -1812,3 +1812,37 @@ orchestration thread`)
   service/boundary tests, `npm run lint`, `npm run format:check`, `npm run test`, and
   `npm run build`.
 - Report-back instruction: included in the worker prompt.
+
+### Worker 031 Review And Merge: Task Worktree Creation / Selection Service Boundary
+
+- Status: reviewed, corrected, merged, verified, logged, and Git-cleaned
+- Worker commit: `0a0e8cf560f985f9b962f15e017afa13543eb868`
+  (`Add task worktree selection service`)
+- Orchestrator review correction commit:
+  `19a0bcf0d924a42746b7630c6469f99a3d7df64b`
+  (`Review Worker 031 post-create scan root`)
+- Merge commit: `741f08985a5ad4f9dd4f19250932c60bec205853`
+- Result log: `docs/task-logs/worker-031-task-worktree-service.md`
+- Accepted decision: `taskWorktreeSelection.ts` is an application boundary over injected task
+  stores, repo registry scan service, and optional `GitWorktreeCreator`. It preflights task
+  existence, optionally delegates narrow worktree creation, scans/syncs repo records, selects a
+  scanned worktree by path and/or branch, and links the task with repo, worktree, and available
+  branch IDs.
+- Accepted decision: concrete Git command execution remains deferred. The slice defined the
+  creator boundary but did not add a process adapter or UI.
+- Review correction: post-create scans now use the repo root returned by the injected creator when
+  present. The correction also formatted existing drift in `docs/first-slice-completion-plan.md`
+  so `npm run format:check` passes again.
+- Orchestrator verification before merge: `git diff --check main...worker/031-task-worktree-service`,
+  `npm run test -- taskWorktreeSelection`, `npm run lint`, `npm run format:check`,
+  `npm run test`, and `npm run build` passed in the worker worktree after the review correction.
+  `cargo --version` and `rustc --version` failed because Rust/Cargo are not on `PATH`.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed on main. `node:sqlite` emitted the expected experimental warning during
+  SQLite tests.
+- Drift check: the slice did not build React UI, wire persisted dashboard behavior, start Codex
+  runs, collect diffs, execute validation commands, build review UI, add broad Git workflow-engine
+  behavior, import Node-only APIs into browser code, or add dependencies.
+- Cleanup: `git worktree remove` unregistered the Worker 031 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\93b2\Codex Orchestrator`; the merged branch
+  `worker/031-task-worktree-service` was deleted and the locked physical folder was left in place.
