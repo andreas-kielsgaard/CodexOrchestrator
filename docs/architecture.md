@@ -69,6 +69,15 @@ It intentionally does not execute Codex, parse Codex output, open SQLite, run va
 behavior. Future runtime composition should call this service after Codex events are captured and
 parsed.
 
+`runComposition.ts` coordinates one persisted non-interactive Codex run over injected boundaries. It
+starts the lifecycle with Codex conversation metadata, invokes an injected Codex runtime, stores the
+raw stdout JSONL as a `raw_event_stream` artifact, updates conversation thread metadata and summary
+when the runtime returns structured output, and then completes or fails the lifecycle with exit-code
+and final-response details when available. The service is intentionally non-atomic and explicit
+about that coordination boundary: it does not open the app database, import concrete runtime
+infrastructure, execute child processes directly, choose database paths, collect diffs, run
+validation commands, manage worktrees, or wire UI behavior.
+
 ## Infrastructure Layer
 
 ### Git
@@ -147,8 +156,8 @@ The first usable runtime loop still needs:
 
 1. UI/runtime composition that chooses the local app database path and exposes the opened store
    bundle to application services.
-2. A composition service that calls the Codex runtime adapter, stores raw JSONL, extracts final response/thread metadata, updates
-   lifecycle state, and appends events.
+2. Runtime wiring that passes the SQLite-backed store bundle and concrete Codex runtime adapter into
+   the run composition service.
 3. Diff and validation runners that store their outputs as artifacts/validation runs.
 4. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.
 
