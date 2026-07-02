@@ -45,13 +45,12 @@ Already built on `main`:
 - Codex JSONL parser boundary for captured `codex exec --json` streams.
 - Runtime-facing local SQLite database opener over the app store bundle.
 - Codex exec runtime adapter for non-interactive JSONL runs.
+- Application-layer run composition service over injected stores and Codex runtime.
 
 Important gaps:
 
 - No UI/runtime composition that chooses the app database path and exposes stores to application
   services.
-- No run composition service that connects Codex execution to lifecycle, stores, artifacts, and
-  events.
 - No persisted dashboard UI; the visible app is still seed/demo driven.
 - No repo registration/worktree creation UI path.
 - No task/run detail view.
@@ -76,12 +75,11 @@ events, diff, and validation result in the app.
 
 Current planned sequence:
 
-1. Compose runtime adapter, JSONL parser, lifecycle recorder, stores, artifacts, and events.
-2. Add repo registration/scanning and worktree selection/creation.
-3. Replace seed dashboard behavior with persisted task CRUD.
-4. Add run controls and task/run detail UI.
-5. Add diff capture and validation command execution.
-6. Add the review surface that combines final response, diff, validation, and next action.
+1. Add repo registration/scanning and worktree selection/creation.
+2. Replace seed dashboard behavior with persisted task CRUD.
+3. Wire run controls and task/run detail UI to the composed run service.
+4. Add diff capture and validation command execution.
+5. Add the review surface that combines final response, diff, validation, and next action.
 
 ## Later Roadmap
 

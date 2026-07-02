@@ -1708,3 +1708,34 @@ orchestration thread`)
   composition service tests, `npm run lint`, `npm run format:check`, `npm run test`, and
   `npm run build`.
 - Report-back instruction: included in the worker prompt.
+
+### Worker 029 Review And Merge: Run Composition Service
+
+- Status: reviewed, corrected, merged, verified, logged, and Git-cleaned
+- Worker commit: `4bb5c2fecd27dabe956b9c41f0a43f0ab4f2b327`
+- Orchestrator review correction commit:
+  `613ca38e79fc420e85a1a544d7157075aa9fae70` (`Review Worker 029 structured error coverage`)
+- Merge commit: `08c376703e88a2ad5d5bcd6a18183dc1065b9dae`
+- Result log: `docs/task-logs/worker-029-run-composition-service.md`
+- Accepted decision: `runComposition.ts` is an application-layer service over injected store and
+  runtime boundaries. It starts lifecycle state, invokes the injected Codex runtime, stores raw
+  JSONL as a `raw_event_stream` artifact, emits an `artifact_created` event, updates Codex
+  conversation metadata, and completes or fails lifecycle state with exit/final-response details.
+- Accepted decision: the service remains intentionally non-atomic. Raw JSONL is persisted before
+  terminal lifecycle updates when a structured runtime result exists.
+- Review correction: added focused coverage for structured runtime `error` results so raw JSONL is
+  stored before failing lifecycle state without inventing an exit code.
+- Orchestrator verification before merge: `git diff --check main...worker/029-run-composition-service`,
+  `npm run test -- src/application/runComposition.test.ts`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` passed in the worker worktree after
+  the review correction.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed on main. `node:sqlite` emitted the expected experimental warning during
+  SQLite tests.
+- Drift check: the slice did not wire React/Tauri UI, choose or open an app database path, register
+  repos, create worktrees, collect diffs, run validations, manage credentials, execute real Codex in
+  tests, or add dependencies.
+- Cleanup: `git worktree remove` unregistered the Worker 029 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\a518\Codex Orchestrator`; the merged branch
+  `worker/029-run-composition-service` was deleted and the locked physical folder was left in
+  place.
