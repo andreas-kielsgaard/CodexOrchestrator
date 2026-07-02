@@ -379,3 +379,25 @@
 - Instruction: this compressed orchestration thread should not launch Worker 013 or new
   implementation work. Continue orchestration in a fresh `xhigh` control-room thread after it
   re-ingests the new handoff and required context files.
+
+### Worker 013: Open Tasks Write Boundary
+
+- Status: launched/in progress; not reviewed or merged
+- Pending worktree id: `local:70b5b4c5-fb0c-4689-bb54-cbd6a892a4da`
+- Worker branch: `worker/013-open-tasks-write-boundary`
+- Launch base: `c239cc87558071dd619226bdcdf487e37f87c8f5`
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 012's read-store implementation is merged
+  and the write-boundary slice should use current `main`, the merged task schema/read-store files,
+  and the domain model rather than carrying the read-store worker conversation.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Scope: add a pure TypeScript Open Tasks write/mutation boundary with an in-memory implementation
+  or test helper, covering task create, edit/update, archive-style close behavior, ordered
+  conversation ID replacement, optional anchor/timestamp clears, missing-task handling, and
+  unrelated record preservation.
+- Out of scope: SQLite write adapter, schema changes unless mapper-only and justified, runtime
+  database wiring, Tauri/Rust work, Codex runtime integration, Git command execution, React/UI
+  work, and new package dependencies.
+- Expected result log: `docs/task-logs/worker-013-open-tasks-write-boundary.md`
+- Success signal: committed worker branch with focused tests plus feasible `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` verification.
