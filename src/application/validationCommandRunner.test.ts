@@ -1,10 +1,11 @@
-import { InMemoryArtifactStore } from '../domain/artifactStore';
+import { InMemoryArtifactStore, type ArtifactStore } from '../domain/artifactStore';
 import { InMemoryEventStore } from '../domain/eventStore';
-import type { DomainRecords, IsoDateTime, Task, Worktree } from '../domain/model';
+import type { DomainRecords, IsoDateTime, Task, TaskRun, Worktree } from '../domain/model';
 import { InMemoryOpenTaskDashboardStore } from '../domain/openTaskDashboardStore';
 import { InMemoryValidationRunStore } from '../domain/validationRunStore';
 import {
   runTaskValidationCommand,
+  ValidationCommandTaskRunNotFoundForTaskError,
   ValidationCommandTaskNotFoundError,
   ValidationCommandWorktreeNotFoundError,
   type ValidationCommandRunnerService,
@@ -290,6 +291,32 @@ describe('validation command runner', () => {
     expect(fixture.eventStore.snapshot()).toEqual([]);
   });
 
+  it('preflights task run ownership before creating validation records or invoking the runtime', async () => {
+    const fixture = createFixture({
+      records: recordsWith({ taskRuns: [baseTaskRun({ taskId: 'task-other' })] }),
+      runtime: new FakeValidationRuntime({
+        stdout: 'unused',
+        stderr: '',
+        exitCode: 0,
+        signal: null,
+      }),
+    });
+
+    await expect(
+      runTaskValidationCommand(fixture.service, {
+        taskId,
+        taskRunId,
+        command: 'npm',
+        args: ['run', 'test'],
+      }),
+    ).rejects.toThrow(ValidationCommandTaskRunNotFoundForTaskError);
+
+    expect(fixture.runtime.calls).toEqual([]);
+    expect(fixture.validationRunStore.snapshot()).toEqual([]);
+    expect(fixture.artifactStore.snapshot()).toEqual([]);
+    expect(fixture.eventStore.snapshot()).toEqual([]);
+  });
+
   it('preflights missing linked worktrees before creating validation records or invoking the runtime', async () => {
     const fixture = createFixture({
       records: recordsWith({ tasks: [baseTask], worktrees: [] }),
@@ -313,6 +340,65 @@ describe('validation command runner', () => {
     expect(fixture.validationRunStore.snapshot()).toEqual([]);
     expect(fixture.artifactStore.snapshot()).toEqual([]);
     expect(fixture.eventStore.snapshot()).toEqual([]);
+  });
+
+  it('propagates artifact store failures after runtime success without marking the command failed', async () => {
+    const runtimeResult: ValidationCommandRuntimeResult = {
+      stdout: 'tests passed\n',
+      stderr: '',
+      exitCode: 0,
+      signal: null,
+    };
+    const runtime = new FakeValidationRuntime(runtimeResult);
+    const validationRunStore = new InMemoryValidationRunStore(
+      sequenceIds('validation'),
+      fixedClock('2026-07-02T10:01:00.000Z'),
+    );
+    const eventStore = new InMemoryEventStore(
+      sequenceIds('event'),
+      fixedClock('2026-07-02T10:03:00.000Z'),
+    );
+    const artifactStore: ArtifactStore = {
+      createArtifact: async () => {
+        throw new Error('artifact store unavailable');
+      },
+      queryArtifacts: async () => [],
+    };
+
+    await expect(
+      runTaskValidationCommand(
+        {
+          dashboardStore: new InMemoryOpenTaskDashboardStore(recordsWith({})),
+          validationRunStore,
+          artifactStore,
+          eventStore,
+          runtime,
+        },
+        {
+          taskId,
+          taskRunId,
+          command: 'npm',
+          args: ['run', 'test'],
+        },
+      ),
+    ).rejects.toThrow('artifact store unavailable');
+
+    expect(runtime.calls).toEqual([
+      {
+        command: 'npm',
+        args: ['run', 'test'],
+        cwd: worktreePath,
+      },
+    ]);
+    expect(validationRunStore.snapshot()).toMatchObject([
+      {
+        id: 'validation-001',
+        taskId,
+        taskRunId,
+        status: 'running',
+      },
+    ]);
+    expect(eventStore.snapshot().map((event) => event.kind)).toEqual(['validation_started']);
   });
 });
 
@@ -385,10 +471,24 @@ function recordsWith(overrides: Partial<DomainRecords>): DomainRecords {
     worktrees: [baseWorktree],
     conversations: [],
     tasks: [baseTask],
-    taskRuns: [],
+    taskRuns: [baseTaskRun()],
     artifacts: [],
     validationRuns: [],
     events: [],
+    ...overrides,
+  };
+}
+
+function baseTaskRun(overrides: Partial<TaskRun> = {}): TaskRun {
+  return {
+    id: taskRunId,
+    taskId,
+    worktreeId,
+    executionState: 'completed',
+    startedAt: '2026-07-02T09:00:00.000Z',
+    completedAt: '2026-07-02T09:30:00.000Z',
+    createdAt: '2026-07-02T09:00:00.000Z',
+    updatedAt: '2026-07-02T09:30:00.000Z',
     ...overrides,
   };
 }

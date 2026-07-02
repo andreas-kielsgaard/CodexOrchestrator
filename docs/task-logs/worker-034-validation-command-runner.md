@@ -47,16 +47,15 @@ Date: 2026-07-02
 
 ## Review Notes
 
+- Orchestrator review correction: added task-run ownership preflight and narrowed runtime error
+  handling so store/event persistence failures propagate instead of being converted into failed
+  validation command outcomes.
 - Review the event payload names and artifact JSON shape before UI review work consumes them.
 - The service intentionally runs one command per call. Multi-command orchestration can be layered by
   a caller later without adding a workflow engine here.
 
-## Final Git Status At Log Write
+## Final Git Status
 
 ```text
 ## worker/034-validation-command-runner
- M docs/architecture.md
-?? docs/task-logs/worker-034-validation-command-runner.md
-?? src/application/validationCommandRunner.test.ts
-?? src/application/validationCommandRunner.ts
 ```

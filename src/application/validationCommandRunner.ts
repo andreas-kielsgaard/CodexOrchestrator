@@ -7,6 +7,7 @@ import type {
   Event,
   IsoDateTime,
   Task,
+  TaskRun,
   ValidationRun,
   ValidationStatus,
   Worktree,
@@ -91,6 +92,13 @@ export class ValidationCommandTaskNotFoundError extends Error {
   }
 }
 
+export class ValidationCommandTaskRunNotFoundForTaskError extends Error {
+  constructor(taskId: EntityId, taskRunId: EntityId) {
+    super(`Validation command task run not found for task: ${taskRunId} for ${taskId}`);
+    this.name = 'ValidationCommandTaskRunNotFoundForTaskError';
+  }
+}
+
 export class ValidationCommandWorktreeRequiredError extends Error {
   constructor(taskId: EntityId) {
     super(`Validation command run requires a cwd or linked worktree path for task: ${taskId}`);
@@ -111,20 +119,22 @@ export async function runTaskValidationCommand(
 ): Promise<RunTaskValidationCommandResult> {
   const records = await service.dashboardStore.loadOpenTaskDashboardRecords();
   const task = requireTask(records, input.taskId);
+  const taskRun = resolveTaskRun(records, task, input.taskRunId);
+  const taskRunId = taskRun?.id;
   const resolvedCwd = resolveValidationCwd(records, task, input);
   const displayCommand = renderValidationCommand(input.command, input.args);
   const validationRun = await service.validationRunStore.createValidationRun({
     command: displayCommand,
     status: 'running',
     taskId: task.id,
-    ...(input.taskRunId === undefined ? {} : { taskRunId: input.taskRunId }),
+    ...(taskRunId === undefined ? {} : { taskRunId }),
     ...(input.startedAt === undefined ? {} : { startedAt: input.startedAt }),
   });
   const startedEvent = await service.eventStore.appendEvent({
     kind: 'validation_started',
     projectId: task.projectId,
     taskId: task.id,
-    ...(input.taskRunId === undefined ? {} : { taskRunId: input.taskRunId }),
+    ...(taskRunId === undefined ? {} : { taskRunId }),
     validationRunId: validationRun.id,
     payload: {
       taskId: task.id,
@@ -137,8 +147,9 @@ export async function runTaskValidationCommand(
     },
   });
 
+  let runtimeResult: ValidationCommandRuntimeResult;
   try {
-    const runtimeResult = await service.runtime.run({
+    runtimeResult = await service.runtime.run({
       command: input.command,
       ...(input.args === undefined ? {} : { args: input.args }),
       cwd: resolvedCwd.cwd,
@@ -146,67 +157,12 @@ export async function runTaskValidationCommand(
       ...(input.onStdoutChunk === undefined ? {} : { onStdoutChunk: input.onStdoutChunk }),
       ...(input.onStderrChunk === undefined ? {} : { onStderrChunk: input.onStderrChunk }),
     });
-    const status = classifyValidationStatus(runtimeResult);
-    const outputArtifact = await createValidationLogArtifact(service, {
-      task,
-      taskRunId: input.taskRunId,
-      validationRun,
-      displayCommand,
-      command: input.command,
-      args: input.args,
-      cwd: resolvedCwd.cwd,
-      worktree: resolvedCwd.worktree,
-      startedAt: input.startedAt,
-      completedAt: input.completedAt,
-      status,
-      runtimeResult,
-    });
-    const artifactCreatedEvent = await appendArtifactCreatedEvent(service, {
-      task,
-      taskRunId: input.taskRunId,
-      validationRun,
-      outputArtifact,
-      runtimeResult,
-      status,
-    });
-    const updatedValidationRun = await service.validationRunStore.updateValidationRun(
-      validationRun.id,
-      {
-        status,
-        ...(input.completedAt === undefined ? {} : { completedAt: input.completedAt }),
-        ...(numericExitCode(runtimeResult.exitCode) === undefined
-          ? {}
-          : { exitCode: numericExitCode(runtimeResult.exitCode) }),
-        outputArtifactId: outputArtifact.id,
-      },
-    );
-    const completedEvent = await appendValidationCompletedEvent(service, {
-      task,
-      taskRunId: input.taskRunId,
-      validationRun: updatedValidationRun,
-      outputArtifact,
-      runtimeResult,
-      status,
-      completedAt: input.completedAt,
-    });
-
-    return {
-      status,
-      task,
-      ...(resolvedCwd.worktree === undefined ? {} : { worktree: resolvedCwd.worktree }),
-      validationRun: updatedValidationRun,
-      outputArtifact,
-      startedEvent,
-      artifactCreatedEvent,
-      completedEvent,
-      runtimeResult,
-    };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const status = 'failed';
     const outputArtifact = await createValidationLogArtifact(service, {
       task,
-      taskRunId: input.taskRunId,
+      taskRunId,
       validationRun,
       displayCommand,
       command: input.command,
@@ -220,7 +176,7 @@ export async function runTaskValidationCommand(
     });
     const artifactCreatedEvent = await appendArtifactCreatedEvent(service, {
       task,
-      taskRunId: input.taskRunId,
+      taskRunId,
       validationRun,
       outputArtifact,
       status,
@@ -236,7 +192,7 @@ export async function runTaskValidationCommand(
     );
     const completedEvent = await appendValidationCompletedEvent(service, {
       task,
-      taskRunId: input.taskRunId,
+      taskRunId,
       validationRun: updatedValidationRun,
       outputArtifact,
       status,
@@ -256,6 +212,62 @@ export async function runTaskValidationCommand(
       error: errorMessage,
     };
   }
+
+  const status = classifyValidationStatus(runtimeResult);
+  const outputArtifact = await createValidationLogArtifact(service, {
+    task,
+    taskRunId,
+    validationRun,
+    displayCommand,
+    command: input.command,
+    args: input.args,
+    cwd: resolvedCwd.cwd,
+    worktree: resolvedCwd.worktree,
+    startedAt: input.startedAt,
+    completedAt: input.completedAt,
+    status,
+    runtimeResult,
+  });
+  const artifactCreatedEvent = await appendArtifactCreatedEvent(service, {
+    task,
+    taskRunId,
+    validationRun,
+    outputArtifact,
+    runtimeResult,
+    status,
+  });
+  const updatedValidationRun = await service.validationRunStore.updateValidationRun(
+    validationRun.id,
+    {
+      status,
+      ...(input.completedAt === undefined ? {} : { completedAt: input.completedAt }),
+      ...(numericExitCode(runtimeResult.exitCode) === undefined
+        ? {}
+        : { exitCode: numericExitCode(runtimeResult.exitCode) }),
+      outputArtifactId: outputArtifact.id,
+    },
+  );
+  const completedEvent = await appendValidationCompletedEvent(service, {
+    task,
+    taskRunId,
+    validationRun: updatedValidationRun,
+    outputArtifact,
+    runtimeResult,
+    status,
+    completedAt: input.completedAt,
+  });
+
+  return {
+    status,
+    task,
+    ...(resolvedCwd.worktree === undefined ? {} : { worktree: resolvedCwd.worktree }),
+    validationRun: updatedValidationRun,
+    outputArtifact,
+    startedEvent,
+    artifactCreatedEvent,
+    completedEvent,
+    runtimeResult,
+  };
 }
 
 interface ResolvedValidationCwd {
@@ -308,6 +320,26 @@ function requireTask(records: DomainRecords, taskId: EntityId): Task {
   }
 
   return task;
+}
+
+function resolveTaskRun(
+  records: DomainRecords,
+  task: Task,
+  taskRunId: EntityId | undefined,
+): TaskRun | undefined {
+  if (taskRunId === undefined) {
+    return undefined;
+  }
+
+  const taskRun = records.taskRuns.find(
+    (candidate) => candidate.id === taskRunId && candidate.taskId === task.id,
+  );
+
+  if (taskRun === undefined) {
+    throw new ValidationCommandTaskRunNotFoundForTaskError(task.id, taskRunId);
+  }
+
+  return taskRun;
 }
 
 function resolveValidationCwd(
