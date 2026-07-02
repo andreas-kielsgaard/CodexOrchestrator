@@ -764,3 +764,17 @@
 - Cleanup note: Windows kept the physical worker folder locked at
   `C:\Users\user\.codex\worktrees\85b4\Codex Orchestrator`; retry later after the app releases the
   handle.
+
+### Orchestration Handoff After Worker 018 Merge Compaction
+
+- Status: handoff prepared; no further workers launched from the compressed thread
+- Handoff:
+  `docs/handoffs/orchestration-handoff-2026-07-02-after-worker-018-merge-compaction.md`
+- Trigger: the orchestration thread resumed from compressed context while stabilizing Worker 018.
+  Per the operating model, compaction is an immediate handoff trigger.
+- Main state before the handoff document: `03f406cfc74614f3835c65c93deaf12bfc274bc3`, clean except
+  pre-existing `origin/main [gone]`.
+- Worker state: no active worker branches or registered worker worktrees remain; Worker 018 was
+  reviewed, merged, verified, logged, and Git-cleaned before this handoff.
+- Instruction: continue in a fresh `xhigh` successor orchestration thread after it re-ingests the
+  handoff and required context files. Do not launch Worker 019 from this compressed thread.
