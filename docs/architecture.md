@@ -132,6 +132,24 @@ When the injected database supports `exec`, create/update/archive writes run ins
 `BEGIN`/`COMMIT` with rollback on failure. Missing update/archive targets throw the typed
 `OpenTaskNotFoundError`.
 
+## App SQLite Migration Coordinator
+
+The app-level SQLite migration coordinator lives in
+`src/infrastructure/sqlite/migrationCoordinator.ts` as pure TypeScript infrastructure. It composes
+the current schema families in deterministic order: repo-sync migrations first, then Open Tasks
+migrations.
+
+The coordinator depends on an injected SQLite-like interface with `exec` and `prepare`; it does not
+open database files and does not import `node:sqlite` in production code. Runtime callers should use
+`enableAppSqliteForeignKeys` on each connection, then `applyAppSqliteMigrations` before constructing
+store adapters.
+
+Applied migrations are tracked in `schema_migrations` with migration ID, applied timestamp, and
+position. Duplicate migration IDs are rejected before any SQL is applied. Each unapplied migration
+runs with its audit-row insert in a transaction, so failed migrations are not recorded and their DDL
+is rolled back by SQLite. Tests inject deterministic applied timestamps for auditability while
+future runtime wiring can provide its own clock.
+
 ## Git Adapter Boundary
 
 Git output parsing lives under `src/infrastructure/git/` as pure TypeScript infrastructure code. The current adapter foundation normalizes parseable command output from `git status --porcelain=v1 -z`, `git branch --format=...`, and `git worktree list --porcelain -z` into scan facts that can later feed the domain `Repo`, `Branch`, and `Worktree` records.
