@@ -1097,3 +1097,34 @@
   folder deletion at `C:\Users\user\.codex\worktrees\cea2\Codex Orchestrator`; the merged branch
   `worker/022-validation-run-store-boundary` was deleted and the locked physical folder was left in
   place.
+
+### Worker 023: Conversation Store Boundary
+
+- Status: launched
+- Pending worktree id: `local:91e9835a-2243-45a5-824c-5c1f1b620c97`
+- Worker thread: `019f23b4-93bc-7dd0-926d-199a0120e91e`
+- Worktree path: `C:\Users\user\.codex\worktrees\14b0\Codex Orchestrator`
+- Expected worker branch: `worker/023-conversation-store-boundary`
+- Launch base: `eb507ce` (`Log Worker 022 merge`)
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 022's ValidationRun store boundary is
+  merged, verified, logged, and cleaned; the Conversation store should use current `main`, the
+  merged TaskRun/Conversation schema and mapper files, and existing TaskRun/ValidationRun store
+  patterns rather than carrying Worker 022's implementation context.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Report-back instruction: included explicitly in the worker prompt as a dedicated requirement,
+  separate from the completion report shape.
+- Scope: add a narrow pure TypeScript Conversation create/update/query store boundary plus SQLite
+  implementation using the existing Conversation schema and app migration coordinator, with
+  deterministic create/update behavior and focused query support over conversation filters.
+- Out of scope: Codex runtime integration, Codex JSONL parsing, app-server/SDK work, transcript or
+  message storage, ChatGPT export import, event emission, event-sourced projections, automatic
+  updates to `task_conversation_links` or `task_runs.conversation_id`, UI/React work, Tauri/Rust
+  database commands, Git execution, runtime database file opening, package dependencies, and broad
+  CRUD stores for other record families.
+- Expected result log: `docs/task-logs/worker-023-conversation-store-boundary.md`
+- Success signal: committed worker branch with focused domain and SQLite Conversation store tests
+  plus feasible `git diff --check main...worker/023-conversation-store-boundary`,
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` verification,
+  followed by a completion report sent back to the orchestration thread or an explicit note that
+  cross-posting was unavailable.
