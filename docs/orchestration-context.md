@@ -16,6 +16,7 @@ review results, merge accepted work, keep state recoverable, and prevent product
   or review correction is pending.
 - Pause only for a concrete reason: product decision, blocker, failed review, unclear next slice,
   drift from project intent, or explicit user request. State the reason and the likely next step.
+- Consult the first-slice-completion-plan and active-task-map when deciding on the next task(s) to start.
 
 ### Delegate Clearly
 
