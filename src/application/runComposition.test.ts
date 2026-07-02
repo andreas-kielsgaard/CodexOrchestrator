@@ -195,6 +195,69 @@ describe('run composition service', () => {
     ]);
   });
 
+  it('stores structured Codex error output before failing the lifecycle', async () => {
+    const runtimeResult = createRuntimeResult({
+      status: 'error',
+      statusReason: 'Codex emitted an error event',
+      stdoutJsonl: errorJsonl,
+      stderr: '',
+      exitCode: null,
+      summary: {
+        threadId: 'thread-error',
+        terminalStatus: { kind: 'error', lineNumber: 2 },
+        itemCountsByType: {},
+      },
+    });
+    const fixture = createCompositionFixture({ runtime: new FakeCodexRuntime(runtimeResult) });
+
+    const result = await composeCodexTaskRun(fixture.service, {
+      taskId: 'task-compose',
+      prompt: 'Try FS-07',
+      completedAt: '2026-07-02T10:25:00.000Z',
+    });
+
+    expect(result.status).toBe('failed');
+    if (result.status !== 'failed') {
+      throw new Error('Expected failed composition result');
+    }
+    expect(result.error).toBe('Codex emitted an error event');
+    expect(result.rawEventStreamArtifact).toMatchObject({
+      id: 'artifact-001',
+      kind: 'raw_event_stream',
+      content: errorJsonl,
+    });
+    expect(result.artifactCreatedEvent).toMatchObject({
+      id: 'event-002',
+      payload: {
+        artifactKind: 'raw_event_stream',
+        artifactId: 'artifact-001',
+        codexStatus: 'error',
+        stdoutJsonlLength: errorJsonl.length,
+      },
+    });
+    expect(result.conversation).toMatchObject({
+      externalThreadId: 'thread-error',
+      summary: 'Codex error: Codex emitted an error event',
+    });
+    expect(result.failed.taskRun).toMatchObject({
+      id: 'run-001',
+      executionState: 'failed',
+      completedAt: '2026-07-02T10:25:00.000Z',
+    });
+    expect(result.failed.taskRun).not.toHaveProperty('exitCode');
+    expect(result.failed.event).toMatchObject({
+      id: 'event-003',
+      kind: 'run_completed',
+      payload: {
+        outcome: 'failed',
+        taskId: 'task-compose',
+        taskRunId: 'run-001',
+        completedAt: '2026-07-02T10:25:00.000Z',
+        error: 'Codex emitted an error event',
+      },
+    });
+  });
+
   it('fails the started lifecycle when the runtime throws without fabricating raw artifacts', async () => {
     const fixture = createCompositionFixture({
       runtime: new FakeCodexRuntime(new Error('codex launch failed')),
@@ -257,6 +320,11 @@ const completedJsonl = [
 const failedJsonl = [
   JSON.stringify({ type: 'thread.started', thread_id: 'thread-failed' }),
   JSON.stringify({ type: 'turn.failed' }),
+].join('\n');
+
+const errorJsonl = [
+  JSON.stringify({ type: 'thread.started', thread_id: 'thread-error' }),
+  JSON.stringify({ type: 'error', message: 'fatal' }),
 ].join('\n');
 
 interface CompositionFixture {

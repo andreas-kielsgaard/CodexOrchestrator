@@ -57,3 +57,8 @@ available on `PATH`.
 - The application service defines the minimal runtime shape structurally instead of importing the
   concrete Codex adapter; the existing infrastructure adapter is compatible through TypeScript
   structural typing.
+
+## Orchestrator Review Addendum
+
+- Added focused coverage for structured runtime `error` results so the service explicitly proves it
+  stores raw JSONL and then fails the lifecycle without inventing an exit code.
