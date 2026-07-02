@@ -46,6 +46,14 @@ The TypeScript domain layer lives under `src/domain/`:
   conversation, URI, and content fields unset unless provided. Queries filter by kind or optional
   links and order by `createdAt` plus a stable ID tie-breaker. The included in-memory implementation
   is a test helper, and the concrete SQLite adapter lives under `src/infrastructure/sqlite/`.
+- `validationRunStore.ts` defines the create/update/query boundary for durable ValidationRun
+  records. Creates require a command and status, use injected ID/time providers, and leave optional
+  task, task-run, timing, exit, and output-artifact fields unset unless provided. Updates keep
+  `id`, `command`, and `createdAt` immutable, treat omitted fields as unchanged, and treat `null` as
+  an explicit clear for optional fields. Queries filter by task, task run, status, or output
+  artifact and order by `createdAt` plus a stable ID tie-breaker. The included in-memory
+  implementation is a test helper, and the concrete SQLite adapter lives under
+  `src/infrastructure/sqlite/`.
 - `seedData.ts` provides demo records until SQLite persistence and repository APIs are introduced.
 
 SQLite migrations, Rust database commands, Git scanning, and Codex runtime integration are intentionally outside this slice.
@@ -217,6 +225,19 @@ The SQLite adapter depends on an injected SQLite-like interface and does not imp
 production code. It uses the Worker 017 `artifactToRow` and `artifactFromRow` mappers so optional
 SQL `NULL` handling and domain row translation stay centralized in the schema layer. When the
 injected database supports `exec`, creates run inside `BEGIN`/`COMMIT` with rollback on failure.
+
+## ValidationRun SQLite Store Boundary
+
+The ValidationRun store boundary lives in `src/domain/validationRunStore.ts`, with the SQLite
+adapter in `src/infrastructure/sqlite/validationRunStore.ts`. It persists validation attempt
+metadata and output-artifact links without running validation commands, appending events, managing
+artifacts, or opening database files.
+
+The SQLite adapter depends on an injected SQLite-like interface and does not import `node:sqlite` in
+production code. It uses the Worker 017 `validationRunToRow` and `validationRunFromRow` mappers so
+optional SQL `NULL` handling and domain row translation stay centralized in the schema layer. When
+the injected database supports `exec`, create and update writes run inside `BEGIN`/`COMMIT` with
+rollback on failure; missing updates throw the typed `ValidationRunNotFoundError`.
 
 ## Artifact and ValidationRun SQLite Schema Foundation
 
