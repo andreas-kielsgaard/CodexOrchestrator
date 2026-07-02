@@ -339,3 +339,18 @@
 - Drift check: still local-first, task-centered, dashboard persistence centers `Task` as the attention unit while Git repo/branch/worktree references remain technical anchors; no Codex credentials, Codex runtime integration, Tauri/Rust runtime DB wiring, or UI work were introduced.
 - Cleanup: removed Git worktree registration and deleted merged branch `worker/011-open-tasks-sqlite-schema`.
 - Cleanup note: Windows kept a physical leftover directory locked at `C:\Users\user\.codex\worktrees\de96\Codex Orchestrator`; retry later after the app releases the handle.
+
+### Worker 012: Open Tasks Dashboard SQLite Read Store
+
+- Status: launched
+- Worker thread: `019f2228-0aba-7a33-9dc8-345a18fb36bf`
+- Pending worktree id: `local:a5b5f9a1-cea2-4e02-abdd-ad31f404ec93`
+- Worktree path: `C:\Users\user\.codex\worktrees\c15d\Codex Orchestrator`
+- Expected worker branch: `worker/012-open-tasks-sqlite-read-store`
+- Launch base: `65380ea`
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 011's schema foundation is merged and cleaned; the read-store slice should use current `main`, the merged task schema, and the dashboard projection code rather than carrying the schema worker's implementation context.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Scope: add a read-side store/query boundary for the Open Tasks dashboard plus a pure TypeScript SQLite read implementation using an injected database interface. The slice should load open tasks, ordered task conversation IDs, and linked project/repo/branch/worktree records needed by `projectOpenTaskDashboard`, without task write APIs, runtime DB wiring, Tauri/Rust work, Codex integration, React/UI work, package dependencies, or full Phase 1 stores.
+- Expected result log: `docs/task-logs/worker-012-open-tasks-sqlite-read-store.md`
+- Success signal: committed worker branch with tests proving dashboard groups are produced through the store facade, SQLite technical anchors resolve, archived/abandoned tasks do not appear, tasks sort by `updatedAt`, optional anchors tolerate `NULL`, and loaded task `conversationIds` preserve stored link order.
