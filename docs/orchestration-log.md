@@ -431,7 +431,7 @@
 
 ### Worker 014: Open Tasks SQLite Write Store Adapter
 
-- Status: launched/in progress; not reviewed or merged
+- Status: launched; later reviewed and merged by successor orchestration thread
 - Worker thread: `019f2240-3425-7b50-8953-70d7e596571b`
 - Pending worktree id: `local:146bea77-5472-493a-acd6-04c003e95220`
 - Worktree path: `C:\Users\user\.codex\worktrees\8f3a\Codex Orchestrator`
@@ -467,3 +467,42 @@
 - Instruction: this compressed orchestration thread should not continue Worker 014 source review or
   merge. Continue orchestration in a fresh `xhigh` control-room thread after it re-ingests the
   handoff and required context files.
+
+### Worker 014 Review And Merge: Open Tasks SQLite Write Store Adapter
+
+- Status: reviewed, corrected, merged, verified, logged, and Git-cleaned
+- Worker thread: `019f2240-3425-7b50-8953-70d7e596571b`
+- Worker implementation commit: `e2c26aaad1b0f5b6b52d64b9f25864c188ee4cc4`
+- Orchestrator review commits: `fdc3ced` and `8269091`
+- Merge commit: `734f270e1a693c2e7ba74f332970ee65f93fd684`
+- Result log: `docs/task-logs/worker-014-open-tasks-sqlite-write-store.md`
+- Review correction: added explicit SQLite write-store coverage for replacing
+  `conversationIds` with an empty list, verifying persisted `task_conversation_links` are deleted
+  and the loaded task returns an empty ordered list.
+- Accepted decision: `SqliteOpenTaskWriteStore` implements the existing `OpenTaskWriteStore`
+  boundary with a narrow injected SQLite-like interface; production code does not import
+  `node:sqlite`.
+- Accepted decision: task creation and updates preserve Worker 013 semantics: deterministic
+  ID/time providers, omitted fields unchanged, `null` clearing optional repo/branch/worktree anchors
+  and due/snooze timestamps, ordered conversation replacement only when provided, typed
+  `OpenTaskNotFoundError` for missing update/archive targets, and `archiveTask` setting only
+  `executionState` to `archived`.
+- Accepted decision: when the injected database supports `exec`, writes use `BEGIN`/`COMMIT` and
+  roll back on failure; when `exec` is absent, the adapter still satisfies the injected-interface
+  contract without assuming runtime SQLite specifics.
+- Orchestrator verification before merge:
+  `git diff --check main...worker/014-open-tasks-sqlite-write-store`,
+  `npm run test -- src/infrastructure/sqlite/openTaskWriteStore.test.ts`,
+  `npm run test -- src/infrastructure/sqlite`, and `npm run build` passed in the worker worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed.
+- Verification note: `node:sqlite` emits Node's expected experimental warning during SQLite tests.
+- Drift check: still local-first and task-centered; Open Tasks writes mutate persisted `Task` rows
+  while Git repo/branch/worktree IDs remain optional technical anchors, dashboard grouping remains
+  in the projection layer, and no Codex credentials, Codex runtime integration, Tauri/Rust runtime
+  database wiring, Git execution, React/UI work, or broader Phase 1 stores were introduced.
+- Cleanup: `git worktree remove` unregistered the worker worktree and the merged branch
+  `worker/014-open-tasks-sqlite-write-store` was deleted.
+- Cleanup note: Windows kept the physical worker folder locked at
+  `C:\Users\user\.codex\worktrees\8f3a\Codex Orchestrator`; retry later after the app releases the
+  handle.
