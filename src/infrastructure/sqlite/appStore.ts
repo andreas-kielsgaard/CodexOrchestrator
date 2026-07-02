@@ -1,8 +1,9 @@
 import type { ArtifactStore } from '../../domain/artifactStore';
 import type { ConversationStore } from '../../domain/conversationStore';
 import type { EventStore } from '../../domain/eventStore';
+import type { EntityId, IsoDateTime } from '../../domain/model';
 import type { OpenTaskDashboardStore } from '../../domain/openTaskDashboardStore';
-import type { IdProvider, OpenTaskWriteStore, TimeProvider } from '../../domain/openTaskWriteStore';
+import type { OpenTaskWriteStore } from '../../domain/openTaskWriteStore';
 import type { RepoSyncStore } from '../../domain/repoSyncStore';
 import type { TaskRunStore } from '../../domain/taskRunStore';
 import type { ValidationRunStore } from '../../domain/validationRunStore';
@@ -49,31 +50,26 @@ export interface InitializeAppSqliteStoreDatabaseOptions {
   migrations?: ApplyAppSqliteMigrationsOptions;
 }
 
+export interface AppSqliteStoreIdProvider {
+  nextId(): EntityId;
+}
+
+export interface AppSqliteStoreTimeProvider {
+  now(): IsoDateTime;
+}
+
+export interface AppSqliteWriteStoreProviders {
+  ids: AppSqliteStoreIdProvider;
+  clock: AppSqliteStoreTimeProvider;
+}
+
 export interface AppSqliteStoreBundleProviders {
-  openTask: {
-    ids: IdProvider;
-    clock: TimeProvider;
-  };
-  event: {
-    ids: IdProvider;
-    clock: TimeProvider;
-  };
-  taskRun: {
-    ids: IdProvider;
-    clock: TimeProvider;
-  };
-  conversation: {
-    ids: IdProvider;
-    clock: TimeProvider;
-  };
-  artifact: {
-    ids: IdProvider;
-    clock: TimeProvider;
-  };
-  validationRun: {
-    ids: IdProvider;
-    clock: TimeProvider;
-  };
+  openTask: AppSqliteWriteStoreProviders;
+  event: AppSqliteWriteStoreProviders;
+  taskRun: AppSqliteWriteStoreProviders;
+  conversation: AppSqliteWriteStoreProviders;
+  artifact: AppSqliteWriteStoreProviders;
+  validationRun: AppSqliteWriteStoreProviders;
 }
 
 export interface AppSqliteStoreBundle {

@@ -50,3 +50,10 @@ None known.
 - Review the provider object shape in `src/infrastructure/sqlite/appStore.ts`; it intentionally uses
   named providers per write-capable store instead of hidden UUID/date defaults.
 - Tests use `node:sqlite`, which emits Node's experimental feature warning during test runs.
+
+## Orchestrator Review Addendum
+
+The orchestrator made one small review correction before merge: `appStore.ts` now defines local
+app-level ID/time provider interfaces instead of importing the Open Tasks write-store provider types
+for every write-capable adapter. The provider shape remains explicit and deterministic, but the new
+bundle boundary no longer semantically depends on the Open Tasks module for shared provider naming.
