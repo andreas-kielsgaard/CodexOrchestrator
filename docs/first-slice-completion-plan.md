@@ -93,9 +93,11 @@ Should wait:
 
 ## Recommended Worker Sequencing
 
-1. Launch FS-05 next so the visible dashboard stops depending on seed data.
-2. Launch FS-10 and FS-11 as service-boundary workers in parallel if capacity allows.
-3. Launch FS-08 and FS-09 as UI workers after FS-05.
+1. Finish the FS-05 backend gap when a Rust/Tauri worker is practical: implement durable SQLite
+   command handling for the registered Open Tasks commands.
+2. Launch FS-10 and FS-11 as service-boundary workers in parallel if staying in TypeScript-only
+   work for now.
+3. Launch FS-08 and FS-09 after persisted dashboard runtime behavior is real enough for UI flows.
 4. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
 
 ## Orchestration Notes

@@ -1868,3 +1868,35 @@ orchestration thread`)
   focused dashboard client/UI and SQLite-backed tests, `npm run lint`, `npm run format:check`,
   `npm run test`, and `npm run build`.
 - Report-back instruction: included in the worker prompt.
+
+### Worker 032 Review And Merge: Persisted Open Tasks Dashboard Boundary
+
+- Status: reviewed, corrected, merged, verified, logged, and Git-cleaned
+- Worker commit: `4a5a23ab082d3b09ecbc2facc233755e567bd116`
+  (`Persist open tasks dashboard boundary`)
+- Orchestrator review correction commit:
+  `9920c89a36f8911cfeda6d1bb625f8d0c4c79511`
+  (`Review Worker 032 dashboard priority preservation`)
+- Merge commit: `b146f16c4170484a24dd9f37c28c96a18f640cd7`
+- Result log: `docs/task-logs/worker-032-persisted-open-tasks-dashboard.md`
+- Accepted decision: `TaskDashboardClient` is the application/browser boundary for Open Tasks
+  dashboard load/create/update/archive. React consumes the injected async client and no longer
+  imports seed dashboard data or Node-only SQLite modules.
+- Accepted decision: Tauri Open Tasks commands are registered as explicit backend-pending stubs.
+  Durable WebView persistence still requires a Rust-side SQLite command adapter.
+- Review correction: `DashboardTask` now carries task priority, and the React edit flow preserves
+  the existing priority instead of silently flattening high/low priority tasks to `normal`.
+- Orchestrator verification before merge: `git diff --check`, focused dashboard/projection/SQLite
+  tests, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed in the
+  worker worktree after the review correction. `cargo --version` and `rustc --version` failed
+  because Rust/Cargo are not on `PATH`.
+- Verification after merge: `git diff --check HEAD^..HEAD`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` passed on main. `node:sqlite`
+  emitted the expected experimental warning during SQLite tests.
+- Drift check: the slice did not wire durable Rust SQLite command implementations, start Codex
+  runs, collect diffs, execute validation commands, build task/run detail or review UI, add broad
+  workflow-engine behavior, or import Node-only APIs into browser code.
+- Cleanup: `git worktree remove` unregistered the Worker 032 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\9117\Codex Orchestrator`; the merged branch
+  `worker/032-persisted-open-tasks-dashboard` was deleted and the locked physical folder was left
+  in place.

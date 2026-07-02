@@ -12,19 +12,23 @@ otherwise resolve it.
 
 ## Active Tasks
 
-- Worker 032: Persisted Open Tasks Dashboard Boundary
-  - Status: launched; awaiting worker completion report
-  - Pending worktree id: `local:fca18278-4136-4949-ba19-a9f7f0ae01eb`
-  - Worktree: `C:\Users\user\.codex\worktrees\9117\Codex Orchestrator`
-  - Expected branch: `worker/032-persisted-open-tasks-dashboard`
-  - Launch base: `71612f36d55ebd2325563aeb3abb6b04d8d7c8fc`
-  - Result log target: `docs/task-logs/worker-032-persisted-open-tasks-dashboard.md`
-  - Next orchestration action: inspect worker report/worktree, review branch, independently
-    verify, then merge or request correction.
+- None.
+
+## Pending Blockers / Follow-Up
+
+- FS-05 backend persistence gap: the Open Tasks dashboard client/UI boundary is merged, but the
+  registered Tauri commands still return an explicit backend-pending error. Durable default WebView
+  persistence needs a Rust-side SQLite command adapter.
+- `npm run build:tauri` is blocked until Rust/Cargo are installed or available on `PATH`.
+
+## Recently Archived
+
+- Worker 032: reviewed, corrected, merged, verified, and Git-cleaned. See
+  `docs/task-logs/worker-032-persisted-open-tasks-dashboard.md`.
 
 ## Blockers
 
-- `npm run build:tauri` is blocked until Rust/Cargo are installed or available on `PATH`.
+- None beyond the pending blockers above.
 
 ## Cleanup Notes
 
@@ -43,3 +47,4 @@ launched:
 - Worker 029: `C:\Users\user\.codex\worktrees\a518\Codex Orchestrator`
 - Worker 030: `C:\Users\user\.codex\worktrees\0d6b\Codex Orchestrator`
 - Worker 031: `C:\Users\user\.codex\worktrees\93b2\Codex Orchestrator`
+- Worker 032: `C:\Users\user\.codex\worktrees\9117\Codex Orchestrator`
