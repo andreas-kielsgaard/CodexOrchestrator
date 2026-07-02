@@ -33,6 +33,7 @@ describe('task run and conversation SQLite schema', () => {
         'artifacts',
         'branches',
         'conversations',
+        'events',
         'projects',
         'repos',
         'schema_migrations',
