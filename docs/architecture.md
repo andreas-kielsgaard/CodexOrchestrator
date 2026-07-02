@@ -81,9 +81,10 @@ validation commands, manage worktrees, or wire UI behavior.
 `repoRegistryScan.ts` coordinates repo registration/scanning over injected Git and persistence
 boundaries. It calls an injected `GitRepoScanner`, maps the scan through the Git infrastructure
 facts mapper, persists the resulting repo/branch/worktree state through `RepoSyncStore`, and returns
-the synced records plus compact scan/change metadata suitable for future UI/runtime wiring. It does
-not list or remove registered repos, create worktrees, choose database paths, execute Git directly,
-link tasks to worktrees, or expose raw command output as its primary API.
+the records touched by the current scan plus compact scan/change metadata suitable for future
+UI/runtime wiring. Stale same-repo worktrees are reported separately rather than returned as current
+scan worktrees. It does not list or remove registered repos, create worktrees, choose database paths,
+execute Git directly, link tasks to worktrees, or expose raw command output as its primary API.
 
 ## Infrastructure Layer
 

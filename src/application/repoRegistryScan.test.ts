@@ -83,7 +83,7 @@ describe('registerAndScanRepo', () => {
     expect(store.snapshot().repos).toEqual([result.repo]);
   });
 
-  it('updates an existing repo and returns only the synced repo records', async () => {
+  it('updates an existing repo and returns only records touched by the scan', async () => {
     const scanner = new FakeGitRepoScanner(
       repoScan({
         rootPath: 'C:/Repos/Codex Orchestrator',
@@ -117,6 +117,17 @@ describe('registerAndScanRepo', () => {
     expect(result.worktrees.map((worktree) => worktree.id)).toEqual([
       'worktree-main',
       'worktree-worker',
+    ]);
+    expect(result.sync.staleWorktrees).toEqual([
+      {
+        action: 'reported_missing_from_scan',
+        worktreeId: 'worktree-old',
+        repoId: 'repo-1',
+        path: 'C:/Repos/Codex Orchestrator Worktrees/old',
+        reason: 'absent_from_current_git_scan',
+        lastObservedAt: yesterday,
+        plannedAt: now,
+      },
     ]);
     expect(result.sync.changeCounts).toEqual({
       repo: { insert: 0, update: 1 },
@@ -306,6 +317,13 @@ function recordsWithExistingAndUnrelatedRepos(): DomainRecords {
       updatedAt: yesterday,
     },
     {
+      id: 'branch-old',
+      repoId: 'repo-1',
+      name: 'worker/old-scan',
+      createdAt: yesterday,
+      updatedAt: yesterday,
+    },
+    {
       id: 'branch-other',
       repoId: 'repo-other',
       name: 'main',
@@ -330,6 +348,17 @@ function recordsWithExistingAndUnrelatedRepos(): DomainRecords {
       repoId: 'repo-1',
       branchId: 'branch-worker',
       path: 'C:/Repos/Codex Orchestrator Worktrees/030',
+      isMain: false,
+      isDirty: false,
+      lastScannedAt: yesterday,
+      createdAt: yesterday,
+      updatedAt: yesterday,
+    },
+    {
+      id: 'worktree-old',
+      repoId: 'repo-1',
+      branchId: 'branch-old',
+      path: 'C:/Repos/Codex Orchestrator Worktrees/old',
       isMain: false,
       isDirty: false,
       lastScannedAt: yesterday,

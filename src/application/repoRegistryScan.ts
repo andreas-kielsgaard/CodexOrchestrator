@@ -69,6 +69,13 @@ export class RepoRegistrySyncedRepoNotFoundError extends Error {
   }
 }
 
+export class RepoRegistrySyncedRecordNotFoundError extends Error {
+  constructor(kind: RepoSyncAppliedRecordKind, id: EntityId) {
+    super(`Repo registry scan did not produce synced ${kind}: ${id}`);
+    this.name = 'RepoRegistrySyncedRecordNotFoundError';
+  }
+}
+
 export async function registerAndScanRepo(
   service: RepoRegistryScanService,
   input: RegisterAndScanRepoInput,
@@ -96,8 +103,12 @@ export async function registerAndScanRepo(
 
   return {
     repo,
-    branches: sync.applied.records.branches.filter((branch) => branch.repoId === repo.id),
-    worktrees: sync.applied.records.worktrees.filter((worktree) => worktree.repoId === repo.id),
+    branches: syncedRecordsByKind(sync.applied.records.branches, sync.applied.changes, 'branch'),
+    worktrees: syncedRecordsByKind(
+      sync.applied.records.worktrees,
+      sync.applied.changes,
+      'worktree',
+    ),
     scan: summarizeScan(scan),
     sync: {
       plannedAt: sync.plan.plannedAt,
@@ -131,6 +142,24 @@ function requireSyncedRepoId(changes: RepoSyncAppliedChange[]): EntityId {
   }
 
   return repoChange.id;
+}
+
+function syncedRecordsByKind<T extends { id: EntityId }>(
+  records: T[],
+  changes: RepoSyncAppliedChange[],
+  kind: RepoSyncAppliedRecordKind,
+): T[] {
+  return changes
+    .filter((change) => change.kind === kind)
+    .map((change) => {
+      const record = records.find((candidate) => candidate.id === change.id);
+
+      if (record === undefined) {
+        throw new RepoRegistrySyncedRecordNotFoundError(kind, change.id);
+      }
+
+      return record;
+    });
 }
 
 function countChanges(changes: RepoSyncAppliedChange[]): RepoRegistryChangeCounts {

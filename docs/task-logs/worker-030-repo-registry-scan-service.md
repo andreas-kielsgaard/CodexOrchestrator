@@ -36,6 +36,9 @@ scan and sync metadata for future UI/runtime wiring.
 - No SQLite store contract was extended. The existing `RepoSyncStore` already supports the
   scan-and-persist path needed for this slice; list/remove behavior is deferred until a caller needs
   a concrete registry management surface.
+- Orchestrator review correction: result branch/worktree arrays now include only records touched by
+  the current scan; same-repo worktrees absent from the scan stay in the explicit stale worktree
+  report.
 - The service intentionally does not create worktrees, link tasks to worktrees, wire React UI, open
   database files, or execute Git directly.
 - The service returns summarized scan metadata and applied change counts rather than raw command
