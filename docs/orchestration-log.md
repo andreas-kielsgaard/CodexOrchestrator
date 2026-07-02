@@ -783,3 +783,30 @@
 - Successor thread initiated: `019f22c0-b8fa-7092-8a7f-0171f72455c5`
 - Instruction: continue in a fresh `xhigh` successor orchestration thread after it re-ingests the
   handoff and required context files. Do not launch Worker 019 from this compressed thread.
+
+### Worker 019: Event Store Boundary
+
+- Status: launched
+- Pending worktree id: `local:213868c6-7b32-48c5-849b-36336399de1f`
+- Expected worker branch: `worker/019-event-store-boundary`
+- Launch base: `55493e145f3623c1c7ae3491c1878924243d1158`
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 018's Event schema foundation is merged,
+  verified, and cleaned; the Event append/query store should use current `main`, the merged schema
+  and mapper files, and existing store patterns rather than carrying Worker 018's implementation
+  context.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Report-back instruction: included explicitly in the worker prompt as a dedicated requirement,
+  separate from the completion report shape.
+- Scope: add a narrow pure TypeScript Event store boundary plus SQLite implementation using the
+  existing Event schema and app migration coordinator, with deterministic append behavior and
+  focused query support over event kind and optional linked IDs.
+- Out of scope: Codex runtime integration, event-sourced projections, workflow engine behavior,
+  UI/React work, Tauri/Rust database commands, Git execution, runtime database file opening, package
+  dependencies, and CRUD stores for other record families.
+- Expected result log: `docs/task-logs/worker-019-event-store-boundary.md`
+- Success signal: committed worker branch with focused domain and SQLite Event store tests plus
+  feasible `git diff --check main...worker/019-event-store-boundary`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` verification, followed by a
+  completion report sent back to the orchestration thread or an explicit note that cross-posting was
+  unavailable.
