@@ -239,6 +239,21 @@
 
 ### Explicit Checkpoint: Pause Before Next Task
 
-- Status: active pause
+- Status: resumed
 - Reason: the user said they are going to bed and asked the orchestrator to pause after reviewing the last implementation instead of starting a new task.
 - Next intended slice when resumed: continue from the clean post-Worker-008 checkpoint and choose the next smallest useful persistence-oriented slice, likely actual SQLite schema/repository groundwork or a narrower repository implementation plan behind `RepoSyncStore`.
+
+### Worker 009: Repo Sync SQLite Schema Foundation
+
+- Status: launched
+- Worker thread: `019f2208-9102-74d1-9160-99bb0c418297`
+- Pending worktree id: `local:bde77e38-538f-4bcc-ac01-154931a6c94e`
+- Worktree path: `C:\Users\user\.codex\worktrees\f0e3\Codex Orchestrator`
+- Expected worker branch: `worker/009-repo-sync-sqlite-schema`
+- Launch base: `f586451`
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 008's implementation is merged and cleaned; the schema foundation should use current `main`, Worker 008's result log, and the merged `RepoSyncStore` boundary rather than carrying the prior worker conversation.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Scope: add a pure TypeScript SQLite schema foundation for the repo-sync persistence subset (`projects`, `repos`, `branches`, and `worktrees`) with ordered migration SQL, row/mapping helpers where useful, and executable in-memory SQLite tests using no new dependencies if possible.
+- Expected result log: `docs/task-logs/worker-009-repo-sync-sqlite-schema.md`
+- Success signal: committed worker branch with tests that execute the migration SQL and cover foreign keys, uniqueness constraints, optional-field `NULL` behavior, boolean round-trips, and branch deletion leaving worktrees intact through `ON DELETE SET NULL` or equivalent behavior.
