@@ -13,8 +13,8 @@ which boundaries should stay intact.
 - Rust currently only proves the Tauri command boundary with `app_metadata`.
 - SQLite infrastructure is written as pure TypeScript over injected SQLite-like interfaces.
 
-Current limitation: the app does not yet open a real runtime database file or execute Git/Codex from
-the UI.
+Current limitation: the app can open a local runtime database file through an infrastructure
+boundary, but it does not yet compose that database into the UI or execute Git/Codex from the UI.
 
 ## Boundary Rules
 
@@ -106,10 +106,13 @@ SQLite infrastructure includes:
   validation runs
 - `migrationCoordinator.ts` for deterministic app migration order
 - `appStore.ts` for constructing the store bundle over one injected connection
+- `localAppDatabase.ts` for opening a local `node:sqlite` database file, enabling foreign keys,
+  applying app migrations, creating runtime default providers when needed, and returning the app
+  store bundle with an explicit close/dispose path
 
-The SQLite adapters do not open database files and do not import `node:sqlite` in production code.
-Runtime wiring still needs to choose the local database path, open the connection, enable foreign
-keys, apply migrations, and create the app store bundle.
+The pure SQLite adapters still do not open database files or import `node:sqlite`; runtime-facing
+opening is isolated in `localAppDatabase.ts`. UI composition still needs to choose the app database
+path and consume the resulting store bundle from an application/runtime boundary.
 
 ### Tauri
 
@@ -131,7 +134,8 @@ before adding rich run review surfaces.
 
 The first usable runtime loop still needs:
 
-1. Runtime database opening and store-bundle construction.
+1. UI/runtime composition that chooses the local app database path and exposes the opened store
+   bundle to application services.
 2. A `CodexRuntime` adapter that invokes `codex exec --json` and streams raw JSONL.
 3. A composition service that stores raw JSONL, extracts final response/thread metadata, updates
    lifecycle state, and appends events.
