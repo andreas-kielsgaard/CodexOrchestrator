@@ -900,6 +900,8 @@
 - Worker 020 reported verification: `git diff --check main...worker/020-task-run-store-boundary`,
   focused TaskRun store tests, `npm run lint`, `npm run format:check`, `npm run test`, and
   `npm run build` passed.
+- Successor thread initiated: `019f2392-b73c-7613-b1ed-5c4ab2970fd8`
+- Successor initiated from main commit: `7b67a52aa634fc47e95defd58ddad2dc612ae0d7`
 - Instruction: continue in a fresh `xhigh` successor orchestration thread after it re-ingests the
   handoff and required context files. The successor should review Worker 020 before any merge and
   should not launch Worker 021 first.

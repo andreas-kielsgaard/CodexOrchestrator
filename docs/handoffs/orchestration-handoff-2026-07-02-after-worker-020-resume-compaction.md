@@ -20,8 +20,8 @@ checkpoint.
 
 Successor initiation:
 
-- Successor thread id: `TBD`
-- Initiated from main commit: `TBD`
+- Successor thread id: `019f2392-b73c-7613-b1ed-5c4ab2970fd8`
+- Initiated from main commit: `7b67a52aa634fc47e95defd58ddad2dc612ae0d7`
 - Successor prompt must instruct the new thread to verify Git state, re-ingest the required
   context, inspect Worker 020 directly before review or merge, and continue orchestration from the
   completed Worker 020 review checkpoint.
