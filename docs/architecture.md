@@ -31,6 +31,29 @@ The TypeScript domain layer lives under `src/domain/`:
 
 SQLite migrations, Rust database commands, Git scanning, and Codex runtime integration are intentionally outside this slice.
 
+## Repo Sync SQLite Schema Foundation
+
+The repo-sync persistence schema foundation lives under `src/infrastructure/sqlite/` as pure
+TypeScript infrastructure. It defines ordered migration SQL for the minimal durable repo-sync
+subset:
+
+- `projects`: minimal project rows needed as the repo foreign-key parent.
+- `repos`: repo identity and scan metadata, unique by `(project_id, root_path)`.
+- `branches`: branch facts and app-owned annotations, unique by `(repo_id, name)`.
+- `worktrees`: worktree facts, dirty/main flags, optional branch link, optional lock reason, and
+  last scan timestamp, unique by `(repo_id, path)`.
+
+The schema preserves repo-sync ownership boundaries: project or repo deletion cascades to owned
+technical records, while deleting a branch uses `ON DELETE SET NULL` for `worktrees.branch_id` so a
+worktree is not unexpectedly deleted merely because its branch row disappeared. Optional domain
+fields persist as SQL `NULL`, booleans persist as checked `0`/`1` integers, and mappers convert
+between SQLite row shapes and the existing `Project`, `Repo`, `Branch`, and `Worktree` domain
+records.
+
+This slice does not add a SQLite-backed `RepoSyncStore`; future store implementation should apply
+these migrations, enable SQLite foreign keys on each connection, and keep scan reconciliation behind
+the existing `RepoSyncStore` boundary.
+
 ## Git Adapter Boundary
 
 Git output parsing lives under `src/infrastructure/git/` as pure TypeScript infrastructure code. The current adapter foundation normalizes parseable command output from `git status --porcelain=v1 -z`, `git branch --format=...`, and `git worktree list --porcelain -z` into scan facts that can later feed the domain `Repo`, `Branch`, and `Worktree` records.
