@@ -942,3 +942,33 @@
 - Cleanup: `git worktree remove` removed the Worker 020 registered worktree and physical worktree
   folder at `C:\Users\user\.codex\worktrees\a979\Codex Orchestrator`; the merged branch
   `worker/020-task-run-store-boundary` was deleted.
+
+### Worker 021: Artifact Store Boundary
+
+- Status: launched
+- Pending worktree id: `local:2d6ad704-f38e-4a36-9f24-14d1cf4ebf57`
+- Worker thread: `019f239a-20fc-7af2-8f8b-6da7fc7f3436`
+- Worktree path: `C:\Users\user\.codex\worktrees\fae3\Codex Orchestrator`
+- Expected worker branch: `worker/021-artifact-store-boundary`
+- Launch base: `1b58f3b` (`Log Worker 020 merge`)
+- Reasoning effort: `medium`
+- Context reuse decision: started fresh because Worker 020's TaskRun store boundary is merged,
+  verified, logged, and cleaned; the Artifact store should use current `main`, the merged
+  Artifact/ValidationRun schema and mapper files, and existing Event/TaskRun store patterns rather
+  than carrying Worker 020's implementation context.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Report-back instruction: included explicitly in the worker prompt as a dedicated requirement,
+  separate from the completion report shape.
+- Scope: add a narrow pure TypeScript Artifact create/query store boundary plus SQLite
+  implementation using the existing Artifact schema and app migration coordinator, with
+  deterministic create behavior and focused query support over artifact filters.
+- Out of scope: Codex runtime integration, Codex JSONL parsing, event emission, event-sourced
+  projections, workflow engine behavior, ValidationRun store work, Conversation CRUD/store work,
+  UI/React work, Tauri/Rust database commands, Git execution, runtime database file opening,
+  package dependencies, and broad CRUD stores for other record families.
+- Expected result log: `docs/task-logs/worker-021-artifact-store-boundary.md`
+- Success signal: committed worker branch with focused domain and SQLite Artifact store tests plus
+  feasible `git diff --check main...worker/021-artifact-store-boundary`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` verification, followed by a
+  completion report sent back to the orchestration thread or an explicit note that cross-posting was
+  unavailable.
