@@ -1449,3 +1449,37 @@ orchestration thread`)
   folder deletion at `C:\Users\user\.codex\worktrees\dc3c\Codex Orchestrator`; the merged branch
   `worker/025-task-run-lifecycle-recorder` was deleted and the locked physical folder was left in
   place.
+
+### Worker 026: Codex JSONL Event Parser Boundary
+
+- Status: launched
+- Pending worktree id: `local:fa08fdf9-c2b5-453e-85af-9d2ab590d2e8`
+- Worker thread: `019f23eb-cbbe-7e31-9e43-ac92770a7bed`
+- Worktree path: `C:\Users\user\.codex\worktrees\9747\Codex Orchestrator`
+- Expected worker branch: `worker/026-codex-jsonl-event-parser`
+- Launch base: `52c25d6` (`Log Worker 025 merge`)
+- Reasoning effort: `high`
+- Context reuse decision: started fresh because Worker 025's lifecycle recorder is merged,
+  verified, logged, and Git-cleaned; the Codex JSONL parser is adjacent runtime-prep work but should
+  use current `main`, the lifecycle recorder, and existing event/artifact store result logs rather
+  than carrying Worker 025 implementation context.
+- UI discipline decision: non-UI slice; no Radix/Storybook/usability-review worker needed.
+- Official-docs check: orchestration refreshed the current Codex manual and used its
+  non-interactive/CLI reference guidance that `codex exec --json` emits newline-delimited JSON
+  events including `thread.started`, `turn.started`, `turn.completed`, `turn.failed`, `item.*`, and
+  `error`.
+- Report-back instruction: included explicitly in the worker prompt as a dedicated requirement,
+  separate from the completion report shape.
+- Scope: add a pure TypeScript parser/normalizer boundary for captured `codex exec --json` JSONL
+  streams, with forward-compatible raw-object preservation and a summary helper for thread id,
+  final agent message, terminal status, token usage, and item counts.
+- Out of scope: running `codex exec`, reading or managing Codex credentials, launching processes,
+  app-server/SDK integration, Tauri/Rust commands, database writes, lifecycle recorder composition,
+  workflow engine behavior, validation command execution, UI/React work, Git command execution,
+  package/dependency changes, and broad runtime policy.
+- Expected result log: `docs/task-logs/worker-026-codex-jsonl-event-parser.md`
+- Success signal: committed worker branch with focused parser tests plus feasible
+  `git diff --check main...worker/026-codex-jsonl-event-parser`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` verification, followed by a
+  completion report sent back to the orchestration thread or an explicit note that cross-posting was
+  unavailable.
