@@ -1937,3 +1937,34 @@ orchestration thread`)
 - Required verification: `git diff --check main...worker/034-validation-command-runner`, focused
   service tests, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build`.
 - Report-back instruction: included in the worker prompt.
+
+### Worker 033 Review And Merge: Diff Collector Service Boundary
+
+- Status: reviewed, corrected, merged, verified, logged, and Git-cleaned
+- Worker commit: `af742c2286d778cabe50524afd85b3e783b6d312`
+  (`Add diff collection service boundary`)
+- Orchestrator review correction commit:
+  `a3524b69e0bcd0c5eede8d13316721644fd47a61`
+  (`Review Worker 033 task run guard coverage`)
+- Merge commit: `6918e440bfe95ac160bf215136254b193756ea1c`
+- Result log: `docs/task-logs/worker-033-diff-collector-service.md`
+- Accepted decision: `diffCollection.ts` is an application boundary over
+  `OpenTaskDashboardStore`, `ArtifactStore`, `EventStore`, and an injected `GitDiffProvider`.
+  It validates task/run/worktree context, persists `diff` artifacts including empty diff bodies,
+  and emits compact `artifact_created` event metadata.
+- Accepted decision: concrete Git diff command execution, Tauri/UI wiring, and lifecycle state
+  mutation remain deferred. Runtime wiring should inject the diff provider later.
+- Review correction: added focused coverage that rejects a `taskRunId` belonging to another task
+  before provider execution or artifact/event writes.
+- Orchestrator verification before merge: `git diff --check`, focused diff-collection tests,
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed in the worker
+  worktree after the review correction. `cargo --version` and `rustc --version` failed because
+  Rust/Cargo are not on `PATH`.
+- Verification after merge: `git diff --check HEAD^..HEAD`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` passed on main. `node:sqlite`
+  emitted the expected experimental warning during SQLite tests.
+- Drift check: the slice did not implement a concrete Git diff command adapter, build React UI or
+  Tauri commands, run Codex, run validation commands, or add workflow-engine behavior.
+- Cleanup: `git worktree remove` unregistered the Worker 033 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\6610\Codex Orchestrator`; the merged branch
+  `worker/033-diff-collector-service` was deleted and the locked physical folder was left in place.

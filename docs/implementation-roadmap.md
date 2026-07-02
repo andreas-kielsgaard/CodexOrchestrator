@@ -52,6 +52,7 @@ Already built on `main`:
   and Git worktree creator boundaries.
 - Application-layer Open Tasks dashboard client and React/Tauri command boundary for
   load/create/update/archive, with the visible dashboard no longer importing seed data directly.
+- Application-layer diff collection service over injected stores and `GitDiffProvider`.
 
 Important gaps:
 
@@ -61,7 +62,7 @@ Important gaps:
   application services.
 - No concrete Git command scanner/worktree creator adapters or repo/worktree UI path.
 - No task/run detail view.
-- No diff collector or validation command runner.
+- No concrete Git diff provider/runtime trigger, and no validation command runner.
 - `npm run build:tauri` is blocked until Rust/Cargo are installed or on `PATH`.
 
 ## Guiding Decisions
@@ -85,7 +86,7 @@ Current planned sequence:
 1. Add concrete Git scanner/worktree adapters where runtime callers need them.
 2. Implement the Rust-side Open Tasks Tauri command backend when Rust verification is practical.
 3. Wire run controls and task/run detail UI to the composed run service.
-4. Add diff capture and validation command execution.
+4. Add validation command execution and runtime wiring for diff capture.
 5. Add the review surface that combines final response, diff, validation, and next action.
 
 ## Later Roadmap
