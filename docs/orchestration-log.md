@@ -1290,3 +1290,42 @@ orchestration thread`)
 - Instruction: continue in a fresh `xhigh` successor orchestration thread after it re-ingests the
   handoff and required context files. The successor should inspect Worker 024 directly, then review
   and independently verify it before any merge.
+
+### Worker 024 Review And Merge: App SQLite Store Bundle
+
+- Status: reviewed, corrected, merged, verified, logged, and Git-cleaned
+- Successor traceability checkpoint before review: `7c6cccd` (`Record Worker 024 successor
+orchestration thread`)
+- Worker thread: `019f23c6-1c5a-7120-9b5d-cb5c6e1e9cc1`
+- Worker commit: `9c76b09d36f8f3c3358a260ddd590b2b575a8451`
+- Orchestrator review correction commit: `0e89a86d27e6371f92cf8d53ed57a01c99682377`
+- Merge commit: `cb7eebdb768abb1720019615f49b7012680a10fa`
+- Result log: `docs/task-logs/worker-024-sqlite-store-bundle.md`
+- Accepted decision: `initializeAppSqliteStoreDatabase` is a narrow initialization helper that
+  enables SQLite foreign keys and applies the coordinated app migrations behind the existing
+  injected SQLite-like interface; it intentionally does not open a database file or choose runtime
+  startup policy.
+- Accepted decision: `createAppSqliteStoreBundle` is an assembly boundary that constructs the
+  existing repo-sync, Open Tasks read/write, Event, TaskRun, Conversation, Artifact, and
+  ValidationRun SQLite adapters over the same injected connection without adding broad CRUD or
+  workflow services.
+- Review correction: replaced reuse of the Open Tasks write-store `IdProvider`/`TimeProvider`
+  names for all stores with local app-level provider interfaces in `appStore.ts`; provider entries
+  remain named per write-capable store and deterministic, but the bundle no longer semantically
+  depends on Open Tasks provider naming.
+- Accepted decision: production code remains pure TypeScript and does not import `node:sqlite`;
+  `node:sqlite` is confined to executable tests.
+- Orchestrator verification before merge:
+  `git diff --check main...worker/024-sqlite-store-bundle`,
+  `npm run test -- src/infrastructure/sqlite/appStore.test.ts`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` passed in the worker worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed on main.
+- Verification note: `node:sqlite` emits Node's expected experimental warning during SQLite tests.
+- Drift check: still local-first and task-centered; the slice wires existing persistence adapters
+  through one app-level SQLite assembly boundary and introduces no Codex credentials, Codex runtime
+  integration, runtime database file opening, Tauri/Rust commands, React/UI work, Git execution,
+  workflow engine behavior, event emission automation, or package dependencies.
+- Cleanup: `git worktree remove` unregistered the Worker 024 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\ab51\Codex Orchestrator`; the merged branch
+  `worker/024-sqlite-store-bundle` was deleted and the locked physical folder was left in place.
