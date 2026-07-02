@@ -115,16 +115,17 @@ export async function selectOrCreateTaskWorktree(
   const task = await requireTask(service.dashboardStore, input.taskId);
   const creation = await createWorktreeIfRequested(service, input);
   const target = targetFromRequest(input.worktree, creation);
+  const repoRootPath = creation?.repoRootPath ?? input.repoRootPath;
   const registryResult = await registerAndScanRepo(service.repoRegistry, {
     projectId: task.projectId,
-    rootPath: input.repoRootPath,
+    rootPath: repoRootPath,
     ...(input.defaultBranch === undefined ? {} : { defaultBranch: input.defaultBranch }),
     ...(input.scannedAt === undefined ? {} : { scannedAt: input.scannedAt }),
   });
   const selected = selectScannedWorktree(registryResult, target);
 
   if (selected === undefined) {
-    throw new TaskWorktreeNotFoundAfterScanError(target, input.repoRootPath);
+    throw new TaskWorktreeNotFoundAfterScanError(target, repoRootPath);
   }
 
   const updatedTask = await service.taskWriteStore.updateTask(input.taskId, {

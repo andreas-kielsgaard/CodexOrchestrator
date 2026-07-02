@@ -32,16 +32,16 @@ Known blocker:
 
 ## Remaining Tasks
 
-| ID    | Task                           | Output                                                                                                      | Depends On                                |
-| ----- | ------------------------------ | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| FS-04 | Worktree creation for a task   | Create/select app-managed task worktree and link it to task/branch/repo records                             | Merged repo registry scan service         |
-| FS-05 | Persisted Open Tasks dashboard | Dashboard reads/writes SQLite-backed tasks instead of seed data; supports create/edit/archive/state changes | Merged database opener                    |
-| FS-08 | Run controls in UI             | User can start a Codex run for a task in a selected worktree and see running/completed/failed state         | FS-04, FS-05, merged run composition      |
-| FS-09 | Task/run detail view           | Show task anchors, run history, final response, raw JSONL artifact link/summary, and event timeline         | FS-05, merged run composition             |
-| FS-10 | Diff collector                 | Capture worktree diff after a run and store it as an artifact                                               | FS-04, merged run composition             |
-| FS-11 | Validation command runner      | Run configured validation command(s), store output artifact and validation run status, and surface failures | FS-04, merged run composition             |
-| FS-12 | Review surface MVP             | Show final response, diff state, validation status, and next action for completed/failed runs               | FS-09, FS-10, FS-11                       |
-| FS-13 | Tauri build environment        | Rust/Cargo available; `npm run build:tauri` can be verified                                                 | External environment                      |
+| ID    | Task                           | Output                                                                                                      | Depends On                           |
+| ----- | ------------------------------ | ----------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| FS-04 | Worktree creation for a task   | Create/select app-managed task worktree and link it to task/branch/repo records                             | Merged repo registry scan service    |
+| FS-05 | Persisted Open Tasks dashboard | Dashboard reads/writes SQLite-backed tasks instead of seed data; supports create/edit/archive/state changes | Merged database opener               |
+| FS-08 | Run controls in UI             | User can start a Codex run for a task in a selected worktree and see running/completed/failed state         | FS-04, FS-05, merged run composition |
+| FS-09 | Task/run detail view           | Show task anchors, run history, final response, raw JSONL artifact link/summary, and event timeline         | FS-05, merged run composition        |
+| FS-10 | Diff collector                 | Capture worktree diff after a run and store it as an artifact                                               | FS-04, merged run composition        |
+| FS-11 | Validation command runner      | Run configured validation command(s), store output artifact and validation run status, and surface failures | FS-04, merged run composition        |
+| FS-12 | Review surface MVP             | Show final response, diff state, validation status, and next action for completed/failed runs               | FS-09, FS-10, FS-11                  |
+| FS-13 | Tauri build environment        | Rust/Cargo available; `npm run build:tauri` can be verified                                                 | External environment                 |
 
 ## Dependency Shape
 

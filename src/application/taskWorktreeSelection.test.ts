@@ -129,8 +129,9 @@ describe('selectOrCreateTaskWorktree', () => {
   });
 
   it('creates through the injected boundary before scanning and selecting by path', async () => {
+    const scanner = new FakeGitRepoScanner(repoScan());
     const creator = new FakeGitWorktreeCreator({
-      repoRootPath,
+      repoRootPath: 'C:/Repos/Codex Orchestrator Normalized',
       worktreePath: workerWorktreePath,
       branchName: workerBranchName,
       baseBranch: 'main',
@@ -139,7 +140,7 @@ describe('selectOrCreateTaskWorktree', () => {
     const result = await selectOrCreateTaskWorktree(
       service({
         records: recordsWithTasks([baseTask()]),
-        scanner: new FakeGitRepoScanner(repoScan()),
+        scanner,
         creator,
       }),
       {
@@ -163,11 +164,17 @@ describe('selectOrCreateTaskWorktree', () => {
       },
     ]);
     expect(result.creation).toEqual({
-      repoRootPath,
+      repoRootPath: 'C:/Repos/Codex Orchestrator Normalized',
       worktreePath: workerWorktreePath,
       branchName: workerBranchName,
       baseBranch: 'main',
     });
+    expect(scanner.inputs).toEqual([
+      {
+        rootPath: 'C:/Repos/Codex Orchestrator Normalized',
+        scannedAt: now,
+      },
+    ]);
     expect(result.worktree.path).toBe(workerWorktreePath);
     expect(result.task.worktreeId).toBe('worktree:C:/Repos/Codex Orchestrator Worktrees/031');
   });

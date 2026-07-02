@@ -36,6 +36,9 @@ available, and worktree records.
 
 ## Review Notes
 
+- Orchestrator review correction: post-create scans now use the repo root returned by the injected
+  creator when present, and the existing Prettier drift in `docs/first-slice-completion-plan.md`
+  was formatted so full verification can pass.
 - The service clears a previous task `branchId` when the selected scanned worktree has no branch,
   preventing stale branch anchors on detached or branchless worktrees.
 - Creation is intentionally only a narrow injected `GitWorktreeCreator` boundary. No concrete Git
