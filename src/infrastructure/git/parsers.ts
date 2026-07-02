@@ -18,9 +18,9 @@ export const gitBranchSummaryFormat = [
   '%(upstream:short)',
   '%(upstream:track)',
   '%(worktreepath)',
-].join('%x1f');
+].join('%1f');
 
-export const gitBranchSummaryArgs = ['branch', `--format=${gitBranchSummaryFormat}%x00`];
+export const gitBranchSummaryArgs = ['branch', `--format=${gitBranchSummaryFormat}%00`];
 
 export function parseGitStatusPorcelainV1Z(output: string): GitStatusSnapshot {
   const tokens = splitNul(output);
@@ -64,19 +64,22 @@ export function parseGitStatusPorcelainV1Z(output: string): GitStatusSnapshot {
 }
 
 export function parseGitBranchSummary(output: string): GitBranchSummary[] {
-  return splitNul(output).map((record) => {
-    const [headMarker, name, headSha, upstreamName, upstreamTrack, worktreePath] =
-      record.split(UNIT_SEPARATOR);
+  return splitNul(output)
+    .map(stripBranchRecordNewline)
+    .filter((record) => record.length > 0)
+    .map((record) => {
+      const [headMarker, name, headSha, upstreamName, upstreamTrack, worktreePath] =
+        record.split(UNIT_SEPARATOR);
 
-    return {
-      name,
-      headSha,
-      isCurrent: headMarker === '*',
-      ...(upstreamName ? { upstreamName } : {}),
-      ...(upstreamTrack ? { upstreamTrack } : {}),
-      ...(worktreePath ? { worktreePath: normalizeGitPath(worktreePath) } : {}),
-    };
-  });
+      return {
+        name,
+        headSha,
+        isCurrent: headMarker === '*',
+        ...(upstreamName ? { upstreamName } : {}),
+        ...(upstreamTrack ? { upstreamTrack } : {}),
+        ...(worktreePath ? { worktreePath: normalizeGitPath(worktreePath) } : {}),
+      };
+    });
 }
 
 export function parseGitRemoteVerbose(output: string): GitRemoteSummary[] {
@@ -167,6 +170,10 @@ export function normalizeGitPath(path: string): string {
 
 function splitNul(output: string): string[] {
   return output.split(NUL).filter((token) => token.length > 0);
+}
+
+function stripBranchRecordNewline(record: string): string {
+  return record.replace(/^\r?\n/, '').replace(/\r?\n$/, '');
 }
 
 function parseStatusCode(code: string): GitStatusCode {

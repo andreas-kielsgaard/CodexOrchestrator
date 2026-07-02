@@ -97,6 +97,7 @@ describe('parseGitStatusPorcelainV1Z', () => {
 describe('parseGitBranchSummary', () => {
   it('parses the documented branch summary format', () => {
     expect(gitBranchSummaryFormat).toContain('%(refname:short)');
+    expect(gitBranchSummaryFormat).toContain('%1f');
 
     const output = [
       [
@@ -132,6 +133,46 @@ describe('parseGitBranchSummary', () => {
         headSha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
         isCurrent: false,
         worktreePath: 'C:/Repos/App Worktrees/003',
+      },
+    ]);
+  });
+
+  it('accepts git branch formatted records with newlines around NUL delimiters', () => {
+    const output = [
+      [
+        ' ',
+        'main',
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        'origin/main',
+        '[gone]',
+        'C:\\Repos\\App',
+      ].join('\x1f'),
+      '\n',
+      [
+        '*',
+        'worker/035-local-git-runtime-adapters',
+        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        '',
+        '',
+        'C:\\Repos\\App Worktrees\\035',
+      ].join('\x1f'),
+      '\n',
+    ].join('\0');
+
+    expect(parseGitBranchSummary(output)).toEqual([
+      {
+        name: 'main',
+        headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        isCurrent: false,
+        upstreamName: 'origin/main',
+        upstreamTrack: '[gone]',
+        worktreePath: 'C:/Repos/App',
+      },
+      {
+        name: 'worker/035-local-git-runtime-adapters',
+        headSha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        isCurrent: true,
+        worktreePath: 'C:/Repos/App Worktrees/035',
       },
     ]);
   });

@@ -122,12 +122,14 @@ Codex runs, or wire UI behavior.
 Location: `src/infrastructure/git/`
 
 The Git infrastructure parses raw command output for status, branch, and worktree facts and
-assembles normalized scan results. It does not execute Git yet. Future command execution should feed
-raw output into these parsers rather than duplicating parsing in UI or application code.
+assembles normalized scan results. It also includes Node-only local runtime adapters for Git command
+execution, repo scanning, worktree creation, and tracked-file diff collection. These adapters use
+the parser-compatible command outputs and remain outside React/browser imports; future runtime
+composition can inject them into application services without changing UI code.
 
 `GitRepoScanner` is the current scanner interface consumed by application services. Concrete local
-runtime wiring still needs to provide an implementation that gathers the raw Git command outputs and
-feeds them into the existing parser/mapper functions.
+runtime wiring can use the local scanner factory to gather raw Git command outputs and feed them
+into the existing parser/mapper functions.
 
 ### Codex
 
@@ -225,12 +227,13 @@ The first usable runtime loop still needs:
    services.
 3. Runtime wiring that passes the SQLite-backed store bundle and concrete Codex runtime adapter into
    the run composition service.
-4. Runtime wiring that passes a concrete `GitRepoScanner`, `RepoSyncStore`, and repo-sync ID/clock
-   providers into the repo registry scan service.
+4. Runtime wiring that passes the concrete local `GitRepoScanner`, `RepoSyncStore`, and repo-sync
+   ID/clock providers into the repo registry scan service.
 5. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
-6. Concrete Git worktree creation and scanning adapters for the task worktree selection service.
-7. Diff collection and runtime wiring that passes the concrete validation command runtime adapter
-   into the application validation service so outputs are stored as artifacts/validation runs.
+6. Repo/worktree UI/runtime composition that injects the concrete local worktree creator into the
+   task worktree selection service.
+7. Diff collection wiring that injects the concrete local Git diff provider, plus concrete
+   validation command runtime wiring that stores validation outputs as artifacts/validation runs.
 8. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.
 
 ## Testing And Verification
