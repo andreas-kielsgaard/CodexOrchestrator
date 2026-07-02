@@ -14,9 +14,10 @@ which boundaries should stay intact.
 - SQLite infrastructure is written as pure TypeScript over injected SQLite-like interfaces.
 
 Current limitation: the app can open a local runtime database file through a Node-facing
-infrastructure boundary, and the Open Tasks UI now consumes an injected async dashboard client, but
-the Tauri WebView still needs a Rust-side SQLite command backend before the default desktop UI can
-mutate the durable app database at runtime.
+infrastructure boundary, and the Open Tasks UI now consumes an injected async dashboard client. The
+default Tauri WebView path now has a narrow Rust-side SQLite backend for Open Tasks dashboard
+load/create/update/archive commands, while broader runtime composition still needs to expose the
+rest of the store bundle to future services.
 
 ## Boundary Rules
 
@@ -187,10 +188,10 @@ SQLite infrastructure includes:
   applying app migrations, creating runtime default providers when needed, and returning the app
   store bundle with an explicit close/dispose path
 
-The pure SQLite adapters still do not open database files or import `node:sqlite`; runtime-facing
-opening is isolated in `localAppDatabase.ts`. Browser/React modules must not import this opener.
-The next runtime step is a Tauri/Rust backend that chooses the app database path and exposes the
-task dashboard command contract to the WebView.
+The pure SQLite adapters still do not open database files or import `node:sqlite`; Node
+runtime-facing opening is isolated in `localAppDatabase.ts`. Browser/React modules must not import
+this opener. The Tauri/Rust backend independently applies the same ordered app schema migrations to
+the app data database for the Open Tasks command path.
 
 ### Tauri
 
@@ -204,8 +205,13 @@ Tasks dashboard command contract is:
 - `update_open_task`
 - `archive_open_task`
 
-Those commands are registered in Rust as explicit backend-pending stubs. They intentionally return a
-clear error until a Rust SQLite adapter is added, rather than falling back to seed/demo data.
+Those commands are implemented in Rust over a local SQLite database under the Tauri app data
+directory. The Rust backend applies the app schema migrations, uses UUID/time providers on the Rust
+side, writes only task fields exposed by the current command contract, archives by setting
+`execution_state = 'archived'`, omits archived/abandoned tasks from the dashboard, and returns the
+existing `TaskDashboardSnapshot` shape. Its dashboard query duplicates only the small projection
+needed for the command response; unlike the earlier TypeScript task read store, it returns all
+persisted projects so the dashboard can create the first task for a real project.
 
 ## UI Layer
 
@@ -221,20 +227,18 @@ boundary.
 
 The first usable runtime loop still needs:
 
-1. A Rust/Tauri SQLite command backend for the Open Tasks dashboard contract that chooses the local
-   app database path and implements load/create/update/archive durably for the WebView.
-2. UI/runtime composition that exposes the opened store bundle to the remaining application
+1. UI/runtime composition that exposes the opened store bundle to the remaining application
    services.
-3. Runtime wiring that passes the SQLite-backed store bundle and concrete Codex runtime adapter into
+2. Runtime wiring that passes the SQLite-backed store bundle and concrete Codex runtime adapter into
    the run composition service.
-4. Runtime wiring that passes the concrete local `GitRepoScanner`, `RepoSyncStore`, and repo-sync
+3. Runtime wiring that passes the concrete local `GitRepoScanner`, `RepoSyncStore`, and repo-sync
    ID/clock providers into the repo registry scan service.
-5. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
-6. Repo/worktree UI/runtime composition that injects the concrete local worktree creator into the
+4. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
+5. Repo/worktree UI/runtime composition that injects the concrete local worktree creator into the
    task worktree selection service.
-7. Diff collection wiring that injects the concrete local Git diff provider, plus concrete
+6. Diff collection wiring that injects the concrete local Git diff provider, plus concrete
    validation command runtime wiring that stores validation outputs as artifacts/validation runs.
-8. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.
+7. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.
 
 ## Testing And Verification
 
@@ -245,5 +249,6 @@ The reliable verification set today is:
 - `npm run test`
 - `npm run build`
 
-`npm run build:tauri` remains blocked in the current environment until Rust/Cargo are installed or
-available on `PATH`.
+Rust/Cargo verification is environment-dependent. When Rust is installed, run the Rust
+format/test/build checks in `src-tauri/` plus `npm run build:tauri`; otherwise the TypeScript
+verification set remains available.
