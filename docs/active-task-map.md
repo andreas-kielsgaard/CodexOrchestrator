@@ -21,15 +21,6 @@ otherwise resolve it.
   - Result log target: `docs/task-logs/worker-035-local-git-runtime-adapters.md`
   - Next orchestration action: inspect worker report/worktree, review branch, independently
     verify, then merge or request correction.
-- Worker 036: Validation Command Runtime Adapter
-  - Status: launched; awaiting worker completion report
-  - Pending worktree id: `local:52ac78b9-0540-429a-b109-6255e1a13362`
-  - Worktree: `C:\Users\user\.codex\worktrees\478e\Codex Orchestrator`
-  - Branch: `worker/036-validation-command-runtime-adapter`
-  - Launch base: `a54248c41d617b0c799c09b02d4f41d63864c6c5`
-  - Result log target: `docs/task-logs/worker-036-validation-command-runtime-adapter.md`
-  - Next orchestration action: inspect worker report/worktree, review branch, independently
-    verify, then merge or request correction.
 
 ## Pending Blockers / Follow-Up
 
@@ -46,6 +37,8 @@ otherwise resolve it.
   `docs/task-logs/worker-033-diff-collector-service.md`.
 - Worker 034: reviewed, corrected, merged, verified, and Git-cleaned. See
   `docs/task-logs/worker-034-validation-command-runner.md`.
+- Worker 036: reviewed, merged, verified, and Git-cleaned. See
+  `docs/task-logs/worker-036-validation-command-runtime-adapter.md`.
 
 ## Blockers
 
@@ -71,3 +64,4 @@ launched:
 - Worker 032: `C:\Users\user\.codex\worktrees\9117\Codex Orchestrator`
 - Worker 033: `C:\Users\user\.codex\worktrees\6610\Codex Orchestrator`
 - Worker 034: `C:\Users\user\.codex\worktrees\d19f\Codex Orchestrator`
+- Worker 036: `C:\Users\user\.codex\worktrees\478e\Codex Orchestrator`

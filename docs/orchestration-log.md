@@ -2038,3 +2038,30 @@ orchestration thread`)
   focused runtime adapter tests, `npm run lint`, `npm run format:check`, `npm run test`, and
   `npm run build`.
 - Report-back instruction: included in the worker prompt.
+
+### Worker 036 Review And Merge: Validation Command Runtime Adapter
+
+- Status: reviewed, merged, verified, logged, and Git-cleaned
+- Worker commit: `4a94077266f6fda8fa8096b8a8178131b8cf2251`
+  (`Add validation command runtime adapter`)
+- Merge commit: `203ca4e4d449553c7284db1e90aea162179ca6bd`
+- Result log: `docs/task-logs/worker-036-validation-command-runtime-adapter.md`
+- Accepted decision: `validationCommandRuntime.ts` is a Node-side infrastructure adapter with an
+  injectable process-runner seam and a default `node:child_process.spawn` runner. It forwards
+  command, args, cwd, env, and chunk callbacks; accumulates raw stdout/stderr; and returns
+  exitCode/signal metadata without classifying validation status.
+- Accepted decision: structural compatibility with `ValidationCommandRuntime` is maintained through
+  type-only imports. The adapter is not composed into application runtime wiring yet.
+- Orchestrator verification before merge: `git diff --check`, focused validation runtime tests,
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed in the worker
+  worktree. `cargo --version` and `rustc --version` failed because Rust/Cargo are not on `PATH`.
+- Verification after merge: `git diff --check HEAD^..HEAD`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` passed on main. `node:sqlite`
+  emitted the expected experimental warning during SQLite tests.
+- Drift check: the slice did not compose validation execution into runtime flows, build UI/Tauri
+  wiring, implement Git adapters, add multi-command orchestration, classify pass/fail, or add
+  workflow-engine behavior.
+- Cleanup: `git worktree remove` unregistered the Worker 036 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\478e\Codex Orchestrator`; the merged branch
+  `worker/036-validation-command-runtime-adapter` was deleted and the locked physical folder was
+  left in place.

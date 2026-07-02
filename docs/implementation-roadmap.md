@@ -54,6 +54,7 @@ Already built on `main`:
   load/create/update/archive, with the visible dashboard no longer importing seed data directly.
 - Application-layer diff collection service over injected stores and `GitDiffProvider`.
 - Application-layer validation command runner service over injected stores and command runtime.
+- Node-side validation command runtime adapter over `child_process.spawn`.
 
 Important gaps:
 
@@ -63,8 +64,7 @@ Important gaps:
   application services.
 - No concrete Git command scanner/worktree creator adapters or repo/worktree UI path.
 - No task/run detail view.
-- No concrete Git diff provider, validation command runtime adapter, or runtime triggers for those
-  post-run artifacts.
+- No concrete Git diff provider or runtime triggers for post-run diff/validation artifacts.
 - `npm run build:tauri` is blocked until Rust/Cargo are installed or on `PATH`.
 
 ## Guiding Decisions

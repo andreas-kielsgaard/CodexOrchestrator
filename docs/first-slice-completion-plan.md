@@ -33,6 +33,7 @@ Already merged:
   `diff` artifacts and compact `artifact_created` metadata.
 - Application-layer validation command runner service over injected stores and command runtime,
   storing `validation_log` artifacts and validation lifecycle events.
+- Node-side validation command runtime adapter over `child_process.spawn`.
 
 Known blockers / remaining runtime wiring:
 
@@ -48,7 +49,7 @@ Known blockers / remaining runtime wiring:
 | FS-08 | Run controls in UI             | User can start a Codex run for a task in a selected worktree and see running/completed/failed state                      | Merged task worktree service, FS-05 |
 | FS-09 | Task/run detail view           | Show task anchors, run history, final response, raw JSONL artifact link/summary, and event timeline                      | FS-05, merged run composition       |
 | FS-10 | Diff collector                 | Service boundary is merged; concrete Git provider/runtime trigger still needed for live post-run capture                 | Merged task worktree service        |
-| FS-11 | Validation command runner      | Service boundary is merged; concrete command runtime adapter/trigger still needed for live validation capture            | Merged task worktree service        |
+| FS-11 | Validation command runner      | Service boundary and Node runtime adapter are merged; runtime trigger still needed for live validation capture           | Merged task worktree service        |
 | FS-12 | Review surface MVP             | Show final response, diff state, validation status, and next action for completed/failed runs                            | FS-09, FS-10, FS-11                 |
 | FS-13 | Tauri build environment        | Rust/Cargo available; `npm run build:tauri` can be verified                                                              | External environment                |
 
@@ -86,7 +87,7 @@ Safe immediately:
 
 - FS-05 backend work can start when a Rust/Tauri worker is practical, with verification limits noted
   while Rust/Cargo are unavailable.
-- Concrete Git diff and validation runtime adapters can start as narrow infrastructure slices.
+- Concrete Git adapters can continue in Worker 035; validation runtime adapter is merged.
 - FS-13 can run anytime.
 
 Should wait:
@@ -99,8 +100,8 @@ Should wait:
 
 1. Finish the FS-05 backend gap when a Rust/Tauri worker is practical: implement durable SQLite
    command handling for the registered Open Tasks commands.
-2. Decide whether to wire concrete Git diff and validation runtime providers or move to task/run
-   detail UI.
+2. Review/merge Worker 035, then decide whether to wire concrete Git diff and validation runtime
+   providers or move to task/run detail UI.
 3. Launch FS-08 and FS-09 after persisted dashboard runtime behavior is real enough for UI flows.
 4. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
 
