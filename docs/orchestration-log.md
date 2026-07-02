@@ -1057,3 +1057,43 @@
   `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` verification,
   followed by a completion report sent back to the orchestration thread or an explicit note that
   cross-posting was unavailable.
+
+### Worker 022 Review And Merge: ValidationRun Store Boundary
+
+- Status: reviewed, merged, verified, logged, and Git-cleaned
+- Worker thread: `019f23aa-3613-7103-b106-9747626089d4`
+- Worker commit: `29cb922`
+- Merge commit: `cb9cf924796bb5f8aff3256ba17d1102f209db7e`
+- Result log: `docs/task-logs/worker-022-validation-run-store-boundary.md`
+- Accepted decision: `ValidationRunStore` defines a narrow create/update/query boundary with
+  deterministic ID/time providers, immutable `id`, `command`, and `createdAt`, typed
+  `ValidationRunNotFoundError` for missing updates, omitted update fields left unchanged, and
+  `null` update fields treated as explicit optional-field clears.
+- Accepted decision: ValidationRun queries filter by optional `taskId`, `taskRunId`, `status`, and
+  `outputArtifactId`, order by `createdAt` plus stable `id` tie-breaker, return an empty result
+  list for `limit: 0`, and throw clear errors for invalid negative or non-integer limits.
+- Accepted decision: mutable optional `taskId` and `taskRunId` links are acceptable for this slice,
+  matching the nullable durability behavior in the Worker 017 schema and the recent store contract
+  where omitted fields stay unchanged and `null` clears optional links.
+- Accepted decision: `SqliteValidationRunStore` uses the Worker 017 `validationRunToRow` and
+  `validationRunFromRow` mappers behind an injected SQLite-like interface; production code does not
+  import `node:sqlite`.
+- Accepted decision: SQLite query behavior currently loads ordered validation-run rows and applies
+  the shared domain query helper in memory, centralizing filter/limit behavior until validation-run
+  volume justifies SQL pushdown.
+- Orchestrator verification before merge:
+  `git diff --check main...worker/022-validation-run-store-boundary`,
+  `npm run test -- src/domain/validationRunStore.test.ts src/infrastructure/sqlite/validationRunStore.test.ts`,
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed in the worker
+  worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed.
+- Verification note: `node:sqlite` emits Node's expected experimental warning during SQLite tests.
+- Drift check: still local-first and task-centered; ValidationRun persistence records validation
+  attempt metadata behind a narrow store boundary and introduces no Codex credentials, Codex runtime
+  integration, event emission, event-sourced projections, workflow engine behavior, Conversation
+  store work, runtime database wiring, UI/React work, Git execution, or package dependencies.
+- Cleanup: `git worktree remove` unregistered the Worker 022 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\cea2\Codex Orchestrator`; the merged branch
+  `worker/022-validation-run-store-boundary` was deleted and the locked physical folder was left in
+  place.
