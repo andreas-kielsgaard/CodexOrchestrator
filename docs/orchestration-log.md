@@ -452,3 +452,18 @@
 - Expected result log: `docs/task-logs/worker-014-open-tasks-sqlite-write-store.md`
 - Success signal: committed worker branch with focused SQLite write-store tests plus feasible
   `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` verification.
+
+### Orchestration Handoff After Worker 014 Review Compaction
+
+- Status: prepared
+- Handoff report: `docs/handoffs/orchestration-handoff-2026-07-02-after-worker-014-review-compaction.md`
+- Trigger: this orchestration thread resumed from compressed context after Worker 014 completed and
+  source/test review began.
+- Worker 014 status at handoff: completed by worker at
+  `e2c26aaad1b0f5b6b52d64b9f25864c188ee4cc4`, with clean active worktree
+  `C:\Users\user\.codex\worktrees\8f3a\Codex Orchestrator`, not merged.
+- Main state at handoff preparation: `f15a207cfb616d49d3c1b3cd95300a0d586d63a9`, clean except
+  pre-existing `origin/main [gone]`.
+- Instruction: this compressed orchestration thread should not continue Worker 014 source review or
+  merge. Continue orchestration in a fresh `xhigh` control-room thread after it re-ingests the
+  handoff and required context files.
