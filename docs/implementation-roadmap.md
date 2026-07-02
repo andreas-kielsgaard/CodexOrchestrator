@@ -43,10 +43,12 @@ Already built on `main`:
   conversations, artifacts, validation runs, and the app store bundle.
 - Application-level task-run lifecycle recorder over existing store boundaries.
 - Codex JSONL parser boundary for captured `codex exec --json` streams.
+- Runtime-facing local SQLite database opener over the app store bundle.
 
 Important gaps:
 
-- No real app database file opening or runtime store construction.
+- No UI/runtime composition that chooses the app database path and exposes stores to application
+  services.
 - No Codex runtime adapter that executes `codex exec --json`.
 - No persisted dashboard UI; the visible app is still seed/demo driven.
 - No repo registration/worktree creation UI path.
@@ -72,14 +74,13 @@ events, diff, and validation result in the app.
 
 Current planned sequence:
 
-1. Add app database opening around the existing SQLite store bundle.
+1. Add a `codex exec --json` runtime adapter.
 2. Add repo registration/scanning and worktree selection/creation.
 3. Replace seed dashboard behavior with persisted task CRUD.
-4. Add a `codex exec --json` runtime adapter.
-5. Compose runtime adapter, JSONL parser, lifecycle recorder, stores, artifacts, and events.
-6. Add run controls and task/run detail UI.
-7. Add diff capture and validation command execution.
-8. Add the review surface that combines final response, diff, validation, and next action.
+4. Compose runtime adapter, JSONL parser, lifecycle recorder, stores, artifacts, and events.
+5. Add run controls and task/run detail UI.
+6. Add diff capture and validation command execution.
+7. Add the review surface that combines final response, diff, validation, and next action.
 
 ## Later Roadmap
 

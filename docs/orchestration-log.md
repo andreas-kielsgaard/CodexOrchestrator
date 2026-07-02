@@ -1607,3 +1607,28 @@ orchestration thread`)
 - Required verification: `git diff --check main...worker/027-app-database-opening`, focused opener
   tests, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build`.
 - Report-back instruction: included in the worker prompt.
+
+### Worker 027 Review And Merge: App Database Opening
+
+- Status: reviewed, merged, verified, logged, and Git-cleaned
+- Worker commit: `8ca13be29c36b18faf1348017a5f28b84c892b1c`
+- Merge commit: `db6c5a4310db3b3bbcc62a76c7340c2e7b6c6694`
+- Result log: `docs/task-logs/worker-027-app-database-opening.md`
+- Accepted decision: `localAppDatabase.ts` is a runtime-facing Node SQLite opener isolated under
+  SQLite infrastructure. It opens a local database path, initializes the existing app store bundle,
+  provides runtime default ID/time providers, and returns a handle with `stores`, raw `db`, and
+  idempotent `close`/`dispose`.
+- Accepted decision: exposing the raw database handle is acceptable at this boundary for runtime
+  composition and tests. UI code should still consume higher-level application services rather than
+  the connection directly.
+- Orchestrator verification before merge: `git diff --check main...worker/027-app-database-opening`,
+  `npm run test -- src/infrastructure/sqlite/localAppDatabase.test.ts`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` passed in the worker worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed on main. `node:sqlite` emitted the expected experimental warning during
+  SQLite tests.
+- Drift check: the slice did not wire React/Tauri, execute Codex or Git, add runtime composition,
+  replace seed UI data, or add dependencies.
+- Cleanup: `git worktree remove` unregistered the Worker 027 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\04d6\Codex Orchestrator`; the merged branch
+  `worker/027-app-database-opening` was deleted and the locked physical folder was left in place.

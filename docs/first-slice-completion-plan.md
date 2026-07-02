@@ -20,6 +20,7 @@ Already merged:
   artifacts, validation runs, and the app store bundle.
 - Task-run lifecycle recorder over existing store boundaries.
 - Codex JSONL event parser boundary.
+- Runtime-facing local SQLite database opener over the app store bundle.
 
 Known blocker:
 
@@ -29,12 +30,11 @@ Known blocker:
 
 | ID    | Task                           | Output                                                                                                                                                          | Depends On                                |
 | ----- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| FS-02 | App database opening           | Runtime-facing DB module that opens a local SQLite file, applies migrations, and returns the app store bundle                                                   | Existing SQLite bundle                    |
 | FS-03 | Repo registry UI/service path  | Add/list/remove repos through persisted stores; scan selected repo into repo/branch/worktree records                                                            | Existing Git parsers and repo sync stores |
 | FS-04 | Worktree creation for a task   | Create/select app-managed task worktree and link it to task/branch/repo records                                                                                 | FS-03                                     |
-| FS-05 | Persisted Open Tasks dashboard | Dashboard reads/writes SQLite-backed tasks instead of seed data; supports create/edit/archive/state changes                                                     | FS-02                                     |
+| FS-05 | Persisted Open Tasks dashboard | Dashboard reads/writes SQLite-backed tasks instead of seed data; supports create/edit/archive/state changes                                                     | Merged database opener                    |
 | FS-06 | Codex exec runtime adapter     | Narrow `CodexRuntime` implementation that runs `codex exec --json`, streams raw JSONL, parses events, and exposes terminal result metadata                      | Merged Codex parser                       |
-| FS-07 | Run composition service        | Start/complete/fail task runs by combining runtime adapter, JSONL parser, lifecycle recorder, raw artifact storage, final-response artifact storage, and events | FS-02, FS-06                              |
+| FS-07 | Run composition service        | Start/complete/fail task runs by combining runtime adapter, JSONL parser, lifecycle recorder, raw artifact storage, final-response artifact storage, and events | Merged database opener, FS-06             |
 | FS-08 | Run controls in UI             | User can start a Codex run for a task in a selected worktree and see running/completed/failed state                                                             | FS-04, FS-05, FS-07                       |
 | FS-09 | Task/run detail view           | Show task anchors, run history, final response, raw JSONL artifact link/summary, and event timeline                                                             | FS-05, FS-07                              |
 | FS-10 | Diff collector                 | Capture worktree diff after a run and store it as an artifact                                                                                                   | FS-04, FS-07                              |
@@ -46,11 +46,10 @@ Known blocker:
 
 Critical path:
 
-1. FS-02: open the real app database.
-2. FS-06: run and parse Codex.
-3. FS-07: persist a full task-run lifecycle.
-4. FS-08 and FS-09: expose run start and run review in the UI.
-5. FS-10, FS-11, FS-12: add review-grade diff and validation.
+1. FS-06: run and parse Codex.
+2. FS-07: persist a full task-run lifecycle.
+3. FS-08 and FS-09: expose run start and run review in the UI.
+4. FS-10, FS-11, FS-12: add review-grade diff and validation.
 
 Repo/worktree path:
 
@@ -60,9 +59,8 @@ Repo/worktree path:
 
 Dashboard path:
 
-1. FS-02 opens stores.
-2. FS-05 replaces seed data with persisted task CRUD.
-3. FS-08 and FS-09 add runtime-specific controls and detail.
+1. FS-05 replaces seed data with persisted task CRUD using the merged database opener.
+2. FS-08 and FS-09 add runtime-specific controls and detail.
 
 Review path:
 
@@ -75,17 +73,11 @@ Review path:
 
 Safe immediately:
 
-- FS-03 can run in parallel with FS-02 if it stays at the service/store boundary.
-- FS-13 can run anytime.
-
-Safe after FS-02:
-
-- FS-05 can proceed while FS-06 is built.
-- FS-03 can continue into persisted repo registration.
-
-Safe now that the parser is merged:
-
+- FS-03 can run in parallel with FS-06 if it stays at the service/store boundary.
+- FS-05 can start now that the database opener is merged, if it keeps browser/runtime boundaries
+  explicit.
 - FS-06 can proceed without waiting for UI work.
+- FS-13 can run anytime.
 
 Safe after FS-03:
 
@@ -93,7 +85,7 @@ Safe after FS-03:
 
 Should wait:
 
-- FS-07 should wait for FS-02 and FS-06.
+- FS-07 should wait for FS-06.
 - FS-08 should wait for FS-04, FS-05, and FS-07.
 - FS-09 should wait for FS-07 unless built as a UI shell only.
 - FS-10 and FS-11 should wait for FS-04 and FS-07.
@@ -101,16 +93,14 @@ Should wait:
 
 ## Recommended Worker Sequencing
 
-1. Launch FS-02 as a small infrastructure worker.
-2. Launch FS-03 as a service/UI-boundary worker if DB wiring is stable enough; otherwise keep it
-   service-only.
-3. Launch FS-06 after or alongside FS-02 if runtime context is clear.
-4. Launch FS-05 once FS-02 is merged.
-5. Launch FS-04 after FS-03.
-6. Launch FS-07 as the main vertical integration worker.
-7. Launch FS-08 and FS-09 as UI workers after FS-07.
-8. Launch FS-10 and FS-11 in parallel after FS-04 and FS-07.
-9. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
+1. Launch FS-06 as the next critical runtime boundary.
+2. Launch FS-03 as a service/UI-boundary worker in parallel if review capacity allows.
+3. Launch FS-05 once the runtime/database boundary for UI consumption is clear.
+4. Launch FS-04 after FS-03.
+5. Launch FS-07 as the main vertical integration worker.
+6. Launch FS-08 and FS-09 as UI workers after FS-07.
+7. Launch FS-10 and FS-11 in parallel after FS-04 and FS-07.
+8. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
 
 ## Orchestration Notes
 

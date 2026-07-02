@@ -12,17 +12,7 @@ otherwise resolve it.
 
 ## Active Tasks
 
-### Worker 027: App Database Opening
-
-- Status: launched; awaiting worker completion report
-- Pending worktree id: `local:ebc5e321-fadf-4c52-8106-bdfbf5cfac7c`
-- Expected branch: `worker/027-app-database-opening`
-- Worktree: `C:\Users\user\.codex\worktrees\04d6\Codex Orchestrator`
-- Launch base: `d5a0ac19c457e4640e562f6063f679176032f862` (`Log Worker 026 merge`)
-- Expected result log: `docs/task-logs/worker-027-app-database-opening.md`
-- Report-back instruction: included in the worker prompt
-- Next action: wait for Worker 027 completion, then inspect the worker branch/result log directly,
-  review source, run independent verification, and merge only accepted work.
+None.
 
 ## Blockers
 
@@ -40,3 +30,4 @@ launched:
 - Worker 024: `C:\Users\user\.codex\worktrees\ab51\Codex Orchestrator`
 - Worker 025: `C:\Users\user\.codex\worktrees\dc3c\Codex Orchestrator`
 - Worker 026: `C:\Users\user\.codex\worktrees\9747\Codex Orchestrator`
+- Worker 027: `C:\Users\user\.codex\worktrees\04d6\Codex Orchestrator`
