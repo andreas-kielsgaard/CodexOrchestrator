@@ -1900,3 +1900,40 @@ orchestration thread`)
   folder deletion at `C:\Users\user\.codex\worktrees\9117\Codex Orchestrator`; the merged branch
   `worker/032-persisted-open-tasks-dashboard` was deleted and the locked physical folder was left
   in place.
+
+### Worker 033 Launch: Diff Collector Service Boundary
+
+- Status: launched in a fresh worktree worker
+- Pending worktree id: `local:0fa11c73-f9b6-47c9-8854-cc0ed17a77f3`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\6610\Codex Orchestrator`
+- Branch observed after launch: `worker/033-diff-collector-service`
+- Launch base: `d30a046e4c1f1e43df20fbe9f3e138d85dd7214f`
+  (`Refresh first slice state after Worker 032`)
+- Goal: add a focused TypeScript boundary for collecting a task/worktree diff after a run and
+  storing it as a `diff` artifact with compact `artifact_created` event metadata.
+- Explicitly deferred: React UI, Tauri command wiring, Codex execution, validation execution,
+  broad workflow-engine behavior, broad Git framework work, browser imports of Node-only APIs, and
+  unnecessary dependencies.
+- Required result log: `docs/task-logs/worker-033-diff-collector-service.md`
+- Required verification: `git diff --check main...worker/033-diff-collector-service`, focused
+  service tests, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build`.
+- Report-back instruction: included in the worker prompt.
+
+### Worker 034 Launch: Validation Command Runner Service Boundary
+
+- Status: launched in a fresh worktree worker
+- Pending worktree id: `local:bbb5785a-a455-45d2-8d6c-3d8673724937`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\d19f\Codex Orchestrator`
+- Branch observed after launch: `worker/034-validation-command-runner`
+- Launch base: `d30a046e4c1f1e43df20fbe9f3e138d85dd7214f`
+  (`Refresh first slice state after Worker 032`)
+- Goal: add a focused TypeScript boundary for executing validation commands, recording
+  `ValidationRun` state, storing `validation_log` artifacts, and emitting validation lifecycle
+  events.
+- Explicitly deferred: React UI, Tauri command wiring, Codex execution, diff collection, broad
+  workflow-engine behavior, broad process framework work, browser imports of Node-only APIs, and
+  unnecessary dependencies.
+- Required result log: `docs/task-logs/worker-034-validation-command-runner.md`
+- Required verification: `git diff --check main...worker/034-validation-command-runner`, focused
+  service tests, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build`.
+- Report-back instruction: included in the worker prompt.

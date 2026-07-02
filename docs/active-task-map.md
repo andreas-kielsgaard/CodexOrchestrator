@@ -12,7 +12,24 @@ otherwise resolve it.
 
 ## Active Tasks
 
-- None.
+- Worker 033: Diff Collector Service Boundary
+  - Status: launched; awaiting worker completion report
+  - Pending worktree id: `local:0fa11c73-f9b6-47c9-8854-cc0ed17a77f3`
+  - Worktree: `C:\Users\user\.codex\worktrees\6610\Codex Orchestrator`
+  - Branch: `worker/033-diff-collector-service`
+  - Launch base: `d30a046e4c1f1e43df20fbe9f3e138d85dd7214f`
+  - Result log target: `docs/task-logs/worker-033-diff-collector-service.md`
+  - Next orchestration action: inspect worker report/worktree, review branch, independently
+    verify, then merge or request correction.
+- Worker 034: Validation Command Runner Service Boundary
+  - Status: launched; awaiting worker completion report
+  - Pending worktree id: `local:bbb5785a-a455-45d2-8d6c-3d8673724937`
+  - Worktree: `C:\Users\user\.codex\worktrees\d19f\Codex Orchestrator`
+  - Branch: `worker/034-validation-command-runner`
+  - Launch base: `d30a046e4c1f1e43df20fbe9f3e138d85dd7214f`
+  - Result log target: `docs/task-logs/worker-034-validation-command-runner.md`
+  - Next orchestration action: inspect worker report/worktree, review branch, independently
+    verify, then merge or request correction.
 
 ## Pending Blockers / Follow-Up
 
