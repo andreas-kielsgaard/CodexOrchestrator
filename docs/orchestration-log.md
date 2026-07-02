@@ -1790,3 +1790,25 @@ orchestration thread`)
   folder deletion at `C:\Users\user\.codex\worktrees\0d6b\Codex Orchestrator`; the merged branch
   `worker/030-repo-registry-scan-service` was deleted and the locked physical folder was left in
   place.
+
+### Worker 031 Launch: Task Worktree Creation / Selection Service Boundary
+
+- Status: launched in a fresh worktree worker
+- Pending worktree id: `local:f4ba4057-cc4e-4902-ace0-961d821c734c`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\93b2\Codex Orchestrator`
+- Initial observed state: detached at launch base; worker prompt instructs creation of
+  `worker/031-task-worktree-service` before editing
+- Expected branch: `worker/031-task-worktree-service`
+- Launch base: `b252e7a241563a6f13bcad1ea067c91518f741fe` (`Log Worker 030 merge`)
+- Goal: add a focused application boundary for creating/selecting a task worktree and linking the
+  task to the resulting repo, branch, and worktree records using the merged repo registry scan
+  service and injected Git/worktree dependencies.
+- Explicitly deferred: React UI, persisted dashboard wiring, Codex runs, diff collection,
+  validation execution, review UI, broad Git workflow-engine behavior, browser imports of Node-only
+  APIs, package dependencies unless clearly justified, and forced cleanup of locked worktree
+  folders.
+- Required result log: `docs/task-logs/worker-031-task-worktree-service.md`
+- Required verification: `git diff --check main...worker/031-task-worktree-service`, focused
+  service/boundary tests, `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build`.
+- Report-back instruction: included in the worker prompt.
