@@ -26,8 +26,9 @@ Worker 024. The successor must inspect Worker 024 directly before any merge deci
   - Worker 024 worktree on `worker/024-sqlite-store-bundle` at
     `9c76b09d36f8f3c3358a260ddd590b2b575a8451`
 - Active worker branch: `worker/024-sqlite-store-bundle`
-- Handoff/log package commit: to be recorded after commit
-- Successor orchestration thread: to be initiated after commit
+- Handoff/log package commit: `f0e369f` (`Hand off after Worker 024 completion compaction`)
+- Successor orchestration thread: `019f23d0-1a06-7780-b259-fb93437ee493`
+- Successor initiated from main commit: `f0e369f`
 
 ## Completed Since Prior Handoff
 
