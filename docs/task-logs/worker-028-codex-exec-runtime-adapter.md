@@ -69,3 +69,10 @@ None in implementation.
 - A zero-exit stream without a terminal JSONL event is classified as `failed` with a clear status
   reason so later composition can decide how to surface incomplete output.
 - `additionalArgs` are placed before the prompt to match `codex exec [OPTIONS] [PROMPT]`.
+
+## Orchestrator Review Addendum
+
+- Added focused tests for two reported classification edges: parseable output with no terminal
+  event, and process signal exit after parseable completed JSONL.
+- Adjusted the fake process runner test helper so explicit `null` exit codes can be tested instead
+  of being replaced by the default zero exit code.

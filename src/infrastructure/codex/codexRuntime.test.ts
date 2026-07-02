@@ -103,6 +103,38 @@ describe('runCodexExec', () => {
     expect(result.summary.terminalStatus).toEqual({ kind: 'completed', lineNumber: 2 });
   });
 
+  it('classifies parseable output without a terminal event as failed', async () => {
+    const stdout = jsonl([
+      { type: 'thread.started', thread_id: 'thread-789' },
+      { type: 'item.completed', item: { type: 'agent_message', text: 'Almost done' } },
+    ]);
+    const runner = new FakeCodexProcessRunner({ stdout, stderr: '', exitCode: 0 });
+
+    const result = await runCodexExec({ prompt: 'Try it' }, { command: 'codex', runner });
+
+    expect(result.status).toBe('failed');
+    expect(result.statusReason).toBe('Codex output did not include a terminal event');
+    expect(result.summary.finalAgentMessageText).toBe('Almost done');
+  });
+
+  it('classifies process signal exits as failed even when JSONL completed', async () => {
+    const stdout = jsonl([{ type: 'turn.completed' }]);
+    const runner = new FakeCodexProcessRunner({
+      stdout,
+      stderr: 'terminated',
+      exitCode: null,
+      signal: 'SIGTERM',
+    });
+
+    const result = await runCodexExec({ prompt: 'Try it' }, { command: 'codex', runner });
+
+    expect(result.status).toBe('failed');
+    expect(result.statusReason).toBe('Codex process exited on signal SIGTERM');
+    expect(result.exitCode).toBeNull();
+    expect(result.signal).toBe('SIGTERM');
+    expect(result.summary.terminalStatus).toEqual({ kind: 'completed', lineNumber: 1 });
+  });
+
   it('classifies Codex turn.failed events as failed even with a zero process exit', async () => {
     const stdout = jsonl([{ type: 'turn.failed', error: { message: 'model failed' } }]);
     const runner = new FakeCodexProcessRunner({ stdout, stderr: '', exitCode: 0 });
@@ -181,8 +213,8 @@ class FakeCodexProcessRunner implements CodexProcessRunner {
     return {
       stdout,
       stderr,
-      exitCode: this.result.exitCode ?? 0,
-      signal: this.result.signal ?? null,
+      exitCode: this.result.exitCode === undefined ? 0 : this.result.exitCode,
+      signal: this.result.signal === undefined ? null : this.result.signal,
     };
   }
 }
