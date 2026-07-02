@@ -1632,3 +1632,26 @@ orchestration thread`)
 - Cleanup: `git worktree remove` unregistered the Worker 027 worktree, but Windows denied physical
   folder deletion at `C:\Users\user\.codex\worktrees\04d6\Codex Orchestrator`; the merged branch
   `worker/027-app-database-opening` was deleted and the locked physical folder was left in place.
+
+### Worker 028 Launch: Codex Exec Runtime Adapter
+
+- Status: launched in a fresh worktree worker
+- Pending worktree id: `local:2f2404b6-9661-47f1-b292-353ee1fc809e`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\c12f\Codex Orchestrator`
+- Expected branch: `worker/028-codex-exec-runtime-adapter`
+- Launch base: `15d2efddbc273a49f397c28f7a8f537cb4bbc097` (`Log Worker 027 merge`)
+- Goal: add a narrow Node/local-runtime adapter for `codex exec --json` that invokes Codex
+  non-interactively, captures raw stdout JSONL and stderr, parses/summarizes the JSONL stream, and
+  returns terminal metadata for later task-run composition.
+- Context checked before launch: local `codex --help` and `codex exec --help` failed with
+  `Access is denied` for the WindowsApps `codex.exe`; official OpenAI Codex non-interactive and CLI
+  reference docs confirm `codex exec --json` as the JSONL path.
+- Explicitly deferred: lifecycle composition, stores/artifacts/events/conversations, React/Tauri
+  UI, repo/worktree registration, diff collection, validation execution, workflow engine behavior,
+  credential management, and dependency additions unless necessary.
+- Required result log: `docs/task-logs/worker-028-codex-exec-runtime-adapter.md`
+- Required verification: `git diff --check main...worker/028-codex-exec-runtime-adapter`, focused
+  adapter tests, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build`;
+  optional live CLI smoke only if the worker environment can execute `codex` without credentials or
+  user interaction.
+- Report-back instruction: included in the worker prompt.
