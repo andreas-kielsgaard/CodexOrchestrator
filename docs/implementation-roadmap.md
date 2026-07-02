@@ -55,6 +55,8 @@ Already built on `main`:
 - Application-layer diff collection service over injected stores and `GitDiffProvider`.
 - Application-layer validation command runner service over injected stores and command runtime.
 - Node-side validation command runtime adapter over `child_process.spawn`.
+- Node-only local Git runtime adapters for repo scanning, worktree creation, and tracked-file diff
+  collection.
 
 Important gaps:
 
@@ -62,9 +64,9 @@ Important gaps:
   persistence still returns an explicit backend-pending error.
 - No broader UI/runtime composition that chooses the app database path and exposes all stores to
   application services.
-- No concrete Git command scanner/worktree creator adapters or repo/worktree UI path.
+- No repo/worktree UI or runtime composition that injects the local Git adapters into user flows.
 - No task/run detail view.
-- No concrete Git diff provider or runtime triggers for post-run diff/validation artifacts.
+- No runtime triggers for post-run diff/validation artifacts.
 - `npm run build:tauri` is blocked until Rust/Cargo are installed or on `PATH`.
 
 ## Guiding Decisions
@@ -85,10 +87,10 @@ events, diff, and validation result in the app.
 
 Current planned sequence:
 
-1. Add concrete Git scanner/worktree adapters where runtime callers need them.
-2. Implement the Rust-side Open Tasks Tauri command backend when Rust verification is practical.
+1. Implement the Rust-side Open Tasks Tauri command backend when Rust verification is practical.
+2. Wire repo/worktree runtime composition using the local Git adapters.
 3. Wire run controls and task/run detail UI to the composed run service.
-4. Add concrete runtime wiring for diff and validation capture.
+4. Add runtime triggers for diff and validation capture.
 5. Add the review surface that combines final response, diff, validation, and next action.
 
 ## Later Roadmap

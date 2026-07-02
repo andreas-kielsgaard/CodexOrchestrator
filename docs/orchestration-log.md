@@ -2065,3 +2065,34 @@ orchestration thread`)
   folder deletion at `C:\Users\user\.codex\worktrees\478e\Codex Orchestrator`; the merged branch
   `worker/036-validation-command-runtime-adapter` was deleted and the locked physical folder was
   left in place.
+
+### Worker 035 Review And Merge: Local Git Runtime Adapters Bundle
+
+- Status: reviewed, merged, verified, logged, and Git-cleaned
+- Worker commit: `462b7b79f6f98bfb3ab6760cdebd2224eb9fafc0`
+  (`Add local Git runtime adapters`)
+- Merge commit: `afd8952600e65cf3ba21d74b9a9ea57461c269a9`
+- Result log: `docs/task-logs/worker-035-local-git-runtime-adapters.md`
+- Accepted decision: local Git process execution is isolated in `localGitRuntime.ts` behind an
+  injectable runner and a default `node:child_process.spawn` implementation. It uses argument arrays,
+  `shell: false`, and hidden Windows process windows.
+- Accepted decision: the local adapter bundle provides repo scanning, narrow worktree creation, and
+  tracked-file diff collection without wiring UI/Tauri runtime composition or workflow policy.
+- Review check: a live read-only probe confirmed that this Git treats `%1f` / `%00` as real
+  branch-format separators while `%x1f` / `%x00` is emitted literally.
+- Merge note: resolved the expected `docs/architecture.md` overlap with Worker 036 by preserving
+  both facts: local Git adapters exist, and validation/diff runtime composition is still pending.
+- Orchestrator verification before merge: `git diff --check`, focused Git infrastructure tests,
+  live Git format probes, `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed in the worker worktree. `cargo --version` and `rustc --version` failed
+  because Rust/Cargo are not on `PATH`.
+- Verification after merge: `git diff --check HEAD^..HEAD`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` passed on main. `node:sqlite`
+  emitted the expected experimental warning during SQLite tests.
+- Drift check: the slice did not build React UI, Tauri commands, runtime composition calls,
+  validation command runtime behavior, cleanup policy, branch naming policy, or workflow-engine
+  behavior.
+- Cleanup: `git worktree remove` unregistered the Worker 035 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\46d5\Codex Orchestrator`; the merged branch
+  `worker/035-local-git-runtime-adapters` was deleted and the locked physical folder was left in
+  place.
