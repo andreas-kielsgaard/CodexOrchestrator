@@ -582,7 +582,7 @@
 
 ### Worker 016: TaskRun/Conversation SQLite Schema
 
-- Status: launched/in progress; not reviewed or merged
+- Status: launched; later reviewed and merged
 - Pending worktree id: `local:c3bb9e49-c809-4f1a-a08f-9996394a99f5`
 - Expected worker branch: `worker/016-run-conversation-sqlite-schema`
 - Launch base: `55f3f4b7b4490448a79f3a7fdb1b423d35d79433`
@@ -605,3 +605,41 @@
   `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` verification, followed
   by a completion report sent back to the orchestration thread or an explicit note that cross-posting
   was unavailable.
+
+### Worker 016 Review And Merge: TaskRun/Conversation SQLite Schema
+
+- Status: reviewed, corrected, merged, verified, logged, and Git-cleaned
+- Worker commit: `328eab92d9ac3c4c56b47d1017c87a8a982fc403`
+- Orchestrator review correction commit: `611b734`
+- Merge commit: `ef05c5e876cac47d31c1315ff1a6c37ccbdb50d3`
+- Result log: `docs/task-logs/worker-016-run-conversation-sqlite-schema.md`
+- Review correction: clarified `docs/architecture.md` so
+  `task_conversation_links.conversation_id` remains an intentionally text-only dashboard link even
+  after the new `conversations` table exists, pending a future link-integrity/backfill migration.
+- Review correction: added a regression assertion that deleting a task cascades its task runs and
+  clears both `conversations.task_id` and `conversations.task_run_id`.
+- Accepted decision: `task_runs.task_id` cascades on task deletion, while optional
+  TaskRun/Conversation/worktree links use `ON DELETE SET NULL` so provenance records survive related
+  cleanup where links are optional.
+- Accepted decision: nullable foreign keys on both `task_runs.conversation_id` and
+  `conversations.task_run_id` keep insertion practical while preserving referential integrity for
+  linked records.
+- Accepted decision: the new migration composes after repo-sync and Open Tasks migrations in the
+  app-level migration coordinator; production code remains pure TypeScript with `node:sqlite`
+  confined to tests.
+- Orchestrator verification before merge:
+  `git diff --check main...worker/016-run-conversation-sqlite-schema`,
+  `npm run test -- src/infrastructure/sqlite/runConversationSchema.test.ts src/infrastructure/sqlite/migrationCoordinator.test.ts`,
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed in the worker
+  worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build` passed.
+- Verification note: `node:sqlite` emits Node's expected experimental warning during SQLite tests.
+- Drift check: still local-first and task-centered; TaskRun and Conversation persistence records add
+  provenance for task execution without introducing Codex credentials, Codex runtime integration,
+  Tauri/Rust runtime database wiring, Git execution, React/UI work, or new dependencies.
+- Cleanup: `git worktree remove` unregistered the worker worktree and the merged branch
+  `worker/016-run-conversation-sqlite-schema` was deleted.
+- Cleanup note: Windows kept the physical worker folder locked at
+  `C:\Users\user\.codex\worktrees\c628\Codex Orchestrator`; retry later after the app releases the
+  handle.
