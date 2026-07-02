@@ -317,11 +317,13 @@
 
 ### Worker 011: Open Tasks SQLite Schema Foundation
 
-- Status: launched
+- Status: launched; later reviewed and merged
 - Worker thread: `019f221d-52e0-7a73-91b5-ec2f752b50cc`
 - Pending worktree id: `local:a0386967-8bd5-4299-a5ff-d9da3f242701`
 - Worktree path: `C:\Users\user\.codex\worktrees\de96\Codex Orchestrator`
-- Expected worker branch: `worker/011-open-tasks-sqlite-schema`
+- Worker branch: `worker/011-open-tasks-sqlite-schema`
+- Worker commit: `765b8bf`
+- Merge commit: `cfc97b9`
 - Launch base: `aa4dddd`
 - Reasoning effort: `medium`
 - Context reuse decision: started fresh because Worker 010's repo-sync adapter is merged and the Open Tasks dashboard persistence schema should use current `main`, the merged SQLite schema/store files, and the domain/dashboard projection files rather than carrying Worker 010's adapter-specific context.
@@ -329,3 +331,11 @@
 - Scope: add a pure TypeScript SQLite schema foundation for the Open Tasks dashboard persistence subset, focused on `tasks` and persisted `Task.conversationIds` links, with row mappers and executable in-memory SQLite tests. No CRUD/store implementation, app runtime DB wiring, Tauri/Rust work, Codex runtime integration, React/UI work, package dependencies, or full Phase 1 event/conversation persistence.
 - Expected result log: `docs/task-logs/worker-011-open-tasks-sqlite-schema.md`
 - Success signal: committed worker branch with tests for task table creation, execution/attention/priority checks, required project foreign-key behavior, optional repo/branch/worktree `ON DELETE SET NULL`, conversation ID link round-trip, task-to-link cascade deletion, and enough mapper coverage to feed `projectOpenTaskDashboard` from persisted task rows.
+- Accepted decision: `tasks` references existing repo-sync `projects`, `repos`, `branches`, and `worktrees` tables; project deletion cascades to tasks, while optional technical anchors use `ON DELETE SET NULL` so task intent survives technical cleanup.
+- Accepted decision: `task_conversation_links` keeps conversation IDs as ordered text references without a conversation foreign key until a future conversation schema slice defines the parent table.
+- Orchestrator verification before merge: `git diff --check main...worker/011-open-tasks-sqlite-schema`, `npm run test -- src/infrastructure/sqlite/taskSchema.test.ts`, and `npm run build` passed in the worker worktree.
+- Verification after merge: `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed.
+- Verification note: `node:sqlite` emits Node's expected experimental warning during schema tests.
+- Drift check: still local-first, task-centered, dashboard persistence centers `Task` as the attention unit while Git repo/branch/worktree references remain technical anchors; no Codex credentials, Codex runtime integration, Tauri/Rust runtime DB wiring, or UI work were introduced.
+- Cleanup: removed Git worktree registration and deleted merged branch `worker/011-open-tasks-sqlite-schema`.
+- Cleanup note: Windows kept a physical leftover directory locked at `C:\Users\user\.codex\worktrees\de96\Codex Orchestrator`; retry later after the app releases the handle.
