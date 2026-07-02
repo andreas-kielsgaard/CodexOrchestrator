@@ -178,6 +178,25 @@ describe('SqliteOpenTaskWriteStore', () => {
     }
   });
 
+  it('replaces conversations with an empty list', async () => {
+    const db = openMigratedDatabase();
+
+    try {
+      insertProjectRepoBranchWorktree(db);
+      insertTaskWithLinks(db, task());
+
+      const updated = await createStore(db).updateTask('task-existing', {
+        conversationIds: [],
+      });
+
+      expect(updated.conversationIds).toEqual([]);
+      expect(loadTask(db, 'task-existing').conversationIds).toEqual([]);
+      expect(selectLinks(db, 'task-existing')).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   it('archives tasks by state and relies on the dashboard projection to omit them', async () => {
     const db = openMigratedDatabase();
 
