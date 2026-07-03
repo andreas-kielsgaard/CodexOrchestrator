@@ -22,6 +22,11 @@ otherwise resolve it.
   `worker/040-rust-toolchain-setup`. Pending worktree id:
   `local:c3fdb1cd-62ad-43ee-8ee2-e4a06858ff2b`. Await completion report and result log
   `docs/task-logs/worker-040-rust-toolchain-setup.md`; review before merge.
+- Worker 041: Orchestration Review is active in
+  `C:\Users\user\.codex\worktrees\b18b\Codex Orchestrator` on target branch
+  `worker/041-orchestration-review`. Pending worktree id:
+  `local:3233e65c-fa11-45a6-ab94-62a5457d347c`. Await completion report and result log
+  `docs/task-logs/worker-041-orchestration-review.md`; review before merge.
 
 ## Pending Blockers / Follow-Up
 

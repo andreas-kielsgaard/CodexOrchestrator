@@ -2249,3 +2249,22 @@ orchestration thread`)
   `npm run format:check`, `npm run test`, and `npm run build`.
 - Report-back instruction: included in the worker prompt, with an explicit fallback if cross-posting
   is unavailable.
+
+### Worker 041 Launch: Orchestration Review
+
+- Status: launched in a fresh worktree worker
+- Pending worktree id: `local:3233e65c-fa11-45a6-ab94-62a5457d347c`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\b18b\Codex Orchestrator`
+- Target branch: `worker/041-orchestration-review`
+- Launch base observed in worktree: `b8460f8` (`Log Worker 040 launch`), detached until the worker
+  creates the target branch
+- Goal: review and improve the orchestration process to reduce latency, token use, and process
+  overhead while preserving review quality and recovery safety.
+- Explicitly deferred: product code changes, launching additional workers, editing
+  `docs/orchestration-log.md` or `docs/active-task-map.md`, and weakening core safety guardrails
+  such as review-before-merge and active-map recovery.
+- Required result log: `docs/task-logs/worker-041-orchestration-review.md`
+- Required verification: `git diff --check main...worker/041-orchestration-review` and
+  `npm run format:check` if docs formatting might be affected.
+- Report-back instruction: included in the worker prompt, with an explicit fallback if cross-posting
+  is unavailable.
