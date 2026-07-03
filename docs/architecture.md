@@ -16,11 +16,12 @@ which boundaries should stay intact.
 Current limitation: the app can open a local runtime database file through a Node-facing
 infrastructure boundary, compose the TypeScript application services over that opened store bundle,
 and inject concrete local Git, Codex, and validation adapters for Node-side callers. The Open Tasks
-UI now consumes an injected async dashboard client. The default Tauri WebView path has a narrow
-Rust-side SQLite backend for Open Tasks dashboard load/create/update/archive commands. A TypeScript
-runtime command contract and browser-safe `start_codex_task_run` client now exist for starting one
-Codex task run, but the Rust/Tauri command registration for that runtime command remains a later
-slice.
+UI now consumes injected async dashboard and runtime command clients. The default Tauri WebView path
+has a narrow Rust-side SQLite backend for Open Tasks dashboard load/create/update/archive commands.
+A TypeScript runtime command contract and browser-safe `start_codex_task_run` client now exist for
+starting one Codex task run, and the UI has compact run controls that call the injected runtime
+client when a task exposes a worktree path. The Rust/Tauri command registration for that runtime
+command remains a later slice.
 
 ## Boundary Rules
 
@@ -258,11 +259,14 @@ runtime command implementation is registered in this slice.
 
 Location: `src/app/`, `src/main.tsx`, `src/styles.css`
 
-The Open Tasks UI consumes an injected `TaskDashboardClient`, loads asynchronously, and provides
-visible create, edit, state-change, and archive controls. The default `src/main.tsx` wiring injects
-the Tauri command client, keeping React/browser code away from SQLite and Node-only modules. Tests
-exercise the UI against a fake client; durable behavior is covered at the application client/store
-boundary.
+The Open Tasks UI consumes injected `TaskDashboardClient` and `RuntimeCommandClient` instances,
+loads asynchronously, and provides visible create, edit, state-change, archive, and per-task Codex
+run controls. Run controls use the projected task `worktreePath` as the command `cwd`, stay
+unavailable when no worktree is linked, show compact running/completed/failed feedback, and reload
+the dashboard after a run attempt so persisted state can be reflected once the backend command
+exists. The default `src/main.tsx` wiring injects the Tauri command clients, keeping React/browser
+code away from SQLite and Node-only modules. Tests exercise the UI against fake clients; durable
+behavior is covered at the application client/store boundary.
 
 ## Pending Runtime Architecture
 

@@ -312,6 +312,46 @@ h3 {
   font-size: 0.86rem;
 }
 
+.run-controls {
+  display: grid;
+  gap: 6px;
+}
+
+.run-command {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.run-command textarea {
+  min-height: 58px;
+}
+
+.run-button {
+  height: 100%;
+}
+
+.run-feedback {
+  color: #4a564f;
+  font-size: 0.78rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.run-feedback.completed {
+  color: #1f6846;
+}
+
+.run-feedback.failed {
+  color: #7a2e20;
+}
+
+.run-feedback.running,
+.run-feedback.unavailable {
+  color: #66736c;
+}
+
 .task-controls {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 36px 36px;
@@ -386,6 +426,7 @@ h3 {
     grid-template-columns: 1fr;
   }
 
+  .run-command,
   .task-controls,
   .edit-grid {
     grid-template-columns: 1fr;

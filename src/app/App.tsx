@@ -8,7 +8,9 @@ import {
   Edit3,
   GitBranch,
   Inbox,
+  LoaderCircle,
   PauseCircle,
+  Play,
   Plus,
   RefreshCw,
   X,
@@ -21,6 +23,10 @@ import {
   type TaskDashboardClient,
   type TaskDashboardSnapshot,
 } from '../application/taskDashboardClient';
+import type {
+  RuntimeCommandClient,
+  StartCodexTaskRunCommandResult,
+} from '../application/runtimeCommandClient';
 
 const groupIcons = {
   needs_action_now: Activity,
@@ -57,6 +63,7 @@ const priorityOptions: Array<{ value: Task['priority']; label: string }> = [
 
 interface AppProps {
   taskDashboardClient: TaskDashboardClient;
+  runtimeCommandClient: RuntimeCommandClient;
 }
 
 interface DraftTaskForm {
@@ -70,6 +77,13 @@ interface DraftTaskForm {
 
 type BusyAction = 'load' | 'create' | `update:${string}` | `archive:${string}` | null;
 
+type TaskRunActionStatus = 'running' | 'completed' | 'failed';
+
+interface TaskRunActionState {
+  status: TaskRunActionStatus;
+  message: string;
+}
+
 const initialCreateForm: DraftTaskForm = {
   projectId: '',
   title: '',
@@ -79,13 +93,15 @@ const initialCreateForm: DraftTaskForm = {
   priority: 'normal',
 };
 
-export function App({ taskDashboardClient }: AppProps) {
+export function App({ taskDashboardClient, runtimeCommandClient }: AppProps) {
   const [snapshot, setSnapshot] = useState<TaskDashboardSnapshot>(() =>
     emptyTaskDashboardSnapshot(),
   );
   const [createForm, setCreateForm] = useState<DraftTaskForm>(initialCreateForm);
   const [editTaskId, setEditTaskId] = useState<EntityId | null>(null);
   const [editForm, setEditForm] = useState<DraftTaskForm>(initialCreateForm);
+  const [runPrompts, setRunPrompts] = useState<Record<EntityId, string>>({});
+  const [runActions, setRunActions] = useState<Record<EntityId, TaskRunActionState>>({});
   const [busyAction, setBusyAction] = useState<BusyAction>('load');
   const [error, setError] = useState<string | null>(null);
 
@@ -200,6 +216,62 @@ export function App({ taskDashboardClient }: AppProps) {
 
   const archiveTask = (taskId: EntityId) => {
     void runClientAction(`archive:${taskId}`, () => taskDashboardClient.archiveTask(taskId));
+  };
+
+  const updateRunPrompt = (taskId: EntityId, prompt: string) => {
+    setRunPrompts((current) => ({ ...current, [taskId]: prompt }));
+  };
+
+  const startTaskRun = (task: DashboardTask) => {
+    const prompt = (runPrompts[task.id] ?? '').trim();
+
+    if (!task.worktreePath || !prompt) {
+      return;
+    }
+
+    void (async () => {
+      setRunActions((current) => ({
+        ...current,
+        [task.id]: { status: 'running', message: 'Starting Codex run...' },
+      }));
+      setError(null);
+
+      try {
+        const result = await runtimeCommandClient.startCodexTaskRun({
+          taskId: task.id,
+          prompt,
+          cwd: task.worktreePath,
+          conversationTitle: task.title,
+          conversationSummary: task.summary,
+        });
+
+        setRunActions((current) => ({
+          ...current,
+          [task.id]: {
+            status: result.status,
+            message: formatRunResult(result),
+          },
+        }));
+
+        if (result.status === 'completed') {
+          setRunPrompts((current) => ({ ...current, [task.id]: '' }));
+        }
+      } catch (caught) {
+        setRunActions((current) => ({
+          ...current,
+          [task.id]: {
+            status: 'failed',
+            message: `Run failed: ${errorMessage(caught)}`,
+          },
+        }));
+      } finally {
+        try {
+          applySnapshot(await taskDashboardClient.loadDashboard());
+        } catch (caught) {
+          setError(`Dashboard reload failed: ${errorMessage(caught)}`);
+        }
+      }
+    })();
   };
 
   return (
@@ -322,8 +394,12 @@ export function App({ taskDashboardClient }: AppProps) {
                 <div className="task-list">
                   {group.tasks.map((task) => {
                     const isEditing = editTaskId === task.id;
+                    const runAction = runActions[task.id];
+                    const isRunBusy = runAction?.status === 'running';
                     const isBusy =
-                      busyAction === `update:${task.id}` || busyAction === `archive:${task.id}`;
+                      isRunBusy ||
+                      busyAction === `update:${task.id}` ||
+                      busyAction === `archive:${task.id}`;
 
                     return (
                       <section className="task-card" key={task.id}>
@@ -341,6 +417,14 @@ export function App({ taskDashboardClient }: AppProps) {
                               <h3>{task.title}</h3>
                               <p>{task.summary}</p>
                             </div>
+                            <RunTaskForm
+                              task={task}
+                              prompt={runPrompts[task.id] ?? ''}
+                              runAction={runAction}
+                              busy={isRunBusy}
+                              onPromptChange={(prompt) => updateRunPrompt(task.id, prompt)}
+                              onStart={() => startTaskRun(task)}
+                            />
                             <div className="task-controls">
                               <select
                                 value={task.attentionState}
@@ -402,6 +486,11 @@ export function App({ taskDashboardClient }: AppProps) {
                               <span>{task.attentionState}</span>
                               {task.repo && <span>{task.repo}</span>}
                               {task.branch && <span>{task.branch}</span>}
+                              {task.worktreePath && (
+                                <span title={task.worktreePath}>
+                                  {compactPath(task.worktreePath)}
+                                </span>
+                              )}
                             </footer>
                           </>
                         )}
@@ -415,6 +504,60 @@ export function App({ taskDashboardClient }: AppProps) {
         </section>
       </section>
     </main>
+  );
+}
+
+interface RunTaskFormProps {
+  task: DashboardTask;
+  prompt: string;
+  runAction?: TaskRunActionState;
+  busy: boolean;
+  onPromptChange(prompt: string): void;
+  onStart(): void;
+}
+
+function RunTaskForm({ task, prompt, runAction, busy, onPromptChange, onStart }: RunTaskFormProps) {
+  const hasWorktree = Boolean(task.worktreePath);
+  const canStart = hasWorktree && prompt.trim().length > 0 && !busy;
+
+  return (
+    <div className="run-controls">
+      <div className="run-command">
+        <textarea
+          value={prompt}
+          onChange={(event) => onPromptChange(event.target.value)}
+          disabled={!hasWorktree || busy}
+          placeholder={hasWorktree ? 'Codex prompt' : 'Worktree required'}
+          aria-label={`Codex prompt for ${task.title}`}
+          rows={2}
+        />
+        <button
+          className="icon-button run-button"
+          type="button"
+          onClick={onStart}
+          disabled={!canStart}
+          title={hasWorktree ? 'Start Codex run' : 'Task needs a worktree'}
+          aria-label={`Start Codex run for ${task.title}`}
+        >
+          {busy ? (
+            <LoaderCircle size={16} aria-hidden="true" />
+          ) : (
+            <Play size={16} aria-hidden="true" />
+          )}
+        </button>
+      </div>
+      {hasWorktree ? (
+        runAction && (
+          <p className={`run-feedback ${runAction.status}`} role="status">
+            {runAction.message}
+          </p>
+        )
+      ) : (
+        <p className="run-feedback unavailable" role="status">
+          No worktree linked
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -518,4 +661,40 @@ function errorMessage(error: unknown): string {
   }
 
   return String(error);
+}
+
+function formatRunResult(result: StartCodexTaskRunCommandResult): string {
+  const parts = [
+    `${capitalize(result.status)} run ${result.taskRunId}`,
+    `task ${result.task.executionState}`,
+  ];
+
+  if (result.taskRun.executionState !== result.task.executionState) {
+    parts.push(`run ${result.taskRun.executionState}`);
+  }
+
+  if (result.exitCode !== undefined) {
+    parts.push(`exit ${result.exitCode}`);
+  }
+
+  if (result.error ?? result.statusReason) {
+    parts.push(result.error ?? result.statusReason ?? '');
+  }
+
+  return parts.filter(Boolean).join(' | ');
+}
+
+function compactPath(path: string): string {
+  const normalizedPath = path.replaceAll('\\', '/');
+  const segments = normalizedPath.split('/').filter(Boolean);
+
+  if (segments.length <= 2) {
+    return path;
+  }
+
+  return `.../${segments.slice(-2).join('/')}`;
+}
+
+function capitalize(value: string): string {
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
 }
