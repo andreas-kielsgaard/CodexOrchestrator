@@ -25,8 +25,8 @@ Date: 2026-07-03
 ## Changed Files
 
 - `src-tauri/src/lib.rs`
+- `src/infrastructure/tauriCommands.ts`
 - `docs/architecture.md`
-- `docs/active-task-map.md`
 - `docs/task-logs/worker-049-start-codex-task-run-tauri-backend.md`
 
 ## Verification
@@ -52,6 +52,9 @@ Date: 2026-07-03
 - The Rust backend includes a small JSONL summarizer for the Tauri command path so React/WebView
   code still avoids Node-only imports.
 - No live Codex CLI smoke test was run.
+- Orchestrator review correction: `docs/active-task-map.md` was restored out of the worker diff
+  because it is orchestrator-owned recovery state, and app metadata now reports
+  `tauri-codex-exec` instead of `adapter-pending`.
 
 ## Blockers
 

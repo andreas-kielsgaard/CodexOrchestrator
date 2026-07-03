@@ -514,7 +514,7 @@ fn app_metadata() -> AppMetadata {
     AppMetadata {
         app_name: "Codex Orchestrator",
         storage_mode: "local-first",
-        codex_runtime: "adapter-pending",
+        codex_runtime: "tauri-codex-exec",
     }
 }
 

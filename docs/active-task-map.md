@@ -12,14 +12,15 @@ otherwise resolve it.
 
 ## Active Tasks
 
-- Worker 049: complete locally on `worker/049-start-codex-task-run-tauri-backend` and awaiting
-  review/merge. See `docs/task-logs/worker-049-start-codex-task-run-tauri-backend.md`.
+- None at this checkpoint.
 
 ## Pending Blockers / Follow-Up
 
 - Rust/Cargo/MSVC build verification is cleared when commands are run through the Visual Studio
   developer environment. Plain shells still do not resolve `link.exe`; use `vcvars64.bat` for native
   Rust/Tauri commands.
+- The merged FS-08 run controls call the browser-safe `start_codex_task_run` facade, but live
+  WebView execution still needs a Rust/Tauri backend command registration.
 - Post-run diff/validation capture exists for Node/local runtime callers, but the live WebView run
   command path has not yet been wired to use it.
 
