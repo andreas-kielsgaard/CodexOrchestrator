@@ -43,6 +43,8 @@ Already merged:
   validation adapters.
 - Browser-safe runtime command contract and Tauri `invoke` client for `start_codex_task_run`, plus
   a Node-only local command handler over the composed run service.
+- Open Tasks run-control UI shell that injects the runtime command client, sends task-scoped prompts
+  with `cwd` from the task worktree path, and shows running/completed/failed feedback.
 
 Known blockers / remaining runtime wiring:
 
@@ -58,8 +60,8 @@ Known blockers / remaining runtime wiring:
 | ID    | Task                           | Output                                                                                                                                                    | Depends On                          |
 | ----- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
 | FS-05 | Persisted Open Tasks dashboard | Application client, React boundary, and Rust SQLite command backend are merged; Rust compile/Tauri build verification remains blocked on MSVC Build Tools | Merged database opener              |
-| FS-08 | Run controls in UI             | User can start a Codex run for a task in a selected worktree and see running/completed/failed state                                                       | Merged task worktree service, FS-05 |
-| FS-09 | Task/run detail view           | Show task anchors, run history, final response, raw JSONL artifact link/summary, and event timeline                                                       | FS-05, merged run composition       |
+| FS-08 | Run controls in UI             | UI shell is merged; live WebView execution still needs the Rust/Tauri `start_codex_task_run` backend command                                              | Merged task worktree service, FS-05 |
+| FS-09 | Task/run detail view           | Detail read model is next; then show task anchors, run history, final response, raw JSONL artifact summary, and event timeline                            | FS-05, merged run composition       |
 | FS-10 | Diff collector                 | Service boundary and local Git diff provider are merged; runtime trigger still needed for live post-run capture                                           | Merged task worktree service        |
 | FS-11 | Validation command runner      | Service boundary and Node runtime adapter are merged; runtime trigger still needed for live validation capture                                            | Merged task worktree service        |
 | FS-12 | Review surface MVP             | Show final response, diff state, validation status, and next action for completed/failed runs                                                             | FS-09, FS-10, FS-11                 |
@@ -69,9 +71,9 @@ Known blockers / remaining runtime wiring:
 
 Critical path:
 
-1. Register a Rust/Tauri backend for `start_codex_task_run` that reaches the local runtime command
-   handler.
-2. FS-08 and FS-09: expose run start and run review in the UI.
+1. Register a Rust/Tauri backend for `start_codex_task_run` so the merged UI controls can execute
+   live Codex runs.
+2. FS-09: add task/run detail data and UI for run review.
 3. Add runtime triggers for post-run diff/validation capture through the composed services.
 4. FS-12: add review-grade validation and live diff capture to the review flow.
 
@@ -101,21 +103,21 @@ Review path:
 
 Safe immediately:
 
-- Run-control and task detail slices can build against the composed local runtime boundary.
+- Task detail data/UI slices can build against the merged stores and runtime records.
 - Diff and validation trigger slices can call the composed local Git and validation services.
 - FS-13 can run anytime.
 
 Should wait:
 
-- FS-08 should wait for FS-05 and concrete runtime wiring.
-- FS-09 should wait for persisted tasks and real run records unless built as a UI shell only.
+- Live FS-08 verification should wait for the Rust/Tauri runtime command backend.
+- FS-09 UI should wait for a detail read model unless built as a minimal shell only.
 - FS-12 should wait for real run, diff, and validation records.
 
 ## Recommended Worker Sequencing
 
-1. Register the `start_codex_task_run` backend command behind the existing TypeScript facade.
-2. Launch FS-08 and FS-09 after persisted dashboard runtime behavior is real enough for UI flows.
-3. Add composed post-run diff and validation triggers.
+1. Build the FS-09 task/run detail read model.
+2. Register the `start_codex_task_run` backend command behind the existing TypeScript facade.
+3. Add the task/run detail UI and composed post-run diff/validation triggers.
 4. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
 5. Install Visual Studio Build Tools with the Visual C++ linker and re-run Rust tests plus
    `npm run build:tauri`.

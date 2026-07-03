@@ -62,10 +62,13 @@ Already built on `main`:
 - Node-only local runtime service composition that opens the app SQLite database once, reuses the
   store bundle, and wires the merged application services to concrete local Git, Codex, and
   validation adapters.
+- Browser-safe runtime command contract and Tauri `invoke` client for `start_codex_task_run`, plus
+  Open Tasks run-control UI that calls the injected runtime client for tasks with worktree paths.
 
 Important gaps:
 
-- No browser/Tauri-safe command surface over the composed local runtime services.
+- No Rust/Tauri backend command for `start_codex_task_run`, so WebView run controls cannot yet
+  execute live Codex runs.
 - No repo/worktree UI that injects the local Git-backed runtime composition into user flows.
 - No task/run detail view.
 - No runtime triggers for post-run diff/validation artifacts.
@@ -91,8 +94,8 @@ events, diff, and validation result in the app.
 
 Current planned sequence:
 
-1. Add a browser/Tauri-safe command surface over the composed local runtime services.
-2. Wire run controls and task/run detail UI to the composed run service.
+1. Add the Rust/Tauri backend command for `start_codex_task_run`.
+2. Add task/run detail data and UI so completed runs can be inspected.
 3. Add runtime triggers for diff and validation capture.
 4. Add the review surface that combines final response, diff, validation, and next action.
 5. Install Visual Studio Build Tools with the Visual C++ linker and verify the Tauri build path.

@@ -12,21 +12,23 @@ otherwise resolve it.
 
 ## Active Tasks
 
-- Worker 040: Rust Toolchain Setup And Tauri Verification is active in
-  `C:\Users\user\.codex\worktrees\83c3\Codex Orchestrator` on target branch
-  `worker/040-rust-toolchain-setup`. Pending worktree id:
-  `local:c3fdb1cd-62ad-43ee-8ee2-e4a06858ff2b`. Await completion report and result log
-  `docs/task-logs/worker-040-rust-toolchain-setup.md`; review before merge.
-- Worker 042: FS-08 Run Controls UI Shell is active in
-  `C:\Users\user\.codex\worktrees\9ca8\Codex Orchestrator` on target branch
-  `worker/042-run-controls-ui-shell`. Pending worktree id:
-  `local:de5e2f31-5011-46b9-8874-9de3402204d7`. Await completion report and result log
-  `docs/task-logs/worker-042-run-controls-ui-shell.md`; review before merge.
+- Worker 043: MSVC Build Tools / Linker Setup is active as multi-agent
+  `019f286c-687f-7792-8254-3b889835520a`. It was redirected away from repo edits after the shared
+  checkout briefly switched to `worker/043-msvc-build-tools-setup`; await report on whether
+  `link.exe` can be installed or enabled. Result log is only expected if repo edits become necessary.
+- Worker 044: FS-09 Task/Run Detail Read Model Boundary is active in
+  `C:\Users\user\.codex\worktrees\514e\Codex Orchestrator` on target branch
+  `worker/044-task-run-detail-read-model`. Pending worktree id:
+  `local:a2881629-2235-48a9-bfa5-126983969850`. Await completion report and result log
+  `docs/task-logs/worker-044-task-run-detail-read-model.md`; review before merge.
 
 ## Pending Blockers / Follow-Up
 
-- Rust/Cargo are unavailable on `PATH`, so the merged Rust/Tauri backend cannot yet be compile
-  verified and `npm run build:tauri` fails at `cargo metadata`.
+- Rust/Cargo are installed under `C:\Users\user\.cargo\bin`, and `cargo metadata` succeeds when
+  that path is prepended in the current Codex shell. Full Rust/Tauri compilation remains blocked
+  because the MSVC linker `link.exe` is unavailable; Worker 043 is investigating setup.
+- The merged FS-08 run controls call the browser-safe `start_codex_task_run` facade, but live
+  WebView execution still needs a Rust/Tauri backend command registration.
 
 ## Recently Archived
 
@@ -46,8 +48,12 @@ otherwise resolve it.
   Git-cleaned. See `docs/task-logs/worker-038-local-runtime-service-composition.md`.
 - Worker 039: reviewed, merged, verified, stabilized, and Git-cleaned. See
   `docs/task-logs/worker-039-runtime-command-contract.md`.
+- Worker 040: reviewed, merged, verified within environment limits, and Git-cleaned. See
+  `docs/task-logs/worker-040-rust-toolchain-setup.md`.
 - Worker 041: reviewed, merged, verified, and Git-cleaned. See
   `docs/task-logs/worker-041-orchestration-review.md`.
+- Worker 042: reviewed, merged, verified, and Git-cleaned. See
+  `docs/task-logs/worker-042-run-controls-ui-shell.md`.
 
 ## Blockers
 
@@ -78,4 +84,6 @@ launched:
 - Worker 037: `C:\Users\user\.codex\worktrees\35fe\Codex Orchestrator`
 - Worker 038: `C:\Users\user\.codex\worktrees\c063\Codex Orchestrator`
 - Worker 039: `C:\Users\user\.codex\worktrees\c6f0\Codex Orchestrator`
+- Worker 040: `C:\Users\user\.codex\worktrees\83c3\Codex Orchestrator`
 - Worker 041: `C:\Users\user\.codex\worktrees\b18b\Codex Orchestrator`
+- Worker 042: `C:\Users\user\.codex\worktrees\9ca8\Codex Orchestrator`

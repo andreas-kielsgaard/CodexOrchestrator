@@ -2341,3 +2341,88 @@ disposal`)
   tests, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build`.
 - Report-back instruction: included in the worker prompt, with an explicit fallback if cross-posting
   is unavailable.
+
+### Worker 040 Review And Merge: Rust Toolchain Setup And Tauri Verification
+
+- Status: reviewed, merged, verified within environment limits, logged, and Git-cleaned.
+- Worker commit: `922be4b2ae12cbb4801c9b2ba5422fc9d1816c81`
+  (`Set up Rust toolchain verification log`)
+- Merge commit: `4653d30` (`Merge Worker 040 rust toolchain setup`)
+- Result log: `docs/task-logs/worker-040-rust-toolchain-setup.md`
+- Accepted decision: Rust is installed for the Windows user under
+  `C:\Users\user\.cargo\bin`; `rustup`, `rustc`, `cargo`, and `cargo metadata` work when that path
+  is prepended in the current Codex shell.
+- Accepted decision: `src-tauri/Cargo.lock` is now committed as the generated Rust dependency
+  lockfile, and Rust source changes are limited to `cargo fmt` output.
+- Environment result: the old `cargo metadata` blocker is cleared. Native Rust/Tauri compilation
+  now blocks on missing MSVC linker `link.exe`; `cargo test` fails before project code compiles with
+  the standard MSVC linker-not-found error.
+- Verification after merge: `git diff --check HEAD^..HEAD`, `npm run format:check`,
+  `npm run lint`, `npm run test`, `npm run build`, `cargo metadata --format-version 1 --no-deps`,
+  and `cargo fmt --check` passed. `cargo test` failed as expected because `link.exe` is unavailable.
+- Cleanup: `git worktree remove` unregistered the Worker 040 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\83c3\Codex Orchestrator`; the merged branch
+  `worker/040-rust-toolchain-setup` was deleted and the locked physical folder was left in place.
+
+### Worker 043 Launch: MSVC Build Tools / Linker Setup
+
+- Status: launched as a parallel environment setup worker.
+- Multi-agent id: `019f286c-687f-7792-8254-3b889835520a`
+- Target branch if repo edits are needed: `worker/043-msvc-build-tools-setup`
+- Goal: install or enable the native Windows MSVC linker required by the Rust MSVC toolchain so
+  `link.exe` is available and Rust/Tauri verification can progress beyond the linker-not-found
+  failure.
+- Explicitly deferred: product feature work, UI/application/runtime code changes, broad repo edits,
+  and any interactive/elevated installation that cannot be completed safely by the worker.
+- Required result log if repo edits are made:
+  `docs/task-logs/worker-043-msvc-build-tools-setup.md`
+- Required verification when possible: `Get-Command link.exe`, Rust version checks,
+  `cargo metadata`, `cargo fmt --check`, `cargo test`, and `npm run build:tauri`.
+- Report-back instruction: included in the worker prompt, with an explicit fallback if cross-posting
+  is unavailable.
+- Coordination note: the multi-agent path briefly switched the main checkout to
+  `worker/043-msvc-build-tools-setup`. The worker was redirected away from repo edits, and the
+  orchestration checkout was switched back to `main`.
+
+### Worker 042 Review And Merge: FS-08 Run Controls UI Shell
+
+- Status: reviewed, merged, verified, logged, and Git-cleaned.
+- Worker commit: `f0123582cf68b8d12898d8b81bac3deb6f97b760`
+  (`Add open task run controls UI shell`)
+- Merge commit: `683f03e` (`Merge Worker 042 run controls UI shell`)
+- Result log: `docs/task-logs/worker-042-run-controls-ui-shell.md`
+- Accepted decision: `App` now consumes injected `TaskDashboardClient` and `RuntimeCommandClient`
+  instances, while `src/main.tsx` wires the Tauri dashboard and runtime command clients.
+- Accepted decision: Open Tasks cards include compact per-task Codex prompt/start controls, disabled
+  state when no worktree path is projected, per-task running/completed/failed feedback, and a
+  dashboard reload after run attempts.
+- Accepted limitation: live WebView starts still need the Rust/Tauri `start_codex_task_run` backend
+  command; until then the UI calls the browser-safe facade and will surface the invoke error.
+- Verification before merge: `git diff --check`, focused App tests, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` passed in the worker worktree.
+- Verification after merge: `git diff --check HEAD^..HEAD`, `npm run format:check`,
+  `npm run lint`, focused App tests, `npm run build`, and full `npm run test` passed on main. Full
+  tests passed: 45 files / 267 tests.
+- Cleanup: `git worktree remove` unregistered the Worker 042 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\9ca8\Codex Orchestrator`; the merged branch
+  `worker/042-run-controls-ui-shell` was deleted and the locked physical folder was left in place.
+
+### Worker 044 Launch: FS-09 Task/Run Detail Read Model Boundary
+
+- Status: launched in a fresh worktree worker.
+- Pending worktree id: `local:a2881629-2235-48a9-bfa5-126983969850`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\514e\Codex Orchestrator`
+- Target branch: `worker/044-task-run-detail-read-model`
+- Launch base observed in worktree: `683f03e` (`Merge Worker 042 run controls UI shell`),
+  detached until the worker creates the target branch.
+- Goal: add a narrow TypeScript application-layer task/run detail read model over existing store
+  boundaries so later UI/review slices can load task anchors, run history, artifacts, validation
+  runs, and events through one contract.
+- Explicitly deferred: React UI, Rust/Tauri backend code, `start_codex_task_run` backend
+  registration, live Codex/Git/validation execution, workflow-engine behavior, and new persistence
+  tables.
+- Required result log: `docs/task-logs/worker-044-task-run-detail-read-model.md`
+- Required verification: `git diff --check main...worker/044-task-run-detail-read-model`, focused
+  read-model tests, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build`.
+- Report-back instruction: included in the worker prompt, with an explicit fallback if cross-posting
+  is unavailable.
