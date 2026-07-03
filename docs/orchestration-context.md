@@ -50,6 +50,11 @@ Every implementation worker prompt must include:
 
 Workers should receive enough context to act well, not a transcript dump.
 
+Process reflection from user discussion: tier context instead of preloading it. Prefer rediscovery
+from git, source, worker threads, and result logs when details are missing. Result logs are fallback
+evidence, not routine worker input; orchestration recovery/process notes stay mostly
+orchestrator-owned unless they directly affect the task.
+
 Prefer worker prompts that point to the smallest authoritative docs and name the exact decision the
 worker owns. Put speculative background, old incidents, and unrelated roadmap history in the result
 log or orchestration log only when they change the current decision.
