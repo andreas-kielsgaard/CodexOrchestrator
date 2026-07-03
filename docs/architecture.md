@@ -113,6 +113,14 @@ that return a dashboard snapshot for UI callers. The client is verified against 
 and the local SQLite app store bundle, but it does not open SQLite files or import Node-only modules
 itself.
 
+`taskRunDetailClient.ts` is the read-only task/run detail application boundary. It composes
+`OpenTaskDashboardStore`, `TaskRunStore`, `ArtifactStore`, `EventStore`, and `ValidationRunStore`
+into one serializable detail snapshot for a single task: task/project/repo/branch/worktree anchors,
+run history ordered for review, grouped final-response/raw-event/diff/validation artifacts,
+validation output links, unlinked task-level artifacts and validation runs, and a chronological
+event timeline. It does not mutate stores, execute runtime commands, add UI behavior, or open
+SQLite directly.
+
 `runtimeCommandClient.ts` is the browser-safe runtime command contract for starting one Codex task
 run. It defines serializable input and compact output shapes for task/run IDs, conversation and
 artifact IDs, terminal metadata, and updated task/run state. It does not import local runtime
@@ -192,6 +200,7 @@ application service objects needed by upcoming run-control and review slices:
 
 - store-backed Open Tasks dashboard client
 - task-run lifecycle recorder
+- task/run detail client
 - Codex run composition service
 - repo registry scan service
 - task worktree selection service

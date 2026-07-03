@@ -10,6 +10,10 @@ import {
   createStoreBackedTaskDashboardClient,
   type TaskDashboardClient,
 } from '../application/taskDashboardClient';
+import {
+  createStoreBackedTaskRunDetailClient,
+  type TaskRunDetailClient,
+} from '../application/taskRunDetailClient';
 import type { TaskRunLifecycleRecorder } from '../application/taskRunLifecycle';
 import type { TaskWorktreeSelectionService } from '../application/taskWorktreeSelection';
 import type { ValidationCommandRunnerService } from '../application/validationCommandRunner';
@@ -70,6 +74,7 @@ export interface LocalRuntimeRepoRegistryOptions {
 
 export interface LocalRuntimeServices {
   taskDashboardClient: TaskDashboardClient;
+  taskRunDetailClient: TaskRunDetailClient;
   taskRunLifecycleRecorder: TaskRunLifecycleRecorder;
   runCompositionService: RunCompositionService;
   repoRegistryScanService: RepoRegistryScanService;
@@ -118,6 +123,13 @@ export function openLocalRuntimeServiceComposition(
     taskDashboardClient: createStoreBackedTaskDashboardClient({
       dashboard: stores.openTaskDashboard,
       write: stores.openTaskWrite,
+    }),
+    taskRunDetailClient: createStoreBackedTaskRunDetailClient({
+      dashboard: stores.openTaskDashboard,
+      taskRun: stores.taskRun,
+      artifact: stores.artifact,
+      event: stores.event,
+      validationRun: stores.validationRun,
     }),
     taskRunLifecycleRecorder,
     runCompositionService: {
