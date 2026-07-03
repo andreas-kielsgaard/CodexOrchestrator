@@ -45,6 +45,9 @@ Already merged:
   a Node-only local command handler over the composed run service.
 - Open Tasks run-control UI shell that injects the runtime command client, sends task-scoped prompts
   with `cwd` from the task worktree path, and shows running/completed/failed feedback.
+- Rust/Tauri `start_codex_task_run` backend that invokes `codex exec --json`, stores raw JSONL,
+  updates task-run lifecycle state, links conversations, stores final responses, and returns the
+  browser-safe command result shape.
 - Task/run detail read model that composes task anchors, run history, grouped artifacts, validation
   links, and task events over existing store boundaries.
 - Open Tasks task/run detail UI shell that injects a detail client and opens a read-only task
@@ -57,8 +60,6 @@ Already merged:
 
 Known blockers / remaining runtime wiring:
 
-- The `start_codex_task_run` TypeScript command facade exists, but no Rust/Tauri backend command is
-  registered yet.
 - Post-run capture exists for Node/local runtime callers, but the live WebView run command path has
   not yet been wired to use it.
 - `link.exe` is available through the Visual Studio developer environment, not the default shell.
@@ -69,7 +70,7 @@ Known blockers / remaining runtime wiring:
 | ID    | Task                           | Output                                                                                                                       | Depends On                          |
 | ----- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
 | FS-05 | Persisted Open Tasks dashboard | Application client, React boundary, Rust SQLite command backend, and Rust/Tauri build verification are merged/cleared        | Merged database opener              |
-| FS-08 | Run controls in UI             | UI shell is merged; live WebView execution still needs the Rust/Tauri `start_codex_task_run` backend command                 | Merged task worktree service, FS-05 |
+| FS-08 | Run controls in UI             | UI shell, Rust/Tauri start-run backend, and native build verification are merged/cleared                                     | Merged task worktree service, FS-05 |
 | FS-09 | Task/run detail view           | Detail read model, UI shell, Tauri facade, and Rust/Tauri backend are merged/cleared                                         | FS-05, merged run composition       |
 | FS-10 | Diff collector                 | Service boundary, local Git diff provider, and post-run composition trigger are merged; live WebView run-path wiring remains | Merged task worktree service        |
 | FS-11 | Validation command runner      | Service boundary, Node runtime adapter, and post-run composition trigger are merged; live WebView run-path wiring remains    | Merged task worktree service        |
@@ -80,10 +81,8 @@ Known blockers / remaining runtime wiring:
 
 Critical path:
 
-1. Register a Rust/Tauri backend for `start_codex_task_run` so the merged UI controls can execute
-   live Codex runs.
-2. Wire the live run command path to explicit post-run diff/validation capture.
-3. FS-12: add review-grade final-response, diff, validation, and next-action flow.
+1. Wire the live run command path to explicit post-run diff/validation capture.
+2. FS-12: add review-grade final-response, diff, validation, and next-action flow.
 
 Repo/worktree path:
 
@@ -115,14 +114,12 @@ Safe immediately:
 
 Should wait:
 
-- Live FS-08 verification should wait for the Rust/Tauri runtime command backend.
 - FS-12 should wait for detail loading plus real run, diff, and validation records.
 
 ## Recommended Worker Sequencing
 
-1. Register the `start_codex_task_run` backend command behind the existing TypeScript facade.
-2. Wire explicit post-run diff/validation capture into the live run path.
-3. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
+1. Wire explicit post-run diff/validation capture into the live run path.
+2. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
 
 ## Orchestration Notes
 

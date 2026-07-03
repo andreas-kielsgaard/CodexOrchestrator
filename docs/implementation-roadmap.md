@@ -64,6 +64,8 @@ Already built on `main`:
   validation adapters.
 - Browser-safe runtime command contract and Tauri `invoke` client for `start_codex_task_run`, plus
   Open Tasks run-control UI that calls the injected runtime client for tasks with worktree paths.
+- Rust/Tauri backend command for `start_codex_task_run`, invoking `codex exec --json` and
+  persisting run lifecycle records, raw JSONL, final responses, and events.
 - Application-layer task/run detail read model over existing stores for task anchors, run history,
   grouped artifacts, validation links, and event timeline.
 - Open Tasks task/run detail UI shell plus browser-safe `load_task_run_detail` Tauri facade.
@@ -75,8 +77,6 @@ Already built on `main`:
 
 Important gaps:
 
-- No Rust/Tauri backend command for `start_codex_task_run`, so WebView run controls cannot yet
-  execute live Codex runs.
 - No repo/worktree UI that injects the local Git-backed runtime composition into user flows.
 - Post-run capture is composed for Node/local runtime callers, but not wired into the live WebView
   run command path.
@@ -101,9 +101,8 @@ events, diff, and validation result in the app.
 
 Current planned sequence:
 
-1. Add the Rust/Tauri backend command for `start_codex_task_run`.
-2. Wire explicit post-run diff/validation capture into the live run path.
-3. Add the review surface that combines final response, diff, validation, and next action.
+1. Wire explicit post-run diff/validation capture into the live run path.
+2. Add the review surface that combines final response, diff, validation, and next action.
 
 ## Later Roadmap
 

@@ -2623,3 +2623,32 @@ disposal`)
   environment if feasible.
 - Report-back instruction: included in the worker prompt, with an explicit fallback if
   cross-thread reporting is unavailable.
+
+### Worker 049 Review And Merge: FS-08 Rust/Tauri Start Codex Task Run Backend
+
+- Status: reviewed, corrected, merged, verified, and Git-cleaned.
+- Worker thread: `019f2901-1da3-7461-8ce9-465466581238`
+- Worker commit: `0dae69b` (`Implement Tauri Codex task run backend`)
+- Orchestrator correction commit: `c75bff2` (`Stabilize Worker 049 runtime metadata`)
+- Merge commit: `3d2262e` (`Merge Worker 049 start Codex task run backend`)
+- Result log: `docs/task-logs/worker-049-start-codex-task-run-tauri-backend.md`
+- Accepted decision: register `start_codex_task_run` in Rust/Tauri and execute
+  `codex exec --json` with array-style arguments, caller `cwd`, additional args, and environment
+  overrides.
+- Accepted decision: persist task-run lifecycle state, Codex conversation linkage, raw JSONL
+  artifacts before parsing, final-response artifacts when present, and run/artifact events in the
+  app SQLite database.
+- Review correction: removed `docs/active-task-map.md` from the worker branch diff because that file
+  is orchestrator-owned recovery state, and updated app metadata from `adapter-pending` to
+  `tauri-codex-exec`.
+- Explicitly deferred: post-run diff/validation capture wiring, repo/worktree UI, workflow-engine
+  behavior, process supervision, and Codex credential management.
+- Verification before merge: diff check, focused Rust command tests, `cargo fmt --check`,
+  full `cargo test`, `npm run lint`, `npm run format:check`, `npm run test`, `npm run build`, and
+  `npm run build:tauri` passed through the Visual Studio developer environment.
+- Verification after merge: `git diff --check HEAD^..HEAD`, focused Rust command tests,
+  `npm run lint`, `npm run format:check`, full `cargo test`, `npm run test`, `npm run build`, and
+  `npm run build:tauri` passed on main. The Tauri build produced MSI and NSIS bundles.
+- Cleanup: `git worktree remove` unregistered the Worker 049 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\2b63\Codex Orchestrator`; the merged branch
+  was deleted and the locked physical folder was left in place.

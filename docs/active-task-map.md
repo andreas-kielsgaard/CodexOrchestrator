@@ -12,21 +12,13 @@ otherwise resolve it.
 
 ## Active Tasks
 
-- Worker 049: FS-08 Rust/Tauri Start Codex Task Run Backend is active in
-  `C:\Users\user\.codex\worktrees\2b63\Codex Orchestrator` on target branch
-  `worker/049-start-codex-task-run-tauri-backend`. Worker thread:
-  `019f2901-1da3-7461-8ce9-465466581238`. Pending worktree id:
-  `local:b7683379-921b-464e-83db-e032e7dabc87`. Launch base: `607352c`
-  (`Log Worker 048 merge`). Await completion report and result log
-  `docs/task-logs/worker-049-start-codex-task-run-tauri-backend.md`; review before merge.
+- None after the Worker 049 merge checkpoint.
 
 ## Pending Blockers / Follow-Up
 
 - Rust/Cargo/MSVC build verification is cleared when commands are run through the Visual Studio
   developer environment. Plain shells still do not resolve `link.exe`; use `vcvars64.bat` for native
   Rust/Tauri commands.
-- The merged FS-08 run controls call the browser-safe `start_codex_task_run` facade, but live
-  WebView execution still needs a Rust/Tauri backend command registration.
 - Post-run diff/validation capture exists for Node/local runtime callers, but the live WebView run
   command path has not yet been wired to use it.
 
@@ -65,6 +57,8 @@ otherwise resolve it.
   `docs/task-logs/worker-047-post-run-capture-composition.md`.
 - Worker 048: reviewed, merged, verified, and Git-cleaned. See
   `docs/task-logs/worker-048-task-run-detail-tauri-backend.md`.
+- Worker 049: reviewed, corrected, merged, verified, and Git-cleaned. See
+  `docs/task-logs/worker-049-start-codex-task-run-tauri-backend.md`.
 
 ## Blockers
 
@@ -102,3 +96,4 @@ launched:
 - Worker 046: `C:\Users\user\.codex\worktrees\071c\Codex Orchestrator`
 - Worker 047: `C:\Users\user\.codex\worktrees\13b2\Codex Orchestrator`
 - Worker 048: `C:\Users\user\.codex\worktrees\ef6d\Codex Orchestrator`
+- Worker 049: `C:\Users\user\.codex\worktrees\2b63\Codex Orchestrator`
