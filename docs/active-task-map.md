@@ -17,10 +17,6 @@ otherwise resolve it.
   `worker/040-rust-toolchain-setup`. Pending worktree id:
   `local:c3fdb1cd-62ad-43ee-8ee2-e4a06858ff2b`. Await completion report and result log
   `docs/task-logs/worker-040-rust-toolchain-setup.md`; review before merge.
-- Worker 041: Orchestration Review is complete-but-unreviewed in
-  `C:\Users\user\.codex\worktrees\b18b\Codex Orchestrator` on target branch
-  `worker/041-orchestration-review` at commit `a8b45632dd94fba4228806cba242bf2c9fceadd8`.
-  Result log: `docs/task-logs/worker-041-orchestration-review.md`. Review before merge.
 
 ## Pending Blockers / Follow-Up
 
@@ -45,6 +41,8 @@ otherwise resolve it.
   Git-cleaned. See `docs/task-logs/worker-038-local-runtime-service-composition.md`.
 - Worker 039: reviewed, merged, verified, stabilized, and Git-cleaned. See
   `docs/task-logs/worker-039-runtime-command-contract.md`.
+- Worker 041: reviewed, merged, verified, and Git-cleaned. See
+  `docs/task-logs/worker-041-orchestration-review.md`.
 
 ## Blockers
 
@@ -75,3 +73,4 @@ launched:
 - Worker 037: `C:\Users\user\.codex\worktrees\35fe\Codex Orchestrator`
 - Worker 038: `C:\Users\user\.codex\worktrees\c063\Codex Orchestrator`
 - Worker 039: `C:\Users\user\.codex\worktrees\c6f0\Codex Orchestrator`
+- Worker 041: `C:\Users\user\.codex\worktrees\b18b\Codex Orchestrator`

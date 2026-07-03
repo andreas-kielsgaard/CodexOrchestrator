@@ -2300,3 +2300,25 @@ disposal`)
   folder deletion at `C:\Users\user\.codex\worktrees\c6f0\Codex Orchestrator`; the merged branch
   `worker/039-runtime-command-contract` was deleted and the locked physical folder was left in
   place.
+
+### Worker 041 Review And Merge: Orchestration Review
+
+- Status: reviewed, merged, verified, logged, and Git-cleaned
+- Worker commit: `a8b45632dd94fba4228806cba242bf2c9fceadd8`
+  (`Improve orchestration report intake`)
+- Merge commit: `c155372` (`Merge Worker 041 orchestration review`)
+- Result log: `docs/task-logs/worker-041-orchestration-review.md`
+- Accepted decision: add a fast report intake path so worker reports are triaged through report,
+  result log, changed files, commit, and branch state before broad recovery reading or audit
+  writing.
+- Accepted decision: preserve review-before-merge and active-map recovery, while allowing
+  independent next slices to proceed in parallel when their inputs are stable.
+- Accepted decision: keep small admin/status/log moves in the main orchestration thread, and reserve
+  admin/review workers for nontrivial parallelizable work.
+- Verification before merge: `git diff --check` and targeted Prettier checks for the changed docs
+  and result log passed in the worker worktree.
+- Verification after merge: `git diff --check HEAD^..HEAD` and `npm run format:check` passed on
+  main.
+- Cleanup: `git worktree remove` unregistered the Worker 041 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\b18b\Codex Orchestrator`; the merged branch
+  `worker/041-orchestration-review` was deleted and the locked physical folder was left in place.
