@@ -2577,3 +2577,26 @@ disposal`)
   developer environment.
 - Report-back instruction: included in the worker prompt, with an explicit fallback if cross-posting
   is unavailable.
+
+### Worker 048 Review And Merge: FS-09 Rust/Tauri Task Run Detail Backend
+
+- Status: reviewed, merged, verified, and Git-cleaned.
+- Worker thread: `019f28e6-b240-79f0-8e1a-bb0a0a24740e`
+- Worker commit: `7e55176` (`Implement Tauri task run detail backend`)
+- Merge commit: `2cb8042` (`Merge Worker 048 task run detail Tauri backend`)
+- Result log: `docs/task-logs/worker-048-task-run-detail-tauri-backend.md`
+- Accepted decision: register `load_task_run_detail` as a read-only Rust/Tauri command backed by
+  the app SQLite database and existing migrations.
+- Accepted decision: mirror the TypeScript detail snapshot semantics in Rust, including task
+  anchors, newest-first run history, artifact grouping, validation output-artifact links, unlinked
+  task-level records, and chronological task events.
+- Explicitly deferred: `start_codex_task_run`, live Codex/Git/validation execution, and post-run
+  capture wiring in the WebView command path.
+- Verification before merge: diff check, focused Rust detail tests, `npm run lint`,
+  `npm run format:check`, full `cargo test`, `npm run test`, and `npm run build` passed.
+- Verification after merge: `git diff --check HEAD^..HEAD`, full `cargo test`, `npm run lint`,
+  `npm run format:check`, `npm run test`, `npm run build`, and `npm run build:tauri` passed through
+  the Visual Studio developer environment. The Tauri build produced MSI and NSIS bundles.
+- Cleanup: `git worktree remove` unregistered the Worker 048 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\ef6d\Codex Orchestrator`; the merged branch
+  was deleted and the locked physical folder was left in place.

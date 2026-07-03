@@ -67,6 +67,7 @@ Already built on `main`:
 - Application-layer task/run detail read model over existing stores for task anchors, run history,
   grouped artifacts, validation links, and event timeline.
 - Open Tasks task/run detail UI shell plus browser-safe `load_task_run_detail` Tauri facade.
+- Rust/Tauri backend command for `load_task_run_detail`, backed by the app SQLite database.
 - Caller-configured post-run capture composition that can run Codex, then optionally collect diff
   and run one validation command through existing services.
 - Rust/Cargo/MSVC Tauri build path verified locally through the Visual Studio developer environment;
@@ -76,8 +77,6 @@ Important gaps:
 
 - No Rust/Tauri backend command for `start_codex_task_run`, so WebView run controls cannot yet
   execute live Codex runs.
-- No Rust/Tauri backend command for `load_task_run_detail`, so the WebView detail panel cannot yet
-  read persisted task/run details.
 - No repo/worktree UI that injects the local Git-backed runtime composition into user flows.
 - Post-run capture is composed for Node/local runtime callers, but not wired into the live WebView
   run command path.
@@ -102,10 +101,9 @@ events, diff, and validation result in the app.
 
 Current planned sequence:
 
-1. Add the Rust/Tauri backend command for `load_task_run_detail`.
-2. Add the Rust/Tauri backend command for `start_codex_task_run`.
-3. Wire explicit post-run diff/validation capture into the live run path.
-4. Add the review surface that combines final response, diff, validation, and next action.
+1. Add the Rust/Tauri backend command for `start_codex_task_run`.
+2. Wire explicit post-run diff/validation capture into the live run path.
+3. Add the review surface that combines final response, diff, validation, and next action.
 
 ## Later Roadmap
 
