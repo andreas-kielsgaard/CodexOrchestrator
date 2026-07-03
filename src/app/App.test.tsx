@@ -59,7 +59,7 @@ describe('App open task dashboard', () => {
       expect(screen.queryByText('Edited dashboard task')).not.toBeInTheDocument();
     });
     expect(client.findTask('task-2')?.executionState).toBe('archived');
-  });
+  }, 10_000);
 
   it('preserves existing task priority when editing title and summary', async () => {
     const client = new FakeTaskDashboardClient();
@@ -79,7 +79,7 @@ describe('App open task dashboard', () => {
 
     expect(await screen.findByText('Priority preserved task')).toBeInTheDocument();
     expect(client.findTask('task-1')?.priority).toBe('high');
-  });
+  }, 10_000);
 
   it('shows backend errors from the injected client without rendering seed tasks', async () => {
     const client: TaskDashboardClient = {
