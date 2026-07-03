@@ -2554,3 +2554,26 @@ disposal`)
 - Cleanup: `git worktree remove` unregistered the Worker 047 worktree, but Windows denied physical
   folder deletion at `C:\Users\user\.codex\worktrees\13b2\Codex Orchestrator`; the merged branch
   was deleted and the locked physical folder was left in place.
+
+### Worker 048 Launch: FS-09 Rust/Tauri Task Run Detail Backend
+
+- Status: launched in a fresh worktree worker.
+- Worker thread: `019f28e6-b240-79f0-8e1a-bb0a0a24740e`
+- Pending worktree id: `local:3e860c6f-fa04-434d-a321-de1f05c11d9c`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\ef6d\Codex Orchestrator`
+- Target branch: `worker/048-task-run-detail-tauri-backend`
+- Launch base observed in worktree: `74e2722` (`Log Worker 046 and 047 merges`), detached until
+  the worker creates the target branch.
+- Goal: implement the Rust/Tauri backend command for the existing browser-safe
+  `load_task_run_detail` facade so the merged detail UI can read persisted task/run records from
+  the app SQLite database.
+- Explicitly deferred: `start_codex_task_run`, live Codex/Git/validation execution, React UI
+  changes except tiny contract fixes, repo/worktree selection UI, workflow behavior, scheduling,
+  and process supervision.
+- Required result log: `docs/task-logs/worker-048-task-run-detail-tauri-backend.md`
+- Required verification: `git diff --check main...worker/048-task-run-detail-tauri-backend`,
+  focused Rust tests, `cargo fmt --check`, `cargo test`, `npm run lint`, `npm run format:check`,
+  `npm run test`, `npm run build`, and `npm run build:tauri` if feasible through the Visual Studio
+  developer environment.
+- Report-back instruction: included in the worker prompt, with an explicit fallback if cross-posting
+  is unavailable.

@@ -12,11 +12,12 @@ otherwise resolve it.
 
 ## Active Tasks
 
-- Worker 046: FS-09 Task/Run Detail UI Shell is active in
-  `C:\Users\user\.codex\worktrees\071c\Codex Orchestrator` on target branch
-  `worker/046-task-run-detail-ui-shell`. Pending worktree id:
-  `local:40c6b702-0071-447a-812b-181d32c3adde`. Await completion report and result log
-  `docs/task-logs/worker-046-task-run-detail-ui-shell.md`; review before merge.
+- Worker 048: FS-09 Rust/Tauri Task Run Detail Backend is active in
+  `C:\Users\user\.codex\worktrees\ef6d\Codex Orchestrator` on target branch
+  `worker/048-task-run-detail-tauri-backend`. Worker thread:
+  `019f28e6-b240-79f0-8e1a-bb0a0a24740e`. Pending worktree id:
+  `local:3e860c6f-fa04-434d-a321-de1f05c11d9c`. Await completion report and result log
+  `docs/task-logs/worker-048-task-run-detail-tauri-backend.md`; review before merge.
 
 ## Pending Blockers / Follow-Up
 
@@ -25,8 +26,10 @@ otherwise resolve it.
   Rust/Tauri commands.
 - The merged FS-08 run controls call the browser-safe `start_codex_task_run` facade, but live
   WebView execution still needs a Rust/Tauri backend command registration.
-- The merged task/run detail read model has no UI yet; Worker 046 is building the UI shell and
-  browser-safe detail facade.
+- The merged detail UI calls the browser-safe `load_task_run_detail` facade; Worker 048 is building
+  the Rust/Tauri backend command.
+- Post-run diff/validation capture exists for Node/local runtime callers, but the live WebView run
+  command path has not yet been wired to use it.
 
 ## Recently Archived
 
@@ -57,6 +60,10 @@ otherwise resolve it.
   `docs/task-logs/worker-044-task-run-detail-read-model.md`.
 - Worker 045: completed, verified, and logged. See
   `docs/task-logs/worker-045-msvc-build-tools-setup.md`.
+- Worker 046: reviewed, corrected, merged, verified, and Git-cleaned. See
+  `docs/task-logs/worker-046-task-run-detail-ui-shell.md`.
+- Worker 047: reviewed, merged, verified, and Git-cleaned. See
+  `docs/task-logs/worker-047-post-run-capture-composition.md`.
 
 ## Blockers
 
@@ -91,3 +98,5 @@ launched:
 - Worker 041: `C:\Users\user\.codex\worktrees\b18b\Codex Orchestrator`
 - Worker 042: `C:\Users\user\.codex\worktrees\9ca8\Codex Orchestrator`
 - Worker 044: `C:\Users\user\.codex\worktrees\514e\Codex Orchestrator`
+- Worker 046: `C:\Users\user\.codex\worktrees\071c\Codex Orchestrator`
+- Worker 047: `C:\Users\user\.codex\worktrees\13b2\Codex Orchestrator`
