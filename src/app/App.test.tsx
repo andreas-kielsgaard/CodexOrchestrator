@@ -304,6 +304,58 @@ describe('App open task dashboard', () => {
     expect(detailClient.inputs).toEqual(['task-1', 'task-2']);
   }, 10_000);
 
+  it('does not reopen an older task detail when a pending run finishes', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new DeferredRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient({
+      'task-1': createTaskDetailSnapshot('task-1', 'Existing task', { runId: 'run-detail-1' }),
+      'task-2': createTaskDetailSnapshot('task-2', 'Second task', { runId: 'run-detail-2' }),
+    });
+
+    await client.createTask({
+      projectId: 'project-1',
+      title: 'Second task',
+      summary: 'Another persisted task.',
+      executionState: 'draft',
+      attentionState: 'needs_action_now',
+      priority: 'normal',
+    });
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
+
+    expect(await screen.findByText('Second task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Open detail for Existing task'));
+    expect(await screen.findByText('run-detail-1')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Codex prompt for Existing task'), {
+      target: { value: 'Run while reviewing.' },
+    });
+    fireEvent.click(screen.getByLabelText('Start Codex run for Existing task'));
+
+    await waitFor(() => {
+      expect(runtimeClient.inputs).toHaveLength(1);
+    });
+
+    fireEvent.click(screen.getByLabelText('Open detail for Second task'));
+    expect(await screen.findByText('run-detail-2')).toBeInTheDocument();
+
+    runtimeClient.resolve();
+
+    await waitFor(() => {
+      expect(client.loadCount).toBe(2);
+    });
+    expect(detailClient.inputs).toEqual(['task-1', 'task-2']);
+    expect(screen.getByText('run-detail-2')).toBeInTheDocument();
+    expect(screen.queryByText('run-detail-1')).not.toBeInTheDocument();
+  }, 10_000);
+
   it('renders an empty no-run detail state', async () => {
     const client = new FakeTaskDashboardClient();
     const runtimeClient = new FakeRuntimeCommandClient();
@@ -494,6 +546,32 @@ class FakeRuntimeCommandClient implements RuntimeCommandClient {
     this.inputs.push(input);
 
     return this.resultFactory(input);
+  }
+}
+
+class DeferredRuntimeCommandClient implements RuntimeCommandClient {
+  inputs: StartCodexTaskRunCommandInput[] = [];
+  private resolvePending: ((result: StartCodexTaskRunCommandResult) => void) | undefined;
+
+  async startCodexTaskRun(
+    input: StartCodexTaskRunCommandInput,
+  ): Promise<StartCodexTaskRunCommandResult> {
+    this.inputs.push(input);
+
+    return new Promise((resolve) => {
+      this.resolvePending = resolve;
+    });
+  }
+
+  resolve(): void {
+    const input = this.inputs[this.inputs.length - 1];
+
+    if (input === undefined || this.resolvePending === undefined) {
+      throw new Error('No pending runtime command to resolve.');
+    }
+
+    this.resolvePending(createCompletedRunResult(input));
+    this.resolvePending = undefined;
   }
 }
 

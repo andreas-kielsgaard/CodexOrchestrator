@@ -17,6 +17,8 @@ Branch: `worker/046-task-run-detail-ui-shell`
   triggers, no repo/worktree selection UI, and no Node/SQLite imports in React.
 - Expanded App tests with fake injected detail clients covering successful load, backend error,
   selecting another task, and empty/no-run detail states.
+- Orchestrator review correction: guarded post-run detail reloads against stale selected-task state
+  and added regression coverage for switching detail selection while a run is pending.
 
 ## Changed Files
 
@@ -32,6 +34,8 @@ Branch: `worker/046-task-run-detail-ui-shell`
 ## Verification
 
 - `npm test -- src/app/App.test.tsx`: passed
+- Orchestrator correction verification: focused App/Tauri tests, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` passed.
 
 Final full-suite verification was run before handoff; see the worker completion report for the
 latest command results.

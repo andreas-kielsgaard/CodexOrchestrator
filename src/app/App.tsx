@@ -20,7 +20,15 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
 import type { DashboardGroupId, DashboardTask } from '../domain/dashboardProjection';
 import type {
   Artifact,
@@ -136,6 +144,7 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
     snapshot: null,
     error: null,
   });
+  const detailTaskIdRef = useRef<EntityId | null>(null);
   const [busyAction, setBusyAction] = useState<BusyAction>('load');
   const [error, setError] = useState<string | null>(null);
 
@@ -201,6 +210,10 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
   useEffect(() => {
     void loadDashboard();
   }, [loadDashboard]);
+
+  useEffect(() => {
+    detailTaskIdRef.current = detail.taskId;
+  }, [detail.taskId]);
 
   const tasksById = useMemo(() => {
     return new Map(snapshot.groups.flatMap((group) => group.tasks).map((task) => [task.id, task]));
@@ -335,7 +348,7 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
       } finally {
         try {
           applySnapshot(await taskDashboardClient.loadDashboard());
-          if (detail.taskId === task.id) {
+          if (detailTaskIdRef.current === task.id) {
             await loadTaskDetail(task.id);
           }
         } catch (caught) {
