@@ -13,6 +13,19 @@ export interface StartCodexTaskRunCommandInput {
   conversationSummary?: string;
   additionalArgs?: readonly string[];
   env?: Record<string, string | undefined>;
+  postRunCapture?: StartCodexTaskRunPostRunCaptureInput;
+}
+
+export interface StartCodexTaskRunPostRunCaptureInput {
+  collectDiff?: boolean;
+  validationCommand?: StartCodexTaskRunValidationCommandInput;
+}
+
+export interface StartCodexTaskRunValidationCommandInput {
+  command: string;
+  args?: readonly string[];
+  cwd?: string;
+  env?: Record<string, string | undefined>;
 }
 
 export type StartCodexTaskRunCommandStatus = 'completed' | 'failed';
@@ -27,8 +40,41 @@ export interface StartCodexTaskRunCommandResult {
   exitCode?: number;
   statusReason?: string;
   error?: string;
+  postRunCapture?: StartCodexTaskRunPostRunCaptureResult;
   task: StartCodexTaskRunTaskState;
   taskRun: StartCodexTaskRunTaskRunState;
+}
+
+export interface StartCodexTaskRunPostRunCaptureResult {
+  diff?: StartCodexTaskRunDiffCaptureResult;
+  validation?: StartCodexTaskRunValidationCaptureResult;
+  skippedReason?: 'run_failed';
+}
+
+export type StartCodexTaskRunDiffCaptureResult =
+  | {
+      status: 'captured';
+      artifactId: EntityId;
+      eventId: EntityId;
+      diffLength: number;
+      isEmptyDiff: boolean;
+      worktreePath: string;
+    }
+  | {
+      status: 'failed';
+      error: string;
+    };
+
+export interface StartCodexTaskRunValidationCaptureResult {
+  status: 'passed' | 'failed';
+  validationRunId?: EntityId;
+  outputArtifactId?: EntityId;
+  startedEventId?: EntityId;
+  artifactCreatedEventId?: EntityId;
+  completedEventId?: EntityId;
+  exitCode?: number;
+  signal?: string;
+  error?: string;
 }
 
 export interface StartCodexTaskRunTaskState {

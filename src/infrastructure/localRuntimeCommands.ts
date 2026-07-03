@@ -3,9 +3,15 @@ import {
   type ComposeCodexTaskRunInput,
   type ComposeCodexTaskRunResult,
 } from '../application/runComposition';
+import {
+  composeCodexTaskRunWithPostRunCapture,
+  type ComposeCodexTaskRunWithPostRunCaptureInput,
+  type PostRunCaptureResult,
+} from '../application/postRunCaptureComposition';
 import type {
   RuntimeCommandClient,
   StartCodexTaskRunCommandInput,
+  StartCodexTaskRunPostRunCaptureResult,
   StartCodexTaskRunCommandResult,
   StartCodexTaskRunTaskRunState,
   StartCodexTaskRunTaskState,
@@ -34,6 +40,18 @@ export async function startCodexTaskRun(
   input: StartCodexTaskRunCommandInput,
   options: LocalRuntimeCommandHandlerOptions = {},
 ): Promise<StartCodexTaskRunCommandResult> {
+  if (input.postRunCapture !== undefined) {
+    const result = await composeCodexTaskRunWithPostRunCapture(
+      composition.services.postRunCaptureCompositionService,
+      toComposeCodexTaskRunWithPostRunCaptureInput(input, options),
+    );
+
+    return {
+      ...toStartCodexTaskRunCommandResult(input.taskId, result.run),
+      postRunCapture: toStartCodexTaskRunPostRunCaptureResult(result.postRunCapture),
+    };
+  }
+
   const result = await composeCodexTaskRun(composition.services.runCompositionService, {
     taskId: input.taskId,
     prompt: input.prompt,
@@ -52,6 +70,47 @@ export async function startCodexTaskRun(
   });
 
   return toStartCodexTaskRunCommandResult(input.taskId, result);
+}
+
+function toComposeCodexTaskRunWithPostRunCaptureInput(
+  input: StartCodexTaskRunCommandInput,
+  options: LocalRuntimeCommandHandlerOptions,
+): ComposeCodexTaskRunWithPostRunCaptureInput {
+  return {
+    taskId: input.taskId,
+    prompt: input.prompt,
+    ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+    ...(input.worktreeId === undefined ? {} : { worktreeId: input.worktreeId }),
+    ...(input.conversationTitle === undefined
+      ? {}
+      : { conversationTitle: input.conversationTitle }),
+    ...(input.conversationSummary === undefined
+      ? {}
+      : { conversationSummary: input.conversationSummary }),
+    ...(input.additionalArgs === undefined ? {} : { additionalArgs: input.additionalArgs }),
+    ...(input.env === undefined ? {} : { env: input.env }),
+    ...(options.startedAt === undefined ? {} : { startedAt: options.startedAt }),
+    ...(options.completedAt === undefined ? {} : { completedAt: options.completedAt }),
+    postRunCapture: {
+      ...(input.postRunCapture?.collectDiff === true ? { diff: {} } : {}),
+      ...(input.postRunCapture?.validationCommand === undefined
+        ? {}
+        : {
+            validation: {
+              command: input.postRunCapture.validationCommand.command,
+              ...(input.postRunCapture.validationCommand.args === undefined
+                ? {}
+                : { args: input.postRunCapture.validationCommand.args }),
+              ...(input.postRunCapture.validationCommand.cwd === undefined
+                ? {}
+                : { cwd: input.postRunCapture.validationCommand.cwd }),
+              ...(input.postRunCapture.validationCommand.env === undefined
+                ? {}
+                : { env: input.postRunCapture.validationCommand.env }),
+            },
+          }),
+    },
+  };
 }
 
 export function toStartCodexTaskRunCommandResult(
@@ -94,6 +153,76 @@ export function toStartCodexTaskRunCommandResult(
     error: result.error,
     task: toTaskState(result.failed.task),
     taskRun: toTaskRunState(result.failed.taskRun),
+  };
+}
+
+function toStartCodexTaskRunPostRunCaptureResult(
+  result: PostRunCaptureResult,
+): StartCodexTaskRunPostRunCaptureResult {
+  return {
+    ...(result.skippedReason === undefined ? {} : { skippedReason: result.skippedReason }),
+    ...(result.diff === undefined
+      ? {}
+      : {
+          diff:
+            result.diff.status === 'captured'
+              ? {
+                  status: 'captured',
+                  artifactId: result.diff.result.artifact.id,
+                  eventId: result.diff.result.event.id,
+                  diffLength: result.diff.result.diff.length,
+                  isEmptyDiff: result.diff.result.isEmptyDiff,
+                  worktreePath: result.diff.result.worktreePath,
+                }
+              : {
+                  status: 'failed',
+                  error: result.diff.error,
+                },
+        }),
+    ...(result.validation === undefined
+      ? {}
+      : { validation: toStartCodexTaskRunValidationCaptureResult(result.validation) }),
+  };
+}
+
+function toStartCodexTaskRunValidationCaptureResult(
+  result: PostRunCaptureResult['validation'],
+): NonNullable<StartCodexTaskRunPostRunCaptureResult['validation']> {
+  if (result === undefined) {
+    return { status: 'failed', error: 'Validation capture result is missing.' };
+  }
+
+  const validationResult = result.result;
+
+  if (validationResult === undefined) {
+    return {
+      status: 'failed',
+      ...(result.status === 'failed' && result.error !== undefined ? { error: result.error } : {}),
+    };
+  }
+
+  const validationError =
+    result.status === 'failed'
+      ? (result.error ??
+        (validationResult.status === 'failed' ? validationResult.error : undefined))
+      : undefined;
+
+  return {
+    status: validationResult.status,
+    validationRunId: validationResult.validationRun.id,
+    outputArtifactId: validationResult.outputArtifact.id,
+    startedEventId: validationResult.startedEvent.id,
+    artifactCreatedEventId: validationResult.artifactCreatedEvent.id,
+    completedEventId: validationResult.completedEvent.id,
+    ...(validationResult.runtimeResult?.exitCode === undefined ||
+    validationResult.runtimeResult.exitCode === null
+      ? {}
+      : { exitCode: validationResult.runtimeResult.exitCode }),
+    ...(validationResult.runtimeResult?.signal === undefined ||
+    validationResult.runtimeResult.signal === null
+      ? {}
+      : { signal: validationResult.runtimeResult.signal }),
+    ...(validationError === undefined ? {} : { error: validationError }),
   };
 }
 

@@ -13,6 +13,25 @@ describe('Tauri runtime command client', () => {
       finalResponseArtifactId: 'artifact-final',
       exitCode: 0,
       statusReason: 'Codex emitted a turn.completed event',
+      postRunCapture: {
+        diff: {
+          status: 'captured',
+          artifactId: 'artifact-diff',
+          eventId: 'event-diff',
+          diffLength: 120,
+          isEmptyDiff: false,
+          worktreePath: 'C:/worktree',
+        },
+        validation: {
+          status: 'passed',
+          validationRunId: 'validation-1',
+          outputArtifactId: 'artifact-validation',
+          startedEventId: 'event-validation-started',
+          artifactCreatedEventId: 'event-validation-artifact',
+          completedEventId: 'event-validation-completed',
+          exitCode: 0,
+        },
+      },
       task: {
         id: 'task-1',
         executionState: 'completed',
@@ -44,6 +63,15 @@ describe('Tauri runtime command client', () => {
       worktreeId: 'worktree-1',
       additionalArgs: ['--sandbox', 'workspace-write'],
       env: { CODEX_PROFILE: 'test' },
+      postRunCapture: {
+        collectDiff: true,
+        validationCommand: {
+          command: 'npm',
+          args: ['run', 'test'],
+          cwd: 'C:/worktree',
+          env: { CI: '1' },
+        },
+      },
     });
 
     expect(result).toBe(expectedResult);
@@ -58,6 +86,15 @@ describe('Tauri runtime command client', () => {
             worktreeId: 'worktree-1',
             additionalArgs: ['--sandbox', 'workspace-write'],
             env: { CODEX_PROFILE: 'test' },
+            postRunCapture: {
+              collectDiff: true,
+              validationCommand: {
+                command: 'npm',
+                args: ['run', 'test'],
+                cwd: 'C:/worktree',
+                env: { CI: '1' },
+              },
+            },
           },
         },
       },

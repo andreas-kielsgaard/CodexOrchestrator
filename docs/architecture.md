@@ -22,8 +22,9 @@ Tauri WebView path has a narrow Rust-side SQLite backend for Open Tasks dashboar
 load/create/update/archive commands, the read-only `load_task_run_detail` command, and live
 `start_codex_task_run` execution. The Rust run command invokes `codex exec --json`, persists raw
 stdout JSONL before deriving summaries, and updates task-run, conversation, artifact, event,
-execution-state, and attention-state tables. Post-run diff and validation capture are still only
-composed for Node/local runtime callers.
+execution-state, and attention-state tables. When callers explicitly pass post-run capture options,
+the same Rust run command can also collect a tracked Git diff and/or run one validation command
+after a completed Codex run. Visible UI controls for those options are still deferred.
 
 ## Boundary Rules
 
@@ -133,8 +134,10 @@ SQLite directly.
 
 `runtimeCommandClient.ts` is the browser-safe runtime command contract for starting one Codex task
 run. It defines serializable input and compact output shapes for task/run IDs, conversation and
-artifact IDs, terminal metadata, and updated task/run state. It does not import local runtime
-composition, execute Codex, open stores, or own React behavior.
+artifact IDs, terminal metadata, updated task/run state, and optional caller-configured post-run
+capture outcomes. Its `postRunCapture` input can request tracked diff collection and/or one
+array-argument validation command. It does not import local runtime composition, execute Codex, open
+stores, or own React behavior.
 
 `validationCommandRunner.ts` coordinates one configured validation command over injected task,
 validation-run, artifact, event, and command-runtime boundaries. It preflights the task and
@@ -225,7 +228,8 @@ database lifecycle. Browser/React entrypoints must not import this module direct
 
 `localRuntimeCommands.ts` is also Node-only. It adapts the browser-safe runtime command contract to
 the composed local runtime services by calling `composeCodexTaskRun` through
-`composition.services.runCompositionService`, then maps the rich composition result to compact
+`composition.services.runCompositionService`, or `composeCodexTaskRunWithPostRunCapture` when the
+caller provides explicit post-run capture options, then maps the rich composition result to compact
 serializable command output. It does not register Tauri/Rust commands or import React/browser
 entrypoints.
 
@@ -283,7 +287,10 @@ Rust over the same app data database. It starts a task-run lifecycle with a Code
 executes `codex exec --json` with array-style arguments and caller-provided `cwd`/environment,
 stores the raw stdout JSONL as a `raw_event_stream` artifact before parsing, derives compact Codex
 thread/final-response/terminal metadata, and completes or fails the task run with the existing
-browser-safe command result shape.
+browser-safe command result shape. When `postRunCapture` is present and the Codex run completes,
+the Rust backend can collect a tracked `git diff --binary HEAD --` artifact and/or run one
+array-argument validation command through fakeable process-runner boundaries. Capture failures are
+reported in the command result without turning the completed Codex run into a failed run.
 
 ## UI Layer
 
@@ -306,9 +313,7 @@ clients; durable behavior is covered at the application client/store boundary.
 The first usable runtime loop still needs:
 
 1. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
-2. Live run-command wiring that calls the composed diff and validation capture path after a Codex
-   run completes.
-3. Review-grade UI that promotes final response, diff, validation, and next action into a focused
+2. Review-grade UI that promotes final response, diff, validation, and next action into a focused
    decision surface.
 
 ## Testing And Verification

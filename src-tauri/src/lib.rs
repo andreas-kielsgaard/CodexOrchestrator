@@ -53,6 +53,23 @@ struct StartCodexTaskRunCommandInput {
     conversation_summary: Option<String>,
     additional_args: Option<Vec<String>>,
     env: Option<BTreeMap<String, Option<String>>>,
+    post_run_capture: Option<StartCodexTaskRunPostRunCaptureInput>,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct StartCodexTaskRunPostRunCaptureInput {
+    collect_diff: Option<bool>,
+    validation_command: Option<StartCodexTaskRunValidationCommandInput>,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct StartCodexTaskRunValidationCommandInput {
+    command: String,
+    args: Option<Vec<String>>,
+    cwd: Option<String>,
+    env: Option<BTreeMap<String, Option<String>>>,
 }
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -115,8 +132,58 @@ struct StartCodexTaskRunCommandResult {
     status_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    post_run_capture: Option<StartCodexTaskRunPostRunCaptureResult>,
     task: StartCodexTaskRunTaskState,
     task_run: StartCodexTaskRunTaskRunState,
+}
+
+#[derive(Serialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct StartCodexTaskRunPostRunCaptureResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    diff: Option<StartCodexTaskRunDiffCaptureResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    validation: Option<StartCodexTaskRunValidationCaptureResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skipped_reason: Option<String>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", tag = "status")]
+enum StartCodexTaskRunDiffCaptureResult {
+    #[serde(rename = "captured")]
+    Captured {
+        artifact_id: String,
+        event_id: String,
+        diff_length: i64,
+        is_empty_diff: bool,
+        worktree_path: String,
+    },
+    #[serde(rename = "failed")]
+    Failed { error: String },
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct StartCodexTaskRunValidationCaptureResult {
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    validation_run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_artifact_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    started_event_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    artifact_created_event_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    completed_event_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_code: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -437,6 +504,50 @@ trait CodexCommandRunner {
 struct SystemCodexCommandRunner;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct GitDiffRunInput {
+    worktree_path: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct GitDiffRunResult {
+    diff: String,
+}
+
+trait GitDiffRunner {
+    fn collect_tracked_diff(&self, input: GitDiffRunInput) -> Result<GitDiffRunResult, String>;
+}
+
+struct SystemGitDiffRunner;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ValidationCommandRunInput {
+    command: String,
+    args: Vec<String>,
+    cwd: String,
+    env: Option<BTreeMap<String, Option<String>>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ValidationCommandRunResult {
+    stdout: String,
+    stderr: String,
+    exit_code: Option<i64>,
+    signal: Option<String>,
+}
+
+trait ValidationCommandRunner {
+    fn run(&self, input: ValidationCommandRunInput) -> Result<ValidationCommandRunResult, String>;
+}
+
+struct SystemValidationCommandRunner;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ResolvedPostRunWorktreePath {
+    path: String,
+    worktree_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct StartedCodexTaskRun {
     task_id: String,
     project_id: String,
@@ -565,7 +676,13 @@ fn start_codex_task_run(
     input: StartCodexTaskRunCommandInput,
 ) -> Result<StartCodexTaskRunCommandResult, String> {
     with_app_database(&app, |conn| {
-        start_codex_task_run_with_runner(conn, input, &SystemCodexCommandRunner)
+        start_codex_task_run_with_runners(
+            conn,
+            input,
+            &SystemCodexCommandRunner,
+            &SystemGitDiffRunner,
+            &SystemValidationCommandRunner,
+        )
     })
 }
 
@@ -694,6 +811,72 @@ impl CodexCommandRunner for SystemCodexCommandRunner {
     }
 }
 
+impl GitDiffRunner for SystemGitDiffRunner {
+    fn collect_tracked_diff(&self, input: GitDiffRunInput) -> Result<GitDiffRunResult, String> {
+        let output = Command::new("git")
+            .args(["diff", "--binary", "HEAD", "--"])
+            .current_dir(&input.worktree_path)
+            .output()
+            .map_err(|error| format!("Unable to launch Git diff: {error}"))?;
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        let exit_code = output.status.code().map(i64::from);
+        let signal = process_exit_signal(&output.status);
+
+        if exit_code != Some(0) || signal.is_some() {
+            return Err(format!(
+                "Git diff failed {}: {}",
+                process_failure_reason(exit_code, signal.as_deref()),
+                stderr
+            ));
+        }
+
+        Ok(GitDiffRunResult { diff: stdout })
+    }
+}
+
+impl ValidationCommandRunner for SystemValidationCommandRunner {
+    fn run(&self, input: ValidationCommandRunInput) -> Result<ValidationCommandRunResult, String> {
+        let mut command = Command::new(&input.command);
+        command.args(&input.args).current_dir(&input.cwd);
+
+        if let Some(env) = &input.env {
+            for (key, value) in env {
+                match value {
+                    Some(value) => {
+                        command.env(key, value);
+                    }
+                    None => {
+                        command.env_remove(key);
+                    }
+                }
+            }
+        }
+
+        let output = command
+            .output()
+            .map_err(|error| format!("Unable to launch validation command: {error}"))?;
+
+        Ok(ValidationCommandRunResult {
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            exit_code: output.status.code().map(i64::from),
+            signal: process_exit_signal(&output.status),
+        })
+    }
+}
+
+fn process_failure_reason(exit_code: Option<i64>, signal: Option<&str>) -> String {
+    if let Some(signal) = signal {
+        return format!("on signal {signal}");
+    }
+
+    match exit_code {
+        Some(exit_code) => format!("with exit code {exit_code}"),
+        None => "without an exit code".to_string(),
+    }
+}
+
 #[cfg(unix)]
 fn process_exit_signal(status: &std::process::ExitStatus) -> Option<String> {
     use std::os::unix::process::ExitStatusExt;
@@ -706,10 +889,27 @@ fn process_exit_signal(_status: &std::process::ExitStatus) -> Option<String> {
     None
 }
 
+#[cfg(test)]
 fn start_codex_task_run_with_runner(
     conn: &Connection,
     input: StartCodexTaskRunCommandInput,
     runner: &impl CodexCommandRunner,
+) -> Result<StartCodexTaskRunCommandResult, String> {
+    start_codex_task_run_with_runners(
+        conn,
+        input,
+        runner,
+        &SystemGitDiffRunner,
+        &SystemValidationCommandRunner,
+    )
+}
+
+fn start_codex_task_run_with_runners(
+    conn: &Connection,
+    input: StartCodexTaskRunCommandInput,
+    codex_runner: &impl CodexCommandRunner,
+    git_diff_runner: &impl GitDiffRunner,
+    validation_runner: &impl ValidationCommandRunner,
 ) -> Result<StartCodexTaskRunCommandResult, String> {
     validate_start_codex_task_run_input(&input)?;
     let started = start_codex_task_run_lifecycle(conn, &input)?;
@@ -720,12 +920,26 @@ fn start_codex_task_run_with_runner(
         env: input.env.clone(),
     };
 
-    match runner.run(command_input) {
-        Ok(process_result) => {
-            finish_codex_task_run_from_process_result(conn, &started, process_result)
-        }
+    match codex_runner.run(command_input) {
+        Ok(process_result) => finish_codex_task_run_from_process_result(
+            conn,
+            &input,
+            &started,
+            process_result,
+            git_diff_runner,
+            validation_runner,
+        ),
         Err(error) => {
-            fail_started_codex_task_run(conn, &started, None, None, Some(error.clone()), error)
+            let mut result = fail_started_codex_task_run(
+                conn,
+                &started,
+                None,
+                None,
+                Some(error.clone()),
+                error,
+            )?;
+            attach_skipped_post_run_capture_if_requested(&input, &mut result);
+            Ok(result)
         }
     }
 }
@@ -753,6 +967,34 @@ fn validate_start_codex_task_run_input(
     if let Some(env) = &input.env {
         for key in env.keys() {
             validate_non_empty("env key", key)?;
+        }
+    }
+
+    if let Some(post_run_capture) = &input.post_run_capture {
+        if let Some(validation_command) = &post_run_capture.validation_command {
+            validate_non_empty(
+                "postRunCapture.validationCommand.command",
+                &validation_command.command,
+            )?;
+
+            if let Some(args) = &validation_command.args {
+                for (index, arg) in args.iter().enumerate() {
+                    validate_non_empty(
+                        &format!("postRunCapture.validationCommand.args[{index}]"),
+                        arg,
+                    )?;
+                }
+            }
+
+            if let Some(cwd) = &validation_command.cwd {
+                validate_non_empty("postRunCapture.validationCommand.cwd", cwd)?;
+            }
+
+            if let Some(env) = &validation_command.env {
+                for key in env.keys() {
+                    validate_non_empty("postRunCapture.validationCommand.env key", key)?;
+                }
+            }
         }
     }
 
@@ -871,8 +1113,11 @@ WHERE id = ?2
 
 fn finish_codex_task_run_from_process_result(
     conn: &Connection,
+    input: &StartCodexTaskRunCommandInput,
     started: &StartedCodexTaskRun,
     process_result: CodexCommandRunResult,
+    git_diff_runner: &impl GitDiffRunner,
+    validation_runner: &impl ValidationCommandRunner,
 ) -> Result<StartCodexTaskRunCommandResult, String> {
     let stdout_jsonl_length = process_result.stdout.len();
     let exit_code = process_result.exit_code;
@@ -893,14 +1138,16 @@ fn finish_codex_task_run_from_process_result(
                 Some(&error),
             )?;
 
-            return fail_started_codex_task_run(
+            let mut result = fail_started_codex_task_run(
                 conn,
                 started,
                 Some(raw_event_stream_artifact_id),
                 exit_code,
                 Some("Codex JSONL parse failed".to_string()),
                 error,
-            );
+            )?;
+            attach_skipped_post_run_capture_if_requested(input, &mut result);
+            return Ok(result);
         }
     };
 
@@ -917,17 +1164,33 @@ fn finish_codex_task_run_from_process_result(
     update_conversation_from_runtime_result(conn, started, &runtime_result)?;
 
     if runtime_result.status == CodexRuntimeStatus::Completed {
-        complete_started_codex_task_run(conn, started, raw_event_stream_artifact_id, runtime_result)
+        let mut result = complete_started_codex_task_run(
+            conn,
+            started,
+            raw_event_stream_artifact_id,
+            runtime_result,
+        )?;
+        attach_post_run_capture_if_requested(
+            conn,
+            input,
+            started,
+            git_diff_runner,
+            validation_runner,
+            &mut result,
+        );
+        Ok(result)
     } else {
         let error = codex_failure_reason(&runtime_result);
-        fail_started_codex_task_run(
+        let mut result = fail_started_codex_task_run(
             conn,
             started,
             Some(raw_event_stream_artifact_id),
             runtime_result.exit_code,
             Some(runtime_result.status_reason),
             error,
-        )
+        )?;
+        attach_skipped_post_run_capture_if_requested(input, &mut result);
+        Ok(result)
     }
 }
 
@@ -1087,6 +1350,605 @@ WHERE id = ?2
         status_reason,
         Some(error),
     )
+}
+
+fn attach_skipped_post_run_capture_if_requested(
+    input: &StartCodexTaskRunCommandInput,
+    result: &mut StartCodexTaskRunCommandResult,
+) {
+    if input.post_run_capture.is_some() {
+        result.post_run_capture = Some(StartCodexTaskRunPostRunCaptureResult {
+            skipped_reason: Some("run_failed".to_string()),
+            ..StartCodexTaskRunPostRunCaptureResult::default()
+        });
+    }
+}
+
+fn attach_post_run_capture_if_requested(
+    conn: &Connection,
+    input: &StartCodexTaskRunCommandInput,
+    started: &StartedCodexTaskRun,
+    git_diff_runner: &impl GitDiffRunner,
+    validation_runner: &impl ValidationCommandRunner,
+    result: &mut StartCodexTaskRunCommandResult,
+) {
+    let Some(options) = &input.post_run_capture else {
+        return;
+    };
+
+    result.post_run_capture = Some(run_post_run_capture(
+        conn,
+        input,
+        started,
+        options,
+        git_diff_runner,
+        validation_runner,
+    ));
+}
+
+fn run_post_run_capture(
+    conn: &Connection,
+    input: &StartCodexTaskRunCommandInput,
+    started: &StartedCodexTaskRun,
+    options: &StartCodexTaskRunPostRunCaptureInput,
+    git_diff_runner: &impl GitDiffRunner,
+    validation_runner: &impl ValidationCommandRunner,
+) -> StartCodexTaskRunPostRunCaptureResult {
+    let diff = if options.collect_diff.unwrap_or(false) {
+        Some(
+            match collect_post_run_diff(conn, input, started, git_diff_runner) {
+                Ok(result) => result,
+                Err(error) => StartCodexTaskRunDiffCaptureResult::Failed { error },
+            },
+        )
+    } else {
+        None
+    };
+
+    let validation = options
+        .validation_command
+        .as_ref()
+        .map(|validation_command| {
+            match run_post_run_validation_command(
+                conn,
+                input,
+                started,
+                validation_command,
+                validation_runner,
+            ) {
+                Ok(result) => result,
+                Err(error) => StartCodexTaskRunValidationCaptureResult {
+                    status: "failed".to_string(),
+                    validation_run_id: None,
+                    output_artifact_id: None,
+                    started_event_id: None,
+                    artifact_created_event_id: None,
+                    completed_event_id: None,
+                    exit_code: None,
+                    signal: None,
+                    error: Some(error),
+                },
+            }
+        });
+
+    StartCodexTaskRunPostRunCaptureResult {
+        diff,
+        validation,
+        skipped_reason: None,
+    }
+}
+
+fn collect_post_run_diff(
+    conn: &Connection,
+    input: &StartCodexTaskRunCommandInput,
+    started: &StartedCodexTaskRun,
+    git_diff_runner: &impl GitDiffRunner,
+) -> Result<StartCodexTaskRunDiffCaptureResult, String> {
+    let resolved = resolve_post_run_worktree_path(
+        conn,
+        started,
+        input.cwd.as_deref(),
+        input.worktree_id.as_deref(),
+    )?;
+    let diff_result = git_diff_runner.collect_tracked_diff(GitDiffRunInput {
+        worktree_path: resolved.path.clone(),
+    })?;
+    let is_empty_diff = diff_result.diff.is_empty();
+    let artifact_id = create_artifact(
+        conn,
+        Some(&started.task_id),
+        Some(&started.task_run_id),
+        None,
+        "diff",
+        "Post-run diff",
+        Some(&diff_result.diff),
+    )?;
+    let occurred_at = now_iso();
+    let mut payload = Map::new();
+    insert_string(&mut payload, "artifactKind", "diff");
+    insert_string(&mut payload, "artifactId", &artifact_id);
+    insert_i64(&mut payload, "diffLength", diff_result.diff.len() as i64);
+    insert_bool(&mut payload, "isEmptyDiff", is_empty_diff);
+    insert_string(&mut payload, "worktreePath", &resolved.path);
+    if let Some(worktree_id) = &resolved.worktree_id {
+        insert_string(&mut payload, "worktreeId", worktree_id);
+    }
+    let event_id = create_event(
+        conn,
+        "artifact_created",
+        &occurred_at,
+        Some(&started.project_id),
+        Some(&started.task_id),
+        Some(&started.task_run_id),
+        None,
+        Some(&artifact_id),
+        None,
+        payload,
+    )?;
+
+    Ok(StartCodexTaskRunDiffCaptureResult::Captured {
+        artifact_id,
+        event_id,
+        diff_length: diff_result.diff.len() as i64,
+        is_empty_diff,
+        worktree_path: resolved.path,
+    })
+}
+
+fn run_post_run_validation_command(
+    conn: &Connection,
+    input: &StartCodexTaskRunCommandInput,
+    started: &StartedCodexTaskRun,
+    validation_command: &StartCodexTaskRunValidationCommandInput,
+    validation_runner: &impl ValidationCommandRunner,
+) -> Result<StartCodexTaskRunValidationCaptureResult, String> {
+    let resolved = resolve_post_run_validation_cwd(conn, input, started, validation_command)?;
+    let args = validation_command.args.clone().unwrap_or_default();
+    let display_command = render_validation_command(&validation_command.command, &args);
+    let started_at = now_iso();
+    let validation_run_id = Uuid::new_v4().to_string();
+
+    conn.execute(
+        "
+INSERT INTO validation_runs (
+  id, task_id, task_run_id, command, status, started_at, completed_at, exit_code,
+  output_artifact_id, created_at, updated_at
+) VALUES (?1, ?2, ?3, ?4, 'running', ?5, NULL, NULL, NULL, ?5, ?5)
+",
+        params![
+            validation_run_id,
+            started.task_id,
+            started.task_run_id,
+            display_command,
+            started_at
+        ],
+    )
+    .map_err(sql_error("create validation run"))?;
+
+    let started_event_id = append_validation_started_event(
+        conn,
+        started,
+        &validation_run_id,
+        validation_command,
+        &args,
+        &resolved,
+        &started_at,
+    )?;
+
+    let (runtime_result, runtime_error) = match validation_runner.run(ValidationCommandRunInput {
+        command: validation_command.command.clone(),
+        args: args.clone(),
+        cwd: resolved.path.clone(),
+        env: validation_command.env.clone(),
+    }) {
+        Ok(result) => (Some(result), None),
+        Err(error) => (None, Some(error)),
+    };
+
+    finish_post_run_validation_command(
+        conn,
+        started,
+        validation_command,
+        &args,
+        &display_command,
+        &validation_run_id,
+        &started_event_id,
+        &resolved,
+        &started_at,
+        runtime_result,
+        runtime_error,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_post_run_validation_command(
+    conn: &Connection,
+    started: &StartedCodexTaskRun,
+    validation_command: &StartCodexTaskRunValidationCommandInput,
+    args: &[String],
+    display_command: &str,
+    validation_run_id: &str,
+    started_event_id: &str,
+    resolved: &ResolvedPostRunWorktreePath,
+    started_at: &str,
+    runtime_result: Option<ValidationCommandRunResult>,
+    runtime_error: Option<String>,
+) -> Result<StartCodexTaskRunValidationCaptureResult, String> {
+    let status = classify_validation_command_status(runtime_result.as_ref());
+    let completed_at = now_iso();
+    let output_content = create_validation_log_content(
+        started,
+        validation_run_id,
+        status,
+        validation_command,
+        args,
+        resolved,
+        started_at,
+        &completed_at,
+        runtime_result.as_ref(),
+        runtime_error.as_deref(),
+    )?;
+    let output_artifact_id = create_artifact(
+        conn,
+        Some(&started.task_id),
+        Some(&started.task_run_id),
+        None,
+        "validation_log",
+        &format!("Validation log: {display_command}"),
+        Some(&output_content),
+    )?;
+    let artifact_created_event_id = append_validation_artifact_created_event(
+        conn,
+        started,
+        validation_run_id,
+        &output_artifact_id,
+        status,
+        runtime_result.as_ref(),
+        runtime_error.as_deref(),
+    )?;
+
+    conn.execute(
+        "
+UPDATE validation_runs
+SET status = ?1, completed_at = ?2, exit_code = ?3, output_artifact_id = ?4, updated_at = ?2
+WHERE id = ?5
+",
+        params![
+            status,
+            completed_at,
+            runtime_result.as_ref().and_then(|result| result.exit_code),
+            output_artifact_id,
+            validation_run_id
+        ],
+    )
+    .map_err(sql_error("complete validation run"))?;
+
+    let completed_event_id = append_validation_completed_event(
+        conn,
+        started,
+        validation_run_id,
+        &output_artifact_id,
+        status,
+        &completed_at,
+        runtime_result.as_ref(),
+        runtime_error.as_deref(),
+    )?;
+
+    Ok(StartCodexTaskRunValidationCaptureResult {
+        status: status.to_string(),
+        validation_run_id: Some(validation_run_id.to_string()),
+        output_artifact_id: Some(output_artifact_id),
+        started_event_id: Some(started_event_id.to_string()),
+        artifact_created_event_id: Some(artifact_created_event_id),
+        completed_event_id: Some(completed_event_id),
+        exit_code: runtime_result.as_ref().and_then(|result| result.exit_code),
+        signal: runtime_result
+            .as_ref()
+            .and_then(|result| result.signal.clone()),
+        error: runtime_error,
+    })
+}
+
+fn resolve_post_run_validation_cwd(
+    conn: &Connection,
+    input: &StartCodexTaskRunCommandInput,
+    started: &StartedCodexTaskRun,
+    validation_command: &StartCodexTaskRunValidationCommandInput,
+) -> Result<ResolvedPostRunWorktreePath, String> {
+    if let Some(cwd) = &validation_command.cwd {
+        return Ok(ResolvedPostRunWorktreePath {
+            path: cwd.clone(),
+            worktree_id: input.worktree_id.clone(),
+        });
+    }
+
+    resolve_post_run_worktree_path(
+        conn,
+        started,
+        input.cwd.as_deref(),
+        input.worktree_id.as_deref(),
+    )
+}
+
+fn resolve_post_run_worktree_path(
+    conn: &Connection,
+    started: &StartedCodexTaskRun,
+    explicit_cwd: Option<&str>,
+    input_worktree_id: Option<&str>,
+) -> Result<ResolvedPostRunWorktreePath, String> {
+    if let Some(cwd) = explicit_cwd {
+        return Ok(ResolvedPostRunWorktreePath {
+            path: cwd.to_string(),
+            worktree_id: input_worktree_id.map(ToString::to_string),
+        });
+    }
+
+    let worktree_id = match input_worktree_id {
+        Some(worktree_id) => Some(worktree_id.to_string()),
+        None => select_task_run_worktree_id(conn, &started.task_run_id)?
+            .or(select_task_worktree_id(conn, &started.task_id)?),
+    }
+    .ok_or_else(|| {
+        format!(
+            "Post-run capture could not resolve a cwd or linked worktree path for task: {}",
+            started.task_id
+        )
+    })?;
+
+    let path = select_worktree_path(conn, &worktree_id)?.ok_or_else(|| {
+        format!(
+            "Post-run capture worktree not found for task {}: {}",
+            started.task_id, worktree_id
+        )
+    })?;
+
+    Ok(ResolvedPostRunWorktreePath {
+        path,
+        worktree_id: Some(worktree_id),
+    })
+}
+
+fn select_task_run_worktree_id(
+    conn: &Connection,
+    task_run_id: &str,
+) -> Result<Option<String>, String> {
+    conn.query_row(
+        "SELECT worktree_id FROM task_runs WHERE id = ?1",
+        params![task_run_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(sql_error("read task run worktree id"))
+    .map(Option::flatten)
+}
+
+fn select_task_worktree_id(conn: &Connection, task_id: &str) -> Result<Option<String>, String> {
+    conn.query_row(
+        "SELECT worktree_id FROM tasks WHERE id = ?1",
+        params![task_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(sql_error("read task worktree id"))
+    .map(Option::flatten)
+}
+
+fn select_worktree_path(conn: &Connection, worktree_id: &str) -> Result<Option<String>, String> {
+    conn.query_row(
+        "SELECT path FROM worktrees WHERE id = ?1",
+        params![worktree_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(sql_error("read worktree path"))
+}
+
+fn append_validation_started_event(
+    conn: &Connection,
+    started: &StartedCodexTaskRun,
+    validation_run_id: &str,
+    validation_command: &StartCodexTaskRunValidationCommandInput,
+    args: &[String],
+    resolved: &ResolvedPostRunWorktreePath,
+    started_at: &str,
+) -> Result<String, String> {
+    let mut payload = Map::new();
+    insert_string(&mut payload, "taskId", &started.task_id);
+    insert_string(&mut payload, "validationRunId", validation_run_id);
+    insert_string(&mut payload, "command", &validation_command.command);
+    insert_string_array(&mut payload, "args", args);
+    insert_string(&mut payload, "cwd", &resolved.path);
+    if let Some(worktree_id) = &resolved.worktree_id {
+        insert_string(&mut payload, "worktreeId", worktree_id);
+    }
+    insert_string(&mut payload, "startedAt", started_at);
+
+    create_event(
+        conn,
+        "validation_started",
+        started_at,
+        Some(&started.project_id),
+        Some(&started.task_id),
+        Some(&started.task_run_id),
+        None,
+        None,
+        Some(validation_run_id),
+        payload,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_validation_log_content(
+    started: &StartedCodexTaskRun,
+    validation_run_id: &str,
+    status: &str,
+    validation_command: &StartCodexTaskRunValidationCommandInput,
+    args: &[String],
+    resolved: &ResolvedPostRunWorktreePath,
+    started_at: &str,
+    completed_at: &str,
+    runtime_result: Option<&ValidationCommandRunResult>,
+    runtime_error: Option<&str>,
+) -> Result<String, String> {
+    let mut payload = Map::new();
+    insert_string(&mut payload, "taskId", &started.task_id);
+    insert_string(&mut payload, "validationRunId", validation_run_id);
+    insert_string(&mut payload, "status", status);
+    insert_string(&mut payload, "command", &validation_command.command);
+    insert_string_array(&mut payload, "args", args);
+    insert_string(&mut payload, "cwd", &resolved.path);
+    if let Some(worktree_id) = &resolved.worktree_id {
+        insert_string(&mut payload, "worktreeId", worktree_id);
+    }
+    insert_string(&mut payload, "startedAt", started_at);
+    insert_string(&mut payload, "completedAt", completed_at);
+    payload.insert(
+        "process".to_string(),
+        Value::Object(validation_process_payload(runtime_result, runtime_error)),
+    );
+
+    serde_json::to_string_pretty(&Value::Object(payload))
+        .map_err(|error| format!("Unable to encode validation log artifact: {error}"))
+}
+
+fn validation_process_payload(
+    runtime_result: Option<&ValidationCommandRunResult>,
+    runtime_error: Option<&str>,
+) -> Map<String, Value> {
+    let mut process = Map::new();
+
+    match runtime_result {
+        Some(result) => {
+            insert_string(&mut process, "stdout", &result.stdout);
+            insert_string(&mut process, "stderr", &result.stderr);
+            insert_nullable_i64(&mut process, "exitCode", result.exit_code);
+            insert_nullable_string(&mut process, "signal", result.signal.as_deref());
+        }
+        None => {
+            insert_string(&mut process, "stdout", "");
+            insert_string(&mut process, "stderr", "");
+            insert_nullable_i64(&mut process, "exitCode", None);
+            insert_nullable_string(&mut process, "signal", None);
+            insert_string(
+                &mut process,
+                "error",
+                runtime_error.unwrap_or("Validation command did not return a process result"),
+            );
+        }
+    }
+
+    process
+}
+
+fn append_validation_artifact_created_event(
+    conn: &Connection,
+    started: &StartedCodexTaskRun,
+    validation_run_id: &str,
+    output_artifact_id: &str,
+    status: &str,
+    runtime_result: Option<&ValidationCommandRunResult>,
+    runtime_error: Option<&str>,
+) -> Result<String, String> {
+    let occurred_at = now_iso();
+    let mut payload = Map::new();
+    insert_string(&mut payload, "artifactKind", "validation_log");
+    insert_string(&mut payload, "artifactId", output_artifact_id);
+    insert_string(&mut payload, "validationRunId", validation_run_id);
+    insert_string(&mut payload, "validationStatus", status);
+    if let Some(result) = runtime_result {
+        insert_i64(&mut payload, "stdoutLength", result.stdout.len() as i64);
+        insert_i64(&mut payload, "stderrLength", result.stderr.len() as i64);
+        if let Some(exit_code) = result.exit_code {
+            insert_i64(&mut payload, "exitCode", exit_code);
+        }
+        if let Some(signal) = &result.signal {
+            insert_string(&mut payload, "signal", signal);
+        }
+    }
+    if let Some(error) = runtime_error {
+        insert_string(&mut payload, "error", error);
+    }
+
+    create_event(
+        conn,
+        "artifact_created",
+        &occurred_at,
+        Some(&started.project_id),
+        Some(&started.task_id),
+        Some(&started.task_run_id),
+        None,
+        Some(output_artifact_id),
+        Some(validation_run_id),
+        payload,
+    )
+}
+
+fn append_validation_completed_event(
+    conn: &Connection,
+    started: &StartedCodexTaskRun,
+    validation_run_id: &str,
+    output_artifact_id: &str,
+    status: &str,
+    completed_at: &str,
+    runtime_result: Option<&ValidationCommandRunResult>,
+    runtime_error: Option<&str>,
+) -> Result<String, String> {
+    let mut payload = Map::new();
+    insert_string(&mut payload, "outcome", status);
+    insert_string(&mut payload, "taskId", &started.task_id);
+    insert_string(&mut payload, "validationRunId", validation_run_id);
+    insert_string(&mut payload, "artifactId", output_artifact_id);
+    insert_string(&mut payload, "completedAt", completed_at);
+    if let Some(result) = runtime_result {
+        if let Some(exit_code) = result.exit_code {
+            insert_i64(&mut payload, "exitCode", exit_code);
+        }
+        if let Some(signal) = &result.signal {
+            insert_string(&mut payload, "signal", signal);
+        }
+    }
+    if let Some(error) = runtime_error {
+        insert_string(&mut payload, "error", error);
+    }
+
+    create_event(
+        conn,
+        "validation_completed",
+        completed_at,
+        Some(&started.project_id),
+        Some(&started.task_id),
+        Some(&started.task_run_id),
+        None,
+        Some(output_artifact_id),
+        Some(validation_run_id),
+        payload,
+    )
+}
+
+fn classify_validation_command_status(result: Option<&ValidationCommandRunResult>) -> &'static str {
+    match result {
+        Some(result) if result.exit_code == Some(0) && result.signal.is_none() => "passed",
+        _ => "failed",
+    }
+}
+
+fn render_validation_command(command: &str, args: &[String]) -> String {
+    std::iter::once(command.to_string())
+        .chain(args.iter().map(|arg| render_validation_command_arg(arg)))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn render_validation_command_arg(arg: &str) -> String {
+    if arg.chars().all(is_plain_validation_command_arg_char) {
+        return arg.to_string();
+    }
+
+    serde_json::to_string(arg).unwrap_or_else(|_| arg.to_string())
+}
+
+fn is_plain_validation_command_arg_char(character: char) -> bool {
+    character.is_ascii_alphanumeric() || "_./:=@+-".contains(character)
 }
 
 fn create_raw_event_stream_artifact(
@@ -1367,6 +2229,7 @@ fn build_start_codex_task_run_result(
         exit_code,
         status_reason,
         error,
+        post_run_capture: None,
         task: start_codex_task_run_task_state(task),
         task_run: start_codex_task_run_task_run_state(task_run),
     })
@@ -2443,6 +3306,40 @@ fn insert_i64(payload: &mut Map<String, Value>, key: &str, value: i64) {
     payload.insert(key.to_string(), Value::Number(value.into()));
 }
 
+fn insert_nullable_i64(payload: &mut Map<String, Value>, key: &str, value: Option<i64>) {
+    match value {
+        Some(value) => insert_i64(payload, key, value),
+        None => {
+            payload.insert(key.to_string(), Value::Null);
+        }
+    }
+}
+
+fn insert_nullable_string(payload: &mut Map<String, Value>, key: &str, value: Option<&str>) {
+    match value {
+        Some(value) => insert_string(payload, key, value),
+        None => {
+            payload.insert(key.to_string(), Value::Null);
+        }
+    }
+}
+
+fn insert_bool(payload: &mut Map<String, Value>, key: &str, value: bool) {
+    payload.insert(key.to_string(), Value::Bool(value));
+}
+
+fn insert_string_array(payload: &mut Map<String, Value>, key: &str, values: &[String]) {
+    payload.insert(
+        key.to_string(),
+        Value::Array(
+            values
+                .iter()
+                .map(|value| Value::String(value.clone()))
+                .collect(),
+        ),
+    );
+}
+
 fn validate_non_empty(label: &str, value: &str) -> Result<(), String> {
     if value.trim().is_empty() {
         return Err(format!("{label} is required."));
@@ -2742,6 +3639,51 @@ mod tests {
 
     impl CodexCommandRunner for FakeCodexRunner {
         fn run(&self, input: CodexCommandRunInput) -> Result<CodexCommandRunResult, String> {
+            self.calls.borrow_mut().push(input);
+            self.result.clone()
+        }
+    }
+
+    struct FakeGitDiffRunner {
+        result: Result<GitDiffRunResult, String>,
+        calls: RefCell<Vec<GitDiffRunInput>>,
+    }
+
+    impl FakeGitDiffRunner {
+        fn new(result: Result<GitDiffRunResult, String>) -> Self {
+            Self {
+                result,
+                calls: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl GitDiffRunner for FakeGitDiffRunner {
+        fn collect_tracked_diff(&self, input: GitDiffRunInput) -> Result<GitDiffRunResult, String> {
+            self.calls.borrow_mut().push(input);
+            self.result.clone()
+        }
+    }
+
+    struct FakeValidationCommandRunner {
+        result: Result<ValidationCommandRunResult, String>,
+        calls: RefCell<Vec<ValidationCommandRunInput>>,
+    }
+
+    impl FakeValidationCommandRunner {
+        fn new(result: Result<ValidationCommandRunResult, String>) -> Self {
+            Self {
+                result,
+                calls: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl ValidationCommandRunner for FakeValidationCommandRunner {
+        fn run(
+            &self,
+            input: ValidationCommandRunInput,
+        ) -> Result<ValidationCommandRunResult, String> {
             self.calls.borrow_mut().push(input);
             self.result.clone()
         }
@@ -3209,6 +4151,7 @@ mod tests {
                 conversation_summary: Some("Initial summary".to_string()),
                 additional_args: Some(vec!["--sandbox".to_string(), "read-only".to_string()]),
                 env: Some(env.clone()),
+                post_run_capture: None,
             },
             &runner,
         )
@@ -3416,6 +4359,271 @@ mod tests {
         );
     }
 
+    #[test]
+    fn start_codex_task_run_collects_post_run_diff_when_requested() {
+        let conn = open_memory_database();
+        seed_project_repo_branch_worktree(&conn);
+        insert_task(
+            &conn,
+            "task-diff-capture",
+            "draft",
+            "needs_action_now",
+            Some("repo-1"),
+            Some("branch-1"),
+            Some("worktree-1"),
+        );
+        let codex_runner = FakeCodexRunner::new(Ok(CodexCommandRunResult {
+            stdout: completed_codex_stdout("thread-diff", "Diff is ready"),
+            stderr: String::new(),
+            exit_code: Some(0),
+            signal: None,
+        }));
+        let diff = "diff --git a/file.txt b/file.txt\n+changed\n".to_string();
+        let git_diff_runner = FakeGitDiffRunner::new(Ok(GitDiffRunResult { diff: diff.clone() }));
+        let validation_runner =
+            FakeValidationCommandRunner::new(Err("validation should not run".to_string()));
+        let mut input = start_command_input("task-diff-capture");
+        input.post_run_capture = Some(StartCodexTaskRunPostRunCaptureInput {
+            collect_diff: Some(true),
+            validation_command: None,
+        });
+
+        let result = start_codex_task_run_with_runners(
+            &conn,
+            input,
+            &codex_runner,
+            &git_diff_runner,
+            &validation_runner,
+        )
+        .expect("captured diff run");
+
+        assert_eq!(result.status, "completed");
+        let diff_capture = result
+            .post_run_capture
+            .as_ref()
+            .and_then(|capture| capture.diff.as_ref())
+            .expect("diff capture");
+        assert_eq!(
+            diff_capture,
+            &StartCodexTaskRunDiffCaptureResult::Captured {
+                artifact_id: match diff_capture {
+                    StartCodexTaskRunDiffCaptureResult::Captured { artifact_id, .. } =>
+                        artifact_id.clone(),
+                    StartCodexTaskRunDiffCaptureResult::Failed { .. } => unreachable!(),
+                },
+                event_id: match diff_capture {
+                    StartCodexTaskRunDiffCaptureResult::Captured { event_id, .. } =>
+                        event_id.clone(),
+                    StartCodexTaskRunDiffCaptureResult::Failed { .. } => unreachable!(),
+                },
+                diff_length: diff.len() as i64,
+                is_empty_diff: false,
+                worktree_path: "C:/Repos/Codex Orchestrator".to_string(),
+            }
+        );
+        assert_eq!(
+            git_diff_runner.calls.borrow().as_slice(),
+            &[GitDiffRunInput {
+                worktree_path: "C:/Repos/Codex Orchestrator".to_string()
+            }]
+        );
+        assert!(validation_runner.calls.borrow().is_empty());
+
+        let detail = load_task_run_detail_snapshot(&conn, "task-diff-capture").expect("detail");
+        assert_eq!(
+            detail.runs[0].artifacts.diffs[0].content.as_deref(),
+            Some(diff.as_str())
+        );
+        assert_eq!(
+            event_kinds(&conn, "task-diff-capture"),
+            vec![
+                "run_started",
+                "artifact_created",
+                "run_completed",
+                "artifact_created"
+            ]
+        );
+    }
+
+    #[test]
+    fn start_codex_task_run_runs_post_run_validation_when_requested() {
+        let conn = open_memory_database();
+        seed_project_repo_branch_worktree(&conn);
+        insert_task(
+            &conn,
+            "task-validation-capture",
+            "draft",
+            "needs_action_now",
+            Some("repo-1"),
+            Some("branch-1"),
+            Some("worktree-1"),
+        );
+        let codex_runner = FakeCodexRunner::new(Ok(CodexCommandRunResult {
+            stdout: completed_codex_stdout("thread-validation", "Validation is ready"),
+            stderr: String::new(),
+            exit_code: Some(0),
+            signal: None,
+        }));
+        let git_diff_runner = FakeGitDiffRunner::new(Err("git diff should not run".to_string()));
+        let validation_runner = FakeValidationCommandRunner::new(Ok(ValidationCommandRunResult {
+            stdout: "tests passed\n".to_string(),
+            stderr: String::new(),
+            exit_code: Some(0),
+            signal: None,
+        }));
+        let mut env = BTreeMap::new();
+        env.insert("CI".to_string(), Some("1".to_string()));
+        let mut input = start_command_input("task-validation-capture");
+        input.post_run_capture = Some(StartCodexTaskRunPostRunCaptureInput {
+            collect_diff: None,
+            validation_command: Some(StartCodexTaskRunValidationCommandInput {
+                command: "npm".to_string(),
+                args: Some(vec!["run".to_string(), "test".to_string()]),
+                cwd: Some("C:/Repos/Codex Orchestrator/app".to_string()),
+                env: Some(env.clone()),
+            }),
+        });
+
+        let result = start_codex_task_run_with_runners(
+            &conn,
+            input,
+            &codex_runner,
+            &git_diff_runner,
+            &validation_runner,
+        )
+        .expect("validation run");
+
+        assert_eq!(result.status, "completed");
+        let validation_capture = result
+            .post_run_capture
+            .as_ref()
+            .and_then(|capture| capture.validation.as_ref())
+            .expect("validation capture");
+        assert_eq!(validation_capture.status, "passed");
+        assert!(validation_capture.validation_run_id.is_some());
+        assert!(validation_capture.output_artifact_id.is_some());
+        assert_eq!(validation_capture.exit_code, Some(0));
+        assert_eq!(
+            validation_runner.calls.borrow().as_slice(),
+            &[ValidationCommandRunInput {
+                command: "npm".to_string(),
+                args: vec!["run".to_string(), "test".to_string()],
+                cwd: "C:/Repos/Codex Orchestrator/app".to_string(),
+                env: Some(env)
+            }]
+        );
+        assert!(git_diff_runner.calls.borrow().is_empty());
+
+        let detail =
+            load_task_run_detail_snapshot(&conn, "task-validation-capture").expect("detail");
+        assert_eq!(detail.runs[0].validation_runs[0].run.status, "passed");
+        assert_eq!(
+            detail.runs[0].artifacts.validation_logs[0]
+                .content
+                .as_deref()
+                .expect("validation log")
+                .contains("\"stdout\": \"tests passed\\n\""),
+            true
+        );
+        assert_eq!(
+            detail.runs[0].validation_runs[0]
+                .run
+                .output_artifact_id
+                .as_deref(),
+            Some(detail.runs[0].artifacts.validation_logs[0].id.as_str())
+        );
+        assert_eq!(
+            event_kinds(&conn, "task-validation-capture"),
+            vec![
+                "run_started",
+                "artifact_created",
+                "run_completed",
+                "validation_started",
+                "artifact_created",
+                "validation_completed"
+            ]
+        );
+    }
+
+    #[test]
+    fn start_codex_task_run_reports_post_run_capture_failures_after_completed_run() {
+        let conn = open_memory_database();
+        seed_project_repo_branch_worktree(&conn);
+        insert_task(
+            &conn,
+            "task-capture-failures",
+            "draft",
+            "needs_action_now",
+            Some("repo-1"),
+            Some("branch-1"),
+            Some("worktree-1"),
+        );
+        let codex_runner = FakeCodexRunner::new(Ok(CodexCommandRunResult {
+            stdout: completed_codex_stdout("thread-capture-failures", "Capture can fail"),
+            stderr: String::new(),
+            exit_code: Some(0),
+            signal: None,
+        }));
+        let git_diff_runner = FakeGitDiffRunner::new(Err("git diff failed".to_string()));
+        let validation_runner =
+            FakeValidationCommandRunner::new(Err("validation launch failed".to_string()));
+        let mut input = start_command_input("task-capture-failures");
+        input.post_run_capture = Some(StartCodexTaskRunPostRunCaptureInput {
+            collect_diff: Some(true),
+            validation_command: Some(StartCodexTaskRunValidationCommandInput {
+                command: "npm".to_string(),
+                args: Some(vec!["run".to_string(), "lint".to_string()]),
+                cwd: None,
+                env: None,
+            }),
+        });
+
+        let result = start_codex_task_run_with_runners(
+            &conn,
+            input,
+            &codex_runner,
+            &git_diff_runner,
+            &validation_runner,
+        )
+        .expect("completed run with capture failures");
+
+        assert_eq!(result.status, "completed");
+        assert_eq!(result.task.execution_state, "completed");
+        assert_eq!(result.task_run.execution_state, "completed");
+        let capture = result.post_run_capture.as_ref().expect("capture result");
+        assert_eq!(
+            capture.diff,
+            Some(StartCodexTaskRunDiffCaptureResult::Failed {
+                error: "git diff failed".to_string()
+            })
+        );
+        let validation = capture.validation.as_ref().expect("validation capture");
+        assert_eq!(validation.status, "failed");
+        assert_eq!(
+            validation.error.as_deref(),
+            Some("validation launch failed")
+        );
+        assert!(validation.validation_run_id.is_some());
+        assert!(validation.output_artifact_id.is_some());
+        assert_eq!(git_diff_runner.calls.borrow().len(), 1);
+        assert_eq!(validation_runner.calls.borrow().len(), 1);
+
+        let detail = load_task_run_detail_snapshot(&conn, "task-capture-failures").expect("detail");
+        assert!(detail.runs[0].artifacts.diffs.is_empty());
+        assert_eq!(detail.runs[0].validation_runs[0].run.status, "failed");
+        assert_eq!(
+            event_kinds(&conn, "task-capture-failures"),
+            vec![
+                "run_started",
+                "artifact_created",
+                "run_completed",
+                "validation_started",
+                "artifact_created",
+                "validation_completed"
+            ]
+        );
+    }
+
     fn open_memory_database() -> Connection {
         let conn = Connection::open_in_memory().expect("memory database");
         initialize_database(&conn).expect("initialize database");
@@ -3445,6 +4653,7 @@ mod tests {
             conversation_summary: None,
             additional_args: None,
             env: None,
+            post_run_capture: None,
         }
     }
 
