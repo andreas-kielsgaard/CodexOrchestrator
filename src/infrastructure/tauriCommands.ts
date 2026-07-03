@@ -21,7 +21,7 @@ type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promi
 export interface AppMetadata {
   appName: string;
   storageMode: 'local-first';
-  codexRuntime: 'adapter-pending';
+  codexRuntime: 'adapter-pending' | 'tauri-codex-exec';
 }
 
 export async function getAppMetadata(): Promise<AppMetadata> {

@@ -2,7 +2,12 @@ use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::{collections::HashSet, fs, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashSet},
+    fs,
+    path::PathBuf,
+    process::Command,
+};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
@@ -35,6 +40,19 @@ struct UpdateOpenTaskCommandInput {
     execution_state: Option<String>,
     attention_state: Option<String>,
     priority: Option<String>,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct StartCodexTaskRunCommandInput {
+    task_id: String,
+    prompt: String,
+    cwd: Option<String>,
+    worktree_id: Option<String>,
+    conversation_title: Option<String>,
+    conversation_summary: Option<String>,
+    additional_args: Option<Vec<String>>,
+    env: Option<BTreeMap<String, Option<String>>>,
 }
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -76,6 +94,62 @@ struct DashboardTask {
     branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     worktree_path: Option<String>,
+    updated_at: String,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct StartCodexTaskRunCommandResult {
+    status: String,
+    task_id: String,
+    task_run_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conversation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_event_stream_artifact_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    final_response_artifact_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_code: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    task: StartCodexTaskRunTaskState,
+    task_run: StartCodexTaskRunTaskRunState,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct StartCodexTaskRunTaskState {
+    id: String,
+    execution_state: String,
+    attention_state: String,
+    conversation_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repo_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    branch_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    worktree_id: Option<String>,
+    updated_at: String,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct StartCodexTaskRunTaskRunState {
+    id: String,
+    execution_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conversation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    worktree_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    completed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_code: Option<i64>,
     updated_at: String,
 }
 
@@ -340,6 +414,70 @@ struct WorktreeRow {
     path: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CodexCommandRunInput {
+    command: String,
+    args: Vec<String>,
+    cwd: Option<String>,
+    env: Option<BTreeMap<String, Option<String>>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CodexCommandRunResult {
+    stdout: String,
+    stderr: String,
+    exit_code: Option<i64>,
+    signal: Option<String>,
+}
+
+trait CodexCommandRunner {
+    fn run(&self, input: CodexCommandRunInput) -> Result<CodexCommandRunResult, String>;
+}
+
+struct SystemCodexCommandRunner;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct StartedCodexTaskRun {
+    task_id: String,
+    project_id: String,
+    task_run_id: String,
+    conversation_id: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CodexRuntimeStatus {
+    Completed,
+    Failed,
+    Error,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct CodexRuntimeResult {
+    exit_code: Option<i64>,
+    signal: Option<String>,
+    status: CodexRuntimeStatus,
+    status_reason: String,
+    stdout_jsonl: String,
+    stderr: String,
+    summary: CodexJsonlSummary,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+struct CodexJsonlSummary {
+    thread_id: Option<String>,
+    final_agent_message_text: Option<String>,
+    terminal_status: Option<CodexJsonlTerminalStatus>,
+    token_usage: Option<Map<String, Value>>,
+    item_counts_by_type: BTreeMap<String, usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CodexJsonlTerminalStatus {
+    Completed { line_number: usize },
+    Failed { line_number: usize },
+    Error { line_number: usize },
+}
+
 const DASHBOARD_GROUPS: [(&str, &str); 5] = [
     ("needs_action_now", "Needs action now"),
     ("review_decide", "Review / decide"),
@@ -376,7 +514,7 @@ fn app_metadata() -> AppMetadata {
     AppMetadata {
         app_name: "Codex Orchestrator",
         storage_mode: "local-first",
-        codex_runtime: "adapter-pending",
+        codex_runtime: "tauri-codex-exec",
     }
 }
 
@@ -421,6 +559,16 @@ fn load_task_run_detail(app: AppHandle, task_id: String) -> Result<TaskRunDetail
     with_app_database(&app, |conn| load_task_run_detail_snapshot(conn, &task_id))
 }
 
+#[tauri::command]
+fn start_codex_task_run(
+    app: AppHandle,
+    input: StartCodexTaskRunCommandInput,
+) -> Result<StartCodexTaskRunCommandResult, String> {
+    with_app_database(&app, |conn| {
+        start_codex_task_run_with_runner(conn, input, &SystemCodexCommandRunner)
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -430,7 +578,8 @@ pub fn run() {
             create_open_task,
             update_open_task,
             archive_open_task,
-            load_task_run_detail
+            load_task_run_detail,
+            start_codex_task_run
         ])
         .run(tauri::generate_context!())
         .expect("error while running Codex Orchestrator");
@@ -508,6 +657,755 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     }
 
     Ok(())
+}
+
+impl CodexCommandRunner for SystemCodexCommandRunner {
+    fn run(&self, input: CodexCommandRunInput) -> Result<CodexCommandRunResult, String> {
+        let mut command = Command::new(&input.command);
+        command.args(&input.args);
+
+        if let Some(cwd) = &input.cwd {
+            command.current_dir(cwd);
+        }
+
+        if let Some(env) = &input.env {
+            for (key, value) in env {
+                match value {
+                    Some(value) => {
+                        command.env(key, value);
+                    }
+                    None => {
+                        command.env_remove(key);
+                    }
+                }
+            }
+        }
+
+        let output = command
+            .output()
+            .map_err(|error| format!("Unable to launch Codex: {error}"))?;
+
+        Ok(CodexCommandRunResult {
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            exit_code: output.status.code().map(i64::from),
+            signal: process_exit_signal(&output.status),
+        })
+    }
+}
+
+#[cfg(unix)]
+fn process_exit_signal(status: &std::process::ExitStatus) -> Option<String> {
+    use std::os::unix::process::ExitStatusExt;
+
+    status.signal().map(|signal| signal.to_string())
+}
+
+#[cfg(not(unix))]
+fn process_exit_signal(_status: &std::process::ExitStatus) -> Option<String> {
+    None
+}
+
+fn start_codex_task_run_with_runner(
+    conn: &Connection,
+    input: StartCodexTaskRunCommandInput,
+    runner: &impl CodexCommandRunner,
+) -> Result<StartCodexTaskRunCommandResult, String> {
+    validate_start_codex_task_run_input(&input)?;
+    let started = start_codex_task_run_lifecycle(conn, &input)?;
+    let command_input = CodexCommandRunInput {
+        command: "codex".to_string(),
+        args: build_codex_exec_args(&input),
+        cwd: input.cwd.clone(),
+        env: input.env.clone(),
+    };
+
+    match runner.run(command_input) {
+        Ok(process_result) => {
+            finish_codex_task_run_from_process_result(conn, &started, process_result)
+        }
+        Err(error) => {
+            fail_started_codex_task_run(conn, &started, None, None, Some(error.clone()), error)
+        }
+    }
+}
+
+fn validate_start_codex_task_run_input(
+    input: &StartCodexTaskRunCommandInput,
+) -> Result<(), String> {
+    validate_non_empty("taskId", &input.task_id)?;
+    validate_non_empty("prompt", &input.prompt)?;
+
+    if let Some(cwd) = &input.cwd {
+        validate_non_empty("cwd", cwd)?;
+    }
+
+    if let Some(worktree_id) = &input.worktree_id {
+        validate_non_empty("worktreeId", worktree_id)?;
+    }
+
+    if let Some(additional_args) = &input.additional_args {
+        for (index, arg) in additional_args.iter().enumerate() {
+            validate_non_empty(&format!("additionalArgs[{index}]"), arg)?;
+        }
+    }
+
+    if let Some(env) = &input.env {
+        for key in env.keys() {
+            validate_non_empty("env key", key)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn build_codex_exec_args(input: &StartCodexTaskRunCommandInput) -> Vec<String> {
+    let mut args = vec!["exec".to_string(), "--json".to_string()];
+
+    if let Some(additional_args) = &input.additional_args {
+        args.extend(additional_args.iter().cloned());
+    }
+
+    args.push(input.prompt.clone());
+    args
+}
+
+fn start_codex_task_run_lifecycle(
+    conn: &Connection,
+    input: &StartCodexTaskRunCommandInput,
+) -> Result<StartedCodexTaskRun, String> {
+    let existing_task = select_detail_task(conn, &input.task_id)?
+        .ok_or_else(|| task_detail_not_found(&input.task_id))?;
+    let timestamp = now_iso();
+    let task_run_id = Uuid::new_v4().to_string();
+    let conversation_id = Uuid::new_v4().to_string();
+    let conversation_title = input.conversation_title.as_deref().unwrap_or("Codex run");
+
+    conn.execute(
+        "
+INSERT INTO task_runs (
+  id, task_id, conversation_id, worktree_id, execution_state, started_at, completed_at,
+  exit_code, created_at, updated_at
+) VALUES (?1, ?2, NULL, ?3, 'running', ?4, NULL, NULL, ?4, ?4)
+",
+        params![
+            task_run_id,
+            existing_task.id,
+            input.worktree_id.as_deref(),
+            timestamp
+        ],
+    )
+    .map_err(sql_error("create task run"))?;
+
+    conn.execute(
+        "
+INSERT INTO conversations (
+  id, task_id, task_run_id, provider, external_thread_id, title, summary, created_at, updated_at
+) VALUES (?1, ?2, ?3, 'codex', NULL, ?4, ?5, ?6, ?6)
+",
+        params![
+            conversation_id,
+            existing_task.id,
+            task_run_id,
+            conversation_title,
+            input.conversation_summary.as_deref(),
+            timestamp
+        ],
+    )
+    .map_err(sql_error("create Codex conversation"))?;
+
+    conn.execute(
+        "UPDATE task_runs SET conversation_id = ?1, updated_at = ?2 WHERE id = ?3",
+        params![conversation_id, timestamp, task_run_id],
+    )
+    .map_err(sql_error("link task run conversation"))?;
+
+    let position = next_task_conversation_position(conn, &existing_task.id)?;
+    conn.execute(
+        "
+INSERT INTO task_conversation_links (task_id, conversation_id, position, created_at)
+VALUES (?1, ?2, ?3, ?4)
+",
+        params![existing_task.id, conversation_id, position, timestamp],
+    )
+    .map_err(sql_error("link task conversation"))?;
+
+    conn.execute(
+        "
+UPDATE tasks
+SET execution_state = 'running', attention_state = 'waiting_on_agent', updated_at = ?1
+WHERE id = ?2
+",
+        params![timestamp, existing_task.id],
+    )
+    .map_err(sql_error("mark task run running"))?;
+
+    let mut payload = Map::new();
+    insert_string(&mut payload, "taskId", &existing_task.id);
+    insert_string(&mut payload, "taskRunId", &task_run_id);
+    if let Some(worktree_id) = &input.worktree_id {
+        insert_string(&mut payload, "worktreeId", worktree_id);
+    }
+    insert_string(&mut payload, "startedAt", &timestamp);
+    insert_string(&mut payload, "conversationId", &conversation_id);
+    create_event(
+        conn,
+        "run_started",
+        &timestamp,
+        Some(&existing_task.project_id),
+        Some(&existing_task.id),
+        Some(&task_run_id),
+        Some(&conversation_id),
+        None,
+        None,
+        payload,
+    )?;
+
+    Ok(StartedCodexTaskRun {
+        task_id: existing_task.id,
+        project_id: existing_task.project_id,
+        task_run_id,
+        conversation_id,
+    })
+}
+
+fn finish_codex_task_run_from_process_result(
+    conn: &Connection,
+    started: &StartedCodexTaskRun,
+    process_result: CodexCommandRunResult,
+) -> Result<StartCodexTaskRunCommandResult, String> {
+    let stdout_jsonl_length = process_result.stdout.len();
+    let exit_code = process_result.exit_code;
+    let signal = process_result.signal.clone();
+    let raw_event_stream_artifact_id =
+        create_raw_event_stream_artifact(conn, started, &process_result.stdout)?;
+    let runtime_result = match codex_runtime_result_from_process_result(process_result.clone()) {
+        Ok(runtime_result) => runtime_result,
+        Err(error) => {
+            append_raw_event_stream_created_event(
+                conn,
+                started,
+                &raw_event_stream_artifact_id,
+                "error",
+                stdout_jsonl_length,
+                exit_code,
+                signal.as_deref(),
+                Some(&error),
+            )?;
+
+            return fail_started_codex_task_run(
+                conn,
+                started,
+                Some(raw_event_stream_artifact_id),
+                exit_code,
+                Some("Codex JSONL parse failed".to_string()),
+                error,
+            );
+        }
+    };
+
+    append_raw_event_stream_created_event(
+        conn,
+        started,
+        &raw_event_stream_artifact_id,
+        runtime_result.status.as_str(),
+        runtime_result.stdout_jsonl.len(),
+        runtime_result.exit_code,
+        runtime_result.signal.as_deref(),
+        None,
+    )?;
+    update_conversation_from_runtime_result(conn, started, &runtime_result)?;
+
+    if runtime_result.status == CodexRuntimeStatus::Completed {
+        complete_started_codex_task_run(conn, started, raw_event_stream_artifact_id, runtime_result)
+    } else {
+        let error = codex_failure_reason(&runtime_result);
+        fail_started_codex_task_run(
+            conn,
+            started,
+            Some(raw_event_stream_artifact_id),
+            runtime_result.exit_code,
+            Some(runtime_result.status_reason),
+            error,
+        )
+    }
+}
+
+fn codex_runtime_result_from_process_result(
+    process_result: CodexCommandRunResult,
+) -> Result<CodexRuntimeResult, String> {
+    let summary = parse_codex_jsonl_summary(&process_result.stdout)?;
+    let classification = classify_codex_exec_result(&process_result, &summary);
+
+    Ok(CodexRuntimeResult {
+        exit_code: process_result.exit_code,
+        signal: process_result.signal,
+        status: classification.0,
+        status_reason: classification.1,
+        stdout_jsonl: process_result.stdout,
+        stderr: process_result.stderr,
+        summary,
+    })
+}
+
+fn complete_started_codex_task_run(
+    conn: &Connection,
+    started: &StartedCodexTaskRun,
+    raw_event_stream_artifact_id: String,
+    runtime_result: CodexRuntimeResult,
+) -> Result<StartCodexTaskRunCommandResult, String> {
+    let completed_at = now_iso();
+
+    conn.execute(
+        "
+UPDATE task_runs
+SET execution_state = 'completed', completed_at = ?1, exit_code = ?2, updated_at = ?1
+WHERE id = ?3
+",
+        params![completed_at, runtime_result.exit_code, started.task_run_id],
+    )
+    .map_err(sql_error("complete task run"))?;
+
+    let final_response_artifact_id = match &runtime_result.summary.final_agent_message_text {
+        Some(final_response) => Some(create_artifact(
+            conn,
+            Some(&started.task_id),
+            Some(&started.task_run_id),
+            Some(&started.conversation_id),
+            "final_response",
+            "Final Codex response",
+            Some(final_response),
+        )?),
+        None => None,
+    };
+
+    conn.execute(
+        "
+UPDATE tasks
+SET execution_state = 'completed', attention_state = 'needs_review', updated_at = ?1
+WHERE id = ?2
+",
+        params![completed_at, started.task_id],
+    )
+    .map_err(sql_error("mark task run completed"))?;
+
+    let mut payload = Map::new();
+    insert_string(&mut payload, "outcome", "completed");
+    insert_string(&mut payload, "taskId", &started.task_id);
+    insert_string(&mut payload, "taskRunId", &started.task_run_id);
+    insert_string(&mut payload, "completedAt", &completed_at);
+    if let Some(exit_code) = runtime_result.exit_code {
+        insert_i64(&mut payload, "exitCode", exit_code);
+    }
+    if let Some(artifact_id) = &final_response_artifact_id {
+        insert_string(&mut payload, "artifactId", artifact_id);
+    }
+    create_event(
+        conn,
+        "run_completed",
+        &completed_at,
+        Some(&started.project_id),
+        Some(&started.task_id),
+        Some(&started.task_run_id),
+        Some(&started.conversation_id),
+        final_response_artifact_id.as_deref(),
+        None,
+        payload,
+    )?;
+
+    build_start_codex_task_run_result(
+        conn,
+        "completed",
+        started,
+        Some(raw_event_stream_artifact_id),
+        final_response_artifact_id,
+        runtime_result.exit_code,
+        Some(runtime_result.status_reason),
+        None,
+    )
+}
+
+fn fail_started_codex_task_run(
+    conn: &Connection,
+    started: &StartedCodexTaskRun,
+    raw_event_stream_artifact_id: Option<String>,
+    exit_code: Option<i64>,
+    status_reason: Option<String>,
+    error: String,
+) -> Result<StartCodexTaskRunCommandResult, String> {
+    let completed_at = now_iso();
+
+    conn.execute(
+        "
+UPDATE task_runs
+SET execution_state = 'failed', completed_at = ?1, exit_code = ?2, updated_at = ?1
+WHERE id = ?3
+",
+        params![completed_at, exit_code, started.task_run_id],
+    )
+    .map_err(sql_error("fail task run"))?;
+
+    conn.execute(
+        "
+UPDATE tasks
+SET execution_state = 'failed', attention_state = 'needs_action_now', updated_at = ?1
+WHERE id = ?2
+",
+        params![completed_at, started.task_id],
+    )
+    .map_err(sql_error("mark task run failed"))?;
+
+    let mut payload = Map::new();
+    insert_string(&mut payload, "outcome", "failed");
+    insert_string(&mut payload, "taskId", &started.task_id);
+    insert_string(&mut payload, "taskRunId", &started.task_run_id);
+    insert_string(&mut payload, "completedAt", &completed_at);
+    if let Some(exit_code) = exit_code {
+        insert_i64(&mut payload, "exitCode", exit_code);
+    }
+    insert_string(&mut payload, "error", &error);
+    create_event(
+        conn,
+        "run_completed",
+        &completed_at,
+        Some(&started.project_id),
+        Some(&started.task_id),
+        Some(&started.task_run_id),
+        Some(&started.conversation_id),
+        None,
+        None,
+        payload,
+    )?;
+
+    build_start_codex_task_run_result(
+        conn,
+        "failed",
+        started,
+        raw_event_stream_artifact_id,
+        None,
+        exit_code,
+        status_reason,
+        Some(error),
+    )
+}
+
+fn create_raw_event_stream_artifact(
+    conn: &Connection,
+    started: &StartedCodexTaskRun,
+    stdout_jsonl: &str,
+) -> Result<String, String> {
+    create_artifact(
+        conn,
+        Some(&started.task_id),
+        Some(&started.task_run_id),
+        Some(&started.conversation_id),
+        "raw_event_stream",
+        "Raw Codex JSONL",
+        Some(stdout_jsonl),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_raw_event_stream_created_event(
+    conn: &Connection,
+    started: &StartedCodexTaskRun,
+    artifact_id: &str,
+    codex_status: &str,
+    stdout_jsonl_length: usize,
+    exit_code: Option<i64>,
+    signal: Option<&str>,
+    parse_error: Option<&str>,
+) -> Result<String, String> {
+    let occurred_at = now_iso();
+    let mut payload = Map::new();
+    insert_string(&mut payload, "artifactKind", "raw_event_stream");
+    insert_string(&mut payload, "artifactId", artifact_id);
+    insert_string(&mut payload, "codexStatus", codex_status);
+    insert_i64(
+        &mut payload,
+        "stdoutJsonlLength",
+        stdout_jsonl_length as i64,
+    );
+    if let Some(exit_code) = exit_code {
+        insert_i64(&mut payload, "exitCode", exit_code);
+    }
+    if let Some(signal) = signal {
+        insert_string(&mut payload, "signal", signal);
+    }
+    if let Some(parse_error) = parse_error {
+        insert_string(&mut payload, "parseError", parse_error);
+    }
+
+    create_event(
+        conn,
+        "artifact_created",
+        &occurred_at,
+        Some(&started.project_id),
+        Some(&started.task_id),
+        Some(&started.task_run_id),
+        Some(&started.conversation_id),
+        Some(artifact_id),
+        None,
+        payload,
+    )
+}
+
+fn update_conversation_from_runtime_result(
+    conn: &Connection,
+    started: &StartedCodexTaskRun,
+    runtime_result: &CodexRuntimeResult,
+) -> Result<(), String> {
+    conn.execute(
+        "
+UPDATE conversations
+SET external_thread_id = COALESCE(?1, external_thread_id), summary = ?2, updated_at = ?3
+WHERE id = ?4
+",
+        params![
+            runtime_result.summary.thread_id.as_deref(),
+            summarize_conversation(runtime_result),
+            now_iso(),
+            started.conversation_id
+        ],
+    )
+    .map_err(sql_error("update Codex conversation"))?;
+
+    Ok(())
+}
+
+fn summarize_conversation(runtime_result: &CodexRuntimeResult) -> String {
+    let prefix = if runtime_result.status == CodexRuntimeStatus::Completed {
+        "Codex completed".to_string()
+    } else {
+        format!(
+            "Codex {}: {}",
+            runtime_result.status.as_str(),
+            runtime_result.status_reason
+        )
+    };
+
+    match runtime_result.summary.final_agent_message_text.as_deref() {
+        Some(final_message) if !final_message.trim().is_empty() => {
+            truncate(&format!("{prefix}: {}", final_message.trim()), 240)
+        }
+        _ => prefix,
+    }
+}
+
+fn codex_failure_reason(runtime_result: &CodexRuntimeResult) -> String {
+    let stderr = runtime_result.stderr.trim();
+
+    if stderr.is_empty() {
+        return runtime_result.status_reason.clone();
+    }
+
+    truncate(&format!("{}: {stderr}", runtime_result.status_reason), 500)
+}
+
+fn classify_codex_exec_result(
+    process_result: &CodexCommandRunResult,
+    summary: &CodexJsonlSummary,
+) -> (CodexRuntimeStatus, String) {
+    match summary.terminal_status {
+        Some(CodexJsonlTerminalStatus::Error { .. }) => {
+            return (
+                CodexRuntimeStatus::Error,
+                "Codex emitted an error event".to_string(),
+            );
+        }
+        Some(CodexJsonlTerminalStatus::Failed { .. }) => {
+            return (
+                CodexRuntimeStatus::Failed,
+                "Codex emitted a turn.failed event".to_string(),
+            );
+        }
+        _ => {}
+    }
+
+    if let Some(signal) = &process_result.signal {
+        return (
+            CodexRuntimeStatus::Failed,
+            format!("Codex process exited on signal {signal}"),
+        );
+    }
+
+    if process_result.exit_code != Some(0) {
+        return (
+            CodexRuntimeStatus::Failed,
+            match process_result.exit_code {
+                Some(exit_code) => format!("Codex process exited with code {exit_code}"),
+                None => "Codex process exited without an exit code".to_string(),
+            },
+        );
+    }
+
+    if matches!(
+        summary.terminal_status,
+        Some(CodexJsonlTerminalStatus::Completed { .. })
+    ) {
+        return (
+            CodexRuntimeStatus::Completed,
+            "Codex emitted a turn.completed event".to_string(),
+        );
+    }
+
+    (
+        CodexRuntimeStatus::Failed,
+        "Codex output did not include a terminal event".to_string(),
+    )
+}
+
+fn parse_codex_jsonl_summary(jsonl: &str) -> Result<CodexJsonlSummary, String> {
+    let mut summary = CodexJsonlSummary::default();
+    let normalized_jsonl = jsonl.replace("\r\n", "\n").replace('\r', "\n");
+
+    for (index, line) in normalized_jsonl.split('\n').enumerate() {
+        let line_number = index + 1;
+
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let parsed = serde_json::from_str::<Value>(line)
+            .map_err(|error| format!("Line {line_number}: Invalid JSON: {error}"))?;
+        let object = parsed
+            .as_object()
+            .ok_or_else(|| format!("Line {line_number}: Event line must be a JSON object"))?;
+        let event_type = object
+            .get("type")
+            .ok_or_else(|| format!("Line {line_number}: Event type is required"))?
+            .as_str()
+            .ok_or_else(|| format!("Line {line_number}: Event type must be a string"))?;
+
+        match event_type {
+            "thread.started" => {
+                let thread_id = object
+                    .get("thread_id")
+                    .and_then(Value::as_str)
+                    .filter(|thread_id| !thread_id.is_empty())
+                    .ok_or_else(|| {
+                        format!("Line {line_number}: thread.started thread_id must be a string")
+                    })?;
+                summary.thread_id = Some(thread_id.to_string());
+            }
+            "turn.completed" => {
+                summary.terminal_status = Some(CodexJsonlTerminalStatus::Completed { line_number });
+                if let Some(usage) = object.get("usage") {
+                    summary.token_usage = Some(usage.as_object().cloned().ok_or_else(|| {
+                        format!("Line {line_number}: turn.completed usage must be a JSON object")
+                    })?);
+                }
+            }
+            "turn.failed" => {
+                summary.terminal_status = Some(CodexJsonlTerminalStatus::Failed { line_number });
+            }
+            "error" => {
+                summary.terminal_status = Some(CodexJsonlTerminalStatus::Error { line_number });
+            }
+            _ if event_type.starts_with("item.") => {
+                let item = object
+                    .get("item")
+                    .and_then(Value::as_object)
+                    .ok_or_else(|| {
+                        format!("Line {line_number}: {event_type} item must be a JSON object")
+                    })?;
+                let item_type = item
+                    .get("type")
+                    .ok_or_else(|| format!("Line {line_number}: Item type is required"))?
+                    .as_str()
+                    .ok_or_else(|| format!("Line {line_number}: Item type must be a string"))?;
+                *summary
+                    .item_counts_by_type
+                    .entry(item_type.to_string())
+                    .or_insert(0) += 1;
+
+                if event_type == "item.completed" && item_type == "agent_message" {
+                    if let Some(text) = item.get("text") {
+                        summary.final_agent_message_text = Some(
+                            text.as_str()
+                                .ok_or_else(|| {
+                                    format!(
+                                        "Line {line_number}: agent_message text must be a string"
+                                    )
+                                })?
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(summary)
+}
+
+fn build_start_codex_task_run_result(
+    conn: &Connection,
+    status: &str,
+    started: &StartedCodexTaskRun,
+    raw_event_stream_artifact_id: Option<String>,
+    final_response_artifact_id: Option<String>,
+    exit_code: Option<i64>,
+    status_reason: Option<String>,
+    error: Option<String>,
+) -> Result<StartCodexTaskRunCommandResult, String> {
+    let task = select_detail_task(conn, &started.task_id)?
+        .ok_or_else(|| task_detail_not_found(&started.task_id))?;
+    let task_run = select_detail_task_runs(conn, &started.task_id)?
+        .into_iter()
+        .find(|task_run| task_run.id == started.task_run_id)
+        .ok_or_else(|| format!("Task run not found: {}", started.task_run_id))?;
+
+    Ok(StartCodexTaskRunCommandResult {
+        status: status.to_string(),
+        task_id: started.task_id.clone(),
+        task_run_id: started.task_run_id.clone(),
+        conversation_id: Some(started.conversation_id.clone()),
+        raw_event_stream_artifact_id,
+        final_response_artifact_id,
+        exit_code,
+        status_reason,
+        error,
+        task: start_codex_task_run_task_state(task),
+        task_run: start_codex_task_run_task_run_state(task_run),
+    })
+}
+
+fn start_codex_task_run_task_state(task: DetailTask) -> StartCodexTaskRunTaskState {
+    StartCodexTaskRunTaskState {
+        id: task.id,
+        execution_state: task.execution_state,
+        attention_state: task.attention_state,
+        conversation_ids: task.conversation_ids,
+        repo_id: task.repo_id,
+        branch_id: task.branch_id,
+        worktree_id: task.worktree_id,
+        updated_at: task.updated_at,
+    }
+}
+
+fn start_codex_task_run_task_run_state(task_run: DetailTaskRun) -> StartCodexTaskRunTaskRunState {
+    StartCodexTaskRunTaskRunState {
+        id: task_run.id,
+        execution_state: task_run.execution_state,
+        conversation_id: task_run.conversation_id,
+        worktree_id: task_run.worktree_id,
+        started_at: task_run.started_at,
+        completed_at: task_run.completed_at,
+        exit_code: task_run.exit_code,
+        updated_at: task_run.updated_at,
+    }
+}
+
+impl CodexRuntimeStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            CodexRuntimeStatus::Completed => "completed",
+            CodexRuntimeStatus::Failed => "failed",
+            CodexRuntimeStatus::Error => "error",
+        }
+    }
 }
 
 fn create_task(conn: &Connection, input: CreateOpenTaskCommandInput) -> Result<(), String> {
@@ -1449,6 +2347,102 @@ fn is_closed_task(task: &TaskRow) -> bool {
     task.execution_state == "archived" || task.execution_state == "abandoned"
 }
 
+fn next_task_conversation_position(conn: &Connection, task_id: &str) -> Result<i64, String> {
+    conn.query_row(
+        "
+SELECT COALESCE(MAX(position) + 1, 0)
+FROM task_conversation_links
+WHERE task_id = ?1
+",
+        params![task_id],
+        |row| row.get(0),
+    )
+    .map_err(sql_error("read next task conversation position"))
+}
+
+fn create_artifact(
+    conn: &Connection,
+    task_id: Option<&str>,
+    task_run_id: Option<&str>,
+    conversation_id: Option<&str>,
+    kind: &str,
+    title: &str,
+    content: Option<&str>,
+) -> Result<String, String> {
+    let artifact_id = Uuid::new_v4().to_string();
+    let created_at = now_iso();
+
+    conn.execute(
+        "
+INSERT INTO artifacts (
+  id, task_id, task_run_id, conversation_id, kind, title, uri, content, created_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?8)
+",
+        params![
+            artifact_id,
+            task_id,
+            task_run_id,
+            conversation_id,
+            kind,
+            title,
+            content,
+            created_at
+        ],
+    )
+    .map_err(sql_error("create artifact"))?;
+
+    Ok(artifact_id)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_event(
+    conn: &Connection,
+    kind: &str,
+    occurred_at: &str,
+    project_id: Option<&str>,
+    task_id: Option<&str>,
+    task_run_id: Option<&str>,
+    conversation_id: Option<&str>,
+    artifact_id: Option<&str>,
+    validation_run_id: Option<&str>,
+    payload: Map<String, Value>,
+) -> Result<String, String> {
+    let event_id = Uuid::new_v4().to_string();
+    let payload_json = Value::Object(payload).to_string();
+
+    conn.execute(
+        "
+INSERT INTO events (
+  id, kind, occurred_at, project_id, task_id, task_run_id, conversation_id, artifact_id,
+  validation_run_id, payload_json
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+",
+        params![
+            event_id,
+            kind,
+            occurred_at,
+            project_id,
+            task_id,
+            task_run_id,
+            conversation_id,
+            artifact_id,
+            validation_run_id,
+            payload_json
+        ],
+    )
+    .map_err(sql_error("create event"))?;
+
+    Ok(event_id)
+}
+
+fn insert_string(payload: &mut Map<String, Value>, key: &str, value: &str) {
+    payload.insert(key.to_string(), Value::String(value.to_string()));
+}
+
+fn insert_i64(payload: &mut Map<String, Value>, key: &str, value: i64) {
+    payload.insert(key.to_string(), Value::Number(value.into()));
+}
+
 fn validate_non_empty(label: &str, value: &str) -> Result<(), String> {
     if value.trim().is_empty() {
         return Err(format!("{label} is required."));
@@ -1503,6 +2497,18 @@ fn open_task_not_found(task_id: &str) -> String {
 
 fn task_detail_not_found(task_id: &str) -> String {
     format!("Task not found: {task_id}")
+}
+
+fn truncate(value: &str, max_length: usize) -> String {
+    if value.len() <= max_length {
+        return value.to_string();
+    }
+
+    let truncated = value
+        .chars()
+        .take(max_length.saturating_sub(3))
+        .collect::<String>();
+    format!("{truncated}...")
 }
 
 fn sql_error(context: &str) -> impl FnOnce(rusqlite::Error) -> String + '_ {
@@ -1716,8 +2722,30 @@ mod tests {
     use super::*;
     use rusqlite::named_params;
     use serde_json::json;
+    use std::cell::RefCell;
 
     const CREATED_AT: &str = "2026-07-02T10:00:00.000Z";
+
+    struct FakeCodexRunner {
+        result: Result<CodexCommandRunResult, String>,
+        calls: RefCell<Vec<CodexCommandRunInput>>,
+    }
+
+    impl FakeCodexRunner {
+        fn new(result: Result<CodexCommandRunResult, String>) -> Self {
+            Self {
+                result,
+                calls: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl CodexCommandRunner for FakeCodexRunner {
+        fn run(&self, input: CodexCommandRunInput) -> Result<CodexCommandRunResult, String> {
+            self.calls.borrow_mut().push(input);
+            self.result.clone()
+        }
+    }
 
     #[test]
     fn load_dashboard_returns_empty_snapshot_for_new_database() {
@@ -2146,10 +3174,309 @@ mod tests {
         );
     }
 
+    #[test]
+    fn start_codex_task_run_executes_codex_and_persists_completed_lifecycle() {
+        let conn = open_memory_database();
+        seed_project_repo_branch_worktree(&conn);
+        insert_task(
+            &conn,
+            "task-run",
+            "draft",
+            "needs_action_now",
+            Some("repo-1"),
+            Some("branch-1"),
+            Some("worktree-1"),
+        );
+        let stdout = completed_codex_stdout("thread-123", "Done from Codex");
+        let runner = FakeCodexRunner::new(Ok(CodexCommandRunResult {
+            stdout: stdout.clone(),
+            stderr: String::new(),
+            exit_code: Some(0),
+            signal: None,
+        }));
+        let mut env = BTreeMap::new();
+        env.insert("CODEX_PROFILE".to_string(), Some("worker".to_string()));
+        env.insert("REMOVE_ME".to_string(), None);
+
+        let result = start_codex_task_run_with_runner(
+            &conn,
+            StartCodexTaskRunCommandInput {
+                task_id: "task-run".to_string(),
+                prompt: "Finish task".to_string(),
+                cwd: Some("C:/Repos/Codex Orchestrator".to_string()),
+                worktree_id: Some("worktree-1".to_string()),
+                conversation_title: Some("Worker run".to_string()),
+                conversation_summary: Some("Initial summary".to_string()),
+                additional_args: Some(vec!["--sandbox".to_string(), "read-only".to_string()]),
+                env: Some(env.clone()),
+            },
+            &runner,
+        )
+        .expect("start run");
+
+        assert_eq!(result.status, "completed");
+        assert_eq!(result.exit_code, Some(0));
+        assert!(result.raw_event_stream_artifact_id.is_some());
+        assert!(result.final_response_artifact_id.is_some());
+        assert_eq!(result.task.execution_state, "completed");
+        assert_eq!(result.task.attention_state, "needs_review");
+        assert_eq!(
+            result.task.conversation_ids,
+            vec![result.conversation_id.clone().unwrap()]
+        );
+        assert_eq!(result.task_run.execution_state, "completed");
+        assert_eq!(result.task_run.worktree_id.as_deref(), Some("worktree-1"));
+
+        let calls = runner.calls.borrow();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].command, "codex");
+        assert_eq!(
+            calls[0].args,
+            vec!["exec", "--json", "--sandbox", "read-only", "Finish task"]
+        );
+        assert_eq!(calls[0].cwd.as_deref(), Some("C:/Repos/Codex Orchestrator"));
+        assert_eq!(calls[0].env.as_ref(), Some(&env));
+
+        let detail = load_task_run_detail_snapshot(&conn, "task-run").expect("detail");
+        assert_eq!(detail.runs.len(), 1);
+        assert_eq!(
+            detail.runs[0].artifacts.raw_event_streams[0]
+                .content
+                .as_deref(),
+            Some(stdout.as_str())
+        );
+        assert_eq!(
+            detail.runs[0].artifacts.final_responses[0]
+                .content
+                .as_deref(),
+            Some("Done from Codex")
+        );
+        assert_eq!(
+            conversation_metadata(
+                &conn,
+                result.conversation_id.as_deref().expect("conversation id")
+            ),
+            (
+                Some("thread-123".to_string()),
+                Some("Codex completed: Done from Codex".to_string())
+            )
+        );
+        assert_eq!(
+            event_kinds(&conn, "task-run"),
+            vec!["run_started", "artifact_created", "run_completed"]
+        );
+    }
+
+    #[test]
+    fn start_codex_task_run_persists_failed_codex_run_with_raw_stream() {
+        let conn = open_memory_database();
+        seed_project_repo_branch_worktree(&conn);
+        insert_task(
+            &conn,
+            "task-failed-run",
+            "draft",
+            "needs_action_now",
+            Some("repo-1"),
+            Some("branch-1"),
+            Some("worktree-1"),
+        );
+        let stdout = "{\"type\":\"turn.failed\"}\n".to_string();
+        let runner = FakeCodexRunner::new(Ok(CodexCommandRunResult {
+            stdout: stdout.clone(),
+            stderr: "permission denied".to_string(),
+            exit_code: Some(1),
+            signal: None,
+        }));
+
+        let result = start_codex_task_run_with_runner(
+            &conn,
+            start_command_input("task-failed-run"),
+            &runner,
+        )
+        .expect("failed run result");
+
+        assert_eq!(result.status, "failed");
+        assert_eq!(result.exit_code, Some(1));
+        assert_eq!(
+            result.status_reason.as_deref(),
+            Some("Codex emitted a turn.failed event")
+        );
+        assert_eq!(
+            result.error.as_deref(),
+            Some("Codex emitted a turn.failed event: permission denied")
+        );
+        assert!(result.raw_event_stream_artifact_id.is_some());
+        assert!(result.final_response_artifact_id.is_none());
+        assert_eq!(result.task.execution_state, "failed");
+        assert_eq!(result.task.attention_state, "needs_action_now");
+        assert_eq!(result.task_run.execution_state, "failed");
+
+        let detail = load_task_run_detail_snapshot(&conn, "task-failed-run").expect("detail");
+        assert_eq!(
+            detail.runs[0].artifacts.raw_event_streams[0]
+                .content
+                .as_deref(),
+            Some(stdout.as_str())
+        );
+        assert!(detail.runs[0].artifacts.final_responses.is_empty());
+        assert_eq!(
+            event_kinds(&conn, "task-failed-run"),
+            vec!["run_started", "artifact_created", "run_completed"]
+        );
+    }
+
+    #[test]
+    fn start_codex_task_run_marks_failed_when_process_launch_fails() {
+        let conn = open_memory_database();
+        seed_project_repo_branch_worktree(&conn);
+        insert_task(
+            &conn,
+            "task-launch-error",
+            "draft",
+            "needs_action_now",
+            Some("repo-1"),
+            Some("branch-1"),
+            Some("worktree-1"),
+        );
+        let runner = FakeCodexRunner::new(Err("Unable to launch Codex: not found".to_string()));
+
+        let result = start_codex_task_run_with_runner(
+            &conn,
+            start_command_input("task-launch-error"),
+            &runner,
+        )
+        .expect("launch failure result");
+
+        assert_eq!(result.status, "failed");
+        assert_eq!(
+            result.error.as_deref(),
+            Some("Unable to launch Codex: not found")
+        );
+        assert!(result.raw_event_stream_artifact_id.is_none());
+        assert_eq!(artifact_count(&conn, "task-launch-error"), 0);
+        assert_eq!(result.task.execution_state, "failed");
+        assert_eq!(result.task_run.execution_state, "failed");
+        assert_eq!(
+            event_kinds(&conn, "task-launch-error"),
+            vec!["run_started", "run_completed"]
+        );
+    }
+
+    #[test]
+    fn start_codex_task_run_preserves_raw_stream_before_jsonl_parse_failure() {
+        let conn = open_memory_database();
+        seed_project_repo_branch_worktree(&conn);
+        insert_task(
+            &conn,
+            "task-parse-error",
+            "draft",
+            "needs_action_now",
+            Some("repo-1"),
+            Some("branch-1"),
+            Some("worktree-1"),
+        );
+        let runner = FakeCodexRunner::new(Ok(CodexCommandRunResult {
+            stdout: "{not json}\n".to_string(),
+            stderr: String::new(),
+            exit_code: Some(0),
+            signal: None,
+        }));
+
+        let result = start_codex_task_run_with_runner(
+            &conn,
+            start_command_input("task-parse-error"),
+            &runner,
+        )
+        .expect("parse failure result");
+
+        assert_eq!(result.status, "failed");
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(
+            result.status_reason.as_deref(),
+            Some("Codex JSONL parse failed")
+        );
+        assert!(result
+            .error
+            .as_deref()
+            .expect("parse error")
+            .starts_with("Line 1: Invalid JSON"));
+        assert!(result.raw_event_stream_artifact_id.is_some());
+
+        let detail = load_task_run_detail_snapshot(&conn, "task-parse-error").expect("detail");
+        assert_eq!(
+            detail.runs[0].artifacts.raw_event_streams[0]
+                .content
+                .as_deref(),
+            Some("{not json}\n")
+        );
+        assert!(detail.runs[0].artifacts.final_responses.is_empty());
+        assert_eq!(
+            event_kinds(&conn, "task-parse-error"),
+            vec!["run_started", "artifact_created", "run_completed"]
+        );
+    }
+
     fn open_memory_database() -> Connection {
         let conn = Connection::open_in_memory().expect("memory database");
         initialize_database(&conn).expect("initialize database");
         conn
+    }
+
+    fn completed_codex_stdout(thread_id: &str, final_message: &str) -> String {
+        [
+            format!(r#"{{"type":"thread.started","thread_id":"{thread_id}"}}"#),
+            r#"{"type":"turn.started"}"#.to_string(),
+            format!(
+                r#"{{"type":"item.completed","item":{{"type":"agent_message","text":"{final_message}"}}}}"#
+            ),
+            r#"{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":2}}"#
+                .to_string(),
+        ]
+        .join("\n")
+    }
+
+    fn start_command_input(task_id: &str) -> StartCodexTaskRunCommandInput {
+        StartCodexTaskRunCommandInput {
+            task_id: task_id.to_string(),
+            prompt: "Run Codex".to_string(),
+            cwd: Some("C:/Repos/Codex Orchestrator".to_string()),
+            worktree_id: Some("worktree-1".to_string()),
+            conversation_title: None,
+            conversation_summary: None,
+            additional_args: None,
+            env: None,
+        }
+    }
+
+    fn conversation_metadata(
+        conn: &Connection,
+        conversation_id: &str,
+    ) -> (Option<String>, Option<String>) {
+        conn.query_row(
+            "SELECT external_thread_id, summary FROM conversations WHERE id = ?1",
+            params![conversation_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("conversation metadata")
+    }
+
+    fn event_kinds(conn: &Connection, task_id: &str) -> Vec<String> {
+        let mut stmt = conn
+            .prepare("SELECT kind FROM events WHERE task_id = ?1 ORDER BY rowid")
+            .expect("prepare event kinds");
+        stmt.query_map(params![task_id], |row| row.get(0))
+            .expect("query event kinds")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("event kinds")
+    }
+
+    fn artifact_count(conn: &Connection, task_id: &str) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM artifacts WHERE task_id = ?1",
+            params![task_id],
+            |row| row.get(0),
+        )
+        .expect("artifact count")
     }
 
     fn seed_project(conn: &Connection) {
