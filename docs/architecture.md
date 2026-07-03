@@ -84,6 +84,14 @@ about that coordination boundary: it does not open the app database, import conc
 infrastructure, execute child processes directly, choose database paths, collect diffs, run
 validation commands, manage worktrees, or wire UI behavior.
 
+`postRunCaptureComposition.ts` is the first explicit run-plus-capture application boundary. It
+wraps the existing run composition service and, only after a completed Codex run, invokes caller
+configured post-run diff capture and/or one caller configured validation command through the
+existing diff and validation services. It returns the original run result alongside optional
+post-run outcomes, preserving partial failures such as a successful Codex run followed by failed
+diff collection or failed validation. It does not choose default validation commands, schedule
+workflows, supervise processes, open databases, or add UI/Tauri behavior.
+
 `repoRegistryScan.ts` coordinates repo registration/scanning over injected Git and persistence
 boundaries. It calls an injected `GitRepoScanner`, maps the scan through the Git infrastructure
 facts mapper, persists the resulting repo/branch/worktree state through `RepoSyncStore`, and returns
@@ -205,6 +213,7 @@ application service objects needed by upcoming run-control and review slices:
 - task worktree selection service
 - diff collection service
 - validation command runner service
+- post-run capture composition service
 
 The composition keeps database opening, process runners, adapter instances, repo-sync ID providers,
 and clocks injectable so tests and future callers can exercise the boundary without running live
