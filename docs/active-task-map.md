@@ -12,7 +12,12 @@ otherwise resolve it.
 
 ## Active Tasks
 
-- None at this checkpoint.
+- Worker 049: FS-08 Rust/Tauri Start Codex Task Run Backend is pending worktree setup with
+  pending id `local:b7683379-921b-464e-83db-e032e7dabc87`. Target branch:
+  `worker/049-start-codex-task-run-tauri-backend`. Launch base: `607352c`
+  (`Log Worker 048 merge`). Await worktree/thread materialization, then completion report and
+  result log `docs/task-logs/worker-049-start-codex-task-run-tauri-backend.md`; review before
+  merge.
 
 ## Pending Blockers / Follow-Up
 
