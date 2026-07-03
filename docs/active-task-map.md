@@ -17,6 +17,11 @@ otherwise resolve it.
   `worker/039-runtime-command-contract`. Pending worktree id:
   `local:e9f471df-c410-4056-aabb-c8238ea72a6d`. Await completion report and result log
   `docs/task-logs/worker-039-runtime-command-contract.md`; review before merge.
+- Worker 040: Rust Toolchain Setup And Tauri Verification is active in
+  `C:\Users\user\.codex\worktrees\83c3\Codex Orchestrator` on target branch
+  `worker/040-rust-toolchain-setup`. Pending worktree id:
+  `local:c3fdb1cd-62ad-43ee-8ee2-e4a06858ff2b`. Await completion report and result log
+  `docs/task-logs/worker-040-rust-toolchain-setup.md`; review before merge.
 
 ## Pending Blockers / Follow-Up
 

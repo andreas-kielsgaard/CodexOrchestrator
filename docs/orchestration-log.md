@@ -2229,3 +2229,23 @@ orchestration thread`)
   `npm run build`.
 - Report-back instruction: included in the worker prompt, with an extra explicit fallback if
   cross-posting is unavailable.
+
+### Worker 040 Launch: Rust Toolchain Setup And Tauri Verification
+
+- Status: launched in a fresh worktree worker
+- Pending worktree id: `local:c3fdb1cd-62ad-43ee-8ee2-e4a06858ff2b`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\83c3\Codex Orchestrator`
+- Target branch: `worker/040-rust-toolchain-setup`
+- Launch base observed in worktree: `93f9109` (`Log Worker 039 launch`), detached until the worker
+  creates the target branch
+- Goal: install or enable the Rust toolchain for this Windows user/session, make `cargo`, `rustc`,
+  and `rustup` available, and verify the Rust/Tauri build path as far as the environment allows.
+- Explicitly deferred: feature implementation, runtime command contracts, UI work, workflow
+  behavior, destructive worktree cleanup, and broad product code changes unless narrowly required by
+  Rust/Tauri compile verification.
+- Required result log: `docs/task-logs/worker-040-rust-toolchain-setup.md`
+- Required verification when possible: Rust toolchain version checks, Rust/Tauri checks,
+  `git diff --check main...worker/040-rust-toolchain-setup`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build`.
+- Report-back instruction: included in the worker prompt, with an explicit fallback if cross-posting
+  is unavailable.
