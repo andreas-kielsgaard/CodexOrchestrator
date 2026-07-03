@@ -339,7 +339,8 @@ fn update_task(
     let existing = select_task(conn, task_id)?.ok_or_else(|| open_task_not_found(task_id))?;
 
     let title = validate_optional_non_empty("title", input.title)?.unwrap_or(existing.title);
-    let summary = validate_optional_non_empty("summary", input.summary)?.unwrap_or(existing.summary);
+    let summary =
+        validate_optional_non_empty("summary", input.summary)?.unwrap_or(existing.summary);
     let execution_state = match input.execution_state {
         Some(value) => validate_value("executionState", &value, &EXECUTION_STATES)?.to_string(),
         None => existing.execution_state,
@@ -364,7 +365,15 @@ UPDATE tasks SET
   updated_at = ?6
 WHERE id = ?7
 ",
-        params![title, summary, execution_state, attention_state, priority, now_iso(), task_id],
+        params![
+            title,
+            summary,
+            execution_state,
+            attention_state,
+            priority,
+            now_iso(),
+            task_id
+        ],
     )
     .map_err(sql_error("update open task"))?;
 
@@ -617,7 +626,10 @@ fn validate_non_empty(label: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_optional_non_empty(label: &str, value: Option<String>) -> Result<Option<String>, String> {
+fn validate_optional_non_empty(
+    label: &str,
+    value: Option<String>,
+) -> Result<Option<String>, String> {
     match value {
         Some(value) => {
             validate_non_empty(label, &value)?;
@@ -966,7 +978,10 @@ mod tests {
         assert_eq!(snapshot.total_open_tasks, 1);
         assert_eq!(task.repo.as_deref(), Some("Codex Orchestrator"));
         assert_eq!(task.branch.as_deref(), Some("worker/test"));
-        assert_eq!(task.worktree_path.as_deref(), Some("C:/Repos/Codex Orchestrator"));
+        assert_eq!(
+            task.worktree_path.as_deref(),
+            Some("C:/Repos/Codex Orchestrator")
+        );
     }
 
     #[test]

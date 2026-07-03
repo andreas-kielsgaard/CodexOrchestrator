@@ -69,8 +69,9 @@ Important gaps:
 - No repo/worktree UI that injects the local Git-backed runtime composition into user flows.
 - No task/run detail view.
 - No runtime triggers for post-run diff/validation artifacts.
-- The Rust/Tauri backend is not compile-verified locally until Rust/Cargo are installed or on
-  `PATH`; `npm run build:tauri` currently fails at `cargo metadata`.
+- The Rust/Tauri backend is not fully compile-verified locally. Rust/Cargo are installed and
+  `cargo metadata` succeeds, but `cargo test`, `cargo build`, and `npm run build:tauri` currently
+  fail because the MSVC linker `link.exe` is unavailable.
 
 ## Guiding Decisions
 
@@ -94,7 +95,7 @@ Current planned sequence:
 2. Wire run controls and task/run detail UI to the composed run service.
 3. Add runtime triggers for diff and validation capture.
 4. Add the review surface that combines final response, diff, validation, and next action.
-5. Install Rust/Cargo and verify the Tauri build path.
+5. Install Visual Studio Build Tools with the Visual C++ linker and verify the Tauri build path.
 
 ## Later Roadmap
 
