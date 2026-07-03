@@ -2656,7 +2656,9 @@ disposal`)
 ### Worker 050 Launch: Live Post-Run Capture
 
 - Status: launched in a fresh worktree worker.
+- Worker thread: `019f29b3-0313-78e1-9037-d2972c714006`
 - Pending worktree id: `local:52021cd1-ef20-4cad-9e0e-9ee77062a0e0`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\94b3\Codex Orchestrator`
 - Target branch: `worker/050-live-post-run-capture`
 - Launch base: `57b46fa` (`Log Worker 049 merge`)
 - Goal: extend the live Rust/Tauri `start_codex_task_run` path with explicit caller-configured

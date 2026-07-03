@@ -12,10 +12,12 @@ otherwise resolve it.
 
 ## Active Tasks
 
-- Worker 050: Live Post-Run Capture is pending worktree setup with pending id
-  `local:52021cd1-ef20-4cad-9e0e-9ee77062a0e0`. Target branch:
-  `worker/050-live-post-run-capture`. Launch base: `57b46fa` (`Log Worker 049 merge`). Await
-  worktree/thread materialization, then completion report and result log
+- Worker 050: Live Post-Run Capture is active in
+  `C:\Users\user\.codex\worktrees\94b3\Codex Orchestrator` on target branch
+  `worker/050-live-post-run-capture`. Worker thread:
+  `019f29b3-0313-78e1-9037-d2972c714006`. Pending worktree id:
+  `local:52021cd1-ef20-4cad-9e0e-9ee77062a0e0`. Launch base: `57b46fa`
+  (`Log Worker 049 merge`). Await completion report and result log
   `docs/task-logs/worker-050-live-post-run-capture.md`; review before merge.
 
 ## Pending Blockers / Follow-Up
