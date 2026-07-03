@@ -38,6 +38,9 @@ Already merged:
 - Node-side validation command runtime adapter over `child_process.spawn`.
 - Node-only local Git runtime adapters for repo scanning, worktree creation, and tracked-file diff
   collection.
+- Node-only local runtime service composition that opens the app SQLite database once, reuses the
+  store bundle, and wires the merged application services to concrete local Git, Codex, and
+  validation adapters.
 
 Known blockers / remaining runtime wiring:
 
@@ -60,9 +63,10 @@ Known blockers / remaining runtime wiring:
 
 Critical path:
 
-1. Runtime composition for repo/worktree selection and post-run diff/validation capture.
+1. Add a browser/Tauri-safe command surface over the Node/local runtime composition.
 2. FS-08 and FS-09: expose run start and run review in the UI.
-3. FS-12: add review-grade validation and live diff capture to the review flow.
+3. Add runtime triggers for post-run diff/validation capture through the composed services.
+4. FS-12: add review-grade validation and live diff capture to the review flow.
 
 Repo/worktree path:
 
@@ -89,8 +93,8 @@ Review path:
 
 Safe immediately:
 
-- Repo/worktree runtime composition can now use the merged local Git adapters.
-- Diff and validation runtime wiring can now use the merged local Git and validation adapters.
+- Run-control and task detail slices can build against the composed local runtime boundary.
+- Diff and validation trigger slices can call the composed local Git and validation services.
 - FS-13 can run anytime.
 
 Should wait:
@@ -101,11 +105,11 @@ Should wait:
 
 ## Recommended Worker Sequencing
 
-1. Add runtime composition for repo/worktree selection and post-run diff/validation capture using
-   the merged local adapters.
+1. Add a browser/Tauri-safe command surface over the local runtime composition.
 2. Launch FS-08 and FS-09 after persisted dashboard runtime behavior is real enough for UI flows.
-3. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
-4. Install Rust/Cargo and verify the merged Tauri backend with Rust tests and `npm run build:tauri`.
+3. Add composed post-run diff and validation triggers.
+4. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
+5. Install Rust/Cargo and verify the merged Tauri backend with Rust tests and `npm run build:tauri`.
 
 ## Orchestration Notes
 
