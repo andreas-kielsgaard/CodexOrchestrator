@@ -12,23 +12,24 @@ otherwise resolve it.
 
 ## Active Tasks
 
-- Worker 043: MSVC Build Tools / Linker Setup is active as multi-agent
-  `019f286c-687f-7792-8254-3b889835520a`. It was redirected away from repo edits after the shared
-  checkout briefly switched to `worker/043-msvc-build-tools-setup`; await report on whether
-  `link.exe` can be installed or enabled. Result log is only expected if repo edits become necessary.
-- Worker 044: FS-09 Task/Run Detail Read Model Boundary is active in
-  `C:\Users\user\.codex\worktrees\514e\Codex Orchestrator` on target branch
-  `worker/044-task-run-detail-read-model`. Pending worktree id:
-  `local:a2881629-2235-48a9-bfa5-126983969850`. Await completion report and result log
-  `docs/task-logs/worker-044-task-run-detail-read-model.md`; review before merge.
+- Worker 045: MSVC Build Tools / Linker Setup is active as projectless background thread
+  `019f28ba-be64-7b11-92c1-b7f4bf3d564a`. Await report on whether `link.exe` can be installed or
+  enabled, and whether `cargo test` / `npm run build:tauri` can progress.
+- Worker 046: FS-09 Task/Run Detail UI Shell is active in
+  `C:\Users\user\.codex\worktrees\071c\Codex Orchestrator` on target branch
+  `worker/046-task-run-detail-ui-shell`. Pending worktree id:
+  `local:40c6b702-0071-447a-812b-181d32c3adde`. Await completion report and result log
+  `docs/task-logs/worker-046-task-run-detail-ui-shell.md`; review before merge.
 
 ## Pending Blockers / Follow-Up
 
 - Rust/Cargo are installed under `C:\Users\user\.cargo\bin`, and `cargo metadata` succeeds when
   that path is prepended in the current Codex shell. Full Rust/Tauri compilation remains blocked
-  because the MSVC linker `link.exe` is unavailable; Worker 043 is investigating setup.
+  because the MSVC linker `link.exe` is unavailable; Worker 045 is investigating setup.
 - The merged FS-08 run controls call the browser-safe `start_codex_task_run` facade, but live
   WebView execution still needs a Rust/Tauri backend command registration.
+- The merged task/run detail read model has no UI yet; Worker 046 is building the UI shell and
+  browser-safe detail facade.
 
 ## Recently Archived
 
@@ -54,6 +55,9 @@ otherwise resolve it.
   `docs/task-logs/worker-041-orchestration-review.md`.
 - Worker 042: reviewed, merged, verified, and Git-cleaned. See
   `docs/task-logs/worker-042-run-controls-ui-shell.md`.
+- Worker 043: errored before completion; stale branch had no useful work and was deleted.
+- Worker 044: reviewed, merged, verified, and Git-cleaned. See
+  `docs/task-logs/worker-044-task-run-detail-read-model.md`.
 
 ## Blockers
 
@@ -87,3 +91,4 @@ launched:
 - Worker 040: `C:\Users\user\.codex\worktrees\83c3\Codex Orchestrator`
 - Worker 041: `C:\Users\user\.codex\worktrees\b18b\Codex Orchestrator`
 - Worker 042: `C:\Users\user\.codex\worktrees\9ca8\Codex Orchestrator`
+- Worker 044: `C:\Users\user\.codex\worktrees\514e\Codex Orchestrator`

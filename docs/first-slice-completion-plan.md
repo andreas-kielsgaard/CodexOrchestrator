@@ -45,6 +45,8 @@ Already merged:
   a Node-only local command handler over the composed run service.
 - Open Tasks run-control UI shell that injects the runtime command client, sends task-scoped prompts
   with `cwd` from the task worktree path, and shows running/completed/failed feedback.
+- Task/run detail read model that composes task anchors, run history, grouped artifacts, validation
+  links, and task events over existing store boundaries.
 
 Known blockers / remaining runtime wiring:
 
@@ -61,7 +63,7 @@ Known blockers / remaining runtime wiring:
 | ----- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
 | FS-05 | Persisted Open Tasks dashboard | Application client, React boundary, and Rust SQLite command backend are merged; Rust compile/Tauri build verification remains blocked on MSVC Build Tools | Merged database opener              |
 | FS-08 | Run controls in UI             | UI shell is merged; live WebView execution still needs the Rust/Tauri `start_codex_task_run` backend command                                              | Merged task worktree service, FS-05 |
-| FS-09 | Task/run detail view           | Detail read model is next; then show task anchors, run history, final response, raw JSONL artifact summary, and event timeline                            | FS-05, merged run composition       |
+| FS-09 | Task/run detail view           | Detail read model is merged; UI shell is active to show task anchors, run history, artifacts, validation summaries, and event timeline                    | FS-05, merged run composition       |
 | FS-10 | Diff collector                 | Service boundary and local Git diff provider are merged; runtime trigger still needed for live post-run capture                                           | Merged task worktree service        |
 | FS-11 | Validation command runner      | Service boundary and Node runtime adapter are merged; runtime trigger still needed for live validation capture                                            | Merged task worktree service        |
 | FS-12 | Review surface MVP             | Show final response, diff state, validation status, and next action for completed/failed runs                                                             | FS-09, FS-10, FS-11                 |
@@ -73,7 +75,7 @@ Critical path:
 
 1. Register a Rust/Tauri backend for `start_codex_task_run` so the merged UI controls can execute
    live Codex runs.
-2. FS-09: add task/run detail data and UI for run review.
+2. FS-09: add task/run detail UI for run review.
 3. Add runtime triggers for post-run diff/validation capture through the composed services.
 4. FS-12: add review-grade validation and live diff capture to the review flow.
 
@@ -115,9 +117,9 @@ Should wait:
 
 ## Recommended Worker Sequencing
 
-1. Build the FS-09 task/run detail read model.
+1. Add the FS-09 task/run detail UI shell.
 2. Register the `start_codex_task_run` backend command behind the existing TypeScript facade.
-3. Add the task/run detail UI and composed post-run diff/validation triggers.
+3. Add composed post-run diff/validation triggers.
 4. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
 5. Install Visual Studio Build Tools with the Visual C++ linker and re-run Rust tests plus
    `npm run build:tauri`.

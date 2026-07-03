@@ -2426,3 +2426,65 @@ disposal`)
   read-model tests, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build`.
 - Report-back instruction: included in the worker prompt, with an explicit fallback if cross-posting
   is unavailable.
+
+### Worker 044 Review And Merge: FS-09 Task/Run Detail Read Model Boundary
+
+- Status: reviewed, merged, verified, logged, and Git-cleaned.
+- Worker commit: `1056186ced76227df3869a19c26f13e69078aeb2`
+  (`Add task run detail read model`)
+- Merge commit: `5626e96` (`Merge Worker 044 task run detail read model`)
+- Result log: `docs/task-logs/worker-044-task-run-detail-read-model.md`
+- Accepted decision: add `src/application/taskRunDetailClient.ts` as a read-only store-backed
+  detail client over Open Tasks, task runs, artifacts, events, and validation runs.
+- Accepted decision: expose task/project/repo/branch/worktree anchors, review-ordered run history,
+  grouped artifacts, validation output links, unlinked task-level records, and a chronological event
+  timeline without adding UI, Rust/Tauri backend behavior, live runtime execution, or new tables.
+- Accepted decision: wire the client into `LocalRuntimeServices` for later UI/review slices.
+- Verification before merge: `git diff --check`, focused detail and local-runtime composition
+  tests, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed in the
+  worker worktree. Full tests passed: 46 files / 272 tests.
+- Verification after merge: `git diff --check HEAD^..HEAD`, `npm run lint`, focused detail and
+  local-runtime composition tests, `npm run build`, `npm run format:check`, and full
+  `npm run test` passed on main. Full tests passed: 46 files / 272 tests.
+- Cleanup: `src-tauri/gen/` was added to `.gitignore` after Tauri generated schema files caused
+  `npm run format:check` to scan untracked generated JSON. `git worktree remove` unregistered the
+  Worker 044 worktree, but Windows denied physical folder deletion at
+  `C:\Users\user\.codex\worktrees\514e\Codex Orchestrator`; the merged branch
+  `worker/044-task-run-detail-read-model` was deleted and the locked physical folder was left in
+  place.
+
+### Worker 043 Closure And Worker 045 Relaunch: MSVC Build Tools / Linker Setup
+
+- Worker 043 status: errored before completion with a stream disconnect. It had left only stale
+  branch `worker/043-msvc-build-tools-setup` at `4653d30`; no useful repo changes were present.
+- Cleanup: Worker 043's stale branch was deleted after confirming `link.exe` was still unavailable.
+- Worker 045 status: relaunched as a projectless background thread to keep machine setup out of the
+  repo checkout.
+- Worker 045 thread: `019f28ba-be64-7b11-92c1-b7f4bf3d564a`
+- Goal: install or enable the Visual C++/MSVC linker required for Rust MSVC builds so
+  `cargo test` and `npm run build:tauri` can progress past `link.exe` not found.
+- Explicitly deferred: repo edits, branch creation, commits, unrelated Visual Studio workloads, and
+  any elevated/interactive install step that cannot be safely completed by the worker.
+- Required verification when possible: `Get-Command link.exe`, Rust version checks,
+  `cargo metadata`, `cargo fmt --check`, `cargo test`, and `npm run build:tauri`.
+- Report-back instruction: included in the worker prompt, with an explicit fallback if cross-posting
+  is unavailable.
+
+### Worker 046 Launch: FS-09 Task/Run Detail UI Shell
+
+- Status: launched in a fresh worktree worker.
+- Pending worktree id: `local:40c6b702-0071-447a-812b-181d32c3adde`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\071c\Codex Orchestrator`
+- Target branch: `worker/046-task-run-detail-ui-shell`
+- Launch base observed in worktree: `5626e96` (`Merge Worker 044 task run detail read model`),
+  detached until the worker creates the target branch.
+- Goal: add a task/run detail UI shell over the merged detail read model shape, with injected fake
+  clients in tests and a browser-safe Tauri facade for future detail loading.
+- Explicitly deferred: Rust/Tauri backend commands, `start_codex_task_run` backend registration,
+  live Codex/Git/validation execution, workflow-engine behavior, diff/validation triggers,
+  repo/worktree selection UI, and process supervision.
+- Required result log: `docs/task-logs/worker-046-task-run-detail-ui-shell.md`
+- Required verification: `git diff --check main...worker/046-task-run-detail-ui-shell`, focused
+  App/UI tests, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build`.
+- Report-back instruction: included in the worker prompt, with an explicit fallback if cross-posting
+  is unavailable.

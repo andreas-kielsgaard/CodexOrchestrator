@@ -64,13 +64,15 @@ Already built on `main`:
   validation adapters.
 - Browser-safe runtime command contract and Tauri `invoke` client for `start_codex_task_run`, plus
   Open Tasks run-control UI that calls the injected runtime client for tasks with worktree paths.
+- Application-layer task/run detail read model over existing stores for task anchors, run history,
+  grouped artifacts, validation links, and event timeline.
 
 Important gaps:
 
 - No Rust/Tauri backend command for `start_codex_task_run`, so WebView run controls cannot yet
   execute live Codex runs.
 - No repo/worktree UI that injects the local Git-backed runtime composition into user flows.
-- No task/run detail view.
+- No task/run detail UI wired to the detail read model.
 - No runtime triggers for post-run diff/validation artifacts.
 - The Rust/Tauri backend is not fully compile-verified locally. Rust/Cargo are installed and
   `cargo metadata` succeeds, but `cargo test`, `cargo build`, and `npm run build:tauri` currently
@@ -95,7 +97,7 @@ events, diff, and validation result in the app.
 Current planned sequence:
 
 1. Add the Rust/Tauri backend command for `start_codex_task_run`.
-2. Add task/run detail data and UI so completed runs can be inspected.
+2. Add task/run detail UI so completed runs can be inspected.
 3. Add runtime triggers for diff and validation capture.
 4. Add the review surface that combines final response, diff, validation, and next action.
 5. Install Visual Studio Build Tools with the Visual C++ linker and verify the Tauri build path.
