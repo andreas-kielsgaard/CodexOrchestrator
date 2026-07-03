@@ -17,8 +17,10 @@ Current limitation: the app can open a local runtime database file through a Nod
 infrastructure boundary, compose the TypeScript application services over that opened store bundle,
 and inject concrete local Git, Codex, and validation adapters for Node-side callers. The Open Tasks
 UI now consumes an injected async dashboard client. The default Tauri WebView path has a narrow
-Rust-side SQLite backend for Open Tasks dashboard load/create/update/archive commands, while
-run-control and review UI surfaces still need to call the composed runtime boundary.
+Rust-side SQLite backend for Open Tasks dashboard load/create/update/archive commands. A TypeScript
+runtime command contract and browser-safe `start_codex_task_run` client now exist for starting one
+Codex task run, but the Rust/Tauri command registration for that runtime command remains a later
+slice.
 
 ## Boundary Rules
 
@@ -110,6 +112,11 @@ that return a dashboard snapshot for UI callers. The client is verified against 
 and the local SQLite app store bundle, but it does not open SQLite files or import Node-only modules
 itself.
 
+`runtimeCommandClient.ts` is the browser-safe runtime command contract for starting one Codex task
+run. It defines serializable input and compact output shapes for task/run IDs, conversation and
+artifact IDs, terminal metadata, and updated task/run state. It does not import local runtime
+composition, execute Codex, open stores, or own React behavior.
+
 `validationCommandRunner.ts` coordinates one configured validation command over injected task,
 validation-run, artifact, event, and command-runtime boundaries. It preflights the task and
 worktree/cwd, creates a running `ValidationRun`, executes the injected runtime, stores a
@@ -195,6 +202,12 @@ and clocks injectable so tests and future callers can exercise the boundary with
 Git, Codex, or validation commands. It also exposes `close`/`dispose` by forwarding the opened
 database lifecycle. Browser/React entrypoints must not import this module directly.
 
+`localRuntimeCommands.ts` is also Node-only. It adapts the browser-safe runtime command contract to
+the composed local runtime services by calling `composeCodexTaskRun` through
+`composition.services.runCompositionService`, then maps the rich composition result to compact
+serializable command output. It does not register Tauri/Rust commands or import React/browser
+entrypoints.
+
 ### SQLite
 
 Location: `src/infrastructure/sqlite/`
@@ -237,6 +250,10 @@ existing `TaskDashboardSnapshot` shape. Its dashboard query duplicates only the 
 needed for the command response; unlike the earlier TypeScript task read store, it returns all
 persisted projects so the dashboard can create the first task for a real project.
 
+The TypeScript Tauri bridge also exposes a browser-safe runtime command client for
+`start_codex_task_run`. That client is intentionally only a typed `invoke` facade today; no Rust
+runtime command implementation is registered in this slice.
+
 ## UI Layer
 
 Location: `src/app/`, `src/main.tsx`, `src/styles.css`
@@ -251,8 +268,8 @@ boundary.
 
 The first usable runtime loop still needs:
 
-1. A browser/Tauri-safe command surface that calls the Node/local runtime composition without
-   importing Node-only modules into React entrypoints.
+1. Rust/Tauri registration that backs `start_codex_task_run` with the local runtime command handler
+   without importing Node-only modules into React entrypoints.
 2. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
 3. Runtime triggers that call the composed diff and validation services after a Codex run completes.
 4. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.

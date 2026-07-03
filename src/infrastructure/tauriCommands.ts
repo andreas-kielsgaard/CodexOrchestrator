@@ -6,6 +6,13 @@ import type {
   TaskDashboardSnapshot,
   UpdateTaskDashboardTaskInput,
 } from '../application/taskDashboardClient';
+import type {
+  RuntimeCommandClient,
+  StartCodexTaskRunCommandInput,
+  StartCodexTaskRunCommandResult,
+} from '../application/runtimeCommandClient';
+
+type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 
 export interface AppMetadata {
   appName: string;
@@ -37,3 +44,17 @@ export const tauriTaskDashboardClient: TaskDashboardClient = {
     return invoke<TaskDashboardSnapshot>('archive_open_task', { taskId });
   },
 };
+
+export function createTauriRuntimeCommandClient(
+  invokeCommand: TauriInvoke = invoke,
+): RuntimeCommandClient {
+  return {
+    startCodexTaskRun(
+      input: StartCodexTaskRunCommandInput,
+    ): Promise<StartCodexTaskRunCommandResult> {
+      return invokeCommand<StartCodexTaskRunCommandResult>('start_codex_task_run', { input });
+    },
+  };
+}
+
+export const tauriRuntimeCommandClient = createTauriRuntimeCommandClient();

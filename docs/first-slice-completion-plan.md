@@ -41,9 +41,13 @@ Already merged:
 - Node-only local runtime service composition that opens the app SQLite database once, reuses the
   store bundle, and wires the merged application services to concrete local Git, Codex, and
   validation adapters.
+- Browser-safe runtime command contract and Tauri `invoke` client for `start_codex_task_run`, plus
+  a Node-only local command handler over the composed run service.
 
 Known blockers / remaining runtime wiring:
 
+- The `start_codex_task_run` TypeScript command facade exists, but no Rust/Tauri backend command is
+  registered yet.
 - Rust/Cargo are unavailable on `PATH`, so the Rust/Tauri backend is not compile-verified locally
   and `npm run build:tauri` fails at `cargo metadata`.
 
@@ -63,7 +67,8 @@ Known blockers / remaining runtime wiring:
 
 Critical path:
 
-1. Add a browser/Tauri-safe command surface over the Node/local runtime composition.
+1. Register a Rust/Tauri backend for `start_codex_task_run` that reaches the local runtime command
+   handler.
 2. FS-08 and FS-09: expose run start and run review in the UI.
 3. Add runtime triggers for post-run diff/validation capture through the composed services.
 4. FS-12: add review-grade validation and live diff capture to the review flow.
@@ -105,7 +110,7 @@ Should wait:
 
 ## Recommended Worker Sequencing
 
-1. Add a browser/Tauri-safe command surface over the local runtime composition.
+1. Register the `start_codex_task_run` backend command behind the existing TypeScript facade.
 2. Launch FS-08 and FS-09 after persisted dashboard runtime behavior is real enough for UI flows.
 3. Add composed post-run diff and validation triggers.
 4. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
