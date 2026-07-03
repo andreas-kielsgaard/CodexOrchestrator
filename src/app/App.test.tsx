@@ -13,6 +13,10 @@ import type {
   StartCodexTaskRunCommandInput,
   StartCodexTaskRunCommandResult,
 } from '../application/runtimeCommandClient';
+import type {
+  TaskRunDetailClient,
+  TaskRunDetailSnapshot,
+} from '../application/taskRunDetailClient';
 
 const now = '2026-07-02T12:00:00.000Z';
 const workerPath = 'C:/Repos/Codex Orchestrator Worktrees/042';
@@ -21,8 +25,15 @@ describe('App open task dashboard', () => {
   it('loads tasks through the injected client and supports create, edit, state change, and archive', async () => {
     const client = new FakeTaskDashboardClient();
     const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
 
-    render(<App taskDashboardClient={client} runtimeCommandClient={runtimeClient} />);
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
 
     expect(await screen.findByText('Existing task')).toBeInTheDocument();
 
@@ -71,8 +82,15 @@ describe('App open task dashboard', () => {
   it('preserves existing task priority when editing title and summary', async () => {
     const client = new FakeTaskDashboardClient();
     const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
 
-    render(<App taskDashboardClient={client} runtimeCommandClient={runtimeClient} />);
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
 
     expect(await screen.findByText('Existing task')).toBeInTheDocument();
 
@@ -99,8 +117,15 @@ describe('App open task dashboard', () => {
       archiveTask: async () => emptySnapshot(),
     };
     const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
 
-    render(<App taskDashboardClient={client} runtimeCommandClient={runtimeClient} />);
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
 
     expect(
       await screen.findByText('Persisted task dashboard backend is not connected.'),
@@ -111,8 +136,15 @@ describe('App open task dashboard', () => {
   it('starts a Codex run through the injected runtime client and reloads the dashboard', async () => {
     const client = new FakeTaskDashboardClient();
     const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
 
-    render(<App taskDashboardClient={client} runtimeCommandClient={runtimeClient} />);
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
 
     expect(await screen.findByText('Existing task')).toBeInTheDocument();
 
@@ -138,8 +170,15 @@ describe('App open task dashboard', () => {
   it('shows failed Codex run feedback from the injected runtime result', async () => {
     const client = new FakeTaskDashboardClient();
     const runtimeClient = new FakeRuntimeCommandClient(createFailedRunResult);
+    const detailClient = new FakeTaskRunDetailClient();
 
-    render(<App taskDashboardClient={client} runtimeCommandClient={runtimeClient} />);
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
 
     expect(await screen.findByText('Existing task')).toBeInTheDocument();
 
@@ -160,8 +199,15 @@ describe('App open task dashboard', () => {
   it('keeps run controls unavailable for tasks without a worktree path', async () => {
     const client = new FakeTaskDashboardClient({ withWorktree: false });
     const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
 
-    render(<App taskDashboardClient={client} runtimeCommandClient={runtimeClient} />);
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
 
     expect(await screen.findByText('Existing task')).toBeInTheDocument();
 
@@ -172,6 +218,166 @@ describe('App open task dashboard', () => {
     fireEvent.click(screen.getByLabelText('Start Codex run for Existing task'));
 
     expect(runtimeClient.inputs).toEqual([]);
+  }, 10_000);
+
+  it('opens task run detail with anchors, artifacts, validation, and events', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Open detail for Existing task'));
+
+    expect(await screen.findByText('worker/042-run-controls-ui-shell')).toBeInTheDocument();
+    expect(screen.getByText('run-detail-1')).toBeInTheDocument();
+    expect(screen.getByText('Final response')).toBeInTheDocument();
+    expect(screen.getByText('npm test')).toBeInTheDocument();
+    expect(screen.getAllByText('run_completed').length).toBeGreaterThan(0);
+    expect(detailClient.inputs).toEqual(['task-1']);
+  }, 10_000);
+
+  it('shows detail load errors without clearing the dashboard', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient(undefined, {
+      taskId: 'task-1',
+      error: new Error('Detail backend is not connected.'),
+    });
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Open detail for Existing task'));
+
+    expect(await screen.findByText('Detail backend is not connected.')).toBeInTheDocument();
+    expect(screen.getByText('Existing task')).toBeInTheDocument();
+  }, 10_000);
+
+  it('loads detail for another selected task', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient({
+      'task-1': createTaskDetailSnapshot('task-1', 'Existing task', { runId: 'run-detail-1' }),
+      'task-2': createTaskDetailSnapshot('task-2', 'Second task', { runId: 'run-detail-2' }),
+    });
+
+    await client.createTask({
+      projectId: 'project-1',
+      title: 'Second task',
+      summary: 'Another persisted task.',
+      executionState: 'draft',
+      attentionState: 'needs_action_now',
+      priority: 'normal',
+    });
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
+
+    expect(await screen.findByText('Second task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Open detail for Existing task'));
+    expect(await screen.findByText('run-detail-1')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Open detail for Second task'));
+    expect(await screen.findByText('run-detail-2')).toBeInTheDocument();
+    expect(detailClient.inputs).toEqual(['task-1', 'task-2']);
+  }, 10_000);
+
+  it('does not reopen an older task detail when a pending run finishes', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new DeferredRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient({
+      'task-1': createTaskDetailSnapshot('task-1', 'Existing task', { runId: 'run-detail-1' }),
+      'task-2': createTaskDetailSnapshot('task-2', 'Second task', { runId: 'run-detail-2' }),
+    });
+
+    await client.createTask({
+      projectId: 'project-1',
+      title: 'Second task',
+      summary: 'Another persisted task.',
+      executionState: 'draft',
+      attentionState: 'needs_action_now',
+      priority: 'normal',
+    });
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
+
+    expect(await screen.findByText('Second task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Open detail for Existing task'));
+    expect(await screen.findByText('run-detail-1')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Codex prompt for Existing task'), {
+      target: { value: 'Run while reviewing.' },
+    });
+    fireEvent.click(screen.getByLabelText('Start Codex run for Existing task'));
+
+    await waitFor(() => {
+      expect(runtimeClient.inputs).toHaveLength(1);
+    });
+
+    fireEvent.click(screen.getByLabelText('Open detail for Second task'));
+    expect(await screen.findByText('run-detail-2')).toBeInTheDocument();
+
+    runtimeClient.resolve();
+
+    await waitFor(() => {
+      expect(client.loadCount).toBe(2);
+    });
+    expect(detailClient.inputs).toEqual(['task-1', 'task-2']);
+    expect(screen.getByText('run-detail-2')).toBeInTheDocument();
+    expect(screen.queryByText('run-detail-1')).not.toBeInTheDocument();
+  }, 10_000);
+
+  it('renders an empty no-run detail state', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient({
+      'task-1': createTaskDetailSnapshot('task-1', 'Existing task', { includeRun: false }),
+    });
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Open detail for Existing task'));
+
+    expect(await screen.findByText('No runs recorded.')).toBeInTheDocument();
+    expect(screen.getAllByText('No artifacts recorded.').length).toBeGreaterThan(0);
+    expect(screen.getByText('No events recorded.')).toBeInTheDocument();
   }, 10_000);
 });
 
@@ -341,6 +547,263 @@ class FakeRuntimeCommandClient implements RuntimeCommandClient {
 
     return this.resultFactory(input);
   }
+}
+
+class DeferredRuntimeCommandClient implements RuntimeCommandClient {
+  inputs: StartCodexTaskRunCommandInput[] = [];
+  private resolvePending: ((result: StartCodexTaskRunCommandResult) => void) | undefined;
+
+  async startCodexTaskRun(
+    input: StartCodexTaskRunCommandInput,
+  ): Promise<StartCodexTaskRunCommandResult> {
+    this.inputs.push(input);
+
+    return new Promise((resolve) => {
+      this.resolvePending = resolve;
+    });
+  }
+
+  resolve(): void {
+    const input = this.inputs[this.inputs.length - 1];
+
+    if (input === undefined || this.resolvePending === undefined) {
+      throw new Error('No pending runtime command to resolve.');
+    }
+
+    this.resolvePending(createCompletedRunResult(input));
+    this.resolvePending = undefined;
+  }
+}
+
+interface FakeTaskRunDetailClientFailure {
+  taskId: EntityId;
+  error: Error;
+}
+
+class FakeTaskRunDetailClient implements TaskRunDetailClient {
+  inputs: EntityId[] = [];
+  private readonly snapshots: Record<EntityId, TaskRunDetailSnapshot>;
+
+  constructor(
+    snapshots: Record<EntityId, TaskRunDetailSnapshot> = {
+      'task-1': createTaskDetailSnapshot('task-1', 'Existing task'),
+    },
+    private readonly failure?: FakeTaskRunDetailClientFailure,
+  ) {
+    this.snapshots = snapshots;
+  }
+
+  async loadTaskRunDetail(taskId: EntityId): Promise<TaskRunDetailSnapshot> {
+    this.inputs.push(taskId);
+
+    if (this.failure?.taskId === taskId) {
+      throw this.failure.error;
+    }
+
+    const snapshot = this.snapshots[taskId];
+
+    if (!snapshot) {
+      throw new Error(`Missing detail for ${taskId}`);
+    }
+
+    return snapshot;
+  }
+}
+
+interface CreateTaskDetailSnapshotOptions {
+  runId?: EntityId;
+  includeRun?: boolean;
+}
+
+function createTaskDetailSnapshot(
+  taskId: EntityId,
+  title: string,
+  options: CreateTaskDetailSnapshotOptions = {},
+): TaskRunDetailSnapshot {
+  const includeRun = options.includeRun ?? true;
+  const runId = options.runId ?? 'run-detail-1';
+
+  return {
+    task: {
+      record: {
+        id: taskId,
+        projectId: 'project-1',
+        repoId: 'repo-1',
+        branchId: 'branch-1',
+        worktreeId: 'worktree-1',
+        conversationIds: [],
+        title,
+        summary: 'Detail summary.',
+        executionState: includeRun ? 'completed' : 'draft',
+        attentionState: includeRun ? 'needs_review' : 'needs_action_now',
+        priority: 'high',
+        createdAt: now,
+        updatedAt: now,
+      },
+      project: {
+        id: 'project-1',
+        name: 'Codex Orchestrator',
+        createdAt: now,
+        updatedAt: now,
+      },
+      repo: {
+        id: 'repo-1',
+        projectId: 'project-1',
+        name: 'Codex Orchestrator',
+        rootPath: 'C:/Repos/Codex Orchestrator',
+        createdAt: now,
+        updatedAt: now,
+      },
+      branch: {
+        id: 'branch-1',
+        repoId: 'repo-1',
+        name: 'worker/042-run-controls-ui-shell',
+        createdAt: now,
+        updatedAt: now,
+      },
+      worktree: {
+        id: 'worktree-1',
+        repoId: 'repo-1',
+        branchId: 'branch-1',
+        path: workerPath,
+        isMain: false,
+        isDirty: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    },
+    runs: includeRun
+      ? [
+          {
+            run: {
+              id: runId,
+              taskId,
+              conversationId: 'conversation-1',
+              worktreeId: 'worktree-1',
+              executionState: 'completed',
+              startedAt: '2026-07-02T12:05:00.000Z',
+              completedAt: '2026-07-02T12:06:00.000Z',
+              exitCode: 0,
+              createdAt: '2026-07-02T12:04:00.000Z',
+              updatedAt: '2026-07-02T12:06:00.000Z',
+            },
+            artifacts: {
+              finalResponses: [
+                {
+                  id: 'artifact-final',
+                  taskId,
+                  taskRunId: runId,
+                  kind: 'final_response',
+                  title: 'Final response',
+                  content: 'Implemented the detail shell.',
+                  createdAt: '2026-07-02T12:06:00.000Z',
+                },
+              ],
+              rawEventStreams: [
+                {
+                  id: 'artifact-raw',
+                  taskId,
+                  taskRunId: runId,
+                  kind: 'raw_event_stream',
+                  title: 'Raw JSONL',
+                  content: '{"type":"turn.completed"}',
+                  createdAt: '2026-07-02T12:05:30.000Z',
+                },
+              ],
+              diffs: [],
+              validationLogs: [
+                {
+                  id: 'artifact-validation',
+                  taskId,
+                  taskRunId: runId,
+                  kind: 'validation_log',
+                  title: 'Validation log',
+                  content: 'all green',
+                  createdAt: '2026-07-02T12:07:00.000Z',
+                },
+              ],
+              notes: [],
+              screenshots: [],
+              handoffs: [],
+              summaries: [],
+              other: [],
+            },
+            validationRuns: [
+              {
+                run: {
+                  id: 'validation-1',
+                  taskId,
+                  taskRunId: runId,
+                  command: 'npm test',
+                  status: 'passed',
+                  startedAt: '2026-07-02T12:06:30.000Z',
+                  completedAt: '2026-07-02T12:07:00.000Z',
+                  exitCode: 0,
+                  outputArtifactId: 'artifact-validation',
+                  createdAt: '2026-07-02T12:06:30.000Z',
+                  updatedAt: '2026-07-02T12:07:00.000Z',
+                },
+                outputArtifact: {
+                  id: 'artifact-validation',
+                  taskId,
+                  taskRunId: runId,
+                  kind: 'validation_log',
+                  title: 'Validation log',
+                  content: 'all green',
+                  createdAt: '2026-07-02T12:07:00.000Z',
+                },
+              },
+            ],
+            events: [
+              {
+                id: 'event-run-completed',
+                taskId,
+                taskRunId: runId,
+                kind: 'run_completed',
+                occurredAt: '2026-07-02T12:06:00.000Z',
+                payload: { exitCode: 0 },
+              },
+            ],
+          },
+        ]
+      : [],
+    unlinkedArtifacts: emptyArtifactGroups(),
+    unlinkedValidationRuns: [],
+    eventTimeline: includeRun
+      ? [
+          {
+            id: 'event-run-started',
+            taskId,
+            taskRunId: runId,
+            kind: 'run_started',
+            occurredAt: '2026-07-02T12:05:00.000Z',
+            payload: { cwd: workerPath },
+          },
+          {
+            id: 'event-run-completed',
+            taskId,
+            taskRunId: runId,
+            kind: 'run_completed',
+            occurredAt: '2026-07-02T12:06:00.000Z',
+            payload: { exitCode: 0 },
+          },
+        ]
+      : [],
+  };
+}
+
+function emptyArtifactGroups(): TaskRunDetailSnapshot['unlinkedArtifacts'] {
+  return {
+    finalResponses: [],
+    rawEventStreams: [],
+    diffs: [],
+    validationLogs: [],
+    notes: [],
+    screenshots: [],
+    handoffs: [],
+    summaries: [],
+    other: [],
+  };
 }
 
 function createCompletedRunResult(

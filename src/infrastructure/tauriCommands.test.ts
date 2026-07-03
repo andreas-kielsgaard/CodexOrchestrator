@@ -1,5 +1,6 @@
 import type { StartCodexTaskRunCommandResult } from '../application/runtimeCommandClient';
-import { createTauriRuntimeCommandClient } from './tauriCommands';
+import type { TaskRunDetailSnapshot } from '../application/taskRunDetailClient';
+import { createTauriRuntimeCommandClient, createTauriTaskRunDetailClient } from './tauriCommands';
 
 describe('Tauri runtime command client', () => {
   it('invokes the start Codex task run command with the serialized input payload', async () => {
@@ -59,6 +60,58 @@ describe('Tauri runtime command client', () => {
             env: { CODEX_PROFILE: 'test' },
           },
         },
+      },
+    ]);
+  });
+});
+
+describe('Tauri task run detail client', () => {
+  it('invokes the load task run detail command with the task id payload', async () => {
+    const expectedResult: TaskRunDetailSnapshot = {
+      task: {
+        record: {
+          id: 'task-1',
+          projectId: 'project-1',
+          conversationIds: [],
+          title: 'Task',
+          summary: 'Summary',
+          executionState: 'draft',
+          attentionState: 'needs_action_now',
+          priority: 'normal',
+          createdAt: '2026-07-03T10:00:00.000Z',
+          updatedAt: '2026-07-03T10:00:00.000Z',
+        },
+      },
+      runs: [],
+      unlinkedArtifacts: {
+        finalResponses: [],
+        rawEventStreams: [],
+        diffs: [],
+        validationLogs: [],
+        notes: [],
+        screenshots: [],
+        handoffs: [],
+        summaries: [],
+        other: [],
+      },
+      unlinkedValidationRuns: [],
+      eventTimeline: [],
+    };
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const client = createTauriTaskRunDetailClient(
+      async <T>(command: string, args?: Record<string, unknown>) => {
+        calls.push({ command, args });
+        return expectedResult as T;
+      },
+    );
+
+    const result = await client.loadTaskRunDetail('task-1');
+
+    expect(result).toBe(expectedResult);
+    expect(calls).toEqual([
+      {
+        command: 'load_task_run_detail',
+        args: { taskId: 'task-1' },
       },
     ]);
   });

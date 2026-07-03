@@ -16,12 +16,11 @@ which boundaries should stay intact.
 Current limitation: the app can open a local runtime database file through a Node-facing
 infrastructure boundary, compose the TypeScript application services over that opened store bundle,
 and inject concrete local Git, Codex, and validation adapters for Node-side callers. The Open Tasks
-UI now consumes injected async dashboard and runtime command clients. The default Tauri WebView path
-has a narrow Rust-side SQLite backend for Open Tasks dashboard load/create/update/archive commands.
-A TypeScript runtime command contract and browser-safe `start_codex_task_run` client now exist for
-starting one Codex task run, and the UI has compact run controls that call the injected runtime
-client when a task exposes a worktree path. The Rust/Tauri command registration for that runtime
-command remains a later slice.
+UI now consumes injected async dashboard, task/run detail, and runtime command clients. The default
+Tauri WebView path has a narrow Rust-side SQLite backend for Open Tasks dashboard
+load/create/update/archive commands. TypeScript browser-safe facades exist for
+`start_codex_task_run` and future `load_task_run_detail` commands, but their Rust/Tauri command
+registrations remain later slices.
 
 ## Boundary Rules
 
@@ -260,22 +259,25 @@ existing `TaskDashboardSnapshot` shape. Its dashboard query duplicates only the 
 needed for the command response; unlike the earlier TypeScript task read store, it returns all
 persisted projects so the dashboard can create the first task for a real project.
 
-The TypeScript Tauri bridge also exposes a browser-safe runtime command client for
-`start_codex_task_run`. That client is intentionally only a typed `invoke` facade today; no Rust
-runtime command implementation is registered in this slice.
+The TypeScript Tauri bridge also exposes browser-safe clients for `start_codex_task_run` and
+`load_task_run_detail`. Those clients are intentionally only typed `invoke` facades today; no Rust
+runtime or task/run detail command implementation is registered in this slice.
 
 ## UI Layer
 
 Location: `src/app/`, `src/main.tsx`, `src/styles.css`
 
-The Open Tasks UI consumes injected `TaskDashboardClient` and `RuntimeCommandClient` instances,
-loads asynchronously, and provides visible create, edit, state-change, archive, and per-task Codex
-run controls. Run controls use the projected task `worktreePath` as the command `cwd`, stay
-unavailable when no worktree is linked, show compact running/completed/failed feedback, and reload
-the dashboard after a run attempt so persisted state can be reflected once the backend command
-exists. The default `src/main.tsx` wiring injects the Tauri command clients, keeping React/browser
-code away from SQLite and Node-only modules. Tests exercise the UI against fake clients; durable
-behavior is covered at the application client/store boundary.
+The Open Tasks UI consumes injected `TaskDashboardClient`, `TaskRunDetailClient`, and
+`RuntimeCommandClient` instances, loads asynchronously, and provides visible create, edit,
+state-change, archive, per-task Codex run controls, and a read-only task/run detail inspector. The
+detail shell opens from a task card and renders task anchors, run history, grouped artifact
+previews/counts, validation summaries, and event timelines from the Worker 044 read model shape. Run
+controls use the projected task `worktreePath` as the command `cwd`, stay unavailable when no
+worktree is linked, show compact running/completed/failed feedback, and reload the dashboard plus
+the currently open detail after a run attempt so persisted state can be reflected once backend
+commands exist. The default `src/main.tsx` wiring injects the Tauri command clients, keeping
+React/browser code away from SQLite and Node-only modules. Tests exercise the UI against fake
+clients; durable behavior is covered at the application client/store boundary.
 
 ## Pending Runtime Architecture
 
@@ -283,9 +285,12 @@ The first usable runtime loop still needs:
 
 1. Rust/Tauri registration that backs `start_codex_task_run` with the local runtime command handler
    without importing Node-only modules into React entrypoints.
-2. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
-3. Runtime triggers that call the composed diff and validation services after a Codex run completes.
-4. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.
+2. Rust/Tauri registration that backs `load_task_run_detail` with the existing task/run detail read
+   model.
+3. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
+4. Runtime triggers that call the composed diff and validation services after a Codex run completes.
+5. Review-grade UI that promotes final response, diff, validation, and next action into a focused
+   decision surface.
 
 ## Testing And Verification
 
