@@ -2173,3 +2173,38 @@ orchestration thread`)
   focused tests for the new module, `npm run lint`, `npm run format:check`, `npm run test`, and
   `npm run build`.
 - Report-back instruction: included in the worker prompt.
+
+### Worker 038 Review And Merge: Local Runtime Service Composition
+
+- Status: reviewed, corrected, merged, verified, logged, and Git-cleaned
+- Worker commit: `c812621` (`Add local runtime service composition`)
+- Orchestrator correction commit on worker branch: `eee0609` (`Bind local runtime composition
+  disposal`)
+- Merge commit: `c80990d` (`Merge Worker 038 local runtime service composition`)
+- Result log: `docs/task-logs/worker-038-local-runtime-service-composition.md`
+- Recovery note: Worker 038 finished without reporting back to the orchestration thread. The
+  completion state was reconstructed from the clean worker branch, worker commit, and result log.
+- Accepted decision: the new Node-only `src/infrastructure/localRuntimeComposition.ts` opens one
+  local app SQLite database, reuses the resulting store bundle, constructs concrete local Git,
+  Codex, and validation runtime adapters, and exposes the store-backed dashboard client, lifecycle
+  recorder, run composition, repo registry scan, task worktree selection, diff collection, and
+  validation command runner service objects.
+- Accepted decision: runtime dependencies remain injectable for tests and future callers; React and
+  browser entrypoints do not import the Node-only composition module.
+- Orchestrator correction: wrapped returned `close`/`dispose` methods so injected database handles
+  that depend on method receiver state are called through the original database object.
+- Orchestrator verification before merge: `git diff --check`, focused local runtime composition
+  tests, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed in the
+  worker worktree. Full tests passed: 43 files / 261 tests, with expected `node:sqlite`
+  experimental warnings.
+- Verification after merge: `git diff --check HEAD^..HEAD`, `npm run lint`,
+  `npm run format:check`, `npm run test`, and `npm run build` passed on main. Full tests passed:
+  43 files / 261 tests, with expected `node:sqlite` experimental warnings.
+- Drift check: the slice did not add React UI controls, task/run detail UI, review surface UI,
+  Tauri/Rust commands, Rust/Cargo environment work, repo registry list/remove behavior, branch
+  naming policy, cleanup policy, workflow-engine behavior, or live Git/Codex process execution in
+  tests.
+- Cleanup: `git worktree remove` unregistered the Worker 038 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\c063\Codex Orchestrator`; the merged branch
+  `worker/038-local-runtime-service-composition` was deleted and the locked physical folder was
+  left in place.

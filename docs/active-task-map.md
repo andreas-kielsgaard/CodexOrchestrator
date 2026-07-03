@@ -1,6 +1,6 @@
 # Active Task Map
 
-Updated: 2026-07-02
+Updated: 2026-07-03
 
 Purpose: fast recovery and orchestration continuity. This file tracks only work that still needs
 attention: blockers, active workers, complete-but-unreviewed branches, pending corrections, and
@@ -12,11 +12,7 @@ otherwise resolve it.
 
 ## Active Tasks
 
-- Worker 038: Local Runtime Service Composition is active in
-  `C:\Users\user\.codex\worktrees\c063\Codex Orchestrator` on target branch
-  `worker/038-local-runtime-service-composition`. Pending worktree id:
-  `local:00c6240a-28aa-4435-86d2-deb96e553627`. Await completion report and result log
-  `docs/task-logs/worker-038-local-runtime-service-composition.md`; review before merge.
+- None.
 
 ## Pending Blockers / Follow-Up
 
@@ -37,6 +33,8 @@ otherwise resolve it.
   `docs/task-logs/worker-036-validation-command-runtime-adapter.md`.
 - Worker 037: reviewed, merged, verified within environment limits, and Git-cleaned. See
   `docs/task-logs/worker-037-open-tasks-tauri-sqlite-backend.md`.
+- Worker 038: finished without reporting back, then was reviewed, corrected, merged, verified, and
+  Git-cleaned. See `docs/task-logs/worker-038-local-runtime-service-composition.md`.
 
 ## Blockers
 
@@ -65,3 +63,4 @@ launched:
 - Worker 035: `C:\Users\user\.codex\worktrees\46d5\Codex Orchestrator`
 - Worker 036: `C:\Users\user\.codex\worktrees\478e\Codex Orchestrator`
 - Worker 037: `C:\Users\user\.codex\worktrees\35fe\Codex Orchestrator`
+- Worker 038: `C:\Users\user\.codex\worktrees\c063\Codex Orchestrator`
