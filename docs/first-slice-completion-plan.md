@@ -47,27 +47,27 @@ Already merged:
   with `cwd` from the task worktree path, and shows running/completed/failed feedback.
 - Task/run detail read model that composes task anchors, run history, grouped artifacts, validation
   links, and task events over existing store boundaries.
+- Rust/Cargo/MSVC native-build path verified through the Visual Studio developer environment;
+  `npm run build:tauri` produces Windows bundles.
 
 Known blockers / remaining runtime wiring:
 
 - The `start_codex_task_run` TypeScript command facade exists, but no Rust/Tauri backend command is
   registered yet.
-- Rust/Cargo are installed for the Windows user and `cargo metadata` succeeds. Full Rust/Tauri
-  compilation remains environment-blocked because the MSVC linker `link.exe` is unavailable; install
-  Visual Studio Build Tools with the Visual C++ option before re-running `cargo test`,
-  `cargo build`, or `npm run build:tauri`.
+- `link.exe` is available through the Visual Studio developer environment, not the default shell.
+  Run native Rust/Tauri verification through `vcvars64.bat`.
 
 ## Remaining Tasks
 
-| ID    | Task                           | Output                                                                                                                                                    | Depends On                          |
-| ----- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| FS-05 | Persisted Open Tasks dashboard | Application client, React boundary, and Rust SQLite command backend are merged; Rust compile/Tauri build verification remains blocked on MSVC Build Tools | Merged database opener              |
-| FS-08 | Run controls in UI             | UI shell is merged; live WebView execution still needs the Rust/Tauri `start_codex_task_run` backend command                                              | Merged task worktree service, FS-05 |
-| FS-09 | Task/run detail view           | Detail read model is merged; UI shell is active to show task anchors, run history, artifacts, validation summaries, and event timeline                    | FS-05, merged run composition       |
-| FS-10 | Diff collector                 | Service boundary and local Git diff provider are merged; runtime trigger still needed for live post-run capture                                           | Merged task worktree service        |
-| FS-11 | Validation command runner      | Service boundary and Node runtime adapter are merged; runtime trigger still needed for live validation capture                                            | Merged task worktree service        |
-| FS-12 | Review surface MVP             | Show final response, diff state, validation status, and next action for completed/failed runs                                                             | FS-09, FS-10, FS-11                 |
-| FS-13 | Tauri build environment        | Rust/Cargo available; Visual Studio Build Tools with `link.exe` still needed before `npm run build:tauri` can pass                                        | External environment                |
+| ID    | Task                           | Output                                                                                                                                 | Depends On                          |
+| ----- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| FS-05 | Persisted Open Tasks dashboard | Application client, React boundary, Rust SQLite command backend, and Rust/Tauri build verification are merged/cleared                  | Merged database opener              |
+| FS-08 | Run controls in UI             | UI shell is merged; live WebView execution still needs the Rust/Tauri `start_codex_task_run` backend command                           | Merged task worktree service, FS-05 |
+| FS-09 | Task/run detail view           | Detail read model is merged; UI shell is active to show task anchors, run history, artifacts, validation summaries, and event timeline | FS-05, merged run composition       |
+| FS-10 | Diff collector                 | Service boundary and local Git diff provider are merged; runtime trigger still needed for live post-run capture                        | Merged task worktree service        |
+| FS-11 | Validation command runner      | Service boundary and Node runtime adapter are merged; runtime trigger still needed for live validation capture                         | Merged task worktree service        |
+| FS-12 | Review surface MVP             | Show final response, diff state, validation status, and next action for completed/failed runs                                          | FS-09, FS-10, FS-11                 |
+| FS-13 | Tauri build environment        | Cleared: Rust/Cargo/MSVC build path works through the Visual Studio developer environment, and `npm run build:tauri` passes            | External environment                |
 
 ## Dependency Shape
 
@@ -90,8 +90,7 @@ Dashboard path:
 
 1. FS-05 has moved the dashboard off direct seed-data imports and added Rust-side durable command
    handling.
-2. Visual Studio Build Tools with the Visual C++ linker are still needed before the Tauri backend
-   can be compiled locally.
+2. Rust/Tauri compile and bundle verification works through the Visual Studio developer environment.
 3. FS-08 and FS-09 add runtime-specific controls and detail.
 
 Review path:
@@ -107,7 +106,6 @@ Safe immediately:
 
 - Task detail data/UI slices can build against the merged stores and runtime records.
 - Diff and validation trigger slices can call the composed local Git and validation services.
-- FS-13 can run anytime.
 
 Should wait:
 
@@ -121,8 +119,6 @@ Should wait:
 2. Register the `start_codex_task_run` backend command behind the existing TypeScript facade.
 3. Add composed post-run diff/validation triggers.
 4. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
-5. Install Visual Studio Build Tools with the Visual C++ linker and re-run Rust tests plus
-   `npm run build:tauri`.
 
 ## Orchestration Notes
 

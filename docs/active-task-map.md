@@ -12,9 +12,6 @@ otherwise resolve it.
 
 ## Active Tasks
 
-- Worker 045: MSVC Build Tools / Linker Setup is active as projectless background thread
-  `019f28ba-be64-7b11-92c1-b7f4bf3d564a`. Await report on whether `link.exe` can be installed or
-  enabled, and whether `cargo test` / `npm run build:tauri` can progress.
 - Worker 046: FS-09 Task/Run Detail UI Shell is active in
   `C:\Users\user\.codex\worktrees\071c\Codex Orchestrator` on target branch
   `worker/046-task-run-detail-ui-shell`. Pending worktree id:
@@ -23,9 +20,9 @@ otherwise resolve it.
 
 ## Pending Blockers / Follow-Up
 
-- Rust/Cargo are installed under `C:\Users\user\.cargo\bin`, and `cargo metadata` succeeds when
-  that path is prepended in the current Codex shell. Full Rust/Tauri compilation remains blocked
-  because the MSVC linker `link.exe` is unavailable; Worker 045 is investigating setup.
+- Rust/Cargo/MSVC build verification is cleared when commands are run through the Visual Studio
+  developer environment. Plain shells still do not resolve `link.exe`; use `vcvars64.bat` for native
+  Rust/Tauri commands.
 - The merged FS-08 run controls call the browser-safe `start_codex_task_run` facade, but live
   WebView execution still needs a Rust/Tauri backend command registration.
 - The merged task/run detail read model has no UI yet; Worker 046 is building the UI shell and
@@ -58,6 +55,8 @@ otherwise resolve it.
 - Worker 043: errored before completion; stale branch had no useful work and was deleted.
 - Worker 044: reviewed, merged, verified, and Git-cleaned. See
   `docs/task-logs/worker-044-task-run-detail-read-model.md`.
+- Worker 045: completed, verified, and logged. See
+  `docs/task-logs/worker-045-msvc-build-tools-setup.md`.
 
 ## Blockers
 

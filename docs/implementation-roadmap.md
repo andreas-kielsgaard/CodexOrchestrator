@@ -66,6 +66,8 @@ Already built on `main`:
   Open Tasks run-control UI that calls the injected runtime client for tasks with worktree paths.
 - Application-layer task/run detail read model over existing stores for task anchors, run history,
   grouped artifacts, validation links, and event timeline.
+- Rust/Cargo/MSVC Tauri build path verified locally through the Visual Studio developer environment;
+  `npm run build:tauri` produces Windows MSI and NSIS bundles.
 
 Important gaps:
 
@@ -74,9 +76,8 @@ Important gaps:
 - No repo/worktree UI that injects the local Git-backed runtime composition into user flows.
 - No task/run detail UI wired to the detail read model.
 - No runtime triggers for post-run diff/validation artifacts.
-- The Rust/Tauri backend is not fully compile-verified locally. Rust/Cargo are installed and
-  `cargo metadata` succeeds, but `cargo test`, `cargo build`, and `npm run build:tauri` currently
-  fail because the MSVC linker `link.exe` is unavailable.
+- The default shell still does not resolve `link.exe`; run Rust/Tauri native-build verification
+  after loading the Visual Studio developer environment.
 
 ## Guiding Decisions
 
@@ -100,7 +101,6 @@ Current planned sequence:
 2. Add task/run detail UI so completed runs can be inspected.
 3. Add runtime triggers for diff and validation capture.
 4. Add the review surface that combines final response, diff, validation, and next action.
-5. Install Visual Studio Build Tools with the Visual C++ linker and verify the Tauri build path.
 
 ## Later Roadmap
 

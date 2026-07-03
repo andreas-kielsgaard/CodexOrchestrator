@@ -508,10 +508,13 @@ ORDER BY updated_at DESC, id
         )
         .map_err(sql_error("prepare task dashboard query"))?;
 
-    stmt.query_map([], map_task_row)
+    let rows = stmt
+        .query_map([], map_task_row)
         .map_err(sql_error("query task dashboard rows"))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(sql_error("read task dashboard rows"))
+        .map_err(sql_error("read task dashboard rows"))?;
+
+    Ok(rows)
 }
 
 fn select_projects(conn: &Connection) -> Result<Vec<ProjectRow>, String> {
@@ -519,15 +522,18 @@ fn select_projects(conn: &Connection) -> Result<Vec<ProjectRow>, String> {
         .prepare("SELECT id, name FROM projects ORDER BY id")
         .map_err(sql_error("prepare projects query"))?;
 
-    stmt.query_map([], |row| {
-        Ok(ProjectRow {
-            id: row.get(0)?,
-            name: row.get(1)?,
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(ProjectRow {
+                id: row.get(0)?,
+                name: row.get(1)?,
+            })
         })
-    })
-    .map_err(sql_error("query project rows"))?
-    .collect::<Result<Vec<_>, _>>()
-    .map_err(sql_error("read project rows"))
+        .map_err(sql_error("query project rows"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sql_error("read project rows"))?;
+
+    Ok(rows)
 }
 
 fn select_repos(conn: &Connection) -> Result<Vec<RepoRow>, String> {
@@ -535,15 +541,18 @@ fn select_repos(conn: &Connection) -> Result<Vec<RepoRow>, String> {
         .prepare("SELECT id, name FROM repos ORDER BY id")
         .map_err(sql_error("prepare repos query"))?;
 
-    stmt.query_map([], |row| {
-        Ok(RepoRow {
-            id: row.get(0)?,
-            name: row.get(1)?,
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(RepoRow {
+                id: row.get(0)?,
+                name: row.get(1)?,
+            })
         })
-    })
-    .map_err(sql_error("query repo rows"))?
-    .collect::<Result<Vec<_>, _>>()
-    .map_err(sql_error("read repo rows"))
+        .map_err(sql_error("query repo rows"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sql_error("read repo rows"))?;
+
+    Ok(rows)
 }
 
 fn select_branches(conn: &Connection) -> Result<Vec<BranchRow>, String> {
@@ -551,15 +560,18 @@ fn select_branches(conn: &Connection) -> Result<Vec<BranchRow>, String> {
         .prepare("SELECT id, name FROM branches ORDER BY id")
         .map_err(sql_error("prepare branches query"))?;
 
-    stmt.query_map([], |row| {
-        Ok(BranchRow {
-            id: row.get(0)?,
-            name: row.get(1)?,
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(BranchRow {
+                id: row.get(0)?,
+                name: row.get(1)?,
+            })
         })
-    })
-    .map_err(sql_error("query branch rows"))?
-    .collect::<Result<Vec<_>, _>>()
-    .map_err(sql_error("read branch rows"))
+        .map_err(sql_error("query branch rows"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sql_error("read branch rows"))?;
+
+    Ok(rows)
 }
 
 fn select_worktrees(conn: &Connection) -> Result<Vec<WorktreeRow>, String> {
@@ -567,15 +579,18 @@ fn select_worktrees(conn: &Connection) -> Result<Vec<WorktreeRow>, String> {
         .prepare("SELECT id, path FROM worktrees ORDER BY id")
         .map_err(sql_error("prepare worktrees query"))?;
 
-    stmt.query_map([], |row| {
-        Ok(WorktreeRow {
-            id: row.get(0)?,
-            path: row.get(1)?,
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(WorktreeRow {
+                id: row.get(0)?,
+                path: row.get(1)?,
+            })
         })
-    })
-    .map_err(sql_error("query worktree rows"))?
-    .collect::<Result<Vec<_>, _>>()
-    .map_err(sql_error("read worktree rows"))
+        .map_err(sql_error("query worktree rows"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sql_error("read worktree rows"))?;
+
+    Ok(rows)
 }
 
 fn map_task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRow> {
@@ -973,7 +988,12 @@ mod tests {
         );
 
         let snapshot = load_dashboard_snapshot(&conn).expect("snapshot");
-        let task = &snapshot.groups[3].tasks[0];
+        let working_group = snapshot
+            .groups
+            .iter()
+            .find(|group| group.id == "working")
+            .expect("working group");
+        let task = &working_group.tasks[0];
 
         assert_eq!(snapshot.total_open_tasks, 1);
         assert_eq!(task.repo.as_deref(), Some("Codex Orchestrator"));
