@@ -55,34 +55,34 @@ Already merged:
 - Browser-safe `load_task_run_detail` Tauri facade plus Rust/Tauri SQLite backend for the detail UI.
 - Caller-configured post-run capture composition service that can run Codex, then optionally collect
   a diff and run one validation command through existing services while preserving partial failures.
+- Browser-safe `postRunCapture` command input plus live Rust/Tauri `start_codex_task_run` wiring
+  that, after a completed Codex run, can optionally store a tracked diff artifact and/or run one
+  validation command with a linked validation log artifact and validation events.
 - Rust/Cargo/MSVC native-build path verified through the Visual Studio developer environment;
   `npm run build:tauri` produces Windows bundles.
 
 Known blockers / remaining runtime wiring:
 
-- Post-run capture exists for Node/local runtime callers, but the live WebView run command path has
-  not yet been wired to use it.
 - `link.exe` is available through the Visual Studio developer environment, not the default shell.
   Run native Rust/Tauri verification through `vcvars64.bat`.
 
 ## Remaining Tasks
 
-| ID    | Task                           | Output                                                                                                                       | Depends On                          |
-| ----- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| FS-05 | Persisted Open Tasks dashboard | Application client, React boundary, Rust SQLite command backend, and Rust/Tauri build verification are merged/cleared        | Merged database opener              |
-| FS-08 | Run controls in UI             | UI shell, Rust/Tauri start-run backend, and native build verification are merged/cleared                                     | Merged task worktree service, FS-05 |
-| FS-09 | Task/run detail view           | Detail read model, UI shell, Tauri facade, and Rust/Tauri backend are merged/cleared                                         | FS-05, merged run composition       |
-| FS-10 | Diff collector                 | Service boundary, local Git diff provider, and post-run composition trigger are merged; live WebView run-path wiring remains | Merged task worktree service        |
-| FS-11 | Validation command runner      | Service boundary, Node runtime adapter, and post-run composition trigger are merged; live WebView run-path wiring remains    | Merged task worktree service        |
-| FS-12 | Review surface MVP             | Show final response, diff state, validation status, and next action for completed/failed runs                                | FS-09, FS-10, FS-11                 |
-| FS-13 | Tauri build environment        | Cleared: Rust/Cargo/MSVC build path works through the Visual Studio developer environment, and `npm run build:tauri` passes  | External environment                |
+| ID    | Task                           | Output                                                                                                                        | Depends On                          |
+| ----- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| FS-05 | Persisted Open Tasks dashboard | Application client, React boundary, Rust SQLite command backend, and Rust/Tauri build verification are merged/cleared         | Merged database opener              |
+| FS-08 | Run controls in UI             | UI shell, Rust/Tauri start-run backend, and native build verification are merged/cleared                                      | Merged task worktree service, FS-05 |
+| FS-09 | Task/run detail view           | Detail read model, UI shell, Tauri facade, and Rust/Tauri backend are merged/cleared                                          | FS-05, merged run composition       |
+| FS-10 | Diff collector                 | Service boundary, local Git diff provider, post-run composition trigger, and explicit live WebView run-path wiring are merged | Merged task worktree service        |
+| FS-11 | Validation command runner      | Service boundary, Node runtime adapter, post-run composition trigger, and explicit live WebView run-path wiring are merged    | Merged task worktree service        |
+| FS-12 | Review surface MVP             | Show final response, diff state, validation status, and next action for completed/failed runs                                 | FS-09, FS-10, FS-11                 |
+| FS-13 | Tauri build environment        | Cleared: Rust/Cargo/MSVC build path works through the Visual Studio developer environment, and `npm run build:tauri` passes   | External environment                |
 
 ## Dependency Shape
 
 Critical path:
 
-1. Wire the live run command path to explicit post-run diff/validation capture.
-2. FS-12: add review-grade final-response, diff, validation, and next-action flow.
+1. FS-12: add review-grade final-response, diff, validation, and next-action flow.
 
 Repo/worktree path:
 
@@ -118,8 +118,7 @@ Should wait:
 
 ## Recommended Worker Sequencing
 
-1. Wire explicit post-run diff/validation capture into the live run path.
-2. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
+1. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
 
 ## Orchestration Notes
 
