@@ -2652,3 +2652,22 @@ disposal`)
 - Cleanup: `git worktree remove` unregistered the Worker 049 worktree, but Windows denied physical
   folder deletion at `C:\Users\user\.codex\worktrees\2b63\Codex Orchestrator`; the merged branch
   was deleted and the locked physical folder was left in place.
+
+### Worker 050 Launch: Live Post-Run Capture
+
+- Status: launched in a fresh worktree worker.
+- Pending worktree id: `local:52021cd1-ef20-4cad-9e0e-9ee77062a0e0`
+- Target branch: `worker/050-live-post-run-capture`
+- Launch base: `57b46fa` (`Log Worker 049 merge`)
+- Goal: extend the live Rust/Tauri `start_codex_task_run` path with explicit caller-configured
+  post-run diff and validation capture after a completed Codex run.
+- Explicitly deferred: visible React UI controls, repo/worktree selection UI, repo registry
+  list/remove UI, workflow-engine behavior, scheduling, process supervision, PR helpers, cleanup
+  policy, branch naming policy, and Codex credential management.
+- Required result log: `docs/task-logs/worker-050-live-post-run-capture.md`
+- Required verification: `git diff --check main...worker/050-live-post-run-capture`, focused Rust
+  capture tests, `cargo fmt --check`, `cargo test`, `npm run lint`, `npm run format:check`,
+  `npm run test`, `npm run build`, and `npm run build:tauri` through the Visual Studio developer
+  environment if feasible.
+- Report-back instruction: included in the worker prompt, with an explicit fallback if
+  cross-thread reporting is unavailable.
