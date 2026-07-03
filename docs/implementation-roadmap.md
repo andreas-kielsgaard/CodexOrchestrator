@@ -66,6 +66,9 @@ Already built on `main`:
   Open Tasks run-control UI that calls the injected runtime client for tasks with worktree paths.
 - Application-layer task/run detail read model over existing stores for task anchors, run history,
   grouped artifacts, validation links, and event timeline.
+- Open Tasks task/run detail UI shell plus browser-safe `load_task_run_detail` Tauri facade.
+- Caller-configured post-run capture composition that can run Codex, then optionally collect diff
+  and run one validation command through existing services.
 - Rust/Cargo/MSVC Tauri build path verified locally through the Visual Studio developer environment;
   `npm run build:tauri` produces Windows MSI and NSIS bundles.
 
@@ -73,9 +76,11 @@ Important gaps:
 
 - No Rust/Tauri backend command for `start_codex_task_run`, so WebView run controls cannot yet
   execute live Codex runs.
+- No Rust/Tauri backend command for `load_task_run_detail`, so the WebView detail panel cannot yet
+  read persisted task/run details.
 - No repo/worktree UI that injects the local Git-backed runtime composition into user flows.
-- No task/run detail UI wired to the detail read model.
-- No runtime triggers for post-run diff/validation artifacts.
+- Post-run capture is composed for Node/local runtime callers, but not wired into the live WebView
+  run command path.
 - The default shell still does not resolve `link.exe`; run Rust/Tauri native-build verification
   after loading the Visual Studio developer environment.
 
@@ -97,9 +102,9 @@ events, diff, and validation result in the app.
 
 Current planned sequence:
 
-1. Add the Rust/Tauri backend command for `start_codex_task_run`.
-2. Add task/run detail UI so completed runs can be inspected.
-3. Add runtime triggers for diff and validation capture.
+1. Add the Rust/Tauri backend command for `load_task_run_detail`.
+2. Add the Rust/Tauri backend command for `start_codex_task_run`.
+3. Wire explicit post-run diff/validation capture into the live run path.
 4. Add the review surface that combines final response, diff, validation, and next action.
 
 ## Later Roadmap

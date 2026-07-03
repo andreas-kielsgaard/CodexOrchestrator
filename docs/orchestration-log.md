@@ -2509,3 +2509,48 @@ disposal`)
   bundles under `src-tauri/target/release/bundle/`.
 - Remaining caveat: ad hoc shells still need `vcvars64.bat` for `link.exe`; this is an environment
   invocation requirement rather than a project blocker.
+
+### Worker 046 Review And Merge: FS-09 Task/Run Detail UI Shell
+
+- Status: reviewed, corrected, merged, verified, and Git-cleaned.
+- Worker commit: `048190f` (`Add task run detail UI shell`)
+- Orchestrator correction commit: `4c4e2e4` (`Stabilize task detail selection after runs`)
+- Merge commit: `9eb3881` (`Merge Worker 046 task run detail UI shell`)
+- Result log: `docs/task-logs/worker-046-task-run-detail-ui-shell.md`
+- Accepted decision: `App` now consumes an injected `TaskRunDetailClient`, opens a read-only detail
+  panel from task cards, and renders task anchors, run history, artifact buckets, validation
+  summaries, and event timelines.
+- Accepted decision: `src/infrastructure/tauriCommands.ts` exposes a browser-safe
+  `load_task_run_detail` facade, while Rust/Tauri backend implementation remains a later slice.
+- Review correction: guarded post-run detail refresh against stale selected-task state and added a
+  regression test for switching detail selection while a run is pending.
+- Verification after merge: `git diff --check HEAD^..HEAD`, focused App/Tauri tests,
+  `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed on main. Full
+  tests passed: 46 files / 278 tests.
+- Cleanup: temporary review worktree was removed and the merged branch was deleted. The original
+  Worker 046 physical folder at `C:\Users\user\.codex\worktrees\071c\Codex Orchestrator` is a
+  leftover non-Git folder and was left alone.
+
+### Worker 047 Review And Merge: Post-Run Capture Composition
+
+- Status: reviewed, merged, verified, and Git-cleaned.
+- Worker thread: `019f28d6-c100-7831-9ec7-f391c5936118`
+- Worker commit: `684d46a` (`Add post-run capture composition`)
+- Merge commit: `449234e` (`Merge Worker 047 post-run capture composition`)
+- Result log: `docs/task-logs/worker-047-post-run-capture-composition.md`
+- Accepted decision: add `src/application/postRunCaptureComposition.ts` as a caller-configured
+  run-plus-capture boundary over the existing run composition, diff collection, and validation
+  command services.
+- Accepted decision: preserve the original run result and return post-run partial failures beside
+  it, without adding React UI, Rust/Tauri backend behavior, default validation commands, or live
+  command execution in tests.
+- Accepted decision: expose the service through Node-only `LocalRuntimeServices` while keeping the
+  public browser runtime command contract stable.
+- Verification before merge: focused post-run/local-runtime tests, `npm run lint`,
+  `npm run format:check`, and `npm run build` passed in the worker worktree.
+- Verification after merge: `git diff --check HEAD^..HEAD`, focused App/post-run/local-runtime
+  tests, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build` passed on
+  main. Full tests passed: 47 files / 283 tests.
+- Cleanup: `git worktree remove` unregistered the Worker 047 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\13b2\Codex Orchestrator`; the merged branch
+  was deleted and the locked physical folder was left in place.

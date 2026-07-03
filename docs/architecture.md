@@ -19,7 +19,7 @@ and inject concrete local Git, Codex, and validation adapters for Node-side call
 UI now consumes injected async dashboard, task/run detail, and runtime command clients. The default
 Tauri WebView path has a narrow Rust-side SQLite backend for Open Tasks dashboard
 load/create/update/archive commands. TypeScript browser-safe facades exist for
-`start_codex_task_run` and future `load_task_run_detail` commands, but their Rust/Tauri command
+`start_codex_task_run` and `load_task_run_detail` commands, but their Rust/Tauri command
 registrations remain later slices.
 
 ## Boundary Rules
@@ -297,7 +297,8 @@ The first usable runtime loop still needs:
 2. Rust/Tauri registration that backs `load_task_run_detail` with the existing task/run detail read
    model.
 3. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
-4. Runtime triggers that call the composed diff and validation services after a Codex run completes.
+4. Live run-command wiring that calls the composed diff and validation capture path after a Codex
+   run completes.
 5. Review-grade UI that promotes final response, diff, validation, and next action into a focused
    decision surface.
 
