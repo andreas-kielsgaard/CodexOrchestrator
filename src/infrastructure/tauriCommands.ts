@@ -11,6 +11,10 @@ import type {
   StartCodexTaskRunCommandInput,
   StartCodexTaskRunCommandResult,
 } from '../application/runtimeCommandClient';
+import type {
+  TaskRunDetailClient,
+  TaskRunDetailSnapshot,
+} from '../application/taskRunDetailClient';
 
 type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 
@@ -58,3 +62,15 @@ export function createTauriRuntimeCommandClient(
 }
 
 export const tauriRuntimeCommandClient = createTauriRuntimeCommandClient();
+
+export function createTauriTaskRunDetailClient(
+  invokeCommand: TauriInvoke = invoke,
+): TaskRunDetailClient {
+  return {
+    loadTaskRunDetail(taskId: EntityId): Promise<TaskRunDetailSnapshot> {
+      return invokeCommand<TaskRunDetailSnapshot>('load_task_run_detail', { taskId });
+    },
+  };
+}
+
+export const tauriTaskRunDetailClient = createTauriTaskRunDetailClient();
