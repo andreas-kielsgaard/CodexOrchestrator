@@ -155,8 +155,8 @@ export function openLocalRuntimeServiceComposition(
       validation,
     },
     services,
-    close: database.close,
-    dispose: database.dispose,
+    close: () => database.close(),
+    dispose: () => database.dispose(),
   };
 }
 

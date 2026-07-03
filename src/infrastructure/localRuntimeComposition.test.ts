@@ -6,11 +6,12 @@ import { runTaskValidationCommand } from '../application/validationCommandRunner
 import type { EntityId, IsoDateTime, Project } from '../domain/model';
 import type { RepoSyncPlanIdProvider } from '../domain/repoSyncPlanApplier';
 import type {
+  AppSqliteStoreBundle,
   AppSqliteStoreBundleProviders,
   AppSqliteWriteStoreProviders,
 } from './sqlite/appStore';
 import type { AppSqliteMigrationDatabase } from './sqlite/migrationCoordinator';
-import { openLocalAppSqliteDatabase } from './sqlite/localAppDatabase';
+import { openLocalAppSqliteDatabase, type LocalAppSqliteDatabase } from './sqlite/localAppDatabase';
 import {
   createDefaultLocalRuntimeRepoRegistryProviders,
   openLocalRuntimeServiceComposition,
@@ -218,6 +219,30 @@ describe('local runtime service composition', () => {
     );
     expect(Date.parse(defaults.clock.now())).not.toBeNaN();
   });
+
+  it('forwards close and dispose through injected database handle methods', () => {
+    const fakeDatabase = {
+      db: {},
+      stores: fakeStoreBundle(),
+      closed: false,
+      disposed: false,
+      close() {
+        this.closed = true;
+      },
+      dispose() {
+        this.disposed = true;
+      },
+    };
+    const composition = openLocalRuntimeServiceComposition(':memory:', {
+      openDatabase: () => fakeDatabase as unknown as LocalAppSqliteDatabase,
+    });
+
+    composition.close();
+    composition.dispose();
+
+    expect(fakeDatabase.closed).toBe(true);
+    expect(fakeDatabase.disposed).toBe(true);
+  });
 });
 
 const completedJsonl = [
@@ -339,4 +364,17 @@ function deterministicRepoSyncIds(prefix: string): RepoSyncPlanIdProvider {
     branchId: () => `${prefix}-branch-${++index}` as EntityId,
     worktreeId: () => `${prefix}-worktree-${++index}` as EntityId,
   };
+}
+
+function fakeStoreBundle(): AppSqliteStoreBundle {
+  return {
+    repoSync: {},
+    openTaskDashboard: {},
+    openTaskWrite: {},
+    event: {},
+    taskRun: {},
+    conversation: {},
+    artifact: {},
+    validationRun: {},
+  } as AppSqliteStoreBundle;
 }
