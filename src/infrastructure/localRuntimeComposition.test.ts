@@ -83,6 +83,9 @@ describe('local runtime service composition', () => {
       expect(composition.services.taskRunLifecycleRecorder.openTaskDashboardStore).toBe(
         composition.stores.openTaskDashboard,
       );
+      await expect(
+        composition.services.taskRunDetailClient.loadTaskRunDetail('task-missing'),
+      ).rejects.toThrow('Task not found: task-missing');
       expect(composition.services.runCompositionService.recorder).toBe(
         composition.services.taskRunLifecycleRecorder,
       );
@@ -142,6 +145,7 @@ describe('local runtime service composition', () => {
       const events = await composition.stores.event.queryEvents({ taskId });
       const taskRuns = await composition.stores.taskRun.queryTaskRuns({ taskId });
       const validationRuns = await composition.stores.validationRun.queryValidationRuns({ taskId });
+      const detail = await composition.services.taskRunDetailClient.loadTaskRunDetail(taskId);
 
       expect(run.status).toBe('completed');
       expect(diff.diff).toBe('diff --git a/src/example.ts b/src/example.ts\n');
@@ -193,6 +197,27 @@ describe('local runtime service composition', () => {
           id: 'validation-run-1',
           status: 'passed',
           outputArtifactId: 'artifact-4',
+        }),
+      ]);
+      expect(detail.runs).toEqual([
+        expect.objectContaining({
+          run: expect.objectContaining({ id: 'task-run-1' }),
+          artifacts: expect.objectContaining({
+            finalResponses: [expect.objectContaining({ id: 'artifact-2' })],
+            rawEventStreams: [expect.objectContaining({ id: 'artifact-1' })],
+            diffs: [],
+            validationLogs: [],
+          }),
+          validationRuns: [],
+        }),
+      ]);
+      expect(detail.unlinkedArtifacts.diffs).toEqual([
+        expect.objectContaining({ id: 'artifact-3' }),
+      ]);
+      expect(detail.unlinkedValidationRuns).toEqual([
+        expect.objectContaining({
+          run: expect.objectContaining({ id: 'validation-run-1' }),
+          outputArtifact: expect.objectContaining({ id: 'artifact-4' }),
         }),
       ]);
 
