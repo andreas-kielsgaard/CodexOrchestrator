@@ -10,7 +10,8 @@ which boundaries should stay intact.
 - Desktop shell: Tauri v2.
 - UI: React, TypeScript, Vite.
 - Domain/application/infrastructure layers are TypeScript-first today.
-- Rust currently only proves the Tauri command boundary with `app_metadata`.
+- Rust owns the Tauri command boundary for app metadata, Open Tasks persistence, task/run detail
+  reads, and live Codex task-run execution.
 - SQLite infrastructure is written as pure TypeScript over injected SQLite-like interfaces.
 
 Current limitation: the app can open a local runtime database file through a Node-facing
@@ -18,9 +19,11 @@ infrastructure boundary, compose the TypeScript application services over that o
 and inject concrete local Git, Codex, and validation adapters for Node-side callers. The Open Tasks
 UI now consumes injected async dashboard, task/run detail, and runtime command clients. The default
 Tauri WebView path has a narrow Rust-side SQLite backend for Open Tasks dashboard
-load/create/update/archive commands and the read-only `load_task_run_detail` command. A TypeScript
-browser-safe facade exists for `start_codex_task_run`, but its Rust/Tauri command registration
-remains a later slice.
+load/create/update/archive commands, the read-only `load_task_run_detail` command, and live
+`start_codex_task_run` execution. The Rust run command invokes `codex exec --json`, persists raw
+stdout JSONL before deriving summaries, and updates task-run, conversation, artifact, event,
+execution-state, and attention-state tables. Post-run diff and validation capture are still only
+composed for Node/local runtime callers.
 
 ## Boundary Rules
 
@@ -275,8 +278,12 @@ existing `TaskRunDetailSnapshot` shape: task/project/repo/branch/worktree anchor
 ordered for review, grouped artifacts, validation output links, unlinked task-level artifacts and
 validation runs, and a chronological event timeline. The Rust grouping intentionally mirrors the
 TypeScript read-model semantics, including validations that belong to a run through either
-`validation_runs.task_run_id` or a linked output artifact. `start_codex_task_run` remains only a
-typed facade until the runtime command backend slice.
+`validation_runs.task_run_id` or a linked output artifact. `start_codex_task_run` is implemented in
+Rust over the same app data database. It starts a task-run lifecycle with a Codex conversation,
+executes `codex exec --json` with array-style arguments and caller-provided `cwd`/environment,
+stores the raw stdout JSONL as a `raw_event_stream` artifact before parsing, derives compact Codex
+thread/final-response/terminal metadata, and completes or fails the task run with the existing
+browser-safe command result shape.
 
 ## UI Layer
 
@@ -289,8 +296,8 @@ detail shell opens from a task card and renders task anchors, run history, group
 previews/counts, validation summaries, and event timelines from the Worker 044 read model shape. Run
 controls use the projected task `worktreePath` as the command `cwd`, stay unavailable when no
 worktree is linked, show compact running/completed/failed feedback, and reload the dashboard plus
-the currently open detail after a run attempt so persisted state can be reflected once backend
-commands exist. The default `src/main.tsx` wiring injects the Tauri command clients, keeping
+the currently open detail after a run attempt so persisted backend state can be reflected. The
+default `src/main.tsx` wiring injects the Tauri command clients, keeping
 React/browser code away from SQLite and Node-only modules. Tests exercise the UI against fake
 clients; durable behavior is covered at the application client/store boundary.
 
@@ -298,12 +305,10 @@ clients; durable behavior is covered at the application client/store boundary.
 
 The first usable runtime loop still needs:
 
-1. Rust/Tauri registration that backs `start_codex_task_run` with the local runtime command handler
-   without importing Node-only modules into React entrypoints.
-2. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
-3. Live run-command wiring that calls the composed diff and validation capture path after a Codex
+1. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
+2. Live run-command wiring that calls the composed diff and validation capture path after a Codex
    run completes.
-4. Review-grade UI that promotes final response, diff, validation, and next action into a focused
+3. Review-grade UI that promotes final response, diff, validation, and next action into a focused
    decision surface.
 
 ## Testing And Verification
