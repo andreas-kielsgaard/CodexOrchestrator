@@ -25,11 +25,25 @@ struct AppMetadata {
 #[serde(rename_all = "camelCase")]
 struct CreateOpenTaskCommandInput {
     project_id: String,
+    repo_id: Option<String>,
+    branch_id: Option<String>,
+    worktree_id: Option<String>,
     title: String,
     summary: String,
     execution_state: Option<String>,
     attention_state: Option<String>,
     priority: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RegisterTaskWorktreeCommandInput {
+    project_name: String,
+    repo_name: Option<String>,
+    repo_root_path: String,
+    branch_name: Option<String>,
+    worktree_path: String,
+    is_main: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -77,6 +91,7 @@ struct StartCodexTaskRunValidationCommandInput {
 struct TaskDashboardSnapshot {
     groups: Vec<DashboardGroup>,
     projects: Vec<TaskDashboardProject>,
+    worktree_anchors: Vec<TaskDashboardWorktreeAnchor>,
     total_open_tasks: usize,
 }
 
@@ -85,6 +100,21 @@ struct TaskDashboardSnapshot {
 struct TaskDashboardProject {
     id: String,
     name: String,
+}
+
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct TaskDashboardWorktreeAnchor {
+    id: String,
+    project_id: String,
+    project: String,
+    repo_id: String,
+    repo: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    branch_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    branch: Option<String>,
+    path: String,
 }
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -635,6 +665,17 @@ fn load_open_task_dashboard(app: AppHandle) -> Result<TaskDashboardSnapshot, Str
 }
 
 #[tauri::command]
+fn register_task_worktree(
+    app: AppHandle,
+    input: RegisterTaskWorktreeCommandInput,
+) -> Result<TaskDashboardSnapshot, String> {
+    with_app_database(&app, |conn| {
+        register_task_worktree_anchor(conn, input)?;
+        load_dashboard_snapshot(conn)
+    })
+}
+
+#[tauri::command]
 fn create_open_task(
     app: AppHandle,
     input: CreateOpenTaskCommandInput,
@@ -692,6 +733,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_metadata,
             load_open_task_dashboard,
+            register_task_worktree,
             create_open_task,
             update_open_task,
             archive_open_task,
@@ -2271,6 +2313,293 @@ impl CodexRuntimeStatus {
     }
 }
 
+fn register_task_worktree_anchor(
+    conn: &Connection,
+    input: RegisterTaskWorktreeCommandInput,
+) -> Result<(), String> {
+    let project_name = input.project_name.trim().to_string();
+    let worktree_path = input.worktree_path.trim().to_string();
+    let repo_root_path = match input.repo_root_path.trim() {
+        "" => worktree_path.clone(),
+        value => value.to_string(),
+    };
+    validate_non_empty("projectName", &project_name)?;
+    validate_non_empty("repoRootPath", &repo_root_path)?;
+    validate_non_empty("worktreePath", &worktree_path)?;
+
+    let repo_name = input
+        .repo_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| path_label(&repo_root_path).unwrap_or_else(|| project_name.clone()));
+    let branch_name = input
+        .branch_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let timestamp = now_iso();
+
+    let project_id = upsert_project(conn, &project_name, &timestamp)?;
+    let repo_id = upsert_repo(
+        conn,
+        &project_id,
+        &repo_name,
+        &repo_root_path,
+        branch_name.as_deref(),
+        &timestamp,
+    )?;
+    let branch_id = match branch_name {
+        Some(branch_name) => Some(upsert_branch(conn, &repo_id, &branch_name, &timestamp)?),
+        None => None,
+    };
+    upsert_worktree(
+        conn,
+        &repo_id,
+        branch_id.as_deref(),
+        &worktree_path,
+        input.is_main.unwrap_or(false),
+        &timestamp,
+    )?;
+
+    Ok(())
+}
+
+fn upsert_project(conn: &Connection, name: &str, timestamp: &str) -> Result<String, String> {
+    if let Some(project_id) = conn
+        .query_row(
+            "SELECT id FROM projects WHERE name = ?1 ORDER BY created_at, id LIMIT 1",
+            params![name],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(sql_error("read project by name"))?
+    {
+        conn.execute(
+            "UPDATE projects SET updated_at = ?1 WHERE id = ?2",
+            params![timestamp, project_id],
+        )
+        .map_err(sql_error("update project"))?;
+        return Ok(project_id);
+    }
+
+    let project_id = Uuid::new_v4().to_string();
+    conn.execute(
+        "
+INSERT INTO projects (id, name, description, created_at, updated_at)
+VALUES (?1, ?2, NULL, ?3, ?3)
+",
+        params![project_id, name, timestamp],
+    )
+    .map_err(sql_error("create project"))?;
+    Ok(project_id)
+}
+
+fn upsert_repo(
+    conn: &Connection,
+    project_id: &str,
+    name: &str,
+    root_path: &str,
+    default_branch: Option<&str>,
+    timestamp: &str,
+) -> Result<String, String> {
+    if let Some(repo_id) = conn
+        .query_row(
+            "SELECT id FROM repos WHERE project_id = ?1 AND root_path = ?2",
+            params![project_id, root_path],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(sql_error("read repo by path"))?
+    {
+        conn.execute(
+            "
+UPDATE repos SET name = ?1, default_branch = ?2, updated_at = ?3 WHERE id = ?4
+",
+            params![name, default_branch, timestamp, repo_id],
+        )
+        .map_err(sql_error("update repo"))?;
+        return Ok(repo_id);
+    }
+
+    let repo_id = Uuid::new_v4().to_string();
+    conn.execute(
+        "
+INSERT INTO repos (id, project_id, name, root_path, default_branch, remote_url, created_at, updated_at)
+VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?6)
+",
+        params![repo_id, project_id, name, root_path, default_branch, timestamp],
+    )
+    .map_err(sql_error("create repo"))?;
+    Ok(repo_id)
+}
+
+fn upsert_branch(
+    conn: &Connection,
+    repo_id: &str,
+    name: &str,
+    timestamp: &str,
+) -> Result<String, String> {
+    if let Some(branch_id) = conn
+        .query_row(
+            "SELECT id FROM branches WHERE repo_id = ?1 AND name = ?2",
+            params![repo_id, name],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(sql_error("read branch by name"))?
+    {
+        conn.execute(
+            "UPDATE branches SET updated_at = ?1 WHERE id = ?2",
+            params![timestamp, branch_id],
+        )
+        .map_err(sql_error("update branch"))?;
+        return Ok(branch_id);
+    }
+
+    let branch_id = Uuid::new_v4().to_string();
+    conn.execute(
+        "
+INSERT INTO branches (id, repo_id, name, base_branch, head_sha, intent, created_at, updated_at)
+VALUES (?1, ?2, ?3, NULL, NULL, NULL, ?4, ?4)
+",
+        params![branch_id, repo_id, name, timestamp],
+    )
+    .map_err(sql_error("create branch"))?;
+    Ok(branch_id)
+}
+
+fn upsert_worktree(
+    conn: &Connection,
+    repo_id: &str,
+    branch_id: Option<&str>,
+    path: &str,
+    is_main: bool,
+    timestamp: &str,
+) -> Result<String, String> {
+    if let Some(worktree_id) = conn
+        .query_row(
+            "SELECT id FROM worktrees WHERE repo_id = ?1 AND path = ?2",
+            params![repo_id, path],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(sql_error("read worktree by path"))?
+    {
+        conn.execute(
+            "
+UPDATE worktrees SET branch_id = ?1, is_main = ?2, last_scanned_at = ?3, updated_at = ?3
+WHERE id = ?4
+",
+            params![branch_id, bool_to_sqlite(is_main), timestamp, worktree_id],
+        )
+        .map_err(sql_error("update worktree"))?;
+        return Ok(worktree_id);
+    }
+
+    let worktree_id = Uuid::new_v4().to_string();
+    conn.execute(
+        "
+INSERT INTO worktrees (
+  id, repo_id, branch_id, path, is_main, is_dirty, lock_reason, last_scanned_at, created_at, updated_at
+) VALUES (?1, ?2, ?3, ?4, ?5, 0, NULL, ?6, ?6, ?6)
+",
+        params![
+            worktree_id,
+            repo_id,
+            branch_id,
+            path,
+            bool_to_sqlite(is_main),
+            timestamp
+        ],
+    )
+    .map_err(sql_error("create worktree"))?;
+    Ok(worktree_id)
+}
+
+fn resolve_create_task_anchor(
+    conn: &Connection,
+    project_id: &str,
+    repo_id: Option<String>,
+    branch_id: Option<String>,
+    worktree_id: Option<String>,
+) -> Result<(Option<String>, Option<String>, Option<String>), String> {
+    if let Some(worktree_id) = worktree_id {
+        validate_non_empty("worktreeId", &worktree_id)?;
+        let (anchor_project_id, anchor_repo_id, anchor_branch_id) =
+            select_worktree_task_anchor(conn, &worktree_id)?
+                .ok_or_else(|| format!("Worktree not found: {worktree_id}"))?;
+        ensure_same_anchor("projectId", project_id, &anchor_project_id)?;
+
+        if let Some(repo_id) = repo_id.as_deref() {
+            ensure_same_anchor("repoId", repo_id, &anchor_repo_id)?;
+        }
+
+        if let Some(branch_id) = branch_id.as_deref() {
+            match anchor_branch_id.as_deref() {
+                Some(anchor_branch_id) => {
+                    ensure_same_anchor("branchId", branch_id, anchor_branch_id)?
+                }
+                None => return Err(format!("Branch does not belong to worktree: {branch_id}")),
+            }
+        }
+
+        return Ok((Some(anchor_repo_id), anchor_branch_id, Some(worktree_id)));
+    }
+
+    if let Some(branch_id) = branch_id {
+        validate_non_empty("branchId", &branch_id)?;
+        let (anchor_project_id, anchor_repo_id) = select_branch_task_anchor(conn, &branch_id)?
+            .ok_or_else(|| format!("Branch not found: {branch_id}"))?;
+        ensure_same_anchor("projectId", project_id, &anchor_project_id)?;
+
+        if let Some(repo_id) = repo_id.as_deref() {
+            ensure_same_anchor("repoId", repo_id, &anchor_repo_id)?;
+        }
+
+        return Ok((Some(anchor_repo_id), Some(branch_id), None));
+    }
+
+    if let Some(repo_id) = repo_id {
+        validate_non_empty("repoId", &repo_id)?;
+        let anchor_project_id = select_repo_project_id(conn, &repo_id)?
+            .ok_or_else(|| format!("Repo not found: {repo_id}"))?;
+        ensure_same_anchor("projectId", project_id, &anchor_project_id)?;
+        return Ok((Some(repo_id), None, None));
+    }
+
+    Ok((None, None, None))
+}
+
+fn ensure_same_anchor(label: &str, expected: &str, actual: &str) -> Result<(), String> {
+    if expected == actual {
+        return Ok(());
+    }
+
+    Err(format!(
+        "Mismatched {label}: {expected} does not match {actual}"
+    ))
+}
+
+fn path_label(path: &str) -> Option<String> {
+    PathBuf::from(path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn bool_to_sqlite(value: bool) -> i64 {
+    if value {
+        1
+    } else {
+        0
+    }
+}
+
 fn create_task(conn: &Connection, input: CreateOpenTaskCommandInput) -> Result<(), String> {
     validate_non_empty("projectId", &input.project_id)?;
     validate_non_empty("title", &input.title)?;
@@ -2296,17 +2625,27 @@ fn create_task(conn: &Connection, input: CreateOpenTaskCommandInput) -> Result<(
     )?;
     let timestamp = now_iso();
     let task_id = Uuid::new_v4().to_string();
+    let (repo_id, branch_id, worktree_id) = resolve_create_task_anchor(
+        conn,
+        &input.project_id,
+        input.repo_id,
+        input.branch_id,
+        input.worktree_id,
+    )?;
 
     conn.execute(
         "
 INSERT INTO tasks (
   id, project_id, repo_id, branch_id, worktree_id, title, summary, execution_state,
   attention_state, priority, due_at, snoozed_until, created_at, updated_at
-) VALUES (?1, ?2, NULL, NULL, NULL, ?3, ?4, ?5, ?6, ?7, NULL, NULL, ?8, ?8)
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, NULL, ?11, ?11)
 ",
         params![
             task_id,
             input.project_id,
+            repo_id,
+            branch_id,
+            worktree_id,
             input.title,
             input.summary,
             execution_state,
@@ -2392,6 +2731,7 @@ fn load_dashboard_snapshot(conn: &Connection) -> Result<TaskDashboardSnapshot, S
     let repos = select_repos(conn)?;
     let branches = select_branches(conn)?;
     let worktrees = select_worktrees(conn)?;
+    let worktree_anchors = select_dashboard_worktree_anchors(conn)?;
 
     let mut groups = DASHBOARD_GROUPS
         .iter()
@@ -2467,6 +2807,7 @@ fn load_dashboard_snapshot(conn: &Connection) -> Result<TaskDashboardSnapshot, S
     Ok(TaskDashboardSnapshot {
         groups,
         projects: dashboard_projects,
+        worktree_anchors,
         total_open_tasks,
     })
 }
@@ -2838,6 +3179,96 @@ fn select_worktrees(conn: &Connection) -> Result<Vec<WorktreeRow>, String> {
         .map_err(sql_error("read worktree rows"))?;
 
     Ok(rows)
+}
+
+fn select_dashboard_worktree_anchors(
+    conn: &Connection,
+) -> Result<Vec<TaskDashboardWorktreeAnchor>, String> {
+    let mut stmt = conn
+        .prepare(
+            "
+SELECT
+  worktrees.id,
+  projects.id,
+  projects.name,
+  repos.id,
+  repos.name,
+  branches.id,
+  branches.name,
+  worktrees.path
+FROM worktrees
+JOIN repos ON repos.id = worktrees.repo_id
+JOIN projects ON projects.id = repos.project_id
+LEFT JOIN branches ON branches.id = worktrees.branch_id
+ORDER BY projects.name, repos.name, worktrees.path, worktrees.id
+",
+        )
+        .map_err(sql_error("prepare worktree anchor query"))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(TaskDashboardWorktreeAnchor {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                project: row.get(2)?,
+                repo_id: row.get(3)?,
+                repo: row.get(4)?,
+                branch_id: row.get(5)?,
+                branch: row.get(6)?,
+                path: row.get(7)?,
+            })
+        })
+        .map_err(sql_error("query worktree anchor rows"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sql_error("read worktree anchor rows"))?;
+
+    Ok(rows)
+}
+
+fn select_worktree_task_anchor(
+    conn: &Connection,
+    worktree_id: &str,
+) -> Result<Option<(String, String, Option<String>)>, String> {
+    conn.query_row(
+        "
+SELECT repos.project_id, worktrees.repo_id, worktrees.branch_id
+FROM worktrees
+JOIN repos ON repos.id = worktrees.repo_id
+WHERE worktrees.id = ?1
+",
+        params![worktree_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )
+    .optional()
+    .map_err(sql_error("read worktree task anchor"))
+}
+
+fn select_branch_task_anchor(
+    conn: &Connection,
+    branch_id: &str,
+) -> Result<Option<(String, String)>, String> {
+    conn.query_row(
+        "
+SELECT repos.project_id, branches.repo_id
+FROM branches
+JOIN repos ON repos.id = branches.repo_id
+WHERE branches.id = ?1
+",
+        params![branch_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .optional()
+    .map_err(sql_error("read branch task anchor"))
+}
+
+fn select_repo_project_id(conn: &Connection, repo_id: &str) -> Result<Option<String>, String> {
+    conn.query_row(
+        "SELECT project_id FROM repos WHERE id = ?1",
+        params![repo_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(sql_error("read repo project id"))
 }
 
 fn select_detail_task(conn: &Connection, task_id: &str) -> Result<Option<DetailTask>, String> {
@@ -3698,6 +4129,10 @@ mod tests {
         assert_eq!(snapshot.total_open_tasks, 0);
         assert_eq!(snapshot.projects, Vec::<TaskDashboardProject>::new());
         assert_eq!(
+            snapshot.worktree_anchors,
+            Vec::<TaskDashboardWorktreeAnchor>::new()
+        );
+        assert_eq!(
             snapshot
                 .groups
                 .iter()
@@ -3722,6 +4157,9 @@ mod tests {
             &conn,
             CreateOpenTaskCommandInput {
                 project_id: "project-1".to_string(),
+                repo_id: None,
+                branch_id: None,
+                worktree_id: None,
                 title: "Persist Tauri tasks".to_string(),
                 summary: "Create through the Rust SQLite backend.".to_string(),
                 execution_state: None,
@@ -3764,6 +4202,63 @@ mod tests {
         archive_task(&conn, &task_id).expect("archive task");
         let archived = load_dashboard_snapshot(&conn).expect("archived snapshot");
         assert_eq!(archived.total_open_tasks, 0);
+    }
+
+    #[test]
+    fn register_worktree_anchor_allows_creating_runnable_task() {
+        let conn = open_memory_database();
+
+        register_task_worktree_anchor(
+            &conn,
+            RegisterTaskWorktreeCommandInput {
+                project_name: "Codex Orchestrator".to_string(),
+                repo_name: None,
+                repo_root_path: "C:/Repos/Codex Orchestrator".to_string(),
+                branch_name: Some("main".to_string()),
+                worktree_path: "C:/Repos/Codex Orchestrator".to_string(),
+                is_main: Some(true),
+            },
+        )
+        .expect("register worktree");
+
+        let registered = load_dashboard_snapshot(&conn).expect("registered snapshot");
+        let anchor = registered
+            .worktree_anchors
+            .first()
+            .expect("registered worktree anchor");
+        assert_eq!(anchor.project, "Codex Orchestrator");
+        assert_eq!(anchor.repo, "Codex Orchestrator");
+        assert_eq!(anchor.branch.as_deref(), Some("main"));
+
+        create_task(
+            &conn,
+            CreateOpenTaskCommandInput {
+                project_id: anchor.project_id.clone(),
+                repo_id: Some(anchor.repo_id.clone()),
+                branch_id: anchor.branch_id.clone(),
+                worktree_id: Some(anchor.id.clone()),
+                title: "Run through registered worktree".to_string(),
+                summary: "Task created with a runnable technical anchor.".to_string(),
+                execution_state: None,
+                attention_state: None,
+                priority: None,
+            },
+        )
+        .expect("create anchored task");
+
+        let created = load_dashboard_snapshot(&conn).expect("created snapshot");
+        let task = created
+            .groups
+            .iter()
+            .flat_map(|group| &group.tasks)
+            .next()
+            .expect("created anchored task");
+        assert_eq!(task.repo.as_deref(), Some("Codex Orchestrator"));
+        assert_eq!(task.branch.as_deref(), Some("main"));
+        assert_eq!(
+            task.worktree_path.as_deref(),
+            Some("C:/Repos/Codex Orchestrator")
+        );
     }
 
     #[test]

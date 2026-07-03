@@ -74,18 +74,22 @@ Already built on `main`:
   and run one validation command through existing services.
 - Live Rust/Tauri `start_codex_task_run` post-run capture wiring for explicit tracked diff and
   one validation command after a completed Codex run.
+- App-side manual repo/worktree registration, dashboard worktree anchors, and anchored task
+  creation so a clean app database can create a runnable task without manual SQLite seeding.
 - Rust/Cargo/MSVC Tauri build path verified locally through the Visual Studio developer environment;
   `npm run build:tauri` produces Windows MSI and NSIS bundles.
 
 Important gaps:
 
-- No repo/worktree UI that injects the local Git-backed runtime composition into user flows.
+- No repo list/remove management, file/folder picker, or Git auto-discovery UI yet; the current
+  setup path is explicit manual registration.
 - The detail shell can show persisted final responses, events, diffs, and validation results, but
   review-grade next-action flow should wait for manual testing feedback.
 - Visible controls for post-run capture configuration are intentionally deferred pending manual
   testing.
 - The default shell still does not resolve `link.exe`; run Rust/Tauri native-build verification
-  after loading the Visual Studio developer environment.
+  after loading the Visual Studio developer environment. This Codex shell may also need
+  `%USERPROFILE%\.cargo\bin` prepended inside that command session so `cargo` resolves.
 
 ## Guiding Decisions
 

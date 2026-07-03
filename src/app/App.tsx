@@ -40,8 +40,10 @@ import type {
 } from '../domain/model';
 import {
   emptyTaskDashboardSnapshot,
+  type RegisterTaskWorktreeInput,
   type TaskDashboardClient,
   type TaskDashboardSnapshot,
+  type TaskDashboardWorktreeAnchor,
 } from '../application/taskDashboardClient';
 import type {
   RuntimeCommandClient,
@@ -96,6 +98,7 @@ interface AppProps {
 
 interface DraftTaskForm {
   projectId: EntityId;
+  worktreeId: EntityId;
   title: string;
   summary: string;
   attentionState: AttentionState;
@@ -103,7 +106,16 @@ interface DraftTaskForm {
   priority: Task['priority'];
 }
 
-type BusyAction = 'load' | 'create' | `update:${string}` | `archive:${string}` | null;
+interface WorktreeSetupForm {
+  projectName: string;
+  repoName: string;
+  repoRootPath: string;
+  worktreePath: string;
+  branchName: string;
+}
+
+type BusyAction =
+  'load' | 'register-worktree' | 'create' | `update:${string}` | `archive:${string}` | null;
 
 type TaskRunActionStatus = 'running' | 'completed' | 'failed';
 type DetailStatus = 'idle' | 'loading' | 'loaded' | 'failed';
@@ -122,6 +134,7 @@ interface DetailState {
 
 const initialCreateForm: DraftTaskForm = {
   projectId: '',
+  worktreeId: '',
   title: '',
   summary: '',
   attentionState: 'needs_action_now',
@@ -129,10 +142,20 @@ const initialCreateForm: DraftTaskForm = {
   priority: 'normal',
 };
 
+const initialWorktreeSetupForm: WorktreeSetupForm = {
+  projectName: '',
+  repoName: '',
+  repoRootPath: '',
+  worktreePath: '',
+  branchName: '',
+};
+
 export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandClient }: AppProps) {
   const [snapshot, setSnapshot] = useState<TaskDashboardSnapshot>(() =>
     emptyTaskDashboardSnapshot(),
   );
+  const [worktreeSetupForm, setWorktreeSetupForm] =
+    useState<WorktreeSetupForm>(initialWorktreeSetupForm);
   const [createForm, setCreateForm] = useState<DraftTaskForm>(initialCreateForm);
   const [editTaskId, setEditTaskId] = useState<EntityId | null>(null);
   const [editForm, setEditForm] = useState<DraftTaskForm>(initialCreateForm);
@@ -154,7 +177,7 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
     setSnapshot(nextSnapshot);
     setCreateForm((current) => ({
       ...current,
-      projectId: current.projectId || nextSnapshot.projects[0]?.id || '',
+      ...nextCreateFormAnchorDefaults(current, nextSnapshot),
     }));
   }, []);
 
@@ -177,6 +200,31 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
   const loadDashboard = useCallback(async () => {
     await runClientAction('load', () => taskDashboardClient.loadDashboard());
   }, [runClientAction, taskDashboardClient]);
+
+  const registerWorktree = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const input = normalizeWorktreeSetupInput(worktreeSetupForm);
+
+    if (!input || !taskDashboardClient.registerWorktree) {
+      return;
+    }
+
+    void runClientAction('register-worktree', async () => {
+      const nextSnapshot = await taskDashboardClient.registerWorktree?.(input);
+
+      if (!nextSnapshot) {
+        throw new Error('Repo/worktree registration is not available.');
+      }
+
+      setWorktreeSetupForm((current) => ({
+        ...current,
+        repoRootPath: current.repoRootPath.trim() || input.repoRootPath,
+        worktreePath: input.worktreePath,
+      }));
+      return nextSnapshot;
+    });
+  };
 
   const loadTaskDetail = useCallback(
     async (taskId: EntityId) => {
@@ -229,8 +277,12 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
     }
 
     void runClientAction('create', async () => {
+      const selectedAnchor = selectedWorktreeAnchor(snapshot, createForm.worktreeId);
       const nextSnapshot = await taskDashboardClient.createTask({
-        projectId: createForm.projectId,
+        projectId: selectedAnchor?.projectId ?? createForm.projectId,
+        repoId: selectedAnchor?.repoId,
+        branchId: selectedAnchor?.branchId,
+        worktreeId: selectedAnchor?.id,
         title,
         summary,
         attentionState: createForm.attentionState,
@@ -240,6 +292,7 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
       setCreateForm((current) => ({
         ...initialCreateForm,
         projectId: current.projectId,
+        worktreeId: current.worktreeId,
       }));
       return nextSnapshot;
     });
@@ -249,6 +302,7 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
     setEditTaskId(task.id);
     setEditForm({
       projectId: '',
+      worktreeId: '',
       title: task.title,
       summary: task.summary,
       attentionState: task.attentionState,
@@ -383,6 +437,7 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
           <div className="status-strip" aria-label="Dashboard totals">
             <span>{snapshot.totalOpenTasks} open</span>
             <span>{snapshot.projects.length} projects</span>
+            <span>{snapshot.worktreeAnchors.length} worktrees</span>
             <button
               className="icon-button"
               type="button"
@@ -403,6 +458,14 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
           </section>
         )}
 
+        <RegisterWorktreeForm
+          form={worktreeSetupForm}
+          busy={busyAction === 'register-worktree'}
+          available={Boolean(taskDashboardClient.registerWorktree)}
+          onChange={setWorktreeSetupForm}
+          onSubmit={registerWorktree}
+        />
+
         <form className="task-composer" onSubmit={handleCreate} aria-label="Create open task">
           <select
             value={createForm.projectId}
@@ -418,6 +481,33 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
                   {project.name}
                 </option>
               ))
+            )}
+          </select>
+          <select
+            value={createForm.worktreeId}
+            onChange={(event) => {
+              const worktreeId = event.target.value;
+              const anchor = selectedWorktreeAnchor(snapshot, worktreeId);
+              setCreateForm({
+                ...createForm,
+                worktreeId,
+                projectId: anchor?.projectId ?? createForm.projectId,
+              });
+            }}
+            disabled={snapshot.worktreeAnchors.length === 0 || busyAction !== null}
+            aria-label="Worktree"
+          >
+            {snapshot.worktreeAnchors.length === 0 ? (
+              <option value="">No registered worktrees</option>
+            ) : (
+              <>
+                <option value="">No worktree</option>
+                {snapshot.worktreeAnchors.map((anchor) => (
+                  <option key={anchor.id} value={anchor.id}>
+                    {formatWorktreeAnchor(anchor)}
+                  </option>
+                ))}
+              </>
             )}
           </select>
           <input
@@ -613,6 +703,62 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
         </div>
       </section>
     </main>
+  );
+}
+
+interface RegisterWorktreeFormProps {
+  form: WorktreeSetupForm;
+  busy: boolean;
+  available: boolean;
+  onChange(form: WorktreeSetupForm): void;
+  onSubmit(event: FormEvent<HTMLFormElement>): void;
+}
+
+function RegisterWorktreeForm({
+  form,
+  busy,
+  available,
+  onChange,
+  onSubmit,
+}: RegisterWorktreeFormProps) {
+  const canSubmit =
+    available && !busy && form.projectName.trim().length > 0 && form.worktreePath.trim().length > 0;
+
+  return (
+    <form className="setup-panel" onSubmit={onSubmit} aria-label="Register repo worktree">
+      <input
+        value={form.projectName}
+        onChange={(event) => onChange({ ...form, projectName: event.target.value })}
+        disabled={!available || busy}
+        placeholder="Project name"
+        aria-label="Project name"
+      />
+      <input
+        value={form.repoRootPath}
+        onChange={(event) => onChange({ ...form, repoRootPath: event.target.value })}
+        disabled={!available || busy}
+        placeholder="Repo root path"
+        aria-label="Repo root path"
+      />
+      <input
+        value={form.worktreePath}
+        onChange={(event) => onChange({ ...form, worktreePath: event.target.value })}
+        disabled={!available || busy}
+        placeholder="Worktree path"
+        aria-label="Worktree path"
+      />
+      <input
+        value={form.branchName}
+        onChange={(event) => onChange({ ...form, branchName: event.target.value })}
+        disabled={!available || busy}
+        placeholder="Branch"
+        aria-label="Branch name"
+      />
+      <button className="primary-action" type="submit" disabled={!canSubmit}>
+        <GitBranch size={17} aria-hidden="true" />
+        Register
+      </button>
+    </form>
   );
 }
 
@@ -1100,4 +1246,50 @@ function compactPath(path: string): string {
 
 function capitalize(value: string): string {
   return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
+}
+
+function nextCreateFormAnchorDefaults(
+  current: DraftTaskForm,
+  snapshot: TaskDashboardSnapshot,
+): Pick<DraftTaskForm, 'projectId' | 'worktreeId'> {
+  const currentAnchor = selectedWorktreeAnchor(snapshot, current.worktreeId);
+  const fallbackAnchor = currentAnchor ?? snapshot.worktreeAnchors[0];
+
+  return {
+    projectId: fallbackAnchor?.projectId ?? (current.projectId || snapshot.projects[0]?.id || ''),
+    worktreeId: fallbackAnchor?.id ?? '',
+  };
+}
+
+function selectedWorktreeAnchor(
+  snapshot: TaskDashboardSnapshot,
+  worktreeId: EntityId,
+): TaskDashboardWorktreeAnchor | undefined {
+  return snapshot.worktreeAnchors.find((anchor) => anchor.id === worktreeId);
+}
+
+function normalizeWorktreeSetupInput(
+  form: WorktreeSetupForm,
+): RegisterTaskWorktreeInput | undefined {
+  const projectName = form.projectName.trim();
+  const worktreePath = form.worktreePath.trim();
+  const repoRootPath = form.repoRootPath.trim() || worktreePath;
+
+  if (!projectName || !worktreePath) {
+    return undefined;
+  }
+
+  return {
+    projectName,
+    repoRootPath,
+    worktreePath,
+    ...(form.repoName.trim() ? { repoName: form.repoName.trim() } : {}),
+    ...(form.branchName.trim() ? { branchName: form.branchName.trim() } : {}),
+  };
+}
+
+function formatWorktreeAnchor(anchor: TaskDashboardWorktreeAnchor): string {
+  return [anchor.project, anchor.repo, anchor.branch, compactPath(anchor.path)]
+    .filter(Boolean)
+    .join(' / ');
 }

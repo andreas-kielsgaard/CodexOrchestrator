@@ -10,8 +10,8 @@ which boundaries should stay intact.
 - Desktop shell: Tauri v2.
 - UI: React, TypeScript, Vite.
 - Domain/application/infrastructure layers are TypeScript-first today.
-- Rust owns the Tauri command boundary for app metadata, Open Tasks persistence, task/run detail
-  reads, and live Codex task-run execution.
+- Rust owns the Tauri command boundary for app metadata, Open Tasks persistence, manual
+  repo/worktree registration, task/run detail reads, and live Codex task-run execution.
 - SQLite infrastructure is written as pure TypeScript over injected SQLite-like interfaces.
 
 Current limitation: the app can open a local runtime database file through a Node-facing
@@ -19,12 +19,13 @@ infrastructure boundary, compose the TypeScript application services over that o
 and inject concrete local Git, Codex, and validation adapters for Node-side callers. The Open Tasks
 UI now consumes injected async dashboard, task/run detail, and runtime command clients. The default
 Tauri WebView path has a narrow Rust-side SQLite backend for Open Tasks dashboard
-load/create/update/archive commands, the read-only `load_task_run_detail` command, and live
-`start_codex_task_run` execution. The Rust run command invokes `codex exec --json`, persists raw
-stdout JSONL before deriving summaries, and updates task-run, conversation, artifact, event,
-execution-state, and attention-state tables. When callers explicitly pass post-run capture options,
-the same Rust run command can also collect a tracked Git diff and/or run one validation command
-after a completed Codex run. Visible UI controls for those options are still deferred.
+load/create/update/archive commands, manual repo/worktree registration, the read-only
+`load_task_run_detail` command, and live `start_codex_task_run` execution. The Rust run command
+invokes `codex exec --json`, persists raw stdout JSONL before deriving summaries, and updates
+task-run, conversation, artifact, event, execution-state, and attention-state tables. When callers
+explicitly pass post-run capture options, the same Rust run command can also collect a tracked Git
+diff and/or run one validation command after a completed Codex run. Visible UI controls for those
+options are still deferred.
 
 ## Boundary Rules
 
@@ -122,7 +123,8 @@ directly, mutate task/run lifecycle state, run validation commands, or wire UI/T
 `OpenTaskDashboardStore` and `OpenTaskWriteStore` into async load/create/update/archive operations
 that return a dashboard snapshot for UI callers. The client is verified against in-memory stores
 and the local SQLite app store bundle, but it does not open SQLite files or import Node-only modules
-itself.
+itself. The browser-safe dashboard snapshot now includes registered worktree anchors, and the Tauri
+client supplies an optional `registerWorktree` operation for the Rust-backed manual setup command.
 
 `taskRunDetailClient.ts` is the read-only task/run detail application boundary. It composes
 `OpenTaskDashboardStore`, `TaskRunStore`, `ArtifactStore`, `EventStore`, and `ValidationRunStore`
@@ -263,6 +265,7 @@ The Tauri bridge exposes browser-safe TypeScript functions over `@tauri-apps/api
 Tasks dashboard command contract is:
 
 - `load_open_task_dashboard`
+- `register_task_worktree`
 - `create_open_task`
 - `update_open_task`
 - `archive_open_task`
@@ -273,7 +276,9 @@ side, writes only task fields exposed by the current command contract, archives 
 `execution_state = 'archived'`, omits archived/abandoned tasks from the dashboard, and returns the
 existing `TaskDashboardSnapshot` shape. Its dashboard query duplicates only the small projection
 needed for the command response; unlike the earlier TypeScript task read store, it returns all
-persisted projects so the dashboard can create the first task for a real project.
+persisted projects and registered worktree anchors so the dashboard can create runnable tasks for a
+real project. `register_task_worktree` creates or reuses a project, repo, optional branch, and
+worktree anchor without requiring manual database seeding.
 
 The TypeScript Tauri bridge also exposes browser-safe clients for `start_codex_task_run` and
 `load_task_run_detail`. The detail command is implemented in Rust as a read-only SQLite read model
@@ -297,16 +302,18 @@ reported in the command result without turning the completed Codex run into a fa
 Location: `src/app/`, `src/main.tsx`, `src/styles.css`
 
 The Open Tasks UI consumes injected `TaskDashboardClient`, `TaskRunDetailClient`, and
-`RuntimeCommandClient` instances, loads asynchronously, and provides visible create, edit,
-state-change, archive, per-task Codex run controls, and a read-only task/run detail inspector. The
-detail shell opens from a task card and renders task anchors, run history, grouped artifact
-previews/counts, validation summaries, and event timelines from the Worker 044 read model shape. Run
-controls use the projected task `worktreePath` as the command `cwd`, stay unavailable when no
-worktree is linked, show compact running/completed/failed feedback, and reload the dashboard plus
-the currently open detail after a run attempt so persisted backend state can be reflected. The
-default `src/main.tsx` wiring injects the Tauri command clients, keeping
-React/browser code away from SQLite and Node-only modules. Tests exercise the UI against fake
-clients; durable behavior is covered at the application client/store boundary.
+`RuntimeCommandClient` instances, loads asynchronously, and provides visible repo/worktree
+registration, create, edit, state-change, archive, per-task Codex run controls, and a read-only
+task/run detail inspector. The task composer can select a registered worktree anchor so newly
+created tasks can immediately become runnable. The detail shell opens from a task card and renders
+task anchors, run history, grouped artifact previews/counts, validation summaries, and event
+timelines from the Worker 044 read model shape. Run controls use the projected task `worktreePath`
+as the command `cwd`, stay unavailable when no worktree is linked, show compact
+running/completed/failed feedback, and reload the dashboard plus the currently open detail after a
+run attempt so persisted backend state can be reflected. The default `src/main.tsx` wiring injects
+the Tauri command clients, keeping React/browser code away from SQLite and Node-only modules. Tests
+exercise the UI against fake clients; durable behavior is covered at the application client/store
+boundary.
 
 ## Pending Runtime Architecture
 

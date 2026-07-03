@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { EntityId } from '../domain/model';
 import type {
   CreateTaskDashboardTaskInput,
+  RegisterTaskWorktreeInput,
   TaskDashboardClient,
   TaskDashboardSnapshot,
   UpdateTaskDashboardTaskInput,
@@ -31,6 +32,10 @@ export async function getAppMetadata(): Promise<AppMetadata> {
 export const tauriTaskDashboardClient: TaskDashboardClient = {
   async loadDashboard(): Promise<TaskDashboardSnapshot> {
     return invoke<TaskDashboardSnapshot>('load_open_task_dashboard');
+  },
+
+  async registerWorktree(input: RegisterTaskWorktreeInput): Promise<TaskDashboardSnapshot> {
+    return invoke<TaskDashboardSnapshot>('register_task_worktree', { input });
   },
 
   async createTask(input: CreateTaskDashboardTaskInput): Promise<TaskDashboardSnapshot> {

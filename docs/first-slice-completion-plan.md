@@ -58,31 +58,42 @@ Already merged:
 - Browser-safe `postRunCapture` command input plus live Rust/Tauri `start_codex_task_run` wiring
   that, after a completed Codex run, can optionally store a tracked diff artifact and/or run one
   validation command with a linked validation log artifact and validation events.
+- App-side project/repo/worktree setup path: the Tauri backend can register a manual worktree
+  anchor, the dashboard snapshot exposes registered worktrees, and the React shell can create a task
+  linked to a runnable worktree.
 - Rust/Cargo/MSVC native-build path verified through the Visual Studio developer environment;
   `npm run build:tauri` produces Windows bundles.
 
 Known blockers / remaining runtime wiring:
 
 - `link.exe` is available through the Visual Studio developer environment, not the default shell.
-  Run native Rust/Tauri verification through `vcvars64.bat`.
+  Run native Rust/Tauri verification through `vcvars64.bat`; in this Codex shell, also prepend
+  `%USERPROFILE%\.cargo\bin` inside that `cmd` session if `cargo` is not already on `PATH`.
+- Direct `codex exec --json` smoke testing works when the local OpenAI Codex binary is used. The
+  WindowsApps packaged shim still returns access denied when executed directly from this shell, so
+  live app launches should use `%LOCALAPPDATA%\OpenAI\Codex\bin\codex.exe` explicitly or put that
+  directory earlier on `PATH`.
 
 ## Remaining Tasks
 
-| ID    | Task                           | Output                                                                                                                        | Depends On                          |
-| ----- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| FS-05 | Persisted Open Tasks dashboard | Application client, React boundary, Rust SQLite command backend, and Rust/Tauri build verification are merged/cleared         | Merged database opener              |
-| FS-08 | Run controls in UI             | UI shell, Rust/Tauri start-run backend, and native build verification are merged/cleared                                      | Merged task worktree service, FS-05 |
-| FS-09 | Task/run detail view           | Detail read model, UI shell, Tauri facade, and Rust/Tauri backend are merged/cleared                                          | FS-05, merged run composition       |
-| FS-10 | Diff collector                 | Service boundary, local Git diff provider, post-run composition trigger, and explicit live WebView run-path wiring are merged | Merged task worktree service        |
-| FS-11 | Validation command runner      | Service boundary, Node runtime adapter, post-run composition trigger, and explicit live WebView run-path wiring are merged    | Merged task worktree service        |
-| FS-12 | Review surface MVP             | Show final response, diff state, validation status, and next action for completed/failed runs                                 | FS-09, FS-10, FS-11                 |
-| FS-13 | Tauri build environment        | Cleared: Rust/Cargo/MSVC build path works through the Visual Studio developer environment, and `npm run build:tauri` passes   | External environment                |
+| ID    | Task                           | Output                                                                                                                        | Depends On                             |
+| ----- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| FS-05 | Persisted Open Tasks dashboard | Application client, React boundary, Rust SQLite command backend, and Rust/Tauri build verification are merged/cleared         | Merged database opener                 |
+| FS-08 | Run controls in UI             | UI shell, Rust/Tauri start-run backend, and native build verification are merged/cleared                                      | Merged task worktree service, FS-05    |
+| FS-09 | Task/run detail view           | Detail read model, UI shell, Tauri facade, and Rust/Tauri backend are merged/cleared                                          | FS-05, merged run composition          |
+| FS-10 | Diff collector                 | Service boundary, local Git diff provider, post-run composition trigger, and explicit live WebView run-path wiring are merged | Merged task worktree service           |
+| FS-11 | Validation command runner      | Service boundary, Node runtime adapter, post-run composition trigger, and explicit live WebView run-path wiring are merged    | Merged task worktree service           |
+| FS-14 | Repo/worktree setup path       | Manual worktree registration, dashboard worktree anchors, and anchored task creation are implemented                          | Merged repo scan and worktree services |
+| FS-12 | Review surface MVP             | Show final response, diff state, validation status, and next action for completed/failed runs                                 | FS-09, FS-10, FS-11                    |
+| FS-13 | Tauri build environment        | Cleared: Rust/Cargo/MSVC build path works through the Visual Studio developer environment, and `npm run build:tauri` passes   | External environment                   |
 
 ## Dependency Shape
 
 Critical path:
 
-1. FS-12: add review-grade final-response, diff, validation, and next-action flow.
+1. Manual-test the current live loop from project/repo/worktree setup through task creation,
+   `codex exec --json`, detail loading, final response, diff, and validation records.
+2. FS-12: add review-grade final-response, diff, validation, and next-action flow.
 
 Repo/worktree path:
 
@@ -109,16 +120,16 @@ Review path:
 
 Safe immediately:
 
-- Review read-model/UI refinements can build against the merged detail shell and post-run capture
-  records.
+- Manual live-loop testing can use the new setup path without manual database seeding.
 
 Should wait:
 
-- FS-12 should wait for detail loading plus real run, diff, and validation records.
+- Subjective review-surface polish and visible capture controls should wait until the live loop has
+  been manually tested through the setup path.
 
 ## Recommended Worker Sequencing
 
-1. Manual-test the current live loop before launching extras or subjective polish.
+1. Manual-test the live loop after FS-14 before launching extras or subjective polish.
 2. After feedback, launch only the review-surface or capture-control work that is clearly needed.
 
 ## Orchestration Notes

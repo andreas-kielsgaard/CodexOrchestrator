@@ -4,6 +4,7 @@ import type { DomainRecords, EntityId, Task } from '../domain/model';
 import { projectOpenTaskDashboard } from '../domain/dashboardProjection';
 import type {
   CreateTaskDashboardTaskInput,
+  RegisterTaskWorktreeInput,
   TaskDashboardClient,
   TaskDashboardSnapshot,
   UpdateTaskDashboardTaskInput,
@@ -220,6 +221,55 @@ describe('App open task dashboard', () => {
     expect(runtimeClient.inputs).toEqual([]);
   }, 10_000);
 
+  it('registers a worktree and creates a runnable task against it', async () => {
+    const client = new FakeTaskDashboardClient({ empty: true });
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
+
+    expect(await screen.findByText('No persisted projects')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Project name'), {
+      target: { value: 'Codex Orchestrator' },
+    });
+    fireEvent.change(screen.getByLabelText('Repo root path'), {
+      target: { value: 'C:/Repos/Codex Orchestrator' },
+    });
+    fireEvent.change(screen.getByLabelText('Worktree path'), {
+      target: { value: workerPath },
+    });
+    fireEvent.change(screen.getByLabelText('Branch name'), {
+      target: { value: 'worker/042-run-controls-ui-shell' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Register' }));
+
+    expect(await screen.findByText('0 open')).toBeInTheDocument();
+    expect(screen.getByLabelText('Worktree')).toHaveValue('worktree-1');
+
+    fireEvent.change(screen.getByLabelText('Task title'), {
+      target: { value: 'Runnable task' },
+    });
+    fireEvent.change(screen.getByLabelText('Task summary'), {
+      target: { value: 'Created after registering a worktree.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    expect(await screen.findByText('Runnable task')).toBeInTheDocument();
+    expect(screen.getByLabelText('Codex prompt for Runnable task')).not.toBeDisabled();
+    expect(client.findTask('task-1')).toMatchObject({
+      repoId: 'repo-1',
+      branchId: 'branch-1',
+      worktreeId: 'worktree-1',
+    });
+  }, 10_000);
+
   it('opens task run detail with anchors, artifacts, validation, and events', async () => {
     const client = new FakeTaskDashboardClient();
     const runtimeClient = new FakeRuntimeCommandClient();
@@ -382,6 +432,7 @@ describe('App open task dashboard', () => {
 });
 
 interface FakeTaskDashboardClientOptions {
+  empty?: boolean;
   withWorktree?: boolean;
 }
 
@@ -389,81 +440,100 @@ class FakeTaskDashboardClient implements TaskDashboardClient {
   private records: DomainRecords;
 
   private nextTaskIndex = 2;
+  private nextProjectIndex = 1;
+  private nextRepoIndex = 1;
+  private nextBranchIndex = 1;
+  private nextWorktreeIndex = 1;
   private nextTick = 1;
   loadCount = 0;
 
   constructor(options: FakeTaskDashboardClientOptions = {}) {
     const withWorktree = options.withWorktree ?? true;
 
-    this.records = {
-      projects: [
-        {
-          id: 'project-1',
-          name: 'Codex Orchestrator',
-          createdAt: now,
-          updatedAt: now,
-        },
-      ],
-      repos: withWorktree
-        ? [
+    this.records = options.empty
+      ? {
+          projects: [],
+          repos: [],
+          branches: [],
+          worktrees: [],
+          conversations: [],
+          tasks: [],
+          taskRuns: [],
+          artifacts: [],
+          validationRuns: [],
+          events: [],
+        }
+      : {
+          projects: [
             {
-              id: 'repo-1',
-              projectId: 'project-1',
+              id: 'project-1',
               name: 'Codex Orchestrator',
-              rootPath: 'C:/Repos/Codex Orchestrator',
               createdAt: now,
               updatedAt: now,
             },
-          ]
-        : [],
-      branches: withWorktree
-        ? [
+          ],
+          repos: withWorktree
+            ? [
+                {
+                  id: 'repo-1',
+                  projectId: 'project-1',
+                  name: 'Codex Orchestrator',
+                  rootPath: 'C:/Repos/Codex Orchestrator',
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              ]
+            : [],
+          branches: withWorktree
+            ? [
+                {
+                  id: 'branch-1',
+                  repoId: 'repo-1',
+                  name: 'worker/042-run-controls-ui-shell',
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              ]
+            : [],
+          worktrees: withWorktree
+            ? [
+                {
+                  id: 'worktree-1',
+                  repoId: 'repo-1',
+                  branchId: 'branch-1',
+                  path: workerPath,
+                  isMain: false,
+                  isDirty: false,
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              ]
+            : [],
+          conversations: [],
+          tasks: [
             {
-              id: 'branch-1',
-              repoId: 'repo-1',
-              name: 'worker/042-run-controls-ui-shell',
+              id: 'task-1',
+              projectId: 'project-1',
+              ...(withWorktree
+                ? { repoId: 'repo-1', branchId: 'branch-1', worktreeId: 'worktree-1' }
+                : {}),
+              conversationIds: [],
+              title: 'Existing task',
+              summary: 'Already loaded from persistence.',
+              executionState: 'draft',
+              attentionState: 'needs_action_now',
+              priority: 'high',
               createdAt: now,
               updatedAt: now,
             },
-          ]
-        : [],
-      worktrees: withWorktree
-        ? [
-            {
-              id: 'worktree-1',
-              repoId: 'repo-1',
-              branchId: 'branch-1',
-              path: workerPath,
-              isMain: false,
-              isDirty: false,
-              createdAt: now,
-              updatedAt: now,
-            },
-          ]
-        : [],
-      conversations: [],
-      tasks: [
-        {
-          id: 'task-1',
-          projectId: 'project-1',
-          ...(withWorktree
-            ? { repoId: 'repo-1', branchId: 'branch-1', worktreeId: 'worktree-1' }
-            : {}),
-          conversationIds: [],
-          title: 'Existing task',
-          summary: 'Already loaded from persistence.',
-          executionState: 'draft',
-          attentionState: 'needs_action_now',
-          priority: 'high',
-          createdAt: now,
-          updatedAt: now,
-        },
-      ],
-      taskRuns: [],
-      artifacts: [],
-      validationRuns: [],
-      events: [],
-    };
+          ],
+          taskRuns: [],
+          artifacts: [],
+          validationRuns: [],
+          events: [],
+        };
+
+    this.nextTaskIndex = options.empty ? 1 : 2;
   }
 
   async loadDashboard(): Promise<TaskDashboardSnapshot> {
@@ -479,6 +549,9 @@ class FakeTaskDashboardClient implements TaskDashboardClient {
         {
           id: `task-${this.nextTaskIndex++}`,
           projectId: input.projectId,
+          ...(input.repoId ? { repoId: input.repoId } : {}),
+          ...(input.branchId ? { branchId: input.branchId } : {}),
+          ...(input.worktreeId ? { worktreeId: input.worktreeId } : {}),
           conversationIds: [],
           title: input.title,
           summary: input.summary,
@@ -489,6 +562,53 @@ class FakeTaskDashboardClient implements TaskDashboardClient {
           updatedAt: this.timestamp(),
         },
       ],
+    };
+
+    return this.snapshot();
+  }
+
+  async registerWorktree(input: RegisterTaskWorktreeInput): Promise<TaskDashboardSnapshot> {
+    const project = this.records.projects.find((record) => record.name === input.projectName) ?? {
+      id: `project-${this.nextProjectIndex++}`,
+      name: input.projectName,
+      createdAt: this.timestamp(),
+      updatedAt: this.timestamp(),
+    };
+    const hasProject = this.records.projects.some((record) => record.id === project.id);
+    const repo = {
+      id: `repo-${this.nextRepoIndex++}`,
+      projectId: project.id,
+      name: input.repoName ?? input.projectName,
+      rootPath: input.repoRootPath,
+      createdAt: this.timestamp(),
+      updatedAt: this.timestamp(),
+    };
+    const branch = input.branchName
+      ? {
+          id: `branch-${this.nextBranchIndex++}`,
+          repoId: repo.id,
+          name: input.branchName,
+          createdAt: this.timestamp(),
+          updatedAt: this.timestamp(),
+        }
+      : undefined;
+    const worktree = {
+      id: `worktree-${this.nextWorktreeIndex++}`,
+      repoId: repo.id,
+      ...(branch ? { branchId: branch.id } : {}),
+      path: input.worktreePath,
+      isMain: input.isMain ?? false,
+      isDirty: false,
+      createdAt: this.timestamp(),
+      updatedAt: this.timestamp(),
+    };
+
+    this.records = {
+      ...this.records,
+      projects: hasProject ? this.records.projects : [...this.records.projects, project],
+      repos: [...this.records.repos, repo],
+      branches: branch ? [...this.records.branches, branch] : this.records.branches,
+      worktrees: [...this.records.worktrees, worktree],
     };
 
     return this.snapshot();
@@ -522,6 +642,31 @@ class FakeTaskDashboardClient implements TaskDashboardClient {
     return {
       groups,
       projects: this.records.projects.map((project) => ({ id: project.id, name: project.name })),
+      worktreeAnchors: this.records.worktrees.flatMap((worktree) => {
+        const repo = this.records.repos.find((record) => record.id === worktree.repoId);
+        const project = repo
+          ? this.records.projects.find((record) => record.id === repo.projectId)
+          : undefined;
+        const branch = worktree.branchId
+          ? this.records.branches.find((record) => record.id === worktree.branchId)
+          : undefined;
+
+        if (!repo || !project) {
+          return [];
+        }
+
+        return [
+          {
+            id: worktree.id,
+            projectId: project.id,
+            project: project.name,
+            repoId: repo.id,
+            repo: repo.name,
+            ...(branch ? { branchId: branch.id, branch: branch.name } : {}),
+            path: worktree.path,
+          },
+        ];
+      }),
       totalOpenTasks: groups.reduce((total, group) => total + group.tasks.length, 0),
     };
   }
@@ -880,6 +1025,7 @@ function emptySnapshot(): TaskDashboardSnapshot {
       events: [],
     }),
     projects: [],
+    worktreeAnchors: [],
     totalOpenTasks: 0,
   };
 }

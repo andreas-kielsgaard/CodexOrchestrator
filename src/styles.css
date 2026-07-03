@@ -153,17 +153,28 @@ h1 {
   color: #7a2e20;
 }
 
+.setup-panel,
 .task-composer {
   display: grid;
-  grid-template-columns:
-    minmax(150px, 0.9fr) minmax(180px, 1.2fr) minmax(220px, 1.5fr) minmax(150px, 0.8fr)
-    auto;
   gap: 8px;
-  margin-bottom: 14px;
   padding: 10px;
   border: 1px solid #d8ddd5;
   border-radius: 8px;
   background: #eef1eb;
+}
+
+.setup-panel {
+  grid-template-columns:
+    minmax(150px, 0.8fr) minmax(210px, 1.1fr) minmax(210px, 1.1fr) minmax(130px, 0.7fr)
+    auto;
+  margin-bottom: 10px;
+}
+
+.task-composer {
+  grid-template-columns:
+    minmax(150px, 0.8fr) minmax(190px, 1fr) minmax(180px, 1.1fr) minmax(220px, 1.3fr)
+    minmax(150px, 0.8fr) auto;
+  margin-bottom: 14px;
 }
 
 input,
@@ -678,6 +689,7 @@ h3 {
     justify-content: start;
   }
 
+  .setup-panel,
   .task-composer {
     grid-template-columns: 1fr;
   }

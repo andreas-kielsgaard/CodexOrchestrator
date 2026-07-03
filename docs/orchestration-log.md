@@ -2699,3 +2699,39 @@ disposal`)
 - Cleanup: `git worktree remove` unregistered the Worker 050 worktree, but Windows denied physical
   folder deletion at `C:\Users\user\.codex\worktrees\94b3\Codex Orchestrator`; the merged branch
   was deleted and the locked physical folder was left in place.
+
+### Manual Gate Intake: First Slice Setup Gap
+
+- Status: automated verification passed; no new worker launched yet.
+- Verification run on main: `npm run lint`, `npm run format:check`, `npm run test`,
+  `npm run build`, `cargo test` through `vcvars64.bat`, and `npm run build:tauri` through
+  `vcvars64.bat` all passed. `npm run build:tauri` produced MSI and NSIS bundles.
+- Live runtime smoke: direct `codex exec --json --sandbox read-only --ephemeral` using
+  `C:\Users\user\AppData\Local\OpenAI\Codex\bin\aec6b7c6fcdfb66a\codex.exe` returned the expected
+  final `OK` response. Direct execution of the WindowsApps packaged `codex.exe` still returns
+  access denied, so live app launches from this shell should prefer the local Codex binary earlier
+  on PATH.
+- Manual-test finding: a fresh Tauri app database has no persisted project/repo/worktree records,
+  and the current UI can create tasks only after a project exists while run controls require a
+  linked worktree. That blocks a clean first-run live-loop test without manual database seeding.
+- Decision: make the next implementation slice the smallest repo/worktree setup and task-linking
+  path needed for a fresh app database before subjective review-surface polish or visible
+  post-run-capture controls.
+
+### FS-14 Direct Implementation: Repo/Worktree Setup Path
+
+- Status: implemented in the orchestration thread after the manual gate exposed a clean-database
+  setup blocker.
+- Result log: `docs/task-logs/worker-051-repo-worktree-setup-path.md`
+- Summary: added a browser-safe worktree-anchor shape, an optional dashboard-client
+  `registerWorktree` operation, a Tauri `register_task_worktree` backend command, a compact
+  repo/worktree registration form, a worktree selector in the task composer, and anchored task
+  creation so registered tasks can immediately expose run controls.
+- Explicitly deferred: file pickers, Git auto-discovery, repo list/remove management, branch policy,
+  workflow defaults, visible post-run capture controls, and subjective review-surface polish.
+- Verification before broader sweep: focused App/task-dashboard/Tauri client tests,
+  `npm run build`, `cargo fmt --check`, and focused Rust `register_worktree` tests passed.
+- Verification after implementation: `git diff --check`, `npm run lint`, `npm run format:check`,
+  `npm run test`, full `cargo test`, and `npm run build:tauri` passed. Full Vitest coverage is now
+  47 files / 284 tests; full Rust coverage is 15 tests. The Tauri build produced MSI and NSIS
+  bundles.
