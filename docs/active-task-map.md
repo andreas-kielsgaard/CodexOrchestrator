@@ -17,6 +17,11 @@ otherwise resolve it.
   `worker/040-rust-toolchain-setup`. Pending worktree id:
   `local:c3fdb1cd-62ad-43ee-8ee2-e4a06858ff2b`. Await completion report and result log
   `docs/task-logs/worker-040-rust-toolchain-setup.md`; review before merge.
+- Worker 042: FS-08 Run Controls UI Shell is active in
+  `C:\Users\user\.codex\worktrees\9ca8\Codex Orchestrator` on target branch
+  `worker/042-run-controls-ui-shell`. Pending worktree id:
+  `local:de5e2f31-5011-46b9-8874-9de3402204d7`. Await completion report and result log
+  `docs/task-logs/worker-042-run-controls-ui-shell.md`; review before merge.
 
 ## Pending Blockers / Follow-Up
 

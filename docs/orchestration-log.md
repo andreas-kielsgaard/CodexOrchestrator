@@ -2322,3 +2322,22 @@ disposal`)
 - Cleanup: `git worktree remove` unregistered the Worker 041 worktree, but Windows denied physical
   folder deletion at `C:\Users\user\.codex\worktrees\b18b\Codex Orchestrator`; the merged branch
   `worker/041-orchestration-review` was deleted and the locked physical folder was left in place.
+
+### Worker 042 Launch: FS-08 Run Controls UI Shell
+
+- Status: launched in a fresh worktree worker
+- Pending worktree id: `local:de5e2f31-5011-46b9-8874-9de3402204d7`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\9ca8\Codex Orchestrator`
+- Target branch: `worker/042-run-controls-ui-shell`
+- Launch base observed in worktree: `c169cfa` (`Log Worker 041 merge`), detached until the worker
+  creates the target branch
+- Goal: add Open Tasks run-control UI against the browser-safe runtime command client, using an
+  injected fake client in tests and the Tauri runtime command facade in `main.tsx`.
+- Explicitly deferred: Rust/Tauri implementation or registration of `start_codex_task_run`,
+  task/run detail pages, review surface, diff/validation triggers, repo/worktree selection UI,
+  workflow-engine behavior, process supervision, and live Codex/Git/validation execution in tests.
+- Required result log: `docs/task-logs/worker-042-run-controls-ui-shell.md`
+- Required verification: `git diff --check main...worker/042-run-controls-ui-shell`, focused App/UI
+  tests, `npm run lint`, `npm run format:check`, `npm run test`, and `npm run build`.
+- Report-back instruction: included in the worker prompt, with an explicit fallback if cross-posting
+  is unavailable.
