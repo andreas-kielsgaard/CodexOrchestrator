@@ -118,7 +118,8 @@ Should wait:
 
 ## Recommended Worker Sequencing
 
-1. Launch FS-12 to pull final response, diff, validation, and next action into one review view.
+1. Manual-test the current live loop before launching extras or subjective polish.
+2. After feedback, launch only the review-surface or capture-control work that is clearly needed.
 
 ## Orchestration Notes
 

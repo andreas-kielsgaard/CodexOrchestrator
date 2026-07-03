@@ -72,14 +72,18 @@ Already built on `main`:
 - Rust/Tauri backend command for `load_task_run_detail`, backed by the app SQLite database.
 - Caller-configured post-run capture composition that can run Codex, then optionally collect diff
   and run one validation command through existing services.
+- Live Rust/Tauri `start_codex_task_run` post-run capture wiring for explicit tracked diff and
+  one validation command after a completed Codex run.
 - Rust/Cargo/MSVC Tauri build path verified locally through the Visual Studio developer environment;
   `npm run build:tauri` produces Windows MSI and NSIS bundles.
 
 Important gaps:
 
 - No repo/worktree UI that injects the local Git-backed runtime composition into user flows.
-- Post-run capture is composed for Node/local runtime callers, but not wired into the live WebView
-  run command path.
+- The detail shell can show persisted final responses, events, diffs, and validation results, but
+  review-grade next-action flow should wait for manual testing feedback.
+- Visible controls for post-run capture configuration are intentionally deferred pending manual
+  testing.
 - The default shell still does not resolve `link.exe`; run Rust/Tauri native-build verification
   after loading the Visual Studio developer environment.
 
@@ -101,8 +105,8 @@ events, diff, and validation result in the app.
 
 Current planned sequence:
 
-1. Wire explicit post-run diff/validation capture into the live run path.
-2. Add the review surface that combines final response, diff, validation, and next action.
+1. Manual-test the current live loop before launching extras or subjective polish.
+2. After feedback, add only the review-surface or configuration controls that are clearly needed.
 
 ## Later Roadmap
 

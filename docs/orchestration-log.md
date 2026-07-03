@@ -2673,3 +2673,29 @@ disposal`)
   environment if feasible.
 - Report-back instruction: included in the worker prompt, with an explicit fallback if
   cross-thread reporting is unavailable.
+
+### Worker 050 Review And Merge: Live Post-Run Capture
+
+- Status: reviewed, merged, verified, and Git-cleaned.
+- Worker thread: `019f29b3-0313-78e1-9037-d2972c714006`
+- Worker commit: `bbacb4b` (`Wire live post-run capture`)
+- Merge commit: `0d4776b` (`Merge Worker 050 live post-run capture`)
+- Result log: `docs/task-logs/worker-050-live-post-run-capture.md`
+- Accepted decision: extend the browser-safe `start_codex_task_run` contract with explicit optional
+  `postRunCapture` input and compact output for tracked diff and one validation command.
+- Accepted decision: wire the live Rust/Tauri run command to run capture only after a completed
+  Codex run, persist diff artifacts/events and validation rows/log artifacts/events, and return
+  capture failures without converting the completed Codex run into a failed run.
+- Explicitly deferred: visible React controls for capture options, repo/worktree setup UI,
+  workflow-engine behavior, process supervision, and subjective review-surface polish pending
+  manual testing.
+- Verification before merge: `git diff --check`, focused Rust post-run tests, `cargo fmt --check`,
+  full `cargo test`, `npm run lint`, `npm run format:check`, `npm run test`, `npm run build`, and
+  `npm run build:tauri` passed through the Visual Studio developer environment.
+- Verification after merge: `git diff --check HEAD^..HEAD`, full `cargo test`, `npm run lint`,
+  `npm run test`, `npm run build`, and `npm run build:tauri` passed on main. `npm run format:check`
+  initially failed on the already-dirty `docs/active-task-map.md`; the map was updated/formatted as
+  part of this operation and rechecked afterward.
+- Cleanup: `git worktree remove` unregistered the Worker 050 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\94b3\Codex Orchestrator`; the merged branch
+  was deleted and the locked physical folder was left in place.
