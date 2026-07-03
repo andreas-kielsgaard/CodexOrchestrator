@@ -14,10 +14,11 @@ which boundaries should stay intact.
 - SQLite infrastructure is written as pure TypeScript over injected SQLite-like interfaces.
 
 Current limitation: the app can open a local runtime database file through a Node-facing
-infrastructure boundary, and the Open Tasks UI now consumes an injected async dashboard client. The
-default Tauri WebView path now has a narrow Rust-side SQLite backend for Open Tasks dashboard
-load/create/update/archive commands, while broader runtime composition still needs to expose the
-rest of the store bundle to future services.
+infrastructure boundary, compose the TypeScript application services over that opened store bundle,
+and inject concrete local Git, Codex, and validation adapters for Node-side callers. The Open Tasks
+UI now consumes an injected async dashboard client. The default Tauri WebView path has a narrow
+Rust-side SQLite backend for Open Tasks dashboard load/create/update/archive commands, while
+run-control and review UI surfaces still need to call the composed runtime boundary.
 
 ## Boundary Rules
 
@@ -171,6 +172,29 @@ windows. It returns exit code and signal metadata without deciding whether valid
 This adapter does not compose validation-run lifecycle state, persist artifacts/events, choose
 commands, run multiple commands, collect diffs, or wire UI/Tauri behavior.
 
+### Local Runtime Composition
+
+Location: `src/infrastructure/localRuntimeComposition.ts`
+
+The local runtime composition boundary is Node-only. It opens the local app SQLite database through
+`openLocalAppSqliteDatabase`, reuses the resulting app store bundle, constructs local Git adapters
+with `createLocalGitRuntimeAdapters`, constructs the Codex runtime with `createCodexRuntime`,
+constructs the validation command runtime with `createValidationCommandRuntime`, and exposes the
+application service objects needed by upcoming run-control and review slices:
+
+- store-backed Open Tasks dashboard client
+- task-run lifecycle recorder
+- Codex run composition service
+- repo registry scan service
+- task worktree selection service
+- diff collection service
+- validation command runner service
+
+The composition keeps database opening, process runners, adapter instances, repo-sync ID providers,
+and clocks injectable so tests and future callers can exercise the boundary without running live
+Git, Codex, or validation commands. It also exposes `close`/`dispose` by forwarding the opened
+database lifecycle. Browser/React entrypoints must not import this module directly.
+
 ### SQLite
 
 Location: `src/infrastructure/sqlite/`
@@ -227,18 +251,11 @@ boundary.
 
 The first usable runtime loop still needs:
 
-1. UI/runtime composition that exposes the opened store bundle to the remaining application
-   services.
-2. Runtime wiring that passes the SQLite-backed store bundle and concrete Codex runtime adapter into
-   the run composition service.
-3. Runtime wiring that passes the concrete local `GitRepoScanner`, `RepoSyncStore`, and repo-sync
-   ID/clock providers into the repo registry scan service.
-4. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
-5. Repo/worktree UI/runtime composition that injects the concrete local worktree creator into the
-   task worktree selection service.
-6. Diff collection wiring that injects the concrete local Git diff provider, plus concrete
-   validation command runtime wiring that stores validation outputs as artifacts/validation runs.
-7. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.
+1. A browser/Tauri-safe command surface that calls the Node/local runtime composition without
+   importing Node-only modules into React entrypoints.
+2. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
+3. Runtime triggers that call the composed diff and validation services after a Codex run completes.
+4. UI surfaces for starting runs and reviewing final response, diff, validation, and event history.
 
 ## Testing And Verification
 
