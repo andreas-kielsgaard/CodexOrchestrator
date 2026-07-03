@@ -25,6 +25,13 @@ Every worker launch prompt needs a dedicated "Report back" section. The worker m
 completion report to the orchestration thread when done. If cross-posting is unavailable, the worker
 must say so in its own final message and still include the full report.
 
+### Worker Report Intake
+
+Treat a worker report as an interrupt for triage, not a reason to reload every orchestration
+artifact. First inspect the report, result log, changed files, commit, and branch status. Then choose
+one of five paths: review now, apply a small orchestrator correction, ask the worker to follow up,
+mark blocked, or reject. Defer broad log writing until after that decision.
+
 ### Review Before Merge
 
 The orchestrator reviews worker branches before merging, runs independent verification, and records
@@ -74,6 +81,13 @@ A clean checkpoint is a decision point, not a stopping point. Continue to the ne
 slice unless there is a blocker, product question, failed review, unclear next action, or recovery
 checkpoint to update.
 
+### Parallelize The Nondependent Path
+
+Review-before-merge protects integration quality, but it does not require unrelated work to sit
+idle. When a completed branch is being reviewed, launch or continue an independent slice if its
+inputs are already stable. Keep dependent slices waiting until the upstream branch is accepted,
+rejected, or explicitly declared safe to build against.
+
 ### UI Slices
 
 For UI-heavy work, protect usability early. Ask for states, affordances, density, and user workflow
@@ -83,6 +97,10 @@ clarity. Consider a separate usability-review worker when a screen becomes subst
 
 If merge repair, branch cleanup, or state reconciliation becomes nontrivial, split it into a focused
 admin task instead of burying it inside implementation work.
+
+Keep small admin moves in the orchestration thread: checking status, staging a known doc update,
+recording a merge result, or sending a concise follow-up. Launching a worker for those cases adds
+more overhead than it saves.
 
 ### Windows Worktree Cleanup
 
@@ -101,3 +119,5 @@ Check registration and branch state before cleanup. If Windows keeps a physical 
   report back.
 - Later compaction handling showed that handoff chains and the orchestration log were too heavy for
   recovery; `docs/active-task-map.md` is the current recovery mechanism.
+- Worker 041 showed that report arrival needs a fast intake path: classify the branch and decide
+  review/correction/follow-up before broad recovery reading or audit writing.
