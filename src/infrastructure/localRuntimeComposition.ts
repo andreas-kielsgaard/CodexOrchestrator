@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { DiffCollectionService } from '../application/diffCollection';
+import type { PostRunCaptureCompositionService } from '../application/postRunCaptureComposition';
 import type {
   RepoRegistryScanClock,
   RepoRegistryScanService,
@@ -77,6 +78,7 @@ export interface LocalRuntimeServices {
   taskRunDetailClient: TaskRunDetailClient;
   taskRunLifecycleRecorder: TaskRunLifecycleRecorder;
   runCompositionService: RunCompositionService;
+  postRunCaptureCompositionService: PostRunCaptureCompositionService;
   repoRegistryScanService: RepoRegistryScanService;
   taskWorktreeSelectionService: TaskWorktreeSelectionService;
   diffCollectionService: DiffCollectionService;
@@ -119,6 +121,23 @@ export function openLocalRuntimeServiceComposition(
     ids: repoRegistryProviders.ids,
     clock: repoRegistryProviders.clock,
   };
+  const runCompositionService: RunCompositionService = {
+    recorder: taskRunLifecycleRecorder,
+    runtime: codex,
+  };
+  const diffCollectionService: DiffCollectionService = {
+    dashboardStore: stores.openTaskDashboard,
+    artifactStore: stores.artifact,
+    eventStore: stores.event,
+    diffProvider: git.diffProvider,
+  };
+  const validationCommandRunnerService: ValidationCommandRunnerService = {
+    dashboardStore: stores.openTaskDashboard,
+    validationRunStore: stores.validationRun,
+    artifactStore: stores.artifact,
+    eventStore: stores.event,
+    runtime: validation,
+  };
   const services: LocalRuntimeServices = {
     taskDashboardClient: createStoreBackedTaskDashboardClient({
       dashboard: stores.openTaskDashboard,
@@ -132,9 +151,11 @@ export function openLocalRuntimeServiceComposition(
       validationRun: stores.validationRun,
     }),
     taskRunLifecycleRecorder,
-    runCompositionService: {
-      recorder: taskRunLifecycleRecorder,
-      runtime: codex,
+    runCompositionService,
+    postRunCaptureCompositionService: {
+      runCompositionService,
+      diffCollectionService,
+      validationCommandRunnerService,
     },
     repoRegistryScanService,
     taskWorktreeSelectionService: {
@@ -143,19 +164,8 @@ export function openLocalRuntimeServiceComposition(
       repoRegistry: repoRegistryScanService,
       worktreeCreator: git.worktreeCreator,
     },
-    diffCollectionService: {
-      dashboardStore: stores.openTaskDashboard,
-      artifactStore: stores.artifact,
-      eventStore: stores.event,
-      diffProvider: git.diffProvider,
-    },
-    validationCommandRunnerService: {
-      dashboardStore: stores.openTaskDashboard,
-      validationRunStore: stores.validationRun,
-      artifactStore: stores.artifact,
-      eventStore: stores.event,
-      runtime: validation,
-    },
+    diffCollectionService,
+    validationCommandRunnerService,
   };
 
   return {
