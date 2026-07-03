@@ -12,21 +12,15 @@ otherwise resolve it.
 
 ## Active Tasks
 
-- Worker 039: Runtime Command Contract Boundary is active in
-  `C:\Users\user\.codex\worktrees\c6f0\Codex Orchestrator` on target branch
-  `worker/039-runtime-command-contract`. Pending worktree id:
-  `local:e9f471df-c410-4056-aabb-c8238ea72a6d`. Await completion report and result log
-  `docs/task-logs/worker-039-runtime-command-contract.md`; review before merge.
 - Worker 040: Rust Toolchain Setup And Tauri Verification is active in
   `C:\Users\user\.codex\worktrees\83c3\Codex Orchestrator` on target branch
   `worker/040-rust-toolchain-setup`. Pending worktree id:
   `local:c3fdb1cd-62ad-43ee-8ee2-e4a06858ff2b`. Await completion report and result log
   `docs/task-logs/worker-040-rust-toolchain-setup.md`; review before merge.
-- Worker 041: Orchestration Review is active in
+- Worker 041: Orchestration Review is complete-but-unreviewed in
   `C:\Users\user\.codex\worktrees\b18b\Codex Orchestrator` on target branch
-  `worker/041-orchestration-review`. Pending worktree id:
-  `local:3233e65c-fa11-45a6-ab94-62a5457d347c`. Await completion report and result log
-  `docs/task-logs/worker-041-orchestration-review.md`; review before merge.
+  `worker/041-orchestration-review` at commit `a8b45632dd94fba4228806cba242bf2c9fceadd8`.
+  Result log: `docs/task-logs/worker-041-orchestration-review.md`. Review before merge.
 
 ## Pending Blockers / Follow-Up
 
@@ -49,6 +43,8 @@ otherwise resolve it.
   `docs/task-logs/worker-037-open-tasks-tauri-sqlite-backend.md`.
 - Worker 038: finished without reporting back, then was reviewed, corrected, merged, verified, and
   Git-cleaned. See `docs/task-logs/worker-038-local-runtime-service-composition.md`.
+- Worker 039: reviewed, merged, verified, stabilized, and Git-cleaned. See
+  `docs/task-logs/worker-039-runtime-command-contract.md`.
 
 ## Blockers
 
@@ -78,3 +74,4 @@ launched:
 - Worker 036: `C:\Users\user\.codex\worktrees\478e\Codex Orchestrator`
 - Worker 037: `C:\Users\user\.codex\worktrees\35fe\Codex Orchestrator`
 - Worker 038: `C:\Users\user\.codex\worktrees\c063\Codex Orchestrator`
+- Worker 039: `C:\Users\user\.codex\worktrees\c6f0\Codex Orchestrator`

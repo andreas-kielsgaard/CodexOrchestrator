@@ -2268,3 +2268,35 @@ disposal`)
   `npm run format:check` if docs formatting might be affected.
 - Report-back instruction: included in the worker prompt, with an explicit fallback if cross-posting
   is unavailable.
+
+### Worker 039 Review And Merge: Runtime Command Contract Boundary
+
+- Status: reviewed, merged, verified, logged, and Git-cleaned
+- Worker commit: `398875c` (`Add runtime command contract boundary`)
+- Merge commit: `74ced1f` (`Merge Worker 039 runtime command contract`)
+- Follow-up stabilization commit on main: `375a0fa` (`Stabilize dashboard interaction tests`)
+- Result log: `docs/task-logs/worker-039-runtime-command-contract.md`
+- Accepted decision: `src/application/runtimeCommandClient.ts` defines a browser-safe start-run
+  command contract with compact serializable result data for task/run IDs, conversation and artifact
+  IDs, terminal metadata, and updated task/run state.
+- Accepted decision: `src/infrastructure/tauriCommands.ts` now exposes a typed
+  `start_codex_task_run` invoke facade without wiring React UI or registering Rust/Tauri backend
+  behavior in this slice.
+- Accepted decision: `src/infrastructure/localRuntimeCommands.ts` is Node-only and maps the command
+  contract onto `composeCodexTaskRun` through the merged local runtime service composition.
+- Orchestrator verification before merge: `git diff --check`, focused runtime command/Tauri facade
+  tests, changed-file Prettier check, `npm run lint`, `npm run test`, and `npm run build` passed in
+  the worker worktree. Full tests passed: 45 files / 264 tests.
+- Verification after merge: `git diff --check HEAD^..HEAD`, `npm run lint`,
+  `npm run format:check`, focused App tests, full `npm run test`, and `npm run build` passed on
+  main. The first two full-suite post-merge test attempts exposed a pre-existing timing fragility
+  in `src/app/App.test.tsx`; focused App tests passed, and the tiny stabilization commit widened
+  two slow dashboard interaction tests to 10 seconds. The final full suite passed: 45 files /
+  264 tests.
+- Drift check: the slice did not add React run controls, task/run detail UI, review UI,
+  Rust/Tauri command implementations or stubs, repo/worktree selection UI, diff/validation triggers,
+  workflow-engine behavior, process supervision, or live Codex execution in tests.
+- Cleanup: `git worktree remove` unregistered the Worker 039 worktree, but Windows denied physical
+  folder deletion at `C:\Users\user\.codex\worktrees\c6f0\Codex Orchestrator`; the merged branch
+  `worker/039-runtime-command-contract` was deleted and the locked physical folder was left in
+  place.
