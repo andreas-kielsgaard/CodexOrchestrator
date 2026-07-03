@@ -59,12 +59,14 @@ Already built on `main`:
 - Node-side validation command runtime adapter over `child_process.spawn`.
 - Node-only local Git runtime adapters for repo scanning, worktree creation, and tracked-file diff
   collection.
+- Node-only local runtime service composition that opens the app SQLite database once, reuses the
+  store bundle, and wires the merged application services to concrete local Git, Codex, and
+  validation adapters.
 
 Important gaps:
 
-- No broader UI/runtime composition that chooses the app database path and exposes all stores to
-  application services.
-- No repo/worktree UI or runtime composition that injects the local Git adapters into user flows.
+- No browser/Tauri-safe command surface over the composed local runtime services.
+- No repo/worktree UI that injects the local Git-backed runtime composition into user flows.
 - No task/run detail view.
 - No runtime triggers for post-run diff/validation artifacts.
 - The Rust/Tauri backend is not compile-verified locally until Rust/Cargo are installed or on
@@ -88,7 +90,7 @@ events, diff, and validation result in the app.
 
 Current planned sequence:
 
-1. Wire repo/worktree runtime composition using the local Git adapters.
+1. Add a browser/Tauri-safe command surface over the composed local runtime services.
 2. Wire run controls and task/run detail UI to the composed run service.
 3. Add runtime triggers for diff and validation capture.
 4. Add the review surface that combines final response, diff, validation, and next action.
