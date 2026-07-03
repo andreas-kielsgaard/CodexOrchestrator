@@ -2208,3 +2208,24 @@ orchestration thread`)
   folder deletion at `C:\Users\user\.codex\worktrees\c063\Codex Orchestrator`; the merged branch
   `worker/038-local-runtime-service-composition` was deleted and the locked physical folder was
   left in place.
+
+### Worker 039 Launch: Runtime Command Contract Boundary
+
+- Status: launched in a fresh worktree worker
+- Pending worktree id: `local:e9f471df-c410-4056-aabb-c8238ea72a6d`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\c6f0\Codex Orchestrator`
+- Target branch: `worker/039-runtime-command-contract`
+- Launch base observed in worktree: `556b4ef` (`Align roadmap after Worker 038`), detached until
+  the worker creates the target branch
+- Goal: add a browser-safe runtime command/client contract for starting one Codex task run, plus a
+  Node-only local handler that calls the merged local runtime service composition.
+- Explicitly deferred: React run controls, task/run detail UI, review UI, Rust/Tauri command
+  implementations or stubs, Rust/Cargo environment work, repo/worktree selection UI,
+  diff/validation triggers, workflow-engine behavior, process supervision, and live Codex execution
+  in tests.
+- Required result log: `docs/task-logs/worker-039-runtime-command-contract.md`
+- Required verification: `git diff --check main...worker/039-runtime-command-contract`, focused
+  command contract/handler tests, `npm run lint`, `npm run format:check`, `npm run test`, and
+  `npm run build`.
+- Report-back instruction: included in the worker prompt, with an extra explicit fallback if
+  cross-posting is unavailable.
