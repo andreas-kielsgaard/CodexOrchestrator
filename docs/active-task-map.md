@@ -12,12 +12,13 @@ otherwise resolve it.
 
 ## Active Tasks
 
-- Worker 049: FS-08 Rust/Tauri Start Codex Task Run Backend is pending worktree setup with
-  pending id `local:b7683379-921b-464e-83db-e032e7dabc87`. Target branch:
-  `worker/049-start-codex-task-run-tauri-backend`. Launch base: `607352c`
-  (`Log Worker 048 merge`). Await worktree/thread materialization, then completion report and
-  result log `docs/task-logs/worker-049-start-codex-task-run-tauri-backend.md`; review before
-  merge.
+- Worker 049: FS-08 Rust/Tauri Start Codex Task Run Backend is active in
+  `C:\Users\user\.codex\worktrees\2b63\Codex Orchestrator` on target branch
+  `worker/049-start-codex-task-run-tauri-backend`. Worker thread:
+  `019f2901-1da3-7461-8ce9-465466581238`. Pending worktree id:
+  `local:b7683379-921b-464e-83db-e032e7dabc87`. Launch base: `607352c`
+  (`Log Worker 048 merge`). Await completion report and result log
+  `docs/task-logs/worker-049-start-codex-task-run-tauri-backend.md`; review before merge.
 
 ## Pending Blockers / Follow-Up
 

@@ -2604,7 +2604,9 @@ disposal`)
 ### Worker 049 Launch: FS-08 Rust/Tauri Start Codex Task Run Backend
 
 - Status: launched in a fresh worktree worker.
+- Worker thread: `019f2901-1da3-7461-8ce9-465466581238`
 - Pending worktree id: `local:b7683379-921b-464e-83db-e032e7dabc87`
+- Worktree observed after launch: `C:\Users\user\.codex\worktrees\2b63\Codex Orchestrator`
 - Target branch: `worker/049-start-codex-task-run-tauri-backend`
 - Launch base: `607352c` (`Log Worker 048 merge`)
 - Goal: implement and register the Rust/Tauri backend command for the existing
