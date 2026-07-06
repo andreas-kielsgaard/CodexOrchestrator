@@ -3,6 +3,7 @@ dist/
 dist-ssr/
 coverage/
 .vite/
+.dev/
 src-tauri/target/
 src-tauri/gen/
 .DS_Store

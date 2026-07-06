@@ -40,7 +40,8 @@ import type {
 } from '../domain/model';
 import {
   emptyTaskDashboardSnapshot,
-  type RegisterTaskWorktreeInput,
+  type DiscoveredTaskRepo,
+  type RegisterTaskRepoInput,
   type TaskDashboardClient,
   type TaskDashboardSnapshot,
   type TaskDashboardWorktreeAnchor,
@@ -49,6 +50,10 @@ import type {
   RuntimeCommandClient,
   StartCodexTaskRunCommandResult,
 } from '../application/runtimeCommandClient';
+import type {
+  RuntimeStatusClient,
+  RuntimeStatusSnapshot,
+} from '../application/runtimeStatusClient';
 import type {
   TaskRunDetailArtifactGroups,
   TaskRunDetailClient,
@@ -94,6 +99,7 @@ interface AppProps {
   taskDashboardClient: TaskDashboardClient;
   taskRunDetailClient: TaskRunDetailClient;
   runtimeCommandClient: RuntimeCommandClient;
+  runtimeStatusClient?: RuntimeStatusClient;
 }
 
 interface DraftTaskForm {
@@ -106,16 +112,20 @@ interface DraftTaskForm {
   priority: Task['priority'];
 }
 
-interface WorktreeSetupForm {
+interface RepoSetupForm {
   projectName: string;
-  repoName: string;
   repoRootPath: string;
-  worktreePath: string;
-  branchName: string;
+  scanRootPath: string;
 }
 
 type BusyAction =
-  'load' | 'register-worktree' | 'create' | `update:${string}` | `archive:${string}` | null;
+  | 'load'
+  | 'register-repo'
+  | 'discover-repos'
+  | 'create'
+  | `update:${string}`
+  | `archive:${string}`
+  | null;
 
 type TaskRunActionStatus = 'running' | 'completed' | 'failed';
 type DetailStatus = 'idle' | 'loading' | 'loaded' | 'failed';
@@ -142,20 +152,23 @@ const initialCreateForm: DraftTaskForm = {
   priority: 'normal',
 };
 
-const initialWorktreeSetupForm: WorktreeSetupForm = {
+const initialRepoSetupForm: RepoSetupForm = {
   projectName: '',
-  repoName: '',
   repoRootPath: '',
-  worktreePath: '',
-  branchName: '',
+  scanRootPath: '',
 };
 
-export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandClient }: AppProps) {
+export function App({
+  taskDashboardClient,
+  taskRunDetailClient,
+  runtimeCommandClient,
+  runtimeStatusClient,
+}: AppProps) {
   const [snapshot, setSnapshot] = useState<TaskDashboardSnapshot>(() =>
     emptyTaskDashboardSnapshot(),
   );
-  const [worktreeSetupForm, setWorktreeSetupForm] =
-    useState<WorktreeSetupForm>(initialWorktreeSetupForm);
+  const [repoSetupForm, setRepoSetupForm] = useState<RepoSetupForm>(initialRepoSetupForm);
+  const [discoveredRepos, setDiscoveredRepos] = useState<DiscoveredTaskRepo[]>([]);
   const [createForm, setCreateForm] = useState<DraftTaskForm>(initialCreateForm);
   const [editTaskId, setEditTaskId] = useState<EntityId | null>(null);
   const [editForm, setEditForm] = useState<DraftTaskForm>(initialCreateForm);
@@ -170,6 +183,9 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
   const detailTaskIdRef = useRef<EntityId | null>(null);
   const [busyAction, setBusyAction] = useState<BusyAction>('load');
   const [error, setError] = useState<string | null>(null);
+  const [hasLoadedDashboard, setHasLoadedDashboard] = useState(false);
+  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatusSnapshot | null>(null);
+  const [dismissedStaleGeneration, setDismissedStaleGeneration] = useState<string | null>(null);
 
   const canCreate = snapshot.projects.length > 0 && busyAction === null;
 
@@ -188,8 +204,10 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
 
       try {
         applySnapshot(await write());
+        return true;
       } catch (caught) {
         setError(errorMessage(caught));
+        return false;
       } finally {
         setBusyAction(null);
       }
@@ -198,32 +216,70 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
   );
 
   const loadDashboard = useCallback(async () => {
-    await runClientAction('load', () => taskDashboardClient.loadDashboard());
+    if (await runClientAction('load', () => taskDashboardClient.loadDashboard())) {
+      setHasLoadedDashboard(true);
+    }
   }, [runClientAction, taskDashboardClient]);
 
-  const registerWorktree = (event: FormEvent<HTMLFormElement>) => {
+  const addRepo = useCallback(
+    (input: RegisterTaskRepoInput) => {
+      if (!taskDashboardClient.registerRepo) {
+        return;
+      }
+
+      void runClientAction('register-repo', async () => {
+        const nextSnapshot = await taskDashboardClient.registerRepo?.(input);
+
+        if (!nextSnapshot) {
+          throw new Error('Repo registration is not available.');
+        }
+
+        setRepoSetupForm((current) => ({
+          ...current,
+          repoRootPath: input.repoRootPath,
+          projectName: current.projectName.trim(),
+        }));
+        setDiscoveredRepos((current) => current.filter((repo) => repo.path !== input.repoRootPath));
+        return nextSnapshot;
+      });
+    },
+    [runClientAction, taskDashboardClient],
+  );
+
+  const registerRepo = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    const input = normalizeWorktreeSetupInput(worktreeSetupForm);
+    const input = normalizeRepoSetupInput(repoSetupForm);
 
-    if (!input || !taskDashboardClient.registerWorktree) {
+    if (!input) {
       return;
     }
 
-    void runClientAction('register-worktree', async () => {
-      const nextSnapshot = await taskDashboardClient.registerWorktree?.(input);
+    addRepo(input);
+  };
 
-      if (!nextSnapshot) {
-        throw new Error('Repo/worktree registration is not available.');
+  const discoverRepos = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const rootPath = repoSetupForm.scanRootPath.trim();
+
+    if (!rootPath || !taskDashboardClient.discoverRepos) {
+      return;
+    }
+
+    void (async () => {
+      setBusyAction('discover-repos');
+      setError(null);
+
+      try {
+        const repos = await taskDashboardClient.discoverRepos?.({ rootPath, maxDepth: 5 });
+        setDiscoveredRepos(repos ?? []);
+      } catch (caught) {
+        setError(errorMessage(caught));
+      } finally {
+        setBusyAction(null);
       }
-
-      setWorktreeSetupForm((current) => ({
-        ...current,
-        repoRootPath: current.repoRootPath.trim() || input.repoRootPath,
-        worktreePath: input.worktreePath,
-      }));
-      return nextSnapshot;
-    });
+    })();
   };
 
   const loadTaskDetail = useCallback(
@@ -258,6 +314,32 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
   useEffect(() => {
     void loadDashboard();
   }, [loadDashboard]);
+
+  useEffect(() => {
+    if (!runtimeStatusClient) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const checkRuntimeStatus = async () => {
+      const nextStatus = await runtimeStatusClient.checkStatus();
+
+      if (!cancelled) {
+        setRuntimeStatus(nextStatus);
+      }
+    };
+
+    void checkRuntimeStatus();
+    const intervalId = window.setInterval(() => {
+      void checkRuntimeStatus();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [runtimeStatusClient]);
 
   useEffect(() => {
     detailTaskIdRef.current = detail.taskId;
@@ -412,6 +494,20 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
     })();
   };
 
+  const staleGeneration = runtimeStatus?.generation ?? 'stale-runtime';
+  const shouldShowStaleNotice =
+    runtimeStatus?.stale === true && dismissedStaleGeneration !== staleGeneration;
+
+  if (!hasLoadedDashboard) {
+    return (
+      <StartupScreen
+        loading={busyAction === 'load'}
+        error={error}
+        onRetry={() => void loadDashboard()}
+      />
+    );
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar" aria-label="Primary navigation">
@@ -451,6 +547,14 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
           </div>
         </header>
 
+        {shouldShowStaleNotice && runtimeStatus && (
+          <RuntimeStaleNotice
+            status={runtimeStatus}
+            onRefresh={() => window.location.reload()}
+            onDismiss={() => setDismissedStaleGeneration(staleGeneration)}
+          />
+        )}
+
         {error && (
           <section className="notice error" role="status">
             <AlertCircle size={18} aria-hidden="true" />
@@ -458,12 +562,17 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
           </section>
         )}
 
-        <RegisterWorktreeForm
-          form={worktreeSetupForm}
-          busy={busyAction === 'register-worktree'}
-          available={Boolean(taskDashboardClient.registerWorktree)}
-          onChange={setWorktreeSetupForm}
-          onSubmit={registerWorktree}
+        <RepoSetupForm
+          form={repoSetupForm}
+          discoveredRepos={discoveredRepos}
+          addBusy={busyAction === 'register-repo'}
+          scanBusy={busyAction === 'discover-repos'}
+          available={Boolean(taskDashboardClient.registerRepo)}
+          scanAvailable={Boolean(taskDashboardClient.discoverRepos)}
+          onChange={setRepoSetupForm}
+          onSubmit={registerRepo}
+          onScan={discoverRepos}
+          onAddDiscovered={(repo) => addRepo({ repoRootPath: repo.path })}
         />
 
         <form className="task-composer" onSubmit={handleCreate} aria-label="Create open task">
@@ -706,59 +815,148 @@ export function App({ taskDashboardClient, taskRunDetailClient, runtimeCommandCl
   );
 }
 
-interface RegisterWorktreeFormProps {
-  form: WorktreeSetupForm;
-  busy: boolean;
-  available: boolean;
-  onChange(form: WorktreeSetupForm): void;
-  onSubmit(event: FormEvent<HTMLFormElement>): void;
+interface StartupScreenProps {
+  loading: boolean;
+  error: string | null;
+  onRetry(): void;
 }
 
-function RegisterWorktreeForm({
+function StartupScreen({ loading, error, onRetry }: StartupScreenProps) {
+  return (
+    <main className="startup-screen" aria-busy={loading}>
+      <section className="startup-panel" aria-label="App startup">
+        <div className="brand-mark">CO</div>
+        <div>
+          <p className="eyebrow">Codex Orchestrator</p>
+          <h1>{error ? 'Backend unavailable' : 'Starting local backend'}</h1>
+          <p>{error ?? 'Waiting for the Tauri command layer to answer.'}</p>
+        </div>
+        {loading ? (
+          <LoaderCircle className="spin" size={28} aria-hidden="true" />
+        ) : (
+          <button className="primary-action" type="button" onClick={onRetry}>
+            <RefreshCw size={17} aria-hidden="true" />
+            Retry
+          </button>
+        )}
+      </section>
+    </main>
+  );
+}
+
+interface RuntimeStaleNoticeProps {
+  status: RuntimeStatusSnapshot;
+  onRefresh(): void;
+  onDismiss(): void;
+}
+
+function RuntimeStaleNotice({ status, onRefresh, onDismiss }: RuntimeStaleNoticeProps) {
+  return (
+    <section className="notice stale" role="status">
+      <RefreshCw size={18} aria-hidden="true" />
+      <span>
+        {formatStaleTargets(status.staleTargets)} changed
+        {status.reason ? `: ${status.reason}` : ''}.
+      </span>
+      <button className="text-button" type="button" onClick={onRefresh}>
+        Refresh
+      </button>
+      <button
+        className="icon-button"
+        type="button"
+        onClick={onDismiss}
+        title="Dismiss stale notice"
+        aria-label="Dismiss stale notice"
+      >
+        <X size={16} aria-hidden="true" />
+      </button>
+    </section>
+  );
+}
+
+interface RepoSetupFormProps {
+  form: RepoSetupForm;
+  discoveredRepos: DiscoveredTaskRepo[];
+  addBusy: boolean;
+  scanBusy: boolean;
+  available: boolean;
+  scanAvailable: boolean;
+  onChange(form: RepoSetupForm): void;
+  onSubmit(event: FormEvent<HTMLFormElement>): void;
+  onScan(event: FormEvent<HTMLFormElement>): void;
+  onAddDiscovered(repo: DiscoveredTaskRepo): void;
+}
+
+function RepoSetupForm({
   form,
-  busy,
+  discoveredRepos,
+  addBusy,
+  scanBusy,
   available,
+  scanAvailable,
   onChange,
   onSubmit,
-}: RegisterWorktreeFormProps) {
-  const canSubmit =
-    available && !busy && form.projectName.trim().length > 0 && form.worktreePath.trim().length > 0;
+  onScan,
+  onAddDiscovered,
+}: RepoSetupFormProps) {
+  const canAdd = available && !addBusy && form.repoRootPath.trim().length > 0;
+  const canScan = scanAvailable && !scanBusy && form.scanRootPath.trim().length > 0;
 
   return (
-    <form className="setup-panel" onSubmit={onSubmit} aria-label="Register repo worktree">
-      <input
-        value={form.projectName}
-        onChange={(event) => onChange({ ...form, projectName: event.target.value })}
-        disabled={!available || busy}
-        placeholder="Project name"
-        aria-label="Project name"
-      />
-      <input
-        value={form.repoRootPath}
-        onChange={(event) => onChange({ ...form, repoRootPath: event.target.value })}
-        disabled={!available || busy}
-        placeholder="Repo root path"
-        aria-label="Repo root path"
-      />
-      <input
-        value={form.worktreePath}
-        onChange={(event) => onChange({ ...form, worktreePath: event.target.value })}
-        disabled={!available || busy}
-        placeholder="Worktree path"
-        aria-label="Worktree path"
-      />
-      <input
-        value={form.branchName}
-        onChange={(event) => onChange({ ...form, branchName: event.target.value })}
-        disabled={!available || busy}
-        placeholder="Branch"
-        aria-label="Branch name"
-      />
-      <button className="primary-action" type="submit" disabled={!canSubmit}>
-        <GitBranch size={17} aria-hidden="true" />
-        Register
-      </button>
-    </form>
+    <section className="repo-setup" aria-label="Repo setup">
+      <form className="setup-panel repo-add-panel" onSubmit={onSubmit} aria-label="Add repo">
+        <input
+          value={form.repoRootPath}
+          onChange={(event) => onChange({ ...form, repoRootPath: event.target.value })}
+          disabled={!available || addBusy}
+          placeholder="Repo root path"
+          aria-label="Repo root path"
+        />
+        <input
+          value={form.projectName}
+          onChange={(event) => onChange({ ...form, projectName: event.target.value })}
+          disabled={!available || addBusy}
+          placeholder="Project name"
+          aria-label="Project name"
+        />
+        <button className="primary-action" type="submit" disabled={!canAdd}>
+          <GitBranch size={17} aria-hidden="true" />
+          Add repo
+        </button>
+      </form>
+
+      <form className="setup-panel repo-scan-panel" onSubmit={onScan} aria-label="Scan for repos">
+        <input
+          value={form.scanRootPath}
+          onChange={(event) => onChange({ ...form, scanRootPath: event.target.value })}
+          disabled={!scanAvailable || scanBusy}
+          placeholder="Search root folder"
+          aria-label="Search root folder"
+        />
+        <button className="primary-action" type="submit" disabled={!canScan}>
+          <RefreshCw size={17} aria-hidden="true" />
+          Scan
+        </button>
+      </form>
+
+      {discoveredRepos.length > 0 && (
+        <div className="repo-results" aria-label="Discovered repos">
+          {discoveredRepos.map((repo) => (
+            <button
+              className="repo-result"
+              key={repo.path}
+              type="button"
+              onClick={() => onAddDiscovered(repo)}
+              disabled={addBusy}
+            >
+              <GitBranch size={16} aria-hidden="true" />
+              <span>{repo.name}</span>
+              <small title={repo.path}>{compactPath(repo.path)}</small>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1268,23 +1466,16 @@ function selectedWorktreeAnchor(
   return snapshot.worktreeAnchors.find((anchor) => anchor.id === worktreeId);
 }
 
-function normalizeWorktreeSetupInput(
-  form: WorktreeSetupForm,
-): RegisterTaskWorktreeInput | undefined {
-  const projectName = form.projectName.trim();
-  const worktreePath = form.worktreePath.trim();
-  const repoRootPath = form.repoRootPath.trim() || worktreePath;
+function normalizeRepoSetupInput(form: RepoSetupForm): RegisterTaskRepoInput | undefined {
+  const repoRootPath = form.repoRootPath.trim();
 
-  if (!projectName || !worktreePath) {
+  if (!repoRootPath) {
     return undefined;
   }
 
   return {
-    projectName,
     repoRootPath,
-    worktreePath,
-    ...(form.repoName.trim() ? { repoName: form.repoName.trim() } : {}),
-    ...(form.branchName.trim() ? { branchName: form.branchName.trim() } : {}),
+    ...(form.projectName.trim() ? { projectName: form.projectName.trim() } : {}),
   };
 }
 
@@ -1292,4 +1483,16 @@ function formatWorktreeAnchor(anchor: TaskDashboardWorktreeAnchor): string {
   return [anchor.project, anchor.repo, anchor.branch, compactPath(anchor.path)]
     .filter(Boolean)
     .join(' / ');
+}
+
+function formatStaleTargets(targets: RuntimeStatusSnapshot['staleTargets']): string {
+  if (targets.length === 0 || targets.includes('app')) {
+    return 'App';
+  }
+
+  if (targets.length === 1) {
+    return capitalize(targets[0]);
+  }
+
+  return targets.map(capitalize).join(' and ');
 }

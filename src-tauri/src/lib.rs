@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 use std::{
     collections::{BTreeMap, HashSet},
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
 };
 use tauri::{AppHandle, Manager};
@@ -44,6 +44,28 @@ struct RegisterTaskWorktreeCommandInput {
     branch_name: Option<String>,
     worktree_path: String,
     is_main: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RegisterTaskRepoCommandInput {
+    repo_root_path: String,
+    project_name: Option<String>,
+    repo_name: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DiscoverTaskReposCommandInput {
+    root_path: String,
+    max_depth: Option<usize>,
+}
+
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct DiscoveredTaskRepo {
+    name: String,
+    path: String,
 }
 
 #[derive(Deserialize)]
@@ -91,6 +113,7 @@ struct StartCodexTaskRunValidationCommandInput {
 struct TaskDashboardSnapshot {
     groups: Vec<DashboardGroup>,
     projects: Vec<TaskDashboardProject>,
+    repos: Vec<TaskDashboardRepo>,
     worktree_anchors: Vec<TaskDashboardWorktreeAnchor>,
     total_open_tasks: usize,
 }
@@ -100,6 +123,16 @@ struct TaskDashboardSnapshot {
 struct TaskDashboardProject {
     id: String,
     name: String,
+}
+
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct TaskDashboardRepo {
+    id: String,
+    project_id: String,
+    project: String,
+    name: String,
+    root_path: String,
 }
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -496,7 +529,9 @@ struct ProjectRow {
 #[derive(Debug)]
 struct RepoRow {
     id: String,
+    project_id: String,
     name: String,
+    root_path: String,
 }
 
 #[derive(Debug)]
@@ -676,6 +711,24 @@ fn register_task_worktree(
 }
 
 #[tauri::command]
+fn register_task_repo(
+    app: AppHandle,
+    input: RegisterTaskRepoCommandInput,
+) -> Result<TaskDashboardSnapshot, String> {
+    with_app_database(&app, |conn| {
+        register_task_repo_anchor(conn, input)?;
+        load_dashboard_snapshot(conn)
+    })
+}
+
+#[tauri::command]
+fn discover_task_repos(
+    input: DiscoverTaskReposCommandInput,
+) -> Result<Vec<DiscoveredTaskRepo>, String> {
+    discover_git_repos(input)
+}
+
+#[tauri::command]
 fn create_open_task(
     app: AppHandle,
     input: CreateOpenTaskCommandInput,
@@ -734,6 +787,8 @@ pub fn run() {
             app_metadata,
             load_open_task_dashboard,
             register_task_worktree,
+            register_task_repo,
+            discover_task_repos,
             create_open_task,
             update_open_task,
             archive_open_task,
@@ -2367,6 +2422,93 @@ fn register_task_worktree_anchor(
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct GitWorktreeFacts {
+    path: String,
+    branch_name: Option<String>,
+    is_main: bool,
+}
+
+fn register_task_repo_anchor(
+    conn: &Connection,
+    input: RegisterTaskRepoCommandInput,
+) -> Result<(), String> {
+    let repo_root_path = input.repo_root_path.trim().to_string();
+    validate_non_empty("repoRootPath", &repo_root_path)?;
+
+    let git_root_path = git_stdout(&repo_root_path, &["rev-parse", "--show-toplevel"])?
+        .trim()
+        .to_string();
+    validate_non_empty("gitRootPath", &git_root_path)?;
+
+    let repo_label = path_label(&git_root_path).unwrap_or_else(|| "Repository".to_string());
+    let project_name = input
+        .project_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| repo_label.clone());
+    let repo_name = input
+        .repo_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| repo_label.clone());
+    let default_branch = git_default_branch(&git_root_path)?;
+    let worktrees = git_worktree_facts(&git_root_path)?;
+    let branch_names = git_branch_names(&git_root_path, &worktrees)?;
+    let timestamp = now_iso();
+
+    let project_id = upsert_project(conn, &project_name, &timestamp)?;
+    let repo_id = upsert_repo(
+        conn,
+        &project_id,
+        &repo_name,
+        &git_root_path,
+        default_branch.as_deref(),
+        &timestamp,
+    )?;
+    let branch_ids = upsert_branches(conn, &repo_id, &branch_names, &timestamp)?;
+
+    for worktree in worktrees {
+        let branch_id = worktree
+            .branch_name
+            .as_deref()
+            .and_then(|branch_name| branch_ids.get(branch_name))
+            .map(String::as_str);
+        upsert_worktree(
+            conn,
+            &repo_id,
+            branch_id,
+            &worktree.path,
+            worktree.is_main,
+            &timestamp,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn upsert_branches(
+    conn: &Connection,
+    repo_id: &str,
+    branch_names: &[String],
+    timestamp: &str,
+) -> Result<BTreeMap<String, String>, String> {
+    let mut branch_ids = BTreeMap::new();
+
+    for branch_name in branch_names {
+        branch_ids.insert(
+            branch_name.clone(),
+            upsert_branch(conn, repo_id, branch_name, timestamp)?,
+        );
+    }
+
+    Ok(branch_ids)
+}
+
 fn upsert_project(conn: &Connection, name: &str, timestamp: &str) -> Result<String, String> {
     if let Some(project_id) = conn
         .query_row(
@@ -2598,6 +2740,264 @@ fn bool_to_sqlite(value: bool) -> i64 {
     } else {
         0
     }
+}
+
+fn git_stdout(cwd: &str, args: &[&str]) -> Result<String, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(args)
+        .output()
+        .map_err(|error| format!("Failed to launch git: {error}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!("Git command failed: git -C {cwd} {}", args.join(" "))
+        } else {
+            stderr
+        });
+    }
+
+    String::from_utf8(output.stdout).map_err(|error| format!("Git output was not UTF-8: {error}"))
+}
+
+fn git_default_branch(repo_root_path: &str) -> Result<Option<String>, String> {
+    if let Ok(default_branch) = git_stdout(
+        repo_root_path,
+        &[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
+    ) {
+        let normalized = default_branch
+            .trim()
+            .strip_prefix("origin/")
+            .unwrap_or(default_branch.trim())
+            .to_string();
+
+        if !normalized.is_empty() {
+            return Ok(Some(normalized));
+        }
+    }
+
+    let current_branch = git_stdout(repo_root_path, &["branch", "--show-current"])?;
+    let current_branch = current_branch.trim();
+
+    if current_branch.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(current_branch.to_string()))
+    }
+}
+
+fn git_branch_names(
+    repo_root_path: &str,
+    worktrees: &[GitWorktreeFacts],
+) -> Result<Vec<String>, String> {
+    let mut names = HashSet::new();
+    let branch_output = git_stdout(repo_root_path, &["branch", "--format=%(refname:short)"])?;
+
+    for branch_name in branch_output.lines().map(str::trim) {
+        if !branch_name.is_empty() {
+            names.insert(branch_name.to_string());
+        }
+    }
+
+    for worktree in worktrees {
+        if let Some(branch_name) = worktree.branch_name.as_deref() {
+            names.insert(branch_name.to_string());
+        }
+    }
+
+    let mut names = names.into_iter().collect::<Vec<_>>();
+    names.sort();
+    Ok(names)
+}
+
+fn git_worktree_facts(repo_root_path: &str) -> Result<Vec<GitWorktreeFacts>, String> {
+    let output = git_stdout(repo_root_path, &["worktree", "list", "--porcelain"])?;
+    let worktrees = parse_git_worktree_list(&output, repo_root_path);
+
+    if worktrees.is_empty() {
+        Ok(vec![GitWorktreeFacts {
+            path: repo_root_path.to_string(),
+            branch_name: git_default_branch(repo_root_path)?,
+            is_main: true,
+        }])
+    } else {
+        Ok(worktrees)
+    }
+}
+
+fn parse_git_worktree_list(output: &str, repo_root_path: &str) -> Vec<GitWorktreeFacts> {
+    let mut worktrees = Vec::new();
+    let mut current_path: Option<String> = None;
+    let mut current_branch: Option<String> = None;
+    let mut is_bare = false;
+
+    for line in output.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            push_git_worktree_fact(
+                &mut worktrees,
+                current_path.take(),
+                current_branch.take(),
+                is_bare,
+                repo_root_path,
+            );
+            current_path = Some(path.to_string());
+            current_branch = None;
+            is_bare = false;
+            continue;
+        }
+
+        if let Some(branch_ref) = line.strip_prefix("branch ") {
+            current_branch = normalize_git_branch_ref(branch_ref);
+        } else if line == "bare" {
+            is_bare = true;
+        }
+    }
+
+    push_git_worktree_fact(
+        &mut worktrees,
+        current_path,
+        current_branch,
+        is_bare,
+        repo_root_path,
+    );
+
+    worktrees
+}
+
+fn push_git_worktree_fact(
+    worktrees: &mut Vec<GitWorktreeFacts>,
+    path: Option<String>,
+    branch_name: Option<String>,
+    is_bare: bool,
+    repo_root_path: &str,
+) {
+    if is_bare {
+        return;
+    }
+
+    if let Some(path) = path.filter(|value| !value.trim().is_empty()) {
+        worktrees.push(GitWorktreeFacts {
+            is_main: same_filesystem_path(&path, repo_root_path),
+            path,
+            branch_name,
+        });
+    }
+}
+
+fn normalize_git_branch_ref(branch_ref: &str) -> Option<String> {
+    let branch_name = branch_ref
+        .trim()
+        .strip_prefix("refs/heads/")
+        .unwrap_or(branch_ref.trim());
+
+    if branch_name.is_empty() {
+        None
+    } else {
+        Some(branch_name.to_string())
+    }
+}
+
+fn same_filesystem_path(left: &str, right: &str) -> bool {
+    normalize_path_for_compare(left) == normalize_path_for_compare(right)
+}
+
+fn normalize_path_for_compare(path: &str) -> String {
+    path.replace('\\', "/").trim_end_matches('/').to_lowercase()
+}
+
+fn discover_git_repos(
+    input: DiscoverTaskReposCommandInput,
+) -> Result<Vec<DiscoveredTaskRepo>, String> {
+    let root_path = input.root_path.trim();
+    validate_non_empty("rootPath", root_path)?;
+
+    let root = PathBuf::from(root_path);
+
+    if !root.is_dir() {
+        return Err(format!("Search root is not a directory: {root_path}"));
+    }
+
+    let max_depth = input.max_depth.unwrap_or(4).min(8);
+    let mut repos = Vec::new();
+    let mut seen_paths = HashSet::new();
+    collect_git_repos(&root, 0, max_depth, &mut repos, &mut seen_paths);
+    repos.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    Ok(repos)
+}
+
+fn collect_git_repos(
+    directory: &Path,
+    depth: usize,
+    max_depth: usize,
+    repos: &mut Vec<DiscoveredTaskRepo>,
+    seen_paths: &mut HashSet<String>,
+) {
+    if is_git_repo_path(directory) {
+        add_discovered_repo(directory, repos, seen_paths);
+        return;
+    }
+
+    if depth >= max_depth {
+        return;
+    }
+
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+
+        if path.is_dir() && should_scan_child_dir(&path) {
+            collect_git_repos(&path, depth + 1, max_depth, repos, seen_paths);
+        }
+    }
+}
+
+fn is_git_repo_path(directory: &Path) -> bool {
+    let git_marker = directory.join(".git");
+    git_marker.is_dir() || git_marker.is_file()
+}
+
+fn should_scan_child_dir(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+        return false;
+    };
+
+    !matches!(
+        name,
+        ".git" | ".dev" | ".vite" | "coverage" | "dist" | "dist-ssr" | "node_modules" | "target"
+    )
+}
+
+fn add_discovered_repo(
+    directory: &Path,
+    repos: &mut Vec<DiscoveredTaskRepo>,
+    seen_paths: &mut HashSet<String>,
+) {
+    let display_path = directory.to_string_lossy().to_string();
+    let key = normalize_path_for_compare(&display_path);
+
+    if !seen_paths.insert(key) {
+        return;
+    }
+
+    repos.push(DiscoveredTaskRepo {
+        name: path_label(&display_path).unwrap_or_else(|| display_path.clone()),
+        path: display_path,
+    });
 }
 
 fn create_task(conn: &Connection, input: CreateOpenTaskCommandInput) -> Result<(), String> {
@@ -4259,6 +4659,111 @@ mod tests {
             task.worktree_path.as_deref(),
             Some("C:/Repos/Codex Orchestrator")
         );
+    }
+
+    #[test]
+    fn parse_git_worktree_list_returns_branch_anchors() {
+        let output = "\
+worktree C:/Repos/Codex Orchestrator
+HEAD abc123
+branch refs/heads/main
+
+worktree C:/Repos/Codex Orchestrator Worktrees/feature
+HEAD def456
+branch refs/heads/worker/feature
+";
+
+        let worktrees = parse_git_worktree_list(output, "C:/Repos/Codex Orchestrator");
+
+        assert_eq!(
+            worktrees,
+            vec![
+                GitWorktreeFacts {
+                    path: "C:/Repos/Codex Orchestrator".to_string(),
+                    branch_name: Some("main".to_string()),
+                    is_main: true,
+                },
+                GitWorktreeFacts {
+                    path: "C:/Repos/Codex Orchestrator Worktrees/feature".to_string(),
+                    branch_name: Some("worker/feature".to_string()),
+                    is_main: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn discover_git_repos_finds_repos_under_designated_root() {
+        let root = std::env::temp_dir().join(format!("codex-orchestrator-scan-{}", Uuid::new_v4()));
+        let repo = root.join("CodexOrchestrator");
+        let nested_repo = root.join("Nested").join("Tooling");
+        fs::create_dir_all(repo.join(".git")).expect("create repo marker");
+        fs::create_dir_all(nested_repo.join(".git")).expect("create nested repo marker");
+        fs::create_dir_all(root.join("node_modules").join("ignored").join(".git"))
+            .expect("create ignored repo marker");
+
+        let repos = discover_git_repos(DiscoverTaskReposCommandInput {
+            root_path: root.to_string_lossy().to_string(),
+            max_depth: Some(3),
+        })
+        .expect("discover repos");
+
+        assert_eq!(
+            repos
+                .iter()
+                .map(|repo| repo.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["CodexOrchestrator", "Tooling"]
+        );
+
+        fs::remove_dir_all(root).expect("remove temp scan root");
+    }
+
+    #[test]
+    fn register_repo_anchor_scans_git_worktrees_for_runnable_task_anchor() {
+        let git_available = Command::new("git").arg("--version").output().is_ok();
+
+        if !git_available {
+            return;
+        }
+
+        let root = std::env::temp_dir().join(format!("codex-orchestrator-repo-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("create temp repo");
+        let init_output = Command::new("git")
+            .arg("init")
+            .arg("-b")
+            .arg("main")
+            .current_dir(&root)
+            .output()
+            .expect("run git init");
+
+        if !init_output.status.success() {
+            fs::remove_dir_all(root).expect("remove temp repo");
+            return;
+        }
+
+        let conn = open_memory_database();
+        register_task_repo_anchor(
+            &conn,
+            RegisterTaskRepoCommandInput {
+                repo_root_path: root.to_string_lossy().to_string(),
+                project_name: None,
+                repo_name: None,
+            },
+        )
+        .expect("register repo");
+
+        let snapshot = load_dashboard_snapshot(&conn).expect("load dashboard");
+        let anchor = snapshot
+            .worktree_anchors
+            .first()
+            .expect("repo worktree anchor");
+
+        assert_eq!(snapshot.projects.len(), 1);
+        assert_eq!(anchor.branch.as_deref(), Some("main"));
+        assert!(same_filesystem_path(&anchor.path, &root.to_string_lossy()));
+
+        fs::remove_dir_all(root).expect("remove temp repo");
     }
 
     #[test]

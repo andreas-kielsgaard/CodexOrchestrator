@@ -12,6 +12,14 @@ export interface TaskDashboardProject {
   name: string;
 }
 
+export interface TaskDashboardRepo {
+  id: EntityId;
+  projectId: EntityId;
+  project: string;
+  name: string;
+  rootPath: string;
+}
+
 export interface TaskDashboardWorktreeAnchor {
   id: EntityId;
   projectId: EntityId;
@@ -26,6 +34,7 @@ export interface TaskDashboardWorktreeAnchor {
 export interface TaskDashboardSnapshot {
   groups: DashboardGroup[];
   projects: TaskDashboardProject[];
+  repos: TaskDashboardRepo[];
   worktreeAnchors: TaskDashboardWorktreeAnchor[];
   totalOpenTasks: number;
 }
@@ -51,6 +60,22 @@ export interface RegisterTaskWorktreeInput {
   isMain?: boolean;
 }
 
+export interface RegisterTaskRepoInput {
+  repoRootPath: string;
+  projectName?: string;
+  repoName?: string;
+}
+
+export interface DiscoverTaskReposInput {
+  rootPath: string;
+  maxDepth?: number;
+}
+
+export interface DiscoveredTaskRepo {
+  name: string;
+  path: string;
+}
+
 export interface UpdateTaskDashboardTaskInput {
   title?: string;
   summary?: string;
@@ -62,6 +87,8 @@ export interface UpdateTaskDashboardTaskInput {
 export interface TaskDashboardClient {
   loadDashboard(): Promise<TaskDashboardSnapshot>;
   registerWorktree?(input: RegisterTaskWorktreeInput): Promise<TaskDashboardSnapshot>;
+  registerRepo?(input: RegisterTaskRepoInput): Promise<TaskDashboardSnapshot>;
+  discoverRepos?(input: DiscoverTaskReposInput): Promise<DiscoveredTaskRepo[]>;
   createTask(input: CreateTaskDashboardTaskInput): Promise<TaskDashboardSnapshot>;
   updateTask(taskId: EntityId, input: UpdateTaskDashboardTaskInput): Promise<TaskDashboardSnapshot>;
   archiveTask(taskId: EntityId): Promise<TaskDashboardSnapshot>;
@@ -104,6 +131,7 @@ export function emptyTaskDashboardSnapshot(): TaskDashboardSnapshot {
   return {
     groups: dashboardGroupOrder.map((group) => ({ ...group, tasks: [] })),
     projects: [],
+    repos: [],
     worktreeAnchors: [],
     totalOpenTasks: 0,
   };
@@ -120,6 +148,7 @@ async function loadTaskDashboardSnapshot(
     projects: records.projects
       .map((project) => ({ id: project.id, name: project.name }))
       .sort((left, right) => left.name.localeCompare(right.name)),
+    repos: loadDashboardRepos(records),
     worktreeAnchors: loadWorktreeAnchors(records),
     totalOpenTasks: groups.reduce((total, group) => total + group.tasks.length, 0),
   };
@@ -137,6 +166,37 @@ function normalizeCreateTaskInput(input: CreateTaskDashboardTaskInput): CreateOp
     attentionState: input.attentionState ?? 'needs_action_now',
     priority: input.priority ?? 'normal',
   };
+}
+
+function loadDashboardRepos(records: {
+  projects: Array<{ id: EntityId; name: string }>;
+  repos: Array<{ id: EntityId; projectId: EntityId; name: string; rootPath: string }>;
+}): TaskDashboardRepo[] {
+  const projectsById = new Map(records.projects.map((project) => [project.id, project]));
+
+  return records.repos
+    .flatMap((repo): TaskDashboardRepo[] => {
+      const project = projectsById.get(repo.projectId);
+
+      if (!project) {
+        return [];
+      }
+
+      return [
+        {
+          id: repo.id,
+          projectId: project.id,
+          project: project.name,
+          name: repo.name,
+          rootPath: repo.rootPath,
+        },
+      ];
+    })
+    .sort((left, right) =>
+      `${left.project}\u0000${left.name}\u0000${left.rootPath}`.localeCompare(
+        `${right.project}\u0000${right.name}\u0000${right.rootPath}`,
+      ),
+    );
 }
 
 function loadWorktreeAnchors(records: {

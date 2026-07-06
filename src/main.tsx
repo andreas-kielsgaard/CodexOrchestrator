@@ -6,6 +6,7 @@ import {
   tauriTaskDashboardClient,
   tauriTaskRunDetailClient,
 } from './infrastructure/tauriCommands';
+import { createDevRuntimeStatusClient } from './infrastructure/devRuntimeStatusClient';
 import './styles.css';
 
 createRoot(document.getElementById('root')!).render(
@@ -14,6 +15,7 @@ createRoot(document.getElementById('root')!).render(
       taskDashboardClient={tauriTaskDashboardClient}
       taskRunDetailClient={tauriTaskRunDetailClient}
       runtimeCommandClient={tauriRuntimeCommandClient}
+      runtimeStatusClient={createDevRuntimeStatusClient()}
     />
   </StrictMode>,
 );

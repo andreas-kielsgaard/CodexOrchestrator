@@ -4,7 +4,8 @@ import type { DomainRecords, EntityId, Task } from '../domain/model';
 import { projectOpenTaskDashboard } from '../domain/dashboardProjection';
 import type {
   CreateTaskDashboardTaskInput,
-  RegisterTaskWorktreeInput,
+  DiscoveredTaskRepo,
+  RegisterTaskRepoInput,
   TaskDashboardClient,
   TaskDashboardSnapshot,
   UpdateTaskDashboardTaskInput,
@@ -14,6 +15,10 @@ import type {
   StartCodexTaskRunCommandInput,
   StartCodexTaskRunCommandResult,
 } from '../application/runtimeCommandClient';
+import type {
+  RuntimeStatusClient,
+  RuntimeStatusSnapshot,
+} from '../application/runtimeStatusClient';
 import type {
   TaskRunDetailClient,
   TaskRunDetailSnapshot,
@@ -55,8 +60,12 @@ describe('App open task dashboard', () => {
       expect(client.findTask('task-2')?.attentionState).toBe('needs_review');
     });
 
-    fireEvent.click(screen.getByLabelText('Edit New dashboard task'));
-    fireEvent.change(screen.getByLabelText('Edit task title'), {
+    const editNewTaskButton = screen.getByLabelText('Edit New dashboard task');
+    await waitFor(() => {
+      expect(editNewTaskButton).not.toBeDisabled();
+    });
+    fireEvent.click(editNewTaskButton);
+    fireEvent.change(await screen.findByLabelText('Edit task title'), {
       target: { value: 'Edited dashboard task' },
     });
     fireEvent.change(screen.getByLabelText('Edit task summary'), {
@@ -133,6 +142,65 @@ describe('App open task dashboard', () => {
     ).toBeInTheDocument();
     expect(screen.queryByText('Run Codex on onboarding flow')).not.toBeInTheDocument();
   });
+
+  it('shows a startup screen until the dashboard backend responds', async () => {
+    const baseClient = new FakeTaskDashboardClient();
+    const readySnapshot = await baseClient.loadDashboard();
+    let resolveLoad: ((snapshot: TaskDashboardSnapshot) => void) | undefined;
+    const client: TaskDashboardClient = {
+      loadDashboard: () =>
+        new Promise((resolve) => {
+          resolveLoad = resolve;
+        }),
+      createTask: (input) => baseClient.createTask(input),
+      updateTask: (taskId, input) => baseClient.updateTask(taskId, input),
+      archiveTask: (taskId) => baseClient.archiveTask(taskId),
+    };
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
+
+    expect(screen.getByText('Starting local backend')).toBeInTheDocument();
+
+    resolveLoad?.(readySnapshot);
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+    expect(screen.queryByText('Starting local backend')).not.toBeInTheDocument();
+  }, 10_000);
+
+  it('offers a refresh when the runtime status reports stale backend state', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+    const runtimeStatusClient = new FakeRuntimeStatusClient({
+      available: true,
+      stale: true,
+      staleTargets: ['backend'],
+      reason: 'Rust command changed',
+      generation: 'generation-1',
+      checkedAt: now,
+    });
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+        runtimeStatusClient={runtimeStatusClient}
+      />,
+    );
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+    expect(await screen.findByText('Backend changed: Rust command changed.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
+  }, 10_000);
 
   it('starts a Codex run through the injected runtime client and reloads the dashboard', async () => {
     const client = new FakeTaskDashboardClient();
@@ -221,7 +289,7 @@ describe('App open task dashboard', () => {
     expect(runtimeClient.inputs).toEqual([]);
   }, 10_000);
 
-  it('registers a worktree and creates a runnable task against it', async () => {
+  it('adds a repo and creates a runnable task against its discovered worktree', async () => {
     const client = new FakeTaskDashboardClient({ empty: true });
     const runtimeClient = new FakeRuntimeCommandClient();
     const detailClient = new FakeTaskRunDetailClient();
@@ -236,19 +304,13 @@ describe('App open task dashboard', () => {
 
     expect(await screen.findByText('No persisted projects')).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText('Project name'), {
-      target: { value: 'Codex Orchestrator' },
-    });
     fireEvent.change(screen.getByLabelText('Repo root path'), {
       target: { value: 'C:/Repos/Codex Orchestrator' },
     });
-    fireEvent.change(screen.getByLabelText('Worktree path'), {
-      target: { value: workerPath },
+    fireEvent.change(screen.getByLabelText('Project name'), {
+      target: { value: 'Codex Orchestrator' },
     });
-    fireEvent.change(screen.getByLabelText('Branch name'), {
-      target: { value: 'worker/042-run-controls-ui-shell' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Register' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add repo' }));
 
     expect(await screen.findByText('0 open')).toBeInTheDocument();
     expect(screen.getByLabelText('Worktree')).toHaveValue('worktree-1');
@@ -268,6 +330,33 @@ describe('App open task dashboard', () => {
       branchId: 'branch-1',
       worktreeId: 'worktree-1',
     });
+  }, 10_000);
+
+  it('scans a root folder and adds a discovered repo', async () => {
+    const client = new FakeTaskDashboardClient({ empty: true });
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
+
+    expect(await screen.findByText('No persisted projects')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Search root folder'), {
+      target: { value: 'C:/Repos' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
+
+    expect(await screen.findByText('Codex Orchestrator')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Codex Orchestrator/i }));
+
+    expect(await screen.findByText('0 open')).toBeInTheDocument();
+    expect(screen.getByLabelText('Worktree')).toHaveValue('worktree-1');
   }, 10_000);
 
   it('opens task run detail with anchors, artifacts, validation, and events', async () => {
@@ -567,10 +656,12 @@ class FakeTaskDashboardClient implements TaskDashboardClient {
     return this.snapshot();
   }
 
-  async registerWorktree(input: RegisterTaskWorktreeInput): Promise<TaskDashboardSnapshot> {
-    const project = this.records.projects.find((record) => record.name === input.projectName) ?? {
+  async registerRepo(input: RegisterTaskRepoInput): Promise<TaskDashboardSnapshot> {
+    const repoName = input.repoName ?? 'Codex Orchestrator';
+    const projectName = input.projectName ?? repoName;
+    const project = this.records.projects.find((record) => record.name === projectName) ?? {
       id: `project-${this.nextProjectIndex++}`,
-      name: input.projectName,
+      name: projectName,
       createdAt: this.timestamp(),
       updatedAt: this.timestamp(),
     };
@@ -578,26 +669,24 @@ class FakeTaskDashboardClient implements TaskDashboardClient {
     const repo = {
       id: `repo-${this.nextRepoIndex++}`,
       projectId: project.id,
-      name: input.repoName ?? input.projectName,
+      name: repoName,
       rootPath: input.repoRootPath,
       createdAt: this.timestamp(),
       updatedAt: this.timestamp(),
     };
-    const branch = input.branchName
-      ? {
-          id: `branch-${this.nextBranchIndex++}`,
-          repoId: repo.id,
-          name: input.branchName,
-          createdAt: this.timestamp(),
-          updatedAt: this.timestamp(),
-        }
-      : undefined;
+    const branch = {
+      id: `branch-${this.nextBranchIndex++}`,
+      repoId: repo.id,
+      name: 'worker/042-run-controls-ui-shell',
+      createdAt: this.timestamp(),
+      updatedAt: this.timestamp(),
+    };
     const worktree = {
       id: `worktree-${this.nextWorktreeIndex++}`,
       repoId: repo.id,
-      ...(branch ? { branchId: branch.id } : {}),
-      path: input.worktreePath,
-      isMain: input.isMain ?? false,
+      branchId: branch.id,
+      path: workerPath,
+      isMain: true,
       isDirty: false,
       createdAt: this.timestamp(),
       updatedAt: this.timestamp(),
@@ -607,11 +696,15 @@ class FakeTaskDashboardClient implements TaskDashboardClient {
       ...this.records,
       projects: hasProject ? this.records.projects : [...this.records.projects, project],
       repos: [...this.records.repos, repo],
-      branches: branch ? [...this.records.branches, branch] : this.records.branches,
+      branches: [...this.records.branches, branch],
       worktrees: [...this.records.worktrees, worktree],
     };
 
     return this.snapshot();
+  }
+
+  async discoverRepos(): Promise<DiscoveredTaskRepo[]> {
+    return [{ name: 'Codex Orchestrator', path: 'C:/Repos/Codex Orchestrator' }];
   }
 
   async updateTask(
@@ -717,6 +810,14 @@ class DeferredRuntimeCommandClient implements RuntimeCommandClient {
 
     this.resolvePending(createCompletedRunResult(input));
     this.resolvePending = undefined;
+  }
+}
+
+class FakeRuntimeStatusClient implements RuntimeStatusClient {
+  constructor(private readonly status: RuntimeStatusSnapshot) {}
+
+  async checkStatus(): Promise<RuntimeStatusSnapshot> {
+    return this.status;
   }
 }
 

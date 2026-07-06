@@ -24,6 +24,53 @@ body {
   min-height: 100vh;
 }
 
+.startup-screen {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background: #f6f7f4;
+}
+
+.startup-panel {
+  display: grid;
+  grid-template-columns: auto minmax(0, 440px) auto;
+  align-items: center;
+  gap: 18px;
+  width: min(100%, 640px);
+  padding: 18px;
+  border: 1px solid #d8ddd5;
+  border-radius: 8px;
+  background: #fffdf8;
+  box-shadow: 0 12px 34px rgb(23 33 27 / 10%);
+}
+
+.startup-panel .brand-mark {
+  margin: 0;
+}
+
+.startup-panel h1 {
+  margin-bottom: 8px;
+  font-size: 1.65rem;
+}
+
+.startup-panel p:last-child {
+  color: #4a564f;
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+  color: #59645d;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -153,6 +200,16 @@ h1 {
   color: #7a2e20;
 }
 
+.notice.stale {
+  border-color: #c9b36a;
+  background: #fff8dc;
+  color: #5f4d11;
+}
+
+.notice.stale span {
+  flex: 1;
+}
+
 .setup-panel,
 .task-composer {
   display: grid;
@@ -163,11 +220,58 @@ h1 {
   background: #eef1eb;
 }
 
-.setup-panel {
-  grid-template-columns:
-    minmax(150px, 0.8fr) minmax(210px, 1.1fr) minmax(210px, 1.1fr) minmax(130px, 0.7fr)
-    auto;
+.repo-setup {
+  display: grid;
+  gap: 8px;
   margin-bottom: 10px;
+}
+
+.repo-add-panel {
+  grid-template-columns: minmax(260px, 1.4fr) minmax(180px, 0.8fr) auto;
+}
+
+.repo-scan-panel {
+  grid-template-columns: minmax(260px, 1fr) auto;
+}
+
+.repo-results {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.repo-result {
+  display: inline-grid;
+  grid-template-columns: auto minmax(90px, auto) minmax(120px, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  max-width: 360px;
+  padding: 0 10px;
+  border: 1px solid #cbd2c7;
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #17211b;
+  font: inherit;
+  cursor: pointer;
+}
+
+.repo-result span,
+.repo-result small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-result span {
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.repo-result small {
+  color: #66736c;
+  font-size: 0.76rem;
+  font-weight: 650;
 }
 
 .task-composer {
@@ -236,8 +340,22 @@ button:disabled {
   background: #e7ebe4;
 }
 
+.text-button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #17211b;
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #17211b;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
 .icon-button:hover,
-.primary-action:hover {
+.primary-action:hover,
+.text-button:hover {
   filter: brightness(0.98);
 }
 
@@ -659,6 +777,10 @@ h3 {
 }
 
 @media (max-width: 860px) {
+  .startup-panel {
+    grid-template-columns: 1fr;
+  }
+
   .app-shell {
     grid-template-columns: 1fr;
   }
