@@ -124,6 +124,32 @@ boundary for interactive sessions, approvals, steering, interrupts, and live tur
 Add editable workflows for branch naming, worktree strategy, Codex profile/sandbox settings,
 preflight commands, post-run validation, attention-state transitions, and cleanup policies.
 
+### Thread Orientation Metadata
+
+Replace file-based sub-agent orientation records with product-owned lookup tables once the app owns
+multi-thread orchestration. The current file convention is useful as scaffolding, but the durable
+product model should store thread topology as structured metadata instead of Markdown.
+
+The lookup should answer "where does this thread sit in the orchestration graph?" without becoming
+a task archive or compressed project memory. Candidate fields:
+
+- thread id and provider conversation id
+- orchestration id or workflow run id
+- role/skill type
+- parent thread id and parent role
+- addressed-by or instantiated-by thread id when different from parent
+- child thread ids or edge records
+- expected return destination
+- lifecycle state
+- reasoning/sandbox/model routing used for the thread
+- created/updated timestamps and last visible activity
+
+Keep task payloads, acceptance criteria, implementation notes, review findings, merge details, and
+worker reports out of this table. Those belong in task/run records, artifacts, review records, or
+maintained orchestration records. This separation should make recovery, trace views, pause/resume,
+and context refresh more reliable without turning orientation metadata into a second orchestration
+ledger.
+
 ### Review And Delivery Tools
 
 Add stronger diff summaries, validation history, commit helpers, PR preparation, and risk/next-action
