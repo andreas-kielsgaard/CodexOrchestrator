@@ -55,6 +55,10 @@ import type {
   RuntimeStatusSnapshot,
 } from '../application/runtimeStatusClient';
 import type {
+  BackendMaintenanceClient,
+  BackendMaintenanceResult,
+} from '../infrastructure/tauriCommands';
+import type {
   TaskRunDetailArtifactGroups,
   TaskRunDetailClient,
   TaskRunDetailRun,
@@ -99,6 +103,7 @@ interface AppProps {
   taskDashboardClient: TaskDashboardClient;
   taskRunDetailClient: TaskRunDetailClient;
   runtimeCommandClient: RuntimeCommandClient;
+  backendMaintenanceClient?: BackendMaintenanceClient;
   runtimeStatusClient?: RuntimeStatusClient;
 }
 
@@ -129,6 +134,7 @@ type BusyAction =
 
 type TaskRunActionStatus = 'running' | 'completed' | 'failed';
 type DetailStatus = 'idle' | 'loading' | 'loaded' | 'failed';
+type BackendMaintenanceStatus = 'idle' | 'checking' | 'current' | 'restarting' | 'failed';
 
 interface TaskRunActionState {
   status: TaskRunActionStatus;
@@ -140,6 +146,12 @@ interface DetailState {
   status: DetailStatus;
   snapshot: TaskRunDetailSnapshot | null;
   error: string | null;
+}
+
+interface BackendMaintenanceState {
+  status: BackendMaintenanceStatus;
+  message: string;
+  result: BackendMaintenanceResult | null;
 }
 
 const initialCreateForm: DraftTaskForm = {
@@ -162,6 +174,7 @@ export function App({
   taskDashboardClient,
   taskRunDetailClient,
   runtimeCommandClient,
+  backendMaintenanceClient,
   runtimeStatusClient,
 }: AppProps) {
   const [snapshot, setSnapshot] = useState<TaskDashboardSnapshot>(() =>
@@ -186,6 +199,11 @@ export function App({
   const [hasLoadedDashboard, setHasLoadedDashboard] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatusSnapshot | null>(null);
   const [dismissedStaleGeneration, setDismissedStaleGeneration] = useState<string | null>(null);
+  const [backendMaintenance, setBackendMaintenance] = useState<BackendMaintenanceState>({
+    status: 'idle',
+    message: 'Backend current',
+    result: null,
+  });
 
   const canCreate = snapshot.projects.length > 0 && busyAction === null;
 
@@ -494,6 +512,35 @@ export function App({
     })();
   };
 
+  const checkAndReopenBackend = () => {
+    if (!backendMaintenanceClient || backendMaintenance.status === 'checking') {
+      return;
+    }
+
+    void (async () => {
+      setBackendMaintenance({
+        status: 'checking',
+        message: 'Checking backend...',
+        result: null,
+      });
+
+      try {
+        const result = await backendMaintenanceClient.checkAndReopenBackend();
+        setBackendMaintenance({
+          status: result.status,
+          message: result.message,
+          result,
+        });
+      } catch (caught) {
+        setBackendMaintenance({
+          status: 'failed',
+          message: errorMessage(caught),
+          result: null,
+        });
+      }
+    })();
+  };
+
   const staleGeneration = runtimeStatus?.generation ?? 'stale-runtime';
   const shouldShowStaleNotice =
     runtimeStatus?.stale === true && dismissedStaleGeneration !== staleGeneration;
@@ -511,17 +558,39 @@ export function App({
   return (
     <main className="app-shell">
       <aside className="sidebar" aria-label="Primary navigation">
-        <div className="brand-mark">CO</div>
-        <nav>
-          <a className="nav-item active" href="#open-tasks">
-            <Inbox size={18} aria-hidden="true" />
-            Open Tasks
-          </a>
-          <a className="nav-item" href="#projects">
-            <GitBranch size={18} aria-hidden="true" />
-            Projects
-          </a>
-        </nav>
+        <div>
+          <div className="brand-mark">CO</div>
+          <nav>
+            <a className="nav-item active" href="#open-tasks">
+              <Inbox size={18} aria-hidden="true" />
+              Open Tasks
+            </a>
+            <a className="nav-item" href="#projects">
+              <GitBranch size={18} aria-hidden="true" />
+              Projects
+            </a>
+          </nav>
+        </div>
+
+        <div className="backend-maintenance" aria-label="Rust backend maintenance">
+          <button
+            className="backend-maintenance-button"
+            type="button"
+            onClick={checkAndReopenBackend}
+            disabled={!backendMaintenanceClient || backendMaintenance.status === 'checking'}
+            title={backendMaintenance.result?.newestSourcePath ?? backendMaintenance.message}
+          >
+            <RefreshCw
+              size={16}
+              aria-hidden="true"
+              className={backendMaintenance.status === 'checking' ? 'spin' : undefined}
+            />
+            <span>Rust backend</span>
+          </button>
+          <p className={`backend-maintenance-status ${backendMaintenance.status}`} role="status">
+            {backendMaintenance.message}
+          </p>
+        </div>
       </aside>
 
       <section className="workspace" id="open-tasks">

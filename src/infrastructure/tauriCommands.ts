@@ -28,6 +28,20 @@ export interface AppMetadata {
   codexRuntime: 'adapter-pending' | 'tauri-codex-exec';
 }
 
+export interface BackendMaintenanceResult {
+  status: 'current' | 'restarting' | 'failed';
+  stale: boolean;
+  checkedAt: string;
+  newestSourcePath?: string;
+  newestSourceModifiedAt?: string;
+  executableModifiedAt?: string;
+  message: string;
+}
+
+export interface BackendMaintenanceClient {
+  checkAndReopenBackend(): Promise<BackendMaintenanceResult>;
+}
+
 export async function getAppMetadata(): Promise<AppMetadata> {
   return invoke<AppMetadata>('app_metadata');
 }
@@ -78,6 +92,18 @@ export function createTauriRuntimeCommandClient(
 }
 
 export const tauriRuntimeCommandClient = createTauriRuntimeCommandClient();
+
+export function createTauriBackendMaintenanceClient(
+  invokeCommand: TauriInvoke = invoke,
+): BackendMaintenanceClient {
+  return {
+    checkAndReopenBackend(): Promise<BackendMaintenanceResult> {
+      return invokeCommand<BackendMaintenanceResult>('check_and_reopen_rust_backend');
+    },
+  };
+}
+
+export const tauriBackendMaintenanceClient = createTauriBackendMaintenanceClient();
 
 export function createTauriTaskRunDetailClient(
   invokeCommand: TauriInvoke = invoke,
