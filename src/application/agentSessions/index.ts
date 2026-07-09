@@ -1,9 +1,8 @@
 /**
- * Agent Session application boundary.
+ * Serializable Agent Session client boundary.
  *
- * Later slices place provider-neutral use cases and client ports here. This layer must not import
- * React, Tauri, SQLite, operating-system process APIs, or Codex JSONL types.
- *
- * AS-00 intentionally exports no contracts or behavior.
+ * Rust owns lifecycle validation and durable mutation policy. These DTOs describe transport-safe
+ * values consumed by frontend application and feature code; they intentionally contain no React,
+ * Tauri, SQLite, process, or provider-protocol types.
  */
-export {};
+export * from './contracts';
