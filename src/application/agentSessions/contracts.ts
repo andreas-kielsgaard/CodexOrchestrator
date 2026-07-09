@@ -26,7 +26,6 @@ export interface AgentSessionDto {
   runtimeBinding: AgentRuntimeBindingDto;
   workingDirectory: string | null;
   requestedOptions: AgentRuntimeOptionsDto;
-  effectiveOptions: AgentRuntimeOptionsDto | null;
   createdAt: IsoDateTimeDto;
   updatedAt: IsoDateTimeDto;
 }
@@ -77,7 +76,6 @@ export type NormalizedRuntimeEventKindDto =
   | 'processing_update'
   | 'tool_activity'
   | 'agent_message'
-  | 'final_response'
   | 'usage'
   | 'invocation_completed'
   | 'runtime_error'

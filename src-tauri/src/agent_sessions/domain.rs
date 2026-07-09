@@ -91,7 +91,6 @@ pub(crate) struct AgentSession {
     pub(crate) runtime_binding: AgentRuntimeBinding,
     pub(crate) working_directory: Option<String>,
     pub(crate) requested_options: AgentRuntimeOptions,
-    pub(crate) effective_options: Option<AgentRuntimeOptions>,
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) updated_at: DateTime<Utc>,
 }
@@ -256,7 +255,6 @@ pub(crate) enum NormalizedRuntimeEventKind {
     ProcessingUpdate,
     ToolActivity,
     AgentMessage,
-    FinalResponse,
     Usage,
     InvocationCompleted,
     RuntimeError,
@@ -304,6 +302,9 @@ pub(crate) enum ContractViolation {
     InvalidSessionRecord {
         reason: &'static str,
     },
+    ArchivedSessionCannotStartInvocation {
+        session_id: AgentSessionId,
+    },
     InvocationSessionMismatch,
     InvocationMustStartPending,
     ActiveInvocationExists {
@@ -334,6 +335,10 @@ impl fmt::Display for ContractViolation {
             Self::ExternalRuntimeContextChanged => formatter
                 .write_str("an established external runtime context cannot be cleared or replaced"),
             Self::InvalidSessionRecord { reason } => formatter.write_str(reason),
+            Self::ArchivedSessionCannotStartInvocation { session_id } => write!(
+                formatter,
+                "archived session {session_id} cannot start a new invocation"
+            ),
             Self::InvocationSessionMismatch => {
                 formatter.write_str("invocation does not belong to the target session")
             }
@@ -379,6 +384,20 @@ pub(crate) fn validate_session_update(
 }
 
 pub(crate) fn validate_session(session: &AgentSession) -> Result<(), ContractViolation> {
+    if session.title.trim().is_empty() {
+        return Err(ContractViolation::InvalidSessionRecord {
+            reason: "session title cannot be blank",
+        });
+    }
+    if session
+        .working_directory
+        .as_ref()
+        .is_some_and(|working_directory| working_directory.trim().is_empty())
+    {
+        return Err(ContractViolation::InvalidSessionRecord {
+            reason: "session working directory cannot be blank when present",
+        });
+    }
     if session.updated_at < session.created_at {
         return Err(ContractViolation::InvalidSessionRecord {
             reason: "session update time cannot precede creation time",
@@ -405,12 +424,18 @@ pub(crate) fn validate_runtime_binding_update(
 }
 
 pub(crate) fn validate_new_invocation(
-    session_id: &AgentSessionId,
+    session: &AgentSession,
     active_invocation: Option<&AgentInvocation>,
     candidate: &AgentInvocation,
 ) -> Result<(), ContractViolation> {
-    if &candidate.session_id != session_id {
+    validate_session(session)?;
+    if candidate.session_id != session.id {
         return Err(ContractViolation::InvocationSessionMismatch);
+    }
+    if session.availability == AgentSessionAvailability::Archived {
+        return Err(ContractViolation::ArchivedSessionCannotStartInvocation {
+            session_id: session.id.clone(),
+        });
     }
     if candidate.status != AgentInvocationStatus::Pending {
         return Err(ContractViolation::InvocationMustStartPending);

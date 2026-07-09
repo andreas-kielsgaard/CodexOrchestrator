@@ -67,6 +67,31 @@ fn runtime_binding_can_be_established_idempotently_but_not_replaced() {
 }
 
 #[test]
+fn session_validation_rejects_blank_title_and_present_but_blank_working_directory() {
+    let mut blank_title = session("session-title", None);
+    blank_title.title = "  \t".to_string();
+    assert_eq!(
+        validate_session(&blank_title),
+        Err(ContractViolation::InvalidSessionRecord {
+            reason: "session title cannot be blank",
+        })
+    );
+
+    let mut blank_working_directory = session("session-working-directory", None);
+    blank_working_directory.working_directory = Some(" \r\n ".to_string());
+    assert_eq!(
+        validate_session(&blank_working_directory),
+        Err(ContractViolation::InvalidSessionRecord {
+            reason: "session working directory cannot be blank when present",
+        })
+    );
+
+    let mut no_working_directory = session("session-no-working-directory", None);
+    no_working_directory.working_directory = None;
+    assert_eq!(validate_session(&no_working_directory), Ok(()));
+}
+
+#[test]
 fn invocation_lifecycle_accepts_proven_transitions_and_rejects_terminal_reentry() {
     let pending = invocation("invocation-1", "session-1", AgentInvocationStatus::Pending);
     let running = pending
@@ -127,20 +152,41 @@ fn invocation_lifecycle_accepts_proven_transitions_and_rejects_terminal_reentry(
 
 #[test]
 fn active_invocation_check_is_session_scoped() {
+    let session_one = session("session-1", None);
+    let session_two = session("session-2", None);
     let active = invocation("invocation-1", "session-1", AgentInvocationStatus::Pending);
     let same_session = invocation("invocation-2", "session-1", AgentInvocationStatus::Pending);
     let other_session = invocation("invocation-3", "session-2", AgentInvocationStatus::Pending);
 
     assert_eq!(
-        validate_new_invocation(&session_id("session-1"), Some(&active), &same_session),
+        validate_new_invocation(&session_one, Some(&active), &same_session),
         Err(ContractViolation::ActiveInvocationExists {
             invocation_id: invocation_id("invocation-1"),
         })
     );
     assert_eq!(
-        validate_new_invocation(&session_id("session-2"), None, &other_session),
+        validate_new_invocation(&session_two, None, &other_session),
         Ok(())
     );
+}
+
+#[test]
+fn archived_session_rejects_new_invocation_without_changing_invocation_lifecycle() {
+    let mut archived = session("session-archived", None);
+    archived.availability = AgentSessionAvailability::Archived;
+    let pending = invocation(
+        "invocation-pending",
+        "session-archived",
+        AgentInvocationStatus::Pending,
+    );
+
+    assert_eq!(
+        validate_new_invocation(&archived, None, &pending),
+        Err(ContractViolation::ArchivedSessionCannotStartInvocation {
+            session_id: session_id("session-archived"),
+        })
+    );
+    assert_eq!(pending.status, AgentInvocationStatus::Pending);
 }
 
 #[test]
@@ -214,6 +260,23 @@ fn fake_repository_proves_one_active_invocation_and_session_availability_are_ind
         persisted_session.availability,
         AgentSessionAvailability::Available
     );
+    repository
+        .set_session_availability(&session.id, AgentSessionAvailability::Archived, at(3))
+        .expect("archive session");
+    assert_eq!(
+        repository
+            .create_pending_invocation(invocation(
+                "invocation-2",
+                "session-1",
+                AgentInvocationStatus::Pending,
+            ))
+            .expect_err("archived session must reject a new invocation")
+            .kind,
+        RepositoryErrorKind::InvalidState
+    );
+    repository
+        .set_session_availability(&session.id, AgentSessionAvailability::Available, at(4))
+        .expect("restore session availability");
     assert!(repository
         .create_pending_invocation(invocation(
             "invocation-2",
@@ -372,12 +435,11 @@ impl AgentSessionRepository for FakeRepository {
         invocation: AgentInvocation,
     ) -> Result<AgentInvocation, RepositoryError> {
         let mut state = self.state.lock().expect("fake repository");
-        if !state.sessions.contains_key(&invocation.session_id) {
-            return Err(repository_error(
-                RepositoryErrorKind::NotFound,
-                "session not found",
-            ));
-        }
+        let session = state
+            .sessions
+            .get(&invocation.session_id)
+            .cloned()
+            .ok_or_else(|| repository_error(RepositoryErrorKind::NotFound, "session not found"))?;
         let active = state
             .invocations
             .values()
@@ -385,8 +447,13 @@ impl AgentSessionRepository for FakeRepository {
                 existing.session_id == invocation.session_id && existing.status.is_active()
             })
             .cloned();
-        validate_new_invocation(&invocation.session_id, active.as_ref(), &invocation)
-            .map_err(|error| repository_error(RepositoryErrorKind::Conflict, error.to_string()))?;
+        validate_new_invocation(&session, active.as_ref(), &invocation).map_err(|error| {
+            let kind = match &error {
+                ContractViolation::ActiveInvocationExists { .. } => RepositoryErrorKind::Conflict,
+                _ => RepositoryErrorKind::InvalidState,
+            };
+            repository_error(kind, error.to_string())
+        })?;
         state
             .invocations
             .insert(invocation.id.clone(), invocation.clone());
@@ -593,7 +660,6 @@ fn session(id: &str, external_context_id: Option<&str>) -> AgentSession {
         runtime_binding: binding(external_context_id),
         working_directory: Some(format!("C:/work/{id}")),
         requested_options: runtime_options(),
-        effective_options: None,
         created_at: at(0),
         updated_at: at(0),
     }

@@ -101,7 +101,6 @@ function session(externalContextId: string | null): AgentSessionDto {
     },
     workingDirectory: 'C:/work/session-local',
     requestedOptions: { model: null, sandbox: null },
-    effectiveOptions: null,
     createdAt: timestamp,
     updatedAt: timestamp,
   };
