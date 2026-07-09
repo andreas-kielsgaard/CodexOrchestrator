@@ -23,12 +23,25 @@ Integration root: current Codex task on `codex/agent-session-reset`
 - If a package changes an accepted architectural decision, the worker must flag it rather than
   silently editing the decision record.
 
+## Work Thread Reasoning Policy
+
+- AS-01 contracts: high, because boundary mistakes propagate through every later slice.
+- AS-02 repository: high, because transaction and rehydration invariants need careful coverage.
+- AS-03 supervisor: xhigh, because concurrency, cancellation, and shutdown are high-risk.
+- AS-04 Codex adapter: high, because the provider protocol is bounded and fixture-testable.
+- AS-05 lifecycle integration: xhigh, because it joins persistence, processes, and transport.
+- AS-06 projection/UI: high, because it combines state reconciliation with presentation policy.
+- AS-07 recovery gate: high, focused on adversarial verification rather than new architecture.
+
+Reasoning effort may be reduced for a narrowly mechanical correction, but should not be raised to
+compensate for an over-broad prompt.
+
 ## Work Package State
 
 | Package                                 | State                      | Thread                                 | Integrated commit | Integration result |
 | --------------------------------------- | -------------------------- | -------------------------------------- | ----------------- | ------------------ |
-| AS-00 Structural and migration baseline | active                     | `019f4905-dc10-7c80-9e42-882196abac18` | —                 | —                  |
-| AS-01 Agent Session contracts           | blocked by AS-00           | pending                                | —                 | —                  |
+| AS-00 Structural and migration baseline | integrated                 | `019f4905-dc10-7c80-9e42-882196abac18` | `4e171e9`         | accepted           |
+| AS-01 Agent Session contracts           | ready                      | pending                                | —                 | —                  |
 | AS-02 Durable repository and queries    | blocked by AS-01           | pending                                | —                 | —                  |
 | AS-03 Real process supervisor           | blocked by AS-01           | pending                                | —                 | —                  |
 | AS-04 Codex CLI runtime adapter         | blocked by AS-03           | pending                                | —                 | —                  |
@@ -42,5 +55,11 @@ States used: `blocked`, `ready`, `active`, `review`, `correction`, `integrated`,
 ## Integration Notes
 
 - AS-00 started in an isolated Codex worktree from planning baseline commit `625c56a`.
-- The AS-00 worker owns structural and migration preparation only. Integration remains with the
-  root task.
+- AS-00 worker commit `21b9ffd` was reviewed and integrated as `4e171e9`.
+- Integration verification passed formatting, lint, all 291 frontend tests, 16 focused migration
+  tests, and Rust formatting.
+- Frontend build and Rust check/test/build remain blocked by confirmed pre-existing task-dashboard
+  fixture/projection inconsistencies. The same errors reproduce before AS-00 and are outside its
+  changed hunks.
+- Generated `storybook-static` output is now ignored by Git, Prettier, and ESLint so preserved local
+  output does not contaminate repository validation.
