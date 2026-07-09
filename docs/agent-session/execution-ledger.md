@@ -43,8 +43,8 @@ slice uses xhigh by default.
 | --------------------------------------- | -------------------------- | -------------------------------------- | -------------------- | ------------------ |
 | AS-00 Structural and migration baseline | integrated                 | `019f4905-dc10-7c80-9e42-882196abac18` | `4e171e9`            | accepted           |
 | AS-01 Agent Session contracts           | integrated                 | `019f491f-7f59-7500-9bf0-d0feaa28a59b` | `d717a28`, `dde0d8e` | accepted           |
-| AS-02 Durable repository and queries    | ready                      | pending                                | —                    | —                  |
-| AS-03 Real process supervisor           | ready                      | pending                                | —                    | —                  |
+| AS-02 Durable repository and queries    | active                     | `019f4947-7ca7-7f63-ac64-fe59a0174299` | —                    | —                  |
+| AS-03 Real process supervisor           | active                     | `019f4947-7cb4-7c60-ab09-4ea5528da2cc` | —                    | —                  |
 | AS-04 Codex CLI runtime adapter         | blocked by AS-03           | pending                                | —                    | —                  |
 | AS-05 Application and Tauri lifecycle   | blocked by AS-02 and AS-04 | pending                                | —                    | —                  |
 | AS-06 Transcript projection and UI      | blocked by AS-05           | pending                                | —                    | —                  |
@@ -69,3 +69,6 @@ States used: `blocked`, `ready`, `active`, `review`, `correction`, `integrated`,
 - AS-01 integration verification passed the frontend build, all 295 frontend tests, all 30 Rust
   tests, Rust check, lint, and formatting. Rust reports expected dead-code warnings while the new
   contracts await their implementations.
+- AS-02 started from root commit `2cd63b9` with medium reasoning.
+- AS-03 started from root commit `2cd63b9` with high reasoning because it owns concurrent child
+  process lifecycle, cancellation, and shutdown semantics.
