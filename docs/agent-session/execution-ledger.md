@@ -25,20 +25,22 @@ Integration root: current Codex task on `codex/agent-session-reset`
 
 ## Work Package State
 
-| Package                                 | State                      | Thread  | Integrated commit | Integration result |
-| --------------------------------------- | -------------------------- | ------- | ----------------- | ------------------ |
-| AS-00 Structural and migration baseline | ready                      | pending | —                 | —                  |
-| AS-01 Agent Session contracts           | blocked by AS-00           | pending | —                 | —                  |
-| AS-02 Durable repository and queries    | blocked by AS-01           | pending | —                 | —                  |
-| AS-03 Real process supervisor           | blocked by AS-01           | pending | —                 | —                  |
-| AS-04 Codex CLI runtime adapter         | blocked by AS-03           | pending | —                 | —                  |
-| AS-05 Application and Tauri lifecycle   | blocked by AS-02 and AS-04 | pending | —                 | —                  |
-| AS-06 Transcript projection and UI      | blocked by AS-05           | pending | —                 | —                  |
-| AS-07 End-to-end recovery gate          | blocked by AS-06           | pending | —                 | —                  |
+| Package                                 | State                      | Thread                                 | Integrated commit | Integration result |
+| --------------------------------------- | -------------------------- | -------------------------------------- | ----------------- | ------------------ |
+| AS-00 Structural and migration baseline | active                     | `019f4905-dc10-7c80-9e42-882196abac18` | —                 | —                  |
+| AS-01 Agent Session contracts           | blocked by AS-00           | pending                                | —                 | —                  |
+| AS-02 Durable repository and queries    | blocked by AS-01           | pending                                | —                 | —                  |
+| AS-03 Real process supervisor           | blocked by AS-01           | pending                                | —                 | —                  |
+| AS-04 Codex CLI runtime adapter         | blocked by AS-03           | pending                                | —                 | —                  |
+| AS-05 Application and Tauri lifecycle   | blocked by AS-02 and AS-04 | pending                                | —                 | —                  |
+| AS-06 Transcript projection and UI      | blocked by AS-05           | pending                                | —                 | —                  |
+| AS-07 End-to-end recovery gate          | blocked by AS-06           | pending                                | —                 | —                  |
 
 States used: `blocked`, `ready`, `active`, `review`, `correction`, `integrated`, `failed`, and
 `superseded`.
 
 ## Integration Notes
 
-No work package has started yet.
+- AS-00 started in an isolated Codex worktree from planning baseline commit `625c56a`.
+- The AS-00 worker owns structural and migration preparation only. Integration remains with the
+  root task.
