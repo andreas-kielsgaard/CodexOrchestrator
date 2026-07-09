@@ -5,7 +5,7 @@ import type {
   ValidationCommandRuntime,
   ValidationCommandRuntimeInput,
   ValidationCommandRuntimeResult,
-} from '../../application/validationCommandRunner';
+} from '../../application/commands/validationCommandRunner';
 
 export interface ValidationCommandRuntimeOptions {
   runner?: ValidationCommandProcessRunner;

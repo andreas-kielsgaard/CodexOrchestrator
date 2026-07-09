@@ -1,4 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
+import type {
+  BackendMaintenanceCapability,
+  BackendMaintenanceResult,
+} from '../capabilities/backendMaintenance';
 import type { EntityId } from '../domain/model';
 import type {
   CreateTaskDashboardTaskInput,
@@ -9,16 +13,16 @@ import type {
   TaskDashboardClient,
   TaskDashboardSnapshot,
   UpdateTaskDashboardTaskInput,
-} from '../application/taskDashboardClient';
+} from '../application/commands/taskDashboardClient';
 import type {
   RuntimeCommandClient,
   StartCodexTaskRunCommandInput,
   StartCodexTaskRunCommandResult,
-} from '../application/runtimeCommandClient';
+} from '../application/commands/runtimeCommandClient';
 import type {
   TaskRunDetailClient,
   TaskRunDetailSnapshot,
-} from '../application/taskRunDetailClient';
+} from '../application/queries/taskRunDetailClient';
 
 type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 
@@ -78,6 +82,18 @@ export function createTauriRuntimeCommandClient(
 }
 
 export const tauriRuntimeCommandClient = createTauriRuntimeCommandClient();
+
+export function createTauriBackendMaintenanceClient(
+  invokeCommand: TauriInvoke = invoke,
+): BackendMaintenanceCapability {
+  return {
+    checkAndReopenBackend(): Promise<BackendMaintenanceResult> {
+      return invokeCommand<BackendMaintenanceResult>('check_and_reopen_rust_backend');
+    },
+  };
+}
+
+export const tauriBackendMaintenanceClient = createTauriBackendMaintenanceClient();
 
 export function createTauriTaskRunDetailClient(
   invokeCommand: TauriInvoke = invoke,

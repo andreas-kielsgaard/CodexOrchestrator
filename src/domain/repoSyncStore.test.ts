@@ -1,4 +1,4 @@
-import type { GitRepoScanDomainFacts } from '../infrastructure/git/types';
+import type { GitRepoScanDomainFacts } from './repoScanFacts';
 import type { DomainRecords } from './model';
 import type { RepoSyncPlanIdProvider } from './repoSyncPlanApplier';
 import { InMemoryRepoSyncStore, syncRepoFromScanWithStore } from './repoSyncStore';

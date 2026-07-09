@@ -1,8 +1,11 @@
 import type { DomainRecords } from '../domain/model';
+import type {
+  GitRepoScanInput,
+  GitRepoScanResult,
+  GitRepoScanner,
+} from './ports/gitRepoScanner';
 import type { RepoSyncPlanIdProvider } from '../domain/repoSyncPlanApplier';
 import { InMemoryRepoSyncStore } from '../domain/repoSyncStore';
-import type { GitRepoScanInput, GitRepoScanner } from '../infrastructure/git/gitAdapter';
-import type { GitRepoScanResult } from '../infrastructure/git/types';
 import { registerAndScanRepo } from './repoRegistryScan';
 
 const projectId = 'project-1';

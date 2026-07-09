@@ -1,23 +1,27 @@
 import { randomUUID } from 'node:crypto';
 
-import type { DiffCollectionService } from '../application/diffCollection';
-import type { PostRunCaptureCompositionService } from '../application/postRunCaptureComposition';
+import type { DiffCollectionService } from '../application/commands/diffCollection';
+import type {
+  PostRunCaptureCompositionService,
+} from '../application/commands/postRunCaptureComposition';
 import type {
   RepoRegistryScanClock,
   RepoRegistryScanService,
-} from '../application/repoRegistryScan';
-import type { RunCompositionService } from '../application/runComposition';
+} from '../application/commands/repoRegistryScan';
+import type { RunCompositionService } from '../application/commands/runComposition';
 import {
   createStoreBackedTaskDashboardClient,
   type TaskDashboardClient,
-} from '../application/taskDashboardClient';
+} from '../application/commands/taskDashboardClient';
 import {
   createStoreBackedTaskRunDetailClient,
   type TaskRunDetailClient,
-} from '../application/taskRunDetailClient';
-import type { TaskRunLifecycleRecorder } from '../application/taskRunLifecycle';
-import type { TaskWorktreeSelectionService } from '../application/taskWorktreeSelection';
-import type { ValidationCommandRunnerService } from '../application/validationCommandRunner';
+} from '../application/queries/taskRunDetailClient';
+import type { TaskRunLifecycleRecorder } from '../application/commands/taskRunLifecycle';
+import type { TaskWorktreeSelectionService } from '../application/commands/taskWorktreeSelection';
+import type {
+  ValidationCommandRunnerService,
+} from '../application/commands/validationCommandRunner';
 import type { EntityId, IsoDateTime } from '../domain/model';
 import type { RepoSyncPlanIdProvider } from '../domain/repoSyncPlanApplier';
 import {

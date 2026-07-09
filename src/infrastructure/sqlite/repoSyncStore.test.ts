@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 
-import type { GitRepoScanDomainFacts } from '../git/types';
+import type { GitRepoScanDomainFacts } from '../../domain/repoScanFacts';
 import type { Branch, Project, Repo, Worktree } from '../../domain/model';
 import type { RepoSyncPlanIdProvider } from '../../domain/repoSyncPlanApplier';
 import { syncRepoFromScanWithStore } from '../../domain/repoSyncStore';

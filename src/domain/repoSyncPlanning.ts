@@ -1,4 +1,4 @@
-import type { GitRepoScanDomainFacts } from '../infrastructure/git/types';
+import type { GitRepoScanDomainFacts } from './repoScanFacts';
 import type { Branch, DomainRecords, EntityId, IsoDateTime, Repo, Worktree } from './model';
 
 export type RepoSyncPlanAction = 'insert' | 'update';

@@ -3,7 +3,7 @@ import {
   type RuntimeStatusClient,
   type RuntimeStatusSnapshot,
   type RuntimeStatusTarget,
-} from '../application/runtimeStatusClient';
+} from '../application/queries/runtimeStatusClient';
 
 const defaultStatusUrl = 'http://127.0.0.1:41415/status';
 

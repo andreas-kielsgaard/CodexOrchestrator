@@ -8,6 +8,8 @@
     "dev": "vite",
     "dev:status": "node scripts/runtime-status-server.mjs",
     "dev:tauri": "tauri dev",
+    "check:tauri": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "test:tauri": "cargo test --manifest-path src-tauri/Cargo.toml",
     "mark:stale": "node scripts/mark-stale.mjs",
     "clear:stale": "node scripts/clear-stale.mjs",
     "build": "tsc --noEmit && vite build",

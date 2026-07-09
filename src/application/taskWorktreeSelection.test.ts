@@ -6,8 +6,11 @@ import {
   type IdProvider,
   type TimeProvider,
 } from '../domain/openTaskWriteStore';
-import type { GitRepoScanInput, GitRepoScanner } from '../infrastructure/git/gitAdapter';
-import type { GitRepoScanResult } from '../infrastructure/git/types';
+import type {
+  GitRepoScanInput,
+  GitRepoScanResult,
+  GitRepoScanner,
+} from './ports/gitRepoScanner';
 import {
   selectOrCreateTaskWorktree,
   TaskWorktreeNotFoundAfterScanError,

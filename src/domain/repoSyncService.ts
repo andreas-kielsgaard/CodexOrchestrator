@@ -1,4 +1,4 @@
-import type { GitRepoScanDomainFacts } from '../infrastructure/git/types';
+import type { GitRepoScanDomainFacts } from './repoScanFacts';
 import type { DomainRecords, EntityId, IsoDateTime } from './model';
 import {
   applyRepoSyncPlan,

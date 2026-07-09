@@ -6,8 +6,8 @@ import {
   buildGitStatusPorcelainV1ZArgs,
   buildGitWorktreeListPorcelainZArgs,
   createGitRepoScanner,
-  type GitRepoScanner,
 } from './gitAdapter';
+import type { GitRepoScanner } from '../../application/ports/gitRepoScanner';
 import { normalizeGitPath } from './parsers';
 import type { GitCommandInput, GitCommandResult, GitCommandRunner } from './types';
 

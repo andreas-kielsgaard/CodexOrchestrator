@@ -2,12 +2,12 @@ import {
   composeCodexTaskRun,
   type ComposeCodexTaskRunInput,
   type ComposeCodexTaskRunResult,
-} from '../application/runComposition';
+} from '../application/commands/runComposition';
 import {
   composeCodexTaskRunWithPostRunCapture,
   type ComposeCodexTaskRunWithPostRunCaptureInput,
   type PostRunCaptureResult,
-} from '../application/postRunCaptureComposition';
+} from '../application/commands/postRunCaptureComposition';
 import type {
   RuntimeCommandClient,
   StartCodexTaskRunCommandInput,
@@ -15,7 +15,7 @@ import type {
   StartCodexTaskRunCommandResult,
   StartCodexTaskRunTaskRunState,
   StartCodexTaskRunTaskState,
-} from '../application/runtimeCommandClient';
+} from '../application/commands/runtimeCommandClient';
 import type { EntityId, Task, TaskRun } from '../domain/model';
 import type { LocalRuntimeServiceComposition } from './localRuntimeComposition';
 
