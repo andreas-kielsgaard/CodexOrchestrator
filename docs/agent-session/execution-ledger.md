@@ -41,7 +41,7 @@ compensate for an over-broad prompt.
 | Package                                 | State                      | Thread                                 | Integrated commit | Integration result |
 | --------------------------------------- | -------------------------- | -------------------------------------- | ----------------- | ------------------ |
 | AS-00 Structural and migration baseline | integrated                 | `019f4905-dc10-7c80-9e42-882196abac18` | `4e171e9`         | accepted           |
-| AS-01 Agent Session contracts           | ready                      | pending                                | —                 | —                  |
+| AS-01 Agent Session contracts           | active                     | `019f491f-7f59-7500-9bf0-d0feaa28a59b` | —                 | —                  |
 | AS-02 Durable repository and queries    | blocked by AS-01           | pending                                | —                 | —                  |
 | AS-03 Real process supervisor           | blocked by AS-01           | pending                                | —                 | —                  |
 | AS-04 Codex CLI runtime adapter         | blocked by AS-03           | pending                                | —                 | —                  |
@@ -63,3 +63,4 @@ States used: `blocked`, `ready`, `active`, `review`, `correction`, `integrated`,
   changed hunks.
 - Generated `storybook-static` output is now ignored by Git, Prettier, and ESLint so preserved local
   output does not contaminate repository validation.
+- AS-01 started from integrated root commit `585a1ff` with high reasoning.
