@@ -3233,18 +3233,43 @@ fn load_dashboard_snapshot(conn: &Connection) -> Result<TaskDashboardSnapshot, S
     }
 
     let mut dashboard_projects = projects
-        .into_iter()
+        .iter()
         .map(|project| TaskDashboardProject {
-            id: project.id,
-            name: project.name,
+            id: project.id.clone(),
+            name: project.name.clone(),
         })
         .collect::<Vec<_>>();
     dashboard_projects.sort_by(|left, right| left.name.cmp(&right.name));
+    let mut dashboard_repos = repos
+        .into_iter()
+        .map(|repo| {
+            let project = projects
+                .iter()
+                .find(|project| project.id == repo.project_id)
+                .map(|project| project.name.clone())
+                .unwrap_or_else(|| "Unassigned project".to_string());
+
+            TaskDashboardRepo {
+                id: repo.id,
+                project_id: repo.project_id,
+                project,
+                name: repo.name,
+                root_path: repo.root_path,
+            }
+        })
+        .collect::<Vec<_>>();
+    dashboard_repos.sort_by(|left, right| {
+        left.project
+            .cmp(&right.project)
+            .then_with(|| left.name.cmp(&right.name))
+            .then_with(|| left.id.cmp(&right.id))
+    });
     let total_open_tasks = groups.iter().map(|group| group.tasks.len()).sum();
 
     Ok(TaskDashboardSnapshot {
         groups,
         projects: dashboard_projects,
+        repos: dashboard_repos,
         worktree_anchors,
         total_open_tasks,
     })
@@ -3564,14 +3589,16 @@ fn select_projects(conn: &Connection) -> Result<Vec<ProjectRow>, String> {
 
 fn select_repos(conn: &Connection) -> Result<Vec<RepoRow>, String> {
     let mut stmt = conn
-        .prepare("SELECT id, name FROM repos ORDER BY id")
+        .prepare("SELECT id, project_id, name, root_path FROM repos ORDER BY id")
         .map_err(sql_error("prepare repos query"))?;
 
     let rows = stmt
         .query_map([], |row| {
             Ok(RepoRow {
                 id: row.get(0)?,
-                name: row.get(1)?,
+                project_id: row.get(1)?,
+                name: row.get(2)?,
+                root_path: row.get(3)?,
             })
         })
         .map_err(sql_error("query repo rows"))?

@@ -735,6 +735,15 @@ class FakeTaskDashboardClient implements TaskDashboardClient {
     return {
       groups,
       projects: this.records.projects.map((project) => ({ id: project.id, name: project.name })),
+      repos: this.records.repos.map((repo) => ({
+        id: repo.id,
+        projectId: repo.projectId,
+        project:
+          this.records.projects.find((project) => project.id === repo.projectId)?.name ??
+          'Unassigned project',
+        name: repo.name,
+        rootPath: repo.rootPath,
+      })),
       worktreeAnchors: this.records.worktrees.flatMap((worktree) => {
         const repo = this.records.repos.find((record) => record.id === worktree.repoId);
         const project = repo
@@ -1126,6 +1135,7 @@ function emptySnapshot(): TaskDashboardSnapshot {
       events: [],
     }),
     projects: [],
+    repos: [],
     worktreeAnchors: [],
     totalOpenTasks: 0,
   };
