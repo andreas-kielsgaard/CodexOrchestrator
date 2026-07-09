@@ -26,6 +26,12 @@ export interface ApplyAppSqliteMigrationsOptions {
   migrations?: readonly SqliteMigration[];
 }
 
+const archivedPrototypeMigrations = [
+  { version: '006', id: '006_orchestration_drafts_schema', position: 5 },
+  { version: '007', id: '007_orchestration_stage_runs_schema', position: 6 },
+  { version: '008', id: '008_agent_sessions_schema', position: 7 },
+] as const;
+
 export const appSqliteMigrations: readonly SqliteMigration[] = [
   ...repoSyncSqliteMigrations,
   ...taskSqliteMigrations,
@@ -42,8 +48,10 @@ export function applyAppSqliteMigrations(
   db: AppSqliteMigrationDatabase,
   options: ApplyAppSqliteMigrationsOptions = {},
 ): void {
-  const migrations = [...(options.migrations ?? appSqliteMigrations)];
-  assertUniqueMigrationIds(migrations);
+  const migrations = [...(options.migrations ?? appSqliteMigrations)].sort(
+    (left, right) => left.position - right.position,
+  );
+  assertValidMigrationRegistration(migrations);
 
   db.exec(`
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -54,18 +62,30 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 `);
 
-  const appliedIds = new Set(
-    db
-      .prepare('SELECT id FROM schema_migrations ORDER BY position')
-      .all()
-      .map((row) => (row as { id: string }).id),
-  );
+  const appliedRows = loadSchemaMigrationRows(db);
+  const appliedById = new Map(appliedRows.map((row) => [row.id, row]));
+  const appliedByPosition = new Map(appliedRows.map((row) => [row.position, row]));
 
-  migrations.forEach((migration, position) => {
-    if (appliedIds.has(migration.id)) {
-      return;
+  for (const migration of migrations) {
+    const applied = appliedById.get(migration.id);
+    if (applied && applied.position !== migration.position) {
+      throw new Error(
+        `SQLite migration ${migration.id} is recorded at position ${applied.position}; expected ${migration.position}`,
+      );
     }
 
+    const positionOwner = appliedByPosition.get(migration.position);
+    if (positionOwner && positionOwner.id !== migration.id) {
+      throw new Error(
+        `SQLite migration position ${migration.position} is already recorded for ${positionOwner.id}; cannot apply ${migration.id}`,
+      );
+    }
+
+    if (applied) {
+      continue;
+    }
+
+    const appliedAt = migrationAppliedAt(migration, migration.position, options.appliedAt);
     db.exec('BEGIN');
     try {
       db.exec(migration.sql);
@@ -74,13 +94,21 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 INSERT INTO schema_migrations (id, applied_at, position)
 VALUES (?, ?, ?)
 `,
-      ).run(migration.id, migrationAppliedAt(migration, position, options.appliedAt), position);
+      ).run(migration.id, appliedAt, migration.position);
       db.exec('COMMIT');
     } catch (error) {
       db.exec('ROLLBACK');
       throw error;
     }
-  });
+
+    const appliedRow: SchemaMigrationRow = {
+      id: migration.id,
+      applied_at: appliedAt,
+      position: migration.position,
+    };
+    appliedById.set(appliedRow.id, appliedRow);
+    appliedByPosition.set(appliedRow.position, appliedRow);
+  }
 }
 
 export function loadSchemaMigrationRows(db: AppSqliteMigrationDatabase): SchemaMigrationRow[] {
@@ -89,15 +117,38 @@ export function loadSchemaMigrationRows(db: AppSqliteMigrationDatabase): SchemaM
     .all() as SchemaMigrationRow[];
 }
 
-function assertUniqueMigrationIds(migrations: readonly SqliteMigration[]): void {
-  const seen = new Set<string>();
+function assertValidMigrationRegistration(migrations: readonly SqliteMigration[]): void {
+  const seenIds = new Set<string>();
+  const seenPositions = new Set<number>();
 
   for (const migration of migrations) {
-    if (seen.has(migration.id)) {
+    if (seenIds.has(migration.id)) {
       throw new Error(`Duplicate SQLite migration id: ${migration.id}`);
     }
 
-    seen.add(migration.id);
+    if (!Number.isSafeInteger(migration.position) || migration.position < 0) {
+      throw new Error(
+        `Invalid SQLite migration position for ${migration.id}: ${migration.position}`,
+      );
+    }
+
+    if (seenPositions.has(migration.position)) {
+      throw new Error(`Duplicate SQLite migration position: ${migration.position}`);
+    }
+
+    const reserved = archivedPrototypeMigrations.find(
+      (prototype) =>
+        migration.id.startsWith(`${prototype.version}_`) ||
+        prototype.position === migration.position,
+    );
+    if (reserved) {
+      throw new Error(
+        `SQLite migration ${migration.id} at position ${migration.position} reuses archived prototype migration ${reserved.id} at position ${reserved.position}`,
+      );
+    }
+
+    seenIds.add(migration.id);
+    seenPositions.add(migration.position);
   }
 }
 

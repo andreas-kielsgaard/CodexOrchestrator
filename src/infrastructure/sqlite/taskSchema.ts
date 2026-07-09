@@ -27,6 +27,7 @@ const priorities = ['low', 'normal', 'high'] as const satisfies readonly Task['p
 export const taskSqliteMigrations: SqliteMigration[] = [
   {
     id: '002_open_tasks_schema',
+    position: 1,
     sql: `
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,

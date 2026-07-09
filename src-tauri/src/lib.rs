@@ -11,6 +11,9 @@ use std::{
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
+mod agent_sessions;
+mod runtime;
+
 const APP_DATABASE_FILE_NAME: &str = "codex-orchestrator.sqlite";
 
 #[derive(Serialize)]
@@ -842,18 +845,53 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     )
     .map_err(sql_error("initialize app database"))?;
 
-    for (position, migration) in app_migrations().iter().enumerate() {
-        let already_applied = conn
+    apply_registered_migrations(conn, &app_migrations())
+}
+
+fn apply_registered_migrations(conn: &Connection, migrations: &[Migration]) -> Result<(), String> {
+    validate_migration_registration(migrations)?;
+
+    let mut migrations = migrations.iter().collect::<Vec<_>>();
+    migrations.sort_by_key(|migration| migration.position);
+
+    for migration in migrations {
+        let applied_position = conn
             .query_row(
-                "SELECT 1 FROM schema_migrations WHERE id = ?1",
+                "SELECT position FROM schema_migrations WHERE id = ?1",
                 params![migration.id],
-                |_| Ok(()),
+                |row| row.get::<_, i64>(0),
             )
             .optional()
-            .map_err(sql_error("read schema migration state"))?
-            .is_some();
+            .map_err(sql_error("read schema migration state"))?;
 
-        if already_applied {
+        if let Some(applied_position) = applied_position {
+            if applied_position != migration.position {
+                return Err(format!(
+                    "SQLite migration {} is recorded at position {}; expected {}",
+                    migration.id, applied_position, migration.position
+                ));
+            }
+        }
+
+        let position_owner = conn
+            .query_row(
+                "SELECT id FROM schema_migrations WHERE position = ?1",
+                params![migration.position],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(sql_error("read schema migration position"))?;
+
+        if let Some(position_owner) = position_owner {
+            if position_owner != migration.id {
+                return Err(format!(
+                    "SQLite migration position {} is already recorded for {}; cannot apply {}",
+                    migration.position, position_owner, migration.id
+                ));
+            }
+        }
+
+        if applied_position.is_some() {
             continue;
         }
 
@@ -864,7 +902,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
             .map_err(|error| format!("Unable to apply migration {}: {error}", migration.id))?;
         tx.execute(
             "INSERT INTO schema_migrations (id, applied_at, position) VALUES (?1, ?2, ?3)",
-            params![migration.id, now_iso(), position as i64],
+            params![migration.id, now_iso(), migration.position],
         )
         .map_err(sql_error("record schema migration"))?;
         tx.commit().map_err(sql_error("commit schema migration"))?;
@@ -4245,29 +4283,79 @@ fn sql_error(context: &str) -> impl FnOnce(rusqlite::Error) -> String + '_ {
 
 struct Migration {
     id: &'static str,
+    position: i64,
     sql: &'static str,
+}
+
+const ARCHIVED_PROTOTYPE_MIGRATIONS: [(&str, i64); 3] = [
+    ("006_orchestration_drafts_schema", 5),
+    ("007_orchestration_stage_runs_schema", 6),
+    ("008_agent_sessions_schema", 7),
+];
+
+fn validate_migration_registration(migrations: &[Migration]) -> Result<(), String> {
+    let mut ids = HashSet::new();
+    let mut positions = HashSet::new();
+
+    for migration in migrations {
+        if !ids.insert(migration.id) {
+            return Err(format!("Duplicate SQLite migration id: {}", migration.id));
+        }
+
+        if migration.position < 0 {
+            return Err(format!(
+                "Invalid SQLite migration position for {}: {}",
+                migration.id, migration.position
+            ));
+        }
+
+        if !positions.insert(migration.position) {
+            return Err(format!(
+                "Duplicate SQLite migration position: {}",
+                migration.position
+            ));
+        }
+
+        if let Some((reserved_id, reserved_position)) =
+            ARCHIVED_PROTOTYPE_MIGRATIONS.iter().find(|(id, position)| {
+                migration.id.starts_with(&id[..4]) || *position == migration.position
+            })
+        {
+            return Err(format!(
+                "SQLite migration {} at position {} reuses archived prototype migration {} at position {}",
+                migration.id, migration.position, reserved_id, reserved_position
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn app_migrations() -> [Migration; 5] {
     [
         Migration {
             id: "001_repo_sync_schema",
+            position: 0,
             sql: REPO_SYNC_SCHEMA,
         },
         Migration {
             id: "002_open_tasks_schema",
+            position: 1,
             sql: TASK_SCHEMA,
         },
         Migration {
             id: "003_task_runs_conversations_schema",
+            position: 2,
             sql: RUN_CONVERSATION_SCHEMA,
         },
         Migration {
             id: "004_artifacts_validation_runs_schema",
+            position: 3,
             sql: ARTIFACT_VALIDATION_SCHEMA,
         },
         Migration {
             id: "005_events_schema",
+            position: 4,
             sql: EVENT_SCHEMA,
         },
     ]
@@ -4518,6 +4606,89 @@ mod tests {
             self.calls.borrow_mut().push(input);
             self.result.clone()
         }
+    }
+
+    #[test]
+    fn initializes_database_with_archived_prototype_migration_records() {
+        let conn = Connection::open_in_memory().expect("memory database");
+        conn.execute_batch(
+            "
+CREATE TABLE schema_migrations (
+  id TEXT PRIMARY KEY,
+  applied_at TEXT NOT NULL,
+  position INTEGER NOT NULL CHECK (position >= 0),
+  UNIQUE (position)
+);
+
+INSERT INTO schema_migrations (id, applied_at, position) VALUES
+  ('006_orchestration_drafts_schema', 'prototype-006', 5),
+  ('007_orchestration_stage_runs_schema', 'prototype-007', 6),
+  ('008_agent_sessions_schema', 'prototype-008', 7);
+",
+        )
+        .expect("seed prototype migration ledger");
+
+        initialize_database(&conn).expect("initialize around prototype ledger");
+        apply_registered_migrations(
+            &conn,
+            &[Migration {
+                id: "009_future_schema",
+                position: 8,
+                sql: "CREATE TABLE future_schema (id TEXT PRIMARY KEY);",
+            }],
+        )
+        .expect("apply migration after reserved prototype positions");
+
+        let mut stmt = conn
+            .prepare("SELECT id, position FROM schema_migrations ORDER BY position")
+            .expect("prepare migration ledger query");
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .expect("query migration ledger")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect migration ledger");
+
+        assert_eq!(
+            rows,
+            vec![
+                ("001_repo_sync_schema".to_string(), 0),
+                ("002_open_tasks_schema".to_string(), 1),
+                ("003_task_runs_conversations_schema".to_string(), 2),
+                ("004_artifacts_validation_runs_schema".to_string(), 3),
+                ("005_events_schema".to_string(), 4),
+                ("006_orchestration_drafts_schema".to_string(), 5),
+                ("007_orchestration_stage_runs_schema".to_string(), 6),
+                ("008_agent_sessions_schema".to_string(), 7),
+                ("009_future_schema".to_string(), 8),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_an_applied_migration_at_a_changed_position() {
+        let conn = Connection::open_in_memory().expect("memory database");
+        conn.execute_batch(
+            "
+CREATE TABLE schema_migrations (
+  id TEXT PRIMARY KEY,
+  applied_at TEXT NOT NULL,
+  position INTEGER NOT NULL CHECK (position >= 0),
+  UNIQUE (position)
+);
+INSERT INTO schema_migrations (id, applied_at, position)
+VALUES ('001_repo_sync_schema', 'prototype', 1);
+",
+        )
+        .expect("seed changed migration position");
+
+        let error = initialize_database(&conn).expect_err("reject changed migration position");
+
+        assert_eq!(
+            error,
+            "SQLite migration 001_repo_sync_schema is recorded at position 1; expected 0"
+        );
     }
 
     #[test]

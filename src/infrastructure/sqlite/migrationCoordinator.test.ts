@@ -41,10 +41,10 @@ describe('SQLite migration coordinator', () => {
       applyAppSqliteMigrations(db, { appliedAt: deterministicAppliedAt });
 
       expect(loadSchemaMigrationRows(db)).toEqual(
-        appSqliteMigrations.map((migration, position) => ({
+        appSqliteMigrations.map((migration) => ({
           id: migration.id,
-          applied_at: deterministicAppliedAt(migration, position),
-          position,
+          applied_at: deterministicAppliedAt(migration, migration.position),
+          position: migration.position,
         })),
       );
     } finally {
@@ -88,10 +88,12 @@ describe('SQLite migration coordinator', () => {
     const duplicateMigrations: SqliteMigration[] = [
       {
         id: '001_duplicate',
+        position: 0,
         sql: 'CREATE TABLE one (id TEXT PRIMARY KEY);',
       },
       {
         id: '001_duplicate',
+        position: 1,
         sql: 'CREATE TABLE two (id TEXT PRIMARY KEY);',
       },
     ];
@@ -106,15 +108,146 @@ describe('SQLite migration coordinator', () => {
     }
   });
 
+  it('uses explicit positions when filling a migration-ledger gap', () => {
+    const db = openDatabase();
+    const firstAndThird: SqliteMigration[] = [
+      {
+        id: '003_third',
+        position: 2,
+        sql: 'CREATE TABLE third_table (id TEXT PRIMARY KEY);',
+      },
+      {
+        id: '001_first',
+        position: 0,
+        sql: 'CREATE TABLE first_table (id TEXT PRIMARY KEY);',
+      },
+    ];
+    const second: SqliteMigration = {
+      id: '002_second',
+      position: 1,
+      sql: 'CREATE TABLE second_table (id TEXT PRIMARY KEY);',
+    };
+
+    try {
+      applyAppSqliteMigrations(db, {
+        appliedAt: deterministicAppliedAt,
+        migrations: firstAndThird,
+      });
+      applyAppSqliteMigrations(db, {
+        appliedAt: deterministicAppliedAt,
+        migrations: [...firstAndThird, second],
+      });
+
+      expect(loadSchemaMigrationRows(db)).toEqual([
+        {
+          id: '001_first',
+          applied_at: deterministicAppliedAt(firstAndThird[1], 0),
+          position: 0,
+        },
+        {
+          id: '002_second',
+          applied_at: deterministicAppliedAt(second, 1),
+          position: 1,
+        },
+        {
+          id: '003_third',
+          applied_at: deterministicAppliedAt(firstAndThird[0], 2),
+          position: 2,
+        },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('initializes current schema around archived prototype ledger positions', () => {
+    const db = openDatabase();
+
+    try {
+      createMigrationLedger(db);
+      const insert = db.prepare(
+        'INSERT INTO schema_migrations (id, applied_at, position) VALUES (?, ?, ?)',
+      );
+      insert.run('006_orchestration_drafts_schema', 'prototype-006', 5);
+      insert.run('007_orchestration_stage_runs_schema', 'prototype-007', 6);
+      insert.run('008_agent_sessions_schema', 'prototype-008', 7);
+
+      applyAppSqliteMigrations(db, { appliedAt: deterministicAppliedAt });
+
+      expect(loadSchemaMigrationRows(db)).toEqual([
+        ...appSqliteMigrations.map((migration) => ({
+          id: migration.id,
+          applied_at: deterministicAppliedAt(migration, migration.position),
+          position: migration.position,
+        })),
+        {
+          id: '006_orchestration_drafts_schema',
+          applied_at: 'prototype-006',
+          position: 5,
+        },
+        {
+          id: '007_orchestration_stage_runs_schema',
+          applied_at: 'prototype-007',
+          position: 6,
+        },
+        {
+          id: '008_agent_sessions_schema',
+          applied_at: 'prototype-008',
+          position: 7,
+        },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('rejects reuse of an archived prototype migration position', () => {
+    const db = openDatabase();
+    const migration: SqliteMigration = {
+      id: '009_new_schema_at_wrong_position',
+      position: 5,
+      sql: 'CREATE TABLE wrong_position (id TEXT PRIMARY KEY);',
+    };
+
+    try {
+      expect(() => applyAppSqliteMigrations(db, { migrations: [migration] })).toThrow(
+        'reuses archived prototype migration 006_orchestration_drafts_schema at position 5',
+      );
+      expect(tableNames(db)).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('rejects reuse of an archived prototype migration version', () => {
+    const db = openDatabase();
+    const migration: SqliteMigration = {
+      id: '008_replacement_agent_sessions_schema',
+      position: 8,
+      sql: 'CREATE TABLE wrong_version (id TEXT PRIMARY KEY);',
+    };
+
+    try {
+      expect(() => applyAppSqliteMigrations(db, { migrations: [migration] })).toThrow(
+        'reuses archived prototype migration 008_agent_sessions_schema at position 7',
+      );
+      expect(tableNames(db)).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   it('does not record failed migrations', () => {
     const db = openDatabase();
     const migrations: SqliteMigration[] = [
       {
         id: '001_create_valid_table',
+        position: 0,
         sql: 'CREATE TABLE valid_table (id TEXT PRIMARY KEY);',
       },
       {
         id: '002_fail_after_ddl',
+        position: 1,
         sql: `
 CREATE TABLE should_roll_back (id TEXT PRIMARY KEY);
 INSERT INTO missing_table (id) VALUES ('missing');
@@ -183,6 +316,17 @@ function tableNames(db: DatabaseSync): string[] {
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
     .all()
     .map((row) => (row as { name: string }).name);
+}
+
+function createMigrationLedger(db: DatabaseSync): void {
+  db.exec(`
+CREATE TABLE schema_migrations (
+  id TEXT PRIMARY KEY,
+  applied_at TEXT NOT NULL,
+  position INTEGER NOT NULL CHECK (position >= 0),
+  UNIQUE (position)
+);
+`);
 }
 
 function deterministicAppliedAt(_migration: SqliteMigration, position: number): string {

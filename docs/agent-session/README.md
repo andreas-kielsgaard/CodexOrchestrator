@@ -45,6 +45,8 @@ The first completion target is deliberately narrow:
   validation, and stop conditions.
 - [Execution ledger](./execution-ledger.md): work-thread ownership, dependency gates, integration
   state, commit references, and validation outcomes.
+- [Prototype database procedure](./prototype-database.md): read-only audit, non-destructive reset,
+  and retained-data upgrade rules for archived migration records.
 
 ## Scope Boundaries
 

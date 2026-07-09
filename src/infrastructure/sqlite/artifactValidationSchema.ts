@@ -23,6 +23,7 @@ const validationStatuses = [
 export const artifactValidationSqliteMigrations: SqliteMigration[] = [
   {
     id: '004_artifacts_validation_runs_schema',
+    position: 3,
     sql: `
 CREATE TABLE IF NOT EXISTS artifacts (
   id TEXT PRIMARY KEY,

@@ -30,10 +30,10 @@ describe('app SQLite store bundle', () => {
 
       expect(foreignKeysEnabled(db)).toBe(true);
       expect(loadSchemaMigrationRows(db)).toEqual(
-        appSqliteMigrations.map((migration, position) => ({
+        appSqliteMigrations.map((migration) => ({
           id: migration.id,
-          applied_at: deterministicAppliedAt(migration, position),
-          position,
+          applied_at: deterministicAppliedAt(migration, migration.position),
+          position: migration.position,
         })),
       );
 
@@ -44,10 +44,10 @@ describe('app SQLite store bundle', () => {
       });
 
       expect(loadSchemaMigrationRows(db)).toEqual(
-        appSqliteMigrations.map((migration, position) => ({
+        appSqliteMigrations.map((migration) => ({
           id: migration.id,
-          applied_at: deterministicAppliedAt(migration, position),
-          position,
+          applied_at: deterministicAppliedAt(migration, migration.position),
+          position: migration.position,
         })),
       );
       expect(() =>

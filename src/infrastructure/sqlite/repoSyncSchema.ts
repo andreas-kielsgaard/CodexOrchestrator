@@ -2,6 +2,7 @@ import type { Branch, Project, Repo, Worktree } from '../../domain/model';
 
 export interface SqliteMigration {
   id: string;
+  position: number;
   sql: string;
 }
 
@@ -12,6 +13,7 @@ export interface SqliteMigrationDatabase {
 export const repoSyncSqliteMigrations: SqliteMigration[] = [
   {
     id: '001_repo_sync_schema',
+    position: 0,
     sql: `
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,

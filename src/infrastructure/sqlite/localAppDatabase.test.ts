@@ -126,7 +126,7 @@ describe('local app SQLite database opener', () => {
         openConnection: () => db,
         initialize: {
           migrations: {
-            migrations: [{ id: '001_broken', sql: 'BROKEN SQL' }],
+            migrations: [{ id: '001_broken', position: 0, sql: 'BROKEN SQL' }],
             appliedAt: deterministicAppliedAt,
           },
         },

@@ -21,6 +21,7 @@ const conversationProviders = [
 export const runConversationSqliteMigrations: SqliteMigration[] = [
   {
     id: '003_task_runs_conversations_schema',
+    position: 2,
     sql: `
 CREATE TABLE IF NOT EXISTS task_runs (
   id TEXT PRIMARY KEY,

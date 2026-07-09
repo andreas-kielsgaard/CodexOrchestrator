@@ -17,6 +17,7 @@ const eventKinds = [
 export const eventSqliteMigrations: SqliteMigration[] = [
   {
     id: '005_events_schema',
+    position: 4,
     sql: `
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY,
