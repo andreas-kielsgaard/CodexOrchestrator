@@ -66,8 +66,15 @@ src/
 src-tauri/             Tauri v2 Rust shell and command boundary
 docs/
   architecture.md      Stack and boundary notes
+  agent-session/       Agent Session recovery plan, decisions, and evidence
   task-logs/           Worker completion logs
 ```
+
+## Current Agent Session Plan
+
+The active recovery direction for the core Agent Session vertical slice is documented in
+[`docs/agent-session/README.md`](docs/agent-session/README.md). The integrated prototype remains on
+archive branches for evidence and selective recovery; it is not intended to be merged wholesale.
 
 ## Runtime Status
 
