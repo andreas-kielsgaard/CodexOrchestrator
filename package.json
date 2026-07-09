@@ -10,7 +10,10 @@
     "dev:tauri": "tauri dev",
     "mark:stale": "node scripts/mark-stale.mjs",
     "clear:stale": "node scripts/clear-stale.mjs",
+    "probe:codex": "node scripts/codex-surface-probe.mjs",
     "build": "tsc --noEmit && vite build",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build",
     "build:tauri": "tauri build",
     "lint": "eslint .",
     "format": "prettier --write .",
@@ -23,10 +26,13 @@
     "@vitejs/plugin-react": "^4.6.0",
     "lucide-react": "^0.525.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.30.1",
+    "@storybook/react-vite": "^10.4.6",
     "@tauri-apps/cli": "^2.8.4",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
@@ -40,6 +46,7 @@
     "globals": "^16.3.0",
     "jsdom": "^26.1.0",
     "prettier": "^3.6.2",
+    "storybook": "^10.4.6",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.35.1",
     "vite": "^7.0.0",

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { App } from './App';
 import type { DomainRecords, EntityId, Task } from '../domain/model';
 import { projectOpenTaskDashboard } from '../domain/dashboardProjection';
@@ -12,6 +12,8 @@ import type {
 } from '../application/taskDashboardClient';
 import type {
   RuntimeCommandClient,
+  StartAgentSessionCommandInput,
+  StartAgentSessionCommandResult,
   StartCodexTaskRunCommandInput,
   StartCodexTaskRunCommandResult,
 } from '../application/runtimeCommandClient';
@@ -23,11 +25,142 @@ import type {
   TaskRunDetailClient,
   TaskRunDetailSnapshot,
 } from '../application/taskRunDetailClient';
+import type {
+  CreateOrchestrationDraftInput,
+  OrchestrationBuildPackage,
+  OrchestrationClient,
+  OrchestrationRegistrySnapshot,
+} from '../application/orchestrationClient';
+import { createLocalOrchestrationClient } from '../infrastructure/localOrchestrationClient';
 
 const now = '2026-07-02T12:00:00.000Z';
 const workerPath = 'C:/Repos/Codex Orchestrator Worktrees/042';
 
 describe('App open task dashboard', () => {
+  it('opens the Agent Session View from the tool viewer and sends prompts through the runtime client', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Session View' }));
+
+    expect(await screen.findByRole('heading', { name: 'Agent Session View' })).toBeInTheDocument();
+    const promptBox = screen.getByLabelText('Agent prompt');
+    fireEvent.change(promptBox, {
+      target: { value: 'Explain this codebase' },
+    });
+    fireEvent.keyDown(promptBox, { key: 'Enter', ctrlKey: true });
+
+    expect(await screen.findByText('Agent output for Explain this codebase')).toBeInTheDocument();
+    expect(screen.getByText('Finished turn')).toBeInTheDocument();
+    expect(screen.getAllByText('gpt-5.5').length).toBeGreaterThan(0);
+    expect(screen.getByText('never')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Agent session ID')).not.toBeInTheDocument();
+    expect(screen.queryByText('OpenAI Codex v0.130.0-alpha.5')).not.toBeInTheDocument();
+    expect(runtimeClient.agentSessionInputs).toEqual([
+      {
+        prompt: 'Explain this codebase',
+        additionalArgs: [
+          '--model',
+          'gpt-5.5',
+          '--sandbox',
+          'danger-full-access',
+          '--reasoning-effort',
+          'high',
+        ],
+      },
+    ]);
+  }, 10_000);
+
+  it('keeps prior Agent Session turns visible after sending another prompt', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Session View' }));
+
+    const promptBox = await screen.findByLabelText('Agent prompt');
+    fireEvent.change(promptBox, { target: { value: 'First message' } });
+    fireEvent.keyDown(promptBox, { key: 'Enter', ctrlKey: true });
+
+    expect(await screen.findByText('Agent output for First message')).toBeInTheDocument();
+
+    fireEvent.change(promptBox, { target: { value: 'Second message' } });
+    fireEvent.keyDown(promptBox, { key: 'Enter', ctrlKey: true });
+
+    expect(await screen.findByText('Agent output for Second message')).toBeInTheDocument();
+    expect(screen.getByText('Agent output for First message')).toBeInTheDocument();
+    expect(screen.getByText('First message')).toBeInTheDocument();
+    expect(screen.getByText('Second message')).toBeInTheDocument();
+    expect(runtimeClient.agentSessionInputs).toHaveLength(2);
+    expect(runtimeClient.agentSessionInputs[1]).toMatchObject({
+      sessionId: 'agent-session-1',
+      prompt: 'Second message',
+    });
+  }, 10_000);
+
+  it('keeps the submitted Agent Session prompt visible when the CLI run fails', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    runtimeClient.agentSessionResultFactory = (input) => ({
+      sessionId: 'agent-session-failed',
+      status: 'failed',
+      command: 'codex',
+      args: [
+        'exec',
+        '--json',
+        ...(input.additionalArgs ?? []),
+        ...(input.sessionId ? ['resume', input.sessionId] : []),
+        input.prompt,
+      ],
+      stdout: '',
+      stderr: 'Something went wrong',
+      startedAt: '2026-07-03T10:00:00.000Z',
+      completedAt: '2026-07-03T10:01:00.000Z',
+      exitCode: 2,
+      error: 'Codex session failed with exit code 2',
+    });
+    const detailClient = new FakeTaskRunDetailClient();
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Session View' }));
+
+    const promptBox = await screen.findByLabelText('Agent prompt');
+    fireEvent.change(promptBox, { target: { value: 'test' } });
+    fireEvent.keyDown(promptBox, { key: 'Enter', ctrlKey: true });
+
+    expect(await screen.findByText('test')).toBeInTheDocument();
+    expect(await screen.findByText('Failed')).toBeInTheDocument();
+    expect(screen.getByText('exit 2')).toBeInTheDocument();
+  }, 10_000);
+
   it('loads tasks through the injected client and supports create, edit, state change, and archive', async () => {
     const client = new FakeTaskDashboardClient();
     const runtimeClient = new FakeRuntimeCommandClient();
@@ -175,10 +308,66 @@ describe('App open task dashboard', () => {
     expect(screen.queryByText('Starting local backend')).not.toBeInTheDocument();
   }, 10_000);
 
-  it('offers a refresh when the runtime status reports stale backend state', async () => {
+  it('shows a retryable startup error when the dashboard backend does not respond', async () => {
+    vi.useFakeTimers();
+    const baseClient = new FakeTaskDashboardClient();
+    const readySnapshot = await baseClient.loadDashboard();
+    const pendingLoads: Array<(snapshot: TaskDashboardSnapshot) => void> = [];
+    const client: TaskDashboardClient = {
+      loadDashboard: vi.fn(
+        () =>
+          new Promise<TaskDashboardSnapshot>((resolve) => {
+            pendingLoads.push(resolve);
+          }),
+      ),
+      createTask: (input) => baseClient.createTask(input),
+      updateTask: (taskId, input) => baseClient.updateTask(taskId, input),
+      archiveTask: (taskId) => baseClient.archiveTask(taskId),
+    };
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+
+    try {
+      render(
+        <App
+          taskDashboardClient={client}
+          taskRunDetailClient={detailClient}
+          runtimeCommandClient={runtimeClient}
+          startupLoadTimeoutMs={25}
+        />,
+      );
+
+      expect(screen.getByText('Starting local backend')).toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(25);
+        await Promise.resolve();
+      });
+
+      expect(screen.getByText('Backend unavailable')).toBeInTheDocument();
+      expect(
+        screen.getByText(/Dashboard backend did not respond during startup/i),
+      ).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      expect(client.loadDashboard).toHaveBeenCalledTimes(2);
+
+      await act(async () => {
+        pendingLoads[1]?.(readySnapshot);
+        await Promise.resolve();
+      });
+
+      expect(screen.getByText('Existing task')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 10_000);
+
+  it('shows a central refresh widget when the runtime status reports stale backend state', async () => {
     const client = new FakeTaskDashboardClient();
     const runtimeClient = new FakeRuntimeCommandClient();
     const detailClient = new FakeTaskRunDetailClient();
+    const reloadApp = vi.fn();
     const runtimeStatusClient = new FakeRuntimeStatusClient({
       available: true,
       stale: true,
@@ -194,12 +383,22 @@ describe('App open task dashboard', () => {
         taskRunDetailClient={detailClient}
         runtimeCommandClient={runtimeClient}
         runtimeStatusClient={runtimeStatusClient}
+        reloadApp={reloadApp}
       />,
     );
 
     expect(await screen.findByText('Existing task')).toBeInTheDocument();
-    expect(await screen.findByText('Backend changed: Rust command changed.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
+    expect(screen.getByLabelText('App notifications')).toHaveTextContent('Backend Updated');
+    expect(screen.getByLabelText('App notifications')).toHaveTextContent('Rust command changed');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrations' }));
+
+    expect(screen.getByLabelText('App notifications')).toHaveTextContent('Backend Updated');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh App' }));
+
+    await waitFor(() => expect(runtimeStatusClient.clearCount).toBe(1));
+    expect(reloadApp).toHaveBeenCalledTimes(1);
   }, 10_000);
 
   it('starts a Codex run through the injected runtime client and reloads the dashboard', async () => {
@@ -518,6 +717,548 @@ describe('App open task dashboard', () => {
     expect(screen.getAllByText('No artifacts recorded.').length).toBeGreaterThan(0);
     expect(screen.getByText('No events recorded.')).toBeInTheDocument();
   }, 10_000);
+
+  it('starts the orchestrations tab on a registry overview', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrations' }));
+    await waitFor(() =>
+      expect(screen.queryByText('Loading orchestration registry')).not.toBeInTheDocument(),
+    );
+
+    expect(screen.getByLabelText('Registered orchestrations')).toHaveTextContent(
+      'No orchestrations are registered.',
+    );
+    expect(screen.getAllByRole('button', { name: 'Add Orchestration' }).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Agent-OS pinned consumption')).not.toBeInTheDocument();
+  }, 10_000);
+
+  it('saves source material as an intake draft without requiring a title first', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrations' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add Orchestration' })[0]);
+
+    expect(screen.getByRole('heading', { name: 'Add Orchestration' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Title')).not.toBeInTheDocument();
+    expect(screen.queryByText('C:\\Users\\user\\.codex\\orchestrations')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Plan Builder intake stage')).toHaveTextContent('Plan Builder');
+    expect(screen.getByLabelText('Plan Builder intake stage')).toHaveTextContent('Not started');
+    expect(screen.queryByRole('button', { name: 'Expected Shape' })).not.toBeInTheDocument();
+
+    fireEvent.drop(screen.getByLabelText('Conversation file uploads'), {
+      dataTransfer: {
+        files: [new File(['handoff'], 'handoff.md', { type: 'text/markdown' })],
+      },
+    });
+    expect(screen.getByLabelText('Uploaded files')).toHaveTextContent('handoff.md');
+
+    fireEvent.change(screen.getByLabelText('Source material'), {
+      target: {
+        value:
+          'Move the target repo to a stable orchestration-ready state.\nKeep planning high-level.',
+      },
+    });
+    fireEvent.click(screen.getByLabelText('Start Plan Builder'));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Plan Builder intake draft' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Add orchestration current action')).toHaveTextContent(
+      'Runtime unsupported',
+    );
+    expect(screen.getByLabelText('Add orchestration current action')).toHaveTextContent(
+      'no Codex thread was created',
+    );
+    expect(screen.getByLabelText('Plan Builder intake draft conversation')).toHaveTextContent(
+      'No supported runtime route',
+    );
+    expect(screen.getByLabelText('Plan Builder intake draft conversation')).toHaveTextContent(
+      'Prompt accepted locally',
+    );
+    expect(screen.getByLabelText('Plan Builder intake draft conversation')).toHaveTextContent(
+      'Backend integration pending',
+    );
+    expect(screen.getByLabelText('Plan Builder intake draft conversation')).toHaveTextContent(
+      'Plan builder cannot start because this draft has no explicit linked task/worktree route.',
+    );
+    expect(screen.getByLabelText('Plan Builder intake draft conversation')).toHaveTextContent(
+      'handoff.md',
+    );
+    expect(screen.getByLabelText('Plan Builder intake draft conversation')).toHaveTextContent(
+      'No artifacts are associated with this conversation.',
+    );
+    expect(screen.queryByLabelText('Current processing turn')).not.toBeInTheDocument();
+    expect(screen.queryByText('Drop files into this conversation')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Plan preview')).not.toBeInTheDocument();
+    expect(screen.queryByText('Live State')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Expected Shape' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Tasks' }));
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrations' }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Registered orchestrations')).toHaveTextContent(
+        'Plan Builder intake draft',
+      );
+    });
+
+    expect(screen.getByLabelText('Registered orchestrations')).toHaveTextContent(
+      'Internal storage title; no user title has been set.',
+    );
+    expect(screen.getByLabelText('Registered orchestrations')).toHaveTextContent('Unsupported');
+    expect(screen.getByLabelText('Registered orchestrations')).toHaveTextContent(
+      'No runtime thread',
+    );
+
+    expect(screen.queryByText('Expected Shape')).not.toBeInTheDocument();
+  }, 10_000);
+
+  it('renders orchestration draft state from the injected orchestration client response', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+    const orchestrationClient = new ControlledOrchestrationClient();
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+        orchestrationClient={orchestrationClient}
+      />,
+    );
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrations' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add Orchestration' })[0]);
+    fireEvent.change(screen.getByLabelText('Source material'), {
+      target: { value: 'User supplied prompt.' },
+    });
+    fireEvent.click(screen.getByLabelText('Start Plan Builder'));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Client controlled draft' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Plan Builder intake draft conversation')).toHaveTextContent(
+      'Client supplied message.',
+    );
+    expect(orchestrationClient.createInputs).toEqual([
+      {
+        title: 'Internal plan-builder intake draft',
+        folderPath: 'C:\\Users\\user\\.codex\\orchestrations',
+        prompt: 'User supplied prompt.',
+        files: [],
+      },
+    ]);
+  }, 10_000);
+
+  it('shows Add Orchestration draft, ready, and submitting states without claiming runtime work', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+    const orchestrationClient = new DeferredCreateDraftOrchestrationClient();
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+        orchestrationClient={orchestrationClient}
+      />,
+    );
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrations' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add Orchestration' })[0]);
+
+    expect(screen.getByLabelText('Add orchestration current action')).toHaveTextContent(
+      'Paste source material or attach files. Plan Builder has not started.',
+    );
+
+    fireEvent.change(screen.getByLabelText('Source material'), {
+      target: { value: 'Source handoff for a local draft.' },
+    });
+    expect(screen.getByLabelText('Add orchestration current action')).toHaveTextContent(
+      'Source material is ready to save as a local intake draft.',
+    );
+
+    fireEvent.click(screen.getByLabelText('Start Plan Builder'));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Add orchestration current action')).toHaveTextContent(
+        'Saving source material as an intake draft before requesting Plan Builder runtime start.',
+      );
+    });
+    expect(screen.getByLabelText('Plan builder conversation')).toHaveTextContent(
+      'Source handoff for a local draft.',
+    );
+    expect(screen.getByLabelText('Plan builder conversation')).not.toHaveTextContent(
+      'Plan-builder is running',
+    );
+
+    await act(async () => {
+      await orchestrationClient.resolveCreateDraft();
+    });
+    expect(
+      await screen.findByRole('heading', { name: 'Client controlled draft' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Add orchestration current action')).toHaveTextContent(
+      'Runtime unsupported',
+    );
+  }, 10_000);
+
+  it('shows local request-in-flight state after draft save while Plan Builder runtime start is pending', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+    const orchestrationClient = new DeferredStartPlanBuilderRunOrchestrationClient();
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+        orchestrationClient={orchestrationClient}
+      />,
+    );
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrations' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add Orchestration' })[0]);
+    fireEvent.change(screen.getByLabelText('Source material'), {
+      target: { value: 'Source handoff for a deferred runtime start.' },
+    });
+    fireEvent.click(screen.getByLabelText('Start Plan Builder'));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Add orchestration current action')).toHaveTextContent(
+        'Sending runtime request',
+      );
+    });
+
+    const currentAction = screen.getByLabelText('Add orchestration current action');
+    expect(currentAction).toHaveTextContent(
+      'Draft saved. Sending Plan Builder runtime request; waiting for backend acknowledgement.',
+    );
+    expect(currentAction).not.toHaveTextContent('Backend accepted');
+    expect(currentAction).not.toHaveTextContent('waiting for the final response');
+    expect(currentAction).not.toHaveTextContent('Running');
+    expect(currentAction).not.toHaveTextContent('Completed');
+
+    const conversation = screen.getByLabelText('Plan Builder intake draft conversation');
+    expect(conversation).toHaveTextContent(
+      'Draft saved. Sending Plan Builder runtime request; waiting for backend acknowledgement.',
+    );
+    expect(conversation).toHaveTextContent('No supported runtime route');
+    expect(conversation).not.toHaveTextContent('Backend response evidence');
+    expect(conversation).not.toHaveTextContent('Backend accepted');
+    expect(conversation).not.toHaveTextContent('waiting for the final response');
+    expect(conversation).not.toHaveTextContent('Running');
+    expect(conversation).not.toHaveTextContent('Completed');
+
+    expect(orchestrationClient.startInputs).toEqual([{ buildPackageId: 'build-controlled-4' }]);
+
+    await act(async () => {
+      await orchestrationClient.resolveStartPlanBuilderRun();
+    });
+
+    expect(screen.getByLabelText('Add orchestration current action')).toHaveTextContent(
+      'Runtime unsupported',
+    );
+  }, 10_000);
+
+  it('shows a recoverable Add Orchestration failure tied to draft creation', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+    const orchestrationClient = new FailingCreateDraftOrchestrationClient();
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+        orchestrationClient={orchestrationClient}
+      />,
+    );
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrations' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add Orchestration' })[0]);
+    fireEvent.change(screen.getByLabelText('Source material'), {
+      target: { value: 'This client will fail.' },
+    });
+    fireEvent.click(screen.getByLabelText('Start Plan Builder'));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Add orchestration current action')).toHaveTextContent(
+        'Draft creation failed',
+      );
+    });
+    expect(screen.getByRole('status')).toHaveTextContent('Draft service unavailable');
+    expect(screen.getByLabelText('Start Plan Builder')).not.toBeDisabled();
+    expect(screen.getByLabelText('Plan builder conversation')).toHaveTextContent(
+      'This client will fail.',
+    );
+    expect(screen.getByLabelText('Plan builder conversation')).toHaveTextContent(
+      'Draft creation failed. Draft service unavailable',
+    );
+    expect(screen.getByLabelText('Plan builder conversation')).not.toHaveTextContent(
+      'Saving source material as a local intake draft.',
+    );
+    expect(
+      within(screen.getByLabelText('Conversation messages')).getByText('Failed'),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText('Current processing turn')).not.toBeInTheDocument();
+  }, 10_000);
+
+  it('shows plan-builder running only from a runtime-event-backed client response', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+    const orchestrationClient = new RuntimeRunningOrchestrationClient();
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+        orchestrationClient={orchestrationClient}
+      />,
+    );
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrations' }));
+    await waitFor(() =>
+      expect(screen.queryByText('Loading orchestration registry')).not.toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add Orchestration' })[0]);
+    fireEvent.change(screen.getByLabelText('Source material'), {
+      target: { value: 'A test client will return a runtime event.' },
+    });
+    fireEvent.click(screen.getByLabelText('Start Plan Builder'));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Runtime-backed orchestration' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Add orchestration current action')).toHaveTextContent('Running');
+    expect(screen.getByLabelText('Add orchestration current action')).toHaveTextContent(
+      'Plan-builder is running from a runtime event.',
+    );
+    expect(screen.getByLabelText('Plan Builder intake draft conversation')).toHaveTextContent(
+      'Runtime event received: plan-builder is running.',
+    );
+    expect(screen.queryByRole('button', { name: 'Accept Plan Output' })).not.toBeInTheDocument();
+  }, 10_000);
+
+  it('shows a Plan Builder review gate, preserves feedback locally, and blocks unsupported instantiation', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+    const orchestrationClient = new CompletedPlanBuilderOrchestrationClient();
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+        orchestrationClient={orchestrationClient}
+      />,
+    );
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrations' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add Orchestration' })[0]);
+    fireEvent.change(screen.getByLabelText('Source material'), {
+      target: { value: 'Source that produces a plan proposal.' },
+    });
+    fireEvent.click(screen.getByLabelText('Start Plan Builder'));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Plan ready for approval' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Add orchestration current action')).toHaveTextContent(
+      'Plan Builder output is ready for review.',
+    );
+    expect(
+      screen.getByRole('button', { name: 'Confirm build plan and start instantiating' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Plan Builder intake draft conversation')).toHaveTextContent(
+      'Draft plan output with orchestrationPlanDraft JSON.',
+    );
+    expect(screen.queryByRole('button', { name: 'Expected Shape' })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Plan Builder feedback'), {
+      target: { value: 'Please keep the phases higher-level.' },
+    });
+    fireEvent.click(screen.getByLabelText('Preserve Plan Builder feedback'));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Plan Builder intake draft conversation')).toHaveTextContent(
+        'Please keep the phases higher-level.',
+      );
+    });
+    expect(screen.getByLabelText('Plan Builder intake draft conversation')).toHaveTextContent(
+      'not sent to the same Plan Builder runtime conversation',
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Confirm build plan and start instantiating' }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Add orchestration current action')).toHaveTextContent(
+        'Instantiator runtime unavailable',
+      );
+    });
+    expect(orchestrationClient.stageRequests).toEqual([
+      { buildPackageId: 'build-controlled-4', stageId: 'instantiator' },
+    ]);
+    expect(screen.getByLabelText('Plan Builder intake draft conversation')).toHaveTextContent(
+      'No files were generated',
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Confirm build plan and start instantiating' }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Expected Shape' })).not.toBeInTheDocument();
+  }, 10_000);
+
+  it('shows Expected Shape only when instantiator evidence exists', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+    const orchestrationClient = new InstantiatorEvidenceOrchestrationClient();
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+        orchestrationClient={orchestrationClient}
+      />,
+    );
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrations' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add Orchestration' })[0]);
+    fireEvent.change(screen.getByLabelText('Source material'), {
+      target: { value: 'Source that already has instantiator evidence in this fixture.' },
+    });
+    fireEvent.click(screen.getByLabelText('Start Plan Builder'));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Instantiator evidence available' }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Overview' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open build package Instantiator evidence available' }),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expected Shape' }));
+
+    expect(screen.getByLabelText('Expected local plan shape')).toHaveTextContent(
+      'orchestration-plan.json',
+    );
+    expect(screen.getByLabelText('Expected package outputs')).toHaveTextContent(
+      'Backend response evidence',
+    );
+  }, 10_000);
+
+  it('does not infer Start Orchestration from a ready root-startup stage without client action metadata', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+    const orchestrationClient = new RootStartupReadyWithoutActionClient();
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+        orchestrationClient={orchestrationClient}
+      />,
+    );
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrations' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add Orchestration' })[0]);
+    fireEvent.change(screen.getByLabelText('Source material'), {
+      target: { value: 'Client returns root-startup ready without action metadata.' },
+    });
+    fireEvent.click(screen.getByLabelText('Start Plan Builder'));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Root startup action omitted' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Add orchestration current action')).toHaveTextContent('Ready');
+    expect(screen.getByLabelText('Add orchestration current action')).toHaveTextContent(
+      'Client snapshot says root startup inputs are ready, but no supported start action was supplied.',
+    );
+    expect(screen.queryByRole('button', { name: 'Start Orchestration' })).not.toBeInTheDocument();
+  }, 10_000);
+
+  it('keeps uploaded files visible in the add-orchestration conversation', async () => {
+    const client = new FakeTaskDashboardClient();
+    const runtimeClient = new FakeRuntimeCommandClient();
+    const detailClient = new FakeTaskRunDetailClient();
+
+    render(
+      <App
+        taskDashboardClient={client}
+        taskRunDetailClient={detailClient}
+        runtimeCommandClient={runtimeClient}
+      />,
+    );
+
+    expect(await screen.findByText('Existing task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrations' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add Orchestration' })[0]);
+
+    fireEvent.change(screen.getByLabelText('Choose conversation files'), {
+      target: {
+        files: [new File(['source handoff'], 'source-handoff.txt', { type: 'text/plain' })],
+      },
+    });
+
+    expect(screen.getByLabelText('Uploaded files')).toHaveTextContent('source-handoff.txt');
+  }, 10_000);
 });
 
 interface FakeTaskDashboardClientOptions {
@@ -735,6 +1476,23 @@ class FakeTaskDashboardClient implements TaskDashboardClient {
     return {
       groups,
       projects: this.records.projects.map((project) => ({ id: project.id, name: project.name })),
+      repos: this.records.repos.flatMap((repo) => {
+        const project = this.records.projects.find((record) => record.id === repo.projectId);
+
+        if (!project) {
+          return [];
+        }
+
+        return [
+          {
+            id: repo.id,
+            projectId: project.id,
+            project: project.name,
+            name: repo.name,
+            rootPath: repo.rootPath,
+          },
+        ];
+      }),
       worktreeAnchors: this.records.worktrees.flatMap((worktree) => {
         const repo = this.records.repos.find((record) => record.id === worktree.repoId);
         const project = repo
@@ -771,6 +1529,10 @@ class FakeTaskDashboardClient implements TaskDashboardClient {
 
 class FakeRuntimeCommandClient implements RuntimeCommandClient {
   inputs: StartCodexTaskRunCommandInput[] = [];
+  agentSessionInputs: StartAgentSessionCommandInput[] = [];
+  agentSessionResultFactory?: (
+    input: StartAgentSessionCommandInput,
+  ) => StartAgentSessionCommandResult;
 
   constructor(
     private readonly resultFactory: (
@@ -785,10 +1547,540 @@ class FakeRuntimeCommandClient implements RuntimeCommandClient {
 
     return this.resultFactory(input);
   }
+
+  async startAgentSession(
+    input: StartAgentSessionCommandInput,
+  ): Promise<StartAgentSessionCommandResult> {
+    this.agentSessionInputs.push(input);
+
+    if (this.agentSessionResultFactory) {
+      return this.agentSessionResultFactory(input);
+    }
+
+    return {
+      sessionId: 'agent-session-1',
+      status: 'completed',
+      command: 'codex',
+      args: [
+        'exec',
+        '--json',
+        ...(input.additionalArgs ?? []),
+        ...(input.sessionId ? ['resume', input.sessionId] : []),
+        input.prompt,
+      ],
+      stdout: [
+        JSON.stringify({ type: 'thread.started', thread_id: 'thread-app' }),
+        JSON.stringify({ type: 'turn.started' }),
+        JSON.stringify({
+          type: 'item.completed',
+          item: { type: 'agent_message', text: `Agent output for ${input.prompt}` },
+        }),
+        JSON.stringify({ type: 'turn.completed' }),
+      ].join('\n'),
+      stderr: [
+        'OpenAI Codex v0.130.0-alpha.5',
+        'model: gpt-5.5',
+        'approval: never',
+        'sandbox: danger-full-access',
+        'reasoning effort: high',
+        'session id: stderr-app-session',
+      ].join('\n'),
+      startedAt: '2026-07-03T10:00:00.000Z',
+      completedAt: '2026-07-03T10:01:00.000Z',
+      exitCode: 0,
+    };
+  }
+}
+
+class ControlledOrchestrationClient implements OrchestrationClient {
+  private nextId = 1;
+  private readonly delegate = createLocalOrchestrationClient({
+    now: () => '2026-07-07T10:00:00.000Z',
+    nextId: (prefix) => `${prefix}-controlled-${this.nextId++}`,
+  });
+  private lastCreated: OrchestrationBuildPackage | null = null;
+
+  createInputs: CreateOrchestrationDraftInput[] = [];
+
+  loadOrchestrations(): Promise<OrchestrationRegistrySnapshot> {
+    return this.delegate.loadOrchestrations();
+  }
+
+  async createDraft(input: CreateOrchestrationDraftInput): Promise<OrchestrationBuildPackage> {
+    this.createInputs.push(input);
+    const buildPackage = await this.delegate.createDraft(input);
+
+    const controlledBuild = {
+      ...buildPackage,
+      title: 'Client controlled draft',
+      messages: [
+        ...buildPackage.messages,
+        {
+          id: 'client-controlled-message',
+          role: 'system' as const,
+          body: 'Client supplied message.',
+          createdAt: '2026-07-07T10:00:00.000Z',
+          truth: { status: 'integration_pending', provenance: 'unsupported' } as const,
+        },
+      ],
+      stages: buildPackage.stages.map((stage, index) =>
+        index === 0
+          ? {
+              ...stage,
+              detail: 'Client supplied current stage detail.',
+            }
+          : stage,
+      ),
+    };
+    this.lastCreated = controlledBuild;
+    return controlledBuild;
+  }
+
+  addDraftNote: OrchestrationClient['addDraftNote'] = (input) => this.delegate.addDraftNote(input);
+
+  attachDraftFiles: OrchestrationClient['attachDraftFiles'] = (input) =>
+    this.delegate.attachDraftFiles(input);
+
+  requestBuildStage: OrchestrationClient['requestBuildStage'] = (input) =>
+    this.delegate.requestBuildStage(input);
+
+  async startPlanBuilderRun(
+    input: Parameters<OrchestrationClient['startPlanBuilderRun']>[0],
+  ): Promise<OrchestrationBuildPackage> {
+    const buildPackage = await this.delegate.startPlanBuilderRun(input);
+    const base = this.lastCreated?.id === buildPackage.id ? this.lastCreated : buildPackage;
+
+    return {
+      ...buildPackage,
+      title: base.title,
+      messages: [
+        ...base.messages,
+        ...buildPackage.messages.filter(
+          (message) => !base.messages.some((candidate) => candidate.id === message.id),
+        ),
+      ],
+      stages: buildPackage.stages.map((stage) =>
+        stage.id === 'plan-builder'
+          ? {
+              ...stage,
+              detail: 'Client supplied current stage detail.',
+            }
+          : stage,
+      ),
+    };
+  }
+
+  startOrchestration: OrchestrationClient['startOrchestration'] = (input) =>
+    this.delegate.startOrchestration(input);
+
+  loadOrchestration: OrchestrationClient['loadOrchestration'] = (id) =>
+    this.delegate.loadOrchestration(id);
+
+  cancelDraft: OrchestrationClient['cancelDraft'] = (buildPackageId) =>
+    this.delegate.cancelDraft(buildPackageId);
+}
+
+class DeferredCreateDraftOrchestrationClient extends ControlledOrchestrationClient {
+  private resolvePending: (() => Promise<void>) | undefined;
+
+  async createDraft(input: CreateOrchestrationDraftInput): Promise<OrchestrationBuildPackage> {
+    return new Promise((resolve) => {
+      this.resolvePending = async () => {
+        resolve(await super.createDraft(input));
+      };
+    });
+  }
+
+  async resolveCreateDraft(): Promise<void> {
+    if (!this.resolvePending) {
+      throw new Error('No deferred orchestration draft request is pending.');
+    }
+
+    await this.resolvePending();
+    this.resolvePending = undefined;
+  }
+}
+
+class DeferredStartPlanBuilderRunOrchestrationClient extends ControlledOrchestrationClient {
+  startInputs: Array<Parameters<OrchestrationClient['startPlanBuilderRun']>[0]> = [];
+  private resolvePending: (() => Promise<void>) | undefined;
+
+  async startPlanBuilderRun(
+    input: Parameters<OrchestrationClient['startPlanBuilderRun']>[0],
+  ): Promise<OrchestrationBuildPackage> {
+    this.startInputs.push(input);
+
+    return new Promise((resolve) => {
+      this.resolvePending = async () => {
+        resolve(await super.startPlanBuilderRun(input));
+      };
+    });
+  }
+
+  async resolveStartPlanBuilderRun(): Promise<void> {
+    if (!this.resolvePending) {
+      throw new Error('No deferred Plan Builder runtime request is pending.');
+    }
+
+    await this.resolvePending();
+    this.resolvePending = undefined;
+  }
+}
+
+class FailingCreateDraftOrchestrationClient extends ControlledOrchestrationClient {
+  async createDraft(input: CreateOrchestrationDraftInput): Promise<OrchestrationBuildPackage> {
+    this.createInputs.push(input);
+    throw new Error('Draft service unavailable');
+  }
+}
+
+class RuntimeRunningOrchestrationClient extends ControlledOrchestrationClient {
+  async startPlanBuilderRun(
+    input: Parameters<OrchestrationClient['startPlanBuilderRun']>[0],
+  ): Promise<OrchestrationBuildPackage> {
+    const buildPackage = await super.startPlanBuilderRun(input);
+    const runtimeState = { status: 'running', provenance: 'runtime_event' } as const;
+
+    return {
+      ...buildPackage,
+      clientState: {
+        ...buildPackage.clientState,
+        status: 'running',
+        provenance: 'runtime_event',
+        currentAction: 'Plan-builder is running from a runtime event.',
+        runtimeSupported: true,
+        primaryAction: undefined,
+      },
+      messages: [
+        ...buildPackage.messages,
+        {
+          id: 'runtime-event-running',
+          role: 'system',
+          body: 'Runtime event received: plan-builder is running.',
+          createdAt: '2026-07-07T10:00:01.000Z',
+          truth: runtimeState,
+        },
+      ],
+      stages: buildPackage.stages.map((stage, index) =>
+        index === 0
+          ? {
+              ...stage,
+              detail: 'A runtime event confirms plan-builder work is active.',
+              state: runtimeState,
+              summary: 'Plan-builder running from runtime event evidence.',
+            }
+          : stage,
+      ),
+      title: 'Runtime-backed orchestration',
+    };
+  }
+}
+
+class CompletedPlanBuilderOrchestrationClient extends ControlledOrchestrationClient {
+  stageRequests: Array<Parameters<OrchestrationClient['requestBuildStage']>[0]> = [];
+  protected currentBuild: OrchestrationBuildPackage | null = null;
+
+  async startPlanBuilderRun(
+    input: Parameters<OrchestrationClient['startPlanBuilderRun']>[0],
+  ): Promise<OrchestrationBuildPackage> {
+    const buildPackage = await super.startPlanBuilderRun(input);
+    this.currentBuild = this.withCompletedPlanBuilderEvidence(buildPackage);
+    return this.currentBuild;
+  }
+
+  addDraftNote: OrchestrationClient['addDraftNote'] = async (input) => {
+    const buildPackage = this.requireCurrentBuild(input.buildPackageId);
+    const updatedAt = '2026-07-07T10:02:00.000Z';
+
+    this.currentBuild = {
+      ...buildPackage,
+      updatedAt,
+      clientState: {
+        ...buildPackage.clientState,
+        currentAction:
+          'Feedback was preserved locally. Runtime continuation is unsupported for this Plan Builder conversation.',
+        notices: [
+          {
+            id: 'unsupported-plan-builder-continuation',
+            kind: 'missing_capability',
+            title: 'Runtime continuation unsupported',
+            message:
+              'Feedback was preserved locally, but it was not sent to the same Plan Builder runtime conversation because continuation is unsupported in this path.',
+            truth: { status: 'integration_pending', provenance: 'unsupported' },
+          },
+        ],
+      },
+      messages: [
+        ...buildPackage.messages,
+        {
+          id: 'feedback-user',
+          role: 'user',
+          body: input.body,
+          createdAt: updatedAt,
+          state: 'completed',
+          truth: { status: 'draft', provenance: 'local_draft' },
+        },
+        {
+          id: 'feedback-unsupported',
+          role: 'system',
+          body: 'Feedback was preserved locally, but it was not sent to the same Plan Builder runtime conversation because continuation is unsupported in this path.',
+          createdAt: updatedAt,
+          state: 'completed',
+          truth: { status: 'integration_pending', provenance: 'unsupported' },
+        },
+      ],
+    };
+
+    return this.currentBuild;
+  };
+
+  requestBuildStage: OrchestrationClient['requestBuildStage'] = async (input) => {
+    this.stageRequests.push(input);
+    const buildPackage = this.requireCurrentBuild(input.buildPackageId);
+    const updatedAt = '2026-07-07T10:03:00.000Z';
+
+    this.currentBuild = {
+      ...buildPackage,
+      updatedAt,
+      clientState: {
+        ...buildPackage.clientState,
+        status: 'integration_pending',
+        provenance: 'unsupported',
+        currentAction:
+          'Instantiator runtime unavailable. The build plan approval was accepted, but no files were generated.',
+        notices: [
+          {
+            id: 'missing-instantiator-runtime',
+            kind: 'missing_capability',
+            title: 'Instantiator runtime unavailable',
+            message:
+              'The build plan approval was accepted, but instantiation cannot start because no instantiator runtime route is implemented. No files were generated.',
+            truth: { status: 'integration_pending', provenance: 'unsupported' },
+          },
+        ],
+        primaryAction: undefined,
+      },
+      messages: [
+        ...buildPackage.messages,
+        {
+          id: 'instantiator-unsupported',
+          role: 'system',
+          body: 'The build plan approval was accepted, but instantiation cannot start because no instantiator runtime route is implemented. No files were generated.',
+          createdAt: updatedAt,
+          state: 'completed',
+          truth: { status: 'integration_pending', provenance: 'unsupported' },
+        },
+      ],
+      stages: buildPackage.stages.map((stage) =>
+        stage.id === 'plan-review'
+          ? {
+              ...stage,
+              state: { status: 'completed', provenance: 'backend_response' },
+              summary: 'The user confirmed the Plan Builder proposal.',
+              detail:
+                'Approval was accepted before attempting instantiation. No instantiator runtime route has started.',
+            }
+          : stage.id === 'instantiator'
+            ? {
+                ...stage,
+                state: { status: 'integration_pending', provenance: 'unsupported' },
+                summary: 'Build plan approval was accepted; instantiator runtime is unsupported.',
+                detail:
+                  'The build plan approval was accepted, but instantiation cannot start because no instantiator runtime route is implemented. No files were generated.',
+              }
+            : stage,
+      ),
+    };
+
+    return this.currentBuild;
+  };
+
+  protected withCompletedPlanBuilderEvidence(
+    buildPackage: OrchestrationBuildPackage,
+  ): OrchestrationBuildPackage {
+    const completedState = { status: 'completed', provenance: 'backend_response' } as const;
+    const readyState = { status: 'ready', provenance: 'backend_response' } as const;
+
+    return {
+      ...buildPackage,
+      title: 'Plan ready for approval',
+      clientState: {
+        ...buildPackage.clientState,
+        status: 'completed',
+        provenance: 'backend_response',
+        currentAction:
+          'Plan Builder output is ready for review. Confirm the build plan to request instantiation, or preserve feedback locally; runtime continuation is unsupported.',
+        runtimeSupported: true,
+        primaryAction: {
+          id: 'start-instantiation',
+          label: 'Confirm build plan and start instantiating',
+          enabled: true,
+        },
+      },
+      messages: [
+        ...buildPackage.messages,
+        {
+          id: 'plan-builder-final',
+          role: 'assistant',
+          body: 'Draft plan output with orchestrationPlanDraft JSON.',
+          createdAt: '2026-07-07T10:01:00.000Z',
+          state: 'completed',
+          truth: completedState,
+        },
+      ],
+      stages: buildPackage.stages.map((stage) =>
+        stage.id === 'plan-builder'
+          ? {
+              ...stage,
+              state: completedState,
+              summary: 'Plan-builder output is available.',
+              detail: 'This is a proposal awaiting explicit user approval.',
+            }
+          : stage.id === 'plan-review'
+            ? {
+                ...stage,
+                state: readyState,
+                summary: 'Plan-builder proposal is ready for user review.',
+                detail:
+                  'Review the final Plan Builder response. Instantiation starts only after explicit user approval.',
+              }
+            : stage,
+      ),
+      stageRuns: [
+        {
+          id: 'stage-run-plan-builder',
+          buildPackageId: buildPackage.id,
+          stageId: 'plan-builder',
+          state: completedState,
+          promptArtifactId: 'artifact-prompt',
+          rawEventArtifactId: 'artifact-raw',
+          outputArtifactId: 'artifact-final',
+          conversationId: 'conversation-plan-builder',
+          eventIds: ['event-started', 'event-completed'],
+          evidence: {
+            schema: 'orchestration-stage-run-evidence/v1',
+            externalThreadId: 'thread-plan-builder',
+          },
+          startedAt: '2026-07-07T10:00:00.000Z',
+          completedAt: '2026-07-07T10:01:00.000Z',
+          createdAt: '2026-07-07T10:00:00.000Z',
+          updatedAt: '2026-07-07T10:01:00.000Z',
+        },
+      ],
+      generatedFiles: [],
+    };
+  }
+
+  protected requireCurrentBuild(buildPackageId: EntityId): OrchestrationBuildPackage {
+    if (!this.currentBuild || this.currentBuild.id !== buildPackageId) {
+      throw new Error(`Unknown completed build fixture: ${buildPackageId}`);
+    }
+
+    return this.currentBuild;
+  }
+}
+
+class InstantiatorEvidenceOrchestrationClient extends CompletedPlanBuilderOrchestrationClient {
+  async startPlanBuilderRun(
+    input: Parameters<OrchestrationClient['startPlanBuilderRun']>[0],
+  ): Promise<OrchestrationBuildPackage> {
+    const buildPackage = await super.startPlanBuilderRun(input);
+    const completedState = { status: 'completed', provenance: 'backend_response' } as const;
+
+    this.currentBuild = {
+      ...buildPackage,
+      title: 'Instantiator evidence available',
+      clientState: {
+        ...buildPackage.clientState,
+        currentAction:
+          'Instantiator output exists with backend evidence; Expected Shape can be inspected.',
+        primaryAction: undefined,
+      },
+      stages: buildPackage.stages.map((stage) =>
+        stage.id === 'plan-review' || stage.id === 'instantiator'
+          ? {
+              ...stage,
+              state: completedState,
+              summary: `${stage.title} completed with backend evidence.`,
+              detail: `${stage.title} completion is backed by stage-run evidence.`,
+            }
+          : stage,
+      ),
+      stageRuns: [
+        ...(buildPackage.stageRuns ?? []),
+        {
+          id: 'stage-run-instantiator',
+          buildPackageId: buildPackage.id,
+          stageId: 'instantiator',
+          state: completedState,
+          outputArtifactId: 'artifact-instantiator-final',
+          conversationId: 'conversation-plan-builder',
+          eventIds: ['event-instantiator-completed'],
+          evidence: {
+            schema: 'orchestration-stage-run-evidence/v1',
+            generatedFiles: ['orchestration-plan.json'],
+          },
+          startedAt: '2026-07-07T10:02:00.000Z',
+          completedAt: '2026-07-07T10:03:00.000Z',
+          createdAt: '2026-07-07T10:02:00.000Z',
+          updatedAt: '2026-07-07T10:03:00.000Z',
+        },
+      ],
+      generatedFiles: [
+        {
+          name: 'orchestration-plan.json',
+          purpose: 'Reported by instantiator stage-run evidence.',
+          state: completedState,
+        },
+      ],
+    };
+
+    return this.currentBuild;
+  }
+}
+
+class RootStartupReadyWithoutActionClient extends ControlledOrchestrationClient {
+  async startPlanBuilderRun(
+    input: Parameters<OrchestrationClient['startPlanBuilderRun']>[0],
+  ): Promise<OrchestrationBuildPackage> {
+    const buildPackage = await super.startPlanBuilderRun(input);
+    const completedState = { status: 'completed', provenance: 'backend_response' } as const;
+    const readyState = { status: 'ready', provenance: 'backend_response' } as const;
+
+    return {
+      ...buildPackage,
+      clientState: {
+        ...buildPackage.clientState,
+        status: 'ready',
+        provenance: 'backend_response',
+        currentAction:
+          'Client snapshot says root startup inputs are ready, but no supported start action was supplied.',
+        runtimeSupported: true,
+        primaryAction: undefined,
+      },
+      stages: buildPackage.stages.map((stage) =>
+        stage.id === 'root-startup'
+          ? {
+              ...stage,
+              detail:
+                'Client snapshot says root startup inputs are ready, but no supported start action was supplied.',
+              state: readyState,
+              summary: 'Root startup readiness came from the client snapshot.',
+            }
+          : {
+              ...stage,
+              state: completedState,
+              summary: `${stage.title} completed in this injected backend snapshot.`,
+            },
+      ),
+      title: 'Root startup action omitted',
+    };
+  }
 }
 
 class DeferredRuntimeCommandClient implements RuntimeCommandClient {
   inputs: StartCodexTaskRunCommandInput[] = [];
+  agentSessionInputs: StartAgentSessionCommandInput[] = [];
   private resolvePending: ((result: StartCodexTaskRunCommandResult) => void) | undefined;
 
   async startCodexTaskRun(
@@ -811,12 +2103,50 @@ class DeferredRuntimeCommandClient implements RuntimeCommandClient {
     this.resolvePending(createCompletedRunResult(input));
     this.resolvePending = undefined;
   }
+
+  async startAgentSession(
+    input: StartAgentSessionCommandInput,
+  ): Promise<StartAgentSessionCommandResult> {
+    this.agentSessionInputs.push(input);
+    const now = '2026-07-03T10:00:00.000Z';
+
+    return {
+      sessionId: 'agent-session-deferred',
+      status: 'completed',
+      command: 'codex',
+      args: [
+        'exec',
+        '--json',
+        ...(input.additionalArgs ?? []),
+        ...(input.sessionId ? ['resume', input.sessionId] : []),
+        input.prompt,
+      ],
+      stdout: 'Agent output',
+      stderr: '',
+      startedAt: now,
+      completedAt: now,
+      exitCode: 0,
+    };
+  }
 }
 
 class FakeRuntimeStatusClient implements RuntimeStatusClient {
-  constructor(private readonly status: RuntimeStatusSnapshot) {}
+  clearCount = 0;
+
+  constructor(private status: RuntimeStatusSnapshot) {}
 
   async checkStatus(): Promise<RuntimeStatusSnapshot> {
+    return this.status;
+  }
+
+  async clearStale(): Promise<RuntimeStatusSnapshot> {
+    this.clearCount += 1;
+    this.status = {
+      ...this.status,
+      stale: false,
+      staleTargets: [],
+      generation: 'fresh-generation',
+    };
     return this.status;
   }
 }
@@ -1126,6 +2456,7 @@ function emptySnapshot(): TaskDashboardSnapshot {
       events: [],
     }),
     projects: [],
+    repos: [],
     worktreeAnchors: [],
     totalOpenTasks: 0,
   };

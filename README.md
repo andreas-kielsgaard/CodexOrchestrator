@@ -49,6 +49,8 @@ without scanning the whole disk.
 - `npm run mark:stale -- --target backend --reason "Rust command changed"`: mark app,
   frontend, or backend state stale so the running UI offers a refresh.
 - `npm run clear:stale`: clear the runtime stale marker.
+- `npm run probe:codex -- --prompt "Reply with ok"`: compare `codex app-server` lifecycle events
+  with a `codex exec --json` baseline and write raw artifacts to `.dev/codex-surface-probes/`.
 - `npm run build`: type-check and build the frontend.
 - `npm run build:tauri`: build the desktop app.
 - `npm run lint`: run ESLint.

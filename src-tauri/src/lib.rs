@@ -1,14 +1,17 @@
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 use std::{
     collections::{BTreeMap, HashSet},
     fs,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
+    sync::{Arc, Mutex},
+    thread,
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
 const APP_DATABASE_FILE_NAME: &str = "codex-orchestrator.sqlite";
@@ -94,6 +97,17 @@ struct StartCodexTaskRunCommandInput {
 
 #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+struct StartAgentSessionCommandInput {
+    stream_id: Option<String>,
+    session_id: Option<String>,
+    prompt: String,
+    cwd: Option<String>,
+    additional_args: Option<Vec<String>>,
+    env: Option<BTreeMap<String, Option<String>>>,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 struct StartCodexTaskRunPostRunCaptureInput {
     collect_diff: Option<bool>,
     validation_command: Option<StartCodexTaskRunValidationCommandInput>,
@@ -106,6 +120,80 @@ struct StartCodexTaskRunValidationCommandInput {
     args: Option<Vec<String>>,
     cwd: Option<String>,
     env: Option<BTreeMap<String, Option<String>>>,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct UploadedOrchestrationDraftFileInput {
+    id: String,
+    name: String,
+    size: i64,
+    last_modified: Option<i64>,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct CreateOrchestrationDraftCommandInput {
+    title: String,
+    folder_path: String,
+    prompt: String,
+    files: Vec<UploadedOrchestrationDraftFileInput>,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct AddOrchestrationDraftNoteCommandInput {
+    build_package_id: String,
+    body: String,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct AttachOrchestrationDraftFilesCommandInput {
+    build_package_id: String,
+    files: Vec<UploadedOrchestrationDraftFileInput>,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct RequestOrchestrationBuildStageCommandInput {
+    build_package_id: String,
+    stage_id: String,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct StartOrchestrationPlanBuilderRunCommandInput {
+    build_package_id: String,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct StartOrchestrationCommandInput {
+    build_package_id: String,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OrchestrationStageRunEvidenceRecord {
+    id: String,
+    build_package_id: String,
+    stage_id: String,
+    status: String,
+    provenance: String,
+    status_reason: Option<String>,
+    prompt_artifact_id: Option<String>,
+    output_artifact_id: Option<String>,
+    raw_event_artifact_id: Option<String>,
+    task_id: Option<String>,
+    task_run_id: Option<String>,
+    conversation_id: Option<String>,
+    event_ids: Vec<String>,
+    evidence: Value,
+    started_at: Option<String>,
+    completed_at: Option<String>,
+    created_at: String,
+    updated_at: String,
 }
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -199,6 +287,59 @@ struct StartCodexTaskRunCommandResult {
     post_run_capture: Option<StartCodexTaskRunPostRunCaptureResult>,
     task: StartCodexTaskRunTaskState,
     task_run: StartCodexTaskRunTaskRunState,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct StartAgentSessionCommandResult {
+    session_id: String,
+    status: String,
+    command: String,
+    args: Vec<String>,
+    stdout: String,
+    stderr: String,
+    output_was_streamed: bool,
+    started_at: String,
+    completed_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_code: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct StartAgentSessionStartedCommandResult {
+    session_id: String,
+    stream_id: String,
+    status: String,
+    command: String,
+    args: Vec<String>,
+    started_at: String,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct AgentSessionCliOutputEvent {
+    stream_id: String,
+    stream: String,
+    content: String,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct AgentSessionCliCompletedEvent {
+    stream_id: String,
+    result: StartAgentSessionCommandResult,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct CodexRuntimeInfoCommandResult {
+    doctor_stdout: String,
+    model_catalog_stdout: String,
 }
 
 #[derive(Serialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -780,6 +921,118 @@ fn start_codex_task_run(
     })
 }
 
+#[tauri::command]
+fn start_agent_session(
+    app: AppHandle,
+    input: StartAgentSessionCommandInput,
+) -> Result<StartAgentSessionStartedCommandResult, String> {
+    start_agent_session_streaming(&app, input)
+}
+
+#[tauri::command]
+fn load_agent_session(
+    app: AppHandle,
+    session_id: String,
+) -> Result<Option<StartAgentSessionCommandResult>, String> {
+    validate_non_empty("sessionId", &session_id)?;
+    with_app_database(&app, |conn| load_agent_session_record(conn, &session_id))
+}
+
+#[tauri::command]
+fn load_codex_runtime_info() -> Result<CodexRuntimeInfoCommandResult, String> {
+    Ok(CodexRuntimeInfoCommandResult {
+        doctor_stdout: run_codex_runtime_info_command(&["doctor", "--json"])?,
+        model_catalog_stdout: run_codex_runtime_info_command(&["debug", "models", "--bundled"])?,
+    })
+}
+
+#[tauri::command]
+fn select_orchestration_directory(default_path: String) -> Result<Option<String>, String> {
+    let default_path = PathBuf::from(default_path);
+    let mut dialog = rfd::FileDialog::new().set_title("Choose orchestration folder");
+
+    if default_path.exists() {
+        dialog = dialog.set_directory(default_path);
+    }
+
+    Ok(dialog
+        .pick_folder()
+        .map(|path| path.to_string_lossy().into_owned()))
+}
+
+#[tauri::command]
+fn load_orchestration_registry(app: AppHandle) -> Result<Value, String> {
+    with_app_database(&app, |conn| load_orchestration_registry_snapshot(conn))
+}
+
+#[tauri::command]
+fn create_orchestration_draft(
+    app: AppHandle,
+    input: CreateOrchestrationDraftCommandInput,
+) -> Result<Value, String> {
+    with_app_database(&app, |conn| create_orchestration_draft_record(conn, input))
+}
+
+#[tauri::command]
+fn add_orchestration_draft_note(
+    app: AppHandle,
+    input: AddOrchestrationDraftNoteCommandInput,
+) -> Result<Value, String> {
+    with_app_database(&app, |conn| {
+        add_orchestration_draft_note_record(conn, input)
+    })
+}
+
+#[tauri::command]
+fn attach_orchestration_draft_files(
+    app: AppHandle,
+    input: AttachOrchestrationDraftFilesCommandInput,
+) -> Result<Value, String> {
+    with_app_database(&app, |conn| {
+        attach_orchestration_draft_files_record(conn, input)
+    })
+}
+
+#[tauri::command]
+fn request_orchestration_build_stage(
+    app: AppHandle,
+    input: RequestOrchestrationBuildStageCommandInput,
+) -> Result<Value, String> {
+    with_app_database(&app, |conn| {
+        request_orchestration_build_stage_record(conn, input)
+    })
+}
+
+#[tauri::command]
+fn start_orchestration_plan_builder_run(
+    app: AppHandle,
+    input: StartOrchestrationPlanBuilderRunCommandInput,
+) -> Result<Value, String> {
+    with_app_database(&app, |conn| {
+        start_orchestration_plan_builder_run_with_runner(conn, input, &SystemCodexCommandRunner)
+    })
+}
+
+#[tauri::command]
+fn start_orchestration(
+    app: AppHandle,
+    input: StartOrchestrationCommandInput,
+) -> Result<Value, String> {
+    with_app_database(&app, |conn| start_orchestration_record(conn, input))
+}
+
+#[tauri::command]
+fn load_orchestration(app: AppHandle, id: String) -> Result<Option<Value>, String> {
+    with_app_database(&app, |conn| load_orchestration_snapshot(conn, &id))
+}
+
+#[tauri::command]
+fn cancel_orchestration_draft(app: AppHandle, build_package_id: String) -> Result<Value, String> {
+    with_app_database(&app, |conn| {
+        cancel_orchestration_draft_record(conn, &build_package_id)
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -793,7 +1046,20 @@ pub fn run() {
             update_open_task,
             archive_open_task,
             load_task_run_detail,
-            start_codex_task_run
+            start_codex_task_run,
+            start_agent_session,
+            load_agent_session,
+            load_codex_runtime_info,
+            select_orchestration_directory,
+            load_orchestration_registry,
+            create_orchestration_draft,
+            add_orchestration_draft_note,
+            attach_orchestration_draft_files,
+            request_orchestration_build_stage,
+            start_orchestration_plan_builder_run,
+            start_orchestration,
+            load_orchestration,
+            cancel_orchestration_draft
         ])
         .run(tauri::generate_context!())
         .expect("error while running Codex Orchestrator");
@@ -1041,6 +1307,513 @@ fn start_codex_task_run_with_runners(
     }
 }
 
+fn start_agent_session_with_runner(
+    input: StartAgentSessionCommandInput,
+    runner: &impl CodexCommandRunner,
+) -> Result<StartAgentSessionCommandResult, String> {
+    validate_start_agent_session_input(&input)?;
+
+    let session_id = input
+        .session_id
+        .clone()
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let started_at = now_iso();
+    let command_input = CodexCommandRunInput {
+        command: "codex".to_string(),
+        args: build_agent_session_args(&input),
+        cwd: input.cwd.clone(),
+        env: input.env.clone(),
+    };
+    let command = command_input.command.clone();
+    let args = command_input.args.clone();
+
+    match runner.run(command_input) {
+        Ok(process_result) => {
+            let exit_code = process_result.exit_code;
+            let signal = process_result.signal.clone();
+            let failed = exit_code != Some(0) || signal.is_some();
+            let error = if failed {
+                Some(format!(
+                    "Codex session failed {}",
+                    process_failure_reason(exit_code, signal.as_deref())
+                ))
+            } else {
+                None
+            };
+
+            Ok(StartAgentSessionCommandResult {
+                session_id,
+                status: if failed { "failed" } else { "completed" }.to_string(),
+                command,
+                args,
+                stdout: process_result.stdout,
+                stderr: process_result.stderr,
+                output_was_streamed: false,
+                started_at,
+                completed_at: now_iso(),
+                exit_code,
+                signal,
+                error,
+            })
+        }
+        Err(error) => Ok(StartAgentSessionCommandResult {
+            session_id,
+            status: "failed".to_string(),
+            command,
+            args,
+            stdout: String::new(),
+            stderr: String::new(),
+            output_was_streamed: false,
+            started_at,
+            completed_at: now_iso(),
+            exit_code: None,
+            signal: None,
+            error: Some(error),
+        }),
+    }
+}
+
+fn start_agent_session_streaming(
+    app: &AppHandle,
+    input: StartAgentSessionCommandInput,
+) -> Result<StartAgentSessionStartedCommandResult, String> {
+    validate_start_agent_session_input(&input)?;
+
+    let session_id = input
+        .session_id
+        .clone()
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let stream_id = input
+        .stream_id
+        .clone()
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let started_at = now_iso();
+    let command_name = "codex".to_string();
+    let args = build_agent_session_args(&input);
+    let app = app.clone();
+    let background_input = input.clone();
+    let background_session_id = session_id.clone();
+    let background_stream_id = stream_id.clone();
+    let background_started_at = started_at.clone();
+    let background_command_name = command_name.clone();
+    let background_args = args.clone();
+
+    thread::spawn(move || {
+        let mut result = run_agent_session_process(
+            &app,
+            background_input,
+            background_session_id.clone(),
+            background_stream_id.clone(),
+            background_started_at,
+            background_command_name,
+            background_args,
+        );
+
+        if let Err(error) = with_app_database(&app, |conn| {
+            persist_agent_session_run(conn, &background_session_id, &background_stream_id, &result)
+        }) {
+            result.status = "failed".to_string();
+            result.error = Some(error);
+        }
+
+        let _ = app.emit(
+            "agent-session-cli-completed",
+            AgentSessionCliCompletedEvent {
+                stream_id: background_stream_id,
+                result,
+            },
+        );
+    });
+
+    Ok(StartAgentSessionStartedCommandResult {
+        session_id,
+        stream_id,
+        status: "running".to_string(),
+        command: command_name,
+        args,
+        started_at,
+    })
+}
+
+fn run_agent_session_process(
+    app: &AppHandle,
+    input: StartAgentSessionCommandInput,
+    session_id: String,
+    stream_id: String,
+    started_at: String,
+    command_name: String,
+    args: Vec<String>,
+) -> StartAgentSessionCommandResult {
+    let mut command = Command::new(&command_name);
+    command
+        .args(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    if let Some(cwd) = &input.cwd {
+        command.current_dir(cwd);
+    }
+
+    if let Some(env) = &input.env {
+        for (key, value) in env {
+            match value {
+                Some(value) => {
+                    command.env(key, value);
+                }
+                None => {
+                    command.env_remove(key);
+                }
+            }
+        }
+    }
+
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            return failed_agent_session_result(
+                session_id,
+                command_name,
+                args,
+                started_at,
+                format!("Unable to launch Codex: {error}"),
+            );
+        }
+    };
+    let stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            return failed_agent_session_result(
+                session_id,
+                command_name,
+                args,
+                started_at,
+                "Unable to capture Codex stdout.".to_string(),
+            );
+        }
+    };
+    let stderr = match child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            return failed_agent_session_result(
+                session_id,
+                command_name,
+                args,
+                started_at,
+                "Unable to capture Codex stderr.".to_string(),
+            );
+        }
+    };
+    let stdout_accumulator = Arc::new(Mutex::new(String::new()));
+    let stderr_accumulator = Arc::new(Mutex::new(String::new()));
+    let stdout_handle = spawn_agent_session_stream_reader(
+        app.clone(),
+        stream_id.clone(),
+        "stdout",
+        stdout,
+        stdout_accumulator.clone(),
+    );
+    let stderr_handle = spawn_agent_session_stream_reader(
+        app.clone(),
+        stream_id.clone(),
+        "stderr",
+        stderr,
+        stderr_accumulator.clone(),
+    );
+    let status = match child.wait() {
+        Ok(status) => status,
+        Err(error) => {
+            return failed_agent_session_result(
+                session_id,
+                command_name,
+                args,
+                started_at,
+                format!("Unable to wait for Codex: {error}"),
+            );
+        }
+    };
+
+    if stdout_handle.join().is_err() {
+        return failed_agent_session_result(
+            session_id,
+            command_name,
+            args,
+            started_at,
+            "Codex stdout reader panicked.".to_string(),
+        );
+    }
+
+    if stderr_handle.join().is_err() {
+        return failed_agent_session_result(
+            session_id,
+            command_name,
+            args,
+            started_at,
+            "Codex stderr reader panicked.".to_string(),
+        );
+    }
+
+    let completed_at = now_iso();
+    let stdout = match take_accumulated_output(&stdout_accumulator) {
+        Ok(stdout) => stdout,
+        Err(error) => {
+            return failed_agent_session_result(session_id, command_name, args, started_at, error);
+        }
+    };
+    let stderr = match take_accumulated_output(&stderr_accumulator) {
+        Ok(stderr) => stderr,
+        Err(error) => {
+            return failed_agent_session_result(session_id, command_name, args, started_at, error);
+        }
+    };
+    let exit_code = status.code().map(i64::from);
+    let signal = process_exit_signal(&status);
+    let failed = exit_code != Some(0) || signal.is_some();
+    let error = if failed {
+        Some(format!(
+            "Codex session failed {}",
+            process_failure_reason(exit_code, signal.as_deref())
+        ))
+    } else {
+        None
+    };
+
+    StartAgentSessionCommandResult {
+        session_id,
+        status: if failed { "failed" } else { "completed" }.to_string(),
+        command: command_name,
+        args,
+        stdout,
+        stderr,
+        output_was_streamed: true,
+        started_at,
+        completed_at,
+        exit_code,
+        signal,
+        error,
+    }
+}
+
+fn failed_agent_session_result(
+    session_id: String,
+    command: String,
+    args: Vec<String>,
+    started_at: String,
+    error: String,
+) -> StartAgentSessionCommandResult {
+    StartAgentSessionCommandResult {
+        session_id,
+        status: "failed".to_string(),
+        command,
+        args,
+        stdout: String::new(),
+        stderr: String::new(),
+        output_was_streamed: true,
+        started_at,
+        completed_at: now_iso(),
+        exit_code: None,
+        signal: None,
+        error: Some(error),
+    }
+}
+
+fn run_codex_runtime_info_command(args: &[&str]) -> Result<String, String> {
+    let output = Command::new("codex")
+        .args(args)
+        .output()
+        .map_err(|error| format!("Unable to launch codex {}: {error}", args.join(" ")))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "codex {} failed {}: {}",
+            args.join(" "),
+            process_failure_reason(
+                output.status.code().map(i64::from),
+                process_exit_signal(&output.status).as_deref()
+            ),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn spawn_agent_session_stream_reader<R>(
+    app: AppHandle,
+    stream_id: String,
+    stream: &'static str,
+    reader: R,
+    accumulator: Arc<Mutex<String>>,
+) -> thread::JoinHandle<()>
+where
+    R: std::io::Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let reader = BufReader::new(reader);
+
+        for line in reader.lines().map_while(Result::ok) {
+            if let Ok(mut output) = accumulator.lock() {
+                output.push_str(&line);
+                output.push('\n');
+            }
+
+            let _ = app.emit(
+                "agent-session-cli-output",
+                AgentSessionCliOutputEvent {
+                    stream_id: stream_id.clone(),
+                    stream: stream.to_string(),
+                    content: line,
+                },
+            );
+        }
+    })
+}
+
+fn take_accumulated_output(output: &Arc<Mutex<String>>) -> Result<String, String> {
+    output
+        .lock()
+        .map(|output| output.clone())
+        .map_err(|_| "Unable to read captured Codex output.".to_string())
+}
+
+fn persist_agent_session_run(
+    conn: &Connection,
+    session_id: &str,
+    stream_id: &str,
+    result: &StartAgentSessionCommandResult,
+) -> Result<(), String> {
+    let timestamp = now_iso();
+    let args_json = serde_json::to_string(&result.args)
+        .map_err(|error| format!("Unable to serialize agent session args: {error}"))?;
+    let codex_session_id = extract_codex_thread_id(&result.stdout);
+
+    conn.execute(
+        "
+INSERT INTO agent_sessions (
+  id, codex_session_id, status, command, args_json, cwd, started_at, completed_at, exit_code,
+  error, created_at, updated_at
+) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, ?9, ?10, ?10)
+ON CONFLICT(id) DO UPDATE SET
+  codex_session_id = excluded.codex_session_id,
+  status = excluded.status,
+  command = excluded.command,
+  args_json = excluded.args_json,
+  started_at = excluded.started_at,
+  completed_at = excluded.completed_at,
+  exit_code = excluded.exit_code,
+  error = excluded.error,
+  updated_at = excluded.updated_at
+",
+        params![
+            session_id,
+            codex_session_id,
+            result.status,
+            result.command,
+            args_json,
+            result.started_at,
+            result.completed_at,
+            result.exit_code,
+            result.error,
+            timestamp
+        ],
+    )
+    .map_err(sql_error("persist agent session"))?;
+
+    conn.execute(
+        "
+INSERT INTO agent_session_cli_logs (
+  id, agent_session_id, stream_id, stdout, stderr, created_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+",
+        params![
+            Uuid::new_v4().to_string(),
+            session_id,
+            stream_id,
+            result.stdout,
+            result.stderr,
+            timestamp
+        ],
+    )
+    .map_err(sql_error("persist agent session CLI log"))?;
+
+    Ok(())
+}
+
+fn load_agent_session_record(
+    conn: &Connection,
+    session_id: &str,
+) -> Result<Option<StartAgentSessionCommandResult>, String> {
+    conn.query_row(
+        "
+SELECT
+  s.id,
+  s.status,
+  s.command,
+  s.args_json,
+  s.started_at,
+  s.completed_at,
+  s.exit_code,
+  s.error,
+  COALESCE(l.stdout, ''),
+  COALESCE(l.stderr, '')
+FROM agent_sessions s
+LEFT JOIN agent_session_cli_logs l
+  ON l.id = (
+    SELECT id
+    FROM agent_session_cli_logs
+    WHERE agent_session_id = s.id
+    ORDER BY created_at DESC
+    LIMIT 1
+  )
+WHERE s.id = ?1
+",
+        params![session_id],
+        |row| {
+            let args_json: String = row.get(3)?;
+            let args = serde_json::from_str::<Vec<String>>(&args_json).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    3,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+            let completed_at = row
+                .get::<_, Option<String>>(5)?
+                .unwrap_or_else(|| row.get::<_, String>(4).unwrap_or_else(|_| now_iso()));
+
+            Ok(StartAgentSessionCommandResult {
+                session_id: row.get(0)?,
+                status: row.get(1)?,
+                command: row.get(2)?,
+                args,
+                stdout: row.get(8)?,
+                stderr: row.get(9)?,
+                output_was_streamed: false,
+                started_at: row.get(4)?,
+                completed_at,
+                exit_code: row.get(6)?,
+                signal: None,
+                error: row.get(7)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(sql_error("load agent session"))
+}
+
+fn extract_codex_thread_id(stdout: &str) -> Option<String> {
+    stdout.lines().find_map(|line| {
+        let value = serde_json::from_str::<Value>(line).ok()?;
+        if value.get("type")?.as_str()? == "thread.started" {
+            value
+                .get("thread_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        } else {
+            None
+        }
+    })
+}
+
 fn validate_start_codex_task_run_input(
     input: &StartCodexTaskRunCommandInput,
 ) -> Result<(), String> {
@@ -1098,11 +1871,53 @@ fn validate_start_codex_task_run_input(
     Ok(())
 }
 
+fn validate_start_agent_session_input(input: &StartAgentSessionCommandInput) -> Result<(), String> {
+    validate_non_empty("prompt", &input.prompt)?;
+
+    if let Some(session_id) = &input.session_id {
+        validate_non_empty("sessionId", session_id)?;
+    }
+
+    if let Some(cwd) = &input.cwd {
+        validate_non_empty("cwd", cwd)?;
+    }
+
+    if let Some(additional_args) = &input.additional_args {
+        for (index, arg) in additional_args.iter().enumerate() {
+            validate_non_empty(&format!("additionalArgs[{index}]"), arg)?;
+        }
+    }
+
+    if let Some(env) = &input.env {
+        for key in env.keys() {
+            validate_non_empty("env key", key)?;
+        }
+    }
+
+    Ok(())
+}
+
 fn build_codex_exec_args(input: &StartCodexTaskRunCommandInput) -> Vec<String> {
     let mut args = vec!["exec".to_string(), "--json".to_string()];
 
     if let Some(additional_args) = &input.additional_args {
         args.extend(additional_args.iter().cloned());
+    }
+
+    args.push(input.prompt.clone());
+    args
+}
+
+fn build_agent_session_args(input: &StartAgentSessionCommandInput) -> Vec<String> {
+    let mut args = vec!["exec".to_string(), "--json".to_string()];
+
+    if let Some(additional_args) = &input.additional_args {
+        args.extend(additional_args.iter().cloned());
+    }
+
+    if let Some(session_id) = &input.session_id {
+        args.push("resume".to_string());
+        args.push(session_id.clone());
     }
 
     args.push(input.prompt.clone());
@@ -3194,6 +4009,29 @@ fn load_dashboard_snapshot(conn: &Connection) -> Result<TaskDashboardSnapshot, S
             .sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
     }
 
+    let mut dashboard_repos = repos
+        .iter()
+        .filter_map(|repo| {
+            let project = projects
+                .iter()
+                .find(|project| project.id == repo.project_id)?;
+
+            Some(TaskDashboardRepo {
+                id: repo.id.clone(),
+                project_id: project.id.clone(),
+                project: project.name.clone(),
+                name: repo.name.clone(),
+                root_path: repo.root_path.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    dashboard_repos.sort_by(|left, right| {
+        format!("{}\0{}\0{}", left.project, left.name, left.root_path).cmp(&format!(
+            "{}\0{}\0{}",
+            right.project, right.name, right.root_path
+        ))
+    });
+
     let mut dashboard_projects = projects
         .into_iter()
         .map(|project| TaskDashboardProject {
@@ -3207,9 +4045,735 @@ fn load_dashboard_snapshot(conn: &Connection) -> Result<TaskDashboardSnapshot, S
     Ok(TaskDashboardSnapshot {
         groups,
         projects: dashboard_projects,
+        repos: dashboard_repos,
         worktree_anchors,
         total_open_tasks,
     })
+}
+
+fn load_orchestration_registry_snapshot(conn: &Connection) -> Result<Value, String> {
+    let build_packages = select_active_orchestration_draft_snapshots(conn)?;
+
+    Ok(json!({
+        "orchestrations": [],
+        "buildPackages": build_packages,
+        "clientState": orchestration_registry_client_state(),
+    }))
+}
+
+fn load_orchestration_snapshot(
+    _conn: &Connection,
+    orchestration_id: &str,
+) -> Result<Option<Value>, String> {
+    validate_non_empty("orchestrationId", orchestration_id)?;
+
+    Err(
+        "Live orchestration snapshot loading is integration-pending: persisted drafts are available through load_orchestration_registry, but this backend does not persist or fabricate live orchestration snapshots yet."
+            .to_string(),
+    )
+}
+
+fn create_orchestration_draft_record(
+    conn: &Connection,
+    input: CreateOrchestrationDraftCommandInput,
+) -> Result<Value, String> {
+    validate_non_empty("title", &input.title)?;
+    validate_non_empty("folderPath", &input.folder_path)?;
+    validate_non_empty("prompt", &input.prompt)?;
+
+    for file in &input.files {
+        validate_non_empty("file.id", &file.id)?;
+        validate_non_empty("file.name", &file.name)?;
+
+        if file.size < 0 {
+            return Err(format!(
+                "Invalid file size for {}: {}",
+                file.name, file.size
+            ));
+        }
+    }
+
+    let build_package_id = Uuid::new_v4().to_string();
+    let created_at = now_iso();
+    let snapshot = build_persisted_orchestration_draft_snapshot(
+        &build_package_id,
+        &created_at,
+        &input.title,
+        &input.folder_path,
+        &input.prompt,
+        &input.files,
+    );
+
+    insert_orchestration_draft_snapshot(
+        conn,
+        &build_package_id,
+        &input.title,
+        &input.folder_path,
+        &input.prompt,
+        &snapshot,
+        &created_at,
+    )?;
+
+    Ok(snapshot)
+}
+
+fn add_orchestration_draft_note_record(
+    conn: &Connection,
+    input: AddOrchestrationDraftNoteCommandInput,
+) -> Result<Value, String> {
+    validate_non_empty("buildPackageId", &input.build_package_id)?;
+    validate_non_empty("body", &input.body)?;
+
+    let mut snapshot = select_orchestration_draft_snapshot(conn, &input.build_package_id)?;
+    let updated_at = now_iso();
+    let continuation_notice = unsupported_orchestration_continuation_notice();
+    let messages = snapshot_array_mut(&mut snapshot, "messages")?;
+    messages.push(json!({
+        "id": format!("message-{}", Uuid::new_v4()),
+        "role": "user",
+        "body": input.body,
+        "createdAt": updated_at,
+        "state": "completed",
+        "truth": persisted_draft_truth_state(),
+    }));
+    messages.push(json!({
+        "id": format!("message-{}", Uuid::new_v4()),
+        "role": "system",
+        "body": continuation_notice["message"].as_str().unwrap_or("Runtime continuation is unsupported."),
+        "createdAt": updated_at,
+        "state": "completed",
+        "truth": unsupported_pending_truth_state(),
+    }));
+    set_orchestration_snapshot_updated_state(
+        &mut snapshot,
+        &input.build_package_id,
+        &updated_at,
+        vec![continuation_notice],
+    )?;
+    update_orchestration_draft_snapshot(conn, &input.build_package_id, &snapshot, &updated_at)?;
+
+    Ok(snapshot)
+}
+
+fn attach_orchestration_draft_files_record(
+    conn: &Connection,
+    input: AttachOrchestrationDraftFilesCommandInput,
+) -> Result<Value, String> {
+    validate_non_empty("buildPackageId", &input.build_package_id)?;
+
+    for file in &input.files {
+        validate_non_empty("file.id", &file.id)?;
+        validate_non_empty("file.name", &file.name)?;
+
+        if file.size < 0 {
+            return Err(format!(
+                "Invalid file size for {}: {}",
+                file.name, file.size
+            ));
+        }
+    }
+
+    let mut snapshot = select_orchestration_draft_snapshot(conn, &input.build_package_id)?;
+    let updated_at = now_iso();
+    let files = snapshot_array_mut(&mut snapshot, "files")?;
+    let mut existing_keys = files
+        .iter()
+        .filter_map(uploaded_orchestration_file_key)
+        .collect::<HashSet<_>>();
+
+    for file in input.files {
+        let key = uploaded_orchestration_file_input_key(&file);
+
+        if existing_keys.insert(key) {
+            files.push(uploaded_orchestration_file_value(&file));
+        }
+    }
+
+    set_orchestration_snapshot_updated_state(
+        &mut snapshot,
+        &input.build_package_id,
+        &updated_at,
+        vec![orchestration_registry_notice()],
+    )?;
+    update_orchestration_draft_snapshot(conn, &input.build_package_id, &snapshot, &updated_at)?;
+
+    Ok(snapshot)
+}
+
+fn request_orchestration_build_stage_record(
+    conn: &Connection,
+    input: RequestOrchestrationBuildStageCommandInput,
+) -> Result<Value, String> {
+    validate_non_empty("buildPackageId", &input.build_package_id)?;
+    let stage_title = orchestration_stage_title(&input.stage_id)?;
+    let mut snapshot = select_orchestration_draft_snapshot(conn, &input.build_package_id)?;
+    let updated_at = now_iso();
+    let notice = missing_orchestration_runtime_notice(&input.stage_id, stage_title);
+
+    if let Some(stages) = snapshot.get_mut("stages").and_then(Value::as_array_mut) {
+        for stage in stages {
+            let Some(stage_object) = stage.as_object_mut() else {
+                continue;
+            };
+            let is_target = stage_object
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| id == input.stage_id);
+
+            if is_target {
+                let current_detail = stage_object
+                    .get("detail")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                stage_object.insert(
+                    "state".to_string(),
+                    notice
+                        .get("truth")
+                        .cloned()
+                        .unwrap_or_else(unsupported_pending_truth_state),
+                );
+                stage_object.insert(
+                    "detail".to_string(),
+                    Value::String(format!(
+                        "{current_detail} {}",
+                        notice["message"].as_str().unwrap()
+                    )),
+                );
+                if input.stage_id == "instantiator" {
+                    stage_object.insert(
+                        "summary".to_string(),
+                        Value::String(
+                            "Build plan approval was accepted; instantiator runtime is unsupported."
+                                .to_string(),
+                        ),
+                    );
+                }
+            } else if input.stage_id == "instantiator"
+                && stage_object
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| id == "plan-review")
+            {
+                stage_object.insert(
+                    "state".to_string(),
+                    json!({ "status": "completed", "provenance": "backend_response" }),
+                );
+                stage_object.insert(
+                    "summary".to_string(),
+                    Value::String("The user confirmed the Plan Builder proposal.".to_string()),
+                );
+                stage_object.insert(
+                    "detail".to_string(),
+                    Value::String(
+                        "Approval was accepted before attempting instantiation. No instantiator runtime route has started."
+                            .to_string(),
+                    ),
+                );
+            }
+        }
+    }
+
+    snapshot_array_mut(&mut snapshot, "messages")?.push(json!({
+        "id": format!("message-{}", Uuid::new_v4()),
+        "role": "system",
+        "body": notice["message"].as_str().unwrap_or("Runtime integration is pending."),
+        "createdAt": updated_at,
+        "state": "completed",
+        "truth": unsupported_pending_truth_state(),
+    }));
+    set_orchestration_snapshot_updated_state(
+        &mut snapshot,
+        &input.build_package_id,
+        &updated_at,
+        vec![notice],
+    )?;
+    update_orchestration_draft_snapshot(conn, &input.build_package_id, &snapshot, &updated_at)?;
+
+    Ok(snapshot)
+}
+
+fn start_orchestration_plan_builder_run_with_runner(
+    conn: &Connection,
+    input: StartOrchestrationPlanBuilderRunCommandInput,
+    codex_runner: &impl CodexCommandRunner,
+) -> Result<Value, String> {
+    validate_non_empty("buildPackageId", &input.build_package_id)?;
+
+    let snapshot = select_orchestration_draft_snapshot(conn, &input.build_package_id)?;
+    let started_at = now_iso();
+    let stage_run_id = Uuid::new_v4().to_string();
+    let conversation_id =
+        create_orchestration_plan_builder_conversation(conn, &snapshot, &started_at)?;
+    let prompt = build_orchestration_plan_builder_prompt(&snapshot)?;
+    let prompt_artifact_id = create_artifact(
+        conn,
+        None,
+        None,
+        Some(&conversation_id),
+        "handoff",
+        "Submitted Plan Builder prompt",
+        Some(&prompt),
+    )?;
+    let run_started_event_id = append_orchestration_plan_builder_started_event(
+        conn,
+        &input.build_package_id,
+        &stage_run_id,
+        &conversation_id,
+        &started_at,
+    )?;
+    let prompt_event_id = append_orchestration_artifact_created_event(
+        conn,
+        &input.build_package_id,
+        &stage_run_id,
+        &conversation_id,
+        &prompt_artifact_id,
+        "handoff",
+        "submitted_prompt",
+        None,
+    )?;
+    let mut event_ids = vec![run_started_event_id, prompt_event_id];
+
+    insert_orchestration_stage_run_evidence_record(
+        conn,
+        &OrchestrationStageRunEvidenceRecord {
+            id: stage_run_id.clone(),
+            build_package_id: input.build_package_id.clone(),
+            stage_id: "plan-builder".to_string(),
+            status: "waiting_for_event".to_string(),
+            provenance: "backend_response".to_string(),
+            status_reason: Some(
+                "Backend accepted the Plan Builder run request; waiting for final Codex output."
+                    .to_string(),
+            ),
+            prompt_artifact_id: Some(prompt_artifact_id.clone()),
+            output_artifact_id: None,
+            raw_event_artifact_id: None,
+            task_id: None,
+            task_run_id: None,
+            conversation_id: Some(conversation_id.clone()),
+            event_ids: event_ids.clone(),
+            evidence: orchestration_plan_builder_evidence_payload(
+                &snapshot,
+                None,
+                None,
+                "codex exec --json",
+            )?,
+            started_at: Some(started_at.clone()),
+            completed_at: None,
+            created_at: started_at.clone(),
+            updated_at: started_at.clone(),
+        },
+    )?;
+    let mut ack_snapshot = select_orchestration_draft_snapshot(conn, &input.build_package_id)?;
+    apply_orchestration_plan_builder_runtime_state(
+        &mut ack_snapshot,
+        &input.build_package_id,
+        "waiting_for_event",
+        "backend_response",
+        "Backend accepted the Plan Builder runtime request; waiting for the final response.",
+        "Backend accepted the Plan Builder request.",
+        "The prompt was submitted through the orchestration Plan Builder runtime route. Live streaming is not available in this increment.",
+        vec![orchestration_plan_builder_waiting_notice()],
+    )?;
+    update_orchestration_draft_snapshot(conn, &input.build_package_id, &ack_snapshot, &started_at)?;
+
+    let process_result = match codex_runner.run(CodexCommandRunInput {
+        command: "codex".to_string(),
+        args: vec!["exec".to_string(), "--json".to_string(), prompt],
+        cwd: None,
+        env: None,
+    }) {
+        Ok(process_result) => process_result,
+        Err(error) => {
+            let completed_at = now_iso();
+            let completed_event_id = append_orchestration_plan_builder_completed_event(
+                conn,
+                &input.build_package_id,
+                &stage_run_id,
+                &conversation_id,
+                "failed",
+                Some(&error),
+                None,
+            )?;
+            event_ids.push(completed_event_id);
+            update_orchestration_stage_run_evidence_record(
+                conn,
+                &OrchestrationStageRunEvidenceRecord {
+                    id: stage_run_id,
+                    build_package_id: input.build_package_id.clone(),
+                    stage_id: "plan-builder".to_string(),
+                    status: "failed".to_string(),
+                    provenance: "backend_response".to_string(),
+                    status_reason: Some(error.clone()),
+                    prompt_artifact_id: Some(prompt_artifact_id),
+                    output_artifact_id: None,
+                    raw_event_artifact_id: None,
+                    task_id: None,
+                    task_run_id: None,
+                    conversation_id: Some(conversation_id),
+                    event_ids,
+                    evidence: orchestration_plan_builder_evidence_payload(
+                        &snapshot,
+                        None,
+                        Some(&error),
+                        "codex exec --json",
+                    )?,
+                    started_at: Some(started_at),
+                    completed_at: Some(completed_at.clone()),
+                    created_at: completed_at.clone(),
+                    updated_at: completed_at.clone(),
+                },
+            )?;
+            let mut failed_snapshot =
+                select_orchestration_draft_snapshot(conn, &input.build_package_id)?;
+            apply_orchestration_plan_builder_terminal_message(
+                &mut failed_snapshot,
+                &completed_at,
+                "system",
+                &format!("Plan Builder runtime failed to launch. {error}"),
+                "failed",
+                "backend_response",
+            )?;
+            apply_orchestration_plan_builder_runtime_state(
+                &mut failed_snapshot,
+                &input.build_package_id,
+                "failed",
+                "backend_response",
+                &format!("Plan Builder runtime failed to launch. {error}"),
+                "Plan-builder runtime start failed.",
+                "The draft is preserved. The backend route was called, but Codex did not launch successfully.",
+                vec![orchestration_plan_builder_failed_notice(&error)],
+            )?;
+            update_orchestration_draft_snapshot(
+                conn,
+                &input.build_package_id,
+                &failed_snapshot,
+                &completed_at,
+            )?;
+            return Ok(failed_snapshot);
+        }
+    };
+
+    finish_orchestration_plan_builder_run_from_process_result(
+        conn,
+        &input.build_package_id,
+        &stage_run_id,
+        &conversation_id,
+        &prompt_artifact_id,
+        &started_at,
+        event_ids,
+        snapshot,
+        process_result,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_orchestration_plan_builder_run_from_process_result(
+    conn: &Connection,
+    build_package_id: &str,
+    stage_run_id: &str,
+    conversation_id: &str,
+    prompt_artifact_id: &str,
+    started_at: &str,
+    mut event_ids: Vec<String>,
+    original_snapshot: Value,
+    process_result: CodexCommandRunResult,
+) -> Result<Value, String> {
+    let raw_event_artifact_id = create_artifact(
+        conn,
+        None,
+        None,
+        Some(conversation_id),
+        "raw_event_stream",
+        "Raw Codex JSONL",
+        Some(&process_result.stdout),
+    )?;
+    let raw_event_id = append_orchestration_artifact_created_event(
+        conn,
+        build_package_id,
+        stage_run_id,
+        conversation_id,
+        &raw_event_artifact_id,
+        "raw_event_stream",
+        "raw_event_stream",
+        Some(process_result.stdout.len() as i64),
+    )?;
+    event_ids.push(raw_event_id);
+
+    let runtime_result = match codex_runtime_result_from_process_result(process_result) {
+        Ok(runtime_result) => runtime_result,
+        Err(error) => {
+            return finish_failed_orchestration_plan_builder_run(
+                conn,
+                build_package_id,
+                stage_run_id,
+                conversation_id,
+                prompt_artifact_id,
+                Some(&raw_event_artifact_id),
+                started_at,
+                event_ids,
+                original_snapshot,
+                "Codex JSONL parse failed",
+                &error,
+            );
+        }
+    };
+
+    update_orchestration_conversation_from_runtime_result(conn, conversation_id, &runtime_result)?;
+
+    if runtime_result.status == CodexRuntimeStatus::Completed {
+        let completed_at = now_iso();
+        let output_artifact_id = match &runtime_result.summary.final_agent_message_text {
+            Some(final_response) => Some(create_artifact(
+                conn,
+                None,
+                None,
+                Some(conversation_id),
+                "final_response",
+                "Final Plan Builder response",
+                Some(final_response),
+            )?),
+            None => None,
+        };
+
+        if let Some(output_artifact_id) = &output_artifact_id {
+            event_ids.push(append_orchestration_artifact_created_event(
+                conn,
+                build_package_id,
+                stage_run_id,
+                conversation_id,
+                output_artifact_id,
+                "final_response",
+                "final_response",
+                runtime_result
+                    .summary
+                    .final_agent_message_text
+                    .as_ref()
+                    .map(|value| value.len() as i64),
+            )?);
+        }
+
+        event_ids.push(append_orchestration_plan_builder_completed_event(
+            conn,
+            build_package_id,
+            stage_run_id,
+            conversation_id,
+            "completed",
+            None,
+            runtime_result.exit_code,
+        )?);
+        update_orchestration_stage_run_evidence_record(
+            conn,
+            &OrchestrationStageRunEvidenceRecord {
+                id: stage_run_id.to_string(),
+                build_package_id: build_package_id.to_string(),
+                stage_id: "plan-builder".to_string(),
+                status: "completed".to_string(),
+                provenance: "backend_response".to_string(),
+                status_reason: Some(runtime_result.status_reason.clone()),
+                prompt_artifact_id: Some(prompt_artifact_id.to_string()),
+                output_artifact_id: output_artifact_id.clone(),
+                raw_event_artifact_id: Some(raw_event_artifact_id),
+                task_id: None,
+                task_run_id: None,
+                conversation_id: Some(conversation_id.to_string()),
+                event_ids,
+                evidence: orchestration_plan_builder_evidence_payload(
+                    &original_snapshot,
+                    runtime_result.summary.thread_id.as_deref(),
+                    None,
+                    "codex exec --json",
+                )?,
+                started_at: Some(started_at.to_string()),
+                completed_at: Some(completed_at.clone()),
+                created_at: started_at.to_string(),
+                updated_at: completed_at.clone(),
+            },
+        )?;
+        let mut completed_snapshot = select_orchestration_draft_snapshot(conn, build_package_id)?;
+        if let Some(final_response) = runtime_result.summary.final_agent_message_text {
+            apply_orchestration_plan_builder_terminal_message(
+                &mut completed_snapshot,
+                &completed_at,
+                "assistant",
+                &final_response,
+                "completed",
+                "backend_response",
+            )?;
+        } else {
+            apply_orchestration_plan_builder_terminal_message(
+                &mut completed_snapshot,
+                &completed_at,
+                "system",
+                "Plan Builder completed, but Codex did not emit a final agent message.",
+                "completed",
+                "backend_response",
+            )?;
+        }
+        apply_orchestration_plan_builder_runtime_state(
+            &mut completed_snapshot,
+            build_package_id,
+            "completed",
+            "backend_response",
+            "Plan Builder output is ready for review. Confirm the build plan to request instantiation, or preserve feedback locally; runtime continuation is unsupported.",
+            "Plan-builder output is available.",
+            "The backend persisted the submitted prompt, raw Codex JSONL, final response artifact, and stage-run evidence. This is a proposal awaiting explicit user approval.",
+            vec![orchestration_plan_builder_completed_notice()],
+        )?;
+        update_orchestration_draft_snapshot(
+            conn,
+            build_package_id,
+            &completed_snapshot,
+            &completed_at,
+        )?;
+
+        return Ok(completed_snapshot);
+    }
+
+    let error = codex_failure_reason(&runtime_result);
+    finish_failed_orchestration_plan_builder_run(
+        conn,
+        build_package_id,
+        stage_run_id,
+        conversation_id,
+        prompt_artifact_id,
+        Some(&raw_event_artifact_id),
+        started_at,
+        event_ids,
+        original_snapshot,
+        &runtime_result.status_reason,
+        &error,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_failed_orchestration_plan_builder_run(
+    conn: &Connection,
+    build_package_id: &str,
+    stage_run_id: &str,
+    conversation_id: &str,
+    prompt_artifact_id: &str,
+    raw_event_artifact_id: Option<&str>,
+    started_at: &str,
+    mut event_ids: Vec<String>,
+    original_snapshot: Value,
+    status_reason: &str,
+    error: &str,
+) -> Result<Value, String> {
+    let completed_at = now_iso();
+    event_ids.push(append_orchestration_plan_builder_completed_event(
+        conn,
+        build_package_id,
+        stage_run_id,
+        conversation_id,
+        "failed",
+        Some(error),
+        None,
+    )?);
+    update_orchestration_stage_run_evidence_record(
+        conn,
+        &OrchestrationStageRunEvidenceRecord {
+            id: stage_run_id.to_string(),
+            build_package_id: build_package_id.to_string(),
+            stage_id: "plan-builder".to_string(),
+            status: "failed".to_string(),
+            provenance: "backend_response".to_string(),
+            status_reason: Some(status_reason.to_string()),
+            prompt_artifact_id: Some(prompt_artifact_id.to_string()),
+            output_artifact_id: None,
+            raw_event_artifact_id: raw_event_artifact_id.map(str::to_string),
+            task_id: None,
+            task_run_id: None,
+            conversation_id: Some(conversation_id.to_string()),
+            event_ids,
+            evidence: orchestration_plan_builder_evidence_payload(
+                &original_snapshot,
+                None,
+                Some(error),
+                "codex exec --json",
+            )?,
+            started_at: Some(started_at.to_string()),
+            completed_at: Some(completed_at.clone()),
+            created_at: started_at.to_string(),
+            updated_at: completed_at.clone(),
+        },
+    )?;
+    let mut failed_snapshot = select_orchestration_draft_snapshot(conn, build_package_id)?;
+    apply_orchestration_plan_builder_terminal_message(
+        &mut failed_snapshot,
+        &completed_at,
+        "system",
+        &format!("Plan Builder runtime failed. {error}"),
+        "failed",
+        "backend_response",
+    )?;
+    apply_orchestration_plan_builder_runtime_state(
+        &mut failed_snapshot,
+        build_package_id,
+        "failed",
+        "backend_response",
+        &format!("Plan Builder runtime failed. {error}"),
+        "Plan-builder runtime failed.",
+        "The draft is preserved. Raw Codex JSONL is linked when the process produced output.",
+        vec![orchestration_plan_builder_failed_notice(error)],
+    )?;
+    update_orchestration_draft_snapshot(conn, build_package_id, &failed_snapshot, &completed_at)?;
+
+    Ok(failed_snapshot)
+}
+
+fn start_orchestration_record(
+    conn: &Connection,
+    input: StartOrchestrationCommandInput,
+) -> Result<Value, String> {
+    validate_non_empty("buildPackageId", &input.build_package_id)?;
+
+    let mut snapshot = select_orchestration_draft_snapshot(conn, &input.build_package_id)?;
+    let updated_at = now_iso();
+    let notice = live_orchestration_runtime_notice();
+    snapshot_array_mut(&mut snapshot, "messages")?.push(json!({
+        "id": format!("message-{}", Uuid::new_v4()),
+        "role": "system",
+        "body": notice["message"].as_str().unwrap_or("Live orchestration runtime is unavailable."),
+        "createdAt": updated_at,
+        "state": "completed",
+        "truth": unsupported_pending_truth_state(),
+    }));
+    set_orchestration_snapshot_updated_state(
+        &mut snapshot,
+        &input.build_package_id,
+        &updated_at,
+        vec![notice],
+    )?;
+    update_orchestration_draft_snapshot(conn, &input.build_package_id, &snapshot, &updated_at)?;
+    let client_state = snapshot.get("clientState").cloned().ok_or_else(|| {
+        "Persisted orchestration draft snapshot is missing clientState.".to_string()
+    })?;
+
+    Ok(json!({
+        "buildPackage": snapshot,
+        "clientState": client_state,
+    }))
+}
+
+fn cancel_orchestration_draft_record(
+    conn: &Connection,
+    build_package_id: &str,
+) -> Result<Value, String> {
+    validate_non_empty("buildPackageId", build_package_id)?;
+    let changed = conn
+        .execute(
+            "UPDATE orchestration_drafts SET canceled_at = ?1, updated_at = ?1 WHERE id = ?2 AND canceled_at IS NULL",
+            params![now_iso(), build_package_id],
+        )
+        .map_err(sql_error("cancel orchestration draft"))?;
+
+    if changed == 0 {
+        return Err(orchestration_draft_not_found(build_package_id));
+    }
+
+    load_orchestration_registry_snapshot(conn)
 }
 
 fn load_task_run_detail_snapshot(
@@ -3526,14 +5090,16 @@ fn select_projects(conn: &Connection) -> Result<Vec<ProjectRow>, String> {
 
 fn select_repos(conn: &Connection) -> Result<Vec<RepoRow>, String> {
     let mut stmt = conn
-        .prepare("SELECT id, name FROM repos ORDER BY id")
+        .prepare("SELECT id, project_id, name, root_path FROM repos ORDER BY id")
         .map_err(sql_error("prepare repos query"))?;
 
     let rows = stmt
         .query_map([], |row| {
             Ok(RepoRow {
                 id: row.get(0)?,
-                name: row.get(1)?,
+                project_id: row.get(1)?,
+                name: row.get(2)?,
+                root_path: row.get(3)?,
             })
         })
         .map_err(sql_error("query repo rows"))?
@@ -4129,6 +5695,1256 @@ INSERT INTO events (
     Ok(event_id)
 }
 
+fn select_active_orchestration_draft_snapshots(conn: &Connection) -> Result<Vec<Value>, String> {
+    let mut stmt = conn
+        .prepare(
+            "
+SELECT snapshot_json
+FROM orchestration_drafts
+WHERE canceled_at IS NULL
+ORDER BY updated_at DESC, created_at DESC, id
+",
+        )
+        .map_err(sql_error("prepare active orchestration draft query"))?;
+
+    let mut snapshots = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(sql_error("query active orchestration draft rows"))?
+        .map(|row| {
+            let snapshot_json = row.map_err(sql_error("read active orchestration draft row"))?;
+            serde_json::from_str::<Value>(&snapshot_json)
+                .map_err(|error| format!("Invalid persisted orchestration draft snapshot: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for snapshot in &mut snapshots {
+        attach_orchestration_stage_runs(conn, snapshot)?;
+    }
+
+    Ok(snapshots)
+}
+
+fn select_orchestration_draft_snapshot(
+    conn: &Connection,
+    build_package_id: &str,
+) -> Result<Value, String> {
+    let mut snapshot = select_orchestration_draft_snapshot_base(conn, build_package_id)?;
+    attach_orchestration_stage_runs(conn, &mut snapshot)?;
+    Ok(snapshot)
+}
+
+fn select_orchestration_draft_snapshot_base(
+    conn: &Connection,
+    build_package_id: &str,
+) -> Result<Value, String> {
+    let snapshot_json = conn
+        .query_row(
+            "
+SELECT snapshot_json
+FROM orchestration_drafts
+WHERE id = ?1 AND canceled_at IS NULL
+",
+            params![build_package_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(sql_error("read orchestration draft snapshot"))?
+        .ok_or_else(|| orchestration_draft_not_found(build_package_id))?;
+
+    serde_json::from_str::<Value>(&snapshot_json)
+        .map_err(|error| format!("Invalid persisted orchestration draft snapshot: {error}"))
+}
+
+fn attach_orchestration_stage_runs(conn: &Connection, snapshot: &mut Value) -> Result<(), String> {
+    let build_package_id = snapshot_string_field(snapshot, "id")?.to_string();
+    let stage_runs = select_orchestration_stage_run_evidence(conn, &build_package_id)?;
+    let object = snapshot.as_object_mut().ok_or_else(|| {
+        "Persisted orchestration draft snapshot must be a JSON object.".to_string()
+    })?;
+    object.insert("stageRuns".to_string(), Value::Array(stage_runs));
+    Ok(())
+}
+
+fn select_orchestration_stage_run_evidence(
+    conn: &Connection,
+    build_package_id: &str,
+) -> Result<Vec<Value>, String> {
+    let mut stmt = conn
+        .prepare(
+            "
+SELECT
+  id, build_package_id, stage_id, status, provenance, status_reason,
+  prompt_artifact_id, output_artifact_id, raw_event_artifact_id,
+  task_id, task_run_id, conversation_id, event_ids_json, evidence_json,
+  started_at, completed_at, created_at, updated_at
+FROM orchestration_stage_runs
+WHERE build_package_id = ?1
+ORDER BY created_at ASC, id ASC
+",
+        )
+        .map_err(sql_error("prepare orchestration stage run evidence query"))?;
+    let mut rows = stmt
+        .query(params![build_package_id])
+        .map_err(sql_error("query orchestration stage run evidence"))?;
+    let mut evidence = Vec::new();
+
+    while let Some(row) = rows
+        .next()
+        .map_err(sql_error("read orchestration stage run evidence row"))?
+    {
+        let event_ids_json: String = row
+            .get(12)
+            .map_err(sql_error("read orchestration stage run event ids"))?;
+        let event_ids_value = serde_json::from_str::<Value>(&event_ids_json)
+            .map_err(|error| format!("Invalid orchestration stage run event IDs: {error}"))?;
+        let event_ids = event_ids_value
+            .as_array()
+            .ok_or_else(|| {
+                "Invalid orchestration stage run event IDs: expected array.".to_string()
+            })?
+            .iter()
+            .map(|event_id| {
+                event_id
+                    .as_str()
+                    .map(|value| Value::String(value.to_string()))
+                    .ok_or_else(|| {
+                        "Invalid orchestration stage run event ID: expected string.".to_string()
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let evidence_json: String = row
+            .get(13)
+            .map_err(sql_error("read orchestration stage run evidence payload"))?;
+        let evidence_value = serde_json::from_str::<Value>(&evidence_json).map_err(|error| {
+            format!("Invalid orchestration stage run evidence payload: {error}")
+        })?;
+
+        let mut payload = Map::new();
+        insert_string(
+            &mut payload,
+            "id",
+            &row.get::<_, String>(0)
+                .map_err(sql_error("read orchestration stage run id"))?,
+        );
+        insert_string(
+            &mut payload,
+            "buildPackageId",
+            &row.get::<_, String>(1)
+                .map_err(sql_error("read orchestration stage run build package id"))?,
+        );
+        insert_string(
+            &mut payload,
+            "stageId",
+            &row.get::<_, String>(2)
+                .map_err(sql_error("read orchestration stage run stage id"))?,
+        );
+        let status = row
+            .get::<_, String>(3)
+            .map_err(sql_error("read orchestration stage run status"))?;
+        let provenance = row
+            .get::<_, String>(4)
+            .map_err(sql_error("read orchestration stage run provenance"))?;
+        payload.insert(
+            "state".to_string(),
+            json!({
+                "status": status,
+                "provenance": provenance,
+            }),
+        );
+        insert_optional_string_value(
+            &mut payload,
+            "statusReason",
+            row.get::<_, Option<String>>(5)
+                .map_err(sql_error("read orchestration stage run status reason"))?,
+        );
+        insert_optional_string_value(
+            &mut payload,
+            "promptArtifactId",
+            row.get::<_, Option<String>>(6)
+                .map_err(sql_error("read orchestration stage run prompt artifact id"))?,
+        );
+        insert_optional_string_value(
+            &mut payload,
+            "outputArtifactId",
+            row.get::<_, Option<String>>(7)
+                .map_err(sql_error("read orchestration stage run output artifact id"))?,
+        );
+        insert_optional_string_value(
+            &mut payload,
+            "rawEventArtifactId",
+            row.get::<_, Option<String>>(8).map_err(sql_error(
+                "read orchestration stage run raw event artifact id",
+            ))?,
+        );
+        insert_optional_string_value(
+            &mut payload,
+            "taskId",
+            row.get::<_, Option<String>>(9)
+                .map_err(sql_error("read orchestration stage run task id"))?,
+        );
+        insert_optional_string_value(
+            &mut payload,
+            "taskRunId",
+            row.get::<_, Option<String>>(10)
+                .map_err(sql_error("read orchestration stage run task run id"))?,
+        );
+        insert_optional_string_value(
+            &mut payload,
+            "conversationId",
+            row.get::<_, Option<String>>(11)
+                .map_err(sql_error("read orchestration stage run conversation id"))?,
+        );
+        payload.insert("eventIds".to_string(), Value::Array(event_ids));
+        payload.insert("evidence".to_string(), evidence_value);
+        insert_optional_string_value(
+            &mut payload,
+            "startedAt",
+            row.get::<_, Option<String>>(14)
+                .map_err(sql_error("read orchestration stage run started at"))?,
+        );
+        insert_optional_string_value(
+            &mut payload,
+            "completedAt",
+            row.get::<_, Option<String>>(15)
+                .map_err(sql_error("read orchestration stage run completed at"))?,
+        );
+        insert_string(
+            &mut payload,
+            "createdAt",
+            &row.get::<_, String>(16)
+                .map_err(sql_error("read orchestration stage run created at"))?,
+        );
+        insert_string(
+            &mut payload,
+            "updatedAt",
+            &row.get::<_, String>(17)
+                .map_err(sql_error("read orchestration stage run updated at"))?,
+        );
+        evidence.push(Value::Object(payload));
+    }
+
+    Ok(evidence)
+}
+
+#[allow(dead_code)]
+fn insert_orchestration_stage_run_evidence(
+    conn: &Connection,
+    record: OrchestrationStageRunEvidenceRecord,
+) -> Result<Value, String> {
+    let build_package_id = record.build_package_id.clone();
+    insert_orchestration_stage_run_evidence_record(conn, &record)?;
+    select_orchestration_draft_snapshot(conn, &build_package_id)
+}
+
+fn insert_orchestration_stage_run_evidence_record(
+    conn: &Connection,
+    record: &OrchestrationStageRunEvidenceRecord,
+) -> Result<(), String> {
+    validate_non_empty("stageRunId", &record.id)?;
+    validate_non_empty("buildPackageId", &record.build_package_id)?;
+    let _stage_title = orchestration_stage_title(&record.stage_id)?;
+    validate_orchestration_stage_run_truth(&record.status, &record.provenance)?;
+
+    if !record.evidence.is_object() {
+        return Err("Orchestration stage run evidence must be a JSON object.".to_string());
+    }
+
+    select_orchestration_draft_snapshot_base(conn, &record.build_package_id)?;
+
+    let event_ids_json = serde_json::to_string(&record.event_ids).map_err(|error| {
+        format!("Unable to serialize orchestration stage run event IDs: {error}")
+    })?;
+    let evidence_json = serde_json::to_string(&record.evidence).map_err(|error| {
+        format!("Unable to serialize orchestration stage run evidence payload: {error}")
+    })?;
+
+    conn.execute(
+        "
+INSERT INTO orchestration_stage_runs (
+  id, build_package_id, stage_id, status, provenance, status_reason,
+  prompt_artifact_id, output_artifact_id, raw_event_artifact_id,
+  task_id, task_run_id, conversation_id, event_ids_json, evidence_json,
+  started_at, completed_at, created_at, updated_at
+) VALUES (
+  ?1, ?2, ?3, ?4, ?5, ?6,
+  ?7, ?8, ?9,
+  ?10, ?11, ?12, ?13, ?14,
+  ?15, ?16, ?17, ?18
+)
+",
+        params![
+            record.id,
+            record.build_package_id,
+            record.stage_id,
+            record.status,
+            record.provenance,
+            record.status_reason,
+            record.prompt_artifact_id,
+            record.output_artifact_id,
+            record.raw_event_artifact_id,
+            record.task_id,
+            record.task_run_id,
+            record.conversation_id,
+            event_ids_json,
+            evidence_json,
+            record.started_at,
+            record.completed_at,
+            record.created_at,
+            record.updated_at,
+        ],
+    )
+    .map_err(sql_error("create orchestration stage run evidence"))?;
+
+    Ok(())
+}
+
+fn update_orchestration_stage_run_evidence_record(
+    conn: &Connection,
+    record: &OrchestrationStageRunEvidenceRecord,
+) -> Result<(), String> {
+    validate_non_empty("stageRunId", &record.id)?;
+    validate_non_empty("buildPackageId", &record.build_package_id)?;
+    let _stage_title = orchestration_stage_title(&record.stage_id)?;
+    validate_orchestration_stage_run_truth(&record.status, &record.provenance)?;
+
+    if !record.evidence.is_object() {
+        return Err("Orchestration stage run evidence must be a JSON object.".to_string());
+    }
+
+    let event_ids_json = serde_json::to_string(&record.event_ids).map_err(|error| {
+        format!("Unable to serialize orchestration stage run event IDs: {error}")
+    })?;
+    let evidence_json = serde_json::to_string(&record.evidence).map_err(|error| {
+        format!("Unable to serialize orchestration stage run evidence payload: {error}")
+    })?;
+
+    let changed = conn
+        .execute(
+            "
+UPDATE orchestration_stage_runs
+SET status = ?1,
+    provenance = ?2,
+    status_reason = ?3,
+    prompt_artifact_id = ?4,
+    output_artifact_id = ?5,
+    raw_event_artifact_id = ?6,
+    task_id = ?7,
+    task_run_id = ?8,
+    conversation_id = ?9,
+    event_ids_json = ?10,
+    evidence_json = ?11,
+    started_at = ?12,
+    completed_at = ?13,
+    updated_at = ?14
+WHERE id = ?15 AND build_package_id = ?16
+",
+            params![
+                record.status,
+                record.provenance,
+                record.status_reason,
+                record.prompt_artifact_id,
+                record.output_artifact_id,
+                record.raw_event_artifact_id,
+                record.task_id,
+                record.task_run_id,
+                record.conversation_id,
+                event_ids_json,
+                evidence_json,
+                record.started_at,
+                record.completed_at,
+                record.updated_at,
+                record.id,
+                record.build_package_id,
+            ],
+        )
+        .map_err(sql_error("update orchestration stage run evidence"))?;
+
+    if changed == 0 {
+        return Err(format!("Orchestration stage run not found: {}", record.id));
+    }
+
+    Ok(())
+}
+
+fn create_orchestration_plan_builder_conversation(
+    conn: &Connection,
+    snapshot: &Value,
+    created_at: &str,
+) -> Result<String, String> {
+    let conversation_id = Uuid::new_v4().to_string();
+    let title = format!(
+        "Plan Builder: {}",
+        snapshot_string_field(snapshot, "title").unwrap_or("Orchestration draft")
+    );
+
+    conn.execute(
+        "
+INSERT INTO conversations (
+  id, task_id, task_run_id, provider, external_thread_id, title, summary, created_at, updated_at
+) VALUES (?1, NULL, NULL, 'codex', NULL, ?2, ?3, ?4, ?4)
+",
+        params![
+            conversation_id,
+            title,
+            "Orchestration Plan Builder runtime conversation",
+            created_at
+        ],
+    )
+    .map_err(sql_error("create orchestration Plan Builder conversation"))?;
+
+    Ok(conversation_id)
+}
+
+fn build_orchestration_plan_builder_prompt(snapshot: &Value) -> Result<String, String> {
+    let source_prompt = snapshot_string_field(snapshot, "sourcePrompt")?;
+    let folder_path = snapshot_string_field(snapshot, "folderPath")?;
+    let files = snapshot
+        .get("files")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Persisted orchestration draft snapshot is missing files.".to_string())?;
+    let mut file_lines = Vec::new();
+
+    for file in files {
+        let name = file
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("unnamed attachment");
+        let size = file.get("size").and_then(Value::as_i64).unwrap_or(0);
+        let last_modified = file
+            .get("lastModified")
+            .and_then(Value::as_i64)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        file_lines.push(format!(
+            "- {name} ({size} bytes, lastModified {last_modified})"
+        ));
+    }
+
+    let attachment_section = if file_lines.is_empty() {
+        "No attached files were submitted.".to_string()
+    } else {
+        format!(
+            "Attached files are metadata-only in this increment. Their paths and contents are unavailable and were not sent to Codex as file content:\n{}",
+            file_lines.join("\n")
+        )
+    };
+
+    Ok(format!(
+        r#"Use the Orchestration Plan Builder skill intent.
+
+Your job is to turn the raw strategic input below into an orchestration-ready plan draft for user approval.
+
+Hard boundaries:
+- Plan only. Do not instantiate an orchestration package.
+- Do not create durable files.
+- Do not launch root orchestration threads, record threads, or workers.
+- Do not claim generated files, conversations, thread ids, or runtime state that this prompt does not provide.
+- Produce plan output suitable for the next approval gate, including an orchestrationPlanDraft JSON object if enough source material exists.
+- If source material is insufficient, return explicit questions or productBlockers instead of inventing facts.
+
+Known product facts:
+- Selected orchestration home candidate: {folder_path}
+- The selected path is product metadata for this draft; it is not being used as the Codex process cwd in this increment.
+- Live streaming and continuation are unsupported for this run.
+
+{attachment_section}
+
+Raw source material:
+{source_prompt}
+"#
+    ))
+}
+
+fn orchestration_plan_builder_evidence_payload(
+    snapshot: &Value,
+    external_thread_id: Option<&str>,
+    error: Option<&str>,
+    runtime_route: &str,
+) -> Result<Value, String> {
+    let files = snapshot
+        .get("files")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Persisted orchestration draft snapshot is missing files.".to_string())?;
+    let mut payload = Map::new();
+    insert_string(
+        &mut payload,
+        "schema",
+        "orchestration-stage-run-evidence/v1",
+    );
+    insert_string(&mut payload, "runtimeRoute", runtime_route);
+    payload.insert("attachmentContentsSent".to_string(), Value::Bool(false));
+    payload.insert(
+        "attachmentMetadata".to_string(),
+        Value::Array(files.clone()),
+    );
+    if let Some(external_thread_id) = external_thread_id {
+        insert_string(&mut payload, "externalThreadId", external_thread_id);
+    }
+    if let Some(error) = error {
+        insert_string(&mut payload, "error", error);
+    }
+
+    Ok(Value::Object(payload))
+}
+
+fn append_orchestration_plan_builder_started_event(
+    conn: &Connection,
+    build_package_id: &str,
+    stage_run_id: &str,
+    conversation_id: &str,
+    started_at: &str,
+) -> Result<String, String> {
+    let mut payload = Map::new();
+    insert_string(&mut payload, "buildPackageId", build_package_id);
+    insert_string(&mut payload, "stageRunId", stage_run_id);
+    insert_string(&mut payload, "stageId", "plan-builder");
+    insert_string(&mut payload, "conversationId", conversation_id);
+    insert_string(&mut payload, "startedAt", started_at);
+    insert_string(
+        &mut payload,
+        "runtimeRoute",
+        "start_orchestration_plan_builder_run",
+    );
+
+    create_event(
+        conn,
+        "run_started",
+        started_at,
+        None,
+        None,
+        None,
+        Some(conversation_id),
+        None,
+        None,
+        payload,
+    )
+}
+
+fn append_orchestration_artifact_created_event(
+    conn: &Connection,
+    build_package_id: &str,
+    stage_run_id: &str,
+    conversation_id: &str,
+    artifact_id: &str,
+    artifact_kind: &str,
+    label: &str,
+    content_length: Option<i64>,
+) -> Result<String, String> {
+    let occurred_at = now_iso();
+    let mut payload = Map::new();
+    insert_string(&mut payload, "buildPackageId", build_package_id);
+    insert_string(&mut payload, "stageRunId", stage_run_id);
+    insert_string(&mut payload, "stageId", "plan-builder");
+    insert_string(&mut payload, "artifactKind", artifact_kind);
+    insert_string(&mut payload, "artifactId", artifact_id);
+    insert_string(&mut payload, "label", label);
+    if let Some(content_length) = content_length {
+        insert_i64(&mut payload, "contentLength", content_length);
+    }
+
+    create_event(
+        conn,
+        "artifact_created",
+        &occurred_at,
+        None,
+        None,
+        None,
+        Some(conversation_id),
+        Some(artifact_id),
+        None,
+        payload,
+    )
+}
+
+fn append_orchestration_plan_builder_completed_event(
+    conn: &Connection,
+    build_package_id: &str,
+    stage_run_id: &str,
+    conversation_id: &str,
+    outcome: &str,
+    error: Option<&str>,
+    exit_code: Option<i64>,
+) -> Result<String, String> {
+    let completed_at = now_iso();
+    let mut payload = Map::new();
+    insert_string(&mut payload, "buildPackageId", build_package_id);
+    insert_string(&mut payload, "stageRunId", stage_run_id);
+    insert_string(&mut payload, "stageId", "plan-builder");
+    insert_string(&mut payload, "outcome", outcome);
+    insert_string(&mut payload, "completedAt", &completed_at);
+    if let Some(error) = error {
+        insert_string(&mut payload, "error", error);
+    }
+    if let Some(exit_code) = exit_code {
+        insert_i64(&mut payload, "exitCode", exit_code);
+    }
+
+    create_event(
+        conn,
+        "run_completed",
+        &completed_at,
+        None,
+        None,
+        None,
+        Some(conversation_id),
+        None,
+        None,
+        payload,
+    )
+}
+
+fn update_orchestration_conversation_from_runtime_result(
+    conn: &Connection,
+    conversation_id: &str,
+    runtime_result: &CodexRuntimeResult,
+) -> Result<(), String> {
+    conn.execute(
+        "
+UPDATE conversations
+SET external_thread_id = COALESCE(?1, external_thread_id), summary = ?2, updated_at = ?3
+WHERE id = ?4
+",
+        params![
+            runtime_result.summary.thread_id.as_deref(),
+            summarize_conversation(runtime_result),
+            now_iso(),
+            conversation_id
+        ],
+    )
+    .map_err(sql_error("update orchestration Plan Builder conversation"))?;
+
+    Ok(())
+}
+
+fn insert_orchestration_draft_snapshot(
+    conn: &Connection,
+    build_package_id: &str,
+    title: &str,
+    folder_path: &str,
+    source_prompt: &str,
+    snapshot: &Value,
+    created_at: &str,
+) -> Result<(), String> {
+    let stored_snapshot = orchestration_draft_snapshot_for_storage(snapshot);
+    let snapshot_json = serde_json::to_string(&stored_snapshot)
+        .map_err(|error| format!("Unable to serialize orchestration draft snapshot: {error}"))?;
+
+    conn.execute(
+        "
+INSERT INTO orchestration_drafts (
+  id, title, folder_path, source_prompt, status, provenance, snapshot_json,
+  created_at, updated_at, canceled_at
+) VALUES (?1, ?2, ?3, ?4, 'integration_pending', 'persisted_snapshot', ?5, ?6, ?6, NULL)
+",
+        params![
+            build_package_id,
+            title,
+            folder_path,
+            source_prompt,
+            snapshot_json,
+            created_at
+        ],
+    )
+    .map_err(sql_error("create orchestration draft"))?;
+
+    Ok(())
+}
+
+fn update_orchestration_draft_snapshot(
+    conn: &Connection,
+    build_package_id: &str,
+    snapshot: &Value,
+    updated_at: &str,
+) -> Result<(), String> {
+    let stored_snapshot = orchestration_draft_snapshot_for_storage(snapshot);
+    let snapshot_json = serde_json::to_string(&stored_snapshot)
+        .map_err(|error| format!("Unable to serialize orchestration draft snapshot: {error}"))?;
+    let changed = conn
+        .execute(
+            "
+UPDATE orchestration_drafts
+SET title = ?1,
+    folder_path = ?2,
+    source_prompt = ?3,
+    status = ?4,
+    provenance = ?5,
+    snapshot_json = ?6,
+    updated_at = ?7
+WHERE id = ?8 AND canceled_at IS NULL
+",
+            params![
+                snapshot_string_field(snapshot, "title")?,
+                snapshot_string_field(snapshot, "folderPath")?,
+                snapshot_string_field(snapshot, "sourcePrompt")?,
+                orchestration_snapshot_client_state_field(snapshot, "status")
+                    .unwrap_or("integration_pending"),
+                orchestration_snapshot_client_state_field(snapshot, "provenance")
+                    .unwrap_or("persisted_snapshot"),
+                snapshot_json,
+                updated_at,
+                build_package_id
+            ],
+        )
+        .map_err(sql_error("update orchestration draft"))?;
+
+    if changed == 0 {
+        return Err(orchestration_draft_not_found(build_package_id));
+    }
+
+    Ok(())
+}
+
+fn orchestration_draft_snapshot_for_storage(snapshot: &Value) -> Value {
+    let mut stored_snapshot = snapshot.clone();
+
+    if let Some(object) = stored_snapshot.as_object_mut() {
+        object.remove("stageRuns");
+    }
+
+    stored_snapshot
+}
+
+fn build_persisted_orchestration_draft_snapshot(
+    id: &str,
+    created_at: &str,
+    title: &str,
+    folder_path: &str,
+    prompt: &str,
+    files: &[UploadedOrchestrationDraftFileInput],
+) -> Value {
+    let plan_preview = vec![
+        first_meaningful_line(prompt).unwrap_or(title).to_string(),
+        "Separate strategic problem structure from executable work-slice planning.".to_string(),
+        "Prepare instantiator-ready files only after a supported backend writes them.".to_string(),
+    ];
+
+    json!({
+        "id": id,
+        "title": title,
+        "folderPath": folder_path,
+        "sourcePrompt": prompt,
+        "createdAt": created_at,
+        "updatedAt": created_at,
+        "clientState": persisted_orchestration_client_state(
+            id,
+            created_at,
+            vec![orchestration_registry_notice()],
+        ),
+        "messages": [
+            {
+                "id": format!("message-{}", Uuid::new_v4()),
+                "role": "system",
+                "body": "Draft persisted locally. Plan-builder runtime has not started yet.",
+                "createdAt": created_at,
+                "state": "completed",
+                "truth": persisted_draft_truth_state(),
+            },
+            {
+                "id": format!("message-{}", Uuid::new_v4()),
+                "role": "user",
+                "body": prompt,
+                "createdAt": created_at,
+                "state": "completed",
+                "truth": { "status": "ready", "provenance": "user_input" },
+            },
+            {
+                "id": format!("message-{}", Uuid::new_v4()),
+                "role": "system",
+                "body": "Backend integration pending. The prompt is saved, but no plan-builder output, generated files, or Codex threads exist yet.",
+                "createdAt": created_at,
+                "state": "completed",
+                "truth": unsupported_pending_truth_state(),
+            }
+        ],
+        "files": files.iter().map(uploaded_orchestration_file_value).collect::<Vec<_>>(),
+        "stages": initial_orchestration_build_stages(),
+        "stageRuns": [],
+        "runtimeRoutes": [blocked_plan_builder_runtime_route(created_at)],
+        "generatedFiles": expected_orchestration_output_slots(),
+        "planPreview": plan_preview,
+    })
+}
+
+fn initial_orchestration_build_stages() -> Vec<Value> {
+    vec![
+        json!({
+            "id": "plan-builder",
+            "title": "Plan Builder",
+            "state": unsupported_pending_truth_state(),
+            "summary": "Prompt is saved; no plan-builder output exists yet.",
+            "detail": "The backend persisted the draft. Plan-builder execution is still unsupported in this adapter.",
+        }),
+        json!({
+            "id": "plan-review",
+            "title": "Review Pending",
+            "state": { "status": "blocked", "provenance": "unsupported" },
+            "summary": "No plan-builder output is available to review.",
+            "detail": "Review waits for real plan-builder output from a supported backend path.",
+        }),
+        json!({
+            "id": "instantiator",
+            "title": "Instantiator",
+            "state": { "status": "blocked", "provenance": "unsupported" },
+            "summary": "Instantiation is not available in this UI path yet.",
+            "detail": "No files have been generated. The future instantiator step needs backend support before it can write to the selected folder.",
+        }),
+        json!({
+            "id": "root-startup",
+            "title": "Root Startup",
+            "state": { "status": "blocked", "provenance": "unsupported" },
+            "summary": "Live root startup has not been prepared.",
+            "detail": "No root orchestration or record threads have been created from this draft.",
+        }),
+    ]
+}
+
+fn expected_orchestration_output_slots() -> Vec<Value> {
+    vec![]
+}
+
+fn persisted_orchestration_client_state(id: &str, updated_at: &str, notices: Vec<Value>) -> Value {
+    json!({
+        "id": id,
+        "status": "integration_pending",
+        "provenance": "persisted_snapshot",
+        "currentAction": "Draft is persisted locally; no explicit task/worktree route is linked for plan-builder, so no Codex run can start.",
+        "updatedAt": updated_at,
+        "persisted": true,
+        "runtimeSupported": false,
+        "notices": notices,
+        "primaryAction": {
+            "id": "request-build-stage",
+            "label": "Plan-builder route required",
+            "enabled": false,
+            "reason": "Plan-builder requires an explicit linked task/worktree route. This draft has none.",
+        },
+    })
+}
+
+fn runtime_orchestration_client_state(
+    id: &str,
+    updated_at: &str,
+    status: &str,
+    provenance: &str,
+    current_action: &str,
+    notices: Vec<Value>,
+) -> Value {
+    let mut state = json!({
+        "id": id,
+        "status": status,
+        "provenance": provenance,
+        "currentAction": current_action,
+        "updatedAt": updated_at,
+        "persisted": true,
+        "runtimeSupported": true,
+        "notices": notices,
+    });
+
+    if status == "completed" {
+        if let Some(object) = state.as_object_mut() {
+            object.insert(
+                "primaryAction".to_string(),
+                json!({
+                    "id": "start-instantiation",
+                    "label": "Confirm build plan and start instantiating",
+                    "enabled": true,
+                }),
+            );
+        }
+    }
+
+    state
+}
+
+fn orchestration_registry_client_state() -> Value {
+    json!({
+        "status": "integration_pending",
+        "provenance": "persisted_snapshot",
+        "currentAction": "Persisted orchestration drafts are available. Runtime execution, generated files, and Codex threads are not connected yet.",
+        "updatedAt": now_iso(),
+        "persisted": true,
+        "runtimeSupported": false,
+        "notices": [orchestration_registry_notice()],
+    })
+}
+
+fn orchestration_plan_builder_waiting_notice() -> Value {
+    json!({
+        "id": "plan-builder-runtime-waiting",
+        "kind": "missing_capability",
+        "title": "Waiting for final response",
+        "message": "The backend accepted the Plan Builder runtime request. Live streaming is not available in this increment, so the UI waits for final output.",
+        "truth": { "status": "waiting_for_event", "provenance": "backend_response" },
+    })
+}
+
+fn orchestration_plan_builder_completed_notice() -> Value {
+    json!({
+        "id": "plan-builder-runtime-completed",
+        "kind": "missing_capability",
+        "title": "Plan Builder completed",
+        "message": "Plan Builder completed with persisted prompt, raw Codex JSONL, final response, and stage-run evidence. Review the proposal before approving instantiation.",
+        "truth": { "status": "completed", "provenance": "backend_response" },
+    })
+}
+
+fn unsupported_orchestration_continuation_notice() -> Value {
+    json!({
+        "id": "unsupported-plan-builder-continuation",
+        "kind": "missing_capability",
+        "title": "Runtime continuation unsupported",
+        "message": "Feedback was preserved locally, but it was not sent to the same Plan Builder runtime conversation because continuation is unsupported in this path.",
+        "truth": unsupported_pending_truth_state(),
+    })
+}
+
+fn orchestration_plan_builder_failed_notice(error: &str) -> Value {
+    json!({
+        "id": "plan-builder-runtime-failed",
+        "kind": "error",
+        "title": "Plan Builder runtime failed",
+        "message": format!("The draft remains saved, but the Plan Builder runtime failed. {error}"),
+        "truth": { "status": "failed", "provenance": "backend_response" },
+    })
+}
+
+fn orchestration_registry_notice() -> Value {
+    json!({
+        "id": "runtime-integration-pending",
+        "kind": "missing_capability",
+        "title": "Runtime integration pending",
+        "message": "Orchestration drafts are persisted locally, but no explicit task/worktree route is linked for plan-builder execution yet.",
+        "truth": unsupported_pending_truth_state(),
+    })
+}
+
+fn missing_orchestration_runtime_notice(stage_id: &str, stage_title: &str) -> Value {
+    if stage_id == "plan-builder" {
+        return json!({
+            "id": "missing-plan-builder-route",
+            "kind": "blocker",
+            "title": "Plan-builder route required",
+            "message": "Plan builder cannot start because this draft has no explicit linked task/worktree route. No Codex run was started.",
+            "truth": { "status": "blocked", "provenance": "unsupported" },
+        });
+    }
+
+    if stage_id == "instantiator" {
+        return json!({
+            "id": "missing-instantiator-runtime",
+            "kind": "missing_capability",
+            "title": "Instantiator runtime unavailable",
+            "message": "The build plan approval was accepted, but instantiation cannot start because no instantiator runtime route is implemented. No files were generated.",
+            "truth": unsupported_pending_truth_state(),
+        });
+    }
+
+    json!({
+        "id": format!("missing-{stage_id}-runtime"),
+        "kind": "missing_capability",
+        "title": "Runtime integration pending",
+        "message": format!("{stage_title} cannot advance because the orchestration runtime adapter is not implemented yet. Your draft remains saved."),
+        "truth": unsupported_pending_truth_state(),
+    })
+}
+
+fn live_orchestration_runtime_notice() -> Value {
+    json!({
+        "id": "missing-live-runtime",
+        "kind": "missing_capability",
+        "title": "Live orchestration runtime unavailable",
+        "message": "The persisted draft cannot create Codex threads or live orchestration roots until runtime integration is implemented.",
+        "truth": unsupported_pending_truth_state(),
+    })
+}
+
+fn persisted_draft_truth_state() -> Value {
+    json!({ "status": "draft", "provenance": "persisted_snapshot" })
+}
+
+fn unsupported_pending_truth_state() -> Value {
+    json!({ "status": "integration_pending", "provenance": "unsupported" })
+}
+
+fn blocked_plan_builder_runtime_route(updated_at: &str) -> Value {
+    json!({
+        "stageId": "plan-builder",
+        "status": "blocked",
+        "truth": { "status": "blocked", "provenance": "unsupported" },
+        "reason": "No explicit Open Task/worktree runtime route is linked to this orchestration draft. The selected folder is not treated as a runnable cwd.",
+        "runtimeCommand": "startCodexTaskRun",
+        "updatedAt": updated_at,
+    })
+}
+
+fn plan_builder_runtime_route(updated_at: &str, status: &str, provenance: &str) -> Value {
+    json!({
+        "stageId": "plan-builder",
+        "status": "supported",
+        "truth": { "status": status, "provenance": provenance },
+        "reason": "Plan Builder uses the orchestration-specific Tauri command and non-interactive Codex JSON mode. Live streaming and continuation are unsupported in this increment.",
+        "runtimeCommand": "startOrchestrationPlanBuilderRun",
+        "updatedAt": updated_at,
+    })
+}
+
+fn set_orchestration_snapshot_updated_state(
+    snapshot: &mut Value,
+    id: &str,
+    updated_at: &str,
+    notices: Vec<Value>,
+) -> Result<(), String> {
+    let object = snapshot.as_object_mut().ok_or_else(|| {
+        "Persisted orchestration draft snapshot must be a JSON object.".to_string()
+    })?;
+    object.insert(
+        "updatedAt".to_string(),
+        Value::String(updated_at.to_string()),
+    );
+    object.insert(
+        "clientState".to_string(),
+        persisted_orchestration_client_state(id, updated_at, notices),
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_orchestration_plan_builder_runtime_state(
+    snapshot: &mut Value,
+    id: &str,
+    status: &str,
+    provenance: &str,
+    current_action: &str,
+    stage_summary: &str,
+    stage_detail: &str,
+    notices: Vec<Value>,
+) -> Result<(), String> {
+    let updated_at = now_iso();
+    let object = snapshot.as_object_mut().ok_or_else(|| {
+        "Persisted orchestration draft snapshot must be a JSON object.".to_string()
+    })?;
+    object.insert("updatedAt".to_string(), Value::String(updated_at.clone()));
+    object.insert(
+        "clientState".to_string(),
+        runtime_orchestration_client_state(
+            id,
+            &updated_at,
+            status,
+            provenance,
+            current_action,
+            notices,
+        ),
+    );
+    object.insert(
+        "runtimeRoutes".to_string(),
+        Value::Array(vec![plan_builder_runtime_route(
+            &updated_at,
+            status,
+            provenance,
+        )]),
+    );
+
+    let stages = snapshot_array_mut(snapshot, "stages")?;
+    for stage in stages {
+        let Some(stage_object) = stage.as_object_mut() else {
+            continue;
+        };
+        let is_plan_builder = stage_object
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|stage_id| stage_id == "plan-builder");
+
+        if is_plan_builder {
+            stage_object.insert(
+                "state".to_string(),
+                json!({ "status": status, "provenance": provenance }),
+            );
+            stage_object.insert(
+                "summary".to_string(),
+                Value::String(stage_summary.to_string()),
+            );
+            stage_object.insert(
+                "detail".to_string(),
+                Value::String(stage_detail.to_string()),
+            );
+        } else if status == "completed"
+            && stage_object
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|stage_id| stage_id == "plan-review")
+        {
+            stage_object.insert(
+                "state".to_string(),
+                json!({ "status": "ready", "provenance": "backend_response" }),
+            );
+            stage_object.insert(
+                "summary".to_string(),
+                Value::String("Plan-builder proposal is ready for user review.".to_string()),
+            );
+            stage_object.insert(
+                "detail".to_string(),
+                Value::String(
+                    "Review the final Plan Builder response. Instantiation starts only after explicit user approval."
+                        .to_string(),
+                ),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn apply_orchestration_plan_builder_terminal_message(
+    snapshot: &mut Value,
+    created_at: &str,
+    role: &str,
+    body: &str,
+    status: &str,
+    provenance: &str,
+) -> Result<(), String> {
+    snapshot_array_mut(snapshot, "messages")?.push(json!({
+        "id": format!("message-{}", Uuid::new_v4()),
+        "role": role,
+        "body": body,
+        "createdAt": created_at,
+        "state": "completed",
+        "truth": { "status": status, "provenance": provenance },
+    }));
+    Ok(())
+}
+
+fn snapshot_array_mut<'a>(
+    snapshot: &'a mut Value,
+    key: &str,
+) -> Result<&'a mut Vec<Value>, String> {
+    snapshot
+        .get_mut(key)
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| format!("Persisted orchestration draft snapshot is missing {key}."))
+}
+
+fn snapshot_string_field<'a>(snapshot: &'a Value, key: &str) -> Result<&'a str, String> {
+    snapshot
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("Persisted orchestration draft snapshot is missing {key}."))
+}
+
+fn orchestration_snapshot_client_state_field<'a>(
+    snapshot: &'a Value,
+    key: &str,
+) -> Option<&'a str> {
+    snapshot.get("clientState")?.get(key)?.as_str()
+}
+
+fn uploaded_orchestration_file_value(file: &UploadedOrchestrationDraftFileInput) -> Value {
+    match file.last_modified {
+        Some(last_modified) => json!({
+            "id": file.id,
+            "name": file.name,
+            "size": file.size,
+            "lastModified": last_modified,
+        }),
+        None => json!({
+            "id": file.id,
+            "name": file.name,
+            "size": file.size,
+        }),
+    }
+}
+
+fn uploaded_orchestration_file_input_key(file: &UploadedOrchestrationDraftFileInput) -> String {
+    format!(
+        "{}:{}:{}",
+        file.name,
+        file.size,
+        file.last_modified
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    )
+}
+
+fn uploaded_orchestration_file_key(file: &Value) -> Option<String> {
+    let name = file.get("name")?.as_str()?;
+    let size = file.get("size")?.as_i64()?;
+    let last_modified = file
+        .get("lastModified")
+        .and_then(Value::as_i64)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    Some(format!("{name}:{size}:{last_modified}"))
+}
+
+fn orchestration_stage_title(stage_id: &str) -> Result<&'static str, String> {
+    match stage_id {
+        "plan-builder" => Ok("Plan builder"),
+        "plan-review" => Ok("Plan review"),
+        "instantiator" => Ok("Instantiator"),
+        "root-startup" => Ok("Root startup"),
+        _ => Err(format!("Unknown orchestration build stage: {stage_id}")),
+    }
+}
+
+#[allow(dead_code)]
+fn validate_orchestration_stage_run_truth(status: &str, provenance: &str) -> Result<(), String> {
+    if !is_valid_orchestration_status(status) {
+        return Err(format!("Invalid orchestration stage run status: {status}"));
+    }
+
+    if !is_valid_orchestration_provenance(provenance) {
+        return Err(format!(
+            "Invalid orchestration stage run provenance: {provenance}"
+        ));
+    }
+
+    if matches!(
+        status,
+        "starting" | "waiting_for_event" | "running" | "completed"
+    ) && !matches!(provenance, "backend_response" | "runtime_event")
+    {
+        return Err(format!(
+            "Runtime stage status {status} requires backend_response or runtime_event provenance."
+        ));
+    }
+
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn is_valid_orchestration_status(status: &str) -> bool {
+    matches!(
+        status,
+        "draft"
+            | "ready"
+            | "starting"
+            | "waiting_for_event"
+            | "running"
+            | "blocked"
+            | "failed"
+            | "completed"
+            | "integration_pending"
+            | "mock_preview"
+    )
+}
+
+#[allow(dead_code)]
+fn is_valid_orchestration_provenance(provenance: &str) -> bool {
+    matches!(
+        provenance,
+        "user_input"
+            | "local_draft"
+            | "persisted_snapshot"
+            | "backend_response"
+            | "runtime_event"
+            | "mock_fixture"
+            | "unsupported"
+    )
+}
+
+fn first_meaningful_line(value: &str) -> Option<&str> {
+    value.lines().map(str::trim).find(|line| !line.is_empty())
+}
+
 fn insert_string(payload: &mut Map<String, Value>, key: &str, value: &str) {
     payload.insert(key.to_string(), Value::String(value.to_string()));
 }
@@ -4152,6 +6968,16 @@ fn insert_nullable_string(payload: &mut Map<String, Value>, key: &str, value: Op
         None => {
             payload.insert(key.to_string(), Value::Null);
         }
+    }
+}
+
+fn insert_optional_string_value(
+    payload: &mut Map<String, Value>,
+    key: &str,
+    value: Option<String>,
+) {
+    if let Some(value) = value {
+        insert_string(payload, key, &value);
     }
 }
 
@@ -4227,6 +7053,10 @@ fn task_detail_not_found(task_id: &str) -> String {
     format!("Task not found: {task_id}")
 }
 
+fn orchestration_draft_not_found(build_package_id: &str) -> String {
+    format!("Orchestration draft not found: {build_package_id}")
+}
+
 fn truncate(value: &str, max_length: usize) -> String {
     if value.len() <= max_length {
         return value.to_string();
@@ -4248,7 +7078,7 @@ struct Migration {
     sql: &'static str,
 }
 
-fn app_migrations() -> [Migration; 5] {
+fn app_migrations() -> [Migration; 8] {
     [
         Migration {
             id: "001_repo_sync_schema",
@@ -4269,6 +7099,18 @@ fn app_migrations() -> [Migration; 5] {
         Migration {
             id: "005_events_schema",
             sql: EVENT_SCHEMA,
+        },
+        Migration {
+            id: "006_orchestration_drafts_schema",
+            sql: ORCHESTRATION_DRAFT_SCHEMA,
+        },
+        Migration {
+            id: "007_orchestration_stage_runs_schema",
+            sql: ORCHESTRATION_STAGE_RUN_SCHEMA,
+        },
+        Migration {
+            id: "008_agent_sessions_schema",
+            sql: AGENT_SESSION_SCHEMA,
         },
     ]
 }
@@ -4445,6 +7287,81 @@ CREATE TABLE IF NOT EXISTS events (
 );
 ";
 
+const ORCHESTRATION_DRAFT_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS orchestration_drafts (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  folder_path TEXT NOT NULL,
+  source_prompt TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('draft', 'ready', 'starting', 'waiting_for_event', 'running', 'blocked', 'failed', 'completed', 'integration_pending', 'mock_preview')),
+  provenance TEXT NOT NULL CHECK (provenance IN ('user_input', 'local_draft', 'persisted_snapshot', 'backend_response', 'runtime_event', 'mock_fixture', 'unsupported')),
+  snapshot_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  canceled_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_orchestration_drafts_active_updated
+ON orchestration_drafts (canceled_at, updated_at DESC, created_at DESC);
+";
+
+const ORCHESTRATION_STAGE_RUN_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS orchestration_stage_runs (
+  id TEXT PRIMARY KEY,
+  build_package_id TEXT NOT NULL,
+  stage_id TEXT NOT NULL CHECK (stage_id IN ('plan-builder', 'plan-review', 'instantiator', 'root-startup')),
+  status TEXT NOT NULL CHECK (status IN ('draft', 'ready', 'starting', 'waiting_for_event', 'running', 'blocked', 'failed', 'completed', 'integration_pending', 'mock_preview')),
+  provenance TEXT NOT NULL CHECK (provenance IN ('user_input', 'local_draft', 'persisted_snapshot', 'backend_response', 'runtime_event', 'mock_fixture', 'unsupported')),
+  status_reason TEXT,
+  prompt_artifact_id TEXT,
+  output_artifact_id TEXT,
+  raw_event_artifact_id TEXT,
+  task_id TEXT,
+  task_run_id TEXT,
+  conversation_id TEXT,
+  event_ids_json TEXT NOT NULL DEFAULT '[]',
+  evidence_json TEXT NOT NULL DEFAULT '{}',
+  started_at TEXT,
+  completed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (build_package_id) REFERENCES orchestration_drafts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_orchestration_stage_runs_build_stage
+ON orchestration_stage_runs (build_package_id, stage_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_orchestration_stage_runs_task_links
+ON orchestration_stage_runs (task_id, task_run_id, conversation_id);
+";
+
+const AGENT_SESSION_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS agent_sessions (
+  id TEXT PRIMARY KEY,
+  codex_session_id TEXT,
+  status TEXT NOT NULL,
+  command TEXT NOT NULL,
+  args_json TEXT NOT NULL,
+  cwd TEXT,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  exit_code INTEGER,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_session_cli_logs (
+  id TEXT PRIMARY KEY,
+  agent_session_id TEXT NOT NULL,
+  stream_id TEXT NOT NULL,
+  stdout TEXT NOT NULL,
+  stderr TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (agent_session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
+);
+";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4518,6 +7435,52 @@ mod tests {
             self.calls.borrow_mut().push(input);
             self.result.clone()
         }
+    }
+
+    #[test]
+    fn agent_session_uses_codex_exec_without_requiring_a_terminal() {
+        let input = StartAgentSessionCommandInput {
+            stream_id: None,
+            session_id: None,
+            prompt: "Test prompt".to_string(),
+            cwd: None,
+            additional_args: None,
+            env: None,
+        };
+
+        assert_eq!(
+            build_agent_session_args(&input),
+            vec![
+                "exec".to_string(),
+                "--json".to_string(),
+                "Test prompt".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn agent_session_resume_uses_codex_exec_resume_with_additional_args() {
+        let input = StartAgentSessionCommandInput {
+            stream_id: None,
+            session_id: Some("agent-session-1".to_string()),
+            prompt: "Continue the task".to_string(),
+            cwd: None,
+            additional_args: Some(vec!["--model".to_string(), "gpt-5.5".to_string()]),
+            env: None,
+        };
+
+        assert_eq!(
+            build_agent_session_args(&input),
+            vec![
+                "exec".to_string(),
+                "--json".to_string(),
+                "--model".to_string(),
+                "gpt-5.5".to_string(),
+                "resume".to_string(),
+                "agent-session-1".to_string(),
+                "Continue the task".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -4602,6 +7565,568 @@ mod tests {
         archive_task(&conn, &task_id).expect("archive task");
         let archived = load_dashboard_snapshot(&conn).expect("archived snapshot");
         assert_eq!(archived.total_open_tasks, 0);
+    }
+
+    #[test]
+    fn orchestration_drafts_are_persisted_and_rehydrated_without_runtime_progress() {
+        let conn = open_memory_database();
+
+        let created = create_orchestration_draft_record(
+            &conn,
+            CreateOrchestrationDraftCommandInput {
+                title: "Persist orchestration draft".to_string(),
+                folder_path: "C:/orchestrations/persist".to_string(),
+                prompt: "Keep this prompt after reload.".to_string(),
+                files: vec![UploadedOrchestrationDraftFileInput {
+                    id: "file-1".to_string(),
+                    name: "handoff.md".to_string(),
+                    size: 12,
+                    last_modified: Some(1_788_888_000_000),
+                }],
+            },
+        )
+        .expect("create orchestration draft");
+
+        assert_eq!(created["clientState"]["persisted"], true);
+        assert_eq!(created["clientState"]["runtimeSupported"], false);
+        assert_eq!(created["clientState"]["provenance"], "persisted_snapshot");
+        assert_eq!(
+            created["stages"][0]["state"]["status"],
+            "integration_pending"
+        );
+        assert_eq!(created["stages"][0]["state"]["provenance"], "unsupported");
+        assert!(created["generatedFiles"]
+            .as_array()
+            .expect("generated files")
+            .is_empty());
+        assert!(created["stageRuns"].as_array().unwrap().is_empty());
+        assert_eq!(created["runtimeRoutes"][0]["stageId"], "plan-builder");
+        assert_eq!(created["runtimeRoutes"][0]["status"], "blocked");
+        assert_eq!(
+            created["runtimeRoutes"][0]["truth"],
+            json!({ "status": "blocked", "provenance": "unsupported" })
+        );
+        assert!(created["runtimeRoutes"][0].get("cwd").is_none());
+        assert!(created["runtimeRoutes"][0].get("taskId").is_none());
+        assert!(created["runtimeRoutes"][0].get("worktreeId").is_none());
+
+        let registry = load_orchestration_registry_snapshot(&conn).expect("registry snapshot");
+        assert_eq!(registry["orchestrations"].as_array().unwrap().len(), 0);
+        assert_eq!(registry["buildPackages"].as_array().unwrap().len(), 1);
+        assert!(registry["buildPackages"][0]["stageRuns"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            registry["buildPackages"][0]["sourcePrompt"],
+            "Keep this prompt after reload."
+        );
+        assert_eq!(registry["clientState"]["persisted"], true);
+    }
+
+    #[test]
+    fn load_orchestration_snapshot_returns_explicit_integration_pending_error() {
+        let conn = open_memory_database();
+        let created = create_orchestration_draft_record(
+            &conn,
+            CreateOrchestrationDraftCommandInput {
+                title: "Persist orchestration draft".to_string(),
+                folder_path: "C:/orchestrations/persist".to_string(),
+                prompt: "Keep this prompt after reload.".to_string(),
+                files: vec![],
+            },
+        )
+        .expect("create orchestration draft");
+        let build_package_id = created["id"].as_str().unwrap().to_string();
+
+        let error = load_orchestration_snapshot(&conn, &build_package_id)
+            .expect_err("live orchestration loading is not implemented");
+
+        assert!(error.contains("integration-pending"));
+        assert!(error.contains("does not persist or fabricate live orchestration snapshots"));
+    }
+
+    #[test]
+    fn orchestration_draft_note_and_files_update_persisted_snapshot() {
+        let conn = open_memory_database();
+        let created = create_orchestration_draft_record(
+            &conn,
+            CreateOrchestrationDraftCommandInput {
+                title: "Persist orchestration draft".to_string(),
+                folder_path: "C:/orchestrations/persist".to_string(),
+                prompt: "Keep this prompt after reload.".to_string(),
+                files: vec![],
+            },
+        )
+        .expect("create orchestration draft");
+        let build_package_id = created["id"].as_str().unwrap().to_string();
+
+        let noted = add_orchestration_draft_note_record(
+            &conn,
+            AddOrchestrationDraftNoteCommandInput {
+                build_package_id: build_package_id.clone(),
+                body: "Additional local context.".to_string(),
+            },
+        )
+        .expect("add note");
+        assert_eq!(noted["messages"].as_array().unwrap().len(), 5);
+        assert_eq!(
+            noted["messages"][3]["truth"],
+            json!({ "status": "draft", "provenance": "persisted_snapshot" })
+        );
+        assert_eq!(
+            noted["messages"][4]["truth"],
+            json!({ "status": "integration_pending", "provenance": "unsupported" })
+        );
+        assert!(noted["messages"][4]["body"]
+            .as_str()
+            .unwrap()
+            .contains("not sent to the same Plan Builder runtime conversation"));
+
+        let with_files = attach_orchestration_draft_files_record(
+            &conn,
+            AttachOrchestrationDraftFilesCommandInput {
+                build_package_id: build_package_id.clone(),
+                files: vec![
+                    UploadedOrchestrationDraftFileInput {
+                        id: "file-1".to_string(),
+                        name: "roadmap.md".to_string(),
+                        size: 24,
+                        last_modified: None,
+                    },
+                    UploadedOrchestrationDraftFileInput {
+                        id: "file-2".to_string(),
+                        name: "roadmap.md".to_string(),
+                        size: 24,
+                        last_modified: None,
+                    },
+                ],
+            },
+        )
+        .expect("attach files");
+        assert_eq!(with_files["files"].as_array().unwrap().len(), 1);
+
+        let registry = load_orchestration_registry_snapshot(&conn).expect("registry snapshot");
+        assert_eq!(
+            registry["buildPackages"][0]["messages"]
+                .as_array()
+                .unwrap()
+                .len(),
+            5
+        );
+        assert_eq!(
+            registry["buildPackages"][0]["files"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn orchestration_runtime_requests_return_unsupported_without_completing_stages() {
+        let conn = open_memory_database();
+        let created = create_orchestration_draft_record(
+            &conn,
+            CreateOrchestrationDraftCommandInput {
+                title: "Persist orchestration draft".to_string(),
+                folder_path: "C:/orchestrations/persist".to_string(),
+                prompt: "Keep this prompt after reload.".to_string(),
+                files: vec![],
+            },
+        )
+        .expect("create orchestration draft");
+        let build_package_id = created["id"].as_str().unwrap().to_string();
+
+        let stage_result = request_orchestration_build_stage_record(
+            &conn,
+            RequestOrchestrationBuildStageCommandInput {
+                build_package_id: build_package_id.clone(),
+                stage_id: "plan-builder".to_string(),
+            },
+        )
+        .expect("request build stage");
+        assert_eq!(
+            stage_result["clientState"]["notices"][0]["truth"],
+            json!({ "status": "blocked", "provenance": "unsupported" })
+        );
+        assert_eq!(stage_result["clientState"]["notices"][0]["kind"], "blocker");
+        assert_eq!(
+            stage_result["stages"][0]["state"],
+            json!({ "status": "blocked", "provenance": "unsupported" })
+        );
+        assert!(stage_result["stages"]
+            .as_array()
+            .expect("stages")
+            .iter()
+            .all(|stage| stage["state"]["status"] != "completed"));
+        assert!(stage_result["stageRuns"].as_array().unwrap().is_empty());
+        assert!(stage_result["runtimeRoutes"][0].get("cwd").is_none());
+        assert!(stage_result["runtimeRoutes"][0].get("taskId").is_none());
+        assert!(stage_result["runtimeRoutes"][0].get("worktreeId").is_none());
+        assert!(stage_result["generatedFiles"]
+            .as_array()
+            .expect("generated files")
+            .iter()
+            .all(|file| file["state"]["status"] != "completed"));
+
+        let start_result = start_orchestration_record(
+            &conn,
+            StartOrchestrationCommandInput {
+                build_package_id: build_package_id.clone(),
+            },
+        )
+        .expect("start orchestration");
+        assert!(start_result.get("orchestration").is_none());
+        assert_eq!(start_result["clientState"]["runtimeSupported"], false);
+        assert_eq!(
+            start_result["clientState"]["notices"][0]["truth"],
+            json!({ "status": "integration_pending", "provenance": "unsupported" })
+        );
+    }
+
+    #[test]
+    fn orchestration_stage_run_evidence_is_owned_and_rehydrated_without_implied_outputs() {
+        let conn = open_memory_database();
+        let created = create_orchestration_draft_record(
+            &conn,
+            CreateOrchestrationDraftCommandInput {
+                title: "Persist orchestration draft".to_string(),
+                folder_path: "C:/orchestrations/persist".to_string(),
+                prompt: "Keep this prompt after reload.".to_string(),
+                files: vec![],
+            },
+        )
+        .expect("create orchestration draft");
+        let build_package_id = created["id"].as_str().unwrap().to_string();
+
+        let with_evidence = insert_orchestration_stage_run_evidence(
+            &conn,
+            stage_run_evidence_record(
+                &build_package_id,
+                "completed",
+                "backend_response",
+                Some("Plan-builder command returned a structured output artifact.".to_string()),
+            ),
+        )
+        .expect("insert stage run evidence");
+
+        assert_eq!(with_evidence["stageRuns"].as_array().unwrap().len(), 1);
+        assert_eq!(with_evidence["stageRuns"][0]["stageId"], "plan-builder");
+        assert_eq!(
+            with_evidence["stageRuns"][0]["state"],
+            json!({ "status": "completed", "provenance": "backend_response" })
+        );
+        assert_eq!(
+            with_evidence["stageRuns"][0]["promptArtifactId"],
+            "artifact-prompt-1"
+        );
+        assert_eq!(
+            with_evidence["stageRuns"][0]["outputArtifactId"],
+            "artifact-output-1"
+        );
+        assert_eq!(
+            with_evidence["stageRuns"][0]["rawEventArtifactId"],
+            "artifact-events-1"
+        );
+        assert_eq!(
+            with_evidence["stageRuns"][0]["eventIds"],
+            json!(["event-1", "event-2"])
+        );
+        assert_eq!(
+            with_evidence["stageRuns"][0]["evidence"]["schema"],
+            "orchestration-stage-run-evidence/v1"
+        );
+        assert_eq!(
+            with_evidence["stages"][0]["state"],
+            json!({ "status": "integration_pending", "provenance": "unsupported" })
+        );
+        assert!(with_evidence["generatedFiles"]
+            .as_array()
+            .expect("generated files")
+            .iter()
+            .all(|file| file["state"]["status"] != "completed"));
+
+        let registry = load_orchestration_registry_snapshot(&conn).expect("registry snapshot");
+        assert_eq!(
+            registry["buildPackages"][0]["stageRuns"][0]["taskRunId"],
+            "task-run-1"
+        );
+        assert_eq!(
+            registry["buildPackages"][0]["stageRuns"][0]["conversationId"],
+            "conversation-1"
+        );
+    }
+
+    #[test]
+    fn orchestration_stage_run_evidence_rejects_runtime_claims_without_runtime_provenance() {
+        let conn = open_memory_database();
+        let created = create_orchestration_draft_record(
+            &conn,
+            CreateOrchestrationDraftCommandInput {
+                title: "Persist orchestration draft".to_string(),
+                folder_path: "C:/orchestrations/persist".to_string(),
+                prompt: "Keep this prompt after reload.".to_string(),
+                files: vec![],
+            },
+        )
+        .expect("create orchestration draft");
+        let build_package_id = created["id"].as_str().unwrap().to_string();
+
+        let error = insert_orchestration_stage_run_evidence(
+            &conn,
+            stage_run_evidence_record(&build_package_id, "running", "persisted_snapshot", None),
+        )
+        .expect_err("reject unsupported runtime claim");
+
+        assert!(error.contains("requires backend_response or runtime_event provenance"));
+        let registry = load_orchestration_registry_snapshot(&conn).expect("registry snapshot");
+        assert!(registry["buildPackages"][0]["stageRuns"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn start_orchestration_plan_builder_run_persists_final_output_raw_stream_and_metadata_only_attachments(
+    ) {
+        let conn = open_memory_database();
+        let created = create_orchestration_draft_record(
+            &conn,
+            CreateOrchestrationDraftCommandInput {
+                title: "Persist orchestration draft".to_string(),
+                folder_path: "C:/orchestrations/persist".to_string(),
+                prompt: "Turn this migration handoff into an orchestration plan.".to_string(),
+                files: vec![UploadedOrchestrationDraftFileInput {
+                    id: "file-1".to_string(),
+                    name: "handoff.md".to_string(),
+                    size: 12,
+                    last_modified: Some(1_788_888_000_000),
+                }],
+            },
+        )
+        .expect("create orchestration draft");
+        let build_package_id = created["id"].as_str().unwrap().to_string();
+        let stdout = completed_codex_stdout(
+            "thread-plan-builder",
+            "Draft plan output with orchestrationPlanDraft JSON.",
+        );
+        let runner = FakeCodexRunner::new(Ok(CodexCommandRunResult {
+            stdout: stdout.clone(),
+            stderr: String::new(),
+            exit_code: Some(0),
+            signal: None,
+        }));
+
+        let result = start_orchestration_plan_builder_run_with_runner(
+            &conn,
+            StartOrchestrationPlanBuilderRunCommandInput {
+                build_package_id: build_package_id.clone(),
+            },
+            &runner,
+        )
+        .expect("start Plan Builder");
+
+        assert_eq!(result["clientState"]["status"], "completed");
+        assert_eq!(result["clientState"]["provenance"], "backend_response");
+        assert_eq!(result["clientState"]["runtimeSupported"], true);
+        assert_eq!(
+            result["stages"][0]["state"],
+            json!({ "status": "completed", "provenance": "backend_response" })
+        );
+        assert_eq!(
+            result["stages"][1]["state"],
+            json!({ "status": "ready", "provenance": "backend_response" })
+        );
+        assert_eq!(
+            result["clientState"]["primaryAction"]["id"],
+            "start-instantiation"
+        );
+        assert_eq!(result["stageRuns"].as_array().unwrap().len(), 1);
+        let stage_run = &result["stageRuns"][0];
+        assert_eq!(
+            stage_run["state"],
+            json!({ "status": "completed", "provenance": "backend_response" })
+        );
+        assert!(stage_run["promptArtifactId"].as_str().is_some());
+        assert!(stage_run["rawEventArtifactId"].as_str().is_some());
+        assert!(stage_run["outputArtifactId"].as_str().is_some());
+        assert_eq!(stage_run["conversationId"].as_str().is_some(), true);
+        assert_eq!(
+            stage_run["evidence"]["externalThreadId"],
+            "thread-plan-builder"
+        );
+        assert_eq!(stage_run["evidence"]["attachmentContentsSent"], false);
+        assert_eq!(
+            stage_run["evidence"]["attachmentMetadata"][0]["name"],
+            "handoff.md"
+        );
+        assert_eq!(
+            artifact_content_by_id(&conn, stage_run["rawEventArtifactId"].as_str().unwrap()),
+            stdout
+        );
+        assert_eq!(
+            artifact_content_by_id(&conn, stage_run["outputArtifactId"].as_str().unwrap()),
+            "Draft plan output with orchestrationPlanDraft JSON."
+        );
+        assert!(result["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| message["body"]
+                .as_str()
+                .is_some_and(|body| body.contains("orchestrationPlanDraft"))));
+        assert_eq!(
+            result["runtimeRoutes"][0]["runtimeCommand"],
+            "startOrchestrationPlanBuilderRun"
+        );
+
+        let calls = runner.calls.borrow();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].command, "codex");
+        assert_eq!(calls[0].args[0..2], ["exec", "--json"]);
+        assert_eq!(calls[0].cwd, None);
+        assert!(calls[0].args[2].contains("metadata-only"));
+        assert!(calls[0].args[2].contains("handoff.md"));
+        assert!(calls[0].args[2].contains("Do not instantiate"));
+
+        let registry = load_orchestration_registry_snapshot(&conn).expect("registry snapshot");
+        assert_eq!(
+            registry["buildPackages"][0]["stageRuns"][0]["rawEventArtifactId"],
+            stage_run["rawEventArtifactId"]
+        );
+        assert_eq!(
+            registry["buildPackages"][0]["clientState"]["status"],
+            "completed"
+        );
+    }
+
+    #[test]
+    fn instantiation_request_records_approval_without_generated_output() {
+        let conn = open_memory_database();
+        let created = create_orchestration_draft_record(
+            &conn,
+            CreateOrchestrationDraftCommandInput {
+                title: "Persist orchestration draft".to_string(),
+                folder_path: "C:/orchestrations/persist".to_string(),
+                prompt: "Keep this prompt after reload.".to_string(),
+                files: vec![],
+            },
+        )
+        .expect("create orchestration draft");
+        let build_package_id = created["id"].as_str().unwrap().to_string();
+
+        let result = request_orchestration_build_stage_record(
+            &conn,
+            RequestOrchestrationBuildStageCommandInput {
+                build_package_id,
+                stage_id: "instantiator".to_string(),
+            },
+        )
+        .expect("request instantiator");
+
+        assert_eq!(
+            result["stages"][1]["state"],
+            json!({ "status": "completed", "provenance": "backend_response" })
+        );
+        assert_eq!(
+            result["stages"][2]["state"],
+            json!({ "status": "integration_pending", "provenance": "unsupported" })
+        );
+        assert!(result["clientState"]["notices"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("No files were generated"));
+        assert!(result["stageRuns"].as_array().unwrap().is_empty());
+        assert!(result["generatedFiles"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn start_orchestration_plan_builder_run_preserves_draft_when_codex_launch_fails() {
+        let conn = open_memory_database();
+        let created = create_orchestration_draft_record(
+            &conn,
+            CreateOrchestrationDraftCommandInput {
+                title: "Persist orchestration draft".to_string(),
+                folder_path: "C:/orchestrations/persist".to_string(),
+                prompt: "Keep this prompt after launch failure.".to_string(),
+                files: vec![UploadedOrchestrationDraftFileInput {
+                    id: "file-1".to_string(),
+                    name: "handoff.md".to_string(),
+                    size: 12,
+                    last_modified: None,
+                }],
+            },
+        )
+        .expect("create orchestration draft");
+        let build_package_id = created["id"].as_str().unwrap().to_string();
+        let runner = FakeCodexRunner::new(Err("Access is denied".to_string()));
+
+        let result = start_orchestration_plan_builder_run_with_runner(
+            &conn,
+            StartOrchestrationPlanBuilderRunCommandInput {
+                build_package_id: build_package_id.clone(),
+            },
+            &runner,
+        )
+        .expect("failed Plan Builder launch returns snapshot");
+
+        assert_eq!(
+            result["sourcePrompt"],
+            "Keep this prompt after launch failure."
+        );
+        assert_eq!(result["files"].as_array().unwrap().len(), 1);
+        assert_eq!(result["clientState"]["status"], "failed");
+        assert_eq!(result["clientState"]["provenance"], "backend_response");
+        assert_eq!(
+            result["clientState"]["notices"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Access is denied"),
+            true
+        );
+        assert_eq!(
+            result["stages"][0]["state"],
+            json!({ "status": "failed", "provenance": "backend_response" })
+        );
+        let stage_run = &result["stageRuns"][0];
+        assert_eq!(
+            stage_run["state"],
+            json!({ "status": "failed", "provenance": "backend_response" })
+        );
+        assert!(stage_run["promptArtifactId"].as_str().is_some());
+        assert!(stage_run.get("rawEventArtifactId").is_none());
+        assert!(stage_run.get("outputArtifactId").is_none());
+        assert_eq!(stage_run["evidence"]["error"], "Access is denied");
+        assert!(result["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| message["body"]
+                .as_str()
+                .is_some_and(|body| body.contains("Access is denied"))));
+    }
+
+    #[test]
+    fn cancel_orchestration_draft_removes_it_from_active_registry() {
+        let conn = open_memory_database();
+        let created = create_orchestration_draft_record(
+            &conn,
+            CreateOrchestrationDraftCommandInput {
+                title: "Persist orchestration draft".to_string(),
+                folder_path: "C:/orchestrations/persist".to_string(),
+                prompt: "Keep this prompt after reload.".to_string(),
+                files: vec![],
+            },
+        )
+        .expect("create orchestration draft");
+        let build_package_id = created["id"].as_str().unwrap().to_string();
+
+        let registry =
+            cancel_orchestration_draft_record(&conn, &build_package_id).expect("cancel draft");
+
+        assert_eq!(registry["buildPackages"].as_array().unwrap().len(), 0);
+        assert!(select_orchestration_draft_snapshot(&conn, &build_package_id).is_err());
     }
 
     #[test]
@@ -5630,6 +9155,37 @@ branch refs/heads/worker/feature
         conn
     }
 
+    fn stage_run_evidence_record(
+        build_package_id: &str,
+        status: &str,
+        provenance: &str,
+        status_reason: Option<String>,
+    ) -> OrchestrationStageRunEvidenceRecord {
+        OrchestrationStageRunEvidenceRecord {
+            id: "stage-run-1".to_string(),
+            build_package_id: build_package_id.to_string(),
+            stage_id: "plan-builder".to_string(),
+            status: status.to_string(),
+            provenance: provenance.to_string(),
+            status_reason,
+            prompt_artifact_id: Some("artifact-prompt-1".to_string()),
+            output_artifact_id: Some("artifact-output-1".to_string()),
+            raw_event_artifact_id: Some("artifact-events-1".to_string()),
+            task_id: Some("task-1".to_string()),
+            task_run_id: Some("task-run-1".to_string()),
+            conversation_id: Some("conversation-1".to_string()),
+            event_ids: vec!["event-1".to_string(), "event-2".to_string()],
+            evidence: json!({
+                "schema": "orchestration-stage-run-evidence/v1",
+                "notes": "Test-only source-backed links; no generated files are implied.",
+            }),
+            started_at: Some(CREATED_AT.to_string()),
+            completed_at: Some("2026-07-02T10:05:00.000Z".to_string()),
+            created_at: CREATED_AT.to_string(),
+            updated_at: "2026-07-02T10:05:00.000Z".to_string(),
+        }
+    }
+
     fn completed_codex_stdout(thread_id: &str, final_message: &str) -> String {
         [
             format!(r#"{{"type":"thread.started","thread_id":"{thread_id}"}}"#),
@@ -5686,6 +9242,15 @@ branch refs/heads/worker/feature
             |row| row.get(0),
         )
         .expect("artifact count")
+    }
+
+    fn artifact_content_by_id(conn: &Connection, artifact_id: &str) -> String {
+        conn.query_row(
+            "SELECT content FROM artifacts WHERE id = ?1",
+            params![artifact_id],
+            |row| row.get::<_, String>(0),
+        )
+        .expect("artifact content")
     }
 
     fn seed_project(conn: &Connection) {

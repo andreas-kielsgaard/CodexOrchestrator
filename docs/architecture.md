@@ -27,6 +27,21 @@ explicitly pass post-run capture options, the same Rust run command can also col
 diff and/or run one validation command after a completed Codex run. Visible UI controls for those
 options are still deferred.
 
+Orchestration draft persistence is product-owned and separate from Open Tasks execution. Drafts live
+in `orchestration_drafts`; future real stage execution evidence belongs in
+`orchestration_stage_runs`, which can link to task, task-run, conversation, event, and artifact IDs
+when those records genuinely exist. The evidence table is a storage foundation only: it does not
+create Open Task rows, start Codex, mark generated files complete, or imply live orchestration
+support. UI running/completed states should be projected from backend/runtime evidence records, not
+from draft-local button clicks.
+
+Plan-builder runtime availability is represented as explicit route/preflight metadata on the build
+package. A persisted draft with only a selected orchestration folder is blocked for plan-builder
+execution: `folderPath` is not treated as a runnable `cwd`, and the backend must not create hidden
+Open Task rows to make the route work. A future supported route should name the real task/worktree
+or command source of truth, then write any resulting backend/runtime evidence through
+`orchestration_stage_runs`.
+
 ## Boundary Rules
 
 - React should consume application/domain facades, not parse Git, open SQLite, or execute Codex.
@@ -188,6 +203,22 @@ results when stdout is parseable; launch failures and untrustworthy JSONL still 
 
 This adapter does not compose task-run lifecycle state, persist artifacts, manage conversations,
 read or manage Codex credentials, run validation commands, collect diffs, or wire UI behavior.
+
+`appServerMessages.ts` parses captured `codex app-server` JSON-RPC-over-JSONL server streams. It
+normalizes response, notification, and unknown envelopes while preserving each raw object, and
+summarizes thread ids, turn ids, terminal `turn/completed` payloads, notification counts, response
+errors, and `thread/tokenUsage/updated` payloads. This boundary is intentionally raw-message
+first because app-server schemas are versioned with the local Codex runtime.
+
+Orchestration conversation views should eventually read their turn list, current-processing state,
+streamed/last output, and token usage from a product runtime feed built on this app-server boundary.
+React may render optimistic placeholder turns while starting work, but durable "what is currently
+going on" state belongs in the server/session watcher, not in page-local UI inference.
+
+`npm run probe:codex` runs `scripts/codex-surface-probe.mjs`, a live research harness that starts
+`codex app-server --listen stdio://`, drives `initialize` -> `thread/start` -> `turn/start`, and
+captures raw client/server JSONL next to a comparable `codex exec --json` run. Probe artifacts are
+written under `.dev/codex-surface-probes/` by default and are ignored by Git.
 
 ### Validation
 

@@ -10,13 +10,15 @@ import {
 } from '../application/postRunCaptureComposition';
 import type {
   RuntimeCommandClient,
+  StartAgentSessionCommandInput,
+  StartAgentSessionCommandResult,
   StartCodexTaskRunCommandInput,
   StartCodexTaskRunPostRunCaptureResult,
   StartCodexTaskRunCommandResult,
   StartCodexTaskRunTaskRunState,
   StartCodexTaskRunTaskState,
 } from '../application/runtimeCommandClient';
-import type { EntityId, Task, TaskRun } from '../domain/model';
+import type { EntityId, IsoDateTime, Task, TaskRun } from '../domain/model';
 import type { LocalRuntimeServiceComposition } from './localRuntimeComposition';
 
 export interface LocalRuntimeCommandHandlerOptions {
@@ -32,6 +34,36 @@ export function createLocalRuntimeCommandHandler(
     startCodexTaskRun(input: StartCodexTaskRunCommandInput) {
       return startCodexTaskRun(composition, input, options);
     },
+    startAgentSession(input: StartAgentSessionCommandInput) {
+      return startAgentSession(input, options);
+    },
+  };
+}
+
+export async function startAgentSession(
+  input: StartAgentSessionCommandInput,
+  options: LocalRuntimeCommandHandlerOptions = {},
+): Promise<StartAgentSessionCommandResult> {
+  const timestamp =
+    options.completedAt ?? options.startedAt ?? (new Date().toISOString() as IsoDateTime);
+
+  return {
+    sessionId: `local-agent-session-${crypto.randomUUID()}` as EntityId,
+    status: 'failed',
+    command: 'codex',
+    args: [
+      'exec',
+      '--json',
+      ...(input.additionalArgs ?? []),
+      ...(input.sessionId ? ['resume', input.sessionId] : []),
+      input.prompt,
+    ],
+    stdout: '',
+    stderr: '',
+    startedAt: options.startedAt ?? timestamp,
+    completedAt: options.completedAt ?? timestamp,
+    error:
+      'Local runtime composition cannot start standalone Agent Session CLI instances. Use the Tauri desktop runtime for live execution.',
   };
 }
 

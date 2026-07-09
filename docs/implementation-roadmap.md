@@ -119,6 +119,24 @@ Current planned sequence:
 After the `codex exec --json` loop works, add SDK/app-server support behind the same runtime
 boundary for interactive sessions, approvals, steering, interrupts, and live turn state.
 
+### Product-Owned Orchestration
+
+Use the repo-local skill folder at `product-skills/codex-orchestration-product/` when reworking the
+orchestration skill family or product workflow. That folder is intentionally not installed under
+`~/.codex/skills`; it stages the newer product-owned model where Codex Orchestrator stores
+topology, lifecycle state, prompt artifacts, routing, records, and UI history while Codex
+conversations act as bounded execution resources.
+
+The plan-builder/instantiator bridge should use structured artifacts: `orchestration-plan.json`
+for the nested proposed problem/stage map, `orchestration-live-state.json` for active lifecycle
+projection, `orchestration-blockers.json` for user-addressable blockers and conclusions, and
+`record-seed.json` for initial maintained-record structure. Markdown can remain human-readable,
+but the orchestration UI should read product-shaped JSON once persistence lands.
+
+Blockers should be directly resolvable in the product. A task or plan node linked to a blocker
+should open the blocker detail, show the requested decision and context, and save the user's
+conclusion so the next planner can consume it without asking an agent to rediscover the answer.
+
 ### Workflow Engine
 
 Add editable workflows for branch naming, worktree strategy, Codex profile/sandbox settings,

@@ -12,6 +12,7 @@ export interface RuntimeStatusSnapshot {
 
 export interface RuntimeStatusClient {
   checkStatus(): Promise<RuntimeStatusSnapshot>;
+  clearStale?(): Promise<RuntimeStatusSnapshot>;
 }
 
 export function unavailableRuntimeStatus(checkedAt: string = new Date().toISOString()) {

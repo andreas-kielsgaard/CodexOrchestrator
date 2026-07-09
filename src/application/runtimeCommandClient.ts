@@ -2,6 +2,46 @@ import type { AttentionState, EntityId, ExecutionState, IsoDateTime } from '../d
 
 export interface RuntimeCommandClient {
   startCodexTaskRun(input: StartCodexTaskRunCommandInput): Promise<StartCodexTaskRunCommandResult>;
+  startAgentSession(
+    input: StartAgentSessionCommandInput,
+    options?: StartAgentSessionCommandOptions,
+  ): Promise<StartAgentSessionCommandResult>;
+  loadAgentSession?(sessionId: EntityId): Promise<StartAgentSessionCommandResult | null>;
+}
+
+export interface StartAgentSessionCommandInput {
+  streamId?: EntityId;
+  sessionId?: EntityId;
+  prompt: string;
+  cwd?: string;
+  additionalArgs?: readonly string[];
+  env?: Record<string, string | undefined>;
+}
+
+export interface StartAgentSessionCommandOptions {
+  onOutput?(chunk: StartAgentSessionOutputChunk): void;
+}
+
+export interface StartAgentSessionOutputChunk {
+  stream: 'stdout' | 'stderr' | 'system';
+  content: string;
+}
+
+export type StartAgentSessionCommandStatus = 'completed' | 'failed';
+
+export interface StartAgentSessionCommandResult {
+  sessionId: EntityId;
+  status: StartAgentSessionCommandStatus;
+  command: string;
+  args: string[];
+  stdout: string;
+  stderr: string;
+  outputWasStreamed?: boolean;
+  startedAt: IsoDateTime;
+  completedAt: IsoDateTime;
+  exitCode?: number;
+  signal?: string;
+  error?: string;
 }
 
 export interface StartCodexTaskRunCommandInput {

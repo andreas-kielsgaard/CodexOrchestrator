@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-ssr/
 coverage/
+storybook-static/
 .vite/
 .dev/
 src-tauri/target/
@@ -9,4 +10,3 @@ src-tauri/gen/
 .DS_Store
 *.local
 *.log
-
