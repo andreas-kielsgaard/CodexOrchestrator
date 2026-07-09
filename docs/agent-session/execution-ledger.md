@@ -25,16 +25,16 @@ Integration root: current Codex task on `codex/agent-session-reset`
 
 ## Work Thread Reasoning Policy
 
-- AS-01 contracts: high, because boundary mistakes propagate through every later slice.
-- AS-02 repository: high, because transaction and rehydration invariants need careful coverage.
-- AS-03 supervisor: xhigh, because concurrency, cancellation, and shutdown are high-risk.
-- AS-04 Codex adapter: high, because the provider protocol is bounded and fixture-testable.
-- AS-05 lifecycle integration: xhigh, because it joins persistence, processes, and transport.
-- AS-06 projection/UI: high, because it combines state reconciliation with presentation policy.
-- AS-07 recovery gate: high, focused on adversarial verification rather than new architecture.
+- AS-01 contracts: launched at high before the policy was adjusted; correction work stays narrow.
+- AS-02 repository: medium.
+- AS-03 supervisor: high because concurrency, cancellation, and shutdown are high-risk.
+- AS-04 Codex adapter: medium because the provider protocol is bounded and fixture-testable.
+- AS-05 lifecycle integration: high because it joins persistence, processes, and transport.
+- AS-06 projection/UI: medium.
+- AS-07 recovery gate: medium, focused on verification rather than new architecture.
 
-Reasoning effort may be reduced for a narrowly mechanical correction, but should not be raised to
-compensate for an over-broad prompt.
+Medium is the default. Reasoning effort may be reduced for a narrowly mechanical correction, but
+should not be raised to compensate for an over-broad prompt. No slice uses xhigh by default.
 
 ## Work Package State
 
