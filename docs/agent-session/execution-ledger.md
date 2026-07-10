@@ -39,16 +39,16 @@ slice uses xhigh by default.
 
 ## Work Package State
 
-| Package                                 | State            | Thread                                 | Integrated commit               | Integration result |
-| --------------------------------------- | ---------------- | -------------------------------------- | ------------------------------- | ------------------ |
-| AS-00 Structural and migration baseline | integrated       | `019f4905-dc10-7c80-9e42-882196abac18` | `4e171e9`                       | accepted           |
-| AS-01 Agent Session contracts           | integrated       | `019f491f-7f59-7500-9bf0-d0feaa28a59b` | `d717a28`, `dde0d8e`            | accepted           |
-| AS-02 Durable repository and queries    | integrated       | `019f4947-7ca7-7f63-ac64-fe59a0174299` | `64c26ab`, `0f7da0f`            | accepted           |
-| AS-03 Real process supervisor           | integrated       | `019f4947-7cb4-7c60-ab09-4ea5528da2cc` | `ddef6a5`, `35ebf8d`            | accepted           |
-| AS-04 Codex CLI runtime adapter         | integrated       | `019f4af8-66ae-7e33-a641-9162851d0114` | `f2af49b`, `8be4d9e`, `d0d764e` | accepted           |
-| AS-05 Application and Tauri lifecycle   | integrated       | `019f4b21-1aee-7272-aed8-a953a6b6cc1d` | `a9c716b`, `09d43ec`            | accepted           |
-| AS-06 Transcript projection and UI      | active           | `019f4b50-0ba0-7ce2-9875-2ec9992d126d` | —                               | —                  |
-| AS-07 End-to-end recovery gate          | blocked by AS-06 | pending                                | —                               | —                  |
+| Package                                 | State      | Thread                                 | Integrated commit               | Integration result |
+| --------------------------------------- | ---------- | -------------------------------------- | ------------------------------- | ------------------ |
+| AS-00 Structural and migration baseline | integrated | `019f4905-dc10-7c80-9e42-882196abac18` | `4e171e9`                       | accepted           |
+| AS-01 Agent Session contracts           | integrated | `019f491f-7f59-7500-9bf0-d0feaa28a59b` | `d717a28`, `dde0d8e`            | accepted           |
+| AS-02 Durable repository and queries    | integrated | `019f4947-7ca7-7f63-ac64-fe59a0174299` | `64c26ab`, `0f7da0f`            | accepted           |
+| AS-03 Real process supervisor           | integrated | `019f4947-7cb4-7c60-ab09-4ea5528da2cc` | `ddef6a5`, `35ebf8d`            | accepted           |
+| AS-04 Codex CLI runtime adapter         | integrated | `019f4af8-66ae-7e33-a641-9162851d0114` | `f2af49b`, `8be4d9e`, `d0d764e` | accepted           |
+| AS-05 Application and Tauri lifecycle   | integrated | `019f4b21-1aee-7272-aed8-a953a6b6cc1d` | `a9c716b`, `09d43ec`            | accepted           |
+| AS-06 Transcript projection and UI      | integrated | `019f4b50-0ba0-7ce2-9875-2ec9992d126d` | `0ebe65b`, `abe27e4`            | accepted           |
+| AS-07 End-to-end recovery gate          | ready      | pending                                | —                               | —                  |
 
 States used: `blocked`, `ready`, `active`, `review`, `correction`, `integrated`, `failed`, and
 `superseded`.
@@ -98,3 +98,11 @@ States used: `blocked`, `ready`, `active`, `review`, `correction`, `integrated`,
   separately executed installed Codex CLI compatibility probe, all 297 frontend tests, Rust check
   and formatting, and frontend build, lint, and formatting.
 - AS-06 started from root commit `1848a2d` with medium reasoning.
+- AS-06 worker commit `a0b89de` was reviewed and integrated as `0ebe65b`. Two attempted worker
+  correction turns failed before agent startup and produced no edits, so the integration root made
+  the bounded review corrections in `abe27e4` without creating a duplicate slice thread.
+- AS-06 corrections added safe GFM rendering, deliberate transcript-follow behavior, live technical
+  detail visibility, delayed-subscription cleanup, a usable mobile new-session control, and
+  feature-owned styles while preserving completed-turn processing collapse.
+- AS-06 verification passed all 324 frontend tests, the production build, lint, formatting, and
+  dependency resolution for the Markdown renderer.
