@@ -898,6 +898,9 @@ fn apply_registered_migrations(conn: &Connection, migrations: &[Migration]) -> R
         let tx = conn
             .unchecked_transaction()
             .map_err(sql_error("begin schema migration"))?;
+        if let Some(prepare) = migration.prepare {
+            prepare(&tx)?;
+        }
         tx.execute_batch(migration.sql)
             .map_err(|error| format!("Unable to apply migration {}: {error}", migration.id))?;
         tx.execute(
@@ -4312,6 +4315,7 @@ struct Migration {
     id: &'static str,
     position: i64,
     sql: &'static str,
+    prepare: Option<fn(&Connection) -> Result<(), String>>,
 }
 
 const ARCHIVED_PROTOTYPE_MIGRATIONS: [(&str, i64); 3] = [
@@ -4358,32 +4362,43 @@ fn validate_migration_registration(migrations: &[Migration]) -> Result<(), Strin
     Ok(())
 }
 
-fn app_migrations() -> [Migration; 5] {
+fn app_migrations() -> [Migration; 6] {
     [
         Migration {
             id: "001_repo_sync_schema",
             position: 0,
             sql: REPO_SYNC_SCHEMA,
+            prepare: None,
         },
         Migration {
             id: "002_open_tasks_schema",
             position: 1,
             sql: TASK_SCHEMA,
+            prepare: None,
         },
         Migration {
             id: "003_task_runs_conversations_schema",
             position: 2,
             sql: RUN_CONVERSATION_SCHEMA,
+            prepare: None,
         },
         Migration {
             id: "004_artifacts_validation_runs_schema",
             position: 3,
             sql: ARTIFACT_VALIDATION_SCHEMA,
+            prepare: None,
         },
         Migration {
             id: "005_events_schema",
             position: 4,
             sql: EVENT_SCHEMA,
+            prepare: None,
+        },
+        Migration {
+            id: "009_durable_agent_sessions_schema",
+            position: 8,
+            sql: agent_sessions::repository::AGENT_SESSION_SCHEMA,
+            prepare: Some(agent_sessions::repository::quarantine_archived_prototype_tables),
         },
     ]
 }
@@ -4651,21 +4666,44 @@ INSERT INTO schema_migrations (id, applied_at, position) VALUES
   ('006_orchestration_drafts_schema', 'prototype-006', 5),
   ('007_orchestration_stage_runs_schema', 'prototype-007', 6),
   ('008_agent_sessions_schema', 'prototype-008', 7);
+
+CREATE TABLE agent_sessions (
+  id TEXT PRIMARY KEY,
+  codex_session_id TEXT,
+  status TEXT NOT NULL,
+  command TEXT NOT NULL,
+  args_json TEXT NOT NULL,
+  cwd TEXT,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  exit_code INTEGER,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE agent_session_cli_logs (
+  id TEXT PRIMARY KEY,
+  agent_session_id TEXT NOT NULL,
+  stream_id TEXT NOT NULL,
+  stdout TEXT NOT NULL,
+  stderr TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (agent_session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
+);
+INSERT INTO agent_sessions VALUES (
+  'prototype-session', 'codex-thread', 'completed', 'codex', '[\"exec\"]', 'C:/work',
+  '2026-07-01T00:00:00Z', '2026-07-01T00:01:00Z', 0, NULL,
+  '2026-07-01T00:00:00Z', '2026-07-01T00:01:00Z'
+);
+INSERT INTO agent_session_cli_logs VALUES (
+  'prototype-log', 'prototype-session', 'stream', 'stdout', 'stderr',
+  '2026-07-01T00:01:00Z'
+);
 ",
         )
         .expect("seed prototype migration ledger");
 
         initialize_database(&conn).expect("initialize around prototype ledger");
-        apply_registered_migrations(
-            &conn,
-            &[Migration {
-                id: "009_future_schema",
-                position: 8,
-                sql: "CREATE TABLE future_schema (id TEXT PRIMARY KEY);",
-            }],
-        )
-        .expect("apply migration after reserved prototype positions");
-
         let mut stmt = conn
             .prepare("SELECT id, position FROM schema_migrations ORDER BY position")
             .expect("prepare migration ledger query");
@@ -4688,8 +4726,140 @@ INSERT INTO schema_migrations (id, applied_at, position) VALUES
                 ("006_orchestration_drafts_schema".to_string(), 5),
                 ("007_orchestration_stage_runs_schema".to_string(), 6),
                 ("008_agent_sessions_schema".to_string(), 7),
-                ("009_future_schema".to_string(), 8),
+                ("009_durable_agent_sessions_schema".to_string(), 8),
             ]
+        );
+
+        assert_eq!(
+            conn.query_row(
+                "SELECT codex_session_id FROM archived_prototype_agent_sessions_008 WHERE id = 'prototype-session'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("quarantined prototype session"),
+            "codex-thread"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT stdout FROM archived_prototype_agent_session_cli_logs_008 WHERE id = 'prototype-log'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("quarantined prototype log"),
+            "stdout"
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM agent_sessions", [], |row| row
+                .get::<_, i64>(0))
+                .expect("new durable Agent Session table"),
+            0
+        );
+    }
+
+    #[test]
+    fn initializes_clean_database_with_durable_agent_session_schema_at_position_eight() {
+        let conn = Connection::open_in_memory().expect("memory database");
+
+        initialize_database(&conn).expect("initialize clean database");
+
+        assert_eq!(
+            conn.query_row(
+                "SELECT position FROM schema_migrations WHERE id = '009_durable_agent_sessions_schema'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("durable Agent Session migration ledger row"),
+            8
+        );
+        let tables = [
+            "agent_sessions",
+            "agent_session_invocations",
+            "agent_session_runtime_events",
+            "agent_session_invocation_diagnostics",
+        ];
+        for table in tables {
+            assert_eq!(
+                conn.query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    params![table],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("query durable table"),
+                1,
+                "missing {table}"
+            );
+        }
+    }
+
+    #[test]
+    fn initializes_database_with_archived_ledger_but_no_prototype_tables() {
+        let conn = Connection::open_in_memory().expect("memory database");
+        conn.execute_batch(
+            "
+CREATE TABLE schema_migrations (
+  id TEXT PRIMARY KEY,
+  applied_at TEXT NOT NULL,
+  position INTEGER NOT NULL CHECK (position >= 0),
+  UNIQUE (position)
+);
+INSERT INTO schema_migrations (id, applied_at, position) VALUES
+  ('006_orchestration_drafts_schema', 'prototype-006', 5),
+  ('007_orchestration_stage_runs_schema', 'prototype-007', 6),
+  ('008_agent_sessions_schema', 'prototype-008', 7);
+",
+        )
+        .expect("seed archived ledger only");
+
+        initialize_database(&conn).expect("initialize archived ledger without tables");
+
+        assert_eq!(
+            conn.query_row(
+                "SELECT position FROM schema_migrations WHERE id = '009_durable_agent_sessions_schema'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("durable migration"),
+            8
+        );
+    }
+
+    #[test]
+    fn rejects_unrecognized_agent_session_table_without_altering_it_or_recording_009() {
+        let conn = Connection::open_in_memory().expect("memory database");
+        conn.execute_batch(
+            "
+CREATE TABLE schema_migrations (
+  id TEXT PRIMARY KEY,
+  applied_at TEXT NOT NULL,
+  position INTEGER NOT NULL CHECK (position >= 0),
+  UNIQUE (position)
+);
+CREATE TABLE agent_sessions (id TEXT PRIMARY KEY, unexpected TEXT NOT NULL);
+INSERT INTO agent_sessions VALUES ('keep-me', 'untouched');
+",
+        )
+        .expect("seed unrecognized collision");
+
+        let error = initialize_database(&conn).expect_err("reject unknown Agent Session table");
+
+        assert!(error.contains("not the recognized archived 008 prototype shape"));
+        assert_eq!(
+            conn.query_row(
+                "SELECT unexpected FROM agent_sessions WHERE id = 'keep-me'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("original table remains"),
+            "untouched"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM schema_migrations WHERE id = '009_durable_agent_sessions_schema'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("query migration ledger"),
+            0
         );
     }
 
