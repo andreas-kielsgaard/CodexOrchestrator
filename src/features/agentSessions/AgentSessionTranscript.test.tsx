@@ -70,6 +70,26 @@ describe('AgentSessionTranscript', () => {
     fireEvent.click(screen.getByText('Technical details (1)'));
     expect(screen.getByText('malformed jsonl')).toBeVisible();
   });
+
+  it('shows technical output while work is live and collapses it at completion', () => {
+    const unknown = runtimeEvent(1, 'unknown', 'Unclassified runtime output');
+    const { rerender } = renderTranscript(
+      projectAgentSessionTranscript(sessionDetails('running', [unknown])),
+    );
+
+    expect(screen.getByText('Unclassified runtime output')).toBeVisible();
+
+    rerender(
+      <AgentSessionTranscript
+        transcript={projectAgentSessionTranscript(sessionDetails('completed', [unknown]))}
+        loading={false}
+        expandedProcessing={new Set()}
+        onToggleProcessing={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText('Unclassified runtime output')).not.toBeVisible();
+  });
 });
 
 function renderTranscript(transcript: ReturnType<typeof projectAgentSessionTranscript>) {

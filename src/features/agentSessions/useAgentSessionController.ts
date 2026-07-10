@@ -102,6 +102,11 @@ export function useAgentSessionController(client: AgentSessionClient): AgentSess
     let unsubscribe: (() => void) | undefined;
     const ready = (async () => {
       unsubscribe = await client.subscribeUpdates((update) => void reconcileUpdate(update));
+      if (canceled) {
+        unsubscribe();
+        unsubscribe = undefined;
+        return;
+      }
       const nextSummaries = await refreshSummaries();
       if (canceled) return;
       const initialId = selectedIdRef.current ?? nextSummaries[0]?.id ?? null;

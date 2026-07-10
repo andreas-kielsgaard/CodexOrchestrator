@@ -4,6 +4,8 @@ import { AgentSessionComposer } from './AgentSessionComposer';
 import { AgentSessionTranscript } from './AgentSessionTranscript';
 import { SessionSelector } from './SessionSelector';
 import { useAgentSessionController } from './useAgentSessionController';
+import { useTranscriptFollow } from './useTranscriptFollow';
+import './agentSession.css';
 
 export interface AgentSessionScreenProps {
   client: AgentSessionClient;
@@ -13,6 +15,14 @@ export function AgentSessionScreen({ client }: AgentSessionScreenProps) {
   const controller = useAgentSessionController(client);
   const active = Boolean(controller.transcript?.activeInvocationId);
   const title = controller.details?.session.title ?? 'New Agent Session';
+  const transcriptRevision =
+    controller.transcript?.invocations
+      .map(
+        (invocation) =>
+          `${invocation.id}:${invocation.status}:${invocation.processing.length}:${invocation.technical.length}:${invocation.finalResponse?.length ?? 0}`,
+      )
+      .join('|') ?? 'empty';
+  const transcriptFollow = useTranscriptFollow(controller.selectedSessionId, transcriptRevision);
 
   return (
     <main className="agent-session-screen">
@@ -53,7 +63,11 @@ export function AgentSessionScreen({ client }: AgentSessionScreenProps) {
             </button>
           </section>
         )}
-        <div className="agent-session-scroll-region">
+        <div
+          className="agent-session-scroll-region"
+          ref={transcriptFollow.containerRef}
+          onScroll={transcriptFollow.handleScroll}
+        >
           <AgentSessionTranscript
             transcript={controller.transcript}
             loading={controller.loading}
@@ -70,7 +84,10 @@ export function AgentSessionScreen({ client }: AgentSessionScreenProps) {
           canceling={controller.canceling}
           onDraftChange={controller.setDraft}
           onWorkingDirectoryChange={controller.setWorkingDirectory}
-          onSend={() => void controller.send()}
+          onSend={() => {
+            transcriptFollow.requestFollow();
+            void controller.send();
+          }}
           onCancel={() => void controller.cancel()}
         />
       </section>

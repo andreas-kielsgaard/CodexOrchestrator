@@ -1,4 +1,5 @@
 import type { TranscriptActivity } from './transcriptProjector';
+import { AgentMarkdown } from './AgentMarkdown';
 
 interface ProcessingDisclosureProps {
   invocationId: string;
@@ -33,7 +34,11 @@ export function ProcessingDisclosure({
         {activity.map((item) => (
           <li className={`activity-${item.kind}`} key={item.id}>
             <span>{activityLabel(item.kind)}</span>
-            <p>{item.text}</p>
+            {item.kind === 'agent_intermediate' ? (
+              <AgentMarkdown className="agent-activity-markdown">{item.text}</AgentMarkdown>
+            ) : (
+              <p>{item.text}</p>
+            )}
             <details className="raw-event-disclosure">
               <summary>Raw event</summary>
               <pre>{formatRaw(item.rawPayload)}</pre>

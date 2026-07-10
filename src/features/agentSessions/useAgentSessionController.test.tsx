@@ -22,6 +22,29 @@ describe('useAgentSessionController', () => {
     expect(result.current.details?.session.id).toBe('session-1');
   });
 
+  it('releases a delayed subscription that resolves after unmount', async () => {
+    let resolveSubscription: ((unsubscribe: () => void) => void) | undefined;
+    const unsubscribe = vi.fn();
+    const client = new FakeAgentSessionClient();
+    client.subscribeUpdates = vi.fn(
+      () =>
+        new Promise<() => void>((resolve) => {
+          resolveSubscription = resolve;
+        }),
+    );
+
+    const { unmount } = renderHook(() => useAgentSessionController(client));
+    unmount();
+
+    await act(async () => {
+      resolveSubscription?.(unsubscribe);
+      await Promise.resolve();
+    });
+
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(client.calls).not.toContain('list');
+  });
+
   it('lazily creates a first session through send, selects acknowledged IDs, and reloads', async () => {
     const client = new FakeAgentSessionClient({ empty: true });
     const { result } = renderHook(() => useAgentSessionController(client));

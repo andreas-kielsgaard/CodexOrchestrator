@@ -1,4 +1,5 @@
 import type { ProjectedTranscript } from './transcriptProjector';
+import { AgentMarkdown } from './AgentMarkdown';
 import { ProcessingDisclosure } from './ProcessingDisclosure';
 import { TechnicalDiagnosticDisclosure } from './TechnicalDiagnosticDisclosure';
 
@@ -59,7 +60,7 @@ export function AgentSessionTranscript({
                   <span>Agent</span>
                   <span className="outcome-label">{invocation.outcome.label}</span>
                 </header>
-                <p>{invocation.finalResponse}</p>
+                <AgentMarkdown>{invocation.finalResponse}</AgentMarkdown>
               </article>
             )}
             {!invocation.finalResponse && invocation.outcome.message && (
@@ -75,6 +76,7 @@ export function AgentSessionTranscript({
             <TechnicalDiagnosticDisclosure
               activity={invocation.technical}
               diagnostics={invocation.diagnostics}
+              running={invocation.isActive}
             />
           </section>
         </li>
