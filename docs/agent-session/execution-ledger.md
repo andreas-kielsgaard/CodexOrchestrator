@@ -46,8 +46,8 @@ slice uses xhigh by default.
 | AS-02 Durable repository and queries    | integrated       | `019f4947-7ca7-7f63-ac64-fe59a0174299` | `64c26ab`, `0f7da0f`            | accepted           |
 | AS-03 Real process supervisor           | integrated       | `019f4947-7cb4-7c60-ab09-4ea5528da2cc` | `ddef6a5`, `35ebf8d`            | accepted           |
 | AS-04 Codex CLI runtime adapter         | integrated       | `019f4af8-66ae-7e33-a641-9162851d0114` | `f2af49b`, `8be4d9e`, `d0d764e` | accepted           |
-| AS-05 Application and Tauri lifecycle   | active           | `019f4b21-1aee-7272-aed8-a953a6b6cc1d` | —                               | —                  |
-| AS-06 Transcript projection and UI      | blocked by AS-05 | pending                                | —                               | —                  |
+| AS-05 Application and Tauri lifecycle   | integrated       | `019f4b21-1aee-7272-aed8-a953a6b6cc1d` | `a9c716b`, `09d43ec`            | accepted           |
+| AS-06 Transcript projection and UI      | ready            | pending                                | —                               | —                  |
 | AS-07 End-to-end recovery gate          | blocked by AS-06 | pending                                | —                               | —                  |
 
 States used: `blocked`, `ready`, `active`, `review`, `correction`, `integrated`, `failed`, and
@@ -91,3 +91,9 @@ States used: `blocked`, `ready`, `active`, `review`, `correction`, `integrated`,
   and formatting, and frontend build, lint, and formatting.
 - AS-05 started from root commit `a8a8aa6` with high reasoning because it joins concurrent runtime
   callbacks, durable lifecycle state, and Tauri transport ordering.
+- AS-05 worker commit `d087dc4` was reviewed and corrected in `75aa8cf` to close uncovered launch
+  failure completion, snapshot-query, runtime-binding repair, terminal-evidence replay, late-event,
+  and update-lane cleanup paths. Integrated as `a9c716b` and `09d43ec`.
+- AS-05 verification passed 74 Rust tests with one intentionally ignored installed-CLI probe, the
+  separately executed installed Codex CLI compatibility probe, all 297 frontend tests, Rust check
+  and formatting, and frontend build, lint, and formatting.
