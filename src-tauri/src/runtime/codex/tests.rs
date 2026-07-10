@@ -1,6 +1,6 @@
 use super::{
     arguments::{build_args, InvocationCommand},
-    capabilities::{CodexCliCapabilities, CodexCliCapabilityProbe},
+    capabilities::{resolve_program, CodexCliCapabilities, CodexCliCapabilityProbe},
     protocol::{CodexJsonlProtocol, JsonlTerminalEvidence},
     runtime::reconcile_terminal,
     CodexCliRuntime,
@@ -13,7 +13,8 @@ use crate::{
         },
         ports::{
             AgentRuntime, AgentRuntimeUpdateSink, RuntimeInvocationRequest, RuntimePortError,
-            RuntimeUpdate,
+            RuntimePortErrorKind, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
+            RuntimeUpdateDeliveryKind,
         },
     },
     runtime::processes::{
@@ -45,20 +46,62 @@ fn capabilities() -> CodexCliCapabilities {
     }
 }
 
+#[cfg(windows)]
+#[test]
+fn explicit_codex_cmd_path_resolves_to_native_npm_binary() {
+    let npm_bin = std::env::temp_dir().join(format!("codex-resolution-{}", uuid::Uuid::new_v4()));
+    let cmd = npm_bin.join("codex.cmd");
+    #[cfg(target_arch = "x86_64")]
+    let native = npm_bin.join(
+        "node_modules/@openai/codex/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe",
+    );
+    #[cfg(target_arch = "aarch64")]
+    let native = npm_bin.join(
+        "node_modules/@openai/codex/node_modules/@openai/codex-win32-arm64/vendor/aarch64-pc-windows-msvc/bin/codex.exe",
+    );
+    std::fs::create_dir_all(native.parent().expect("native parent")).expect("fixture directories");
+    std::fs::write(&cmd, "@echo off").expect("cmd fixture");
+    std::fs::write(&native, []).expect("native fixture");
+
+    assert_eq!(
+        std::path::PathBuf::from(
+            resolve_program(cmd.to_string_lossy().into_owned()).expect("native resolution"),
+        ),
+        native
+    );
+
+    std::fs::remove_dir_all(npm_bin).expect("remove fixture");
+}
+
+#[cfg(windows)]
+#[test]
+fn explicit_cmd_without_native_binary_is_rejected_before_process_launch() {
+    let npm_bin = std::env::temp_dir().join(format!("codex-resolution-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&npm_bin).expect("fixture directory");
+    let cmd = npm_bin.join("codex.cmd");
+    std::fs::write(&cmd, "@echo off").expect("cmd fixture");
+
+    let error = resolve_program(cmd.to_string_lossy().into_owned()).expect_err("batch rejection");
+    assert!(error.contains("no discoverable native npm binary"));
+
+    std::fs::remove_dir_all(npm_bin).expect("remove fixture");
+}
+
 #[test]
 fn builds_supported_first_turn_and_resume_commands() {
     let options = AgentRuntimeOptions {
         model: Some("gpt-5".to_string()),
         sandbox: Some(RuntimeSandboxMode::WorkspaceWrite),
     };
+    let start = build_args(
+        InvocationCommand::Start,
+        "hello",
+        &options,
+        Some(&capabilities()),
+    )
+    .expect("start args");
     assert_eq!(
-        build_args(
-            InvocationCommand::Start,
-            "hello",
-            &options,
-            Some(&capabilities())
-        )
-        .expect("start args"),
+        start.args,
         [
             "exec",
             "--json",
@@ -69,19 +112,21 @@ fn builds_supported_first_turn_and_resume_commands() {
             "hello"
         ]
     );
+    assert_eq!(start.effective_options, options);
     let context = ExternalRuntimeContextId::new("thread-external").expect("context");
     let resume_options = AgentRuntimeOptions {
         model: Some("gpt-5".to_string()),
         sandbox: None,
     };
+    let resume = build_args(
+        InvocationCommand::Resume(&context),
+        "continue",
+        &resume_options,
+        Some(&capabilities()),
+    )
+    .expect("resume args");
     assert_eq!(
-        build_args(
-            InvocationCommand::Resume(&context),
-            "continue",
-            &resume_options,
-            Some(&capabilities())
-        )
-        .expect("resume args"),
+        resume.args,
         [
             "exec",
             "resume",
@@ -92,6 +137,7 @@ fn builds_supported_first_turn_and_resume_commands() {
             "continue"
         ]
     );
+    assert_eq!(resume.effective_options, resume_options);
 }
 
 #[test]
@@ -100,10 +146,9 @@ fn omits_optional_options_when_capability_data_is_absent() {
         model: Some("unverified-model".to_string()),
         sandbox: Some(RuntimeSandboxMode::ReadOnly),
     };
-    assert_eq!(
-        build_args(InvocationCommand::Start, "hello", &options, None).expect("defaults"),
-        ["exec", "--json", "hello"]
-    );
+    let prepared = build_args(InvocationCommand::Start, "hello", &options, None).expect("defaults");
+    assert_eq!(prepared.args, ["exec", "--json", "hello"]);
+    assert_eq!(prepared.effective_options, AgentRuntimeOptions::default());
 }
 
 #[test]
@@ -268,6 +313,7 @@ impl ChildProcessFactory for FixtureFactory {
 #[derive(Default)]
 struct CollectingSink {
     updates: Mutex<Vec<RuntimeUpdate>>,
+    delivery_failures: Mutex<Vec<RuntimeUpdateDeliveryFailure>>,
     changed: Condvar,
 }
 
@@ -280,6 +326,17 @@ impl AgentRuntimeUpdateSink for CollectingSink {
         self.updates.lock().expect("updates").push(update);
         self.changed.notify_all();
         Ok(())
+    }
+
+    fn report_delivery_failure(
+        &self,
+        _invocation_id: &AgentInvocationId,
+        failure: RuntimeUpdateDeliveryFailure,
+    ) {
+        self.delivery_failures
+            .lock()
+            .expect("delivery failures")
+            .push(failure);
     }
 }
 
@@ -301,6 +358,98 @@ impl CollectingSink {
     }
 }
 
+#[derive(Default)]
+struct FailingDeliverySink {
+    attempts: Mutex<Vec<RuntimeUpdate>>,
+    failures: Mutex<Vec<RuntimeUpdateDeliveryFailure>>,
+    changed: Condvar,
+}
+
+impl AgentRuntimeUpdateSink for FailingDeliverySink {
+    fn emit_update(
+        &self,
+        _invocation_id: &AgentInvocationId,
+        update: RuntimeUpdate,
+    ) -> Result<(), RuntimePortError> {
+        self.attempts.lock().expect("attempts").push(update);
+        Err(RuntimePortError::new(
+            RuntimePortErrorKind::EventDeliveryFailed,
+            "deterministic delivery failure",
+        ))
+    }
+
+    fn report_delivery_failure(
+        &self,
+        _invocation_id: &AgentInvocationId,
+        failure: RuntimeUpdateDeliveryFailure,
+    ) {
+        self.failures.lock().expect("failures").push(failure);
+        self.changed.notify_all();
+    }
+}
+
+impl FailingDeliverySink {
+    fn wait_for_terminal_delivery_failure(&self) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut failures = self.failures.lock().expect("failures");
+        while !failures
+            .iter()
+            .any(|failure| failure.update_kind == RuntimeUpdateDeliveryKind::Finished)
+        {
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .expect("timed out");
+            let (next, timeout) = self
+                .changed
+                .wait_timeout(failures, remaining)
+                .expect("wait");
+            assert!(
+                !timeout.timed_out(),
+                "timed out waiting for delivery failure"
+            );
+            failures = next;
+        }
+    }
+}
+
+#[test]
+fn event_and_terminal_delivery_failures_are_observed_without_reclassifying_runtime_outcome() {
+    let factory = Arc::new(FixtureFactory::default());
+    factory
+        .stdout
+        .lock()
+        .expect("stdout")
+        .push_back(FIRST_TURN.as_bytes().to_vec());
+    let runtime = CodexCliRuntime::new("fixture-codex", Some(capabilities()), factory);
+    let concrete = Arc::new(FailingDeliverySink::default());
+    let sink: Arc<dyn AgentRuntimeUpdateSink> = concrete.clone();
+    runtime
+        .start_invocation(request("delivery-failure", "first"), sink)
+        .expect("launch remains successful");
+    concrete.wait_for_terminal_delivery_failure();
+
+    let attempts = concrete.attempts.lock().expect("attempts");
+    assert!(attempts
+        .iter()
+        .any(|attempt| matches!(attempt, RuntimeUpdate::Event(_))));
+    assert!(matches!(
+        attempts.last(),
+        Some(RuntimeUpdate::Finished(outcome))
+            if outcome.status == AgentInvocationTerminalStatus::Completed
+    ));
+    let failures = concrete.failures.lock().expect("failures");
+    assert!(failures
+        .iter()
+        .any(|failure| failure.update_kind == RuntimeUpdateDeliveryKind::Event));
+    assert_eq!(
+        failures.last().map(|failure| failure.update_kind),
+        Some(RuntimeUpdateDeliveryKind::Finished)
+    );
+    assert!(failures
+        .iter()
+        .all(|failure| failure.error.kind == RuntimePortErrorKind::EventDeliveryFailed));
+}
+
 #[test]
 fn runtime_uses_supervisor_for_first_turn_and_resume_with_explicit_working_directory() {
     let factory = Arc::new(FixtureFactory::default());
@@ -311,12 +460,12 @@ fn runtime_uses_supervisor_for_first_turn_and_resume_with_explicit_working_direc
         .extend([FIRST_TURN.as_bytes().to_vec(), RESUME.as_bytes().to_vec()]);
     let runtime = CodexCliRuntime::new("codex", Some(capabilities()), factory.clone());
     let first_sink = Arc::new(CollectingSink::default());
-    runtime
+    let first_launch = runtime
         .start_invocation(request("inv-1", "first"), first_sink.clone())
         .expect("start");
     first_sink.wait_finished();
     let resume_sink = Arc::new(CollectingSink::default());
-    runtime
+    let resume_launch = runtime
         .resume_invocation(
             request("inv-2", "again"),
             ExternalRuntimeContextId::new("019f-fixture-first").expect("context"),
@@ -339,6 +488,14 @@ fn runtime_uses_supervisor_for_first_turn_and_resume_with_explicit_working_direc
         ["exec", "resume", "--json", "019f-fixture-first", "again"]
     );
     assert!(first_sink.updates.lock().expect("updates").iter().any(|update| matches!(update, RuntimeUpdate::Finished(outcome) if outcome.status == AgentInvocationTerminalStatus::Completed)));
+    assert_eq!(
+        first_launch.effective_options,
+        AgentRuntimeOptions::default()
+    );
+    assert_eq!(
+        resume_launch.effective_options,
+        AgentRuntimeOptions::default()
+    );
 }
 
 #[test]

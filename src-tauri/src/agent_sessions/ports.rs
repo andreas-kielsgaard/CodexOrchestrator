@@ -133,6 +133,14 @@ pub(crate) struct RuntimeInvocationRequest {
     pub(crate) options: AgentRuntimeOptions,
 }
 
+/// Confirms which semantic options the runtime adapter actually applied at launch.
+///
+/// Absent values remain unknown and must not be filled with provider defaults by the caller.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct RuntimeLaunchAcknowledgement {
+    pub(crate) effective_options: AgentRuntimeOptions,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RuntimeEventDraft {
     pub(crate) source: AgentRuntimeEventSource,
@@ -154,6 +162,18 @@ pub(crate) enum RuntimeUpdate {
     Finished(RuntimeInvocationOutcome),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RuntimeUpdateDeliveryKind {
+    Event,
+    Finished,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RuntimeUpdateDeliveryFailure {
+    pub(crate) update_kind: RuntimeUpdateDeliveryKind,
+    pub(crate) error: RuntimePortError,
+}
+
 /// Receives provider-neutral event drafts in runtime-observed order and one terminal outcome.
 ///
 /// The application layer assigns durable event IDs, sequence numbers, and timestamps before
@@ -165,6 +185,16 @@ pub(crate) trait AgentRuntimeUpdateSink: Send + Sync {
         invocation_id: &AgentInvocationId,
         update: RuntimeUpdate,
     ) -> Result<(), RuntimePortError>;
+
+    /// Observes one failed `emit_update` attempt through a bounded, non-recursive fallback.
+    ///
+    /// Implementations must not retry the failed runtime update from this callback. The runtime
+    /// calls it at most once per failed attempt and preserves the actual runtime terminal result.
+    fn report_delivery_failure(
+        &self,
+        invocation_id: &AgentInvocationId,
+        failure: RuntimeUpdateDeliveryFailure,
+    );
 }
 
 /// Runtime operations proven necessary by the first Agent Session slice.
@@ -178,14 +208,14 @@ pub(crate) trait AgentRuntime: Send + Sync {
         &self,
         request: RuntimeInvocationRequest,
         update_sink: Arc<dyn AgentRuntimeUpdateSink>,
-    ) -> Result<(), RuntimePortError>;
+    ) -> Result<RuntimeLaunchAcknowledgement, RuntimePortError>;
 
     fn resume_invocation(
         &self,
         request: RuntimeInvocationRequest,
         external_context_id: ExternalRuntimeContextId,
         update_sink: Arc<dyn AgentRuntimeUpdateSink>,
-    ) -> Result<(), RuntimePortError>;
+    ) -> Result<RuntimeLaunchAcknowledgement, RuntimePortError>;
 
     fn cancel_invocation(&self, invocation_id: &AgentInvocationId) -> Result<(), RuntimePortError>;
 }

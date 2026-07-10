@@ -14,22 +14,31 @@ pub(crate) struct CodexCliCapabilities {
 /// Probes each CLI surface independently. A failed optional probe leaves only that capability
 /// unknown; it does not erase successfully discovered version or help data.
 pub(crate) struct CodexCliCapabilityProbe {
-    program: String,
+    program: Option<String>,
 }
 
 impl CodexCliCapabilityProbe {
     pub(crate) fn new(program: impl Into<String>) -> Self {
         Self {
-            program: resolve_program(program.into()),
+            program: resolve_program(program.into()).ok(),
         }
     }
 
     pub(crate) fn discover(&self) -> CodexCliCapabilities {
-        let version = command_stdout(&self.program, &["--version"])
+        let version = self
+            .program
+            .as_deref()
+            .and_then(|program| command_stdout(program, &["--version"]))
             .map(|output| output.trim().to_string())
             .filter(|output| !output.is_empty());
-        let exec_help = command_stdout(&self.program, &["exec", "--help"]);
-        let resume_help = command_stdout(&self.program, &["exec", "resume", "--help"]);
+        let exec_help = self
+            .program
+            .as_deref()
+            .and_then(|program| command_stdout(program, &["exec", "--help"]));
+        let resume_help = self
+            .program
+            .as_deref()
+            .and_then(|program| command_stdout(program, &["exec", "resume", "--help"]));
 
         CodexCliCapabilities {
             version,
@@ -43,13 +52,27 @@ impl CodexCliCapabilityProbe {
     }
 }
 
-pub(super) fn resolve_program(program: String) -> String {
+pub(super) fn resolve_program(program: String) -> Result<String, String> {
     #[cfg(windows)]
     {
         use std::path::Path;
 
-        if Path::new(&program).is_file() {
-            return program;
+        let explicit = Path::new(&program);
+        if explicit.is_file() {
+            let is_cmd = explicit
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("cmd"));
+            if is_cmd {
+                if let Some(native) = explicit.parent().and_then(npm_codex_native_binary) {
+                    return Ok(native.to_string_lossy().into_owned());
+                }
+                return Err(format!(
+                    "Codex CLI batch shim {} has no discoverable native npm binary",
+                    explicit.display()
+                ));
+            }
+            return Ok(program);
         }
         if !program.contains('/') && !program.contains('\\') {
             if let Some(path) = std::env::var_os("PATH") {
@@ -58,7 +81,7 @@ pub(super) fn resolve_program(program: String) -> String {
                     for directory in &directories {
                         if directory.join("codex.cmd").is_file() {
                             if let Some(native) = npm_codex_native_binary(directory) {
-                                return native.to_string_lossy().into_owned();
+                                return Ok(native.to_string_lossy().into_owned());
                             }
                         }
                     }
@@ -68,12 +91,12 @@ pub(super) fn resolve_program(program: String) -> String {
                     .map(|directory| directory.join(format!("{program}.exe")))
                     .find(|candidate| candidate.is_file())
                 {
-                    return path.to_string_lossy().into_owned();
+                    return Ok(path.to_string_lossy().into_owned());
                 }
             }
         }
     }
-    program
+    Ok(program)
 }
 
 #[cfg(windows)]

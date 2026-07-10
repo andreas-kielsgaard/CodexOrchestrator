@@ -1,5 +1,5 @@
 use super::{
-    arguments::{build_args, InvocationCommand},
+    arguments::{build_args, InvocationCommand, PreparedInvocationCommand},
     capabilities::{resolve_program, CodexCliCapabilities},
     protocol::{CodexJsonlProtocol, JsonlTerminalEvidence},
 };
@@ -11,7 +11,9 @@ use crate::{
         },
         ports::{
             AgentRuntime, AgentRuntimeUpdateSink, RuntimeEventDraft, RuntimeInvocationOutcome,
-            RuntimeInvocationRequest, RuntimePortError, RuntimePortErrorKind, RuntimeUpdate,
+            RuntimeInvocationRequest, RuntimeLaunchAcknowledgement, RuntimePortError,
+            RuntimePortErrorKind, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
+            RuntimeUpdateDeliveryKind,
         },
     },
     runtime::processes::{
@@ -103,7 +105,7 @@ impl ProcessEventSink for RuntimeCoordinator {
             (state.sink.clone(), events)
         };
         for event in events {
-            let _ = sink.emit_update(invocation_id, RuntimeUpdate::Event(event));
+            deliver_update(&sink, invocation_id, RuntimeUpdate::Event(event));
         }
     }
 
@@ -121,22 +123,39 @@ impl ProcessEventSink for RuntimeCoordinator {
                 state.terminal_evidence = parsed.terminal;
             }
             for event in parsed.events {
-                let _ = state
-                    .sink
-                    .emit_update(invocation_id, RuntimeUpdate::Event(event));
+                deliver_update(&state.sink, invocation_id, RuntimeUpdate::Event(event));
             }
         }
         let finished = reconcile_terminal(state.terminal_evidence, outcome);
-        let _ = state
-            .sink
-            .emit_update(invocation_id, RuntimeUpdate::Finished(finished));
+        deliver_update(
+            &state.sink,
+            invocation_id,
+            RuntimeUpdate::Finished(finished),
+        );
+    }
+}
+
+fn deliver_update(
+    sink: &Arc<dyn AgentRuntimeUpdateSink>,
+    invocation_id: &AgentInvocationId,
+    update: RuntimeUpdate,
+) {
+    let update_kind = match &update {
+        RuntimeUpdate::Event(_) => RuntimeUpdateDeliveryKind::Event,
+        RuntimeUpdate::Finished(_) => RuntimeUpdateDeliveryKind::Finished,
+    };
+    if let Err(error) = sink.emit_update(invocation_id, update) {
+        let failure = RuntimeUpdateDeliveryFailure { update_kind, error };
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            sink.report_delivery_failure(invocation_id, failure)
+        }));
     }
 }
 
 /// Codex CLI runtime adapter. Child ownership, output reads, cancellation, and process terminal
 /// evidence are delegated exclusively to `ProcessSupervisor`.
 pub(crate) struct CodexCliRuntime {
-    program: String,
+    program: Result<String, String>,
     capabilities: Option<CodexCliCapabilities>,
     coordinator: Arc<RuntimeCoordinator>,
     supervisor: ProcessSupervisor,
@@ -170,15 +189,22 @@ impl CodexCliRuntime {
         request: RuntimeInvocationRequest,
         command: InvocationCommand<'_>,
         update_sink: Arc<dyn AgentRuntimeUpdateSink>,
-    ) -> Result<(), RuntimePortError> {
-        let args = build_args(
+    ) -> Result<RuntimeLaunchAcknowledgement, RuntimePortError> {
+        let PreparedInvocationCommand {
+            args,
+            effective_options,
+        } = build_args(
             command,
             &request.submitted_text,
             &request.options,
             self.capabilities.as_ref(),
         )?;
+        let program = self
+            .program
+            .clone()
+            .map_err(|message| RuntimePortError::new(RuntimePortErrorKind::Unavailable, message))?;
         let spec = ProcessLaunchSpec {
-            program: self.program.clone(),
+            program,
             args,
             working_directory: request.working_directory.as_deref().map(PathBuf::from),
             environment: Vec::new(),
@@ -189,7 +215,7 @@ impl CodexCliRuntime {
             .supervisor
             .start(request.session_id, request.invocation_id.clone(), spec)
         {
-            Ok(()) => Ok(()),
+            Ok(()) => Ok(RuntimeLaunchAcknowledgement { effective_options }),
             Err(error) => {
                 if error.kind != SupervisorErrorKind::SpawnFailed {
                     self.coordinator.remove(&request.invocation_id);
@@ -205,7 +231,7 @@ impl AgentRuntime for CodexCliRuntime {
         &self,
         request: RuntimeInvocationRequest,
         update_sink: Arc<dyn AgentRuntimeUpdateSink>,
-    ) -> Result<(), RuntimePortError> {
+    ) -> Result<RuntimeLaunchAcknowledgement, RuntimePortError> {
         self.launch(request, InvocationCommand::Start, update_sink)
     }
 
@@ -214,7 +240,7 @@ impl AgentRuntime for CodexCliRuntime {
         request: RuntimeInvocationRequest,
         external_context_id: crate::agent_sessions::domain::ExternalRuntimeContextId,
         update_sink: Arc<dyn AgentRuntimeUpdateSink>,
-    ) -> Result<(), RuntimePortError> {
+    ) -> Result<RuntimeLaunchAcknowledgement, RuntimePortError> {
         self.launch(
             request,
             InvocationCommand::Resume(&external_context_id),

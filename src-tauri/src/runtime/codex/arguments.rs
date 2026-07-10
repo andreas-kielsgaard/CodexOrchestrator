@@ -9,29 +9,63 @@ pub(super) enum InvocationCommand<'a> {
     Resume(&'a ExternalRuntimeContextId),
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct PreparedInvocationCommand {
+    pub(super) args: Vec<String>,
+    pub(super) effective_options: AgentRuntimeOptions,
+}
+
 pub(super) fn build_args(
     command: InvocationCommand<'_>,
     prompt: &str,
     options: &AgentRuntimeOptions,
     capabilities: Option<&CodexCliCapabilities>,
-) -> Result<Vec<String>, RuntimePortError> {
+) -> Result<PreparedInvocationCommand, RuntimePortError> {
     let resume = matches!(command, InvocationCommand::Resume(_));
     require_json(capabilities, resume)?;
 
     let mut args = vec!["exec".to_string()];
+    let mut effective_options = AgentRuntimeOptions::default();
     if let InvocationCommand::Resume(context_id) = command {
         args.push("resume".to_string());
         push_supported_flag(&mut args, "--json", None);
-        map_model(&mut args, options, capabilities, true)?;
-        map_sandbox(&mut args, options, capabilities, true)?;
+        map_model(
+            &mut args,
+            &mut effective_options,
+            options,
+            capabilities,
+            true,
+        )?;
+        map_sandbox(
+            &mut args,
+            &mut effective_options,
+            options,
+            capabilities,
+            true,
+        )?;
         args.push(context_id.as_str().to_string());
     } else {
         push_supported_flag(&mut args, "--json", None);
-        map_model(&mut args, options, capabilities, false)?;
-        map_sandbox(&mut args, options, capabilities, false)?;
+        map_model(
+            &mut args,
+            &mut effective_options,
+            options,
+            capabilities,
+            false,
+        )?;
+        map_sandbox(
+            &mut args,
+            &mut effective_options,
+            options,
+            capabilities,
+            false,
+        )?;
     }
     args.push(prompt.to_string());
-    Ok(args)
+    Ok(PreparedInvocationCommand {
+        args,
+        effective_options,
+    })
 }
 
 fn require_json(
@@ -55,6 +89,7 @@ fn require_json(
 
 fn map_model(
     args: &mut Vec<String>,
+    effective_options: &mut AgentRuntimeOptions,
     options: &AgentRuntimeOptions,
     capabilities: Option<&CodexCliCapabilities>,
     resume: bool,
@@ -73,7 +108,10 @@ fn map_model(
         }
     });
     match support {
-        Some(true) => push_supported_flag(args, "--model", Some(model)),
+        Some(true) => {
+            push_supported_flag(args, "--model", Some(model));
+            effective_options.model = Some(model.to_string());
+        }
         Some(false) => return Err(unsupported(
             "the installed Codex CLI does not support the requested model option for this command",
         )),
@@ -84,6 +122,7 @@ fn map_model(
 
 fn map_sandbox(
     args: &mut Vec<String>,
+    effective_options: &mut AgentRuntimeOptions,
     options: &AgentRuntimeOptions,
     capabilities: Option<&CodexCliCapabilities>,
     resume: bool,
@@ -99,7 +138,10 @@ fn map_sandbox(
         }
     });
     match support {
-        Some(true) => push_supported_flag(args, "--sandbox", Some(sandbox_value(sandbox))),
+        Some(true) => {
+            push_supported_flag(args, "--sandbox", Some(sandbox_value(sandbox)));
+            effective_options.sandbox = Some(sandbox);
+        }
         Some(false) => return Err(unsupported("the installed Codex CLI does not support the requested sandbox option for this command")),
         None => {}
     }
