@@ -45,7 +45,7 @@ slice uses xhigh by default.
 | AS-01 Agent Session contracts           | integrated       | `019f491f-7f59-7500-9bf0-d0feaa28a59b` | `d717a28`, `dde0d8e` | accepted           |
 | AS-02 Durable repository and queries    | integrated       | `019f4947-7ca7-7f63-ac64-fe59a0174299` | `64c26ab`, `0f7da0f` | accepted           |
 | AS-03 Real process supervisor           | integrated       | `019f4947-7cb4-7c60-ab09-4ea5528da2cc` | `ddef6a5`, `35ebf8d` | accepted           |
-| AS-04 Codex CLI runtime adapter         | ready            | pending                                | —                    | —                  |
+| AS-04 Codex CLI runtime adapter         | active           | `019f4af8-66ae-7e33-a641-9162851d0114` | —                    | —                  |
 | AS-05 Application and Tauri lifecycle   | blocked by AS-04 | pending                                | —                    | —                  |
 | AS-06 Transcript projection and UI      | blocked by AS-05 | pending                                | —                    | —                  |
 | AS-07 End-to-end recovery gate          | blocked by AS-06 | pending                                | —                    | —                  |
@@ -81,3 +81,4 @@ States used: `blocked`, `ready`, `active`, `review`, `correction`, `integrated`,
 - Combined AS-02/AS-03 verification passed all 49 Rust tests, all 295 frontend tests, Rust check and
   formatting, and frontend build, lint, and formatting. Dead-code warnings remain expected until
   AS-04 and AS-05 wire these modules into the runtime and application.
+- AS-04 started from root commit `a5543e4` with medium reasoning.
