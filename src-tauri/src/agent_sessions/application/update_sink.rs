@@ -41,6 +41,28 @@ impl InvocationUpdateLanes {
             .or_insert_with(|| Arc::new(Mutex::new(InvocationUpdateState::default())))
             .clone())
     }
+
+    fn remove(&self, invocation_id: &AgentInvocationId, lane: &Arc<Mutex<InvocationUpdateState>>) {
+        if let Ok(mut lanes) = self.lanes.lock() {
+            if lanes
+                .get(invocation_id)
+                .is_some_and(|current| Arc::ptr_eq(current, lane))
+            {
+                lanes.remove(invocation_id);
+            }
+        }
+    }
+
+    pub(super) fn remove_invocation(&self, invocation_id: &AgentInvocationId) {
+        if let Ok(mut lanes) = self.lanes.lock() {
+            lanes.remove(invocation_id);
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn len(&self) -> usize {
+        self.lanes.lock().map_or(0, |lanes| lanes.len())
+    }
 }
 
 pub(super) struct PersistedRuntimeUpdateSink {
@@ -91,6 +113,14 @@ impl AgentRuntimeUpdateSink for PersistedRuntimeUpdateSink {
 
         match update {
             RuntimeUpdate::Event(draft) => {
+                if invocation.status.is_terminal() {
+                    drop(state);
+                    self.update_lanes.remove(invocation_id, &lane);
+                    return Err(delivery_error(
+                        "ignored late runtime event for terminal invocation",
+                        Some(json!({"invocationStatus": invocation.status})),
+                    ));
+                }
                 let sequence = match state.next_sequence {
                     Some(sequence) => sequence,
                     None => self
@@ -150,6 +180,8 @@ impl AgentRuntimeUpdateSink for PersistedRuntimeUpdateSink {
             }
             RuntimeUpdate::Finished(outcome) => {
                 if invocation.status.is_terminal() {
+                    drop(state);
+                    self.update_lanes.remove(invocation_id, &lane);
                     return Ok(());
                 }
                 let completed_at = self.clock.now();
@@ -169,6 +201,8 @@ impl AgentRuntimeUpdateSink for PersistedRuntimeUpdateSink {
                     .map_err(repository_delivery_error(
                         "persist runtime terminal outcome",
                     ))?;
+                drop(state);
+                self.update_lanes.remove(invocation_id, &lane);
                 self.notifier
                     .notify(AgentSessionNotification::InvocationTerminal {
                         session_id: invocation.session_id.clone(),

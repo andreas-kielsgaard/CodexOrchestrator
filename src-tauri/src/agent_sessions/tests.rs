@@ -9,10 +9,11 @@ use super::{
         NormalizedRuntimeEventKind,
     },
     ports::{
-        AgentRuntime, AgentRuntimeUpdateSink, AgentSessionRepository, ListAgentSessionsQuery,
-        RepositoryError, RepositoryErrorKind, RuntimeEventDraft, RuntimeInvocationMode,
-        RuntimeInvocationOutcome, RuntimeInvocationPreflight, RuntimeInvocationRequest,
-        RuntimePortError, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
+        AgentInvocationHistory, AgentRuntime, AgentRuntimeUpdateSink, AgentSessionHistory,
+        AgentSessionRepository, AgentSessionSummary, ListAgentSessionsQuery, RepositoryError,
+        RepositoryErrorKind, RuntimeEventDraft, RuntimeInvocationMode, RuntimeInvocationOutcome,
+        RuntimeInvocationPreflight, RuntimeInvocationRequest, RuntimePortError, RuntimeUpdate,
+        RuntimeUpdateDeliveryFailure,
     },
 };
 use chrono::{DateTime, Utc};
@@ -402,6 +403,90 @@ impl AgentSessionRepository for FakeRepository {
             sessions.truncate(limit as usize);
         }
         Ok(sessions)
+    }
+
+    fn load_session_history(
+        &self,
+        session_id: &AgentSessionId,
+    ) -> Result<Option<AgentSessionHistory>, RepositoryError> {
+        let state = self.state.lock().expect("fake repository");
+        let Some(session) = state.sessions.get(session_id).cloned() else {
+            return Ok(None);
+        };
+        let mut invocations = state
+            .invocations
+            .values()
+            .filter(|invocation| &invocation.session_id == session_id)
+            .cloned()
+            .map(|invocation| AgentInvocationHistory {
+                events: state
+                    .events
+                    .get(&invocation.id)
+                    .cloned()
+                    .unwrap_or_default(),
+                invocation,
+            })
+            .collect::<Vec<_>>();
+        invocations.sort_by(|left, right| {
+            left.invocation
+                .created_at
+                .cmp(&right.invocation.created_at)
+                .then_with(|| left.invocation.id.cmp(&right.invocation.id))
+        });
+        Ok(Some(AgentSessionHistory {
+            session,
+            invocations,
+        }))
+    }
+
+    fn list_session_summaries(
+        &self,
+        query: ListAgentSessionsQuery,
+    ) -> Result<Vec<AgentSessionSummary>, RepositoryError> {
+        let state = self.state.lock().expect("fake repository");
+        let mut sessions = state
+            .sessions
+            .values()
+            .filter(|session| {
+                query
+                    .availability
+                    .is_none_or(|availability| session.availability == availability)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        sessions.sort_by(|left, right| {
+            right
+                .updated_at
+                .cmp(&left.updated_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        if let Some(limit) = query.limit {
+            sessions.truncate(limit as usize);
+        }
+        Ok(sessions
+            .into_iter()
+            .map(|session| {
+                let mut invocations = state
+                    .invocations
+                    .values()
+                    .filter(|invocation| invocation.session_id == session.id)
+                    .collect::<Vec<_>>();
+                invocations.sort_by(|left, right| {
+                    right
+                        .created_at
+                        .cmp(&left.created_at)
+                        .then_with(|| right.id.cmp(&left.id))
+                });
+                AgentSessionSummary {
+                    session,
+                    invocation_count: invocations.len() as u64,
+                    latest_invocation_status: invocations.first().map(|value| value.status),
+                    latest_submitted_text: invocations
+                        .first()
+                        .map(|value| value.submitted_text.clone()),
+                }
+            })
+            .collect())
     }
 
     fn set_session_availability(

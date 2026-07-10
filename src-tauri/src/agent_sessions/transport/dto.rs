@@ -1,13 +1,13 @@
 use crate::agent_sessions::{
     application::{
-        AgentSessionNotification, AgentSessionSummaryResult, CancelAgentInvocationCommand,
-        CreateAgentSessionCommand, SendAgentSessionMessageCommand, SendAgentSessionMessageResult,
+        AgentSessionNotification, CancelAgentInvocationCommand, CreateAgentSessionCommand,
+        SendAgentSessionMessageCommand, SendAgentSessionMessageResult,
     },
     domain::{
         AgentInvocation, AgentInvocationId, AgentRuntimeEvent, AgentRuntimeKind,
         AgentRuntimeOptions, AgentSession, AgentSessionAvailability, AgentSessionId,
     },
-    ports::ListAgentSessionsQuery,
+    ports::{AgentSessionHistory, AgentSessionSummary, ListAgentSessionsQuery},
 };
 use serde::{Deserialize, Serialize};
 
@@ -125,15 +125,16 @@ pub(crate) struct AgentSessionDetailsDto {
 }
 
 impl AgentSessionDetailsDto {
-    pub(crate) fn from_history(
-        session: AgentSession,
-        invocations: Vec<(AgentInvocation, Vec<AgentRuntimeEvent>)>,
-    ) -> Self {
+    pub(crate) fn from_history(history: AgentSessionHistory) -> Self {
         Self {
-            session,
-            invocations: invocations
+            session: history.session,
+            invocations: history
+                .invocations
                 .into_iter()
-                .map(|(invocation, events)| AgentInvocationDetailsDto { invocation, events })
+                .map(|history| AgentInvocationDetailsDto {
+                    invocation: history.invocation,
+                    events: history.events,
+                })
                 .collect(),
         }
     }
@@ -151,14 +152,16 @@ pub(crate) struct AgentSessionSummaryDto {
     pub(crate) updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-impl From<AgentSessionSummaryResult> for AgentSessionSummaryDto {
-    fn from(value: AgentSessionSummaryResult) -> Self {
+impl From<AgentSessionSummary> for AgentSessionSummaryDto {
+    fn from(value: AgentSessionSummary) -> Self {
         Self {
             id: value.session.id,
             title: value.session.title,
             availability: value.session.availability,
             runtime_kind: value.session.runtime_binding.kind,
-            has_active_invocation: value.has_active_invocation,
+            has_active_invocation: value
+                .latest_invocation_status
+                .is_some_and(|status| status.is_active()),
             created_at: value.session.created_at,
             updated_at: value.session.updated_at,
         }

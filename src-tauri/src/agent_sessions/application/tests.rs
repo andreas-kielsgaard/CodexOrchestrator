@@ -12,10 +12,11 @@ use crate::agent_sessions::{
         NormalizedRuntimeEvent, NormalizedRuntimeEventKind, RuntimeSandboxMode,
     },
     ports::{
-        AgentRuntime, AgentRuntimeUpdateSink, AgentSessionRepository, ListAgentSessionsQuery,
-        RepositoryError, RepositoryErrorKind, RuntimeEventDraft, RuntimeInvocationMode,
-        RuntimeInvocationOutcome, RuntimeInvocationPreflight, RuntimeInvocationRequest,
-        RuntimePortError, RuntimePortErrorKind, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
+        AgentRuntime, AgentRuntimeUpdateSink, AgentSessionHistory, AgentSessionRepository,
+        AgentSessionSummary, ListAgentSessionsQuery, RepositoryError, RepositoryErrorKind,
+        RuntimeEventDraft, RuntimeInvocationMode, RuntimeInvocationOutcome,
+        RuntimeInvocationPreflight, RuntimeInvocationRequest, RuntimePortError,
+        RuntimePortErrorKind, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
     },
     repository::{SqliteAgentSessionRepository, AGENT_SESSION_SCHEMA},
 };
@@ -40,17 +41,20 @@ fn first_turn_captures_binding_and_second_turn_resumes_with_effective_options() 
         .application
         .load_session(&session.id)
         .expect("load first");
-    assert_eq!(loaded.0.id, session.id);
+    assert_eq!(loaded.session.id, session.id);
     assert_eq!(
         loaded
-            .0
+            .session
             .runtime_binding
             .external_context_id
             .as_ref()
             .map(|id| id.as_str()),
         Some("codex-thread-1")
     );
-    assert_eq!(loaded.1[0].0.status, AgentInvocationStatus::Completed);
+    assert_eq!(
+        loaded.invocations[0].invocation.status,
+        AgentInvocationStatus::Completed
+    );
 
     let second = harness
         .application
@@ -133,12 +137,15 @@ fn missed_notifications_reload_from_durable_history_and_record_delivery_diagnost
         .send_message(message(&session.id, "Miss every event"))
         .expect("send remains acknowledged");
 
-    let (_, invocations) = harness
+    let history = harness
         .application
         .load_session(&session.id)
         .expect("durable reload");
-    assert_eq!(invocations[0].0.status, AgentInvocationStatus::Completed);
-    assert!(!invocations[0].1.is_empty());
+    assert_eq!(
+        history.invocations[0].invocation.status,
+        AgentInvocationStatus::Completed
+    );
+    assert!(!history.invocations[0].events.is_empty());
     let persisted = harness
         .repository
         .get_invocation(&result.invocation_id)
@@ -152,6 +159,13 @@ fn missed_notifications_reload_from_durable_history_and_record_delivery_diagnost
                 .is_some_and(|details| details["failedUpdate"]["kind"] == "event")
     }));
     assert_eq!(persisted.runtime_error, None);
+    assert_eq!(
+        harness
+            .application
+            .reconcile_startup()
+            .expect("already terminal remains idempotent"),
+        0
+    );
 }
 
 #[test]
@@ -169,6 +183,7 @@ fn spawn_failure_callback_owns_the_single_terminal_outcome_despite_launch_error_
         .expect("present");
 
     assert_eq!(invocation.status, AgentInvocationStatus::Failed);
+    assert_eq!(harness.application.update_lane_count(), 0);
     assert_eq!(
         invocation
             .runtime_error
@@ -180,6 +195,45 @@ fn spawn_failure_callback_owns_the_single_terminal_outcome_despite_launch_error_
         .diagnostics
         .iter()
         .any(|diagnostic| diagnostic.code == "runtime_launch_returned_error"));
+    assert_eq!(
+        harness
+            .notifier
+            .notifications
+            .lock()
+            .expect("notifications")
+            .iter()
+            .filter(|notification| matches!(
+                notification,
+                AgentSessionNotification::InvocationTerminal { .. }
+            ))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn launch_error_without_terminal_callback_is_durably_failed_once() {
+    let harness = Harness::new(RuntimeBehavior::LaunchErrorWithoutCallback);
+    let session = harness.create_session();
+    let result = harness
+        .application
+        .send_message(message(&session.id, "Fail before child"))
+        .expect("durable acknowledgement");
+    let invocation = harness
+        .repository
+        .get_invocation(&result.invocation_id)
+        .expect("invocation")
+        .expect("present");
+
+    assert_eq!(invocation.status, AgentInvocationStatus::Failed);
+    assert_eq!(harness.application.update_lane_count(), 0);
+    assert_eq!(
+        invocation
+            .runtime_error
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("runtime_launch_failed")
+    );
     assert_eq!(
         harness
             .notifier
@@ -211,6 +265,7 @@ fn repeated_completion_is_idempotent_and_does_not_duplicate_terminal_notificatio
         .expect("present");
 
     assert_eq!(invocation.status, AgentInvocationStatus::Completed);
+    assert_eq!(harness.application.update_lane_count(), 0);
     assert_eq!(
         harness
             .notifier
@@ -225,6 +280,33 @@ fn repeated_completion_is_idempotent_and_does_not_duplicate_terminal_notificatio
             .count(),
         1
     );
+}
+
+#[test]
+fn late_event_after_terminal_is_diagnosed_without_append_and_lane_is_removed() {
+    let harness = Harness::new(RuntimeBehavior::LateEventAfterCompletion);
+    let session = harness.create_session();
+    let result = harness
+        .application
+        .send_message(message(&session.id, "Finish before late output"))
+        .expect("send");
+    let invocation = harness
+        .repository
+        .get_invocation(&result.invocation_id)
+        .expect("invocation")
+        .expect("present");
+
+    assert_eq!(invocation.status, AgentInvocationStatus::Completed);
+    assert!(harness
+        .repository
+        .list_events(&result.invocation_id)
+        .expect("events")
+        .is_empty());
+    assert!(invocation.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "runtime_update_delivery_failed"
+            && diagnostic.message == "ignored late runtime event for terminal invocation"
+    }));
+    assert_eq!(harness.application.update_lane_count(), 0);
 }
 
 #[test]
@@ -346,9 +428,10 @@ fn persistence_failure_retains_known_runtime_success_as_a_delivery_diagnostic() 
         .expect("Agent Session schema");
     let inner =
         Arc::new(SqliteAgentSessionRepository::new(connection).expect("Agent Session repository"));
-    let repository = Arc::new(FinishFailingRepository {
+    let repository = Arc::new(FaultInjectingRepository {
         inner: inner.clone(),
         fail_finish: AtomicBool::new(true),
+        fail_binding: AtomicBool::new(false),
     });
     let runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::CompleteWithBinding));
     let notifier = Arc::new(RecordingNotifier::new(inner.clone()));
@@ -386,6 +469,88 @@ fn persistence_failure_retains_known_runtime_success_as_a_delivery_diagnostic() 
                     && details["failedUpdate"]["payload"]["status"] == "completed"
             })
     }));
+
+    let restarted_runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::StayRunning));
+    let restarted_notifier = Arc::new(RecordingNotifier::new(inner.clone()));
+    let restarted_providers = Arc::new(DeterministicProviders::default());
+    let restarted = AgentSessionApplication::new(
+        inner.clone(),
+        restarted_runtime,
+        restarted_notifier,
+        restarted_providers.clone(),
+        restarted_providers,
+        Some("codex-test".to_string()),
+    );
+    assert_eq!(restarted.reconcile_startup().expect("terminal replay"), 1);
+    assert_eq!(restarted.reconcile_startup().expect("idempotent replay"), 0);
+    let replayed = inner
+        .get_invocation(&sent.invocation_id)
+        .expect("invocation")
+        .expect("present");
+    assert_eq!(replayed.status, AgentInvocationStatus::Completed);
+    assert_eq!(replayed.exit_code, Some(0));
+}
+
+#[test]
+fn missing_binding_is_repaired_from_durable_context_event_before_resume() {
+    let connection = Connection::open_in_memory().expect("memory database");
+    connection
+        .execute_batch(AGENT_SESSION_SCHEMA)
+        .expect("Agent Session schema");
+    let inner =
+        Arc::new(SqliteAgentSessionRepository::new(connection).expect("Agent Session repository"));
+    let repository = Arc::new(FaultInjectingRepository {
+        inner: inner.clone(),
+        fail_finish: AtomicBool::new(false),
+        fail_binding: AtomicBool::new(true),
+    });
+    let runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::CompleteWithBinding));
+    let notifier = Arc::new(RecordingNotifier::new(inner.clone()));
+    let providers = Arc::new(DeterministicProviders::default());
+    let application = AgentSessionApplication::new(
+        repository,
+        runtime.clone(),
+        notifier,
+        providers.clone(),
+        providers,
+        Some("codex-test".to_string()),
+    );
+    let session = application
+        .create_session(CreateAgentSessionCommand {
+            title: Some("Binding repair".to_string()),
+            working_directory: None,
+            runtime_kind: None,
+            requested_options: AgentRuntimeOptions::default(),
+        })
+        .expect("session");
+    application
+        .send_message(message(&session.id, "Establish context"))
+        .expect("first send");
+    assert!(inner
+        .get_session(&session.id)
+        .expect("session")
+        .expect("present")
+        .runtime_binding
+        .external_context_id
+        .is_none());
+
+    application
+        .send_message(message(&session.id, "Resume repaired context"))
+        .expect("second send");
+    assert!(runtime.calls.lock().expect("calls").iter().any(|call| {
+        matches!(call, RuntimeCall::Resume(_, external) if external == "codex-thread-1")
+    }));
+    assert_eq!(
+        inner
+            .get_session(&session.id)
+            .expect("session")
+            .expect("present")
+            .runtime_binding
+            .external_context_id
+            .as_ref()
+            .map(|id| id.as_str()),
+        Some("codex-thread-1")
+    );
 }
 
 struct Harness {
@@ -453,7 +618,9 @@ enum RuntimeBehavior {
     CompleteWithBinding,
     ConcurrentFastCompletion,
     SpawnFailure,
+    LaunchErrorWithoutCallback,
     DuplicateCompletion,
+    LateEventAfterCompletion,
     StayRunning,
     PreflightFailure,
 }
@@ -536,9 +703,29 @@ impl FakeRuntime {
                     "spawn returned an error",
                 ))
             }
+            RuntimeBehavior::LaunchErrorWithoutCallback => {
+                deliver(
+                    &sink,
+                    &request.invocation_id,
+                    RuntimeUpdate::Event(text_event("pre-launch diagnostic output")),
+                );
+                Err(RuntimePortError::new(
+                    RuntimePortErrorKind::Unavailable,
+                    "program resolution failed before child launch",
+                ))
+            }
             RuntimeBehavior::DuplicateCompletion => {
                 deliver(&sink, &request.invocation_id, completed());
                 deliver(&sink, &request.invocation_id, completed());
+                Ok(())
+            }
+            RuntimeBehavior::LateEventAfterCompletion => {
+                deliver(&sink, &request.invocation_id, completed());
+                deliver(
+                    &sink,
+                    &request.invocation_id,
+                    RuntimeUpdate::Event(text_event("late")),
+                );
                 Ok(())
             }
             RuntimeBehavior::StayRunning => {
@@ -783,12 +970,13 @@ impl AgentSessionIdProvider for DeterministicProviders {
     }
 }
 
-struct FinishFailingRepository {
+struct FaultInjectingRepository {
     inner: Arc<SqliteAgentSessionRepository>,
     fail_finish: AtomicBool,
+    fail_binding: AtomicBool,
 }
 
-impl AgentSessionRepository for FinishFailingRepository {
+impl AgentSessionRepository for FaultInjectingRepository {
     fn create_session(&self, session: AgentSession) -> Result<AgentSession, RepositoryError> {
         self.inner.create_session(session)
     }
@@ -807,6 +995,20 @@ impl AgentSessionRepository for FinishFailingRepository {
         self.inner.list_sessions(query)
     }
 
+    fn load_session_history(
+        &self,
+        session_id: &AgentSessionId,
+    ) -> Result<Option<AgentSessionHistory>, RepositoryError> {
+        self.inner.load_session_history(session_id)
+    }
+
+    fn list_session_summaries(
+        &self,
+        query: ListAgentSessionsQuery,
+    ) -> Result<Vec<AgentSessionSummary>, RepositoryError> {
+        self.inner.list_session_summaries(query)
+    }
+
     fn set_session_availability(
         &self,
         session_id: &AgentSessionId,
@@ -823,6 +1025,12 @@ impl AgentSessionRepository for FinishFailingRepository {
         binding: AgentRuntimeBinding,
         updated_at: DateTime<Utc>,
     ) -> Result<AgentSession, RepositoryError> {
+        if self.fail_binding.swap(false, Ordering::AcqRel) {
+            return Err(RepositoryError::new(
+                RepositoryErrorKind::Unavailable,
+                "deterministic runtime binding persistence failure",
+            ));
+        }
         self.inner
             .update_runtime_binding(session_id, binding, updated_at)
     }

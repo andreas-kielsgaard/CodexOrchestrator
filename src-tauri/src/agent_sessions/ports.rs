@@ -5,9 +5,29 @@ use super::domain::{
     ExternalRuntimeContextId, InvocationCompletion, NormalizedRuntimeEvent,
 };
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{error::Error, fmt, sync::Arc};
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct AgentSessionHistory {
+    pub(crate) session: AgentSession,
+    pub(crate) invocations: Vec<AgentInvocationHistory>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct AgentInvocationHistory {
+    pub(crate) invocation: AgentInvocation,
+    pub(crate) events: Vec<AgentRuntimeEvent>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct AgentSessionSummary {
+    pub(crate) session: AgentSession,
+    pub(crate) invocation_count: u64,
+    pub(crate) latest_invocation_status: Option<super::domain::AgentInvocationStatus>,
+    pub(crate) latest_submitted_text: Option<String>,
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ListAgentSessionsQuery {
@@ -35,6 +55,18 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
         &self,
         query: ListAgentSessionsQuery,
     ) -> Result<Vec<AgentSession>, RepositoryError>;
+
+    /// Loads one complete, consistently ordered session snapshot.
+    fn load_session_history(
+        &self,
+        session_id: &AgentSessionId,
+    ) -> Result<Option<AgentSessionHistory>, RepositoryError>;
+
+    /// Lists consistently read session summaries using the repository's snapshot boundary.
+    fn list_session_summaries(
+        &self,
+        query: ListAgentSessionsQuery,
+    ) -> Result<Vec<AgentSessionSummary>, RepositoryError>;
 
     fn set_session_availability(
         &self,
@@ -150,7 +182,7 @@ pub(crate) struct RuntimeInvocationPreflight {
     pub(crate) effective_options: AgentRuntimeOptions,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RuntimeEventDraft {
     pub(crate) source: AgentRuntimeEventSource,
@@ -158,7 +190,7 @@ pub(crate) struct RuntimeEventDraft {
     pub(crate) normalized: Option<NormalizedRuntimeEvent>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RuntimeInvocationOutcome {
     pub(crate) status: AgentInvocationTerminalStatus,
@@ -167,7 +199,7 @@ pub(crate) struct RuntimeInvocationOutcome {
     pub(crate) runtime_error: Option<AgentRuntimeFailure>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
 pub(crate) enum RuntimeUpdate {
     Event(RuntimeEventDraft),
@@ -213,7 +245,11 @@ pub(crate) trait AgentRuntimeUpdateSink: Send + Sync {
 /// Start and resume are separate so callers cannot accidentally use the local session ID as the
 /// external continuation identity. Implementations may return after launch and continue emitting
 /// through the supplied sink. Process arguments, JSONL types, and child handles are adapter
-/// concerns and do not cross this boundary.
+/// concerns and do not cross this boundary. If either launch method returns an error after also
+/// producing a terminal update, that terminal update must be delivered synchronously before the
+/// error is returned, and no later updates may follow that error return. The application then
+/// checks durable invocation state: an already-terminal invocation is left unchanged, while a
+/// still-active invocation is durably failed from the returned launch error.
 pub(crate) trait AgentRuntime: Send + Sync {
     fn preflight_invocation(
         &self,

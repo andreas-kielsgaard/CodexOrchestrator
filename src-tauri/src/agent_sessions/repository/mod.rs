@@ -15,31 +15,14 @@ use super::{
         AgentRuntimeOptions, AgentSession, AgentSessionAvailability, AgentSessionId,
         InvocationCompletion,
     },
-    ports::{AgentSessionRepository, ListAgentSessionsQuery, RepositoryError, RepositoryErrorKind},
+    ports::{
+        AgentInvocationHistory, AgentSessionHistory, AgentSessionRepository, AgentSessionSummary,
+        ListAgentSessionsQuery, RepositoryError, RepositoryErrorKind,
+    },
 };
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::{path::Path, sync::Mutex};
-
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct AgentSessionHistory {
-    pub(crate) session: AgentSession,
-    pub(crate) invocations: Vec<AgentInvocationHistory>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct AgentInvocationHistory {
-    pub(crate) invocation: AgentInvocation,
-    pub(crate) events: Vec<AgentRuntimeEvent>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct AgentSessionSummary {
-    pub(crate) session: AgentSession,
-    pub(crate) invocation_count: u64,
-    pub(crate) latest_invocation_status: Option<AgentInvocationStatus>,
-    pub(crate) latest_submitted_text: Option<String>,
-}
 
 pub(crate) struct SqliteAgentSessionRepository {
     connection: Mutex<Connection>,
@@ -70,7 +53,7 @@ impl SqliteAgentSessionRepository {
         Self::new(connection)
     }
 
-    pub(crate) fn load_session_history(
+    fn load_session_history_snapshot(
         &self,
         session_id: &AgentSessionId,
     ) -> Result<Option<AgentSessionHistory>, RepositoryError> {
@@ -98,7 +81,7 @@ impl SqliteAgentSessionRepository {
         }))
     }
 
-    pub(crate) fn list_session_summaries(
+    fn list_session_summaries_snapshot(
         &self,
         query: ListAgentSessionsQuery,
     ) -> Result<Vec<AgentSessionSummary>, RepositoryError> {
@@ -181,6 +164,20 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
     ) -> Result<Vec<AgentSession>, RepositoryError> {
         let connection = self.lock()?;
         list_sessions_from(&connection, query)
+    }
+
+    fn load_session_history(
+        &self,
+        session_id: &AgentSessionId,
+    ) -> Result<Option<AgentSessionHistory>, RepositoryError> {
+        self.load_session_history_snapshot(session_id)
+    }
+
+    fn list_session_summaries(
+        &self,
+        query: ListAgentSessionsQuery,
+    ) -> Result<Vec<AgentSessionSummary>, RepositoryError> {
+        self.list_session_summaries_snapshot(query)
     }
 
     fn set_session_availability(

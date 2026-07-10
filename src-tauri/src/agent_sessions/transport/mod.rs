@@ -96,7 +96,7 @@ pub(crate) fn load_agent_session(
     state
         .application
         .load_session(&query.session_id)
-        .map(|(session, invocations)| AgentSessionDetailsDto::from_history(session, invocations))
+        .map(AgentSessionDetailsDto::from_history)
         .map_err(|error| error.to_string())
 }
 

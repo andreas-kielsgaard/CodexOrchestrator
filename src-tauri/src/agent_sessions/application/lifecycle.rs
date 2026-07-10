@@ -8,8 +8,9 @@ use crate::agent_sessions::{
         AgentSessionId, InvocationCompletion,
     },
     ports::{
-        AgentRuntime, AgentRuntimeUpdateSink, AgentSessionRepository, ListAgentSessionsQuery,
-        RepositoryError, RuntimeInvocationMode, RuntimeInvocationRequest, RuntimePortError,
+        AgentRuntime, AgentRuntimeUpdateSink, AgentSessionHistory, AgentSessionRepository,
+        AgentSessionSummary, ListAgentSessionsQuery, RepositoryError, RuntimeInvocationMode,
+        RuntimeInvocationOutcome, RuntimeInvocationRequest, RuntimePortError, RuntimeUpdate,
     },
 };
 use chrono::{DateTime, Utc};
@@ -45,13 +46,7 @@ pub(crate) struct CancelAgentInvocationCommand {
     pub(crate) invocation_id: AgentInvocationId,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct AgentSessionSummaryResult {
-    pub(crate) session: AgentSession,
-    pub(crate) has_active_invocation: bool,
-}
-
-pub(crate) type ListAgentSessionsResult = Vec<AgentSessionSummaryResult>;
+pub(crate) type ListAgentSessionsResult = Vec<AgentSessionSummary>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum AgentSessionNotification {
@@ -173,50 +168,18 @@ impl AgentSessionApplication {
         query: ListAgentSessionsQuery,
     ) -> Result<ListAgentSessionsResult, AgentSessionApplicationError> {
         self.repository
-            .list_sessions(query)
-            .map_err(AgentSessionApplicationError::repository)?
-            .into_iter()
-            .map(|session| {
-                let has_active_invocation = self
-                    .repository
-                    .list_invocations(&session.id)
-                    .map_err(AgentSessionApplicationError::repository)?
-                    .iter()
-                    .any(|invocation| invocation.status.is_active());
-                Ok(AgentSessionSummaryResult {
-                    session,
-                    has_active_invocation,
-                })
-            })
-            .collect()
+            .list_session_summaries(query)
+            .map_err(AgentSessionApplicationError::repository)
     }
 
     pub(crate) fn load_session(
         &self,
         session_id: &AgentSessionId,
-    ) -> Result<
-        (AgentSession, Vec<(AgentInvocation, Vec<AgentRuntimeEvent>)>),
-        AgentSessionApplicationError,
-    > {
-        let session = self
-            .repository
-            .get_session(session_id)
+    ) -> Result<AgentSessionHistory, AgentSessionApplicationError> {
+        self.repository
+            .load_session_history(session_id)
             .map_err(AgentSessionApplicationError::repository)?
-            .ok_or_else(|| AgentSessionApplicationError::not_found("Agent Session not found"))?;
-        let histories = self
-            .repository
-            .list_invocations(session_id)
-            .map_err(AgentSessionApplicationError::repository)?
-            .into_iter()
-            .map(|invocation| {
-                let events = self
-                    .repository
-                    .list_events(&invocation.id)
-                    .map_err(AgentSessionApplicationError::repository)?;
-                Ok((invocation, events))
-            })
-            .collect::<Result<Vec<_>, AgentSessionApplicationError>>()?;
-        Ok((session, histories))
+            .ok_or_else(|| AgentSessionApplicationError::not_found("Agent Session not found"))
     }
 
     pub(crate) fn send_message(
@@ -252,6 +215,7 @@ impl AgentSessionApplication {
                 "archived Agent Sessions cannot accept messages",
             ));
         }
+        let session = self.repair_missing_runtime_binding(session)?;
 
         let requested_options = command
             .requested_options
@@ -327,15 +291,7 @@ impl AgentSessionApplication {
             None => self.runtime.start_invocation(request, sink),
         };
         if let Err(error) = launch {
-            // Supervisor-backed spawn/start failures already own their one terminal callback.
-            // Recording the returned error is diagnostic only and never synthesizes completion.
-            self.record_diagnostic(
-                &invocation.id,
-                AgentDiagnosticSource::Runtime,
-                "runtime_launch_returned_error",
-                error.message.clone(),
-                serde_json::to_value(&error).ok(),
-            );
+            self.handle_launch_error(&invocation.id, error)?;
         }
         Ok(acknowledgement)
     }
@@ -370,17 +326,46 @@ impl AgentSessionApplication {
 
     pub(crate) fn reconcile_startup(&self) -> Result<usize, AgentSessionApplicationError> {
         let mut reconciled = 0;
-        for session in self
+        for summary in self
             .repository
-            .list_sessions(ListAgentSessionsQuery::default())
+            .list_session_summaries(ListAgentSessionsQuery::default())
             .map_err(AgentSessionApplicationError::repository)?
         {
-            for invocation in self
+            let history = self
                 .repository
-                .list_invocations(&session.id)
+                .load_session_history(&summary.session.id)
                 .map_err(AgentSessionApplicationError::repository)?
-            {
+                .ok_or_else(|| {
+                    AgentSessionApplicationError::not_found(
+                        "Agent Session disappeared during startup reconciliation",
+                    )
+                })?;
+            for invocation_history in history.invocations {
+                let invocation = invocation_history.invocation;
                 if !invocation.status.is_active() {
+                    continue;
+                }
+                if let Some((outcome, completed_at)) = known_terminal_delivery(&invocation) {
+                    let updated = self
+                        .repository
+                        .finish_invocation(
+                            &invocation.id,
+                            InvocationCompletion {
+                                status: outcome.status,
+                                completed_at,
+                                exit_code: outcome.exit_code,
+                                signal: outcome.signal,
+                                runtime_error: outcome.runtime_error,
+                            },
+                            completed_at,
+                        )
+                        .map_err(AgentSessionApplicationError::repository)?;
+                    self.update_lanes.remove_invocation(&invocation.id);
+                    reconciled += 1;
+                    self.notify_or_record(AgentSessionNotification::InvocationTerminal {
+                        session_id: history.session.id.clone(),
+                        invocation: updated,
+                    });
                     continue;
                 }
                 let completed_at = self.clock.now();
@@ -398,9 +383,10 @@ impl AgentSessionApplication {
                         completed_at,
                     )
                     .map_err(AgentSessionApplicationError::repository)?;
+                self.update_lanes.remove_invocation(&invocation.id);
                 reconciled += 1;
                 self.notify_or_record(AgentSessionNotification::InvocationTerminal {
-                    session_id: session.id.clone(),
+                    session_id: history.session.id.clone(),
                     invocation: updated,
                 });
             }
@@ -412,6 +398,11 @@ impl AgentSessionApplication {
         self.runtime
             .shutdown()
             .map_err(AgentSessionApplicationError::runtime)
+    }
+
+    #[cfg(test)]
+    pub(super) fn update_lane_count(&self) -> usize {
+        self.update_lanes.len()
     }
 
     fn finish_preflight_failure(
@@ -443,6 +434,101 @@ impl AgentSessionApplication {
             invocation: updated,
         });
         Ok(())
+    }
+
+    fn handle_launch_error(
+        &self,
+        invocation_id: &AgentInvocationId,
+        error: RuntimePortError,
+    ) -> Result<(), AgentSessionApplicationError> {
+        let invocation = self
+            .repository
+            .get_invocation(invocation_id)
+            .map_err(AgentSessionApplicationError::repository)?
+            .ok_or_else(|| AgentSessionApplicationError::not_found("Agent invocation not found"))?;
+        if invocation.status.is_active() {
+            let completed_at = self.clock.now();
+            let updated = self
+                .repository
+                .finish_invocation(
+                    invocation_id,
+                    InvocationCompletion {
+                        status: AgentInvocationTerminalStatus::Failed,
+                        completed_at,
+                        exit_code: None,
+                        signal: None,
+                        runtime_error: Some(AgentRuntimeFailure {
+                            code: "runtime_launch_failed".to_string(),
+                            message: error.message.clone(),
+                            details: serde_json::to_value(&error).ok(),
+                        }),
+                    },
+                    completed_at,
+                )
+                .map_err(AgentSessionApplicationError::repository)?;
+            self.update_lanes.remove_invocation(invocation_id);
+            self.notify_or_record(AgentSessionNotification::InvocationTerminal {
+                session_id: updated.session_id.clone(),
+                invocation: updated,
+            });
+        }
+        self.record_diagnostic(
+            invocation_id,
+            AgentDiagnosticSource::Runtime,
+            "runtime_launch_returned_error",
+            error.message.clone(),
+            serde_json::to_value(&error).ok(),
+        );
+        Ok(())
+    }
+
+    fn repair_missing_runtime_binding(
+        &self,
+        session: AgentSession,
+    ) -> Result<AgentSession, AgentSessionApplicationError> {
+        if session.runtime_binding.external_context_id.is_some() {
+            return Ok(session);
+        }
+        let history = self
+            .repository
+            .load_session_history(&session.id)
+            .map_err(AgentSessionApplicationError::repository)?
+            .ok_or_else(|| AgentSessionApplicationError::not_found("Agent Session not found"))?;
+        let mut recovered = None;
+        for event in history
+            .invocations
+            .iter()
+            .flat_map(|history| history.events.iter())
+        {
+            let Some(external_context_id) = event
+                .normalized
+                .as_ref()
+                .filter(|normalized| {
+                    normalized.kind
+                        == crate::agent_sessions::domain::NormalizedRuntimeEventKind::RuntimeContextEstablished
+                })
+                .and_then(|normalized| normalized.external_context_id.clone())
+            else {
+                continue;
+            };
+            if recovered
+                .as_ref()
+                .is_some_and(|current| current != &external_context_id)
+            {
+                return Err(AgentSessionApplicationError::conflict(
+                    "durable runtime context evidence contains conflicting external identities",
+                ));
+            }
+            recovered = Some(external_context_id);
+        }
+        let Some(external_context_id) = recovered else {
+            return Ok(session);
+        };
+        let mut binding = session.runtime_binding.clone();
+        binding.external_context_id = Some(external_context_id);
+        self.repository
+            .update_runtime_binding(&session.id, binding, self.clock.now())
+            .map_err(AgentSessionApplicationError::repository)
     }
 
     fn notify_or_record(&self, notification: AgentSessionNotification) {
@@ -487,6 +573,41 @@ impl AgentSessionApplication {
                 invocation,
             });
     }
+}
+
+fn known_terminal_delivery(
+    invocation: &AgentInvocation,
+) -> Option<(RuntimeInvocationOutcome, DateTime<Utc>)> {
+    invocation.diagnostics.iter().rev().find_map(|diagnostic| {
+        if diagnostic.source != AgentDiagnosticSource::Repository
+            || diagnostic.code != "runtime_update_delivery_failed"
+            || diagnostic.recorded_at < invocation.created_at
+            || invocation
+                .started_at
+                .is_some_and(|started_at| diagnostic.recorded_at < started_at)
+        {
+            return None;
+        }
+        let failed_update = diagnostic.details.as_ref()?.get("failedUpdate")?.clone();
+        match serde_json::from_value::<RuntimeUpdate>(failed_update).ok()? {
+            RuntimeUpdate::Finished(outcome) => {
+                invocation
+                    .finish(
+                        InvocationCompletion {
+                            status: outcome.status,
+                            completed_at: diagnostic.recorded_at,
+                            exit_code: outcome.exit_code,
+                            signal: outcome.signal.clone(),
+                            runtime_error: outcome.runtime_error.clone(),
+                        },
+                        diagnostic.recorded_at,
+                    )
+                    .ok()?;
+                Some((outcome, diagnostic.recorded_at))
+            }
+            RuntimeUpdate::Event(_) => None,
+        }
+    })
 }
 
 fn notification_ids(
