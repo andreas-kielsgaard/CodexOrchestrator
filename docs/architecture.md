@@ -1,6 +1,6 @@
 # Architecture Notes
 
-Date: 2026-07-02
+Updated: 2026-07-10
 
 This document describes the current code architecture. It should explain where new work belongs and
 which boundaries should stay intact.
@@ -9,9 +9,11 @@ which boundaries should stay intact.
 
 - Desktop shell: Tauri v2.
 - UI: React, TypeScript, Vite.
-- Domain/application/infrastructure layers are TypeScript-first today.
-- Rust owns the Tauri command boundary for app metadata, Open Tasks persistence, manual
-  repo/worktree registration, task/run detail reads, and live Codex task-run execution.
+- The legacy task/run model remains TypeScript-first with a parallel Rust Tauri implementation.
+- The core Agent Session lifecycle is Rust-first: durable records, SQLite history, application
+  coordination, Codex protocol handling, and process supervision live behind Tauri commands.
+- Rust also retains the older command boundary for app metadata, Open Tasks persistence, manual
+  repo/worktree registration, task/run detail reads, and task-scoped Codex execution.
 - SQLite infrastructure is written as pure TypeScript over injected SQLite-like interfaces.
 
 Current limitation: the app can open a local runtime database file through a Node-facing
@@ -33,9 +35,43 @@ options are still deferred.
 - Git output parsing stays under `src/infrastructure/git/`.
 - SQLite schema/store code stays under `src/infrastructure/sqlite/`.
 - Task lifecycle state changes stay in application services, not UI components.
-- Codex execution should enter through a future runtime adapter; Codex credentials remain owned by
-  Codex.
-- Store raw runtime output as artifacts before deriving summaries.
+- Agent Session execution enters through the provider-neutral `AgentRuntime` port and its current
+  Codex-specific adapter; Codex credentials remain owned by Codex.
+- Persist raw runtime output before deriving transcript presentation. The legacy task-run path
+  still stores its raw stream as an artifact; Agent Sessions store ordered raw runtime events.
+
+## Agent Session Vertical Slice
+
+Agent Sessions are the default application surface and are independent from the legacy task
+dashboard. The responsibility flow is:
+
+```text
+React Agent Session screen
+  -> TypeScript AgentSessionClient
+    -> Tauri commands and persisted update event
+      -> Rust AgentSessionApplication
+        -> SQLite AgentSessionRepository
+        -> CodexCliRuntime
+          -> ProcessSupervisor
+```
+
+The Rust backend is authoritative. It persists a submitted invocation before launch, persists each
+ordered runtime event before notifying the WebView, separately captures the external Codex context
+ID, and persists terminal state idempotently. The frontend projects durable records into a
+conversation: live work is open, completed work is collapsed, and the final response remains
+prominent. Reload and short-interval active reconciliation repair missed transient events.
+
+Primary module map:
+
+- `src/application/agentSessions/`: serializable client contract and DTOs
+- `src/infrastructure/agentSessions/`: Tauri client and persisted update subscription
+- `src/features/agentSessions/`: controller, transcript projector, and focused UI components
+- `src-tauri/src/agent_sessions/`: domain, ports, repository, lifecycle, and Tauri transport
+- `src-tauri/src/runtime/codex/`: Codex command capability mapping and JSONL normalization
+- `src-tauri/src/runtime/processes/`: direct-child ownership, streaming, cancellation, and shutdown
+
+The older task `Conversation` and Codex run path are intentionally not foundations for Agent
+Sessions. Task, goal, repo, and orchestration relationships remain deferred edges.
 
 ## Domain Layer
 
@@ -297,27 +333,39 @@ the Rust backend can collect a tracked `git diff --binary HEAD --` artifact and/
 array-argument validation command through fakeable process-runner boundaries. Capture failures are
 reported in the command result without turning the completed Codex run into a failed run.
 
+The independent Agent Session bridge exposes:
+
+- `create_agent_session`
+- `list_agent_sessions`
+- `load_agent_session`
+- `send_agent_session_message`
+- `cancel_agent_invocation`
+- `agent-session://persisted-update`
+
+These commands use migration `009_durable_agent_sessions_schema` and the Rust Agent Session
+application/repository modules rather than the task-run tables. Tauri event listen/unlisten
+permissions are explicitly scoped to the main window. Notifications are correlated by session and
+invocation IDs and are never the only source of terminal truth.
+
 ## UI Layer
 
-Location: `src/app/`, `src/main.tsx`, `src/styles.css`
+Location: `src/app/`, `src/features/`, `src/main.tsx`, `src/styles.css`
 
-The Open Tasks UI consumes injected `TaskDashboardClient`, `TaskRunDetailClient`, and
-`RuntimeCommandClient` instances, loads asynchronously, and provides visible repo/worktree
-registration, create, edit, state-change, archive, per-task Codex run controls, and a read-only
-task/run detail inspector. The task composer can select a registered worktree anchor so newly
-created tasks can immediately become runnable. The detail shell opens from a task card and renders
-task anchors, run history, grouped artifact previews/counts, validation summaries, and event
-timelines from the Worker 044 read model shape. Run controls use the projected task `worktreePath`
-as the command `cwd`, stay unavailable when no worktree is linked, show compact
-running/completed/failed feedback, and reload the dashboard plus the currently open detail after a
-run attempt so persisted backend state can be reflected. The default `src/main.tsx` wiring injects
-the Tauri command clients, keeping React/browser code away from SQLite and Node-only modules. Tests
-exercise the UI against fake clients; durable behavior is covered at the application client/store
-boundary.
+The thin app shell defaults to the independent Agent Session screen and mounts the old task
+dashboard only when the user selects `Legacy Tasks`. Agent Session state is owned by its feature
+controller, not the app shell or task screen. Its feature-owned components cover session selection,
+transcript projection, processing/technical disclosures, Markdown final output, composer actions,
+and deliberate follow-to-latest behavior.
 
-## Pending Runtime Architecture
+The legacy task screen still consumes injected `TaskDashboardClient`, `TaskRunDetailClient`, and
+`RuntimeCommandClient` instances and retains its existing repo/worktree, task-run, artifact,
+validation, and detail behavior. It is preserved rather than presented as the future task model.
+The default `src/main.tsx` wiring injects both sets of Tauri clients, keeping React/browser code away
+from SQLite, process APIs, and raw Codex arguments.
 
-The first usable runtime loop still needs:
+## Pending Legacy Task Runtime Architecture
+
+The legacy task surface still needs:
 
 1. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
 2. Review-grade UI that promotes final response, diff, validation, and next action into a focused
@@ -333,5 +381,6 @@ The reliable verification set today is:
 - `npm run build`
 
 Rust/Cargo verification is environment-dependent. When Rust is installed, run the Rust
-format/test/build checks in `src-tauri/` plus `npm run build:tauri`; otherwise the TypeScript
-verification set remains available.
+format/check/test/build checks in `src-tauri/` plus `npm run build:tauri`. The installed Codex help
+compatibility probe is intentionally ignored by the ordinary suite and should be executed
+explicitly for Agent Session release verification.

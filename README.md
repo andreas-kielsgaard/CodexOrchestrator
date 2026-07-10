@@ -1,8 +1,10 @@
 # Codex Orchestrator
 
-Codex Orchestrator is a local-first desktop control plane for Codex-driven work. It uses Tauri v2,
-React, TypeScript, Vite, SQLite, and local runtime adapters to track tasks, repos, worktrees, Codex
-runs, artifacts, validation results, and review state.
+Codex Orchestrator is a local-first desktop surface for doing work with agents. Its current core is
+a durable Agent Session: a text interaction context that can stream Codex CLI work, preserve the
+technical record, reopen after an app restart, and continue the same external Codex thread. The
+older task dashboard remains available as a secondary legacy surface while its product model is
+reconsidered.
 
 ## Prerequisites
 
@@ -60,21 +62,25 @@ without scanning the whole disk.
 ```text
 src/
   app/                 React application shell
+  application/         Browser-safe client contracts
   domain/              Domain types, seed records, and dashboard projection
+  features/            Independent Agent Session and legacy task screens
   infrastructure/      Tauri command adapters
   test/                Test setup
-src-tauri/             Tauri v2 Rust shell and command boundary
+src-tauri/
+  src/agent_sessions/  Durable domain, repository, lifecycle, and transport
+  src/runtime/         Codex adapter and operating-system process supervisor
 docs/
   architecture.md      Stack and boundary notes
-  agent-session/       Agent Session recovery plan, decisions, and evidence
+  agent-session/       Agent Session decisions, implementation evidence, and execution ledger
   task-logs/           Worker completion logs
 ```
 
-## Current Agent Session Plan
+## Agent Session Architecture
 
-The active recovery direction for the core Agent Session vertical slice is documented in
-[`docs/agent-session/README.md`](docs/agent-session/README.md). The integrated prototype remains on
-archive branches for evidence and selective recovery; it is not intended to be merged wholesale.
+The implemented vertical slice and its deliberate boundaries are documented in
+[`docs/agent-session/README.md`](docs/agent-session/README.md). The earlier integrated prototype
+remains on archive branches only as evidence; it was not merged wholesale.
 
 ## Runtime Status
 

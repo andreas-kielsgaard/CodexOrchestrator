@@ -1,6 +1,6 @@
 # Agent Session Architecture and Decisions
 
-Status: accepted direction for planning
+Status: implemented recovery baseline
 
 Created: 2026-07-10
 
@@ -58,8 +58,8 @@ inherit context from a root session while presenting only post-branch history.
 
 ## Core Records
 
-The first implementation should use separate records for the durable context, individual runtime
-work, and technical output.
+The implementation uses separate records for the durable context, individual runtime work, and
+technical output.
 
 ### `AgentSession`
 
@@ -215,7 +215,7 @@ solve orchestration.
 The Tauri boundary owns serializable commands, queries, acknowledgements, and update events. It does
 not own transcript presentation.
 
-Expected surface, subject to contract design:
+Implemented surface:
 
 - create or lazily establish a session
 - list session summaries
@@ -316,21 +316,41 @@ until real consumers and constraints exist.
 
 ## Structural Direction
 
-Exact filenames should follow the code that emerges, but conceptual ownership should remain clear:
+The implemented ownership map is:
 
 ```text
 src/
-  domain/agentSessions/          pure records and invariants
-  application/agentSessions/     use cases and ports
-  infrastructure/agentSessions/  Tauri client and persistence/runtime adapters where applicable
-  infrastructure/codex/          Codex protocol parsing and option mapping
-  features/agentSessions/        controller, projection, and views
+  application/agentSessions/     serializable frontend client contract and DTOs
+  infrastructure/agentSessions/  Tauri Agent Session client
+  features/agentSessions/        controller, transcript projection, and views
 
 src-tauri/src/
-  agent_sessions/                repository, commands/queries, reconciliation
+  agent_sessions/domain.rs       durable records and invariants
+  agent_sessions/ports.rs        repository, runtime, and notification ports
+  agent_sessions/repository/     SQLite schema, mapping, and repository coordination
+  agent_sessions/application/    lifecycle and persist-first update sink
+  agent_sessions/transport/      Tauri DTOs, commands, and notifications
   runtime/processes/             real process supervisor
   runtime/codex/                 Codex CLI process and protocol adapter
 ```
 
 The frontend and backend do not need mechanically identical folders. Responsibilities matter more
 than symmetry.
+
+## Implementation Notes and Known Limits
+
+- A session is established lazily when its first message is sent. The acknowledgement returns both
+  the stable local session ID and invocation ID.
+- Tauri events provide low-latency updates; durable reload remains authoritative. While an
+  invocation is active, the frontend also reconciles on a short interval so a missed event cannot
+  strand the visible state.
+- Expansion preference is transient UI state. The underlying processing and technical record is
+  durable and can be expanded again after restart.
+- The default process factory owns and reaps the direct Codex child. Portable Rust process APIs do
+  not guarantee descendant-tree termination on Windows; full tree ownership would require a Job
+  Object or another platform-specific factory.
+- Several repository/supervisor inspection methods remain unused by the first product path and
+  currently produce compile warnings. They are not exposed as inert UI controls or represented as
+  completed scheduling behavior.
+- The task-oriented conversation/run system remains separate. No task, goal, repo, or orchestration
+  relationship was introduced into Agent Sessions during the reset.

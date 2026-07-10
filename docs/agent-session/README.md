@@ -1,6 +1,7 @@
 # Agent Session Recovery Plan
 
-Status: approved direction, not yet implemented
+Status: recovery baseline implemented; automated gate complete; live disposable-session exercise
+pending available Codex usage
 
 Created: 2026-07-10
 
@@ -8,8 +9,8 @@ Working branch: `codex/agent-session-reset`
 
 ## Purpose
 
-This directory is the durable planning record for rebuilding the Agent Session vertical slice on
-the cleaned workspace baseline.
+This directory is the durable reasoning and implementation record for the Agent Session vertical
+slice rebuilt on the cleaned workspace baseline.
 
 An Agent Session is a durable interaction context for doing work through a text interface. The
 first runtime is Codex CLI. The visible conversation is a projection of that context rather than
@@ -18,22 +19,29 @@ the complete technical record.
 This plan supersedes Agent Session implementation assumptions found in the archived integrated
 overlay. It does not adopt the old task dashboard or orchestration models as prerequisites.
 
-## High-Level Plan
+## Implemented Baseline
 
-1. Establish a reviewed structural baseline without merging either archive wholesale.
-2. Define stable Agent Session, runtime binding, invocation, and event contracts.
-3. Build SQLite persistence and restart-safe session queries before launching Codex.
-4. Replace `CLISessionMaster` with a real Rust process supervisor that owns child processes.
-5. Implement a Codex CLI runtime adapter that resumes the external Codex thread identity.
-6. Add a recoverable Tauri command and event boundary over persisted invocation state.
-7. Rebuild the conversation UI as a projection: live work is visible, completed work is collapsed,
-   and the final response is prominent.
-8. Prove continuation, cancellation, restart recovery, and CLI compatibility with boundary tests.
+1. The structural baseline was recovered selectively without merging either archive wholesale.
+2. Stable Agent Session, runtime binding, invocation, event, repository, and runtime contracts are
+   implemented in Rust with a browser-safe TypeScript client contract.
+3. SQLite persistence and restart-safe ordered history queries exist before runtime launch.
+4. A real Rust supervisor owns direct child processes, output readers, cancellation, and shutdown.
+5. The Codex-specific adapter starts and resumes the separate external Codex thread identity.
+6. The application lifecycle persists before notification and reconciles missed events by query.
+7. The independent UI shows live work, collapses completed processing, and keeps the final response
+   prominent with safe Markdown rendering.
+8. Boundary tests prove continuation, persistence, cancellation, restart recovery, migration
+   compatibility, and installed CLI help compatibility.
 
-The first completion target is deliberately narrow:
+The implemented completion target remains deliberately narrow:
 
 > Create or open a session, send text, watch Codex work, see the final response, restart the app,
 > reopen the session, and continue the same Codex thread.
+
+The last manual gate is one disposable live session through the desktop app. Automated and desktop
+startup checks are complete, including the Tauri event-listener permission required for live
+updates. A live prompt is intentionally not claimed while the configured Codex account is at its
+usage limit.
 
 ## Documents
 

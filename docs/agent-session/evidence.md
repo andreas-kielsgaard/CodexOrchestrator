@@ -30,6 +30,42 @@ The archived implementation was inspected without merging it into the reset bran
 | E-11 | Tests use fake runtime identities and fake CLI parsing      | Green tests validate wiring while missing live failures                        | Add contract, persistence, process, and restart tests                     |
 | E-12 | Archived migration IDs may already exist in local databases | Reusing ordinal positions can collide with prototype databases                 | Audit/reset explicitly and use immutable non-colliding versions           |
 
+## Recovery Verification
+
+The reset implementation resolves the archived findings through independently testable
+boundaries:
+
+| Evidence   | Implemented proof                                                                                                                                                              |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| E-01       | Domain serialization and application lifecycle tests keep the stable local ID separate from the captured external context ID and resume the latter.                            |
+| E-02, E-03 | The SQLite repository close/reopen test retains two invocations, ordered normalized/raw events, diagnostics, and complete session history.                                     |
+| E-04       | Codex argument tests are capability-aware, and the ignored installed-CLI help probe passes explicitly against the locally installed CLI without running an agent.              |
+| E-05, E-08 | Supervisor tests cover concurrent sessions, duplicate-session rejection, cancellation, cancellation failure, shutdown, reader/wait failure, reap, and registry cleanup.        |
+| E-06       | Application tests prove persist-before-notify ordering, missed-notification reload, bounded delivery diagnostics, idempotent completion, and startup interruption.             |
+| E-07       | Session availability and invocation lifecycle are separate domain and repository invariants.                                                                                   |
+| E-09       | The Codex protocol adapter normalizes and retains provider data; a pure frontend projector independently applies live and final-first presentation policy.                     |
+| E-10       | The app defaults to Agent Sessions and does not initialize the legacy task dashboard until that secondary surface is selected.                                                 |
+| E-11       | Contract, repository, supervisor, fixture, application, transport, controller, projection, component, and shell tests now cover the actual boundaries.                         |
+| E-12       | Migration `009` has an immutable position after reserved prototype IDs; tests cover clean, archived-ledger, recognized-prototype quarantine, and unrecognized-table rejection. |
+
+### AS-07 gate results
+
+Verified on 2026-07-10:
+
+- frontend build, lint, formatting, and all 325 tests pass
+- Rust formatting and check pass
+- Rust tests pass: 74 library tests, one capability integration test, and one normally ignored
+  installed-Codex compatibility probe executed separately and passed
+- the desktop app starts directly on the Agent Session surface with the legacy task surface idle
+- the first desktop launch exposed a missing Tauri event-listener permission; the main-window
+  capability was added, covered by an integration test, rebuilt, and verified by restarting the app
+  without the permission error
+
+One manual claim remains deliberately open: a disposable live prompt, app restart/reopen, second
+prompt resume, concurrent second session, and live cancellation were not exercised while the
+configured Codex account reported that its usage limit was exhausted. The automated boundaries for
+those paths pass, but this document does not promote them to live-observed evidence.
+
 ## Detailed Findings
 
 ### E-01: Wrong continuation identity
