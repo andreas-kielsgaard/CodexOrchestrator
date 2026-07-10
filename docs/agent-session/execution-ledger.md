@@ -39,16 +39,16 @@ slice uses xhigh by default.
 
 ## Work Package State
 
-| Package                                 | State      | Thread                                 | Integrated commit               | Integration result |
-| --------------------------------------- | ---------- | -------------------------------------- | ------------------------------- | ------------------ |
-| AS-00 Structural and migration baseline | integrated | `019f4905-dc10-7c80-9e42-882196abac18` | `4e171e9`                       | accepted           |
-| AS-01 Agent Session contracts           | integrated | `019f491f-7f59-7500-9bf0-d0feaa28a59b` | `d717a28`, `dde0d8e`            | accepted           |
-| AS-02 Durable repository and queries    | integrated | `019f4947-7ca7-7f63-ac64-fe59a0174299` | `64c26ab`, `0f7da0f`            | accepted           |
-| AS-03 Real process supervisor           | integrated | `019f4947-7cb4-7c60-ab09-4ea5528da2cc` | `ddef6a5`, `35ebf8d`            | accepted           |
-| AS-04 Codex CLI runtime adapter         | integrated | `019f4af8-66ae-7e33-a641-9162851d0114` | `f2af49b`, `8be4d9e`, `d0d764e` | accepted           |
-| AS-05 Application and Tauri lifecycle   | integrated | `019f4b21-1aee-7272-aed8-a953a6b6cc1d` | `a9c716b`, `09d43ec`            | accepted           |
-| AS-06 Transcript projection and UI      | integrated | `019f4b50-0ba0-7ce2-9875-2ec9992d126d` | `0ebe65b`, `abe27e4`            | accepted           |
-| AS-07 End-to-end recovery gate          | ready      | pending                                | —                               | —                  |
+| Package                                 | State      | Thread                                 | Integrated commit               | Integration result               |
+| --------------------------------------- | ---------- | -------------------------------------- | ------------------------------- | -------------------------------- |
+| AS-00 Structural and migration baseline | integrated | `019f4905-dc10-7c80-9e42-882196abac18` | `4e171e9`                       | accepted                         |
+| AS-01 Agent Session contracts           | integrated | `019f491f-7f59-7500-9bf0-d0feaa28a59b` | `d717a28`, `dde0d8e`            | accepted                         |
+| AS-02 Durable repository and queries    | integrated | `019f4947-7ca7-7f63-ac64-fe59a0174299` | `64c26ab`, `0f7da0f`            | accepted                         |
+| AS-03 Real process supervisor           | integrated | `019f4947-7cb4-7c60-ab09-4ea5528da2cc` | `ddef6a5`, `35ebf8d`            | accepted                         |
+| AS-04 Codex CLI runtime adapter         | integrated | `019f4af8-66ae-7e33-a641-9162851d0114` | `f2af49b`, `8be4d9e`, `d0d764e` | accepted                         |
+| AS-05 Application and Tauri lifecycle   | integrated | `019f4b21-1aee-7272-aed8-a953a6b6cc1d` | `a9c716b`, `09d43ec`            | accepted                         |
+| AS-06 Transcript projection and UI      | integrated | `019f4b50-0ba0-7ce2-9875-2ec9992d126d` | `0ebe65b`, `abe27e4`            | accepted                         |
+| AS-07 End-to-end recovery gate          | review     | `019f4b73-2867-77e3-9a91-b8042cc8e994` | `742d477`                       | automated accepted; live pending |
 
 States used: `blocked`, `ready`, `active`, `review`, `correction`, `integrated`, `failed`, and
 `superseded`.
@@ -106,3 +106,16 @@ States used: `blocked`, `ready`, `active`, `review`, `correction`, `integrated`,
   feature-owned styles while preserving completed-turn processing collapse.
 - AS-06 verification passed all 324 frontend tests, the production build, lint, formatting, and
   dependency resolution for the Markdown renderer.
+- AS-07 was assigned to one low-reasoning worktree task. Its initial turn and one retry both failed
+  before agent startup and produced no edits, consistent with the account usage-limit notice. The
+  integration root executed the bounded verification rather than creating a duplicate slice task.
+- The AS-07 desktop smoke test found that Tauri denied `event.listen`, which prevented the live
+  update subscription. Commit `742d477` adds a main-window listen/unlisten capability, an
+  integration regression test, current architecture pointers, and the evidence resolution matrix.
+- AS-07 automated verification passed the frontend build, lint, formatting, all 325 frontend tests,
+  Rust formatting/check, 74 Rust library tests plus the capability integration test, and the
+  separately executed installed Codex CLI help probe. The rebuilt desktop app opens Agent Sessions
+  without the permission error and leaves the legacy task surface idle.
+- The disposable live-session sequence remains open because the configured Codex account reported
+  exhausted usage: first prompt/live processing, restart/reopen, resume prompt, concurrent second
+  session, and live cancellation are not claimed as manually observed.
