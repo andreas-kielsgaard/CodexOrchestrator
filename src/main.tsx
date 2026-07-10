@@ -7,6 +7,7 @@ import {
   tauriTaskRunDetailClient,
 } from './infrastructure/tauriCommands';
 import { createDevRuntimeStatusClient } from './infrastructure/devRuntimeStatusClient';
+import { tauriAgentSessionClient } from './infrastructure/agentSessions/tauriAgentSessionClient';
 import './styles.css';
 
 createRoot(document.getElementById('root')!).render(
@@ -16,6 +17,7 @@ createRoot(document.getElementById('root')!).render(
       taskRunDetailClient={tauriTaskRunDetailClient}
       runtimeCommandClient={tauriRuntimeCommandClient}
       runtimeStatusClient={createDevRuntimeStatusClient()}
+      agentSessionClient={tauriAgentSessionClient}
     />
   </StrictMode>,
 );
