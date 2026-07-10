@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"019f-fixture-first"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"0","type":"command_execution","command":"git status","status":"in_progress"}}
+{"type":"item.completed","item":{"id":"0","type":"command_execution","command":"git status","aggregated_output":"clean","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"1","type":"agent_message","text":"First fixture response."}}
+{"type":"turn.completed","usage":{"input_tokens":11,"cached_input_tokens":2,"output_tokens":7}}

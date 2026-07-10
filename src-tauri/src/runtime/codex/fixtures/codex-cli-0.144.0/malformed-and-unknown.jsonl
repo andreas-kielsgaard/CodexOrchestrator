@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"019f-fixture-malformed"}
+{not valid json}
+{"type":"future.event","payload":{"preserve":true}}
+{"type":"item.completed","item":{"type":"future_item","value":42}}
+{"type":"item.completed","item":{"type":"agent_message","text":"Valid output survives malformed neighbors."}}
+{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":4}}

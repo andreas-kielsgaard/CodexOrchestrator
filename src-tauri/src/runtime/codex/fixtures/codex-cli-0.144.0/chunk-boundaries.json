@@ -1,0 +1,8 @@
+{
+  "source": "first-turn.jsonl",
+  "chunks": [
+    "{\"type\":\"thread.st",
+    "arted\",\"thread_id\":\"019f-fixture-first\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"split",
+    " across chunks\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}"
+  ]
+}

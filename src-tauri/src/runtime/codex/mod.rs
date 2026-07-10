@@ -1,5 +1,17 @@
-//! Codex CLI adapter boundary.
+//! Codex CLI implementation of the provider-neutral Agent Runtime port.
 //!
-//! Codex argument construction, capability mapping, and JSONL normalization belong here once the
-//! provider-neutral Agent Session runtime contract exists. The existing task-run Codex behavior
-//! remains unchanged in the legacy task path during AS-00.
+//! Argument/capability mapping, JSONL normalization, and process coordination are intentionally
+//! separate. The process supervisor remains the sole owner of child processes.
+
+mod arguments;
+mod capabilities;
+mod protocol;
+mod runtime;
+
+#[allow(unused_imports)]
+pub(crate) use capabilities::{CodexCliCapabilities, CodexCliCapabilityProbe};
+#[allow(unused_imports)]
+pub(crate) use runtime::CodexCliRuntime;
+
+#[cfg(test)]
+mod tests;

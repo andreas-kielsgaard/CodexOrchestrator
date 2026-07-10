@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"019f-fixture-first"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"2","type":"reasoning","text":"Continued from the prior context."}}
+{"type":"item.completed","item":{"id":"3","type":"agent_message","text":"Resume fixture response."}}
+{"type":"turn.completed","usage":{"input_tokens":17,"cached_input_tokens":11,"output_tokens":5}}
