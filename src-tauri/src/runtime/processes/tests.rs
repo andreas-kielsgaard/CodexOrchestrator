@@ -1,8 +1,12 @@
 use super::*;
+use crate::agent_sessions::domain::AgentSessionId;
 use std::{
     collections::VecDeque,
     io::Cursor,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Condvar, Mutex,
+    },
     time::{Duration, Instant},
 };
 
