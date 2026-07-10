@@ -39,16 +39,16 @@ slice uses xhigh by default.
 
 ## Work Package State
 
-| Package                                 | State                      | Thread                                 | Integrated commit    | Integration result |
-| --------------------------------------- | -------------------------- | -------------------------------------- | -------------------- | ------------------ |
-| AS-00 Structural and migration baseline | integrated                 | `019f4905-dc10-7c80-9e42-882196abac18` | `4e171e9`            | accepted           |
-| AS-01 Agent Session contracts           | integrated                 | `019f491f-7f59-7500-9bf0-d0feaa28a59b` | `d717a28`, `dde0d8e` | accepted           |
-| AS-02 Durable repository and queries    | active                     | `019f4947-7ca7-7f63-ac64-fe59a0174299` | —                    | —                  |
-| AS-03 Real process supervisor           | active                     | `019f4947-7cb4-7c60-ab09-4ea5528da2cc` | —                    | —                  |
-| AS-04 Codex CLI runtime adapter         | blocked by AS-03           | pending                                | —                    | —                  |
-| AS-05 Application and Tauri lifecycle   | blocked by AS-02 and AS-04 | pending                                | —                    | —                  |
-| AS-06 Transcript projection and UI      | blocked by AS-05           | pending                                | —                    | —                  |
-| AS-07 End-to-end recovery gate          | blocked by AS-06           | pending                                | —                    | —                  |
+| Package                                 | State            | Thread                                 | Integrated commit    | Integration result |
+| --------------------------------------- | ---------------- | -------------------------------------- | -------------------- | ------------------ |
+| AS-00 Structural and migration baseline | integrated       | `019f4905-dc10-7c80-9e42-882196abac18` | `4e171e9`            | accepted           |
+| AS-01 Agent Session contracts           | integrated       | `019f491f-7f59-7500-9bf0-d0feaa28a59b` | `d717a28`, `dde0d8e` | accepted           |
+| AS-02 Durable repository and queries    | integrated       | `019f4947-7ca7-7f63-ac64-fe59a0174299` | `64c26ab`, `0f7da0f` | accepted           |
+| AS-03 Real process supervisor           | integrated       | `019f4947-7cb4-7c60-ab09-4ea5528da2cc` | `ddef6a5`, `35ebf8d` | accepted           |
+| AS-04 Codex CLI runtime adapter         | ready            | pending                                | —                    | —                  |
+| AS-05 Application and Tauri lifecycle   | blocked by AS-04 | pending                                | —                    | —                  |
+| AS-06 Transcript projection and UI      | blocked by AS-05 | pending                                | —                    | —                  |
+| AS-07 End-to-end recovery gate          | blocked by AS-06 | pending                                | —                    | —                  |
 
 States used: `blocked`, `ready`, `active`, `review`, `correction`, `integrated`, `failed`, and
 `superseded`.
@@ -72,3 +72,12 @@ States used: `blocked`, `ready`, `active`, `review`, `correction`, `integrated`,
 - AS-02 started from root commit `2cd63b9` with medium reasoning.
 - AS-03 started from root commit `2cd63b9` with high reasoning because it owns concurrent child
   process lifecycle, cancellation, and shutdown semantics.
+- AS-02 worker commit `33e7d9c` was reviewed, then corrected structurally in `14b1df8` to separate
+  schema/quarantine, repository coordination, SQLite mapping, and tests. Integrated as `64c26ab`
+  and `0f7da0f`.
+- AS-03 worker commit `ef5a0ad` was reviewed, then corrected structurally in `90bc033` to separate
+  the process contracts, supervisor coordination, monitoring, system adapter, and tests. Integrated
+  as `ddef6a5` and `35ebf8d`.
+- Combined AS-02/AS-03 verification passed all 49 Rust tests, all 295 frontend tests, Rust check and
+  formatting, and frontend build, lint, and formatting. Dead-code warnings remain expected until
+  AS-04 and AS-05 wire these modules into the runtime and application.
