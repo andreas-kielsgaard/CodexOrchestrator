@@ -5,6 +5,7 @@ use super::domain::{
     ExternalRuntimeContextId, InvocationCompletion, NormalizedRuntimeEvent,
 };
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use serde_json::Value;
 use std::{error::Error, fmt, sync::Arc};
 
@@ -133,7 +134,8 @@ pub(crate) struct RuntimeInvocationRequest {
     pub(crate) options: AgentRuntimeOptions,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum RuntimeInvocationMode {
     Start,
     Resume,
@@ -142,19 +144,22 @@ pub(crate) enum RuntimeInvocationMode {
 /// Confirms which semantic options preflight determined will be applied at launch.
 ///
 /// Absent values remain unknown and must not be filled with provider defaults by the caller.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct RuntimeInvocationPreflight {
     pub(crate) effective_options: AgentRuntimeOptions,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct RuntimeEventDraft {
     pub(crate) source: AgentRuntimeEventSource,
     pub(crate) raw_payload: Value,
     pub(crate) normalized: Option<NormalizedRuntimeEvent>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct RuntimeInvocationOutcome {
     pub(crate) status: AgentInvocationTerminalStatus,
     pub(crate) exit_code: Option<i32>,
@@ -162,13 +167,15 @@ pub(crate) struct RuntimeInvocationOutcome {
     pub(crate) runtime_error: Option<AgentRuntimeFailure>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
 pub(crate) enum RuntimeUpdate {
     Event(RuntimeEventDraft),
     Finished(RuntimeInvocationOutcome),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct RuntimeUpdateDeliveryFailure {
     pub(crate) update: RuntimeUpdate,
     pub(crate) error: RuntimePortError,
@@ -228,9 +235,16 @@ pub(crate) trait AgentRuntime: Send + Sync {
     ) -> Result<(), RuntimePortError>;
 
     fn cancel_invocation(&self, invocation_id: &AgentInvocationId) -> Result<(), RuntimePortError>;
+
+    /// Stops runtime-owned processes during application shutdown. Implementations without
+    /// process ownership may keep the default no-op behavior.
+    fn shutdown(&self) -> Result<(), RuntimePortError> {
+        Ok(())
+    }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum RuntimePortErrorKind {
     UnsupportedOptions,
     AlreadyActive,
@@ -241,7 +255,8 @@ pub(crate) enum RuntimePortErrorKind {
     Unavailable,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct RuntimePortError {
     pub(crate) kind: RuntimePortErrorKind,
     pub(crate) message: String,

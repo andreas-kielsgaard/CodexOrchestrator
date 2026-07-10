@@ -163,12 +163,37 @@ export interface SendAgentSessionMessageResultDto {
   invocationId: AgentInvocationIdDto;
 }
 
+export type AgentSessionUpdateDto =
+  | {
+      kind: 'event_persisted';
+      sessionId: AgentSessionIdDto;
+      invocationId: AgentInvocationIdDto;
+      event: AgentRuntimeEventDto;
+    }
+  | {
+      kind: 'invocation_terminal';
+      sessionId: AgentSessionIdDto;
+      invocationId: AgentInvocationIdDto;
+      invocation: AgentInvocationDto;
+    }
+  | {
+      kind: 'diagnostic_recorded';
+      sessionId: AgentSessionIdDto;
+      invocationId: AgentInvocationIdDto;
+      invocation: AgentInvocationDto;
+    };
+
+export type AgentSessionUpdateListener = (update: AgentSessionUpdateDto) => void;
+
 export interface AgentSessionClient {
   createSession(command: CreateAgentSessionCommandDto): Promise<AgentSessionDto>;
   listSessions(query?: ListAgentSessionsQueryDto): Promise<AgentSessionSummaryDto[]>;
   loadSession(query: LoadAgentSessionQueryDto): Promise<AgentSessionDetailsDto>;
+  reloadSession(query: LoadAgentSessionQueryDto): Promise<AgentSessionDetailsDto>;
+  subscribeUpdates(listener: AgentSessionUpdateListener): Promise<() => void>;
   sendMessage(
     command: SendAgentSessionMessageCommandDto,
   ): Promise<SendAgentSessionMessageResultDto>;
   cancelInvocation(command: CancelAgentInvocationCommandDto): Promise<AgentInvocationDto>;
+  disconnectUpdates(): Promise<void>;
 }

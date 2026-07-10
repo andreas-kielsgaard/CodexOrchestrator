@@ -6,9 +6,11 @@
 //! types. Provider adapters and process ownership stay under `runtime`; transport DTOs remain a
 //! separate boundary.
 
+pub(crate) mod application;
 pub(crate) mod domain;
 pub(crate) mod ports;
 pub(crate) mod repository;
+pub(crate) mod transport;
 
 #[cfg(test)]
 mod tests;

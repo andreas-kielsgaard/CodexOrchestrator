@@ -256,6 +256,10 @@ impl AgentRuntime for CodexCliRuntime {
             .cancel(invocation_id)
             .map_err(map_supervisor_error)
     }
+
+    fn shutdown(&self) -> Result<(), RuntimePortError> {
+        self.supervisor.shutdown().map_err(map_supervisor_error)
+    }
 }
 
 pub(super) fn reconcile_terminal(
