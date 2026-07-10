@@ -9,63 +9,38 @@ pub(super) enum InvocationCommand<'a> {
     Resume(&'a ExternalRuntimeContextId),
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub(super) struct PreparedInvocationCommand {
-    pub(super) args: Vec<String>,
-    pub(super) effective_options: AgentRuntimeOptions,
-}
-
 pub(super) fn build_args(
     command: InvocationCommand<'_>,
     prompt: &str,
     options: &AgentRuntimeOptions,
     capabilities: Option<&CodexCliCapabilities>,
-) -> Result<PreparedInvocationCommand, RuntimePortError> {
+) -> Result<Vec<String>, RuntimePortError> {
     let resume = matches!(command, InvocationCommand::Resume(_));
-    require_json(capabilities, resume)?;
+    let effective_options = prepare_options(resume, options, capabilities)?;
 
     let mut args = vec!["exec".to_string()];
-    let mut effective_options = AgentRuntimeOptions::default();
     if let InvocationCommand::Resume(context_id) = command {
         args.push("resume".to_string());
         push_supported_flag(&mut args, "--json", None);
-        map_model(
-            &mut args,
-            &mut effective_options,
-            options,
-            capabilities,
-            true,
-        )?;
-        map_sandbox(
-            &mut args,
-            &mut effective_options,
-            options,
-            capabilities,
-            true,
-        )?;
+        push_effective_options(&mut args, &effective_options);
         args.push(context_id.as_str().to_string());
     } else {
         push_supported_flag(&mut args, "--json", None);
-        map_model(
-            &mut args,
-            &mut effective_options,
-            options,
-            capabilities,
-            false,
-        )?;
-        map_sandbox(
-            &mut args,
-            &mut effective_options,
-            options,
-            capabilities,
-            false,
-        )?;
+        push_effective_options(&mut args, &effective_options);
     }
     args.push(prompt.to_string());
-    Ok(PreparedInvocationCommand {
-        args,
-        effective_options,
-    })
+    Ok(args)
+}
+
+pub(super) fn prepare_options(
+    resume: bool,
+    options: &AgentRuntimeOptions,
+    capabilities: Option<&CodexCliCapabilities>,
+) -> Result<AgentRuntimeOptions, RuntimePortError> {
+    require_json(capabilities, resume)?;
+    let model = prepare_model(options.model.as_deref(), capabilities, resume)?;
+    let sandbox = prepare_sandbox(options.sandbox, capabilities, resume)?;
+    Ok(AgentRuntimeOptions { model, sandbox })
 }
 
 fn require_json(
@@ -87,15 +62,13 @@ fn require_json(
     Ok(())
 }
 
-fn map_model(
-    args: &mut Vec<String>,
-    effective_options: &mut AgentRuntimeOptions,
-    options: &AgentRuntimeOptions,
+fn prepare_model(
+    model: Option<&str>,
     capabilities: Option<&CodexCliCapabilities>,
     resume: bool,
-) -> Result<(), RuntimePortError> {
-    let Some(model) = options.model.as_deref() else {
-        return Ok(());
+) -> Result<Option<String>, RuntimePortError> {
+    let Some(model) = model else {
+        return Ok(None);
     };
     if model.trim().is_empty() {
         return Err(unsupported("the requested Codex model must not be empty"));
@@ -108,27 +81,21 @@ fn map_model(
         }
     });
     match support {
-        Some(true) => {
-            push_supported_flag(args, "--model", Some(model));
-            effective_options.model = Some(model.to_string());
-        }
+        Some(true) => Ok(Some(model.to_string())),
         Some(false) => return Err(unsupported(
             "the installed Codex CLI does not support the requested model option for this command",
         )),
-        None => {}
+        None => Ok(None),
     }
-    Ok(())
 }
 
-fn map_sandbox(
-    args: &mut Vec<String>,
-    effective_options: &mut AgentRuntimeOptions,
-    options: &AgentRuntimeOptions,
+fn prepare_sandbox(
+    sandbox: Option<RuntimeSandboxMode>,
     capabilities: Option<&CodexCliCapabilities>,
     resume: bool,
-) -> Result<(), RuntimePortError> {
-    let Some(sandbox) = options.sandbox else {
-        return Ok(());
+) -> Result<Option<RuntimeSandboxMode>, RuntimePortError> {
+    let Some(sandbox) = sandbox else {
+        return Ok(None);
     };
     let support = capabilities.and_then(|caps| {
         if resume {
@@ -138,14 +105,19 @@ fn map_sandbox(
         }
     });
     match support {
-        Some(true) => {
-            push_supported_flag(args, "--sandbox", Some(sandbox_value(sandbox)));
-            effective_options.sandbox = Some(sandbox);
-        }
+        Some(true) => Ok(Some(sandbox)),
         Some(false) => return Err(unsupported("the installed Codex CLI does not support the requested sandbox option for this command")),
-        None => {}
+        None => Ok(None),
     }
-    Ok(())
+}
+
+fn push_effective_options(args: &mut Vec<String>, options: &AgentRuntimeOptions) {
+    if let Some(model) = options.model.as_deref() {
+        push_supported_flag(args, "--model", Some(model));
+    }
+    if let Some(sandbox) = options.sandbox {
+        push_supported_flag(args, "--sandbox", Some(sandbox_value(sandbox)));
+    }
 }
 
 fn push_supported_flag(args: &mut Vec<String>, flag: &str, value: Option<&str>) {

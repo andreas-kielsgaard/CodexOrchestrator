@@ -1,5 +1,5 @@
 use super::{
-    arguments::{build_args, InvocationCommand, PreparedInvocationCommand},
+    arguments::{build_args, prepare_options, InvocationCommand},
     capabilities::{resolve_program, CodexCliCapabilities},
     protocol::{CodexJsonlProtocol, JsonlTerminalEvidence},
 };
@@ -10,10 +10,9 @@ use crate::{
             AgentRuntimeFailure,
         },
         ports::{
-            AgentRuntime, AgentRuntimeUpdateSink, RuntimeEventDraft, RuntimeInvocationOutcome,
-            RuntimeInvocationRequest, RuntimeLaunchAcknowledgement, RuntimePortError,
-            RuntimePortErrorKind, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
-            RuntimeUpdateDeliveryKind,
+            AgentRuntime, AgentRuntimeUpdateSink, RuntimeEventDraft, RuntimeInvocationMode,
+            RuntimeInvocationOutcome, RuntimeInvocationPreflight, RuntimeInvocationRequest,
+            RuntimePortError, RuntimePortErrorKind, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
         },
     },
     runtime::processes::{
@@ -140,12 +139,8 @@ fn deliver_update(
     invocation_id: &AgentInvocationId,
     update: RuntimeUpdate,
 ) {
-    let update_kind = match &update {
-        RuntimeUpdate::Event(_) => RuntimeUpdateDeliveryKind::Event,
-        RuntimeUpdate::Finished(_) => RuntimeUpdateDeliveryKind::Finished,
-    };
-    if let Err(error) = sink.emit_update(invocation_id, update) {
-        let failure = RuntimeUpdateDeliveryFailure { update_kind, error };
+    if let Err(error) = sink.emit_update(invocation_id, update.clone()) {
+        let failure = RuntimeUpdateDeliveryFailure { update, error };
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             sink.report_delivery_failure(invocation_id, failure)
         }));
@@ -189,11 +184,8 @@ impl CodexCliRuntime {
         request: RuntimeInvocationRequest,
         command: InvocationCommand<'_>,
         update_sink: Arc<dyn AgentRuntimeUpdateSink>,
-    ) -> Result<RuntimeLaunchAcknowledgement, RuntimePortError> {
-        let PreparedInvocationCommand {
-            args,
-            effective_options,
-        } = build_args(
+    ) -> Result<(), RuntimePortError> {
+        let args = build_args(
             command,
             &request.submitted_text,
             &request.options,
@@ -215,7 +207,7 @@ impl CodexCliRuntime {
             .supervisor
             .start(request.session_id, request.invocation_id.clone(), spec)
         {
-            Ok(()) => Ok(RuntimeLaunchAcknowledgement { effective_options }),
+            Ok(()) => Ok(()),
             Err(error) => {
                 if error.kind != SupervisorErrorKind::SpawnFailed {
                     self.coordinator.remove(&request.invocation_id);
@@ -227,11 +219,22 @@ impl CodexCliRuntime {
 }
 
 impl AgentRuntime for CodexCliRuntime {
+    fn preflight_invocation(
+        &self,
+        mode: RuntimeInvocationMode,
+        requested_options: &crate::agent_sessions::domain::AgentRuntimeOptions,
+    ) -> Result<RuntimeInvocationPreflight, RuntimePortError> {
+        let resume = mode == RuntimeInvocationMode::Resume;
+        let effective_options =
+            prepare_options(resume, requested_options, self.capabilities.as_ref())?;
+        Ok(RuntimeInvocationPreflight { effective_options })
+    }
+
     fn start_invocation(
         &self,
         request: RuntimeInvocationRequest,
         update_sink: Arc<dyn AgentRuntimeUpdateSink>,
-    ) -> Result<RuntimeLaunchAcknowledgement, RuntimePortError> {
+    ) -> Result<(), RuntimePortError> {
         self.launch(request, InvocationCommand::Start, update_sink)
     }
 
@@ -240,7 +243,7 @@ impl AgentRuntime for CodexCliRuntime {
         request: RuntimeInvocationRequest,
         external_context_id: crate::agent_sessions::domain::ExternalRuntimeContextId,
         update_sink: Arc<dyn AgentRuntimeUpdateSink>,
-    ) -> Result<RuntimeLaunchAcknowledgement, RuntimePortError> {
+    ) -> Result<(), RuntimePortError> {
         self.launch(
             request,
             InvocationCommand::Resume(&external_context_id),

@@ -1,5 +1,5 @@
 use super::{
-    arguments::{build_args, InvocationCommand},
+    arguments::{build_args, prepare_options, InvocationCommand},
     capabilities::{resolve_program, CodexCliCapabilities, CodexCliCapabilityProbe},
     protocol::{CodexJsonlProtocol, JsonlTerminalEvidence},
     runtime::reconcile_terminal,
@@ -12,9 +12,8 @@ use crate::{
             ExternalRuntimeContextId, NormalizedRuntimeEventKind, RuntimeSandboxMode,
         },
         ports::{
-            AgentRuntime, AgentRuntimeUpdateSink, RuntimeInvocationRequest, RuntimePortError,
-            RuntimePortErrorKind, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
-            RuntimeUpdateDeliveryKind,
+            AgentRuntime, AgentRuntimeUpdateSink, RuntimeInvocationMode, RuntimeInvocationRequest,
+            RuntimePortError, RuntimePortErrorKind, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
         },
     },
     runtime::processes::{
@@ -26,7 +25,10 @@ use serde::Deserialize;
 use std::{
     collections::VecDeque,
     io::{self, Cursor},
-    sync::{Arc, Condvar, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Condvar, Mutex,
+    },
     time::{Duration, Instant},
 };
 
@@ -101,7 +103,7 @@ fn builds_supported_first_turn_and_resume_commands() {
     )
     .expect("start args");
     assert_eq!(
-        start.args,
+        start,
         [
             "exec",
             "--json",
@@ -112,7 +114,10 @@ fn builds_supported_first_turn_and_resume_commands() {
             "hello"
         ]
     );
-    assert_eq!(start.effective_options, options);
+    assert_eq!(
+        prepare_options(false, &options, Some(&capabilities())).expect("start preflight"),
+        options
+    );
     let context = ExternalRuntimeContextId::new("thread-external").expect("context");
     let resume_options = AgentRuntimeOptions {
         model: Some("gpt-5".to_string()),
@@ -126,7 +131,7 @@ fn builds_supported_first_turn_and_resume_commands() {
     )
     .expect("resume args");
     assert_eq!(
-        resume.args,
+        resume,
         [
             "exec",
             "resume",
@@ -137,7 +142,10 @@ fn builds_supported_first_turn_and_resume_commands() {
             "continue"
         ]
     );
-    assert_eq!(resume.effective_options, resume_options);
+    assert_eq!(
+        prepare_options(true, &resume_options, Some(&capabilities())).expect("resume preflight"),
+        resume_options
+    );
 }
 
 #[test]
@@ -146,9 +154,12 @@ fn omits_optional_options_when_capability_data_is_absent() {
         model: Some("unverified-model".to_string()),
         sandbox: Some(RuntimeSandboxMode::ReadOnly),
     };
-    let prepared = build_args(InvocationCommand::Start, "hello", &options, None).expect("defaults");
-    assert_eq!(prepared.args, ["exec", "--json", "hello"]);
-    assert_eq!(prepared.effective_options, AgentRuntimeOptions::default());
+    let args = build_args(InvocationCommand::Start, "hello", &options, None).expect("defaults");
+    assert_eq!(args, ["exec", "--json", "hello"]);
+    assert_eq!(
+        prepare_options(false, &options, None).expect("preflight defaults"),
+        AgentRuntimeOptions::default()
+    );
 }
 
 #[test]
@@ -358,6 +369,71 @@ impl CollectingSink {
     }
 }
 
+struct RunningOrderSink {
+    durable_running: Arc<AtomicBool>,
+    inner: CollectingSink,
+}
+
+impl AgentRuntimeUpdateSink for RunningOrderSink {
+    fn emit_update(
+        &self,
+        invocation_id: &AgentInvocationId,
+        update: RuntimeUpdate,
+    ) -> Result<(), RuntimePortError> {
+        assert!(
+            self.durable_running.load(Ordering::Acquire),
+            "runtime update arrived before the durable running transition"
+        );
+        self.inner.emit_update(invocation_id, update)
+    }
+
+    fn report_delivery_failure(
+        &self,
+        invocation_id: &AgentInvocationId,
+        failure: RuntimeUpdateDeliveryFailure,
+    ) {
+        self.inner.report_delivery_failure(invocation_id, failure);
+    }
+}
+
+#[test]
+fn preflight_allows_durable_running_transition_before_an_immediate_child_can_emit() {
+    let factory = Arc::new(FixtureFactory::default());
+    factory
+        .stdout
+        .lock()
+        .expect("stdout")
+        .push_back(FIRST_TURN.as_bytes().to_vec());
+    let runtime = CodexCliRuntime::new("fixture-codex", Some(capabilities()), factory);
+    let requested = AgentRuntimeOptions {
+        model: Some("gpt-5".to_string()),
+        sandbox: Some(RuntimeSandboxMode::WorkspaceWrite),
+    };
+    let preflight = runtime
+        .preflight_invocation(RuntimeInvocationMode::Start, &requested)
+        .expect("preflight");
+    assert_eq!(preflight.effective_options, requested);
+
+    let durable_running = Arc::new(AtomicBool::new(false));
+    let sink = Arc::new(RunningOrderSink {
+        durable_running: durable_running.clone(),
+        inner: CollectingSink::default(),
+    });
+    durable_running.store(true, Ordering::Release);
+    let mut invocation = request("immediate", "first");
+    invocation.options = requested;
+    runtime
+        .start_invocation(invocation, sink.clone())
+        .expect("launch");
+    sink.inner.wait_finished();
+    assert!(sink
+        .inner
+        .delivery_failures
+        .lock()
+        .expect("delivery failures")
+        .is_empty());
+}
+
 #[derive(Default)]
 struct FailingDeliverySink {
     attempts: Mutex<Vec<RuntimeUpdate>>,
@@ -394,7 +470,7 @@ impl FailingDeliverySink {
         let mut failures = self.failures.lock().expect("failures");
         while !failures
             .iter()
-            .any(|failure| failure.update_kind == RuntimeUpdateDeliveryKind::Finished)
+            .any(|failure| matches!(failure.update, RuntimeUpdate::Finished(_)))
         {
             let remaining = deadline
                 .checked_duration_since(Instant::now())
@@ -440,10 +516,18 @@ fn event_and_terminal_delivery_failures_are_observed_without_reclassifying_runti
     let failures = concrete.failures.lock().expect("failures");
     assert!(failures
         .iter()
-        .any(|failure| failure.update_kind == RuntimeUpdateDeliveryKind::Event));
+        .any(|failure| matches!(failure.update, RuntimeUpdate::Event(_))));
+    assert!(matches!(
+        failures.last().map(|failure| &failure.update),
+        Some(RuntimeUpdate::Finished(outcome))
+            if outcome.status == AgentInvocationTerminalStatus::Completed
+    ));
     assert_eq!(
-        failures.last().map(|failure| failure.update_kind),
-        Some(RuntimeUpdateDeliveryKind::Finished)
+        failures
+            .iter()
+            .map(|failure| &failure.update)
+            .collect::<Vec<_>>(),
+        attempts.iter().collect::<Vec<_>>()
     );
     assert!(failures
         .iter()
@@ -460,12 +544,24 @@ fn runtime_uses_supervisor_for_first_turn_and_resume_with_explicit_working_direc
         .extend([FIRST_TURN.as_bytes().to_vec(), RESUME.as_bytes().to_vec()]);
     let runtime = CodexCliRuntime::new("codex", Some(capabilities()), factory.clone());
     let first_sink = Arc::new(CollectingSink::default());
-    let first_launch = runtime
+    let first_preflight = runtime
+        .preflight_invocation(
+            RuntimeInvocationMode::Start,
+            &AgentRuntimeOptions::default(),
+        )
+        .expect("start preflight");
+    runtime
         .start_invocation(request("inv-1", "first"), first_sink.clone())
         .expect("start");
     first_sink.wait_finished();
     let resume_sink = Arc::new(CollectingSink::default());
-    let resume_launch = runtime
+    let resume_preflight = runtime
+        .preflight_invocation(
+            RuntimeInvocationMode::Resume,
+            &AgentRuntimeOptions::default(),
+        )
+        .expect("resume preflight");
+    runtime
         .resume_invocation(
             request("inv-2", "again"),
             ExternalRuntimeContextId::new("019f-fixture-first").expect("context"),
@@ -489,11 +585,11 @@ fn runtime_uses_supervisor_for_first_turn_and_resume_with_explicit_working_direc
     );
     assert!(first_sink.updates.lock().expect("updates").iter().any(|update| matches!(update, RuntimeUpdate::Finished(outcome) if outcome.status == AgentInvocationTerminalStatus::Completed)));
     assert_eq!(
-        first_launch.effective_options,
+        first_preflight.effective_options,
         AgentRuntimeOptions::default()
     );
     assert_eq!(
-        resume_launch.effective_options,
+        resume_preflight.effective_options,
         AgentRuntimeOptions::default()
     );
 }

@@ -10,9 +10,9 @@ use super::{
     },
     ports::{
         AgentRuntime, AgentRuntimeUpdateSink, AgentSessionRepository, ListAgentSessionsQuery,
-        RepositoryError, RepositoryErrorKind, RuntimeEventDraft, RuntimeInvocationOutcome,
-        RuntimeInvocationRequest, RuntimeLaunchAcknowledgement, RuntimePortError, RuntimeUpdate,
-        RuntimeUpdateDeliveryFailure,
+        RepositoryError, RepositoryErrorKind, RuntimeEventDraft, RuntimeInvocationMode,
+        RuntimeInvocationOutcome, RuntimeInvocationPreflight, RuntimeInvocationRequest,
+        RuntimePortError, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
     },
 };
 use chrono::{DateTime, Utc};
@@ -299,10 +299,16 @@ fn fake_runtime_requires_external_identity_only_for_resume_and_streams_updates()
         options: runtime_options(),
     };
 
-    let start = runtime
+    let start_preflight = runtime
+        .preflight_invocation(RuntimeInvocationMode::Start, &request.options)
+        .expect("start preflight");
+    runtime
         .start_invocation(request.clone(), sink.clone())
         .expect("start runtime");
-    let resume = runtime
+    let resume_preflight = runtime
+        .preflight_invocation(RuntimeInvocationMode::Resume, &request.options)
+        .expect("resume preflight");
+    runtime
         .resume_invocation(
             request.clone(),
             external_context_id("runtime-external"),
@@ -325,8 +331,8 @@ fn fake_runtime_requires_external_identity_only_for_resume_and_streams_updates()
     assert_eq!(updates.len(), 4);
     assert_eq!(updates[0].0, request.invocation_id);
     assert_eq!(updates[0].1, RuntimeUpdate::Event(runtime_event_draft()));
-    assert_eq!(start.effective_options, request.options);
-    assert_eq!(resume.effective_options, request.options);
+    assert_eq!(start_preflight.effective_options, request.options);
+    assert_eq!(resume_preflight.effective_options, request.options);
     assert_eq!(updates[1].1, RuntimeUpdate::Finished(runtime_outcome()));
 }
 
@@ -599,19 +605,27 @@ struct FakeRuntime {
 }
 
 impl AgentRuntime for FakeRuntime {
+    fn preflight_invocation(
+        &self,
+        _mode: RuntimeInvocationMode,
+        requested_options: &AgentRuntimeOptions,
+    ) -> Result<RuntimeInvocationPreflight, RuntimePortError> {
+        Ok(RuntimeInvocationPreflight {
+            effective_options: requested_options.clone(),
+        })
+    }
+
     fn start_invocation(
         &self,
         request: RuntimeInvocationRequest,
         update_sink: Arc<dyn AgentRuntimeUpdateSink>,
-    ) -> Result<RuntimeLaunchAcknowledgement, RuntimePortError> {
+    ) -> Result<(), RuntimePortError> {
         self.calls
             .lock()
             .expect("runtime calls")
             .push(FakeRuntimeCall::Start(request.clone()));
         emit_fake_runtime_updates(update_sink, &request.invocation_id)?;
-        Ok(RuntimeLaunchAcknowledgement {
-            effective_options: request.options,
-        })
+        Ok(())
     }
 
     fn resume_invocation(
@@ -619,7 +633,7 @@ impl AgentRuntime for FakeRuntime {
         request: RuntimeInvocationRequest,
         external_context_id: ExternalRuntimeContextId,
         update_sink: Arc<dyn AgentRuntimeUpdateSink>,
-    ) -> Result<RuntimeLaunchAcknowledgement, RuntimePortError> {
+    ) -> Result<(), RuntimePortError> {
         self.calls
             .lock()
             .expect("runtime calls")
@@ -628,9 +642,7 @@ impl AgentRuntime for FakeRuntime {
                 external_context_id,
             ));
         emit_fake_runtime_updates(update_sink, &request.invocation_id)?;
-        Ok(RuntimeLaunchAcknowledgement {
-            effective_options: request.options,
-        })
+        Ok(())
     }
 
     fn cancel_invocation(&self, invocation_id: &AgentInvocationId) -> Result<(), RuntimePortError> {

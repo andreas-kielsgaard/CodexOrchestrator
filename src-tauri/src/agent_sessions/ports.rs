@@ -133,11 +133,17 @@ pub(crate) struct RuntimeInvocationRequest {
     pub(crate) options: AgentRuntimeOptions,
 }
 
-/// Confirms which semantic options the runtime adapter actually applied at launch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RuntimeInvocationMode {
+    Start,
+    Resume,
+}
+
+/// Confirms which semantic options preflight determined will be applied at launch.
 ///
 /// Absent values remain unknown and must not be filled with provider defaults by the caller.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct RuntimeLaunchAcknowledgement {
+pub(crate) struct RuntimeInvocationPreflight {
     pub(crate) effective_options: AgentRuntimeOptions,
 }
 
@@ -162,15 +168,9 @@ pub(crate) enum RuntimeUpdate {
     Finished(RuntimeInvocationOutcome),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum RuntimeUpdateDeliveryKind {
-    Event,
-    Finished,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RuntimeUpdateDeliveryFailure {
-    pub(crate) update_kind: RuntimeUpdateDeliveryKind,
+    pub(crate) update: RuntimeUpdate,
     pub(crate) error: RuntimePortError,
 }
 
@@ -199,23 +199,33 @@ pub(crate) trait AgentRuntimeUpdateSink: Send + Sync {
 
 /// Runtime operations proven necessary by the first Agent Session slice.
 ///
+/// Callers must execute `preflight_invocation`, durably transition the invocation from pending to
+/// running using the returned effective options, and only then call `start_invocation` or
+/// `resume_invocation`. A child may emit updates before either launch method returns.
+///
 /// Start and resume are separate so callers cannot accidentally use the local session ID as the
 /// external continuation identity. Implementations may return after launch and continue emitting
 /// through the supplied sink. Process arguments, JSONL types, and child handles are adapter
 /// concerns and do not cross this boundary.
 pub(crate) trait AgentRuntime: Send + Sync {
+    fn preflight_invocation(
+        &self,
+        mode: RuntimeInvocationMode,
+        requested_options: &AgentRuntimeOptions,
+    ) -> Result<RuntimeInvocationPreflight, RuntimePortError>;
+
     fn start_invocation(
         &self,
         request: RuntimeInvocationRequest,
         update_sink: Arc<dyn AgentRuntimeUpdateSink>,
-    ) -> Result<RuntimeLaunchAcknowledgement, RuntimePortError>;
+    ) -> Result<(), RuntimePortError>;
 
     fn resume_invocation(
         &self,
         request: RuntimeInvocationRequest,
         external_context_id: ExternalRuntimeContextId,
         update_sink: Arc<dyn AgentRuntimeUpdateSink>,
-    ) -> Result<RuntimeLaunchAcknowledgement, RuntimePortError>;
+    ) -> Result<(), RuntimePortError>;
 
     fn cancel_invocation(&self, invocation_id: &AgentInvocationId) -> Result<(), RuntimePortError>;
 }
