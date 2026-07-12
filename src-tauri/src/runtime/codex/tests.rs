@@ -651,6 +651,56 @@ fn runtime_uses_supervisor_for_first_turn_and_resume_with_explicit_working_direc
 }
 
 #[test]
+fn launch_observer_sees_resume_external_context_not_local_ids() {
+    let factory = Arc::new(FixtureFactory::default());
+    factory
+        .stdout
+        .lock()
+        .expect("stdout")
+        .push_back(FIRST_TURN.as_bytes().to_vec());
+    let observed = Arc::new(Mutex::new(Vec::<ProcessLaunchSpec>::new()));
+    let observer_target = observed.clone();
+    let runtime = CodexCliRuntime::new("codex", Some(capabilities()), factory)
+        .with_launch_observer(Arc::new(move |spec| {
+            observer_target
+                .lock()
+                .expect("observed specs")
+                .push(spec.clone());
+        }));
+    let local_session = AgentSessionId::new("local-session-17").expect("session");
+    let local_invocation = AgentInvocationId::new("local-invocation-23").expect("invocation");
+    let external_context = ExternalRuntimeContextId::new("codex-thread-41").expect("context");
+    let sink = Arc::new(CollectingSink::default());
+
+    runtime
+        .resume_invocation(
+            RuntimeInvocationRequest {
+                session_id: local_session,
+                invocation_id: local_invocation,
+                submitted_text: "continue".to_string(),
+                working_directory: None,
+                options: AgentRuntimeOptions::default(),
+            },
+            external_context.clone(),
+            sink.clone(),
+        )
+        .expect("resume");
+    sink.wait_finished();
+
+    let specs = observed.lock().expect("observed specs");
+    assert_eq!(specs.len(), 1);
+    assert_eq!(
+        specs[0].args,
+        ["exec", "resume", "--json", "codex-thread-41", "continue"]
+    );
+    assert!(specs[0]
+        .args
+        .contains(&external_context.as_str().to_string()));
+    assert!(!specs[0].args.contains(&"local-session-17".to_string()));
+    assert!(!specs[0].args.contains(&"local-invocation-23".to_string()));
+}
+
+#[test]
 fn terminal_reconciliation_requires_both_protocol_and_process_success() {
     let clean_exit = || {
         ProcessTerminalOutcome::Exited(ProcessExit {

@@ -160,6 +160,8 @@ pub(crate) struct CodexCliRuntime {
     capabilities: Option<CodexCliCapabilities>,
     coordinator: Arc<RuntimeCoordinator>,
     supervisor: ProcessSupervisor,
+    #[cfg(test)]
+    launch_observer: Option<Arc<dyn Fn(&ProcessLaunchSpec) + Send + Sync>>,
 }
 
 impl CodexCliRuntime {
@@ -182,7 +184,25 @@ impl CodexCliRuntime {
             capabilities,
             coordinator,
             supervisor,
+            #[cfg(test)]
+            launch_observer: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_launch_observer(
+        mut self,
+        observer: Arc<dyn Fn(&ProcessLaunchSpec) + Send + Sync>,
+    ) -> Self {
+        self.launch_observer = Some(observer);
+        self
+    }
+
+    /// Test-only visibility into direct children owned by this runtime's supervisor. This makes
+    /// no claim about descendants (notably on Windows, where `Child::kill` is not tree kill).
+    #[cfg(test)]
+    pub(crate) fn active_direct_child_count(&self) -> Result<usize, RuntimePortError> {
+        self.supervisor.active_count().map_err(map_supervisor_error)
     }
 
     fn launch(
@@ -207,6 +227,10 @@ impl CodexCliRuntime {
             working_directory: request.working_directory.as_deref().map(PathBuf::from),
             environment: Vec::new(),
         };
+        #[cfg(test)]
+        if let Some(observer) = &self.launch_observer {
+            observer(&spec);
+        }
         self.coordinator
             .register(request.invocation_id.clone(), update_sink)?;
         match self

@@ -14,3 +14,6 @@ pub(crate) mod transport;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod live_smoke;

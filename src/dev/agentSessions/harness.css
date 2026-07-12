@@ -1,0 +1,89 @@
+html,
+body,
+#root {
+  min-width: 0;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #f6f7f4;
+}
+
+.agent-session-harness {
+  display: grid;
+  height: 100vh;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.agent-session-harness-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid #bbc4bb;
+  background: #17211b;
+  color: #fffdf8;
+  font:
+    0.78rem/1.3 system-ui,
+    sans-serif;
+}
+
+.agent-session-harness-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.agent-session-harness-controls select,
+.agent-session-harness-controls button {
+  min-height: 30px;
+  padding: 3px 8px;
+  border: 1px solid #748078;
+  border-radius: 5px;
+  background: #fffdf8;
+  color: #17211b;
+  font: inherit;
+}
+
+.agent-session-harness-controls button {
+  cursor: pointer;
+}
+
+.agent-session-harness-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.agent-session-harness-status {
+  min-width: max-content;
+  margin-left: auto;
+  font-weight: 700;
+}
+
+.agent-session-harness-note {
+  color: #c9d3ca;
+  white-space: nowrap;
+}
+
+.agent-session-harness > .agent-session-screen {
+  height: auto;
+  min-height: 0;
+}
+
+@media (max-width: 860px) {
+  .agent-session-harness-controls {
+    flex-wrap: wrap;
+  }
+
+  .agent-session-harness-status {
+    margin-left: 0;
+  }
+
+  .agent-session-harness-note {
+    width: 100%;
+  }
+}
