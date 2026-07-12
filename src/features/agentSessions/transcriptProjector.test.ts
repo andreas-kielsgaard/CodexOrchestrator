@@ -81,6 +81,17 @@ describe('projectAgentSessionTranscript', () => {
     expect(invocation.technical.map((item) => item.text)).toEqual(['{bad', 'warning']);
   });
 
+  it('decodes legacy persisted stderr bytes for readable technical presentation', () => {
+    const stderr = event(1, 'unknown', null);
+    stderr.source = 'stderr';
+    stderr.normalized = null;
+    stderr.rawPayload = { bytes: [119, 97, 114, 110], lossyUtf8: 'warning\n' };
+
+    const invocation = projectAgentSessionTranscript(details('failed', [stderr])).invocations[0];
+
+    expect(invocation.technical[0].text).toBe('warning');
+  });
+
   it('orders invocations and their events deterministically', () => {
     const value = details();
     value.invocations = [

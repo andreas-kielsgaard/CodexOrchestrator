@@ -301,6 +301,7 @@ impl SupervisedChild for ImmediateChild {
 #[derive(Default)]
 struct FixtureFactory {
     stdout: Mutex<VecDeque<Vec<u8>>>,
+    stderr: Mutex<VecDeque<Vec<u8>>>,
     specs: Mutex<Vec<ProcessLaunchSpec>>,
 }
 
@@ -313,12 +314,67 @@ impl ChildProcessFactory for FixtureFactory {
             .expect("stdout")
             .pop_front()
             .expect("fixture configured");
+        let stderr = self
+            .stderr
+            .lock()
+            .expect("stderr")
+            .pop_front()
+            .unwrap_or_default();
         Ok(SpawnedProcess {
             child: Arc::new(ImmediateChild),
             stdout: Box::new(Cursor::new(stdout)),
-            stderr: Box::new(Cursor::new(Vec::<u8>::new())),
+            stderr: Box::new(Cursor::new(stderr)),
         })
     }
+}
+
+#[test]
+fn stderr_is_preserved_as_bytes_and_normalized_as_readable_text() {
+    let factory = Arc::new(FixtureFactory::default());
+    factory
+        .stdout
+        .lock()
+        .expect("stdout")
+        .push_back(FIRST_TURN.as_bytes().to_vec());
+    factory
+        .stderr
+        .lock()
+        .expect("stderr")
+        .push_back(b"readable warning\n".to_vec());
+    let runtime = CodexCliRuntime::new("fixture-codex", Some(capabilities()), factory);
+    let sink = Arc::new(CollectingSink::default());
+
+    runtime
+        .start_invocation(request("stderr-invocation", "first"), sink.clone())
+        .expect("start invocation");
+    sink.wait_finished();
+
+    let updates = sink.updates.lock().expect("updates");
+    let stderr = updates
+        .iter()
+        .find_map(|update| match update {
+            RuntimeUpdate::Event(event)
+                if event.source
+                    == crate::agent_sessions::domain::AgentRuntimeEventSource::Stderr =>
+            {
+                Some(event)
+            }
+            _ => None,
+        })
+        .expect("stderr event");
+    assert_eq!(
+        stderr.raw_payload["bytes"],
+        serde_json::json!([
+            114, 101, 97, 100, 97, 98, 108, 101, 32, 119, 97, 114, 110, 105, 110, 103, 10
+        ])
+    );
+    assert_eq!(
+        stderr
+            .normalized
+            .as_ref()
+            .and_then(|normalized| normalized.text.as_deref()),
+        Some("readable warning\n")
+    );
 }
 
 #[derive(Default)]

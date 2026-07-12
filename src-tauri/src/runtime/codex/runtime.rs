@@ -7,7 +7,7 @@ use crate::{
     agent_sessions::{
         domain::{
             AgentInvocationId, AgentInvocationTerminalStatus, AgentRuntimeEventSource,
-            AgentRuntimeFailure,
+            AgentRuntimeFailure, NormalizedRuntimeEvent, NormalizedRuntimeEventKind,
         },
         ports::{
             AgentRuntime, AgentRuntimeUpdateSink, RuntimeEventDraft, RuntimeInvocationMode,
@@ -97,7 +97,13 @@ impl ProcessEventSink for RuntimeCoordinator {
                     events.push(RuntimeEventDraft {
                         source: AgentRuntimeEventSource::Stderr,
                         raw_payload: json!({"bytes": output.bytes, "lossyUtf8": text}),
-                        normalized: None,
+                        normalized: Some(NormalizedRuntimeEvent {
+                            kind: NormalizedRuntimeEventKind::Unknown,
+                            text: Some(text),
+                            external_context_id: None,
+                            usage: None,
+                            details: None,
+                        }),
                     });
                 }
             }

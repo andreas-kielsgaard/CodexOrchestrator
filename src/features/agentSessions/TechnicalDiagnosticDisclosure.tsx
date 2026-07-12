@@ -37,7 +37,12 @@ export function TechnicalDiagnosticDisclosure({
           <li key={item.id}>
             <strong>{item.source}</strong>
             <span>{item.text}</span>
-            {formatRaw(item.rawPayload) !== item.text && <pre>{formatRaw(item.rawPayload)}</pre>}
+            {formatRaw(item.rawPayload) !== item.text && (
+              <details className="raw-event-disclosure">
+                <summary>Raw event</summary>
+                <pre>{formatRaw(item.rawPayload)}</pre>
+              </details>
+            )}
           </li>
         ))}
       </ul>

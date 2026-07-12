@@ -224,6 +224,12 @@ function technicalLabel(event: AgentRuntimeEventDto): string {
   if (typeof event.rawPayload === 'string' && event.rawPayload.trim()) {
     return event.rawPayload.trim();
   }
+  if (event.rawPayload && typeof event.rawPayload === 'object') {
+    const decoded = (event.rawPayload as Record<string, unknown>).lossyUtf8;
+    if (typeof decoded === 'string' && decoded.trim()) {
+      return decoded.trim();
+    }
+  }
   return `${event.source} event (${event.normalized?.kind ?? 'unparsed'})`;
 }
 
