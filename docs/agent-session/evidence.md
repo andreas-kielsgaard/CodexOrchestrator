@@ -342,3 +342,57 @@ Useful assets to recover selectively:
 - live processing disclosure and final-first completed presentation
 - SQLite migration transaction pattern
 - the modular Rust archive as responsibility-layout reference
+
+## Verification Harness Audit (2026-07-12)
+
+The accumulated harness was audited against the recovery-gate boundary. The privileged live driver
+is compiled only for tests; its normal production module wiring exposes no new Tauri command. It
+creates only a `tempfile`-owned SQLite database and workspace, and rejects any candidate path
+outside that root. Ordinary `cargo test --lib` leaves the live driver ignored. With the opt-in
+environment variable absent, its selected ignored test refused before capability discovery, so it
+could not launch Codex.
+
+The driver uses `AgentSessionApplication` for all lifecycle actions. Its lower-level runtime
+observer is verification-specific and records the actual `ProcessLaunchSpec`, proving that the
+resume target equals the persisted external context and differs from local session/invocation IDs.
+It has an explicit four-invocation budget, bounded per-polling-wait deadlines, authoritative
+graceful-then-forced direct-child shutdown, failure cleanup,
+hashed evidence IDs, quota/rate-limit classification without retry, and an inconclusive outcome
+when durable concurrent running/cancellation cannot be established. Cleanup evidence covers only
+supervised direct children; it explicitly does not claim Windows descendant-tree cleanup or
+provider determinism.
+
+The real frontend Tauri client still registers the listener before `send_agent_session_message`
+and keeps acknowledgement correlation IDs. Its tests retain durable reload repair after a missed
+notification. Rust transport coverage still proves persisted correlated notification DTOs. The
+separate browser harness uses recorded application DTOs with opaque raw payloads, no Tauri IPC, no
+normal app data, no Codex JSONL/Rust evidence fixtures, and no Playwright dependency. Vite emits a
+separate harness entry from the production app.
+
+Automated 2026-07-12 result: formatting, lint, 340 frontend tests, production build, Rust format,
+check, and 79 Rust tests passed (two intentional ignored tests). The built output contained both
+application and harness HTML entries. Manual responsive inspection previously passed at 1280x800,
+860x800, and 390x844. The real live lifecycle was not run by this audit because no explicit opt-in
+was present; successful provider completion, external-context capture/resume, live concurrency,
+and cancellation therefore remain open.
+
+## Reset Baseline Cleanup Continuation (2026-07-12)
+
+Inspection confirmed three contradictions outside the coherent Agent Session island: a mounted
+legacy task surface could launch Codex without `ProcessSupervisor`; synchronous capability probing
+could stall startup before history became available; and app connections had no explicit SQLite
+contention policy. The smallest cleanup was quarantine rather than task redesign or a large module
+extraction.
+
+The app now mounts only Agent Sessions. Legacy command names fail closed before database, Git,
+Codex, or validation work, while migrations and isolated task-screen tests remain. Production
+startup composes the runtime with unknown capabilities and never invokes the test-only capability
+probe; deterministic argument coverage proves defaults still emit `exec --json` and resume uses the
+persisted external context. SQLite connections use foreign keys, a five-second busy timeout, WAL
+for file-backed databases, and full synchronous commits; dedicated tests verify the policy.
+
+The full non-live matrix passed: formatting, lint, 339 frontend tests, production build, Rust
+format/check, 84 Rust tests, and two intentional ignored Rust tests. `git diff --check` passed. No
+live provider call ran. Successful provider completion, persisted external-context capture,
+reopen/resume against that real context, concurrent live sessions, and live cancellation remain
+explicitly unproven.

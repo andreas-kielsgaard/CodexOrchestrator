@@ -9,25 +9,19 @@ which boundaries should stay intact.
 
 - Desktop shell: Tauri v2.
 - UI: React, TypeScript, Vite.
-- The legacy task/run model remains TypeScript-first with a parallel Rust Tauri implementation.
+- The legacy task/run model remains as compatibility code and isolated component tests, not as a
+  mounted product surface.
 - The core Agent Session lifecycle is Rust-first: durable records, SQLite history, application
   coordination, Codex protocol handling, and process supervision live behind Tauri commands.
-- Rust also retains the older command boundary for app metadata, Open Tasks persistence, manual
-  repo/worktree registration, task/run detail reads, and task-scoped Codex execution.
+- Rust retains the older command names as fail-closed compatibility stubs plus their migration and
+  unit-test implementation. Every legacy handler rejects before opening another database connection
+  or launching Git, Codex, or validation processes.
 - SQLite infrastructure is written as pure TypeScript over injected SQLite-like interfaces.
 
-Current limitation: the app can open a local runtime database file through a Node-facing
-infrastructure boundary, compose the TypeScript application services over that opened store bundle,
-and inject concrete local Git, Codex, and validation adapters for Node-side callers. The Open Tasks
-UI now consumes injected async dashboard, task/run detail, and runtime command clients. The default
-Tauri WebView path has a narrow Rust-side SQLite backend for Open Tasks dashboard
-load/create/update/archive commands, manual repo/worktree registration, the read-only
-`load_task_run_detail` command, and live `start_codex_task_run` execution. The Rust run command
-invokes `codex exec --json`, persists raw stdout JSONL before deriving summaries, and updates
-task-run, conversation, artifact, event, execution-state, and attention-state tables. When callers
-explicitly pass post-run capture options, the same Rust run command can also collect a tracked Git
-diff and/or run one validation command after a completed Codex run. Visible UI controls for those
-options are still deferred.
+Current limitation: substantial legacy task, repository, Git, validation, and migration code still
+resides in `src-tauri/src/lib.rs`. It is retained to avoid a risky extraction during reset cleanup,
+but it is not an active execution path. Agent Sessions are the only mounted UI and the only Tauri
+commands that can launch a provider process.
 
 ## Boundary Rules
 
@@ -37,6 +31,8 @@ options are still deferred.
 - Task lifecycle state changes stay in application services, not UI components.
 - Agent Session execution enters through the provider-neutral `AgentRuntime` port and its current
   Codex-specific adapter; Codex credentials remain owned by Codex.
+- Every process reachable from the active surface is owned through `ProcessSupervisor`; legacy
+  process runners are unreachable behind fail-closed command guards.
 - Persist raw runtime output before deriving transcript presentation. The legacy task-run path
   still stores its raw stream as an artifact; Agent Sessions store ordered raw runtime events.
 
@@ -60,6 +56,8 @@ ordered runtime event before notifying the WebView, separately captures the exte
 ID, and persists terminal state idempotently. The frontend projects durable records into a
 conversation: live work is open, completed work is collapsed, and the final response remains
 prominent. Reload and short-interval active reconciliation repair missed transient events.
+Startup opens and reconciles durable history without executing Codex capability probes. Provider
+resolution and absence therefore affect an invocation, not access to stored sessions.
 
 Primary module map:
 
@@ -290,15 +288,16 @@ SQLite infrastructure includes:
 
 The pure SQLite adapters still do not open database files or import `node:sqlite`; Node
 runtime-facing opening is isolated in `localAppDatabase.ts`. Browser/React modules must not import
-this opener. The Tauri/Rust backend independently applies the same ordered app schema migrations to
-the app data database for the Open Tasks command path.
+this opener. The active Tauri composition retains one Agent Session connection. Every Rust SQLite
+connection goes through the same explicit policy: foreign keys enabled, a five-second busy timeout,
+WAL for file-backed databases, and `FULL` synchronous commits.
 
 ### Tauri
 
 Location: `src/infrastructure/tauriCommands.ts` and `src-tauri/`
 
-The Tauri bridge exposes browser-safe TypeScript functions over `@tauri-apps/api/core`. The Open
-Tasks dashboard command contract is:
+The Tauri bridge exposes browser-safe TypeScript functions over `@tauri-apps/api/core`. The older
+task command names remain registered only to return a deliberate quarantine error:
 
 - `load_open_task_dashboard`
 - `register_task_worktree`
@@ -306,32 +305,9 @@ Tasks dashboard command contract is:
 - `update_open_task`
 - `archive_open_task`
 
-Those commands are implemented in Rust over a local SQLite database under the Tauri app data
-directory. The Rust backend applies the app schema migrations, uses UUID/time providers on the Rust
-side, writes only task fields exposed by the current command contract, archives by setting
-`execution_state = 'archived'`, omits archived/abandoned tasks from the dashboard, and returns the
-existing `TaskDashboardSnapshot` shape. Its dashboard query duplicates only the small projection
-needed for the command response; unlike the earlier TypeScript task read store, it returns all
-persisted projects and registered worktree anchors so the dashboard can create runnable tasks for a
-real project. `register_task_worktree` creates or reuses a project, repo, optional branch, and
-worktree anchor without requiring manual database seeding.
-
-The TypeScript Tauri bridge also exposes browser-safe clients for `start_codex_task_run` and
-`load_task_run_detail`. The detail command is implemented in Rust as a read-only SQLite read model
-over the same app data database and migration setup as the Open Tasks commands. It returns the
-existing `TaskRunDetailSnapshot` shape: task/project/repo/branch/worktree anchors, run history
-ordered for review, grouped artifacts, validation output links, unlinked task-level artifacts and
-validation runs, and a chronological event timeline. The Rust grouping intentionally mirrors the
-TypeScript read-model semantics, including validations that belong to a run through either
-`validation_runs.task_run_id` or a linked output artifact. `start_codex_task_run` is implemented in
-Rust over the same app data database. It starts a task-run lifecycle with a Codex conversation,
-executes `codex exec --json` with array-style arguments and caller-provided `cwd`/environment,
-stores the raw stdout JSONL as a `raw_event_stream` artifact before parsing, derives compact Codex
-thread/final-response/terminal metadata, and completes or fails the task run with the existing
-browser-safe command result shape. When `postRunCapture` is present and the Codex run completes,
-the Rust backend can collect a tracked `git diff --binary HEAD --` artifact and/or run one
-array-argument validation command through fakeable process-runner boundaries. Capture failures are
-reported in the command result without turning the completed Codex run into a failed run.
+`register_task_repo`, `discover_task_repos`, `load_task_run_detail`, and `start_codex_task_run` are
+also guarded the same way. Their implementation and tests remain as cleanup source material, but no
+registered legacy handler reaches database or process work in this baseline.
 
 The independent Agent Session bridge exposes:
 
@@ -351,25 +327,26 @@ invocation IDs and are never the only source of terminal truth.
 
 Location: `src/app/`, `src/features/`, `src/main.tsx`, `src/styles.css`
 
-The thin app shell defaults to the independent Agent Session screen and mounts the old task
-dashboard only when the user selects `Legacy Tasks`. Agent Session state is owned by its feature
-controller, not the app shell or task screen. Its feature-owned components cover session selection,
+The thin app shell mounts only the independent Agent Session screen. Agent Session state is owned by
+its feature controller, not the app shell. Its feature-owned components cover session selection,
 transcript projection, processing/technical disclosures, Markdown final output, composer actions,
 and deliberate follow-to-latest behavior.
 
-The legacy task screen still consumes injected `TaskDashboardClient`, `TaskRunDetailClient`, and
-`RuntimeCommandClient` instances and retains its existing repo/worktree, task-run, artifact,
-validation, and detail behavior. It is preserved rather than presented as the future task model.
-The default `src/main.tsx` wiring injects both sets of Tauri clients, keeping React/browser code away
-from SQLite, process APIs, and raw Codex arguments.
+The legacy task screen still has isolated component coverage against injected clients, but
+`src/main.tsx` neither imports nor mounts it. This preserves useful implementation evidence without
+presenting incompatible task semantics as part of the reset product.
 
 ## Pending Legacy Task Runtime Architecture
 
-The legacy task surface still needs:
+The legacy task surface is quarantined, not an active architecture track. Its remaining code is
+retained only as migration compatibility and isolated test material until a later, separately
+scoped decision chooses one of three paths: delete it after migration consumers are gone, extract
+the still-useful pieces behind an explicitly supported boundary, or reconsider the task model with
+new product evidence. No further task-runtime feature development is implied by this section.
 
-1. Repo list/remove behavior once a UI/runtime caller needs that registry management surface.
-2. Review-grade UI that promotes final response, diff, validation, and next action into a focused
-   decision surface.
+The Agent Session reset baseline still uses the shared legacy migration registry during startup, so
+it is not yet storage-independent. Production runtime options are conservatively omitted while
+provider capability support is unknown; bounded or lazy capability evaluation remains future work.
 
 ## Testing And Verification
 

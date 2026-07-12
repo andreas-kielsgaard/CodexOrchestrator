@@ -31,7 +31,8 @@ Integration root: current Codex task on `codex/agent-session-reset`
 - AS-04 Codex adapter: medium because the provider protocol is bounded and fixture-testable.
 - AS-05 lifecycle integration: high because it joins persistence, processes, and transport.
 - AS-06 projection/UI: medium.
-- AS-07 recovery gate: low, focused on verification rather than new architecture.
+- AS-07 recovery gate: low, focused on verification rather than new architecture. Slice 5 audit
+  and documentation remain bounded verification work; no production control surface is in scope.
 
 Medium is the default. Low or minimal reasoning is appropriate for mechanical corrections and
 bounded verification. Reasoning should not be raised to compensate for an over-broad prompt. No
@@ -126,3 +127,31 @@ States used: `blocked`, `ready`, `active`, `review`, `correction`, `integrated`,
   Commit `0f3d46d` keeps raw bytes behind a nested disclosure while presenting decoded stderr text,
   including already persisted events. Verification passed all 326 frontend tests, 75 Rust library
   tests plus the capability integration test, build, lint, formatting, and Rust check.
+- Slice 1 added test-only smoke isolation/evidence foundations and Slice 2 added the ignored
+  opt-in live driver, four-invocation cap, owned temporary SQLite/workspace, reopen/resume,
+  concurrent/cancellation, cleanup, and redacted evidence path. No live Codex call was authorized
+  during those slices.
+- Slice 3 added recorded DTO scenarios and a deterministic `AgentSessionClient`/store. Slice 4
+  added the separate `/agent-session-harness.html` Vite entry, deterministic controls, full-screen
+  tests, and manual responsive inspection at 1280x800, 860x800, and 390x844. It did not add
+  Playwright or use focus-sensitive desktop automation.
+- Slice 5 audited the accumulated work and ran the full non-live matrix on 2026-07-12: frontend
+  format/lint/tests (340 passed)/build; Rust format/check/tests (79 passed, 2 ignored). The build
+  emitted separate app and harness HTML entries. The ignored live driver was discoverable and,
+  with `CODEX_AGENT_SESSION_LIVE_SMOKE` absent, refused before capability discovery as designed.
+  The Tauri listener-before-send/reload-correlation and transport-correlation tests remain in the
+  passing suite. Documentation now records exact live execution and report semantics.
+- Remaining AS-07 gate: an independently authorized, quota-available live run must prove successful
+  provider completion, persisted external context, reopen/resume, concurrent sessions, and durable
+  cancellation. Direct-child cleanup is the only cleanup claim; Windows descendant-tree cleanup
+  remains a deliberate limitation.
+- The reset-baseline cleanup continuation removed the legacy task screen from production
+  composition and made every registered legacy command fail closed before database or process work.
+  This quarantines the unsupervised `Command::output` Codex/Git/validation paths without redesigning
+  task semantics or extracting the large legacy module.
+- Production startup no longer runs Codex capability discovery; durable history composition is
+  provider-independent. SQLite connections now share an explicit foreign-key, five-second busy
+  timeout, WAL, and full-synchronous policy.
+- Cleanup verification on 2026-07-12 passed formatting, lint, 339 frontend tests, production build,
+  Rust format/check, 84 Rust tests with two intentional ignores, and `git diff --check`. No live
+  provider invocation was authorized or run; the existing live-evidence gate remains open.

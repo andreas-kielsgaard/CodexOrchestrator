@@ -343,6 +343,26 @@ Restore the core interaction window over trustworthy backend state.
 
 ## AS-07: End-to-End Recovery Gate
 
+### Verification method and current status
+
+The primary recovery proof is now deterministic: Rust lifecycle/repository/supervisor/runtime and
+transport tests plus the separate recorded browser harness. The harness drives application DTO
+scenarios and validates live-to-completed presentation, durable restart-style remount, correlation,
+diagnostics, outcomes, and long content without Tauri IPC, normal app data, Codex JSONL, or
+focus-sensitive automation. It complements rather than replaces tests at the real Tauri client and
+transport boundary.
+
+As of the cleanup continuation on 2026-07-12, the non-live matrix passes (339 frontend tests; 84
+Rust tests; two intentional
+ignored tests), the production build contains independent app and harness entries, and manual
+responsive inspection passed at 1280x800, 860x800, and 390x844. The ignored live driver is an
+optional provider gate, not ordinary test coverage: it requires explicit opt-in, uses an owned
+temporary database/workspace, is bounded to four invocations with 1-300 second per-polling-wait
+deadlines, and emits redacted evidence. Successful live-provider proof remains pending available,
+separately authorized
+Codex usage. The deliberate manual remainder is a live desktop/provider exercise; it is no longer
+the primary proof for the deterministic recovery behavior.
+
 ### Purpose
 
 Prove the vertical slice works under the failures that invalidated the prototype.

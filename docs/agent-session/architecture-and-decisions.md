@@ -295,6 +295,33 @@ Reasoning: local databases may contain migrations from the archived overlay. Mig
 and positions must remain immutable even when their feature code is discarded. The rebuild must
 audit/reset prototype data explicitly or move forward with a new non-colliding migration version.
 
+### D-11: Verification privilege is test-only; semantic control is a future product boundary
+
+Reasoning: deterministic verification needs a disposable database/workspace, launch observation,
+and direct-child inspection that normal application users must not receive. Those hooks compile
+only under `cfg(test)` and are used by an ignored, explicitly opted-in driver; they do not add a
+Tauri command or production agent-control API.
+
+The recorded browser harness observes visual and interaction behavior through application DTOs. It
+does not attempt to control a real provider or infer provider truth from presentation. If a future
+product needs authorized semantic operations such as start, resume, cancel, or durable evidence
+export, it must introduce an explicitly authorized and audited semantic control facade with its
+own policy, identity, and audit trail. That facade is deliberately neither designed nor implemented
+by this verification work.
+
+### D-12: The reset product has one mounted surface and one active process authority
+
+Reasoning: retaining the visible task dashboard also retained a second Codex launcher based on
+`Command::output`, contradicting the supervisor ownership model and reopening database connections
+without a contention policy. Extracting or redesigning the large legacy task implementation would
+be broader and riskier than the reset requires.
+
+The production React entry therefore mounts only Agent Sessions. Legacy Tauri command names remain
+as fail-closed compatibility stubs and reject before database or process work; the legacy
+implementation remains only for migration compatibility, isolated tests, and possible later
+deletion. Normal startup does not invoke Codex capability discovery. All Rust SQLite connections
+use the central foreign-key, bounded busy-timeout, WAL, and full-synchronous policy.
+
 ## Existing Concepts Not Used as Foundations
 
 ### Task-oriented `Conversation`

@@ -1,7 +1,7 @@
 # Agent Session Recovery Plan
 
-Status: recovery baseline implemented; automated gate complete; successful live-session exercise
-pending available Codex usage
+Status: recovery baseline implemented; deterministic verification harness and non-live gate
+complete; live Codex lifecycle proof pending an independently authorized account with available usage
 
 Created: 2026-07-10
 
@@ -32,16 +32,76 @@ overlay. It does not adopt the old task dashboard or orchestration models as pre
    prominent with safe Markdown rendering.
 8. Boundary tests prove continuation, persistence, cancellation, restart recovery, migration
    compatibility, and installed CLI help compatibility.
+9. The production app mounts only Agent Sessions. Legacy task handlers fail closed before database
+   or process work, while their migration compatibility and isolated component tests remain.
+10. Startup does not probe Codex. The retained SQLite connection uses an explicit foreign-key,
+    five-second busy-timeout, WAL, and full-synchronous policy.
 
 The implemented completion target remains deliberately narrow:
 
 > Create or open a session, send text, watch Codex work, see the final response, restart the app,
 > reopen the session, and continue the same Codex thread.
 
-The last manual gate is one successful disposable live session through the desktop app. Automated
-and desktop startup checks are complete, including the Tauri event-listener permission required for
-live updates. A live launch, failure presentation, and restart/reopen were observed on 2026-07-12,
-but Codex rejected the invocation at its usage limit before a provider thread could be established.
+The remaining provider-dependent gate is one successful disposable live lifecycle. A 2026-07-12
+desktop retry observed live working state, technical streaming, durable failed terminal state, and
+restart/reopen history, but Codex rejected it at its usage limit before it created a provider
+thread. The deterministic harness covers the presentation and durable-reload cases without making
+a provider-determinism claim.
+
+## Verification Surfaces
+
+- Rust unit/integration coverage exercises the repository, lifecycle, supervisor, Codex argument
+  construction, persisted Tauri notifications, and the test-only live-smoke foundations.
+- `agent-session-harness.html` is a separate Vite entry with recorded application DTO scenarios.
+  It imports neither Tauri IPC nor normal app data, and `src/main.tsx` remains the production app
+  entry point.
+- The harness deliberately treats `rawPayload` as opaque fixture data; it does not reproduce Codex
+  JSONL or Rust evidence records. It has no Playwright dependency. Browser checks are manual,
+  lightweight inspection rather than focus-sensitive desktop automation.
+
+### Non-live commands
+
+```powershell
+npm run format:check
+npm run lint
+npm test
+npm run build
+cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml --lib
+```
+
+For the browser harness, run `npm run dev` and open
+`http://localhost:1420/agent-session-harness.html`. The production build must contain both
+`dist/index.html` and `dist/agent-session-harness.html`.
+
+### Optional live smoke command
+
+The ignored driver can launch up to four real Codex invocations. Do not run it unless a human has
+explicitly authorized the cost/quota exposure and the account has usable capacity.
+
+```powershell
+$env:CODEX_AGENT_SESSION_LIVE_SMOKE = 'true'
+$env:CODEX_AGENT_SESSION_LIVE_SMOKE_TIMEOUT_SECS = '180' # optional; per-wait limit, 1-300 seconds
+cargo test --manifest-path src-tauri/Cargo.toml --lib agent_sessions::live_smoke::agent_session_live_smoke_driver -- --ignored --exact --nocapture
+```
+
+Without `CODEX_AGENT_SESSION_LIVE_SMOKE=true`, the ignored test refuses before capability discovery
+or any agent launch. Each polling wait defaults to 180 seconds and may be configured up to 300.
+Runtime shutdown first allows supervised children a two-second grace period, then requests
+termination and retains ownership until every direct child has been reaped. That authoritative
+cleanup is intentionally not misrepresented as a time-bounded operation. The driver writes
+its temporary database, workspace, and `agent-session-live-smoke-evidence.json` inside its owned
+temporary root; that root is deleted when the test exits. With `--nocapture`, it also prints one
+redacted durable report prefixed `AGENT_SESSION_LIVE_SMOKE_EVIDENCE=`. Its `passed` or `failed`
+outcome reports the four-invocation budget, phase results, hashed IDs, final durable statuses,
+direct-child cleanup, cancellation state, and stated limitations. A quota/rate-limit result is not
+retried and does not prove provider completion, resume, concurrency, or cancellation.
+
+Current verification status: the cleanup continuation passed the full non-live matrix on
+2026-07-12 (339 frontend tests; 84 Rust tests; two intentional Rust ignores). Recorded-harness
+manual responsive checks previously passed at 1280x800, 860x800, and 390x844. Live Codex lifecycle
+remains pending and was not run during cleanup.
 
 ## Documents
 

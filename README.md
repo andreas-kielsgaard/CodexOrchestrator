@@ -3,8 +3,8 @@
 Codex Orchestrator is a local-first desktop surface for doing work with agents. Its current core is
 a durable Agent Session: a text interaction context that can stream Codex CLI work, preserve the
 technical record, reopen after an app restart, and continue the same external Codex thread. The
-older task dashboard remains available as a secondary legacy surface while its product model is
-reconsidered.
+older task/dashboard implementation remains in the repository for migration compatibility and
+isolated tests, but it is quarantined from the mounted UI and its Tauri commands fail closed.
 
 ## Prerequisites
 
@@ -33,16 +33,6 @@ The launcher prepares the local Cargo/MSVC/Codex paths, starts the runtime statu
 old stale marker, and then starts `npm run dev:tauri`. The app shows a loading screen until the
 Tauri command backend responds.
 
-To load a project, add its Git repository root in the app. For this repo, use:
-
-```text
-C:\Users\user\Documents\Code Projects\Codex Orchestrator
-```
-
-The app scans Git branches and worktrees from the repo and persists the runnable worktree anchors.
-You can also scan a designated folder, such as `C:\Users\user\Documents`, to find candidate repos
-without scanning the whole disk.
-
 ## Scripts
 
 - `npm run dev`: start the React/Vite app.
@@ -64,7 +54,7 @@ src/
   app/                 React application shell
   application/         Browser-safe client contracts
   domain/              Domain types, seed records, and dashboard projection
-  features/            Independent Agent Session and legacy task screens
+  features/            Mounted Agent Session screen and quarantined legacy task components
   infrastructure/      Tauri command adapters
   test/                Test setup
 src-tauri/
