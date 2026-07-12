@@ -26,7 +26,10 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{Arc, Mutex},
+    time::Duration,
 };
+
+const GRACEFUL_SHUTDOWN_PERIOD: Duration = Duration::from_secs(2);
 
 struct InvocationState {
     sink: Arc<dyn AgentRuntimeUpdateSink>,
@@ -288,7 +291,9 @@ impl AgentRuntime for CodexCliRuntime {
     }
 
     fn shutdown(&self) -> Result<(), RuntimePortError> {
-        self.supervisor.shutdown().map_err(map_supervisor_error)
+        self.supervisor
+            .shutdown_with_grace_period(GRACEFUL_SHUTDOWN_PERIOD)
+            .map_err(map_supervisor_error)
     }
 }
 

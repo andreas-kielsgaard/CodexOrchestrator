@@ -7,6 +7,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Condvar, Mutex,
     },
+    thread,
     time::{Duration, Instant},
 };
 
@@ -514,6 +515,37 @@ fn shutdown_interrupts_and_accounts_for_every_owned_child() {
         )
         .expect_err("start after shutdown must fail");
     assert_eq!(error.kind, SupervisorErrorKind::ShuttingDown);
+}
+
+#[test]
+fn graceful_shutdown_allows_natural_completion_before_escalating() {
+    let (factory, sink, supervisor) = fixture();
+    let child = Arc::new(FakeChild::default());
+    factory.push_process(child.clone());
+    let invocation = invocation_id("invocation-graceful");
+    supervisor
+        .start(session_id("session-graceful"), invocation.clone(), spec())
+        .expect("start");
+
+    let completing_child = child.clone();
+    let completion = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(20));
+        completing_child.complete(0);
+    });
+    supervisor
+        .shutdown_with_grace_period(Duration::from_secs(1))
+        .expect("graceful shutdown");
+    completion.join().expect("completion thread");
+
+    assert_eq!(child.terminate_calls.load(Ordering::SeqCst), 0);
+    assert!(matches!(
+        sink.wait_for_terminal(&invocation),
+        ProcessTerminalOutcome::Exited(ProcessExit {
+            exit_code: Some(0),
+            signal: None,
+        })
+    ));
+    assert_eq!(supervisor.active_count().expect("active count"), 0);
 }
 
 #[test]

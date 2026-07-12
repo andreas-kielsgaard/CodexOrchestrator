@@ -10,6 +10,7 @@ use std::{
     io,
     sync::{Arc, Condvar, Mutex, MutexGuard},
     thread,
+    time::{Duration, Instant},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -212,9 +213,32 @@ impl ProcessSupervisor {
     /// fails, shutdown continues waiting for that child to exit before returning the control error;
     /// it never reports successful shutdown while silently detaching an owned process.
     pub(crate) fn shutdown(&self) -> Result<(), SupervisorError> {
+        self.shutdown_with_grace_period(Duration::ZERO)
+    }
+
+    /// Stops accepting work and gives active children a bounded opportunity to finish naturally
+    /// before requesting termination. Ownership is retained through escalation and reap.
+    pub(crate) fn shutdown_with_grace_period(
+        &self,
+        grace_period: Duration,
+    ) -> Result<(), SupervisorError> {
+        let grace_deadline = Instant::now() + grace_period;
+        let mut registry = self.lock_registry()?;
+        registry.shutting_down = true;
+        while (!registry.active.is_empty() || registry.terminal_callbacks_in_progress != 0)
+            && Instant::now() < grace_deadline
+        {
+            let remaining = grace_deadline.saturating_duration_since(Instant::now());
+            let (next, _) = self.inner.changed.wait_timeout(registry, remaining).map_err(|_| {
+                SupervisorError::new(
+                    SupervisorErrorKind::Internal,
+                    "process supervisor registry lock was poisoned while awaiting graceful shutdown",
+                )
+            })?;
+            registry = next;
+        }
+
         let processes = {
-            let mut registry = self.lock_registry()?;
-            registry.shutting_down = true;
             let mut processes = Vec::new();
             for (invocation_id, entry) in &mut registry.active {
                 if entry.requested_termination != Some(RequestedTermination::Shutdown) {
@@ -227,6 +251,7 @@ impl ProcessSupervisor {
             }
             processes
         };
+        drop(registry);
 
         let mut termination_failures = Vec::new();
         for (invocation_id, process) in processes {
