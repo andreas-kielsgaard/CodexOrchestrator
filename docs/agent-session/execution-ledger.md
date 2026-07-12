@@ -39,16 +39,16 @@ slice uses xhigh by default.
 
 ## Work Package State
 
-| Package                                 | State      | Thread                                 | Integrated commit               | Integration result               |
-| --------------------------------------- | ---------- | -------------------------------------- | ------------------------------- | -------------------------------- |
-| AS-00 Structural and migration baseline | integrated | `019f4905-dc10-7c80-9e42-882196abac18` | `4e171e9`                       | accepted                         |
-| AS-01 Agent Session contracts           | integrated | `019f491f-7f59-7500-9bf0-d0feaa28a59b` | `d717a28`, `dde0d8e`            | accepted                         |
-| AS-02 Durable repository and queries    | integrated | `019f4947-7ca7-7f63-ac64-fe59a0174299` | `64c26ab`, `0f7da0f`            | accepted                         |
-| AS-03 Real process supervisor           | integrated | `019f4947-7cb4-7c60-ab09-4ea5528da2cc` | `ddef6a5`, `35ebf8d`            | accepted                         |
-| AS-04 Codex CLI runtime adapter         | integrated | `019f4af8-66ae-7e33-a641-9162851d0114` | `f2af49b`, `8be4d9e`, `d0d764e` | accepted                         |
-| AS-05 Application and Tauri lifecycle   | integrated | `019f4b21-1aee-7272-aed8-a953a6b6cc1d` | `a9c716b`, `09d43ec`            | accepted                         |
-| AS-06 Transcript projection and UI      | integrated | `019f4b50-0ba0-7ce2-9875-2ec9992d126d` | `0ebe65b`, `abe27e4`            | accepted                         |
-| AS-07 End-to-end recovery gate          | review     | `019f4b73-2867-77e3-9a91-b8042cc8e994` | `742d477`                       | automated accepted; live pending |
+| Package                                 | State      | Thread                                 | Integrated commit               | Integration result                          |
+| --------------------------------------- | ---------- | -------------------------------------- | ------------------------------- | ------------------------------------------- |
+| AS-00 Structural and migration baseline | integrated | `019f4905-dc10-7c80-9e42-882196abac18` | `4e171e9`                       | accepted                                    |
+| AS-01 Agent Session contracts           | integrated | `019f491f-7f59-7500-9bf0-d0feaa28a59b` | `d717a28`, `dde0d8e`            | accepted                                    |
+| AS-02 Durable repository and queries    | integrated | `019f4947-7ca7-7f63-ac64-fe59a0174299` | `64c26ab`, `0f7da0f`            | accepted                                    |
+| AS-03 Real process supervisor           | integrated | `019f4947-7cb4-7c60-ab09-4ea5528da2cc` | `ddef6a5`, `35ebf8d`            | accepted                                    |
+| AS-04 Codex CLI runtime adapter         | integrated | `019f4af8-66ae-7e33-a641-9162851d0114` | `f2af49b`, `8be4d9e`, `d0d764e` | accepted                                    |
+| AS-05 Application and Tauri lifecycle   | integrated | `019f4b21-1aee-7272-aed8-a953a6b6cc1d` | `a9c716b`, `09d43ec`            | accepted                                    |
+| AS-06 Transcript projection and UI      | integrated | `019f4b50-0ba0-7ce2-9875-2ec9992d126d` | `0ebe65b`, `abe27e4`            | accepted                                    |
+| AS-07 End-to-end recovery gate          | review     | `019f4b73-2867-77e3-9a91-b8042cc8e994` | `742d477`, `0f3d46d`            | automated accepted; successful live pending |
 
 States used: `blocked`, `ready`, `active`, `review`, `correction`, `integrated`, `failed`, and
 `superseded`.
@@ -116,6 +116,13 @@ States used: `blocked`, `ready`, `active`, `review`, `correction`, `integrated`,
   Rust formatting/check, 74 Rust library tests plus the capability integration test, and the
   separately executed installed Codex CLI help probe. The rebuilt desktop app opens Agent Sessions
   without the permission error and leaves the legacy task surface idle.
-- The disposable live-session sequence remains open because the configured Codex account reported
-  exhausted usage: first prompt/live processing, restart/reopen, resume prompt, concurrent second
-  session, and live cancellation are not claimed as manually observed.
+- The successful disposable live-session sequence remained open after the initial gate because the
+  configured Codex account reported exhausted usage.
+- A 2026-07-12 live retry launched a real Codex process and observed live Working state, technical
+  streaming, durable failed terminal state, and identical restart/reopen history. Codex rejected
+  the invocation at its usage limit before creating an external thread, so successful final,
+  resume, concurrency, and cancellation remain open.
+- That retry exposed unreadable raw stderr byte arrays in the default technical presentation.
+  Commit `0f3d46d` keeps raw bytes behind a nested disclosure while presenting decoded stderr text,
+  including already persisted events. Verification passed all 326 frontend tests, 75 Rust library
+  tests plus the capability integration test, build, lint, formatting, and Rust check.

@@ -1,6 +1,6 @@
 # Agent Session Recovery Plan
 
-Status: recovery baseline implemented; automated gate complete; live disposable-session exercise
+Status: recovery baseline implemented; automated gate complete; successful live-session exercise
 pending available Codex usage
 
 Created: 2026-07-10
@@ -38,10 +38,10 @@ The implemented completion target remains deliberately narrow:
 > Create or open a session, send text, watch Codex work, see the final response, restart the app,
 > reopen the session, and continue the same Codex thread.
 
-The last manual gate is one disposable live session through the desktop app. Automated and desktop
-startup checks are complete, including the Tauri event-listener permission required for live
-updates. A live prompt is intentionally not claimed while the configured Codex account is at its
-usage limit.
+The last manual gate is one successful disposable live session through the desktop app. Automated
+and desktop startup checks are complete, including the Tauri event-listener permission required for
+live updates. A live launch, failure presentation, and restart/reopen were observed on 2026-07-12,
+but Codex rejected the invocation at its usage limit before a provider thread could be established.
 
 ## Documents
 

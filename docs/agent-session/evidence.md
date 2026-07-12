@@ -61,10 +61,19 @@ Verified on 2026-07-10:
   capability was added, covered by an integration test, rebuilt, and verified by restarting the app
   without the permission error
 
-One manual claim remains deliberately open: a disposable live prompt, app restart/reopen, second
-prompt resume, concurrent second session, and live cancellation were not exercised while the
-configured Codex account reported that its usage limit was exhausted. The automated boundaries for
-those paths pass, but this document does not promote them to live-observed evidence.
+One successful-session claim remains deliberately open. On 2026-07-12 the desktop app launched a
+real Codex process, displayed live Working state and streamed technical activity, durably recorded
+Codex's usage-limit failure, and reopened the same failed turn after an app restart. Because Codex
+rejected the turn before establishing an external thread, successful final-response collapse,
+second-prompt resume, concurrent live sessions, and live cancellation remain unobserved. The
+automated boundaries for those paths pass, but this document does not promote them to live-observed
+evidence.
+
+The live failure also showed that raw stderr bytes dominated the technical disclosure. Commit
+`0f3d46d` preserves those bytes for inspection, normalizes decoded text for new events, decodes the
+already persisted legacy shape in the transcript projector, and nests raw payloads one level
+deeper. After that correction, all 326 frontend tests and 75 Rust library tests pass, along with the
+capability integration test, build, lint, formatting, and Rust check.
 
 ## Detailed Findings
 
