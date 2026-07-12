@@ -1,3 +1,4 @@
+#[cfg(test)]
 use std::process::Command;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -11,12 +12,14 @@ pub(crate) struct CodexCliCapabilities {
     pub(crate) resume_sandbox: Option<bool>,
 }
 
+#[cfg(test)]
 /// Probes each CLI surface independently. A failed optional probe leaves only that capability
 /// unknown; it does not erase successfully discovered version or help data.
 pub(crate) struct CodexCliCapabilityProbe {
     program: Option<String>,
 }
 
+#[cfg(test)]
 impl CodexCliCapabilityProbe {
     pub(crate) fn new(program: impl Into<String>) -> Self {
         Self {
@@ -122,6 +125,7 @@ fn npm_codex_native_binary(npm_bin: &std::path::Path) -> Option<std::path::PathB
     candidate.is_file().then_some(candidate)
 }
 
+#[cfg(test)]
 fn command_stdout(program: &str, args: &[&str]) -> Option<String> {
     let output = Command::new(program).args(args).output().ok()?;
     output.status.success().then(|| {
@@ -131,6 +135,7 @@ fn command_stdout(program: &str, args: &[&str]) -> Option<String> {
     })
 }
 
+#[cfg(test)]
 fn flag_support(help: &Option<String>, flag: &str) -> Option<bool> {
     help.as_ref().map(|help| help.contains(flag))
 }

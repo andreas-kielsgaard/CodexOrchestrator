@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { App } from './App';
+import { TaskDashboardScreen } from '../features/taskDashboard/TaskDashboardScreen';
 import type { DomainRecords, EntityId, Task } from '../domain/model';
 import { projectOpenTaskDashboard } from '../domain/dashboardProjection';
 import type {
@@ -27,14 +27,14 @@ import type {
 const now = '2026-07-02T12:00:00.000Z';
 const workerPath = 'C:/Repos/Codex Orchestrator Worktrees/042';
 
-describe('App open task dashboard', () => {
+describe('quarantined TaskDashboardScreen', () => {
   it('loads tasks through the injected client and supports create, edit, state change, and archive', async () => {
     const client = new FakeTaskDashboardClient();
     const runtimeClient = new FakeRuntimeCommandClient();
     const detailClient = new FakeTaskRunDetailClient();
 
     render(
-      <App
+      <TaskDashboardScreen
         taskDashboardClient={client}
         taskRunDetailClient={detailClient}
         runtimeCommandClient={runtimeClient}
@@ -95,7 +95,7 @@ describe('App open task dashboard', () => {
     const detailClient = new FakeTaskRunDetailClient();
 
     render(
-      <App
+      <TaskDashboardScreen
         taskDashboardClient={client}
         taskRunDetailClient={detailClient}
         runtimeCommandClient={runtimeClient}
@@ -130,7 +130,7 @@ describe('App open task dashboard', () => {
     const detailClient = new FakeTaskRunDetailClient();
 
     render(
-      <App
+      <TaskDashboardScreen
         taskDashboardClient={client}
         taskRunDetailClient={detailClient}
         runtimeCommandClient={runtimeClient}
@@ -160,7 +160,7 @@ describe('App open task dashboard', () => {
     const detailClient = new FakeTaskRunDetailClient();
 
     render(
-      <App
+      <TaskDashboardScreen
         taskDashboardClient={client}
         taskRunDetailClient={detailClient}
         runtimeCommandClient={runtimeClient}
@@ -189,7 +189,7 @@ describe('App open task dashboard', () => {
     });
 
     render(
-      <App
+      <TaskDashboardScreen
         taskDashboardClient={client}
         taskRunDetailClient={detailClient}
         runtimeCommandClient={runtimeClient}
@@ -208,7 +208,7 @@ describe('App open task dashboard', () => {
     const detailClient = new FakeTaskRunDetailClient();
 
     render(
-      <App
+      <TaskDashboardScreen
         taskDashboardClient={client}
         taskRunDetailClient={detailClient}
         runtimeCommandClient={runtimeClient}
@@ -242,7 +242,7 @@ describe('App open task dashboard', () => {
     const detailClient = new FakeTaskRunDetailClient();
 
     render(
-      <App
+      <TaskDashboardScreen
         taskDashboardClient={client}
         taskRunDetailClient={detailClient}
         runtimeCommandClient={runtimeClient}
@@ -271,7 +271,7 @@ describe('App open task dashboard', () => {
     const detailClient = new FakeTaskRunDetailClient();
 
     render(
-      <App
+      <TaskDashboardScreen
         taskDashboardClient={client}
         taskRunDetailClient={detailClient}
         runtimeCommandClient={runtimeClient}
@@ -295,7 +295,7 @@ describe('App open task dashboard', () => {
     const detailClient = new FakeTaskRunDetailClient();
 
     render(
-      <App
+      <TaskDashboardScreen
         taskDashboardClient={client}
         taskRunDetailClient={detailClient}
         runtimeCommandClient={runtimeClient}
@@ -338,7 +338,7 @@ describe('App open task dashboard', () => {
     const detailClient = new FakeTaskRunDetailClient();
 
     render(
-      <App
+      <TaskDashboardScreen
         taskDashboardClient={client}
         taskRunDetailClient={detailClient}
         runtimeCommandClient={runtimeClient}
@@ -365,7 +365,7 @@ describe('App open task dashboard', () => {
     const detailClient = new FakeTaskRunDetailClient();
 
     render(
-      <App
+      <TaskDashboardScreen
         taskDashboardClient={client}
         taskRunDetailClient={detailClient}
         runtimeCommandClient={runtimeClient}
@@ -393,7 +393,7 @@ describe('App open task dashboard', () => {
     });
 
     render(
-      <App
+      <TaskDashboardScreen
         taskDashboardClient={client}
         taskRunDetailClient={detailClient}
         runtimeCommandClient={runtimeClient}
@@ -426,7 +426,7 @@ describe('App open task dashboard', () => {
     });
 
     render(
-      <App
+      <TaskDashboardScreen
         taskDashboardClient={client}
         taskRunDetailClient={detailClient}
         runtimeCommandClient={runtimeClient}
@@ -461,7 +461,7 @@ describe('App open task dashboard', () => {
     });
 
     render(
-      <App
+      <TaskDashboardScreen
         taskDashboardClient={client}
         taskRunDetailClient={detailClient}
         runtimeCommandClient={runtimeClient}
@@ -503,7 +503,7 @@ describe('App open task dashboard', () => {
     });
 
     render(
-      <App
+      <TaskDashboardScreen
         taskDashboardClient={client}
         taskRunDetailClient={detailClient}
         runtimeCommandClient={runtimeClient}

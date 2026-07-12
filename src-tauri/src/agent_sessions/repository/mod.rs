@@ -30,9 +30,8 @@ pub(crate) struct SqliteAgentSessionRepository {
 
 impl SqliteAgentSessionRepository {
     pub(crate) fn new(connection: Connection) -> Result<Self, RepositoryError> {
-        connection
-            .execute_batch("PRAGMA foreign_keys = ON;")
-            .map_err(sql_unavailable("enable Agent Session foreign keys"))?;
+        crate::storage::configure_sqlite_connection(&connection)
+            .map_err(sql_unavailable("configure Agent Session database"))?;
         let foreign_keys_enabled = connection
             .query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))
             .map_err(sql_unavailable("verify Agent Session foreign keys"))?;

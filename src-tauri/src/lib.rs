@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 mod agent_sessions;
 mod runtime;
+mod storage;
 
 const APP_DATABASE_FILE_NAME: &str = "codex-orchestrator.sqlite";
 
@@ -700,6 +701,7 @@ fn app_metadata() -> AppMetadata {
 
 #[tauri::command]
 fn load_open_task_dashboard(app: AppHandle) -> Result<TaskDashboardSnapshot, String> {
+    ensure_legacy_tasks_available()?;
     with_app_database(&app, |conn| load_dashboard_snapshot(conn))
 }
 
@@ -708,6 +710,7 @@ fn register_task_worktree(
     app: AppHandle,
     input: RegisterTaskWorktreeCommandInput,
 ) -> Result<TaskDashboardSnapshot, String> {
+    ensure_legacy_tasks_available()?;
     with_app_database(&app, |conn| {
         register_task_worktree_anchor(conn, input)?;
         load_dashboard_snapshot(conn)
@@ -719,6 +722,7 @@ fn register_task_repo(
     app: AppHandle,
     input: RegisterTaskRepoCommandInput,
 ) -> Result<TaskDashboardSnapshot, String> {
+    ensure_legacy_tasks_available()?;
     with_app_database(&app, |conn| {
         register_task_repo_anchor(conn, input)?;
         load_dashboard_snapshot(conn)
@@ -729,6 +733,7 @@ fn register_task_repo(
 fn discover_task_repos(
     input: DiscoverTaskReposCommandInput,
 ) -> Result<Vec<DiscoveredTaskRepo>, String> {
+    ensure_legacy_tasks_available()?;
     discover_git_repos(input)
 }
 
@@ -737,6 +742,7 @@ fn create_open_task(
     app: AppHandle,
     input: CreateOpenTaskCommandInput,
 ) -> Result<TaskDashboardSnapshot, String> {
+    ensure_legacy_tasks_available()?;
     with_app_database(&app, |conn| {
         create_task(conn, input)?;
         load_dashboard_snapshot(conn)
@@ -749,6 +755,7 @@ fn update_open_task(
     task_id: String,
     input: UpdateOpenTaskCommandInput,
 ) -> Result<TaskDashboardSnapshot, String> {
+    ensure_legacy_tasks_available()?;
     with_app_database(&app, |conn| {
         update_task(conn, &task_id, input)?;
         load_dashboard_snapshot(conn)
@@ -757,6 +764,7 @@ fn update_open_task(
 
 #[tauri::command]
 fn archive_open_task(app: AppHandle, task_id: String) -> Result<TaskDashboardSnapshot, String> {
+    ensure_legacy_tasks_available()?;
     with_app_database(&app, |conn| {
         archive_task(conn, &task_id)?;
         load_dashboard_snapshot(conn)
@@ -765,6 +773,7 @@ fn archive_open_task(app: AppHandle, task_id: String) -> Result<TaskDashboardSna
 
 #[tauri::command]
 fn load_task_run_detail(app: AppHandle, task_id: String) -> Result<TaskRunDetailSnapshot, String> {
+    ensure_legacy_tasks_available()?;
     with_app_database(&app, |conn| load_task_run_detail_snapshot(conn, &task_id))
 }
 
@@ -773,6 +782,7 @@ fn start_codex_task_run(
     app: AppHandle,
     input: StartCodexTaskRunCommandInput,
 ) -> Result<StartCodexTaskRunCommandResult, String> {
+    ensure_legacy_tasks_available()?;
     with_app_database(&app, |conn| {
         start_codex_task_run_with_runners(
             conn,
@@ -794,11 +804,10 @@ pub fn run() {
                 agent_sessions::repository::SqliteAgentSessionRepository::new(connection)
                     .map_err(|error| error.to_string())?,
             );
-            let capabilities = runtime::codex::CodexCliCapabilityProbe::new("codex").discover();
-            let runtime = Arc::new(runtime::codex::CodexCliRuntime::system(
-                "codex",
-                Some(capabilities.clone()),
-            ));
+            // Durable history must not wait on a provider executable. Capability discovery remains
+            // available only to explicitly opted-in verification; normal execution starts with
+            // unknown capabilities and degrades at invocation time when Codex is unavailable.
+            let runtime = Arc::new(runtime::codex::CodexCliRuntime::system("codex", None));
             let notifier = Arc::new(agent_sessions::transport::TauriAgentSessionNotifier::new(
                 app.handle().clone(),
             ));
@@ -809,7 +818,7 @@ pub fn run() {
                 notifier,
                 providers.clone(),
                 providers,
-                capabilities.version,
+                None,
             );
             application
                 .reconcile_startup()
@@ -821,6 +830,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_metadata,
+            // Compatibility command names remain registered so older callers receive a deliberate
+            // quarantine error. Every legacy handler rejects before database or process work.
             load_open_task_dashboard,
             register_task_worktree,
             register_task_repo,
@@ -850,6 +861,10 @@ pub fn run() {
     });
 }
 
+fn ensure_legacy_tasks_available() -> Result<(), String> {
+    Err("Legacy Tasks are quarantined in the Agent Session reset baseline".to_string())
+}
+
 fn with_app_database<T>(
     app: &AppHandle,
     operation: impl FnOnce(&Connection) -> Result<T, String>,
@@ -874,6 +889,8 @@ fn app_database_path(app: &AppHandle) -> Result<PathBuf, String> {
 fn open_initialized_database(database_path: PathBuf) -> Result<Connection, String> {
     let conn = Connection::open(database_path)
         .map_err(|error| format!("Unable to open app SQLite database: {error}"))?;
+    storage::configure_sqlite_connection(&conn)
+        .map_err(|error| format!("Unable to configure app SQLite database: {error}"))?;
     initialize_database(&conn)?;
     Ok(conn)
 }
@@ -4631,6 +4648,14 @@ mod tests {
     use std::cell::RefCell;
 
     const CREATED_AT: &str = "2026-07-02T10:00:00.000Z";
+
+    #[test]
+    fn legacy_task_commands_are_fail_closed_in_the_reset_baseline() {
+        assert_eq!(
+            ensure_legacy_tasks_available().expect_err("legacy tasks stay quarantined"),
+            "Legacy Tasks are quarantined in the Agent Session reset baseline"
+        );
+    }
 
     struct FakeCodexRunner {
         result: Result<CodexCommandRunResult, String>,

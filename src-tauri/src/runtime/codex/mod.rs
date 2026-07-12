@@ -8,7 +8,7 @@ mod capabilities;
 mod protocol;
 mod runtime;
 
-#[allow(unused_imports)]
+#[cfg(test)]
 pub(crate) use capabilities::{CodexCliCapabilities, CodexCliCapabilityProbe};
 #[allow(unused_imports)]
 pub(crate) use runtime::CodexCliRuntime;
