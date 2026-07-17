@@ -15,11 +15,6 @@ unified and split layouts, text or Markdown inspection, and explicit binary or u
 read-only client. Source IDs are opaque. Display paths are relative labels, not filesystem handles.
 The presentation does not import Git, repository, worktree, artifact, or Tauri adapters.
 
-`src/application/applicationOwnedFileReview.ts` resolves changed-files Documents and stored diff
-artifacts through separate read-only ports. It rechecks Document authorization, matches Document,
-artifact, and changed-file identities, bounds artifact bytes, requires UTF-8 JSON, and names binary
-or unsupported file content without exposing storage locators.
-
 ## Security boundaries
 
 - The adapter owns repository and worktree identity, source collection, and path/read authorization.
@@ -29,10 +24,9 @@ or unsupported file content without exposing storage locators.
 
 ## Prototype limits
 
-- Recorded fixtures exercise the presentation; they do not prove live Git or a native artifact
-  backend. One recorded product Document and artifact fixture exercise the application-owned ports.
-- Stored hunks remain parsed and display-ready. The adapter validates their shape and derives counts;
-  unified-diff parsing and truncation remain unimplemented.
+- Recorded fixtures exercise the presentation; they do not prove live Git or artifact integration.
+- Hunks arrive parsed and display-ready. Parsing, size limits, encoding detection, and truncation are
+  unimplemented.
 - Split pairing is line-oriented and does not perform word-level alignment.
 - Syntax highlighting, search, comments, media playback, and virtualized large files are excluded.
 
@@ -53,9 +47,10 @@ inspector-body horizontal overflow. The captured flow reported no browser consol
 - Whether renamed, deleted, binary, and unsupported states give enough context.
 - Minimum useful behavior at narrow desktop widths.
 
-## Application-owned integration proof
+## Exact next product slice
 
-The recorded Sprint Documents surface now opens the same viewer for one changed-files Document.
-Tests cover identity, authorization, size bounds, UTF-8 and unsupported encoding, binary detection,
-unavailable artifacts, and the empty-source state. Product boot still supplies no file-review
-client; a focused native read adapter remains separate future work.
+Add one authorized application adapter that resolves an existing application-owned changed-files
+Document and stored diff artifact into `FileReviewSnapshot`, then open this same viewer from the
+Sprint Documents surface. Include controller tests for identity, authorization, size limits,
+encoding, binary detection, and unavailable artifacts. Keep live working-tree collection and every
+write action out of that slice.

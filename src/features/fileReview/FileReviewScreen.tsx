@@ -21,20 +21,13 @@ import './fileReview.css';
 
 export interface FileReviewScreenProps {
   readonly client: FileReviewClient;
-  readonly initialSourceId?: string;
-  readonly fixedSource?: boolean;
 }
 
 type ContentMode = 'changes' | 'file';
 type DiffLayout = 'unified' | 'split';
 
-export function FileReviewScreen({
-  client,
-  initialSourceId,
-  fixedSource = false,
-}: FileReviewScreenProps) {
+export function FileReviewScreen({ client }: FileReviewScreenProps) {
   const [sources, setSources] = useState<Awaited<ReturnType<FileReviewClient['listSources']>>>([]);
-  const [sourcesLoaded, setSourcesLoaded] = useState(false);
   const [selectedSourceId, setSelectedSourceId] = useState('');
   const [snapshot, setSnapshot] = useState<Awaited<
     ReturnType<FileReviewClient['loadSource']>
@@ -51,24 +44,16 @@ export function FileReviewScreen({
       (nextSources) => {
         if (!active) return;
         setSources(nextSources);
-        setSourcesLoaded(true);
-        setSelectedSourceId((current) => {
-          if (initialSourceId && nextSources.some(({ sourceId }) => sourceId === initialSourceId))
-            return initialSourceId;
-          return current || nextSources[0]?.sourceId || '';
-        });
+        setSelectedSourceId((current) => current || nextSources[0]?.sourceId || '');
       },
       () => {
-        if (active) {
-          setSourcesLoaded(true);
-          setError('Review sources could not be loaded.');
-        }
+        if (active) setError('Review sources could not be loaded.');
       },
     );
     return () => {
       active = false;
     };
-  }, [client, initialSourceId]);
+  }, [client]);
 
   useEffect(() => {
     if (!selectedSourceId) return;
@@ -80,7 +65,7 @@ export function FileReviewScreen({
         if (!active) return;
         setSnapshot(nextSnapshot);
         setSelectedFileId(nextSnapshot.files[0]?.fileId ?? '');
-        setContentMode(nextSnapshot.source.kind === 'application_owned' ? 'file' : 'changes');
+        setContentMode('changes');
         setExpandedContext(new Set());
       },
       () => {
@@ -127,26 +112,20 @@ export function FileReviewScreen({
           <p>Inspect supplied material without editing or direct filesystem access.</p>
         </div>
         <div className="file-review-header__controls">
-          {fixedSource ? (
-            <span className="file-review-fixed-source">
-              {sources.find(({ sourceId }) => sourceId === selectedSourceId)?.label}
-            </span>
-          ) : (
-            <label>
-              <span>Review source</span>
-              <select
-                aria-label="Review source"
-                value={selectedSourceId}
-                onChange={(event) => setSelectedSourceId(event.target.value)}
-              >
-                {sources.map((source) => (
-                  <option key={source.sourceId} value={source.sourceId}>
-                    {source.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
+          <label>
+            <span>Review source</span>
+            <select
+              aria-label="Review source"
+              value={selectedSourceId}
+              onChange={(event) => setSelectedSourceId(event.target.value)}
+            >
+              {sources.map((source) => (
+                <option key={source.sourceId} value={source.sourceId}>
+                  {source.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <span className="file-review-read-only">
             <ShieldCheck size={15} aria-hidden="true" />
             Read only
@@ -159,17 +138,6 @@ export function FileReviewScreen({
           <FileArchive size={28} aria-hidden="true" />
           <h2>Review unavailable</h2>
           <p>{error}</p>
-        </section>
-      ) : !sourcesLoaded ? (
-        <section className="file-review-state" role="status">
-          <FolderGit2 size={28} aria-hidden="true" />
-          <h2>Loading review sources</h2>
-        </section>
-      ) : sources.length === 0 ? (
-        <section className="file-review-state" role="status">
-          <FileArchive size={28} aria-hidden="true" />
-          <h2>No review sources</h2>
-          <p>No authorized review material is currently available.</p>
         </section>
       ) : !snapshot ? (
         <section className="file-review-state" role="status">
@@ -228,7 +196,7 @@ export function FileReviewScreen({
                       aria-pressed={contentMode === 'changes'}
                       onClick={() => setContentMode('changes')}
                     >
-                      {snapshot.source.comparisonLabel ?? 'Changes'}
+                      Changes
                     </button>
                     <button
                       type="button"

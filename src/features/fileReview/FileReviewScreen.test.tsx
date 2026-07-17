@@ -63,43 +63,12 @@ describe('FileReviewScreen', () => {
       ['source-staged', 'Index snapshot · ready for commit review'],
       ['source-commit-range', 'main…exploration · three commits'],
       ['source-generated', 'Bootstrap preview · not persisted'],
-      ['doc-file-review', 'Recorded application-owned review material'],
+      ['source-application-owned', 'Accepted review note · durable product record'],
     ] as const) {
       fireEvent.change(source, { target: { value: sourceId } });
       expect(await screen.findByText(expectedDetail)).toBeVisible();
     }
 
     expect(screen.queryByText(/C:\\|C:\//)).toBeNull();
-  });
-
-  it('names the empty authorized-source state instead of remaining in loading', async () => {
-    render(
-      <FileReviewScreen
-        client={{
-          listSources: async () => [],
-          loadSource: async () => {
-            throw new Error('No source is authorized.');
-          },
-        }}
-      />,
-    );
-
-    expect(await screen.findByRole('heading', { name: 'No review sources' })).toBeVisible();
-    expect(screen.getByText('No authorized review material is currently available.')).toBeVisible();
-    expect(screen.queryByText('Loading review material')).toBeNull();
-  });
-
-  it('locks an application-owned Document and defaults to its complete content', async () => {
-    render(
-      <FileReviewScreen client={recordedFileReviewClient} initialSourceId="doc-g1" fixedSource />,
-    );
-
-    expect(await screen.findByRole('button', { name: 'File' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
-    expect(screen.queryByRole('combobox', { name: 'Review source' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Compare with Sprint start' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'G1 feedback and ECS-R2 replan' })).toBeVisible();
   });
 });

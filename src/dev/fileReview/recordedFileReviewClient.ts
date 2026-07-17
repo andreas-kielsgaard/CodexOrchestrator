@@ -5,17 +5,8 @@ import type {
   FileReviewSnapshot,
   FileReviewSourceSummary,
 } from '../../application/fileReview';
-import {
-  STORED_FILE_REVIEW_ARTIFACT_V1,
-  combineFileReviewClients,
-  createApplicationOwnedFileReviewClient,
-  type ApplicationFileReviewDocument,
-  type FileReviewDocumentPort,
-  type StoredFileReviewArtifactPort,
-} from '../../application/applicationOwnedFileReview';
 import type { AppProps } from '../../app/App';
 import { createRecordedDevelopmentApplicationComposition } from '../orchestrationSection/recordedOrchestrationClient';
-import { recordedProductReadCompositionInput } from '../orchestrationSection/recordedProductReadCompositionInput';
 
 interface RecordedSource {
   /** Adapter-private locator facts are intentionally excluded from the returned snapshot. */
@@ -51,6 +42,13 @@ const generatedSource = source(
   'Generated material',
   'Bootstrap preview · not persisted',
 );
+const applicationOwnedSource = source(
+  'source-application-owned',
+  'application_owned',
+  'Application-owned record',
+  'Accepted review note · durable product record',
+);
+
 const recordedSources: readonly RecordedSource[] = [
   {
     locator: {
@@ -289,9 +287,28 @@ interface FileReviewClient {
       ],
     },
   },
+  {
+    locator: {
+      repository: 'product-records:orchestration',
+      revision: 'record:review-note-017',
+    },
+    snapshot: {
+      source: applicationOwnedSource,
+      files: [
+        markdownFile(
+          'application-review-note',
+          'review-notes/file-viewer.md',
+          'modified',
+          6,
+          1,
+          '# Accepted review note\n\nThis content is application-owned, not a repository file.\n',
+        ),
+      ],
+    },
+  },
 ];
 
-const recordedPresentationFileReviewClient: FileReviewClient = {
+export const recordedFileReviewClient: FileReviewClient = {
   async listSources() {
     return recordedSources.map(({ snapshot }) => structuredClone(snapshot.source));
   },
@@ -302,156 +319,12 @@ const recordedPresentationFileReviewClient: FileReviewClient = {
   },
 };
 
-const artifactAccess = recordedProductReadCompositionInput.artifactAccess;
-const changedFilesById = new Map(
-  artifactAccess.changedFileReferences.map((file) => [file.changedFileReferenceId, file]),
-);
-const documentsById: ReadonlyMap<string, (typeof artifactAccess.documents)[number]> = new Map(
-  artifactAccess.documents.map((document) => [document.documentRefId, document]),
-);
-
-const recordedFileReviewDocumentPort: FileReviewDocumentPort = {
-  async listDocuments() {
-    return artifactAccess.documents.map(toApplicationFileReviewDocument);
-  },
-  async loadDocument(documentRefId) {
-    const document = documentsById.get(documentRefId);
-    return document ? toApplicationFileReviewDocument(document) : null;
-  },
-};
-
-const storedFileReviewArtifacts = [
-  storedDocument(
-    'doc-ecs-r1',
-    'artifact-ecs-r1',
-    'document-ecs-r1',
-    '# Original ECS-R1 plan\n\nThe first recorded plan established the Sprint surface direction.\n',
-  ),
-  storedDocument(
-    'doc-g1',
-    'artifact-g1',
-    'document-g1',
-    '# G1 feedback and ECS-R2 replan\n\nThe recorded feedback split the original refinement into bounded Work Units.\n',
-  ),
-  storedDocument(
-    'doc-ecs2e-review',
-    'artifact-ecs2e-review',
-    'document-ecs2e-review',
-    '# WU-ECS2E corrected visual review\n\nThe second recorded attempt was accepted after the bounded correction.\n',
-  ),
-  storedDocument(
-    'doc-file-review',
-    'artifact-file-review',
-    'changed-file-review-doc',
-    '# In-app file and diff viewer exploration\n\nThis recorded review material is supplied by the stored-artifact read port.\n',
-  ),
-  storedDocument(
-    'doc-rd-review',
-    'artifact-rd-review',
-    'document-rd-review',
-    '# Sprint detail review evidence\n\nThis recorded Document captures the mixed-state Sprint review composition.\n',
-  ),
-] as const;
-const storedFileReviewArtifactsByDocument = new Map(
-  storedFileReviewArtifacts.map((artifact) => [artifact.documentRefId, artifact]),
-);
-
-const recordedStoredFileReviewArtifactPort: StoredFileReviewArtifactPort = {
-  async loadArtifact(request) {
-    const artifact = storedFileReviewArtifactsByDocument.get(request.documentRefId);
-    if (!artifact || request.artifactId !== artifact.artifactId) return null;
-    return {
-      ...artifact,
-      bytes: artifact.bytes.slice(),
-    };
-  },
-};
-
-const applicationOwnedFileReviewClient = createApplicationOwnedFileReviewClient(
-  recordedFileReviewDocumentPort,
-  recordedStoredFileReviewArtifactPort,
-);
-
-export const recordedFileReviewClient = combineFileReviewClients([
-  recordedPresentationFileReviewClient,
-  applicationOwnedFileReviewClient,
-]);
-
 /** Development-only tab composition. Product boot does not receive this client or surface. */
 export function createRecordedFileReviewApplicationComposition(): AppProps {
   return {
     ...createRecordedDevelopmentApplicationComposition(),
     fileReviewClient: recordedFileReviewClient,
     initialSurface: 'file-review',
-  };
-}
-
-function toApplicationFileReviewDocument(
-  document: (typeof artifactAccess.documents)[number],
-): ApplicationFileReviewDocument {
-  return {
-    documentRefId: document.documentRefId,
-    classification: document.classification,
-    title: document.title,
-    ...(document.summary ? { summary: document.summary } : {}),
-    artifactIds: document.artifactIds,
-    changedFiles: document.changedFileReferenceIds.map((id) => {
-      const changedFile = changedFilesById.get(id);
-      if (!changedFile) throw new Error(`Missing recorded changed-file reference: ${id}`);
-      return changedFile;
-    }),
-  };
-}
-
-function base64(bytes: Uint8Array) {
-  return btoa(String.fromCharCode(...bytes));
-}
-
-function storedDocument(
-  documentRefId: string,
-  artifactId: string,
-  changedFileReferenceId: string,
-  content: string,
-) {
-  return {
-    documentRefId,
-    artifactId,
-    bytes: new TextEncoder().encode(
-      JSON.stringify({
-        contractVersion: STORED_FILE_REVIEW_ARTIFACT_V1,
-        documentRefId,
-        artifactId,
-        files: [
-          {
-            changedFileReferenceId,
-            content: {
-              encoding: 'utf-8',
-              bytesBase64: base64(new TextEncoder().encode(content)),
-            },
-            hunks: [
-              {
-                header: '@@ Sprint start to recorded Document @@',
-                lines: [
-                  {
-                    kind: 'deletion',
-                    oldLineNumber: 1,
-                    text: 'Document state before this Sprint began.',
-                  },
-                  ...content
-                    .trimEnd()
-                    .split('\n')
-                    .map((text, index) => ({
-                      kind: 'addition',
-                      newLineNumber: index + 1,
-                      text,
-                    })),
-                ],
-              },
-            ],
-          },
-        ],
-      }),
-    ),
   };
 }
 

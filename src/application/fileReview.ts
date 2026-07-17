@@ -7,8 +7,6 @@ export interface FileReviewSourceSummary {
   readonly kind: FileReviewSourceKind;
   readonly label: string;
   readonly detail: string;
-  /** Optional comparison meaning supplied by the source adapter. */
-  readonly comparisonLabel?: string;
 }
 
 export type FileReviewChangeKind = 'added' | 'modified' | 'deleted' | 'renamed';
