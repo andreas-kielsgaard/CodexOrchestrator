@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sprint Handoff"
+  short_description: "Hand off a Sprint to a fresh Runner"
+  default_prompt: "Use $sprint-handoff to package and hand off the next Sprint with its decision policy."

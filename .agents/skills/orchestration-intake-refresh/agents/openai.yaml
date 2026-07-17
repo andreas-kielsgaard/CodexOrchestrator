@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orchestration Intake Refresh"
+  short_description: "Refresh orchestration context with relevant deltas."
+  default_prompt: "Use $orchestration-intake-refresh to refresh the root orchestrator context."

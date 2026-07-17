@@ -1,0 +1,4 @@
+interface:
+  display_name: "Context Compression Refresh"
+  short_description: "Refresh root context after compression."
+  default_prompt: "Use $context-compression-refresh after context compression to restore current orchestration context."

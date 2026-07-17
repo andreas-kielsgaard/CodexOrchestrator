@@ -1,0 +1,5 @@
+interface:
+  display_name: "Orchestration Instantiator"
+  short_description: "Instantiate approved orchestration plans."
+  default_prompt: "Use $orchestration-instantiator to instantiate an approved orchestration plan."
+

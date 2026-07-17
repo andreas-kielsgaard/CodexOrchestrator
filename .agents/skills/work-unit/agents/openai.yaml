@@ -1,0 +1,5 @@
+interface:
+  display_name: "Work Unit"
+  short_description: "Execute one fixed Work Unit completely"
+  default_prompt: "Use $work-unit to complete this fixed Work Unit and return evidence to its Sprint Planner."
+

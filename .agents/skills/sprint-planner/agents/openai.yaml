@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sprint Planner"
+  short_description: "Plan and coordinate one bounded Sprint"
+  default_prompt: "Use $sprint-planner to plan and coordinate this bounded Sprint from the Epic handoff."

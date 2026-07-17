@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sprint Runner"
+  short_description: "Plan and coordinate a bounded Sprint"
+  default_prompt: "Use $sprint-runner to plan and coordinate this Sprint while front-loading consequential decisions."

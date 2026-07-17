@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orchestration Interruption Recovery"
+  short_description: "Pause and resume orchestration safely."
+  default_prompt: "Use $orchestration-interruption-recovery to pause or resume orchestration."

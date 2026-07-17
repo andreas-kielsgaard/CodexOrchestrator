@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orchestration Worker"
+  short_description: "Execute a delegated orchestration work slice."
+  default_prompt: "Use $orchestration-worker to execute a delegated work slice."

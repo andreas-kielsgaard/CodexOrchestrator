@@ -1,0 +1,4 @@
+interface:
+  display_name: "Work Unit Review"
+  short_description: "Review completed Work Units before acceptance"
+  default_prompt: "Use $work-unit-review to review this completed Work Unit before acceptance."

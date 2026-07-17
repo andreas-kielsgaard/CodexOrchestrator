@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Before Merge"
+  short_description: "Review a completed work slice before merge."
+  default_prompt: "Use $review-before-merge to review a completed work slice before merge."

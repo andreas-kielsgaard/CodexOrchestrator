@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orchestration Skill Maintainer"
+  short_description: "Maintain product orchestration skills"
+  default_prompt: "Use $orchestration-skill-maintainer to revise a product role skill from observed agent behavior."

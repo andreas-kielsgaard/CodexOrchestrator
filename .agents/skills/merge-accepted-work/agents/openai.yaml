@@ -1,0 +1,4 @@
+interface:
+  display_name: "Merge Accepted Work"
+  short_description: "Merge a clean accepted work slice."
+  default_prompt: "Use $merge-accepted-work to merge accepted work."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orchestration Next Work Planner"
+  short_description: "Choose active orchestration next work."
+  default_prompt: "Use $orchestration-next-work-planner to choose the next executable orchestration work."

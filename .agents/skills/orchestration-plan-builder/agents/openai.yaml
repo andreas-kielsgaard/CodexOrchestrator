@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orchestration Plan Builder"
+  short_description: "Turn raw strategic input into an orchestration-ready plan."
+  default_prompt: "Use $orchestration-plan-builder to refine raw project context into an orchestration-ready plan."
