@@ -1,8 +1,8 @@
 use super::super::{
     domain::{
-        AgentDiagnostic, AgentInvocation, AgentInvocationId, AgentInvocationStatus,
-        AgentRuntimeBinding, AgentRuntimeEvent, AgentRuntimeEventId, AgentRuntimeEventSource,
-        AgentRuntimeKind, AgentSession, AgentSessionAvailability, AgentSessionId,
+        AgentDiagnostic, AgentInvocation, AgentInvocationId, AgentInvocationInputProvenance,
+        AgentInvocationStatus, AgentRuntimeBinding, AgentRuntimeEvent, AgentRuntimeEventId,
+        AgentRuntimeEventSource, AgentSession, AgentSessionAvailability, AgentSessionId,
         ContractViolation, ExternalRuntimeContextId, NormalizedRuntimeEvent,
     },
     ports::{ListAgentSessionsQuery, RepositoryError, RepositoryErrorKind},
@@ -14,7 +14,6 @@ pub(super) type SessionRow = (
     String,
     String,
     String,
-    String,
     Option<String>,
     Option<String>,
     Option<String>,
@@ -23,6 +22,7 @@ pub(super) type SessionRow = (
     String,
 );
 pub(super) type InvocationRow = (
+    String,
     String,
     String,
     String,
@@ -50,7 +50,6 @@ pub(super) fn session_row(row: &Row<'_>) -> rusqlite::Result<SessionRow> {
         row.get(6)?,
         row.get(7)?,
         row.get(8)?,
-        row.get(9)?,
     ))
 }
 
@@ -69,6 +68,7 @@ pub(super) fn invocation_row(row: &Row<'_>) -> rusqlite::Result<InvocationRow> {
         row.get(10)?,
         row.get(11)?,
         row.get(12)?,
+        row.get(13)?,
     ))
 }
 
@@ -90,18 +90,17 @@ pub(super) fn map_session_row(row: SessionRow) -> Result<AgentSession, Repositor
         title: row.1,
         availability: parse_availability(&row.2)?,
         runtime_binding: AgentRuntimeBinding {
-            kind: parse_runtime_kind(&row.3)?,
             external_context_id: row
-                .4
+                .3
                 .map(ExternalRuntimeContextId::new)
                 .transpose()
                 .map_err(contract_error)?,
-            runtime_version: row.5,
+            runtime_version: row.4,
         },
-        working_directory: row.6,
-        requested_options: from_json(&row.7, "session requested options")?,
-        created_at: parse_timestamp(&row.8)?,
-        updated_at: parse_timestamp(&row.9)?,
+        working_directory: row.5,
+        requested_options: from_json(&row.6, "session requested options")?,
+        created_at: parse_timestamp(&row.7)?,
+        updated_at: parse_timestamp(&row.8)?,
     })
 }
 
@@ -110,25 +109,26 @@ pub(super) fn map_invocation_row(row: InvocationRow) -> Result<AgentInvocation, 
         id: AgentInvocationId::new(row.0).map_err(contract_error)?,
         session_id: AgentSessionId::new(row.1).map_err(contract_error)?,
         submitted_text: row.2,
-        status: parse_status(&row.3)?,
-        requested_options: from_json(&row.4, "invocation requested options")?,
+        input_provenance: parse_input_provenance(&row.3)?,
+        status: parse_status(&row.4)?,
+        requested_options: from_json(&row.5, "invocation requested options")?,
         effective_options: row
-            .5
+            .6
             .as_deref()
             .map(|value| from_json(value, "invocation effective options"))
             .transpose()?,
-        started_at: row.6.as_deref().map(parse_timestamp).transpose()?,
-        completed_at: row.7.as_deref().map(parse_timestamp).transpose()?,
-        exit_code: row.8,
-        signal: row.9,
+        started_at: row.7.as_deref().map(parse_timestamp).transpose()?,
+        completed_at: row.8.as_deref().map(parse_timestamp).transpose()?,
+        exit_code: row.9,
+        signal: row.10,
         runtime_error: row
-            .10
+            .11
             .as_deref()
             .map(|value| from_json(value, "runtime error"))
             .transpose()?,
         diagnostics: Vec::new(),
-        created_at: parse_timestamp(&row.11)?,
-        updated_at: parse_timestamp(&row.12)?,
+        created_at: parse_timestamp(&row.12)?,
+        updated_at: parse_timestamp(&row.13)?,
     })
 }
 
@@ -164,8 +164,8 @@ pub(super) fn insert_session(
     session: &AgentSession,
 ) -> Result<(), RepositoryError> {
     transaction.execute(
-        "INSERT INTO agent_sessions (id, title, availability, runtime_kind, external_context_id, runtime_version, working_directory, requested_options_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-        params![session.id.as_str(), session.title, availability_text(session.availability), runtime_kind_text(session.runtime_binding.kind), session.runtime_binding.external_context_id.as_ref().map(|id| id.as_str()), session.runtime_binding.runtime_version, session.working_directory, to_json(&session.requested_options)?, timestamp(session.created_at), timestamp(session.updated_at)],
+        "INSERT INTO agent_sessions (id, title, availability, external_context_id, runtime_version, working_directory, requested_options_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![session.id.as_str(), session.title, availability_text(session.availability), session.runtime_binding.external_context_id.as_ref().map(|id| id.as_str()), session.runtime_binding.runtime_version, session.working_directory, to_json(&session.requested_options)?, timestamp(session.created_at), timestamp(session.updated_at)],
     ).map_err(sql_write("create Agent Session"))?;
     Ok(())
 }
@@ -175,8 +175,8 @@ pub(super) fn insert_invocation(
     invocation: &AgentInvocation,
 ) -> Result<(), RepositoryError> {
     transaction.execute(
-        "INSERT INTO agent_session_invocations (id, session_id, submitted_text, status, requested_options_json, effective_options_json, started_at, completed_at, exit_code, signal, runtime_error_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-        params![invocation.id.as_str(), invocation.session_id.as_str(), invocation.submitted_text, status_text(invocation.status), to_json(&invocation.requested_options)?, invocation.effective_options.as_ref().map(to_json).transpose()?, invocation.started_at.map(timestamp), invocation.completed_at.map(timestamp), invocation.exit_code, invocation.signal, invocation.runtime_error.as_ref().map(to_json).transpose()?, timestamp(invocation.created_at), timestamp(invocation.updated_at)],
+        "INSERT INTO agent_session_invocations (id, session_id, submitted_text, input_provenance, status, requested_options_json, effective_options_json, started_at, completed_at, exit_code, signal, runtime_error_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        params![invocation.id.as_str(), invocation.session_id.as_str(), invocation.submitted_text, input_provenance_text(invocation.input_provenance), status_text(invocation.status), to_json(&invocation.requested_options)?, invocation.effective_options.as_ref().map(to_json).transpose()?, invocation.started_at.map(timestamp), invocation.completed_at.map(timestamp), invocation.exit_code, invocation.signal, invocation.runtime_error.as_ref().map(to_json).transpose()?, timestamp(invocation.created_at), timestamp(invocation.updated_at)],
     ).map_err(sql_write("create pending invocation"))?;
     Ok(())
 }
@@ -192,8 +192,8 @@ pub(super) fn update_invocation(
     Ok(())
 }
 
-pub(super) const SESSION_SELECT: &str = "SELECT id, title, availability, runtime_kind, external_context_id, runtime_version, working_directory, requested_options_json, created_at, updated_at FROM agent_sessions";
-pub(super) const INVOCATION_SELECT: &str = "SELECT id, session_id, submitted_text, status, requested_options_json, effective_options_json, started_at, completed_at, exit_code, signal, runtime_error_json, created_at, updated_at FROM agent_session_invocations";
+pub(super) const SESSION_SELECT: &str = "SELECT id, title, availability, external_context_id, runtime_version, working_directory, requested_options_json, created_at, updated_at FROM agent_sessions";
+pub(super) const INVOCATION_SELECT: &str = "SELECT id, session_id, submitted_text, input_provenance, status, requested_options_json, effective_options_json, started_at, completed_at, exit_code, signal, runtime_error_json, created_at, updated_at FROM agent_session_invocations";
 
 pub(super) fn list_sessions_from(
     conn: &Connection,
@@ -203,7 +203,7 @@ pub(super) fn list_sessions_from(
     let limit = i64::from(query.limit.unwrap_or(u32::MAX));
     let mut statement = conn
         .prepare(
-            "SELECT id, title, availability, runtime_kind, external_context_id, runtime_version, working_directory, requested_options_json, created_at, updated_at FROM agent_sessions WHERE (?1 IS NULL OR availability = ?1) ORDER BY updated_at DESC, id ASC LIMIT ?2",
+            "SELECT id, title, availability, external_context_id, runtime_version, working_directory, requested_options_json, created_at, updated_at FROM agent_sessions WHERE (?1 IS NULL OR availability = ?1) ORDER BY updated_at DESC, id ASC LIMIT ?2",
         )
         .map_err(sql_unavailable("prepare Agent Session list"))?;
     let rows = statement
@@ -375,15 +375,6 @@ pub(super) fn parse_availability(value: &str) -> Result<AgentSessionAvailability
         ))),
     }
 }
-pub(super) fn runtime_kind_text(_: AgentRuntimeKind) -> &'static str {
-    "codex_cli"
-}
-pub(super) fn parse_runtime_kind(value: &str) -> Result<AgentRuntimeKind, RepositoryError> {
-    match value {
-        "codex_cli" => Ok(AgentRuntimeKind::CodexCli),
-        _ => Err(invalid_data(format!("unknown runtime kind {value}"))),
-    }
-}
 pub(super) fn status_text(value: AgentInvocationStatus) -> &'static str {
     match value {
         AgentInvocationStatus::Pending => "pending",
@@ -403,6 +394,24 @@ pub(super) fn parse_status(value: &str) -> Result<AgentInvocationStatus, Reposit
         "canceled" => Ok(AgentInvocationStatus::Canceled),
         "interrupted" => Ok(AgentInvocationStatus::Interrupted),
         _ => Err(invalid_data(format!("unknown invocation status {value}"))),
+    }
+}
+
+pub(super) fn input_provenance_text(value: AgentInvocationInputProvenance) -> &'static str {
+    match value {
+        AgentInvocationInputProvenance::User => "user",
+        AgentInvocationInputProvenance::Application => "application",
+    }
+}
+pub(super) fn parse_input_provenance(
+    value: &str,
+) -> Result<AgentInvocationInputProvenance, RepositoryError> {
+    match value {
+        "user" => Ok(AgentInvocationInputProvenance::User),
+        "application" => Ok(AgentInvocationInputProvenance::Application),
+        _ => Err(invalid_data(format!(
+            "unknown invocation input provenance {value}"
+        ))),
     }
 }
 pub(super) fn event_source_text(value: AgentRuntimeEventSource) -> &'static str {

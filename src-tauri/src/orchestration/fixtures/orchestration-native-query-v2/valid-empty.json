@@ -1,0 +1,34 @@
+{
+  "contractVersion": "orchestration-native-query/v2",
+  "generatedAt": "2026-07-15T12:00:00.000Z",
+  "planningDrafts": [
+    {
+      "epicPlanningDraftId": "epic-planning-draft-1",
+      "status": "active",
+      "createdAt": "2026-07-15T12:00:00.000Z",
+      "updatedAt": "2026-07-15T12:00:00.000Z",
+      "currentProposal": {
+        "status": "empty"
+      }
+    }
+  ],
+  "agentSessionAssociations": [
+    {
+      "agentSessionAssociationId": "planning-draft-agent-session-association-1",
+      "epicPlanningDraftId": "epic-planning-draft-1",
+      "agentSessionId": "agent-session-plan-builder",
+      "actorId": "managed-plan-builder",
+      "associatedAt": "2026-07-15T12:00:00.000Z"
+    }
+  ],
+  "proposalRevisions": [],
+  "recordedProposalEvents": [],
+  "provenanceLinks": [],
+  "initiationCommands": [],
+  "initiationResults": [],
+  "initiationEvents": [],
+  "initiationProvenance": [],
+  "materialSnapshots": [],
+  "initiatedEpics": [],
+  "initiatedSprints": []
+}

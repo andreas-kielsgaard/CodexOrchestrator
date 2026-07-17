@@ -18,6 +18,40 @@ struct RecordingSink {
     changed: Condvar,
 }
 
+#[derive(Default)]
+struct BlockingTerminalSink {
+    entered: Mutex<bool>,
+    released: Mutex<bool>,
+    changed: Condvar,
+}
+
+impl ProcessEventSink for BlockingTerminalSink {
+    fn on_output(&self, _invocation_id: &AgentInvocationId, _output: ProcessOutput) {}
+
+    fn on_terminal(&self, _invocation_id: &AgentInvocationId, _outcome: ProcessTerminalOutcome) {
+        *self.entered.lock().expect("lock entered") = true;
+        self.changed.notify_all();
+        let mut released = self.released.lock().expect("lock released");
+        while !*released {
+            released = self.changed.wait(released).expect("wait for release");
+        }
+    }
+}
+
+impl BlockingTerminalSink {
+    fn wait_until_entered(&self) {
+        let mut entered = self.entered.lock().expect("lock entered");
+        while !*entered {
+            entered = self.changed.wait(entered).expect("wait for callback");
+        }
+    }
+
+    fn release(&self) {
+        *self.released.lock().expect("lock released") = true;
+        self.changed.notify_all();
+    }
+}
+
 impl ProcessEventSink for RecordingSink {
     fn on_output(&self, invocation_id: &AgentInvocationId, output: ProcessOutput) {
         self.outputs
@@ -397,6 +431,39 @@ fn shutdown_retries_after_failed_cancellation_and_reports_interruption() {
 }
 
 #[test]
+fn shutdown_reports_termination_failure_only_after_the_child_exits() {
+    let (factory, sink, supervisor) = fixture();
+    let child = Arc::new(FakeChild::default());
+    child.fail_next_termination(io::ErrorKind::PermissionDenied);
+    factory.push_process(child.clone());
+    let invocation = invocation_id("invocation-shutdown-failure");
+    supervisor
+        .start(
+            session_id("session-shutdown-failure"),
+            invocation.clone(),
+            spec(),
+        )
+        .expect("start");
+
+    let completing_child = child.clone();
+    let completion = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(20));
+        completing_child.complete(0);
+    });
+    let error = supervisor
+        .shutdown()
+        .expect_err("failed direct-child termination must be reported");
+    completion.join().expect("completion thread");
+
+    assert_eq!(error.kind, SupervisorErrorKind::CancellationFailed);
+    assert!(matches!(
+        sink.wait_for_terminal(&invocation),
+        ProcessTerminalOutcome::Interrupted { .. }
+    ));
+    assert_eq!(supervisor.active_count().expect("active count"), 0);
+}
+
+#[test]
 fn reader_failure_terminates_and_reaps_the_child() {
     let (factory, sink, supervisor) = fixture();
     let child = Arc::new(FakeChild::default());
@@ -545,6 +612,31 @@ fn graceful_shutdown_allows_natural_completion_before_escalating() {
             signal: None,
         })
     ));
+    assert_eq!(supervisor.active_count().expect("active count"), 0);
+}
+
+#[test]
+fn shutdown_waits_for_the_terminal_callback_to_return() {
+    let factory = Arc::new(FakeFactory::default());
+    let sink = Arc::new(BlockingTerminalSink::default());
+    let supervisor = Arc::new(ProcessSupervisor::new(factory.clone(), sink.clone()));
+    let child = Arc::new(FakeChild::default());
+    factory.push_process(child);
+    supervisor
+        .start(
+            session_id("session-callback"),
+            invocation_id("invocation-callback"),
+            spec(),
+        )
+        .expect("start");
+
+    let shutdown_supervisor = supervisor.clone();
+    let shutdown = thread::spawn(move || shutdown_supervisor.shutdown());
+    sink.wait_until_entered();
+    assert!(!shutdown.is_finished());
+
+    sink.release();
+    shutdown.join().expect("shutdown thread").expect("shutdown");
     assert_eq!(supervisor.active_count().expect("active count"), 0);
 }
 

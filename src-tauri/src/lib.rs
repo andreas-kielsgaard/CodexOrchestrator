@@ -7,12 +7,15 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::Arc,
 };
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
+mod active_app;
 mod agent_sessions;
+// The semantic save command is intentionally dormant until the later MCP adapter owns its input.
+#[allow(dead_code)]
+mod orchestration;
 mod runtime;
 mod storage;
 
@@ -796,69 +799,7 @@ fn start_codex_task_run(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
-        .setup(|app| {
-            let database_path = app_database_path(app.handle())?;
-            let connection = open_initialized_database(database_path)?;
-            let repository = Arc::new(
-                agent_sessions::repository::SqliteAgentSessionRepository::new(connection)
-                    .map_err(|error| error.to_string())?,
-            );
-            // Durable history must not wait on a provider executable. Capability discovery remains
-            // available only to explicitly opted-in verification; normal execution starts with
-            // unknown capabilities and degrades at invocation time when Codex is unavailable.
-            let runtime = Arc::new(runtime::codex::CodexCliRuntime::system("codex", None));
-            let notifier = Arc::new(agent_sessions::transport::TauriAgentSessionNotifier::new(
-                app.handle().clone(),
-            ));
-            let providers = Arc::new(agent_sessions::application::SystemAgentSessionProviders);
-            let application = agent_sessions::application::AgentSessionApplication::new(
-                repository,
-                runtime,
-                notifier,
-                providers.clone(),
-                providers,
-                None,
-            );
-            application
-                .reconcile_startup()
-                .map_err(|error| error.to_string())?;
-            app.manage(agent_sessions::transport::AgentSessionTauriState::new(
-                application,
-            ));
-            Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![
-            app_metadata,
-            // Compatibility command names remain registered so older callers receive a deliberate
-            // quarantine error. Every legacy handler rejects before database or process work.
-            load_open_task_dashboard,
-            register_task_worktree,
-            register_task_repo,
-            discover_task_repos,
-            create_open_task,
-            update_open_task,
-            archive_open_task,
-            load_task_run_detail,
-            start_codex_task_run,
-            agent_sessions::transport::create_agent_session,
-            agent_sessions::transport::list_agent_sessions,
-            agent_sessions::transport::load_agent_session,
-            agent_sessions::transport::send_agent_session_message,
-            agent_sessions::transport::cancel_agent_invocation
-        ])
-        .build(tauri::generate_context!())
-        .expect("error while building Codex Orchestrator");
-
-    app.run(|app_handle, event| {
-        if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
-            if let Some(state) =
-                app_handle.try_state::<agent_sessions::transport::AgentSessionTauriState>()
-            {
-                let _ = state.application().shutdown_runtime();
-            }
-        }
-    });
+    active_app::run();
 }
 
 fn ensure_legacy_tasks_available() -> Result<(), String> {

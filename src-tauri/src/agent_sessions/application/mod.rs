@@ -5,8 +5,10 @@ mod update_sink;
 
 pub(crate) use lifecycle::{
     AgentSessionApplication, AgentSessionNotification, AgentSessionNotifier,
-    CancelAgentInvocationCommand, CreateAgentSessionCommand, SendAgentSessionMessageCommand,
-    SendAgentSessionMessageResult, SystemAgentSessionProviders,
+    ApplicationInvocationLaunchEvidence, CancelAgentInvocationCommand, CreateAgentSessionCommand,
+    CreateApplicationAgentSessionCommand, SendAgentSessionMessageCommand,
+    SendAgentSessionMessageResult, SendIdempotentApplicationAgentSessionMessageCommand,
+    SystemAgentSessionProviders,
 };
 
 #[cfg(test)]

@@ -105,6 +105,18 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
         updated_at: DateTime<Utc>,
     ) -> Result<AgentInvocation, RepositoryError>;
 
+    /// Records the durable application fact that the runtime accepted this exact invocation.
+    fn record_invocation_launch_accepted(
+        &self,
+        invocation_id: &AgentInvocationId,
+        accepted_at: DateTime<Utc>,
+    ) -> Result<(), RepositoryError>;
+
+    fn invocation_launch_accepted_at(
+        &self,
+        invocation_id: &AgentInvocationId,
+    ) -> Result<Option<DateTime<Utc>>, RepositoryError>;
+
     fn finish_invocation(
         &self,
         invocation_id: &AgentInvocationId,
@@ -164,6 +176,37 @@ pub(crate) struct RuntimeInvocationRequest {
     pub(crate) submitted_text: String,
     pub(crate) working_directory: Option<String>,
     pub(crate) options: AgentRuntimeOptions,
+    /// Opt-in child-process configuration supplied by a role-specific application service.
+    /// Ordinary Agent Session sends always leave this absent.
+    pub(crate) launch_extension: Option<RuntimeLaunchExtension>,
+}
+
+/// Concrete-runtime launch data. This carries no session role, product identity, or authority;
+/// an application service must explicitly opt into it for one invocation.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct RuntimeLaunchExtension {
+    pub(crate) additional_args: Vec<String>,
+    pub(crate) environment: Vec<(String, String)>,
+    /// Neutral, application-provenance text delivered before the initial user prompt. The
+    /// persisted invocation remains the user's submitted text and generic callers leave this absent.
+    pub(crate) initial_prompt_prefix: Option<InitialPromptPrefix>,
+}
+
+/// Explicit, non-user provenance delivered before an initial user query.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct InitialPromptPrefix {
+    pub(crate) source: String,
+    pub(crate) version: u16,
+    pub(crate) content: String,
+}
+
+impl InitialPromptPrefix {
+    pub(crate) fn render_before_user_query(&self, user_query: &str) -> String {
+        format!(
+            "<application_context provenance=\"product_initial_prompt_prefix\" source=\"{}\" version=\"{}\">\n{}\n</application_context>\n\n<user_query>\n{}\n</user_query>",
+            self.source, self.version, self.content, user_query
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -171,6 +214,83 @@ pub(crate) struct RuntimeInvocationRequest {
 pub(crate) enum RuntimeInvocationMode {
     Start,
     Resume,
+}
+
+/// Semantic support states exposed by agent access adapters.
+///
+/// `Unknown` covers both undiscovered support and a discovery result that could not establish a
+/// reliable answer. Callers must never treat it as supported.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CapabilitySupport {
+    Supported,
+    Unsupported,
+    #[default]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct InvocationCapabilities {
+    pub(crate) structured_events: CapabilitySupport,
+    pub(crate) model_selection: CapabilitySupport,
+    pub(crate) sandbox_selection: CapabilitySupport,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentAccessCapabilities {
+    pub(crate) start: InvocationCapabilities,
+    pub(crate) resume: InvocationCapabilities,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CapabilityDiscoveryState {
+    Observed,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CapabilityProvenance {
+    /// Adapter-owned discovery mechanism, for example a CLI help probe.
+    pub(crate) source: String,
+    pub(crate) runtime_version: Option<String>,
+}
+
+/// Cacheable semantic capability evidence returned by an agent access adapter.
+///
+/// `valid_until` is adapter policy, not a promise that an external runtime cannot change sooner.
+/// An unavailable discovery is represented by unknown capabilities plus `Unavailable`, retaining
+/// provenance and a diagnostic message without promoting absence of evidence to unsupported.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentAccessCapabilitySnapshot {
+    pub(crate) capabilities: AgentAccessCapabilities,
+    pub(crate) discovery_state: CapabilityDiscoveryState,
+    pub(crate) provenance: CapabilityProvenance,
+    pub(crate) observed_at: DateTime<Utc>,
+    pub(crate) valid_until: DateTime<Utc>,
+    pub(crate) unavailable_reason: Option<String>,
+}
+
+impl AgentAccessCapabilitySnapshot {
+    pub(crate) fn is_fresh_at(&self, now: DateTime<Utc>) -> bool {
+        now < self.valid_until
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum CapabilityRefresh {
+    #[default]
+    UseFreshCache,
+    Refresh,
+}
+
+/// Adapter-owned discovery supplies semantic evidence; infrastructure owns cache reuse.
+pub(crate) trait AgentAccessCapabilityDiscovery: Send + Sync {
+    fn discover_capabilities(&self, observed_at: DateTime<Utc>) -> AgentAccessCapabilitySnapshot;
 }
 
 /// Confirms which semantic options preflight determined will be applied at launch.

@@ -17,8 +17,20 @@ chrono = { version = "0.4", features = ["clock", "serde"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+schemars = "1"
 tauri = { version = "2", features = [] }
+rmcp = { version = "=2.2.0", default-features = false, features = ["server", "macros", "transport-streamable-http-server"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util"] }
+tokio-util = "0.7"
+axum = { version = "0.8", features = ["http1", "tokio"], default-features = false }
+tower = "0.5"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
 uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
 
 [dev-dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 tempfile = "3"

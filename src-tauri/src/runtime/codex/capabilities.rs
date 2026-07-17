@@ -1,5 +1,12 @@
-#[cfg(test)]
+use crate::agent_sessions::ports::{
+    AgentAccessCapabilities, AgentAccessCapabilityDiscovery, AgentAccessCapabilitySnapshot,
+    CapabilityDiscoveryState, CapabilityProvenance, CapabilitySupport, InvocationCapabilities,
+};
+use chrono::{DateTime, Duration, Utc};
 use std::process::Command;
+
+const OBSERVED_FRESHNESS: Duration = Duration::minutes(30);
+const UNAVAILABLE_FRESHNESS: Duration = Duration::minutes(1);
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CodexCliCapabilities {
@@ -12,46 +19,155 @@ pub(crate) struct CodexCliCapabilities {
     pub(crate) resume_sandbox: Option<bool>,
 }
 
-#[cfg(test)]
-/// Probes each CLI surface independently. A failed optional probe leaves only that capability
-/// unknown; it does not erase successfully discovered version or help data.
+/// Owns Codex executable/version/help discovery and translates it into product semantics.
+///
+/// Successful observations stay fresh for 30 minutes in the runtime's in-memory cache. A fully
+/// unavailable probe is retried after one minute. The shorter failure lifetime supports recovery
+/// after PATH or installation changes without probing on every invocation.
 pub(crate) struct CodexCliCapabilityProbe {
-    program: Option<String>,
+    program: Result<String, String>,
 }
 
-#[cfg(test)]
 impl CodexCliCapabilityProbe {
     pub(crate) fn new(program: impl Into<String>) -> Self {
         Self {
-            program: resolve_program(program.into()).ok(),
+            program: resolve_program(program.into()),
         }
     }
 
+    pub(super) fn from_resolved(program: Result<String, String>) -> Self {
+        Self { program }
+    }
+
     pub(crate) fn discover(&self) -> CodexCliCapabilities {
-        let version = self
-            .program
-            .as_deref()
-            .and_then(|program| command_stdout(program, &["--version"]))
+        self.discover_raw().0
+    }
+
+    fn discover_raw(&self) -> (CodexCliCapabilities, Vec<String>) {
+        let program = match &self.program {
+            Ok(program) => program,
+            Err(error) => return (CodexCliCapabilities::default(), vec![error.clone()]),
+        };
+        let version = command_stdout(program, &["--version"]);
+        let exec_help = command_stdout(program, &["exec", "--help"]);
+        let resume_help = command_stdout(program, &["exec", "resume", "--help"]);
+        let errors = [&version, &exec_help, &resume_help]
+            .into_iter()
+            .filter_map(|result| result.as_ref().err().cloned())
+            .collect();
+        let version = version
+            .ok()
             .map(|output| output.trim().to_string())
             .filter(|output| !output.is_empty());
-        let exec_help = self
-            .program
-            .as_deref()
-            .and_then(|program| command_stdout(program, &["exec", "--help"]));
-        let resume_help = self
-            .program
-            .as_deref()
-            .and_then(|program| command_stdout(program, &["exec", "resume", "--help"]));
+        let exec_help = exec_help.ok();
+        let resume_help = resume_help.ok();
 
-        CodexCliCapabilities {
-            version,
-            exec_json: flag_support(&exec_help, "--json"),
-            resume_json: flag_support(&resume_help, "--json"),
-            exec_model: flag_support(&exec_help, "--model"),
-            resume_model: flag_support(&resume_help, "--model"),
-            exec_sandbox: flag_support(&exec_help, "--sandbox"),
-            resume_sandbox: flag_support(&resume_help, "--sandbox"),
+        (
+            CodexCliCapabilities {
+                version,
+                exec_json: flag_support(exec_help.as_deref(), "--json"),
+                resume_json: flag_support(resume_help.as_deref(), "--json"),
+                exec_model: flag_support(exec_help.as_deref(), "--model"),
+                resume_model: flag_support(resume_help.as_deref(), "--model"),
+                exec_sandbox: flag_support(exec_help.as_deref(), "--sandbox"),
+                // `exec resume` accepts the same `sandbox_mode` through its supported strict
+                // `--config` surface even though it does not publish a dedicated `--sandbox` flag.
+                resume_sandbox: any_flag_support(
+                    resume_help.as_deref(),
+                    &["--sandbox", "--config"],
+                ),
+            },
+            errors,
+        )
+    }
+}
+
+impl AgentAccessCapabilityDiscovery for CodexCliCapabilityProbe {
+    fn discover_capabilities(&self, observed_at: DateTime<Utc>) -> AgentAccessCapabilitySnapshot {
+        let (raw, errors) = self.discover_raw();
+        snapshot_from_raw(raw, errors, observed_at)
+    }
+}
+
+pub(super) struct FixedCodexCapabilityDiscovery {
+    capabilities: CodexCliCapabilities,
+}
+
+impl FixedCodexCapabilityDiscovery {
+    pub(super) fn new(capabilities: CodexCliCapabilities) -> Self {
+        Self { capabilities }
+    }
+}
+
+impl AgentAccessCapabilityDiscovery for FixedCodexCapabilityDiscovery {
+    fn discover_capabilities(&self, observed_at: DateTime<Utc>) -> AgentAccessCapabilitySnapshot {
+        snapshot_from_raw(self.capabilities.clone(), Vec::new(), observed_at)
+    }
+}
+
+fn snapshot_from_raw(
+    raw: CodexCliCapabilities,
+    errors: Vec<String>,
+    observed_at: DateTime<Utc>,
+) -> AgentAccessCapabilitySnapshot {
+    let observed = raw.version.is_some()
+        || [
+            raw.exec_json,
+            raw.resume_json,
+            raw.exec_model,
+            raw.resume_model,
+            raw.exec_sandbox,
+            raw.resume_sandbox,
+        ]
+        .into_iter()
+        .any(|support| support.is_some());
+    let discovery_state = if observed {
+        CapabilityDiscoveryState::Observed
+    } else {
+        CapabilityDiscoveryState::Unavailable
+    };
+    let freshness = if observed {
+        OBSERVED_FRESHNESS
+    } else {
+        UNAVAILABLE_FRESHNESS
+    };
+    let unavailable_reason = (!observed).then(|| {
+        if errors.is_empty() {
+            "Codex CLI capability probes returned no usable evidence".to_string()
+        } else {
+            errors.join("; ")
         }
+    });
+
+    AgentAccessCapabilitySnapshot {
+        capabilities: AgentAccessCapabilities {
+            start: InvocationCapabilities {
+                structured_events: support(raw.exec_json),
+                model_selection: support(raw.exec_model),
+                sandbox_selection: support(raw.exec_sandbox),
+            },
+            resume: InvocationCapabilities {
+                structured_events: support(raw.resume_json),
+                model_selection: support(raw.resume_model),
+                sandbox_selection: support(raw.resume_sandbox),
+            },
+        },
+        discovery_state,
+        provenance: CapabilityProvenance {
+            source: "codex_cli_version_and_help".to_string(),
+            runtime_version: raw.version,
+        },
+        observed_at,
+        valid_until: observed_at + freshness,
+        unavailable_reason,
+    }
+}
+
+fn support(value: Option<bool>) -> CapabilitySupport {
+    match value {
+        Some(true) => CapabilitySupport::Supported,
+        Some(false) => CapabilitySupport::Unsupported,
+        None => CapabilitySupport::Unknown,
     }
 }
 
@@ -125,17 +241,28 @@ fn npm_codex_native_binary(npm_bin: &std::path::Path) -> Option<std::path::PathB
     candidate.is_file().then_some(candidate)
 }
 
-#[cfg(test)]
-fn command_stdout(program: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new(program).args(args).output().ok()?;
-    output.status.success().then(|| {
-        let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
-        text.push_str(&String::from_utf8_lossy(&output.stderr));
-        text
-    })
+fn command_stdout(program: &str, args: &[&str]) -> Result<String, String> {
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|error| format!("{} {} probe failed: {error}", program, args.join(" ")))?;
+    if !output.status.success() {
+        return Err(format!(
+            "{} {} probe exited with {}",
+            program,
+            args.join(" "),
+            output.status
+        ));
+    }
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    Ok(text)
 }
 
-#[cfg(test)]
-fn flag_support(help: &Option<String>, flag: &str) -> Option<bool> {
-    help.as_ref().map(|help| help.contains(flag))
+fn flag_support(help: Option<&str>, flag: &str) -> Option<bool> {
+    help.map(|help| help.contains(flag))
+}
+
+fn any_flag_support(help: Option<&str>, flags: &[&str]) -> Option<bool> {
+    help.map(|help| flags.iter().any(|flag| help.contains(flag)))
 }

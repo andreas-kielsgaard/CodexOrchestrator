@@ -17,11 +17,11 @@ use tauri::{AppHandle, Emitter, State};
 pub(crate) const AGENT_SESSION_UPDATE_EVENT: &str = "agent-session-update";
 
 pub(crate) struct AgentSessionTauriState {
-    application: AgentSessionApplication,
+    application: Arc<AgentSessionApplication>,
 }
 
 impl AgentSessionTauriState {
-    pub(crate) fn new(application: AgentSessionApplication) -> Self {
+    pub(crate) fn new(application: Arc<AgentSessionApplication>) -> Self {
         Self { application }
     }
 

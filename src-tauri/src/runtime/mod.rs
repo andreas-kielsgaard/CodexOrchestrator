@@ -2,5 +2,6 @@
 //!
 //! Runtime code must not own Agent Session persistence or Tauri presentation contracts.
 
+pub(crate) mod capabilities;
 pub(crate) mod codex;
 pub(crate) mod processes;

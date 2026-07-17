@@ -1,6 +1,9 @@
 use super::{
-    arguments::{build_args, prepare_options, InvocationCommand},
-    capabilities::{resolve_program, CodexCliCapabilities},
+    arguments::{build_args_from_effective_options, prepare_options, InvocationCommand},
+    capabilities::{
+        resolve_program, CodexCliCapabilities, CodexCliCapabilityProbe,
+        FixedCodexCapabilityDiscovery,
+    },
     protocol::{CodexJsonlProtocol, JsonlTerminalEvidence},
 };
 use crate::{
@@ -10,17 +13,21 @@ use crate::{
             AgentRuntimeFailure, NormalizedRuntimeEvent, NormalizedRuntimeEventKind,
         },
         ports::{
-            AgentRuntime, AgentRuntimeUpdateSink, RuntimeEventDraft, RuntimeInvocationMode,
-            RuntimeInvocationOutcome, RuntimeInvocationPreflight, RuntimeInvocationRequest,
-            RuntimePortError, RuntimePortErrorKind, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
+            AgentAccessCapabilityDiscovery, AgentAccessCapabilitySnapshot, AgentRuntime,
+            AgentRuntimeUpdateSink, CapabilityRefresh, InvocationCapabilities, RuntimeEventDraft,
+            RuntimeInvocationMode, RuntimeInvocationOutcome, RuntimeInvocationPreflight,
+            RuntimeInvocationRequest, RuntimePortError, RuntimePortErrorKind, RuntimeUpdate,
+            RuntimeUpdateDeliveryFailure,
         },
     },
+    runtime::capabilities::AgentAccessCapabilityCache,
     runtime::processes::{
         ChildProcessFactory, ProcessEventSink, ProcessFailureKind, ProcessLaunchSpec,
         ProcessOutput, ProcessOutputStream, ProcessSupervisor, ProcessTerminalOutcome,
         SupervisorError, SupervisorErrorKind, SystemProcessFactory,
     },
 };
+use chrono::Utc;
 use serde_json::json;
 use std::{
     collections::HashMap,
@@ -160,7 +167,8 @@ fn deliver_update(
 /// evidence are delegated exclusively to `ProcessSupervisor`.
 pub(crate) struct CodexCliRuntime {
     program: Result<String, String>,
-    capabilities: Option<CodexCliCapabilities>,
+    capability_discovery: Arc<dyn AgentAccessCapabilityDiscovery>,
+    capability_cache: AgentAccessCapabilityCache,
     coordinator: Arc<RuntimeCoordinator>,
     supervisor: ProcessSupervisor,
     #[cfg(test)]
@@ -180,15 +188,65 @@ impl CodexCliRuntime {
         capabilities: Option<CodexCliCapabilities>,
         factory: Arc<dyn ChildProcessFactory>,
     ) -> Self {
+        let program = resolve_program(program.into());
+        let capability_discovery: Arc<dyn AgentAccessCapabilityDiscovery> = match capabilities {
+            Some(capabilities) => Arc::new(FixedCodexCapabilityDiscovery::new(capabilities)),
+            None => Arc::new(CodexCliCapabilityProbe::from_resolved(program.clone())),
+        };
+        Self::new_composed(program, capability_discovery, factory)
+    }
+
+    fn new_composed(
+        program: Result<String, String>,
+        capability_discovery: Arc<dyn AgentAccessCapabilityDiscovery>,
+        factory: Arc<dyn ChildProcessFactory>,
+    ) -> Self {
         let coordinator = Arc::new(RuntimeCoordinator::default());
         let supervisor = ProcessSupervisor::new(factory, coordinator.clone());
         Self {
-            program: resolve_program(program.into()),
-            capabilities,
+            program,
+            capability_discovery,
+            capability_cache: AgentAccessCapabilityCache::default(),
             coordinator,
             supervisor,
             #[cfg(test)]
             launch_observer: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_discovery(
+        program: impl Into<String>,
+        capability_discovery: Arc<dyn AgentAccessCapabilityDiscovery>,
+        factory: Arc<dyn ChildProcessFactory>,
+    ) -> Self {
+        Self::new_composed(
+            resolve_program(program.into()),
+            capability_discovery,
+            factory,
+        )
+    }
+
+    /// Forces a fresh Codex version/help observation without launching an agent invocation.
+    pub(crate) fn refresh_capabilities(&self) -> AgentAccessCapabilitySnapshot {
+        self.resolve_capabilities(CapabilityRefresh::Refresh)
+    }
+
+    /// Invalidates application-lifetime evidence after executable or configuration changes.
+    pub(crate) fn invalidate_capabilities(&self) {
+        self.capability_cache.invalidate();
+    }
+
+    fn resolve_capabilities(&self, refresh: CapabilityRefresh) -> AgentAccessCapabilitySnapshot {
+        self.capability_cache
+            .resolve(refresh, Utc::now(), self.capability_discovery.as_ref())
+    }
+
+    fn invocation_capabilities(&self, mode: RuntimeInvocationMode) -> InvocationCapabilities {
+        let snapshot = self.resolve_capabilities(CapabilityRefresh::UseFreshCache);
+        match mode {
+            RuntimeInvocationMode::Start => snapshot.capabilities.start,
+            RuntimeInvocationMode::Resume => snapshot.capabilities.resume,
         }
     }
 
@@ -214,12 +272,14 @@ impl CodexCliRuntime {
         command: InvocationCommand<'_>,
         update_sink: Arc<dyn AgentRuntimeUpdateSink>,
     ) -> Result<(), RuntimePortError> {
-        let args = build_args(
+        // Application persistence supplies the preflight-approved effective options. Launch must
+        // not rediscover or reinterpret capabilities after that durable transition.
+        let args = build_args_from_effective_options(
             command,
             &request.submitted_text,
             &request.options,
-            self.capabilities.as_ref(),
-        )?;
+            request.launch_extension.as_ref(),
+        );
         let program = self
             .program
             .clone()
@@ -228,7 +288,11 @@ impl CodexCliRuntime {
             program,
             args,
             working_directory: request.working_directory.as_deref().map(PathBuf::from),
-            environment: Vec::new(),
+            environment: request
+                .launch_extension
+                .as_ref()
+                .map(|extension| extension.environment.clone())
+                .unwrap_or_default(),
         };
         #[cfg(test)]
         if let Some(observer) = &self.launch_observer {
@@ -257,9 +321,8 @@ impl AgentRuntime for CodexCliRuntime {
         mode: RuntimeInvocationMode,
         requested_options: &crate::agent_sessions::domain::AgentRuntimeOptions,
     ) -> Result<RuntimeInvocationPreflight, RuntimePortError> {
-        let resume = mode == RuntimeInvocationMode::Resume;
-        let effective_options =
-            prepare_options(resume, requested_options, self.capabilities.as_ref())?;
+        let capabilities = self.invocation_capabilities(mode);
+        let effective_options = prepare_options(requested_options, &capabilities)?;
         Ok(RuntimeInvocationPreflight { effective_options })
     }
 

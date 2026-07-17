@@ -4,8 +4,8 @@ use crate::agent_sessions::{
         SendAgentSessionMessageCommand, SendAgentSessionMessageResult,
     },
     domain::{
-        AgentInvocation, AgentInvocationId, AgentRuntimeEvent, AgentRuntimeKind,
-        AgentRuntimeOptions, AgentSession, AgentSessionAvailability, AgentSessionId,
+        AgentInvocation, AgentInvocationId, AgentRuntimeEvent, AgentRuntimeOptions, AgentSession,
+        AgentSessionAvailability, AgentSessionId,
     },
     ports::{AgentSessionHistory, AgentSessionSummary, ListAgentSessionsQuery},
 };
@@ -20,7 +20,6 @@ pub(crate) type AgentRuntimeEventDto = AgentRuntimeEvent;
 pub(crate) struct CreateAgentSessionCommandDto {
     pub(crate) title: Option<String>,
     pub(crate) working_directory: Option<String>,
-    pub(crate) runtime_kind: Option<AgentRuntimeKind>,
     #[serde(default)]
     pub(crate) requested_options: AgentRuntimeOptions,
 }
@@ -30,7 +29,6 @@ impl From<CreateAgentSessionCommandDto> for CreateAgentSessionCommand {
         Self {
             title: value.title,
             working_directory: value.working_directory,
-            runtime_kind: value.runtime_kind,
             requested_options: value.requested_options,
         }
     }
@@ -146,7 +144,6 @@ pub(crate) struct AgentSessionSummaryDto {
     pub(crate) id: AgentSessionId,
     pub(crate) title: String,
     pub(crate) availability: AgentSessionAvailability,
-    pub(crate) runtime_kind: AgentRuntimeKind,
     pub(crate) has_active_invocation: bool,
     pub(crate) created_at: chrono::DateTime<chrono::Utc>,
     pub(crate) updated_at: chrono::DateTime<chrono::Utc>,
@@ -158,7 +155,6 @@ impl From<AgentSessionSummary> for AgentSessionSummaryDto {
             id: value.session.id,
             title: value.session.title,
             availability: value.session.availability,
-            runtime_kind: value.session.runtime_binding.kind,
             has_active_invocation: value
                 .latest_invocation_status
                 .is_some_and(|status| status.is_active()),

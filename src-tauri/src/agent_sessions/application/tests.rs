@@ -1,15 +1,17 @@
 use super::lifecycle::{
     AgentSessionApplication, AgentSessionClock, AgentSessionIdProvider, AgentSessionNotification,
-    AgentSessionNotifier, CancelAgentInvocationCommand, CreateAgentSessionCommand,
-    SendAgentSessionMessageCommand,
+    AgentSessionNotifier, ApplicationInvocationLaunchEvidence, CancelAgentInvocationCommand,
+    CreateAgentSessionCommand, SendAgentSessionMessageCommand,
+    SendIdempotentApplicationAgentSessionMessageCommand,
 };
 use crate::agent_sessions::{
     domain::{
-        AgentDiagnostic, AgentInvocation, AgentInvocationId, AgentInvocationStatus,
-        AgentInvocationTerminalStatus, AgentRuntimeBinding, AgentRuntimeEvent, AgentRuntimeEventId,
-        AgentRuntimeEventSource, AgentRuntimeFailure, AgentRuntimeKind, AgentRuntimeOptions,
-        AgentSession, AgentSessionAvailability, AgentSessionId, InvocationCompletion,
-        NormalizedRuntimeEvent, NormalizedRuntimeEventKind, RuntimeSandboxMode,
+        AgentDiagnostic, AgentInvocation, AgentInvocationId, AgentInvocationInputProvenance,
+        AgentInvocationStatus, AgentInvocationTerminalStatus, AgentRuntimeBinding,
+        AgentRuntimeEvent, AgentRuntimeEventId, AgentRuntimeEventSource, AgentRuntimeFailure,
+        AgentRuntimeOptions, AgentSession, AgentSessionAvailability, AgentSessionId,
+        InvocationCompletion, NormalizedRuntimeEvent, NormalizedRuntimeEventKind,
+        RuntimeSandboxMode,
     },
     ports::{
         AgentRuntime, AgentRuntimeUpdateSink, AgentSessionHistory, AgentSessionRepository,
@@ -251,6 +253,140 @@ fn launch_error_without_terminal_callback_is_durably_failed_once() {
 }
 
 #[test]
+fn runtime_error_never_records_application_launch_acceptance() {
+    let harness = Harness::new(RuntimeBehavior::LaunchErrorWithoutCallback);
+    let session = harness.create_session();
+    let invocation_id = harness.application.allocate_application_invocation_id();
+    let result = harness
+        .application
+        .send_idempotent_application_message_with_launch_observation(
+            SendIdempotentApplicationAgentSessionMessageCommand {
+                invocation_id: invocation_id.clone(),
+                message: message(&session.id, "Application launch error"),
+            },
+            None,
+        )
+        .expect("durable failed acknowledgement");
+
+    assert!(!result.launch_accepted);
+    assert_eq!(
+        harness
+            .application
+            .application_invocation_launch_evidence(&invocation_id, &session.id)
+            .expect("launch evidence"),
+        ApplicationInvocationLaunchEvidence::PersistedNotAccepted
+    );
+    assert_eq!(
+        harness
+            .repository
+            .invocation_launch_accepted_at(&invocation_id)
+            .expect("acceptance lookup"),
+        None
+    );
+}
+
+#[test]
+fn runtime_ok_records_durable_application_launch_acceptance() {
+    let harness = Harness::new(RuntimeBehavior::StayRunning);
+    let session = harness.create_session();
+    let invocation_id = harness.application.allocate_application_invocation_id();
+    let result = harness
+        .application
+        .send_idempotent_application_message_with_launch_observation(
+            SendIdempotentApplicationAgentSessionMessageCommand {
+                invocation_id: invocation_id.clone(),
+                message: message(&session.id, "Application launch accepted"),
+            },
+            None,
+        )
+        .expect("accepted launch");
+
+    assert!(result.launch_accepted);
+    assert_eq!(
+        harness
+            .application
+            .application_invocation_launch_evidence(&invocation_id, &session.id)
+            .expect("launch evidence"),
+        ApplicationInvocationLaunchEvidence::LaunchAccepted
+    );
+    assert!(harness
+        .repository
+        .invocation_launch_accepted_at(&invocation_id)
+        .expect("acceptance lookup")
+        .is_some());
+}
+
+#[test]
+fn launch_acceptance_persistence_failure_does_not_invent_durable_acceptance() {
+    let connection = Connection::open_in_memory().expect("memory database");
+    connection
+        .execute_batch(AGENT_SESSION_SCHEMA)
+        .expect("Agent Session schema");
+    let inner =
+        Arc::new(SqliteAgentSessionRepository::new(connection).expect("Agent Session repository"));
+    let repository = Arc::new(FaultInjectingRepository {
+        inner: inner.clone(),
+        fail_finish: AtomicBool::new(false),
+        fail_binding: AtomicBool::new(false),
+        fail_launch_acceptance: AtomicBool::new(true),
+    });
+    let runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::StayRunning));
+    let notifier = Arc::new(RecordingNotifier::new(inner.clone()));
+    let providers = Arc::new(DeterministicProviders::default());
+    let application = AgentSessionApplication::new(
+        repository,
+        runtime.clone(),
+        notifier,
+        providers.clone(),
+        providers,
+        Some("codex-test".to_string()),
+    );
+    let session = application
+        .create_session(CreateAgentSessionCommand {
+            title: Some("Acceptance persistence fault".to_string()),
+            working_directory: None,
+            requested_options: AgentRuntimeOptions::default(),
+        })
+        .expect("session");
+    let invocation_id = application.allocate_application_invocation_id();
+    let error = match application.send_idempotent_application_message_with_launch_observation(
+        SendIdempotentApplicationAgentSessionMessageCommand {
+            invocation_id: invocation_id.clone(),
+            message: message(&session.id, "Accepted externally, marker fails"),
+        },
+        None,
+    ) {
+        Ok(_) => panic!("marker persistence must fail truthfully"),
+        Err(error) => error,
+    };
+
+    assert!(error
+        .to_string()
+        .contains("deterministic launch acceptance persistence failure"));
+    assert!(inner
+        .get_invocation(&invocation_id)
+        .expect("invocation")
+        .expect("persisted")
+        .started_at
+        .is_some());
+    assert_eq!(
+        inner
+            .invocation_launch_accepted_at(&invocation_id)
+            .expect("acceptance lookup"),
+        None
+    );
+    assert!(runtime.calls.lock().expect("runtime calls").iter().any(
+        |call| matches!(call, RuntimeCall::Start(request) if request.invocation_id == invocation_id)
+    ));
+    assert_eq!(
+        application
+            .application_invocation_launch_evidence(&invocation_id, &session.id)
+            .expect("conservative launch evidence"),
+        ApplicationInvocationLaunchEvidence::PersistedNotAccepted
+    );
+}
+
+#[test]
 fn repeated_completion_is_idempotent_and_does_not_duplicate_terminal_notification() {
     let harness = Harness::new(RuntimeBehavior::DuplicateCompletion);
     let session = harness.create_session();
@@ -347,7 +483,6 @@ fn startup_reconciliation_interrupts_pending_and_running_once() {
         .create_session(CreateAgentSessionCommand {
             title: Some("Pending".to_string()),
             working_directory: None,
-            runtime_kind: None,
             requested_options: AgentRuntimeOptions::default(),
         })
         .expect("pending session");
@@ -356,6 +491,7 @@ fn startup_reconciliation_interrupts_pending_and_running_once() {
         id: AgentInvocationId::new("pending-manual").expect("ID"),
         session_id: pending_session.id,
         submitted_text: "Pending".to_string(),
+        input_provenance: AgentInvocationInputProvenance::User,
         status: AgentInvocationStatus::Pending,
         requested_options: AgentRuntimeOptions::default(),
         effective_options: None,
@@ -432,6 +568,7 @@ fn persistence_failure_retains_known_runtime_success_as_a_delivery_diagnostic() 
         inner: inner.clone(),
         fail_finish: AtomicBool::new(true),
         fail_binding: AtomicBool::new(false),
+        fail_launch_acceptance: AtomicBool::new(false),
     });
     let runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::CompleteWithBinding));
     let notifier = Arc::new(RecordingNotifier::new(inner.clone()));
@@ -448,7 +585,6 @@ fn persistence_failure_retains_known_runtime_success_as_a_delivery_diagnostic() 
         .create_session(CreateAgentSessionCommand {
             title: Some("Persistence fault".to_string()),
             working_directory: None,
-            runtime_kind: None,
             requested_options: AgentRuntimeOptions::default(),
         })
         .expect("session");
@@ -503,6 +639,7 @@ fn missing_binding_is_repaired_from_durable_context_event_before_resume() {
         inner: inner.clone(),
         fail_finish: AtomicBool::new(false),
         fail_binding: AtomicBool::new(true),
+        fail_launch_acceptance: AtomicBool::new(false),
     });
     let runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::CompleteWithBinding));
     let notifier = Arc::new(RecordingNotifier::new(inner.clone()));
@@ -519,7 +656,6 @@ fn missing_binding_is_repaired_from_durable_context_event_before_resume() {
         .create_session(CreateAgentSessionCommand {
             title: Some("Binding repair".to_string()),
             working_directory: None,
-            runtime_kind: None,
             requested_options: AgentRuntimeOptions::default(),
         })
         .expect("session");
@@ -593,7 +729,6 @@ impl Harness {
             .create_session(CreateAgentSessionCommand {
                 title: Some("Test session".to_string()),
                 working_directory: Some("C:/work".to_string()),
-                runtime_kind: Some(AgentRuntimeKind::CodexCli),
                 requested_options: AgentRuntimeOptions {
                     model: Some("requested-model".to_string()),
                     sandbox: Some(RuntimeSandboxMode::WorkspaceWrite),
@@ -974,6 +1109,7 @@ struct FaultInjectingRepository {
     inner: Arc<SqliteAgentSessionRepository>,
     fail_finish: AtomicBool,
     fail_binding: AtomicBool,
+    fail_launch_acceptance: AtomicBool,
 }
 
 impl AgentSessionRepository for FaultInjectingRepository {
@@ -1065,6 +1201,28 @@ impl AgentSessionRepository for FaultInjectingRepository {
     ) -> Result<AgentInvocation, RepositoryError> {
         self.inner
             .mark_invocation_running(invocation_id, started_at, effective_options, updated_at)
+    }
+
+    fn record_invocation_launch_accepted(
+        &self,
+        invocation_id: &AgentInvocationId,
+        accepted_at: DateTime<Utc>,
+    ) -> Result<(), RepositoryError> {
+        if self.fail_launch_acceptance.swap(false, Ordering::AcqRel) {
+            return Err(RepositoryError::new(
+                RepositoryErrorKind::Unavailable,
+                "deterministic launch acceptance persistence failure",
+            ));
+        }
+        self.inner
+            .record_invocation_launch_accepted(invocation_id, accepted_at)
+    }
+
+    fn invocation_launch_accepted_at(
+        &self,
+        invocation_id: &AgentInvocationId,
+    ) -> Result<Option<DateTime<Utc>>, RepositoryError> {
+        self.inner.invocation_launch_accepted_at(invocation_id)
     }
 
     fn finish_invocation(

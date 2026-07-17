@@ -101,7 +101,9 @@ pub(crate) trait ProcessEventSink: Send + Sync {
 /// Process control operations that may safely be called concurrently.
 ///
 /// `try_wait` must be non-blocking. `wait_after_termination` is used only after termination has
-/// been requested because a reader or wait operation failed.
+/// been requested because a reader or wait operation failed. This contract describes the owned
+/// process unit: the system implementation owns one direct child, while a future platform-specific
+/// implementation may own a stronger unit such as a process tree without changing the supervisor.
 pub(crate) trait SupervisedChild: Send + Sync {
     fn try_wait(&self) -> io::Result<Option<ProcessExit>>;
 
@@ -117,6 +119,10 @@ pub(crate) struct SpawnedProcess {
 }
 
 /// Fakeable boundary around the platform-specific launch and child-control mechanism.
+///
+/// Stronger descendant ownership belongs in a replacement factory and matching
+/// [`SupervisedChild`], not in provider adapters or `ProcessSupervisor`. The default system factory
+/// intentionally promises direct-child ownership only.
 pub(crate) trait ChildProcessFactory: Send + Sync {
     fn spawn(&self, spec: &ProcessLaunchSpec) -> io::Result<SpawnedProcess>;
 }

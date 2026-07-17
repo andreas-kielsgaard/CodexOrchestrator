@@ -1,0 +1,3496 @@
+//! Durable post-confirmation preparation, semantic bootstrap completion, and Epic Runner launch.
+
+use super::{
+    conversation_harness::{self, ConversationHarnessRole},
+    domain::PlanBuilderProposal,
+    mcp::CodexMcpInjection,
+};
+use crate::agent_sessions::{
+    application::{
+        AgentSessionApplication, AgentSessionNotification, ApplicationInvocationLaunchEvidence,
+        CreateAgentSessionCommand, CreateApplicationAgentSessionCommand,
+        SendAgentSessionMessageCommand, SendIdempotentApplicationAgentSessionMessageCommand,
+    },
+    domain::{AgentInvocationId, AgentInvocationStatus, AgentSessionId},
+    ports::RuntimeLaunchExtension,
+};
+use bytes::Bytes;
+use chrono::{DateTime, Utc};
+use http_body_util::Empty;
+use hyper::{server::conn::http1, service::service_fn, Response};
+use hyper_util::rt::TokioIo;
+use rmcp::{
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
+    model::{CallToolResult, ContentBlock, ServerCapabilities, ServerInfo},
+    tool, tool_handler, tool_router, ServerHandler,
+};
+use rusqlite::{params, Connection, OptionalExtension};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::HashMap,
+    fs,
+    io::{self, Write},
+    net::SocketAddr,
+    path::{Component, Path, PathBuf},
+    sync::{Arc, Mutex},
+    thread,
+};
+use tokio_util::sync::CancellationToken;
+use tower::ServiceExt;
+
+pub(crate) const TRANSITION_QUERY_CONTRACT: &str = "epic-bootstrap-transition-query/v2";
+const MAX_BOOTSTRAP_ATTEMPTS: i64 = 3;
+
+pub(crate) const POST_CONFIRMATION_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS epic_bootstrap_transitions (
+  initiation_id TEXT PRIMARY KEY,
+  epic_id TEXT NOT NULL UNIQUE,
+  proposal_revision_id TEXT NOT NULL,
+  material_snapshot_hash TEXT NOT NULL,
+  proposal_json TEXT NOT NULL CHECK (json_valid(proposal_json)),
+  preparation_id TEXT NOT NULL UNIQUE,
+  prepared_root TEXT NOT NULL UNIQUE,
+  approved_plan_path TEXT NOT NULL UNIQUE,
+  manifest_path TEXT NOT NULL UNIQUE,
+  overview_path TEXT NOT NULL UNIQUE,
+  runner_brief_path TEXT NOT NULL UNIQUE,
+  bootstrap_session_id TEXT NOT NULL UNIQUE,
+  bootstrap_invocation_id TEXT NOT NULL UNIQUE,
+  runner_session_id TEXT NOT NULL UNIQUE,
+  runner_invocation_id TEXT NOT NULL UNIQUE,
+  prepared_at TEXT,
+  bootstrap_session_created_at TEXT,
+  bootstrap_launched_at TEXT,
+  bootstrap_lifecycle_status TEXT,
+  bootstrap_lifecycle_observed_at TEXT,
+  semantic_completion_fact_id TEXT UNIQUE,
+  semantic_completed_at TEXT,
+  material_accepted_at TEXT,
+  runner_session_created_at TEXT,
+  runner_launched_at TEXT,
+  runner_lifecycle_status TEXT,
+  runner_lifecycle_observed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (initiation_id) REFERENCES epic_initiations(id) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS epic_bootstrap_completion_commands (
+  id TEXT PRIMARY KEY,
+  transition_id TEXT NOT NULL,
+  agent_session_id TEXT NOT NULL,
+  agent_invocation_id TEXT NOT NULL UNIQUE,
+  payload_hash TEXT NOT NULL,
+  payload_json TEXT NOT NULL CHECK (json_valid(payload_json)),
+  recorded_at TEXT NOT NULL,
+  FOREIGN KEY (transition_id) REFERENCES epic_bootstrap_transitions(initiation_id) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS epic_bootstrap_completion_results (
+  id TEXT PRIMARY KEY,
+  command_id TEXT NOT NULL UNIQUE,
+  inventory_json TEXT NOT NULL CHECK (json_valid(inventory_json)),
+  recorded_at TEXT NOT NULL,
+  FOREIGN KEY (command_id) REFERENCES epic_bootstrap_completion_commands(id) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS epic_bootstrap_completion_facts (
+  id TEXT PRIMARY KEY,
+  transition_id TEXT NOT NULL UNIQUE,
+  command_id TEXT NOT NULL UNIQUE,
+  result_id TEXT NOT NULL UNIQUE,
+  inventory_json TEXT NOT NULL CHECK (json_valid(inventory_json)),
+  recorded_at TEXT NOT NULL,
+  FOREIGN KEY (transition_id) REFERENCES epic_bootstrap_transitions(initiation_id) ON DELETE RESTRICT,
+  FOREIGN KEY (command_id) REFERENCES epic_bootstrap_completion_commands(id) ON DELETE RESTRICT,
+  FOREIGN KEY (result_id) REFERENCES epic_bootstrap_completion_results(id) ON DELETE RESTRICT
+);
+"#;
+
+pub(crate) const POST_CONFIRMATION_ATTEMPT_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS epic_bootstrap_attempts (
+  id TEXT PRIMARY KEY,
+  transition_id TEXT NOT NULL,
+  ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+  agent_session_id TEXT NOT NULL,
+  agent_invocation_id TEXT NOT NULL UNIQUE,
+  launched_at TEXT,
+  lifecycle_status TEXT,
+  lifecycle_observed_at TEXT,
+  semantic_completion_fact_id TEXT UNIQUE,
+  semantic_completed_at TEXT,
+  retry_disposition TEXT NOT NULL CHECK (retry_disposition IN ('active','retryable','retried','blocked','accepted')),
+  retry_reason TEXT,
+  retry_attempt_id TEXT UNIQUE,
+  accepted_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (transition_id, ordinal),
+  FOREIGN KEY (transition_id) REFERENCES epic_bootstrap_transitions(initiation_id) ON DELETE RESTRICT,
+  FOREIGN KEY (retry_attempt_id) REFERENCES epic_bootstrap_attempts(id) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS epic_bootstrap_attempt_completion_commands (
+  id TEXT PRIMARY KEY,
+  attempt_id TEXT NOT NULL UNIQUE,
+  agent_session_id TEXT NOT NULL,
+  agent_invocation_id TEXT NOT NULL UNIQUE,
+  payload_hash TEXT NOT NULL,
+  payload_json TEXT NOT NULL CHECK (json_valid(payload_json)),
+  recorded_at TEXT NOT NULL,
+  FOREIGN KEY (attempt_id) REFERENCES epic_bootstrap_attempts(id) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS epic_bootstrap_attempt_completion_results (
+  id TEXT PRIMARY KEY,
+  command_id TEXT NOT NULL UNIQUE,
+  inventory_json TEXT NOT NULL CHECK (json_valid(inventory_json)),
+  recorded_at TEXT NOT NULL,
+  FOREIGN KEY (command_id) REFERENCES epic_bootstrap_attempt_completion_commands(id) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS epic_bootstrap_attempt_completion_facts (
+  id TEXT PRIMARY KEY,
+  attempt_id TEXT NOT NULL UNIQUE,
+  command_id TEXT NOT NULL UNIQUE,
+  result_id TEXT NOT NULL UNIQUE,
+  inventory_json TEXT NOT NULL CHECK (json_valid(inventory_json)),
+  recorded_at TEXT NOT NULL,
+  FOREIGN KEY (attempt_id) REFERENCES epic_bootstrap_attempts(id) ON DELETE RESTRICT,
+  FOREIGN KEY (command_id) REFERENCES epic_bootstrap_attempt_completion_commands(id) ON DELETE RESTRICT,
+  FOREIGN KEY (result_id) REFERENCES epic_bootstrap_attempt_completion_results(id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_epic_bootstrap_attempts_one_accepted
+ON epic_bootstrap_attempts(transition_id) WHERE accepted_at IS NOT NULL;
+
+INSERT OR IGNORE INTO epic_bootstrap_attempts (
+  id,transition_id,ordinal,agent_session_id,agent_invocation_id,launched_at,
+  lifecycle_status,lifecycle_observed_at,semantic_completion_fact_id,semantic_completed_at,
+  retry_disposition,retry_reason,accepted_at,created_at,updated_at
+)
+SELECT
+  'epic-bootstrap-attempt-0-' || transition.initiation_id,
+  transition.initiation_id,0,transition.bootstrap_session_id,transition.bootstrap_invocation_id,
+  transition.bootstrap_launched_at,transition.bootstrap_lifecycle_status,
+  transition.bootstrap_lifecycle_observed_at,transition.semantic_completion_fact_id,
+  transition.semantic_completed_at,
+  CASE
+    WHEN transition.material_accepted_at IS NOT NULL THEN 'accepted'
+    WHEN transition.bootstrap_lifecycle_status = 'interrupted' THEN 'retryable'
+    WHEN transition.bootstrap_lifecycle_status IN ('failed','canceled') THEN 'blocked'
+    WHEN transition.bootstrap_lifecycle_status = 'completed' AND transition.semantic_completion_fact_id IS NULL THEN 'blocked'
+    ELSE 'active'
+  END,
+  CASE
+    WHEN transition.bootstrap_lifecycle_status = 'interrupted' THEN 'startup_interrupted'
+    WHEN transition.bootstrap_lifecycle_status IN ('failed','canceled') THEN 'terminal_without_retry_authority'
+    WHEN transition.bootstrap_lifecycle_status = 'completed' AND transition.semantic_completion_fact_id IS NULL THEN 'completed_without_semantic_fact'
+    ELSE NULL
+  END,
+  transition.material_accepted_at,transition.created_at,transition.updated_at
+FROM epic_bootstrap_transitions transition;
+
+INSERT OR IGNORE INTO epic_bootstrap_attempt_completion_commands (
+  id,attempt_id,agent_session_id,agent_invocation_id,payload_hash,payload_json,recorded_at
+)
+SELECT command.id,attempt.id,command.agent_session_id,command.agent_invocation_id,
+       command.payload_hash,command.payload_json,command.recorded_at
+FROM epic_bootstrap_completion_commands command
+JOIN epic_bootstrap_attempts attempt ON attempt.agent_invocation_id=command.agent_invocation_id;
+
+INSERT OR IGNORE INTO epic_bootstrap_attempt_completion_results (
+  id,command_id,inventory_json,recorded_at
+)
+SELECT result.id,result.command_id,result.inventory_json,result.recorded_at
+FROM epic_bootstrap_completion_results result
+JOIN epic_bootstrap_attempt_completion_commands command ON command.id=result.command_id;
+
+INSERT OR IGNORE INTO epic_bootstrap_attempt_completion_facts (
+  id,attempt_id,command_id,result_id,inventory_json,recorded_at
+)
+SELECT fact.id,attempt.id,fact.command_id,fact.result_id,fact.inventory_json,fact.recorded_at
+FROM epic_bootstrap_completion_facts fact
+JOIN epic_bootstrap_attempts attempt ON attempt.transition_id=fact.transition_id;
+"#;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct BootstrapMaterialInput {
+    pub(crate) epic_overview_markdown: String,
+    pub(crate) runner_brief_markdown: String,
+}
+
+impl BootstrapMaterialInput {
+    fn validate(&self) -> Result<(), TransitionError> {
+        validate_material_text(&self.epic_overview_markdown, "epicOverviewMarkdown")?;
+        validate_material_text(&self.runner_brief_markdown, "runnerBriefMarkdown")
+    }
+}
+
+fn validate_material_text(value: &str, field: &str) -> Result<(), TransitionError> {
+    if value.trim().is_empty() || value.len() > 32_000 || value.contains('\0') {
+        return Err(TransitionError::InvalidMaterial(format!(
+            "{field} must be non-empty, NUL-free, and at most 32000 bytes"
+        )));
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct MaterialInventoryItem {
+    pub(crate) kind: String,
+    pub(crate) path: String,
+    pub(crate) sha256: String,
+    pub(crate) size_bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SemanticCompletionResult {
+    pub(crate) fact_id: String,
+    pub(crate) inventory: Vec<MaterialInventoryItem>,
+    pub(crate) idempotent_replay: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum TransitionError {
+    NotFound,
+    Forbidden,
+    IdentityMismatch(String),
+    InvalidMaterial(String),
+    IdempotencyConflict,
+    Unavailable(String),
+}
+
+impl std::fmt::Display for TransitionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound => formatter.write_str("durable Epic initiation was not found"),
+            Self::Forbidden => {
+                formatter.write_str("the registered bootstrap invocation is not authorized")
+            }
+            Self::IdentityMismatch(message)
+            | Self::InvalidMaterial(message)
+            | Self::Unavailable(message) => formatter.write_str(message),
+            Self::IdempotencyConflict => formatter.write_str(
+                "bootstrap completion identity was already used for different material semantics",
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ConfirmedInitiationSnapshot {
+    initiation_id: String,
+    epic_id: String,
+    proposal_revision_id: String,
+    material_snapshot_hash: String,
+    proposal_json: String,
+    proposal: PlanBuilderProposal,
+}
+
+#[derive(Clone, Debug)]
+struct TransitionRecord {
+    initiation_id: String,
+    epic_id: String,
+    proposal_revision_id: String,
+    material_snapshot_hash: String,
+    proposal_json: String,
+    proposal: PlanBuilderProposal,
+    preparation_id: String,
+    prepared_root: String,
+    approved_plan_path: String,
+    manifest_path: String,
+    overview_path: String,
+    runner_brief_path: String,
+    bootstrap_session_id: String,
+    bootstrap_invocation_id: String,
+    runner_session_id: String,
+    runner_invocation_id: String,
+    prepared_at: Option<String>,
+    bootstrap_session_created_at: Option<String>,
+    bootstrap_launched_at: Option<String>,
+    bootstrap_lifecycle_status: Option<String>,
+    semantic_completion_fact_id: Option<String>,
+    material_accepted_at: Option<String>,
+    runner_session_created_at: Option<String>,
+    runner_launched_at: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct BootstrapAttemptRecord {
+    id: String,
+    transition_id: String,
+    ordinal: i64,
+    agent_session_id: String,
+    agent_invocation_id: String,
+    launched_at: Option<String>,
+    lifecycle_status: Option<String>,
+    lifecycle_observed_at: Option<String>,
+    semantic_completion_fact_id: Option<String>,
+    semantic_completed_at: Option<String>,
+    retry_disposition: String,
+    retry_reason: Option<String>,
+    retry_attempt_id: Option<String>,
+    accepted_at: Option<String>,
+}
+
+pub(crate) trait TransitionClock: Send + Sync {
+    fn now(&self) -> DateTime<Utc>;
+}
+
+struct SystemTransitionClock;
+impl TransitionClock for SystemTransitionClock {
+    fn now(&self) -> DateTime<Utc> {
+        Utc::now()
+    }
+}
+
+pub(crate) struct SqliteBootstrapTransitionRepository {
+    connection: Mutex<Connection>,
+    clock: Arc<dyn TransitionClock>,
+}
+
+impl SqliteBootstrapTransitionRepository {
+    pub(crate) fn open(path: impl AsRef<Path>) -> Result<Self, TransitionError> {
+        let connection = Connection::open(path).map_err(|error| {
+            TransitionError::Unavailable(format!("open transition database: {error}"))
+        })?;
+        Self::new(connection)
+    }
+
+    pub(crate) fn new(connection: Connection) -> Result<Self, TransitionError> {
+        Self::new_with_clock(connection, Arc::new(SystemTransitionClock))
+    }
+
+    fn new_with_clock(
+        connection: Connection,
+        clock: Arc<dyn TransitionClock>,
+    ) -> Result<Self, TransitionError> {
+        crate::storage::configure_sqlite_connection(&connection).map_err(|error| {
+            TransitionError::Unavailable(format!("configure transition database: {error}"))
+        })?;
+        connection
+            .execute_batch(POST_CONFIRMATION_SCHEMA)
+            .map_err(|error| {
+                TransitionError::Unavailable(format!("initialize transition schema: {error}"))
+            })?;
+        connection
+            .execute_batch(POST_CONFIRMATION_ATTEMPT_SCHEMA)
+            .map_err(|error| {
+                TransitionError::Unavailable(format!(
+                    "initialize bootstrap attempt schema: {error}"
+                ))
+            })?;
+        Ok(Self {
+            connection: Mutex::new(connection),
+            clock,
+        })
+    }
+
+    fn snapshots(&self) -> Result<Vec<ConfirmedInitiationSnapshot>, TransitionError> {
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare("SELECT initiation.id, initiation.epic_id, initiation.proposal_revision_id, snapshot.content_hash, snapshot.proposal_json FROM epic_initiations initiation JOIN epic_initiation_material_snapshots snapshot ON snapshot.id = initiation.material_snapshot_id ORDER BY initiation.recorded_at, initiation.id")
+            .map_err(sql_unavailable("prepare confirmed initiation query"))?;
+        let rows = statement
+            .query_map([], |row| {
+                let proposal_json: String = row.get(4)?;
+                let proposal = serde_json::from_str(&proposal_json).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        proposal_json.len(),
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?;
+                Ok(ConfirmedInitiationSnapshot {
+                    initiation_id: row.get(0)?,
+                    epic_id: row.get(1)?,
+                    proposal_revision_id: row.get(2)?,
+                    material_snapshot_hash: row.get(3)?,
+                    proposal_json,
+                    proposal,
+                })
+            })
+            .map_err(sql_unavailable("read confirmed initiations"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql_unavailable("collect confirmed initiations"))?;
+        Ok(rows)
+    }
+
+    fn snapshot(
+        &self,
+        initiation_id: &str,
+    ) -> Result<ConfirmedInitiationSnapshot, TransitionError> {
+        self.snapshots()?
+            .into_iter()
+            .find(|snapshot| snapshot.initiation_id == initiation_id)
+            .ok_or(TransitionError::NotFound)
+    }
+
+    fn ensure_transition(
+        &self,
+        snapshot: &ConfirmedInitiationSnapshot,
+        paths: &PreparedPaths,
+    ) -> Result<TransitionRecord, TransitionError> {
+        let now = self.timestamp();
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO epic_bootstrap_transitions (initiation_id,epic_id,proposal_revision_id,material_snapshot_hash,proposal_json,preparation_id,prepared_root,approved_plan_path,manifest_path,overview_path,runner_brief_path,bootstrap_session_id,bootstrap_invocation_id,runner_session_id,runner_invocation_id,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?16)",
+                params![
+                    snapshot.initiation_id,
+                    snapshot.epic_id,
+                    snapshot.proposal_revision_id,
+                    snapshot.material_snapshot_hash,
+                    snapshot.proposal_json,
+                    paths.preparation_id,
+                    paths.root,
+                    paths.approved_plan,
+                    paths.manifest,
+                    paths.overview,
+                    paths.runner_brief,
+                    stable_id("epic-bootstrap-session", &snapshot.initiation_id),
+                    stable_id("epic-bootstrap-invocation", &snapshot.initiation_id),
+                    stable_id("epic-runner-session", &snapshot.initiation_id),
+                    stable_id("epic-runner-invocation", &snapshot.initiation_id),
+                    now,
+                ],
+            )
+            .map_err(sql_unavailable("create post-confirmation transition"))?;
+        let record = read_transition(&connection, &snapshot.initiation_id)?;
+        if record.epic_id != snapshot.epic_id
+            || record.proposal_revision_id != snapshot.proposal_revision_id
+            || record.material_snapshot_hash != snapshot.material_snapshot_hash
+            || record.proposal_json != snapshot.proposal_json
+            || record.prepared_root != paths.root
+            || record.approved_plan_path != paths.approved_plan
+            || record.manifest_path != paths.manifest
+            || record.overview_path != paths.overview
+            || record.runner_brief_path != paths.runner_brief
+        {
+            return Err(TransitionError::IdentityMismatch(
+                "persisted post-confirmation transition does not match the confirmed initiation snapshot or prepared paths".into(),
+            ));
+        }
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO epic_bootstrap_attempts (id,transition_id,ordinal,agent_session_id,agent_invocation_id,retry_disposition,created_at,updated_at) VALUES (?1,?2,0,?3,?4,'active',?5,?5)",
+                params![
+                    bootstrap_attempt_id(&snapshot.initiation_id, 0),
+                    snapshot.initiation_id,
+                    record.bootstrap_session_id,
+                    record.bootstrap_invocation_id,
+                    now,
+                ],
+            )
+            .map_err(sql_unavailable("create initial bootstrap attempt"))?;
+        Ok(record)
+    }
+
+    fn record_stage(&self, initiation_id: &str, column: &str) -> Result<(), TransitionError> {
+        let allowed = [
+            "prepared_at",
+            "bootstrap_session_created_at",
+            "bootstrap_launched_at",
+            "material_accepted_at",
+            "runner_session_created_at",
+            "runner_launched_at",
+        ];
+        if !allowed.contains(&column) {
+            return Err(TransitionError::Unavailable(
+                "invalid durable transition stage".into(),
+            ));
+        }
+        let now = self.timestamp();
+        let connection = self.lock()?;
+        connection
+            .execute(
+                &format!("UPDATE epic_bootstrap_transitions SET {column}=COALESCE({column},?2), updated_at=?2 WHERE initiation_id=?1"),
+                params![initiation_id, now],
+            )
+            .map_err(sql_unavailable("record transition stage"))?;
+        Ok(())
+    }
+
+    fn record_lifecycle(
+        &self,
+        invocation_id: &str,
+        status: &str,
+        startup_recovery: bool,
+    ) -> Result<Option<String>, TransitionError> {
+        let now = self.timestamp();
+        let connection = self.lock()?;
+        let attempt: Option<(String, i64, bool, String, Option<String>)> = connection
+            .query_row(
+                "SELECT transition_id,ordinal,semantic_completion_fact_id IS NOT NULL,retry_disposition,retry_reason FROM epic_bootstrap_attempts WHERE agent_invocation_id=?1",
+                params![invocation_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .optional()
+            .map_err(sql_unavailable("locate bootstrap attempt lifecycle"))?;
+        if let Some((transition_id, ordinal, has_fact, prior_disposition, prior_reason)) = attempt {
+            let (disposition, reason) = match status {
+                _ if prior_disposition == "blocked"
+                    && prior_reason.as_deref() == Some("terminal_without_retry_authority") =>
+                {
+                    (prior_disposition.as_str(), prior_reason.as_deref())
+                }
+                "completed" if has_fact => ("active", None),
+                "completed" => ("blocked", Some("completed_without_semantic_fact")),
+                "interrupted" if startup_recovery && ordinal + 1 < MAX_BOOTSTRAP_ATTEMPTS => {
+                    ("retryable", Some("startup_interrupted"))
+                }
+                "interrupted" if startup_recovery => {
+                    ("blocked", Some("startup_retry_limit_reached"))
+                }
+                "interrupted" | "failed" | "canceled" => {
+                    ("blocked", Some("terminal_without_retry_authority"))
+                }
+                _ => ("active", None),
+            };
+            connection
+                .execute(
+                    "UPDATE epic_bootstrap_attempts SET lifecycle_status=?2,lifecycle_observed_at=COALESCE(lifecycle_observed_at,?3),retry_disposition=CASE WHEN retry_disposition IN ('accepted','retried') THEN retry_disposition ELSE ?4 END,retry_reason=CASE WHEN retry_disposition IN ('accepted','retried') THEN retry_reason ELSE ?5 END,updated_at=?3 WHERE agent_invocation_id=?1",
+                    params![invocation_id, status, now, disposition, reason],
+                )
+                .map_err(sql_unavailable("record bootstrap attempt lifecycle"))?;
+            return Ok(Some(transition_id));
+        }
+        let initiation_id: Option<String> = connection
+            .query_row(
+                "SELECT initiation_id FROM epic_bootstrap_transitions WHERE runner_invocation_id=?1",
+                params![invocation_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(sql_unavailable("locate runner lifecycle transition"))?;
+        let Some(initiation_id) = initiation_id else {
+            return Ok(None);
+        };
+        connection
+            .execute(
+                "UPDATE epic_bootstrap_transitions SET runner_lifecycle_status=?2,runner_lifecycle_observed_at=COALESCE(runner_lifecycle_observed_at,?3),updated_at=?3 WHERE initiation_id=?1",
+                params![initiation_id, status, now],
+            )
+            .map_err(sql_unavailable("record lifecycle observation"))?;
+        Ok(Some(initiation_id))
+    }
+
+    fn current_attempt(
+        &self,
+        initiation_id: &str,
+    ) -> Result<BootstrapAttemptRecord, TransitionError> {
+        let connection = self.lock()?;
+        read_current_attempt(&connection, initiation_id)
+    }
+
+    fn attempts(
+        &self,
+        initiation_id: &str,
+    ) -> Result<Vec<BootstrapAttemptRecord>, TransitionError> {
+        let connection = self.lock()?;
+        read_attempts(&connection, initiation_id)
+    }
+
+    fn ensure_retry_attempt(
+        &self,
+        previous: &BootstrapAttemptRecord,
+    ) -> Result<BootstrapAttemptRecord, TransitionError> {
+        if previous.retry_disposition != "retryable" {
+            return Ok(previous.clone());
+        }
+        let now = self.timestamp();
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction()
+            .map_err(sql_unavailable("begin bootstrap retry"))?;
+        let refreshed = read_attempt(&transaction, &previous.id)?;
+        if let Some(next_id) = &refreshed.retry_attempt_id {
+            return read_attempt(&transaction, next_id);
+        }
+        let ordinal = refreshed.ordinal + 1;
+        if refreshed.retry_disposition != "retryable" || ordinal >= MAX_BOOTSTRAP_ATTEMPTS {
+            return Ok(refreshed);
+        }
+        let attempt_id = bootstrap_attempt_id(&refreshed.transition_id, ordinal);
+        let invocation_id = stable_id(
+            &format!("epic-bootstrap-invocation-attempt-{ordinal}"),
+            &refreshed.transition_id,
+        );
+        transaction
+            .execute(
+                "INSERT OR IGNORE INTO epic_bootstrap_attempts (id,transition_id,ordinal,agent_session_id,agent_invocation_id,retry_disposition,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,'active',?6,?6)",
+                params![attempt_id, refreshed.transition_id, ordinal, refreshed.agent_session_id, invocation_id, now],
+            )
+            .map_err(sql_unavailable("create bootstrap retry attempt"))?;
+        transaction
+            .execute(
+                "UPDATE epic_bootstrap_attempts SET retry_disposition='retried',retry_attempt_id=?2,updated_at=?3 WHERE id=?1 AND retry_disposition='retryable'",
+                params![refreshed.id, attempt_id, now],
+            )
+            .map_err(sql_unavailable("link bootstrap retry attempt"))?;
+        transaction
+            .commit()
+            .map_err(sql_unavailable("commit bootstrap retry attempt"))?;
+        read_attempt(&connection, &attempt_id)
+    }
+
+    fn record_attempt_launched(&self, attempt_id: &str) -> Result<(), TransitionError> {
+        let now = self.timestamp();
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "UPDATE epic_bootstrap_attempts SET launched_at=COALESCE(launched_at,?2),updated_at=?2 WHERE id=?1",
+                params![attempt_id, now],
+            )
+            .map_err(sql_unavailable("record bootstrap attempt launch"))?;
+        Ok(())
+    }
+
+    fn accept_attempt(&self, attempt_id: &str) -> Result<bool, TransitionError> {
+        let now = self.timestamp();
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction()
+            .map_err(sql_unavailable("begin bootstrap material acceptance"))?;
+        let attempt = read_attempt(&transaction, attempt_id)?;
+        if attempt.lifecycle_status.as_deref() != Some("completed")
+            || attempt.semantic_completion_fact_id.is_none()
+        {
+            return Ok(false);
+        }
+        let accepted_attempt: Option<String> = transaction
+            .query_row(
+                "SELECT id FROM epic_bootstrap_attempts WHERE transition_id=?1 AND accepted_at IS NOT NULL",
+                params![attempt.transition_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(sql_unavailable("read accepted bootstrap attempt"))?;
+        if let Some(accepted_attempt) = accepted_attempt {
+            if accepted_attempt != attempt.id {
+                return Err(TransitionError::IdentityMismatch(
+                    "a different bootstrap attempt already supplied accepted material".into(),
+                ));
+            }
+            return Ok(true);
+        }
+        transaction
+            .execute(
+                "UPDATE epic_bootstrap_attempts SET retry_disposition='accepted',retry_reason=NULL,accepted_at=?2,updated_at=?2 WHERE id=?1",
+                params![attempt.id, now],
+            )
+            .map_err(sql_unavailable("accept bootstrap attempt"))?;
+        transaction
+            .execute(
+                "UPDATE epic_bootstrap_transitions SET material_accepted_at=COALESCE(material_accepted_at,?2),updated_at=?2 WHERE initiation_id=?1",
+                params![attempt.transition_id, now],
+            )
+            .map_err(sql_unavailable("accept bootstrap material"))?;
+        transaction
+            .commit()
+            .map_err(sql_unavailable("commit bootstrap material acceptance"))?;
+        Ok(true)
+    }
+
+    fn persist_completion(
+        &self,
+        invocation_id: &str,
+        input: &BootstrapMaterialInput,
+        inventory: &[MaterialInventoryItem],
+    ) -> Result<(String, bool), TransitionError> {
+        input.validate()?;
+        let payload_json = serde_json::to_string(input)
+            .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
+        let payload_hash = sha256(payload_json.as_bytes());
+        let inventory_json = serde_json::to_string(inventory)
+            .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
+        let now = self.timestamp();
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction()
+            .map_err(sql_unavailable("begin semantic completion"))?;
+        let attempt: Option<(String, String)> = transaction
+            .query_row(
+                "SELECT attempt.id,attempt.agent_session_id FROM epic_bootstrap_attempts attempt JOIN epic_bootstrap_transitions transition ON transition.initiation_id=attempt.transition_id WHERE attempt.agent_invocation_id=?1 AND transition.prepared_at IS NOT NULL AND transition.bootstrap_session_created_at IS NOT NULL AND attempt.retry_disposition IN ('active','blocked')",
+                params![invocation_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(sql_unavailable("authorize semantic completion"))?;
+        let Some((attempt_id, session_id)) = attempt else {
+            return Err(TransitionError::Forbidden);
+        };
+        let existing: Option<(String, String)> = transaction
+            .query_row(
+                "SELECT command.payload_hash,fact.id FROM epic_bootstrap_attempt_completion_commands command JOIN epic_bootstrap_attempt_completion_facts fact ON fact.command_id=command.id WHERE command.agent_invocation_id=?1",
+                params![invocation_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(sql_unavailable("read semantic completion replay"))?;
+        if let Some((stored_hash, fact_id)) = existing {
+            if stored_hash != payload_hash {
+                return Err(TransitionError::IdempotencyConflict);
+            }
+            return Ok((fact_id, true));
+        }
+        let command_id = stable_id("epic-bootstrap-completion-command", invocation_id);
+        let result_id = stable_id("epic-bootstrap-completion-result", invocation_id);
+        let fact_id = stable_id("epic-bootstrap-completion-fact", invocation_id);
+        transaction
+            .execute(
+                "INSERT INTO epic_bootstrap_attempt_completion_commands (id,attempt_id,agent_session_id,agent_invocation_id,payload_hash,payload_json,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                params![command_id, attempt_id, session_id, invocation_id, payload_hash, payload_json, now],
+            )
+            .map_err(sql_unavailable("persist semantic completion command"))?;
+        transaction
+            .execute(
+                "INSERT INTO epic_bootstrap_attempt_completion_results (id,command_id,inventory_json,recorded_at) VALUES (?1,?2,?3,?4)",
+                params![result_id, command_id, inventory_json, now],
+            )
+            .map_err(sql_unavailable("persist semantic completion result"))?;
+        transaction
+            .execute(
+                "INSERT INTO epic_bootstrap_attempt_completion_facts (id,attempt_id,command_id,result_id,inventory_json,recorded_at) VALUES (?1,?2,?3,?4,?5,?6)",
+                params![fact_id, attempt_id, command_id, result_id, inventory_json, now],
+            )
+            .map_err(sql_unavailable("persist semantic completion fact"))?;
+        transaction
+            .execute(
+                "UPDATE epic_bootstrap_attempts SET semantic_completion_fact_id=?2,semantic_completed_at=?3,retry_disposition=CASE WHEN retry_reason='completed_without_semantic_fact' THEN 'active' ELSE retry_disposition END,retry_reason=CASE WHEN retry_reason='completed_without_semantic_fact' THEN NULL ELSE retry_reason END,updated_at=?3 WHERE id=?1",
+                params![attempt_id, fact_id, now],
+            )
+            .map_err(sql_unavailable("record semantic completion"))?;
+        transaction
+            .commit()
+            .map_err(sql_unavailable("commit semantic completion"))?;
+        Ok((fact_id, false))
+    }
+
+    fn completion_replay(
+        &self,
+        invocation_id: &str,
+        input: &BootstrapMaterialInput,
+    ) -> Result<Option<SemanticCompletionResult>, TransitionError> {
+        let payload_json = serde_json::to_string(input)
+            .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
+        let payload_hash = sha256(payload_json.as_bytes());
+        let connection = self.lock()?;
+        let existing: Option<(String, String, String)> = connection
+            .query_row(
+                "SELECT command.payload_hash,fact.id,fact.inventory_json FROM epic_bootstrap_attempt_completion_commands command JOIN epic_bootstrap_attempt_completion_facts fact ON fact.command_id=command.id WHERE command.agent_invocation_id=?1",
+                params![invocation_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(sql_unavailable("read semantic completion replay"))?;
+        let Some((stored_hash, fact_id, inventory_json)) = existing else {
+            return Ok(None);
+        };
+        if stored_hash != payload_hash {
+            return Err(TransitionError::IdempotencyConflict);
+        }
+        let inventory = serde_json::from_str(&inventory_json).map_err(|error| {
+            TransitionError::Unavailable(format!("decode semantic completion replay: {error}"))
+        })?;
+        Ok(Some(SemanticCompletionResult {
+            fact_id,
+            inventory,
+            idempotent_replay: true,
+        }))
+    }
+
+    fn transition(&self, initiation_id: &str) -> Result<TransitionRecord, TransitionError> {
+        let connection = self.lock()?;
+        read_transition(&connection, initiation_id)
+    }
+
+    fn completion_inventory(
+        &self,
+        attempt_id: &str,
+    ) -> Result<Vec<MaterialInventoryItem>, TransitionError> {
+        let connection = self.lock()?;
+        let json: String = connection
+            .query_row(
+                "SELECT inventory_json FROM epic_bootstrap_attempt_completion_facts WHERE attempt_id=?1",
+                params![attempt_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(sql_unavailable("read accepted material inventory"))?
+            .ok_or(TransitionError::NotFound)?;
+        serde_json::from_str(&json).map_err(|error| {
+            TransitionError::Unavailable(format!("decode accepted material inventory: {error}"))
+        })
+    }
+
+    fn query(&self) -> Result<BootstrapTransitionQueryV2, TransitionError> {
+        let connection = self.lock()?;
+        let mut transitions = {
+            let mut statement = connection
+                .prepare("SELECT initiation_id,epic_id,preparation_id,prepared_root,approved_plan_path,manifest_path,overview_path,runner_brief_path,bootstrap_session_id,bootstrap_invocation_id,prepared_at,bootstrap_session_created_at,bootstrap_launched_at,bootstrap_lifecycle_status,bootstrap_lifecycle_observed_at,semantic_completion_fact_id,semantic_completed_at,material_accepted_at,runner_session_id,runner_invocation_id,runner_session_created_at,runner_launched_at,runner_lifecycle_status,runner_lifecycle_observed_at FROM epic_bootstrap_transitions ORDER BY created_at, initiation_id")
+                .map_err(sql_unavailable("prepare transition query"))?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok(BootstrapTransitionStatusV2 {
+                        initiation_id: row.get(0)?,
+                        epic_id: row.get(1)?,
+                        preparation_id: row.get(2)?,
+                        prepared_root: row.get(3)?,
+                        approved_plan_path: row.get(4)?,
+                        manifest_path: row.get(5)?,
+                        overview_path: row.get(6)?,
+                        runner_brief_path: row.get(7)?,
+                        bootstrap_session_id: row.get(8)?,
+                        bootstrap_invocation_id: row.get(9)?,
+                        prepared_at: row.get(10)?,
+                        bootstrap_session_created_at: row.get(11)?,
+                        bootstrap_launched_at: row.get(12)?,
+                        bootstrap_lifecycle_status: row.get(13)?,
+                        bootstrap_lifecycle_observed_at: row.get(14)?,
+                        semantic_completion_fact_id: row.get(15)?,
+                        semantic_completed_at: row.get(16)?,
+                        material_accepted_at: row.get(17)?,
+                        runner_session_id: row.get(18)?,
+                        runner_invocation_id: row.get(19)?,
+                        runner_session_created_at: row.get(20)?,
+                        runner_launched_at: row.get(21)?,
+                        runner_lifecycle_status: row.get(22)?,
+                        runner_lifecycle_observed_at: row.get(23)?,
+                        current_attempt_id: String::new(),
+                        retry_state: String::new(),
+                        blocked_reason: None,
+                        accepted_attempt_id: None,
+                        bootstrap_attempts: Vec::new(),
+                    })
+                })
+                .map_err(sql_unavailable("read transition query"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(sql_unavailable("collect transition query"))?;
+            rows
+        };
+        for transition in &mut transitions {
+            let attempts = read_attempts(&connection, &transition.initiation_id)?;
+            let current = attempts.last().ok_or_else(|| {
+                TransitionError::Unavailable("bootstrap transition has no attempt".into())
+            })?;
+            transition.bootstrap_session_id = current.agent_session_id.clone();
+            transition.bootstrap_invocation_id = current.agent_invocation_id.clone();
+            transition.bootstrap_launched_at = current.launched_at.clone();
+            transition.bootstrap_lifecycle_status = current.lifecycle_status.clone();
+            transition.bootstrap_lifecycle_observed_at = current.lifecycle_observed_at.clone();
+            transition.semantic_completion_fact_id = current.semantic_completion_fact_id.clone();
+            transition.semantic_completed_at = current.semantic_completed_at.clone();
+            transition.current_attempt_id = current.id.clone();
+            transition.retry_state = current.retry_disposition.clone();
+            transition.blocked_reason = current.retry_reason.clone();
+            transition.accepted_attempt_id = attempts
+                .iter()
+                .find(|attempt| attempt.accepted_at.is_some())
+                .map(|attempt| attempt.id.clone());
+            transition.bootstrap_attempts = attempts
+                .into_iter()
+                .map(BootstrapAttemptStatusV2::from)
+                .collect();
+        }
+        Ok(BootstrapTransitionQueryV2 {
+            contract: TRANSITION_QUERY_CONTRACT.into(),
+            schema_version: 2,
+            transitions,
+        })
+    }
+
+    fn timestamp(&self) -> String {
+        self.clock.now().to_rfc3339()
+    }
+
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, TransitionError> {
+        self.connection.lock().map_err(|_| {
+            TransitionError::Unavailable("bootstrap transition database lock is poisoned".into())
+        })
+    }
+}
+
+pub(crate) trait BootstrapInvocationHandle: Send {
+    fn injection(&self) -> &CodexMcpInjection;
+    fn stop(self: Box<Self>);
+}
+
+pub(crate) trait BootstrapInvocationFactory: Send + Sync {
+    fn start(
+        &self,
+        service: Arc<PostConfirmationTransitionService>,
+        invocation_id: AgentInvocationId,
+        enabled_tools: &[String],
+        required: bool,
+    ) -> Result<Box<dyn BootstrapInvocationHandle>, String>;
+}
+
+struct ProductionBootstrapInvocationFactory;
+impl BootstrapInvocationFactory for ProductionBootstrapInvocationFactory {
+    fn start(
+        &self,
+        service: Arc<PostConfirmationTransitionService>,
+        invocation_id: AgentInvocationId,
+        enabled_tools: &[String],
+        required: bool,
+    ) -> Result<Box<dyn BootstrapInvocationHandle>, String> {
+        start_managed_bootstrap_invocation(
+            service,
+            invocation_id,
+            enabled_tools,
+            required,
+            vec!["tauri://localhost".into()],
+        )
+        .map(|managed| Box::new(managed) as Box<dyn BootstrapInvocationHandle>)
+        .map_err(|error| error.to_string())
+    }
+}
+
+#[derive(Default)]
+struct BootstrapInvocationRegistry {
+    active: Mutex<HashMap<AgentInvocationId, Box<dyn BootstrapInvocationHandle>>>,
+}
+
+impl BootstrapInvocationRegistry {
+    fn insert(&self, id: AgentInvocationId, handle: Box<dyn BootstrapInvocationHandle>) {
+        let Ok(mut active) = self.active.lock() else {
+            handle.stop();
+            return;
+        };
+        if active.contains_key(&id) {
+            handle.stop();
+        } else {
+            active.insert(id, handle);
+        }
+    }
+
+    fn remove(&self, id: &AgentInvocationId) {
+        if let Ok(mut active) = self.active.lock() {
+            if let Some(handle) = active.remove(id) {
+                handle.stop();
+            }
+        }
+    }
+
+    fn shutdown(&self) {
+        if let Ok(mut active) = self.active.lock() {
+            for (_, handle) in active.drain() {
+                handle.stop();
+            }
+        }
+    }
+}
+
+pub(crate) struct PostConfirmationTransitionService {
+    repository: Arc<SqliteBootstrapTransitionRepository>,
+    sessions: Arc<AgentSessionApplication>,
+    material_root: PathBuf,
+    factory: Arc<dyn BootstrapInvocationFactory>,
+    registry: BootstrapInvocationRegistry,
+}
+
+impl PostConfirmationTransitionService {
+    pub(crate) fn new(
+        repository: Arc<SqliteBootstrapTransitionRepository>,
+        sessions: Arc<AgentSessionApplication>,
+        material_root: PathBuf,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            repository,
+            sessions,
+            material_root,
+            factory: Arc::new(ProductionBootstrapInvocationFactory),
+            registry: BootstrapInvocationRegistry::default(),
+        })
+    }
+
+    #[cfg(test)]
+    fn with_factory(
+        repository: Arc<SqliteBootstrapTransitionRepository>,
+        sessions: Arc<AgentSessionApplication>,
+        material_root: PathBuf,
+        factory: Arc<dyn BootstrapInvocationFactory>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            repository,
+            sessions,
+            material_root,
+            factory,
+            registry: BootstrapInvocationRegistry::default(),
+        })
+    }
+
+    pub(crate) fn on_initiation_persisted(
+        self: &Arc<Self>,
+        initiation_id: &str,
+    ) -> Result<(), TransitionError> {
+        let snapshot = self.repository.snapshot(initiation_id)?;
+        let paths = PreparedPaths::derive(&self.material_root, &snapshot)?;
+        self.repository.ensure_transition(&snapshot, &paths)?;
+        self.reconcile(initiation_id)
+    }
+
+    pub(crate) fn reconcile_startup(self: &Arc<Self>) -> Result<usize, TransitionError> {
+        let snapshots = self.repository.snapshots()?;
+        let mut reconciled = 0;
+        for snapshot in snapshots {
+            let paths = PreparedPaths::derive(&self.material_root, &snapshot)?;
+            self.repository.ensure_transition(&snapshot, &paths)?;
+            self.observe_existing_terminals(&snapshot.initiation_id)?;
+            self.reconcile(&snapshot.initiation_id)?;
+            reconciled += 1;
+        }
+        Ok(reconciled)
+    }
+
+    pub(crate) fn on_agent_notification(
+        self: &Arc<Self>,
+        notification: &AgentSessionNotification,
+    ) -> Result<(), TransitionError> {
+        let AgentSessionNotification::InvocationTerminal { invocation, .. } = notification else {
+            return Ok(());
+        };
+        let status = invocation_status(invocation.status);
+        if let Some(initiation_id) =
+            self.repository
+                .record_lifecycle(invocation.id.as_str(), status, false)?
+        {
+            self.registry.remove(&invocation.id);
+            self.reconcile(&initiation_id)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn complete_bootstrap(
+        self: &Arc<Self>,
+        invocation_id: &AgentInvocationId,
+        input: BootstrapMaterialInput,
+    ) -> Result<SemanticCompletionResult, TransitionError> {
+        input.validate()?;
+        if let Some(replay) = self
+            .repository
+            .completion_replay(invocation_id.as_str(), &input)?
+        {
+            return Ok(replay);
+        }
+        let query = self.repository.query()?;
+        let transition = query
+            .transitions
+            .iter()
+            .find(|transition| transition.bootstrap_invocation_id == invocation_id.as_str())
+            .ok_or(TransitionError::Forbidden)?;
+        let record = self.repository.transition(&transition.initiation_id)?;
+        let inventory = write_materials(&record, &input)?;
+        let (fact_id, idempotent_replay) =
+            self.repository
+                .persist_completion(invocation_id.as_str(), &input, &inventory)?;
+        self.reconcile(&record.initiation_id)?;
+        Ok(SemanticCompletionResult {
+            fact_id,
+            inventory,
+            idempotent_replay,
+        })
+    }
+
+    pub(crate) fn query(&self) -> Result<BootstrapTransitionQueryV2, TransitionError> {
+        self.repository.query()
+    }
+
+    pub(crate) fn shutdown(&self) {
+        self.registry.shutdown();
+    }
+
+    pub(crate) fn persisted_initiation_observer(
+        self: &Arc<Self>,
+    ) -> Arc<dyn super::confirmation::PersistedInitiationObserver> {
+        Arc::new(PersistedTransitionObserver(self.clone()))
+    }
+
+    fn reconcile(self: &Arc<Self>, initiation_id: &str) -> Result<(), TransitionError> {
+        let mut record = self.repository.transition(initiation_id)?;
+        let snapshot = ConfirmedInitiationSnapshot {
+            initiation_id: record.initiation_id.clone(),
+            epic_id: record.epic_id.clone(),
+            proposal_revision_id: record.proposal_revision_id.clone(),
+            material_snapshot_hash: record.material_snapshot_hash.clone(),
+            proposal_json: record.proposal_json.clone(),
+            proposal: record.proposal.clone(),
+        };
+        let paths = PreparedPaths {
+            preparation_id: record.preparation_id.clone(),
+            root: record.prepared_root.clone(),
+            approved_plan: record.approved_plan_path.clone(),
+            manifest: record.manifest_path.clone(),
+            overview: record.overview_path.clone(),
+            runner_brief: record.runner_brief_path.clone(),
+        };
+        prepare_inputs(&self.material_root, &snapshot, &paths)?;
+        if record.prepared_at.is_none() {
+            self.repository.record_stage(initiation_id, "prepared_at")?;
+            record = self.repository.transition(initiation_id)?;
+        }
+
+        let discovery_root = conversation_harness::role_discovery_root(
+            ConversationHarnessRole::EpicBootstrapGenerator,
+        )
+        .map_err(TransitionError::Unavailable)?;
+        let bootstrap_harness =
+            conversation_harness::profile(ConversationHarnessRole::EpicBootstrapGenerator)
+                .map_err(TransitionError::Unavailable)?;
+        let bootstrap_session_id = AgentSessionId::new(record.bootstrap_session_id.clone())
+            .map_err(|error| TransitionError::IdentityMismatch(error.to_string()))?;
+        if record.bootstrap_session_created_at.is_none() {
+            self.sessions
+                .create_application_session(CreateApplicationAgentSessionCommand {
+                    session_id: bootstrap_session_id.clone(),
+                    session: CreateAgentSessionCommand {
+                        title: Some(format!("Epic Bootstrap Generator: {}", epic_name(&record))),
+                        working_directory: Some(discovery_root.clone()),
+                        requested_options: bootstrap_harness.runtime_options(),
+                    },
+                })
+                .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
+            self.repository
+                .record_stage(initiation_id, "bootstrap_session_created_at")?;
+            record = self.repository.transition(initiation_id)?;
+        }
+
+        let mut attempt = self.repository.current_attempt(initiation_id)?;
+        if attempt.retry_disposition == "retryable" {
+            attempt = self.repository.ensure_retry_attempt(&attempt)?;
+        }
+
+        if attempt.retry_disposition == "active" && attempt.launched_at.is_none() {
+            let invocation_id = AgentInvocationId::new(attempt.agent_invocation_id.clone())
+                .map_err(|error| TransitionError::IdentityMismatch(error.to_string()))?;
+            match self
+                .sessions
+                .application_invocation_launch_evidence(&invocation_id, &bootstrap_session_id)
+                .map_err(|error| TransitionError::Unavailable(error.to_string()))?
+            {
+                ApplicationInvocationLaunchEvidence::LaunchAccepted => {
+                    self.repository.record_attempt_launched(&attempt.id)?;
+                }
+                ApplicationInvocationLaunchEvidence::PersistedNotAccepted => {}
+                ApplicationInvocationLaunchEvidence::NeverPersisted => {
+                    let managed = self
+                        .factory
+                        .start(
+                            self.clone(),
+                            invocation_id.clone(),
+                            &bootstrap_harness.mcp.enabled_tools,
+                            bootstrap_harness.mcp.required,
+                        )
+                        .map_err(TransitionError::Unavailable)?;
+                    let mut additional_args = bootstrap_harness.runtime_configuration_args();
+                    additional_args.extend(managed.injection().configuration_args.clone());
+                    let extension = RuntimeLaunchExtension {
+                        additional_args,
+                        environment: vec![managed.injection().environment.clone()],
+                        initial_prompt_prefix: Some(bootstrap_harness.initial_prompt_prefix()),
+                    };
+                    let send = self
+                        .sessions
+                        .send_idempotent_application_message_with_launch_observation(
+                            SendIdempotentApplicationAgentSessionMessageCommand {
+                                invocation_id: invocation_id.clone(),
+                                message: SendAgentSessionMessageCommand {
+                                    session_id: Some(bootstrap_session_id.clone()),
+                                    submitted_text: bootstrap_prompt(&record, &attempt),
+                                    title: None,
+                                    working_directory: Some(discovery_root),
+                                    requested_options: Some(bootstrap_harness.runtime_options()),
+                                },
+                            },
+                            Some(extension),
+                        );
+                    match send {
+                        Ok(launch) => {
+                            let terminal = self
+                                .sessions
+                                .load_session(&bootstrap_session_id)
+                                .map_err(|error| TransitionError::Unavailable(error.to_string()))?
+                                .invocations
+                                .iter()
+                                .find(|candidate| candidate.invocation.id == invocation_id)
+                                .is_some_and(|candidate| candidate.invocation.status.is_terminal());
+                            if terminal {
+                                managed.stop();
+                            } else {
+                                self.registry.insert(invocation_id, managed);
+                            }
+                            if launch.launch_accepted {
+                                self.repository.record_attempt_launched(&attempt.id)?;
+                            }
+                        }
+                        Err(error) => {
+                            managed.stop();
+                            return Err(TransitionError::Unavailable(error.to_string()));
+                        }
+                    }
+                }
+            }
+            attempt = self.repository.current_attempt(initiation_id)?;
+        }
+
+        if attempt.semantic_completion_fact_id.is_some()
+            && attempt.lifecycle_status.as_deref() == Some("completed")
+        {
+            if self.repository.accept_attempt(&attempt.id)? {
+                record = self.repository.transition(initiation_id)?;
+                self.ensure_runner(&record, &attempt.id)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn ensure_runner(
+        self: &Arc<Self>,
+        record: &TransitionRecord,
+        accepted_attempt_id: &str,
+    ) -> Result<(), TransitionError> {
+        let harness = conversation_harness::profile(ConversationHarnessRole::EpicRunner)
+            .map_err(TransitionError::Unavailable)?;
+        let discovery_root =
+            conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunner)
+                .map_err(TransitionError::Unavailable)?;
+        let session_id = AgentSessionId::new(record.runner_session_id.clone())
+            .map_err(|error| TransitionError::IdentityMismatch(error.to_string()))?;
+        if record.runner_session_created_at.is_none() {
+            self.sessions
+                .create_application_session(CreateApplicationAgentSessionCommand {
+                    session_id: session_id.clone(),
+                    session: CreateAgentSessionCommand {
+                        title: Some(format!("Epic Runner: {}", epic_name(record))),
+                        working_directory: Some(discovery_root.clone()),
+                        requested_options: harness.runtime_options(),
+                    },
+                })
+                .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
+            self.repository
+                .record_stage(&record.initiation_id, "runner_session_created_at")?;
+        }
+        let refreshed = self.repository.transition(&record.initiation_id)?;
+        if refreshed.runner_launched_at.is_none() {
+            let invocation_id = AgentInvocationId::new(refreshed.runner_invocation_id.clone())
+                .map_err(|error| TransitionError::IdentityMismatch(error.to_string()))?;
+            let launch_accepted = match self
+                .sessions
+                .application_invocation_launch_evidence(&invocation_id, &session_id)
+                .map_err(|error| TransitionError::Unavailable(error.to_string()))?
+            {
+                ApplicationInvocationLaunchEvidence::LaunchAccepted => true,
+                ApplicationInvocationLaunchEvidence::PersistedNotAccepted => false,
+                ApplicationInvocationLaunchEvidence::NeverPersisted => {
+                    let extension = RuntimeLaunchExtension {
+                        additional_args: harness.runtime_configuration_args(),
+                        environment: Vec::new(),
+                        initial_prompt_prefix: Some(harness.initial_prompt_prefix()),
+                    };
+                    self.sessions
+                        .send_idempotent_application_message_with_launch_observation(
+                            SendIdempotentApplicationAgentSessionMessageCommand {
+                                invocation_id,
+                                message: SendAgentSessionMessageCommand {
+                                    session_id: Some(session_id),
+                                    submitted_text: self
+                                        .runner_prompt(&refreshed, accepted_attempt_id)?,
+                                    title: None,
+                                    working_directory: Some(discovery_root),
+                                    requested_options: Some(harness.runtime_options()),
+                                },
+                            },
+                            Some(extension),
+                        )
+                        .map_err(|error| TransitionError::Unavailable(error.to_string()))?
+                        .launch_accepted
+                }
+            };
+            if launch_accepted {
+                self.repository
+                    .record_stage(&record.initiation_id, "runner_launched_at")?;
+            }
+        }
+        Ok(())
+    }
+
+    fn runner_prompt(
+        &self,
+        record: &TransitionRecord,
+        accepted_attempt_id: &str,
+    ) -> Result<String, TransitionError> {
+        let inventory = self.repository.completion_inventory(accepted_attempt_id)?;
+        let inventory = serde_json::to_string_pretty(&inventory)
+            .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
+        Ok(format!(
+            "Prepare to run the durably initiated Epic below. Do not create or start a product Sprint in this invocation.\n\nInitiation ID: {}\nEpic ID: {}\nApproved plan: {}\nTransition manifest: {}\nAccepted material inventory:\n{}\n\nThe approved proposal snapshot is:\n{}",
+            record.initiation_id,
+            record.epic_id,
+            record.approved_plan_path,
+            record.manifest_path,
+            inventory,
+            record.proposal_json,
+        ))
+    }
+
+    fn observe_existing_terminals(&self, initiation_id: &str) -> Result<(), TransitionError> {
+        let record = self.repository.transition(initiation_id)?;
+        for attempt in self.repository.attempts(initiation_id)? {
+            let session_id = AgentSessionId::new(attempt.agent_session_id.clone())
+                .map_err(|error| TransitionError::IdentityMismatch(error.to_string()))?;
+            let Ok(history) = self.sessions.load_session(&session_id) else {
+                continue;
+            };
+            if let Some(found) = history
+                .invocations
+                .iter()
+                .find(|candidate| candidate.invocation.id.as_str() == attempt.agent_invocation_id)
+            {
+                if found.invocation.status.is_terminal() {
+                    self.repository.record_lifecycle(
+                        &attempt.agent_invocation_id,
+                        invocation_status(found.invocation.status),
+                        true,
+                    )?;
+                }
+            }
+        }
+        let session_id = AgentSessionId::new(record.runner_session_id.clone())
+            .map_err(|error| TransitionError::IdentityMismatch(error.to_string()))?;
+        if let Ok(history) = self.sessions.load_session(&session_id) {
+            if let Some(found) = history
+                .invocations
+                .iter()
+                .find(|candidate| candidate.invocation.id.as_str() == record.runner_invocation_id)
+            {
+                if found.invocation.status.is_terminal() {
+                    self.repository.record_lifecycle(
+                        &record.runner_invocation_id,
+                        invocation_status(found.invocation.status),
+                        true,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+struct PersistedTransitionObserver(Arc<PostConfirmationTransitionService>);
+
+impl super::confirmation::PersistedInitiationObserver for PersistedTransitionObserver {
+    fn on_persisted_initiation(
+        &self,
+        initiation: &super::domain::InitiateEpicResult,
+    ) -> Result<(), String> {
+        self.0
+            .on_initiation_persisted(initiation.initiation_id.as_str())
+            .map_err(|error| error.to_string())
+    }
+}
+
+fn bootstrap_prompt(record: &TransitionRecord, attempt: &BootstrapAttemptRecord) -> String {
+    format!(
+        "Generate the bounded Epic bootstrap materials from the exact approved durable plan below. Submit both outputs once through complete_epic_bootstrap; do not write files directly and do not start the Epic Runner.\n\nInitiation ID: {}\nEpic ID: {}\nBootstrap attempt ID: {}\nBootstrap attempt ordinal: {}\nPrepared root: {}\nApproved plan input: {}\nTransition manifest: {}\nRequired output destinations (application-owned):\n- Epic overview: {}\n- Runner brief: {}\n\nNo additional accepted decisions, deferred decisions, or user-control policy were stored with this proposal; do not invent them.\n\nApproved proposal snapshot:\n{}",
+        record.initiation_id,
+        record.epic_id,
+        attempt.id,
+        attempt.ordinal,
+        record.prepared_root,
+        record.approved_plan_path,
+        record.manifest_path,
+        record.overview_path,
+        record.runner_brief_path,
+        record.proposal_json,
+    )
+}
+
+fn epic_name(record: &TransitionRecord) -> String {
+    record
+        .proposal
+        .suggested_epic_name
+        .clone()
+        .unwrap_or_else(|| record.epic_id.clone())
+}
+
+fn invocation_status(status: AgentInvocationStatus) -> &'static str {
+    match status {
+        AgentInvocationStatus::Pending => "pending",
+        AgentInvocationStatus::Running => "running",
+        AgentInvocationStatus::Completed => "completed",
+        AgentInvocationStatus::Failed => "failed",
+        AgentInvocationStatus::Canceled => "canceled",
+        AgentInvocationStatus::Interrupted => "interrupted",
+    }
+}
+
+#[derive(Clone)]
+struct BootstrapCompletionMcp {
+    service: Arc<PostConfirmationTransitionService>,
+    invocation_id: AgentInvocationId,
+    tool_router: ToolRouter<Self>,
+}
+
+impl BootstrapCompletionMcp {
+    fn new(
+        service: Arc<PostConfirmationTransitionService>,
+        invocation_id: AgentInvocationId,
+    ) -> Self {
+        Self {
+            service,
+            invocation_id,
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    fn error(code: &str, guidance: impl Into<String>) -> CallToolResult {
+        CallToolResult::error(vec![ContentBlock::text(
+            serde_json::json!({
+                "code": code,
+                "guidance": guidance.into(),
+                "operationId": uuid::Uuid::new_v4().to_string(),
+            })
+            .to_string(),
+        )])
+    }
+}
+
+#[tool_router]
+impl BootstrapCompletionMcp {
+    #[tool(
+        description = "Submit the two bounded semantic bootstrap materials exactly once. Input is ONLY {epicOverviewMarkdown: string, runnerBriefMarkdown: string}. The application derives Epic, session, invocation, paths, and replay authority, validates both values, writes them to exact prepared destinations, and returns the durable material fact. Do not send IDs or paths."
+    )]
+    fn complete_epic_bootstrap(
+        &self,
+        Parameters(input): Parameters<BootstrapMaterialInput>,
+    ) -> CallToolResult {
+        match self.service.complete_bootstrap(&self.invocation_id, input) {
+            Ok(result) => CallToolResult::success(vec![ContentBlock::text(
+                serde_json::json!({
+                    "status": if result.idempotent_replay { "idempotent_replay" } else { "persisted" },
+                    "semanticCompletionFactId": result.fact_id,
+                    "inventory": result.inventory,
+                    "guidance": "Semantic bootstrap completion is durable. Do not retry this successful submission; the application still requires the matching Agent Session lifecycle observation before material acceptance.",
+                })
+                .to_string(),
+            )]),
+            Err(TransitionError::Forbidden | TransitionError::NotFound) => Self::error(
+                "forbidden",
+                "This invocation is not the registered Bootstrap Generator invocation.",
+            ),
+            Err(TransitionError::InvalidMaterial(message)) => Self::error(
+                "invalid_material",
+                format!("{message}. Correct the bounded content and retry once."),
+            ),
+            Err(TransitionError::IdempotencyConflict) => Self::error(
+                "idempotency_conflict",
+                "This invocation already completed with different material semantics.",
+            ),
+            Err(TransitionError::IdentityMismatch(_) | TransitionError::Unavailable(_)) => {
+                Self::error("internal_error", "The application could not record bootstrap completion.")
+            }
+        }
+    }
+}
+
+#[tool_handler(router = self.tool_router)]
+impl ServerHandler for BootstrapCompletionMcp {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
+            "Generate only the requested bounded content, then call complete_epic_bootstrap once. Tool exposure never supplies Epic, session, invocation, or path authority.",
+        )
+    }
+}
+
+struct ManagedBootstrapMcpServer {
+    address: SocketAddr,
+    cancellation: CancellationToken,
+    join: Option<thread::JoinHandle<()>>,
+}
+
+impl ManagedBootstrapMcpServer {
+    fn url(&self) -> String {
+        format!("http://{}/mcp", self.address)
+    }
+
+    fn stop(mut self) {
+        self.cancellation.cancel();
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
+struct ManagedBootstrapInvocation {
+    server: ManagedBootstrapMcpServer,
+    injection: CodexMcpInjection,
+}
+
+impl BootstrapInvocationHandle for ManagedBootstrapInvocation {
+    fn injection(&self) -> &CodexMcpInjection {
+        &self.injection
+    }
+
+    fn stop(self: Box<Self>) {
+        self.server.stop();
+    }
+}
+
+fn start_managed_bootstrap_invocation(
+    service: Arc<PostConfirmationTransitionService>,
+    invocation_id: AgentInvocationId,
+    enabled_tools: &[String],
+    required: bool,
+    origins: Vec<String>,
+) -> io::Result<ManagedBootstrapInvocation> {
+    let bearer = uuid::Uuid::new_v4().simple().to_string();
+    let server = start_bootstrap_server(service, invocation_id, bearer.clone(), origins)?;
+    let injection = CodexMcpInjection::new_named(
+        "epic_bootstrap",
+        &server.url(),
+        bearer,
+        enabled_tools,
+        required,
+    );
+    Ok(ManagedBootstrapInvocation { server, injection })
+}
+
+fn start_bootstrap_server(
+    service: Arc<PostConfirmationTransitionService>,
+    invocation_id: AgentInvocationId,
+    bearer: String,
+    origins: Vec<String>,
+) -> io::Result<ManagedBootstrapMcpServer> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    listener.set_nonblocking(true)?;
+    let address = listener.local_addr()?;
+    let cancellation = CancellationToken::new();
+    let server_cancel = cancellation.clone();
+    let join =
+        thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_io()
+                .enable_time()
+                .build()
+                .expect("bootstrap MCP runtime");
+            runtime.block_on(async move {
+                let config =
+                    rmcp::transport::streamable_http_server::StreamableHttpServerConfig::default()
+                        .with_allowed_hosts([format!("127.0.0.1:{}", address.port())])
+                        .with_allowed_origins(origins.clone())
+                        .with_cancellation_token(server_cancel.clone());
+                let service_adapter: rmcp::transport::streamable_http_server::StreamableHttpService<
+                BootstrapCompletionMcp,
+                rmcp::transport::streamable_http_server::session::local::LocalSessionManager,
+            > = rmcp::transport::streamable_http_server::StreamableHttpService::new(
+                move || Ok(BootstrapCompletionMcp::new(service.clone(), invocation_id.clone())),
+                Default::default(),
+                config,
+            );
+                let expected = Arc::new(bearer);
+                let allowed_host = format!("127.0.0.1:{}", address.port());
+                let allowed_origins = Arc::new(origins);
+                let listener = tokio::net::TcpListener::from_std(listener)
+                    .expect("async bootstrap MCP listener");
+                loop {
+                    let accepted = tokio::select! {
+                        _ = server_cancel.cancelled() => break,
+                        accepted = listener.accept() => accepted,
+                    };
+                    let Ok((stream, _)) = accepted else { continue };
+                    let adapter = service_adapter.clone();
+                    let expected = expected.clone();
+                    let allowed_host = allowed_host.clone();
+                    let allowed_origins = allowed_origins.clone();
+                    tokio::spawn(async move {
+                        let guard = service_fn(move |request| {
+                            let adapter = adapter.clone();
+                            let expected = expected.clone();
+                            let allowed_host = allowed_host.clone();
+                            let allowed_origins = allowed_origins.clone();
+                            async move {
+                                if let Some(status) = super::mcp::transport_denial(
+                                    &expected,
+                                    &allowed_host,
+                                    &allowed_origins,
+                                    &request,
+                                ) {
+                                    return Ok::<_, std::convert::Infallible>(
+                                        Response::builder()
+                                            .status(status)
+                                            .body(Empty::<Bytes>::new())
+                                            .expect("bootstrap MCP denial response")
+                                            .map(axum::body::Body::new),
+                                    );
+                                }
+                                let response = adapter
+                                    .oneshot(request)
+                                    .await
+                                    .expect("bootstrap MCP response");
+                                Ok::<_, std::convert::Infallible>(
+                                    response.map(axum::body::Body::new),
+                                )
+                            }
+                        });
+                        let _ = http1::Builder::new()
+                            .serve_connection(TokioIo::new(stream), guard)
+                            .await;
+                    });
+                }
+            });
+        });
+    Ok(ManagedBootstrapMcpServer {
+        address,
+        cancellation,
+        join: Some(join),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        agent_sessions::{
+            application::{AgentSessionNotifier, SystemAgentSessionProviders},
+            domain::{AgentInvocation, AgentInvocationTerminalStatus, AgentRuntimeOptions},
+            ports::{
+                AgentRuntime, AgentRuntimeUpdateSink, RuntimeInvocationMode,
+                RuntimeInvocationOutcome, RuntimeInvocationPreflight, RuntimeInvocationRequest,
+                RuntimePortError, RuntimePortErrorKind, RuntimeUpdate,
+            },
+            repository::SqliteAgentSessionRepository,
+        },
+        orchestration::{
+            domain::{InitiateEpicCommand, ProposedSprint, SaveEpicPlanProposalCommand},
+            repository::SqliteOrchestrationRepository,
+        },
+    };
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Weak,
+    };
+
+    #[derive(Default)]
+    struct RecordedRuntime {
+        requests: Mutex<Vec<RuntimeInvocationRequest>>,
+        sinks: Mutex<HashMap<AgentInvocationId, Arc<dyn AgentRuntimeUpdateSink>>>,
+        fail_next_launch: AtomicUsize,
+    }
+
+    impl RecordedRuntime {
+        fn requests(&self) -> Vec<RuntimeInvocationRequest> {
+            self.requests.lock().unwrap().clone()
+        }
+
+        fn fail_next_launch(&self) {
+            self.fail_next_launch.store(1, Ordering::SeqCst);
+        }
+
+        fn finish(&self, invocation_id: &str, status: AgentInvocationTerminalStatus) {
+            self.finish_result(invocation_id, status).unwrap();
+        }
+
+        fn finish_result(
+            &self,
+            invocation_id: &str,
+            status: AgentInvocationTerminalStatus,
+        ) -> Result<(), RuntimePortError> {
+            let id = AgentInvocationId::new(invocation_id).unwrap();
+            let sink = self.sinks.lock().unwrap().get(&id).cloned().unwrap();
+            sink.emit_update(
+                &id,
+                RuntimeUpdate::Finished(RuntimeInvocationOutcome {
+                    status,
+                    exit_code: Some(if status == AgentInvocationTerminalStatus::Completed {
+                        0
+                    } else {
+                        1
+                    }),
+                    signal: None,
+                    runtime_error: None,
+                }),
+            )
+        }
+    }
+
+    impl AgentRuntime for RecordedRuntime {
+        fn preflight_invocation(
+            &self,
+            _mode: RuntimeInvocationMode,
+            requested_options: &AgentRuntimeOptions,
+        ) -> Result<RuntimeInvocationPreflight, RuntimePortError> {
+            Ok(RuntimeInvocationPreflight {
+                effective_options: requested_options.clone(),
+            })
+        }
+
+        fn start_invocation(
+            &self,
+            request: RuntimeInvocationRequest,
+            sink: Arc<dyn AgentRuntimeUpdateSink>,
+        ) -> Result<(), RuntimePortError> {
+            self.requests.lock().unwrap().push(request.clone());
+            if self.fail_next_launch.swap(0, Ordering::SeqCst) == 1 {
+                return Err(RuntimePortError::new(
+                    RuntimePortErrorKind::LaunchFailed,
+                    "induced transition launch failure",
+                ));
+            }
+            self.sinks
+                .lock()
+                .unwrap()
+                .insert(request.invocation_id.clone(), sink);
+            Ok(())
+        }
+
+        fn resume_invocation(
+            &self,
+            request: RuntimeInvocationRequest,
+            _external_context_id: crate::agent_sessions::domain::ExternalRuntimeContextId,
+            sink: Arc<dyn AgentRuntimeUpdateSink>,
+        ) -> Result<(), RuntimePortError> {
+            self.start_invocation(request, sink)
+        }
+
+        fn cancel_invocation(
+            &self,
+            _invocation_id: &AgentInvocationId,
+        ) -> Result<(), RuntimePortError> {
+            Err(RuntimePortError::new(
+                RuntimePortErrorKind::NotActive,
+                "recorded runtime cancellation is unavailable",
+            ))
+        }
+    }
+
+    #[derive(Default)]
+    struct TransitionNotifier {
+        service: Mutex<Option<Weak<PostConfirmationTransitionService>>>,
+    }
+
+    impl TransitionNotifier {
+        fn set(&self, service: &Arc<PostConfirmationTransitionService>) {
+            *self.service.lock().unwrap() = Some(Arc::downgrade(service));
+        }
+    }
+
+    impl AgentSessionNotifier for TransitionNotifier {
+        fn notify(&self, notification: AgentSessionNotification) -> Result<(), String> {
+            if let Some(service) = self
+                .service
+                .lock()
+                .map_err(|_| "test notification registry unavailable".to_string())?
+                .as_ref()
+                .and_then(Weak::upgrade)
+            {
+                service
+                    .on_agent_notification(&notification)
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct LiveTransitionNotifier {
+        service: Mutex<Option<Weak<PostConfirmationTransitionService>>>,
+        terminals: Mutex<Vec<AgentInvocation>>,
+        ready: std::sync::Condvar,
+    }
+
+    impl LiveTransitionNotifier {
+        fn set(&self, service: &Arc<PostConfirmationTransitionService>) {
+            *self.service.lock().unwrap() = Some(Arc::downgrade(service));
+        }
+
+        fn wait_for_terminals(&self, count: usize) -> Vec<AgentInvocation> {
+            let terminals = self.terminals.lock().unwrap();
+            let (terminals, wait) = self
+                .ready
+                .wait_timeout_while(terminals, std::time::Duration::from_secs(240), |items| {
+                    items.len() < count
+                })
+                .unwrap();
+            assert!(!wait.timed_out(), "installed Codex transition timed out");
+            terminals.clone()
+        }
+    }
+
+    impl AgentSessionNotifier for LiveTransitionNotifier {
+        fn notify(&self, notification: AgentSessionNotification) -> Result<(), String> {
+            if let Some(service) = self
+                .service
+                .lock()
+                .map_err(|_| "live transition registry unavailable".to_string())?
+                .as_ref()
+                .and_then(Weak::upgrade)
+            {
+                service
+                    .on_agent_notification(&notification)
+                    .map_err(|error| error.to_string())?;
+            }
+            if let AgentSessionNotification::InvocationTerminal { invocation, .. } = notification {
+                self.terminals
+                    .lock()
+                    .map_err(|_| "live transition terminal registry unavailable".to_string())?
+                    .push(invocation);
+                self.ready.notify_all();
+            }
+            Ok(())
+        }
+    }
+
+    struct DummyHandle {
+        injection: CodexMcpInjection,
+        stopped: Arc<AtomicUsize>,
+    }
+
+    impl BootstrapInvocationHandle for DummyHandle {
+        fn injection(&self) -> &CodexMcpInjection {
+            &self.injection
+        }
+
+        fn stop(self: Box<Self>) {
+            self.stopped.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordedBootstrapFactory {
+        starts: AtomicUsize,
+        stops: Arc<AtomicUsize>,
+    }
+
+    impl BootstrapInvocationFactory for RecordedBootstrapFactory {
+        fn start(
+            &self,
+            _service: Arc<PostConfirmationTransitionService>,
+            _invocation_id: AgentInvocationId,
+            enabled_tools: &[String],
+            required: bool,
+        ) -> Result<Box<dyn BootstrapInvocationHandle>, String> {
+            self.starts.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(DummyHandle {
+                injection: CodexMcpInjection::new_named(
+                    "recorded_bootstrap",
+                    "http://127.0.0.1:1/mcp",
+                    "recorded-secret".into(),
+                    enabled_tools,
+                    required,
+                ),
+                stopped: self.stops.clone(),
+            }))
+        }
+    }
+
+    struct FailingBootstrapFactory;
+    impl BootstrapInvocationFactory for FailingBootstrapFactory {
+        fn start(
+            &self,
+            _service: Arc<PostConfirmationTransitionService>,
+            _invocation_id: AgentInvocationId,
+            _enabled_tools: &[String],
+            _required: bool,
+        ) -> Result<Box<dyn BootstrapInvocationHandle>, String> {
+            Err("induced bootstrap listener failure".into())
+        }
+    }
+
+    struct Fixture {
+        _directory: tempfile::TempDir,
+        database_path: PathBuf,
+        material_root: PathBuf,
+        initiation_id: String,
+        service: Arc<PostConfirmationTransitionService>,
+        sessions: Arc<AgentSessionApplication>,
+        runtime: Arc<RecordedRuntime>,
+        runtime_history: Vec<Arc<RecordedRuntime>>,
+        notifier: Arc<TransitionNotifier>,
+        factory: Arc<RecordedBootstrapFactory>,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let fixture = Self::unstarted();
+            fixture
+                .service
+                .on_initiation_persisted(&fixture.initiation_id)
+                .unwrap();
+            fixture
+        }
+
+        fn unstarted() -> Self {
+            let directory = tempfile::tempdir().unwrap();
+            let database_path = directory.path().join("active.sqlite");
+            drop(crate::storage::open_active_database(&database_path).unwrap());
+            let now = Utc::now().to_rfc3339();
+            let connection = Connection::open(&database_path).unwrap();
+            crate::storage::configure_sqlite_connection(&connection).unwrap();
+            connection.execute("INSERT INTO agent_sessions (id,title,availability,requested_options_json,created_at,updated_at) VALUES ('plan-builder-session','Plan Builder','available','{}',?1,?1)", params![now]).unwrap();
+            drop(connection);
+
+            let orchestration = SqliteOrchestrationRepository::open(&database_path).unwrap();
+            let (draft, profile, association) = orchestration
+                .bootstrap_managed_plan_builder("plan-builder-session")
+                .unwrap();
+            let saved = orchestration
+                .save_epic_plan_proposal(SaveEpicPlanProposalCommand {
+                    epic_planning_draft_id: draft.clone(),
+                    capability_profile_id: profile,
+                    agent_session_association_id: association,
+                    agent_session_id: "plan-builder-session".into(),
+                    actor_id: "managed-plan-builder".into(),
+                    expected_revision: None,
+                    proposal: PlanBuilderProposal {
+                        suggested_epic_name: Some("Durable Bootstrap Epic".into()),
+                        sprints: vec![
+                            ProposedSprint {
+                                title: "Foundation".into(),
+                                intended_movement: "Establish the durable transition.".into(),
+                                concern_summaries: vec!["Preserve explicit user control.".into()],
+                            },
+                            ProposedSprint {
+                                title: "Integration".into(),
+                                intended_movement: "Integrate later without starting now.".into(),
+                                concern_summaries: vec![],
+                            },
+                        ],
+                    },
+                    idempotency_key: "fixture-proposal".into(),
+                })
+                .unwrap();
+            let initiated = orchestration
+                .initiate_epic(InitiateEpicCommand {
+                    epic_planning_draft_id: draft,
+                    expected_revision_token: saved.revision_token,
+                    actor_id: "application-user".into(),
+                    idempotency_key: "fixture-initiation".into(),
+                })
+                .unwrap();
+
+            let agent_repository = Arc::new(
+                SqliteAgentSessionRepository::new(Connection::open(&database_path).unwrap())
+                    .unwrap(),
+            );
+            let runtime = Arc::new(RecordedRuntime::default());
+            let notifier = Arc::new(TransitionNotifier::default());
+            let sessions = Arc::new(AgentSessionApplication::new(
+                agent_repository,
+                runtime.clone(),
+                notifier.clone(),
+                Arc::new(SystemAgentSessionProviders),
+                Arc::new(SystemAgentSessionProviders),
+                Some("recorded-runtime".into()),
+            ));
+            let transition_repository =
+                Arc::new(SqliteBootstrapTransitionRepository::open(&database_path).unwrap());
+            let factory = Arc::new(RecordedBootstrapFactory::default());
+            let material_root = directory.path().join("materials");
+            let service = PostConfirmationTransitionService::with_factory(
+                transition_repository,
+                sessions.clone(),
+                material_root.clone(),
+                factory.clone(),
+            );
+            notifier.set(&service);
+            Self {
+                _directory: directory,
+                database_path,
+                material_root,
+                initiation_id: initiated.initiation_id.as_str().into(),
+                service,
+                sessions,
+                runtime: runtime.clone(),
+                runtime_history: vec![runtime],
+                notifier,
+                factory,
+            }
+        }
+
+        fn status(&self) -> BootstrapTransitionStatusV2 {
+            self.service.query().unwrap().transitions[0].clone()
+        }
+
+        fn materials() -> BootstrapMaterialInput {
+            BootstrapMaterialInput {
+                epic_overview_markdown:
+                    "# Durable Bootstrap Epic\n\nAdvance the approved Sprints in order.\n".into(),
+                runner_brief_markdown:
+                    "# Runner brief\n\nReach ready state without starting a Sprint.\n".into(),
+            }
+        }
+
+        fn reopen_service(&mut self) {
+            let repository =
+                Arc::new(SqliteBootstrapTransitionRepository::open(&self.database_path).unwrap());
+            let factory = Arc::new(RecordedBootstrapFactory::default());
+            let service = PostConfirmationTransitionService::with_factory(
+                repository,
+                self.sessions.clone(),
+                self.material_root.clone(),
+                factory.clone(),
+            );
+            self.notifier.set(&service);
+            service.reconcile_startup().unwrap();
+            self.service = service;
+            self.factory = factory;
+        }
+
+        fn restart_application(&mut self) -> usize {
+            self.service.shutdown();
+            let agent_repository = Arc::new(
+                SqliteAgentSessionRepository::new(Connection::open(&self.database_path).unwrap())
+                    .unwrap(),
+            );
+            let runtime = Arc::new(RecordedRuntime::default());
+            let notifier = Arc::new(TransitionNotifier::default());
+            let sessions = Arc::new(AgentSessionApplication::new(
+                agent_repository,
+                runtime.clone(),
+                notifier.clone(),
+                Arc::new(SystemAgentSessionProviders),
+                Arc::new(SystemAgentSessionProviders),
+                Some("recorded-runtime".into()),
+            ));
+            let reconciled = sessions.reconcile_startup().unwrap();
+            let repository =
+                Arc::new(SqliteBootstrapTransitionRepository::open(&self.database_path).unwrap());
+            let factory = Arc::new(RecordedBootstrapFactory::default());
+            let service = PostConfirmationTransitionService::with_factory(
+                repository,
+                sessions.clone(),
+                self.material_root.clone(),
+                factory.clone(),
+            );
+            notifier.set(&service);
+            service.reconcile_startup().unwrap();
+            self.service = service;
+            self.sessions = sessions;
+            self.runtime = runtime.clone();
+            self.runtime_history.push(runtime);
+            self.notifier = notifier;
+            self.factory = factory;
+            reconciled
+        }
+
+        fn all_requests(&self) -> Vec<RuntimeInvocationRequest> {
+            self.runtime_history
+                .iter()
+                .flat_map(|runtime| runtime.requests())
+                .collect()
+        }
+    }
+
+    #[test]
+    fn semantic_first_then_matching_lifecycle_launches_exactly_one_runner() {
+        let mut fixture = Fixture::new();
+        let initial = fixture.status();
+        assert_eq!(fixture.runtime.requests().len(), 1);
+        assert!(initial.prepared_at.is_some());
+        assert!(initial.bootstrap_session_created_at.is_some());
+        assert!(initial.bootstrap_launched_at.is_some());
+        assert!(initial.semantic_completion_fact_id.is_none());
+        assert!(initial.runner_launched_at.is_none());
+        let bootstrap_request = &fixture.runtime.requests()[0];
+        assert_eq!(
+            bootstrap_request.options.sandbox,
+            Some(crate::agent_sessions::domain::RuntimeSandboxMode::ReadOnly)
+        );
+        assert!(bootstrap_request
+            .submitted_text
+            .contains("complete_epic_bootstrap"));
+        assert!(bootstrap_request
+            .submitted_text
+            .contains(&initial.approved_plan_path));
+        assert_eq!(
+            bootstrap_request
+                .launch_extension
+                .as_ref()
+                .unwrap()
+                .environment
+                .len(),
+            1
+        );
+
+        let completed = fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(initial.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        assert!(!completed.idempotent_replay);
+        assert_eq!(completed.inventory.len(), 2);
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            1,
+            "semantic-only must not launch Runner"
+        );
+        assert!(fixture.status().material_accepted_at.is_none());
+
+        fixture.reopen_service();
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            1,
+            "restart must not duplicate Bootstrap launch"
+        );
+        let status = fixture.status();
+        fixture.runtime.finish(
+            &status.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let accepted = fixture.status();
+        assert!(accepted.bootstrap_lifecycle_observed_at.is_some());
+        assert_eq!(
+            accepted.bootstrap_lifecycle_status.as_deref(),
+            Some("completed")
+        );
+        assert!(accepted.material_accepted_at.is_some());
+        assert!(accepted.runner_session_created_at.is_some());
+        assert!(accepted.runner_launched_at.is_some());
+        assert_eq!(fixture.runtime.requests().len(), 2);
+        let runner_request = &fixture.runtime.requests()[1];
+        assert_eq!(
+            runner_request.options.sandbox,
+            Some(crate::agent_sessions::domain::RuntimeSandboxMode::ReadOnly)
+        );
+        assert!(runner_request
+            .submitted_text
+            .contains("Do not create or start a product Sprint"));
+        assert!(runner_request
+            .launch_extension
+            .as_ref()
+            .unwrap()
+            .environment
+            .is_empty());
+
+        fixture.service.reconcile_startup().unwrap();
+        fixture.service.reconcile_startup().unwrap();
+        assert_eq!(fixture.runtime.requests().len(), 2);
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        for (table, expected) in [
+            ("epic_bootstrap_transitions", 1),
+            ("epic_bootstrap_attempts", 1),
+            ("epic_bootstrap_attempt_completion_commands", 1),
+            ("epic_bootstrap_attempt_completion_results", 1),
+            ("epic_bootstrap_attempt_completion_facts", 1),
+            ("agent_sessions", 3),
+            ("agent_session_invocations", 2),
+        ] {
+            let count: i64 = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, expected, "unexpected durable count for {table}");
+        }
+    }
+
+    #[test]
+    fn bootstrap_launch_stage_requires_durable_launch_acceptance() {
+        let bootstrap = Fixture::unstarted();
+        bootstrap.runtime.fail_next_launch();
+        bootstrap
+            .service
+            .on_initiation_persisted(&bootstrap.initiation_id)
+            .unwrap();
+        let failed_bootstrap = bootstrap.status();
+        assert!(failed_bootstrap.bootstrap_launched_at.is_none());
+        assert_eq!(
+            failed_bootstrap.bootstrap_lifecycle_status.as_deref(),
+            Some("failed")
+        );
+        assert_eq!(failed_bootstrap.retry_state, "blocked");
+        assert!(failed_bootstrap.runner_session_created_at.is_none());
+        assert!(failed_bootstrap.runner_launched_at.is_none());
+    }
+
+    #[test]
+    fn runner_launch_stage_requires_durable_launch_acceptance() {
+        let mut runner = Fixture::new();
+        let bootstrap_status = runner.status();
+        runner
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(bootstrap_status.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        runner.runtime.finish(
+            &bootstrap_status.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let launched = runner.status();
+        assert!(launched.runner_launched_at.is_some());
+        let connection = Connection::open(&runner.database_path).unwrap();
+        connection
+            .execute(
+                "DELETE FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1",
+                params![launched.runner_invocation_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE epic_bootstrap_transitions SET runner_launched_at=NULL WHERE initiation_id=?1",
+                params![runner.initiation_id],
+            )
+            .unwrap();
+        drop(connection);
+
+        runner.reopen_service();
+        let unaccepted = runner.status();
+        assert!(unaccepted.material_accepted_at.is_some());
+        assert!(unaccepted.runner_session_created_at.is_some());
+        assert!(unaccepted.runner_launched_at.is_none());
+        assert_eq!(runner.runtime.requests().len(), 2);
+        runner.service.reconcile_startup().unwrap();
+        assert_eq!(runner.runtime.requests().len(), 2);
+        assert!(runner.status().runner_launched_at.is_none());
+    }
+
+    #[test]
+    fn lifecycle_first_waits_for_semantic_fact_and_duplicate_delivery_is_idempotent() {
+        let fixture = Fixture::new();
+        let initial = fixture.status();
+        fixture.runtime.finish(
+            &initial.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            1,
+            "lifecycle-only must not launch Runner"
+        );
+        let invocation = AgentInvocationId::new(initial.bootstrap_invocation_id).unwrap();
+        let first = fixture
+            .service
+            .complete_bootstrap(&invocation, Fixture::materials())
+            .unwrap();
+        let replay = fixture
+            .service
+            .complete_bootstrap(&invocation, Fixture::materials())
+            .unwrap();
+        assert!(!first.idempotent_replay);
+        assert!(replay.idempotent_replay);
+        assert_eq!(first.fact_id, replay.fact_id);
+        assert_eq!(fixture.runtime.requests().len(), 2);
+        assert_eq!(fixture.factory.starts.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn semantic_boundary_rejects_stale_invalid_conflicting_and_path_escape_calls() {
+        let fixture = Fixture::new();
+        let status = fixture.status();
+        let foreign = AgentInvocationId::new("foreign-bootstrap-invocation").unwrap();
+        assert_eq!(
+            fixture
+                .service
+                .complete_bootstrap(&foreign, Fixture::materials()),
+            Err(TransitionError::Forbidden)
+        );
+        let invocation = AgentInvocationId::new(status.bootstrap_invocation_id.clone()).unwrap();
+        assert!(matches!(
+            fixture.service.complete_bootstrap(
+                &invocation,
+                BootstrapMaterialInput {
+                    epic_overview_markdown: "".into(),
+                    runner_brief_markdown: "valid".into()
+                }
+            ),
+            Err(TransitionError::InvalidMaterial(_))
+        ));
+        let first = fixture
+            .service
+            .complete_bootstrap(&invocation, Fixture::materials())
+            .unwrap();
+        let mut changed = Fixture::materials();
+        changed.runner_brief_markdown.push_str("different");
+        assert_eq!(
+            fixture.service.complete_bootstrap(&invocation, changed),
+            Err(TransitionError::IdempotencyConflict)
+        );
+        assert!(!first.idempotent_replay);
+
+        let escaped_fixture = Fixture::new();
+        let escaped_status = escaped_fixture.status();
+        let escaped_invocation =
+            AgentInvocationId::new(escaped_status.bootstrap_invocation_id).unwrap();
+        let connection = Connection::open(&escaped_fixture.database_path).unwrap();
+        let escaped = escaped_fixture.material_root.join("escaped.md");
+        connection
+            .execute(
+                "UPDATE epic_bootstrap_transitions SET overview_path=?2 WHERE initiation_id=?1",
+                params![escaped_fixture.initiation_id, escaped.to_string_lossy()],
+            )
+            .unwrap();
+        drop(connection);
+        assert!(matches!(
+            escaped_fixture
+                .service
+                .complete_bootstrap(&escaped_invocation, Fixture::materials()),
+            Err(TransitionError::IdentityMismatch(_))
+        ));
+        assert!(!escaped.exists());
+    }
+
+    #[test]
+    fn restart_reverifies_prepared_bytes_and_fails_closed_on_identity_mismatch() {
+        let fixture = Fixture::new();
+        let status = fixture.status();
+        fs::write(&status.approved_plan_path, b"tampered").unwrap();
+        assert!(matches!(
+            fixture.service.reconcile_startup(),
+            Err(TransitionError::IdentityMismatch(message)) if message.contains("different bytes")
+        ));
+        assert_eq!(fixture.runtime.requests().len(), 1);
+    }
+
+    #[test]
+    fn unsuccessful_terminal_lifecycle_never_accepts_material_or_launches_runner() {
+        let fixture = Fixture::new();
+        let status = fixture.status();
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(status.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        fixture.runtime.finish(
+            &status.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Failed,
+        );
+        let failed = fixture.status();
+        assert_eq!(failed.bootstrap_lifecycle_status.as_deref(), Some("failed"));
+        assert!(failed.material_accepted_at.is_none());
+        assert!(failed.runner_launched_at.is_none());
+        assert_eq!(fixture.runtime.requests().len(), 1);
+    }
+
+    #[test]
+    fn recovery_reuses_session_and_invocation_effects_across_pre_and_post_ack_stages() {
+        let mut fixture = Fixture::unstarted();
+        let failing_repository =
+            Arc::new(SqliteBootstrapTransitionRepository::open(&fixture.database_path).unwrap());
+        let failing = PostConfirmationTransitionService::with_factory(
+            failing_repository,
+            fixture.sessions.clone(),
+            fixture.material_root.clone(),
+            Arc::new(FailingBootstrapFactory),
+        );
+        fixture.notifier.set(&failing);
+        assert!(matches!(
+            failing.on_initiation_persisted(&fixture.initiation_id),
+            Err(TransitionError::Unavailable(message)) if message.contains("induced bootstrap listener failure")
+        ));
+        fixture.service = failing;
+        let before_launch = fixture.status();
+        assert!(before_launch.prepared_at.is_some());
+        assert!(before_launch.bootstrap_session_created_at.is_some());
+        assert!(before_launch.bootstrap_launched_at.is_none());
+        assert!(fixture.runtime.requests().is_empty());
+
+        fixture.reopen_service();
+        assert_eq!(fixture.runtime.requests().len(), 1);
+        let launched = fixture.status();
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        connection
+            .execute(
+                "UPDATE epic_bootstrap_attempts SET launched_at=NULL WHERE id=?1",
+                params![launched.current_attempt_id],
+            )
+            .unwrap();
+        drop(connection);
+        fixture.reopen_service();
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            1,
+            "send acceptance recovery must reuse the invocation"
+        );
+        assert!(fixture.status().bootstrap_launched_at.is_some());
+
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(launched.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        fixture
+            .service
+            .repository
+            .record_lifecycle(&launched.bootstrap_invocation_id, "completed", false)
+            .unwrap();
+        let runner_harness =
+            conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap();
+        let runner_root =
+            conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunner).unwrap();
+        fixture
+            .sessions
+            .create_application_session(CreateApplicationAgentSessionCommand {
+                session_id: AgentSessionId::new(launched.runner_session_id.clone()).unwrap(),
+                session: CreateAgentSessionCommand {
+                    title: Some("Epic Runner: Durable Bootstrap Epic".into()),
+                    working_directory: Some(runner_root),
+                    requested_options: runner_harness.runtime_options(),
+                },
+            })
+            .unwrap();
+        fixture
+            .service
+            .repository
+            .record_stage(&fixture.initiation_id, "runner_session_created_at")
+            .unwrap();
+        assert_eq!(fixture.runtime.requests().len(), 1);
+
+        fixture.reopen_service();
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            2,
+            "Runner created-before-launch must launch once"
+        );
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        connection
+            .execute(
+                "UPDATE epic_bootstrap_transitions SET runner_launched_at=NULL WHERE initiation_id=?1",
+                params![fixture.initiation_id],
+            )
+            .unwrap();
+        drop(connection);
+        fixture.reopen_service();
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            2,
+            "Runner launch-ack recovery must reuse the invocation"
+        );
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM agent_sessions WHERE id IN (?1,?2)",
+                    params![launched.bootstrap_session_id, launched.runner_session_id],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM agent_session_invocations WHERE id IN (?1,?2)",
+                    params![
+                        launched.bootstrap_invocation_id,
+                        launched.runner_invocation_id
+                    ],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn post_persistence_failure_reconciles_fact_and_lifecycle_without_reapplying_effects() {
+        let mut fixture = Fixture::new();
+        let status = fixture.status();
+        let approved = fs::read(&status.approved_plan_path).unwrap();
+        fs::write(
+            &status.approved_plan_path,
+            b"induced post-persistence mismatch",
+        )
+        .unwrap();
+        assert!(matches!(
+            fixture.service.complete_bootstrap(
+                &AgentInvocationId::new(status.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            ),
+            Err(TransitionError::IdentityMismatch(_))
+        ));
+        let persisted = fixture.status();
+        assert!(persisted.semantic_completion_fact_id.is_some());
+        assert!(persisted.material_accepted_at.is_none());
+        assert_eq!(fixture.runtime.requests().len(), 1);
+
+        assert!(fixture
+            .runtime
+            .finish_result(
+                &status.bootstrap_invocation_id,
+                AgentInvocationTerminalStatus::Completed,
+            )
+            .is_err());
+        assert_eq!(
+            fixture.status().bootstrap_lifecycle_status.as_deref(),
+            Some("completed")
+        );
+        fs::write(&status.approved_plan_path, approved).unwrap();
+        fixture.reopen_service();
+        assert!(fixture.status().material_accepted_at.is_some());
+        assert!(fixture.status().runner_launched_at.is_some());
+        assert_eq!(fixture.runtime.requests().len(), 2);
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM epic_bootstrap_attempt_completion_facts",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM agent_session_invocations",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn real_startup_reconciliation_interrupts_and_retries_bootstrap_once() {
+        let mut fixture = Fixture::new();
+        let original = fixture.status();
+
+        assert_eq!(fixture.restart_application(), 1);
+        let retry = fixture.status();
+        assert_eq!(retry.bootstrap_attempts.len(), 2);
+        assert_eq!(
+            retry.bootstrap_attempts[0].lifecycle_status.as_deref(),
+            Some("interrupted")
+        );
+        assert_eq!(retry.bootstrap_attempts[0].retry_disposition, "retried");
+        assert_eq!(retry.bootstrap_attempts[1].ordinal, 1);
+        assert_ne!(
+            retry.bootstrap_invocation_id,
+            original.bootstrap_invocation_id
+        );
+        assert_eq!(fixture.all_requests().len(), 2);
+
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(retry.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        fixture.runtime.finish(
+            &retry.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let accepted = fixture.status();
+        assert_eq!(accepted.accepted_attempt_id, Some(retry.current_attempt_id));
+        assert!(accepted.runner_launched_at.is_some());
+        assert_eq!(fixture.all_requests().len(), 3);
+        assert_eq!(
+            fixture
+                .all_requests()
+                .iter()
+                .filter(|request| request.invocation_id.as_str() == accepted.runner_invocation_id)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn semantic_fact_before_crash_is_preserved_but_retry_must_supply_its_own_fact() {
+        let mut fixture = Fixture::new();
+        let original = fixture.status();
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(original.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+
+        assert_eq!(fixture.restart_application(), 1);
+        let retry = fixture.status();
+        assert!(retry.bootstrap_attempts[0]
+            .semantic_completion_fact_id
+            .is_some());
+        assert_eq!(
+            retry.bootstrap_attempts[0].lifecycle_status.as_deref(),
+            Some("interrupted")
+        );
+        assert!(retry.bootstrap_attempts[1]
+            .semantic_completion_fact_id
+            .is_none());
+        assert!(retry.material_accepted_at.is_none());
+        assert!(retry.runner_launched_at.is_none());
+
+        let mut conflicting = Fixture::materials();
+        conflicting.epic_overview_markdown.push_str("conflict\n");
+        assert!(matches!(
+            fixture.service.complete_bootstrap(
+                &AgentInvocationId::new(retry.bootstrap_invocation_id.clone()).unwrap(),
+                conflicting,
+            ),
+            Err(TransitionError::IdentityMismatch(_))
+        ));
+
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(retry.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        fixture.runtime.finish(
+            &retry.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let accepted = fixture.status();
+        assert_eq!(accepted.accepted_attempt_id, Some(retry.current_attempt_id));
+        assert!(accepted.runner_launched_at.is_some());
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM epic_bootstrap_attempt_completion_facts",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM epic_bootstrap_attempts WHERE accepted_at IS NOT NULL",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn repeated_transition_reconciliation_at_retry_boundary_is_idempotent() {
+        let mut fixture = Fixture::new();
+        assert_eq!(fixture.restart_application(), 1);
+        let retry = fixture.status();
+        fixture.service.reconcile_startup().unwrap();
+        fixture.service.reconcile_startup().unwrap();
+        let repeated = fixture.status();
+        assert_eq!(repeated.current_attempt_id, retry.current_attempt_id);
+        assert_eq!(repeated.bootstrap_attempts.len(), 2);
+        assert_eq!(fixture.all_requests().len(), 2);
+    }
+
+    #[test]
+    fn ordinary_failed_and_canceled_attempts_are_blocked_without_auto_loop() {
+        for terminal in [
+            AgentInvocationTerminalStatus::Failed,
+            AgentInvocationTerminalStatus::Canceled,
+        ] {
+            let mut fixture = Fixture::new();
+            let initial = fixture.status();
+            fixture
+                .runtime
+                .finish(&initial.bootstrap_invocation_id, terminal);
+            fixture.service.reconcile_startup().unwrap();
+            fixture.service.reconcile_startup().unwrap();
+            assert_eq!(fixture.restart_application(), 0);
+            let blocked = fixture.status();
+            assert_eq!(blocked.retry_state, "blocked");
+            assert_eq!(
+                blocked.blocked_reason.as_deref(),
+                Some("terminal_without_retry_authority")
+            );
+            assert_eq!(blocked.bootstrap_attempts.len(), 1);
+            assert_eq!(fixture.all_requests().len(), 1);
+        }
+    }
+
+    #[test]
+    fn startup_interruption_retries_stop_at_the_durable_attempt_limit() {
+        let mut fixture = Fixture::new();
+        assert_eq!(fixture.restart_application(), 1);
+        assert_eq!(fixture.restart_application(), 1);
+        assert_eq!(fixture.restart_application(), 1);
+        let blocked = fixture.status();
+        assert_eq!(
+            blocked.bootstrap_attempts.len(),
+            MAX_BOOTSTRAP_ATTEMPTS as usize
+        );
+        assert_eq!(blocked.retry_state, "blocked");
+        assert_eq!(
+            blocked.blocked_reason.as_deref(),
+            Some("startup_retry_limit_reached")
+        );
+        assert_eq!(
+            fixture.all_requests().len(),
+            MAX_BOOTSTRAP_ATTEMPTS as usize
+        );
+        fixture.service.reconcile_startup().unwrap();
+        assert_eq!(
+            fixture.status().bootstrap_attempts.len(),
+            MAX_BOOTSTRAP_ATTEMPTS as usize
+        );
+        assert_eq!(
+            fixture.all_requests().len(),
+            MAX_BOOTSTRAP_ATTEMPTS as usize
+        );
+    }
+
+    #[test]
+    fn lifecycle_and_semantic_facts_never_mix_across_attempts() {
+        let mut fixture = Fixture::new();
+        let original = fixture.status();
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(original.bootstrap_invocation_id).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        fixture.restart_application();
+        let retry = fixture.status();
+        fixture.runtime.finish(
+            &retry.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let blocked = fixture.status();
+        assert_eq!(blocked.retry_state, "blocked");
+        assert_eq!(
+            blocked.blocked_reason.as_deref(),
+            Some("completed_without_semantic_fact")
+        );
+        assert!(blocked.material_accepted_at.is_none());
+        assert!(blocked.runner_launched_at.is_none());
+        assert_eq!(fixture.all_requests().len(), 2);
+    }
+
+    #[test]
+    fn existing_output_link_is_rejected_before_read_or_acceptance() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("prepared");
+        fs::create_dir(&root).unwrap();
+        let target = root.join("epic-overview.md");
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let outside = directory.path().join("outside-directory");
+            fs::create_dir(&outside).unwrap();
+            let output = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&target)
+                .arg(&outside)
+                .creation_flags(0x08000000)
+                .output()
+                .expect("create Windows output junction");
+            assert!(output.status.success(), "mklink failed: {output:?}");
+        }
+        #[cfg(unix)]
+        {
+            let outside = directory.path().join("outside.md");
+            fs::write(&outside, b"same bytes").unwrap();
+            std::os::unix::fs::symlink(&outside, &target).expect("create output symlink");
+        }
+
+        let canonical_root = fs::canonicalize(&root).unwrap();
+        assert!(matches!(
+            write_exact_contained(&canonical_root, &target, b"same bytes"),
+            Err(TransitionError::IdentityMismatch(message))
+                if message.contains("symbolic link or reparse point")
+        ));
+    }
+
+    #[test]
+    #[ignore = "paid installed-Codex Bootstrap and Runner proof from isolated confirmed state"]
+    fn installed_codex_bootstrap_and_runner_converge_without_starting_a_sprint() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("active.sqlite");
+        drop(crate::storage::open_active_database(&database_path).unwrap());
+        let now = Utc::now().to_rfc3339();
+        let connection = Connection::open(&database_path).unwrap();
+        crate::storage::configure_sqlite_connection(&connection).unwrap();
+        connection.execute("INSERT INTO agent_sessions (id,title,availability,requested_options_json,created_at,updated_at) VALUES ('live-plan-builder-session','Isolated confirmed test state','available','{}',?1,?1)", params![now]).unwrap();
+        drop(connection);
+
+        let orchestration = SqliteOrchestrationRepository::open(&database_path).unwrap();
+        let (draft, profile, association) = orchestration
+            .bootstrap_managed_plan_builder("live-plan-builder-session")
+            .unwrap();
+        let saved = orchestration
+            .save_epic_plan_proposal(SaveEpicPlanProposalCommand {
+                epic_planning_draft_id: draft.clone(),
+                capability_profile_id: profile,
+                agent_session_association_id: association,
+                agent_session_id: "live-plan-builder-session".into(),
+                actor_id: "managed-plan-builder".into(),
+                expected_revision: None,
+                proposal: PlanBuilderProposal {
+                    suggested_epic_name: Some("Isolated live transition proof".into()),
+                    sprints: vec![ProposedSprint {
+                        title: "Future Sprint".into(),
+                        intended_movement: "Remain planned and unstarted during this proof.".into(),
+                        concern_summaries: vec![
+                            "Preserve the production confirmation boundary.".into()
+                        ],
+                    }],
+                },
+                idempotency_key: "live-transition-proposal".into(),
+            })
+            .unwrap();
+        let initiated = orchestration
+            .initiate_epic(InitiateEpicCommand {
+                epic_planning_draft_id: draft,
+                expected_revision_token: saved.revision_token,
+                actor_id: "application-user".into(),
+                idempotency_key: "live-transition-initiation".into(),
+            })
+            .unwrap();
+
+        let runtime = Arc::new(crate::runtime::codex::CodexCliRuntime::system(
+            "codex", None,
+        ));
+        let notifier = Arc::new(LiveTransitionNotifier::default());
+        let providers = Arc::new(SystemAgentSessionProviders);
+        let sessions = Arc::new(AgentSessionApplication::new(
+            Arc::new(SqliteAgentSessionRepository::open(&database_path).unwrap()),
+            runtime.clone(),
+            notifier.clone(),
+            providers.clone(),
+            providers,
+            None,
+        ));
+        let service = PostConfirmationTransitionService::new(
+            Arc::new(SqliteBootstrapTransitionRepository::open(&database_path).unwrap()),
+            sessions,
+            directory.path().join("materials"),
+        );
+        notifier.set(&service);
+        service
+            .on_initiation_persisted(initiated.initiation_id.as_str())
+            .unwrap();
+        let terminals = notifier.wait_for_terminals(2);
+        assert_eq!(terminals.len(), 2);
+        assert!(terminals
+            .iter()
+            .all(|item| item.status == AgentInvocationStatus::Completed));
+
+        let status = service.query().unwrap().transitions.remove(0);
+        assert!(status.prepared_at.is_some());
+        assert!(status.bootstrap_launched_at.is_some());
+        assert_eq!(
+            status.bootstrap_lifecycle_status.as_deref(),
+            Some("completed")
+        );
+        assert!(status.semantic_completion_fact_id.is_some());
+        assert!(status.material_accepted_at.is_some());
+        assert!(status.runner_session_created_at.is_some());
+        assert!(status.runner_launched_at.is_some());
+        assert_eq!(status.runner_lifecycle_status.as_deref(), Some("completed"));
+        assert_eq!(status.bootstrap_attempts.len(), 1);
+        assert_eq!(
+            status.accepted_attempt_id.as_deref(),
+            Some(status.current_attempt_id.as_str())
+        );
+
+        let connection = Connection::open(&database_path).unwrap();
+        for (table, expected) in [
+            ("epic_bootstrap_attempt_completion_commands", 1),
+            ("epic_bootstrap_attempt_completion_results", 1),
+            ("epic_bootstrap_attempt_completion_facts", 1),
+            ("agent_session_invocation_launch_acceptances", 2),
+            ("agent_session_invocations", 2),
+            ("epic_initiations", 1),
+            ("initiated_sprints", 1),
+        ] {
+            let count: i64 = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, expected, "unexpected live count for {table}");
+        }
+        let completed_mcp_calls = |invocation_id: &str, tool: &str| -> i64 {
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM agent_session_runtime_events WHERE invocation_id=?1 AND json_extract(raw_payload_json,'$.type')='item.completed' AND json_extract(raw_payload_json,'$.item.type')='mcp_tool_call' AND raw_payload_json LIKE ?2",
+                    params![invocation_id, format!("%{tool}%")],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(
+            completed_mcp_calls(&status.bootstrap_invocation_id, "complete_epic_bootstrap"),
+            1
+        );
+        assert_eq!(
+            completed_mcp_calls(&status.runner_invocation_id, "mcp_tool_call"),
+            0
+        );
+        let sprint_sessions: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM agent_sessions WHERE title LIKE '%Sprint%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(sprint_sessions, 0);
+        let inventory: String = connection
+            .query_row(
+                "SELECT inventory_json FROM epic_bootstrap_attempt_completion_facts",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let inventory: Vec<MaterialInventoryItem> = serde_json::from_str(&inventory).unwrap();
+        assert_eq!(inventory.len(), 2);
+        for item in &inventory {
+            let bytes = fs::read(&item.path).unwrap();
+            assert_eq!(item.sha256, sha256(&bytes));
+            assert_eq!(item.size_bytes, bytes.len() as u64);
+        }
+        drop(connection);
+        eprintln!(
+            "live transition: 1 Bootstrap call, 1 accepted inventory, 1 Runner launch, 0 Sprint sessions"
+        );
+        service.shutdown();
+        runtime.shutdown().unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_mcp_exposes_one_identity_free_semantic_action_and_persists_through_service()
+    {
+        let fixture = Fixture::new();
+        let status = fixture.status();
+        let invocation = AgentInvocationId::new(status.bootstrap_invocation_id.clone()).unwrap();
+        let server = start_bootstrap_server(
+            fixture.service.clone(),
+            invocation,
+            "bootstrap-bearer".into(),
+            vec!["tauri://localhost".into()],
+        )
+        .unwrap();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let initialize = serde_json::json!({
+            "jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                "protocolVersion":"2025-11-25","capabilities":{},
+                "clientInfo":{"name":"test","version":"1"}
+            }
+        })
+        .to_string();
+        assert_eq!(
+            client
+                .post(server.url())
+                .header("content-type", "application/json")
+                .body(initialize.clone())
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::UNAUTHORIZED
+        );
+        let initialized = client
+            .post(server.url())
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", "Bearer bootstrap-bearer")
+            .body(initialize)
+            .send()
+            .await
+            .unwrap();
+        let session = initialized
+            .headers()
+            .get("mcp-session-id")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let request = |id: u32, method: &str, params: serde_json::Value| {
+            serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}).to_string()
+        };
+        client
+            .post(server.url())
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", "Bearer bootstrap-bearer")
+            .header("mcp-session-id", &session)
+            .body(
+                serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+                    .to_string(),
+            )
+            .send()
+            .await
+            .unwrap();
+        let listed = client
+            .post(server.url())
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", "Bearer bootstrap-bearer")
+            .header("mcp-session-id", &session)
+            .body(request(2, "tools/list", serde_json::json!({})))
+            .send()
+            .await
+            .unwrap();
+        let listed = mcp_response_json(listed).await;
+        let tools = listed["result"]["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "complete_epic_bootstrap");
+        let schema = &tools[0]["inputSchema"];
+        assert_eq!(schema["additionalProperties"], false);
+        assert_eq!(
+            schema["properties"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            ["epicOverviewMarkdown", "runnerBriefMarkdown"]
+        );
+        assert!(!schema.to_string().contains("sessionId"));
+        assert!(!schema.to_string().contains("path"));
+
+        let arguments = serde_json::to_value(Fixture::materials()).unwrap();
+        let completed = client
+            .post(server.url())
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", "Bearer bootstrap-bearer")
+            .header("mcp-session-id", &session)
+            .body(request(
+                3,
+                "tools/call",
+                serde_json::json!({"name":"complete_epic_bootstrap","arguments":arguments}),
+            ))
+            .send()
+            .await
+            .unwrap();
+        let completed = mcp_response_json(completed).await;
+        assert_eq!(completed["result"]["isError"], false);
+        assert!(completed.to_string().contains("semanticCompletionFactId"));
+        assert!(fixture.status().semantic_completion_fact_id.is_some());
+        assert!(fixture.status().runner_launched_at.is_none());
+
+        let forbidden_shape = client.post(server.url()).header("content-type", "application/json").header("accept", "application/json, text/event-stream").header("authorization", "Bearer bootstrap-bearer").header("mcp-session-id", &session).body(request(4,"tools/call",serde_json::json!({"name":"complete_epic_bootstrap","arguments":{"epicOverviewMarkdown":"x","runnerBriefMarkdown":"y","agentSessionId":"forged"}}))).send().await.unwrap();
+        let forbidden_shape = mcp_response_json(forbidden_shape).await;
+        assert_eq!(forbidden_shape["result"]["isError"], true);
+        server.stop();
+    }
+
+    async fn mcp_response_json(response: reqwest::Response) -> serde_json::Value {
+        let text = response.text().await.unwrap();
+        let json = text
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or(&text);
+        serde_json::from_str(json)
+            .unwrap_or_else(|error| panic!("invalid MCP response {text:?}: {error}"))
+    }
+}
+
+fn read_transition(
+    connection: &Connection,
+    initiation_id: &str,
+) -> Result<TransitionRecord, TransitionError> {
+    connection
+        .query_row(
+            "SELECT initiation_id,epic_id,proposal_revision_id,material_snapshot_hash,proposal_json,preparation_id,prepared_root,approved_plan_path,manifest_path,overview_path,runner_brief_path,bootstrap_session_id,bootstrap_invocation_id,runner_session_id,runner_invocation_id,prepared_at,bootstrap_session_created_at,bootstrap_launched_at,bootstrap_lifecycle_status,semantic_completion_fact_id,material_accepted_at,runner_session_created_at,runner_launched_at FROM epic_bootstrap_transitions WHERE initiation_id=?1",
+            params![initiation_id],
+            |row| {
+                let proposal_json: String = row.get(4)?;
+                let proposal = serde_json::from_str(&proposal_json).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(proposal_json.len(), rusqlite::types::Type::Text, Box::new(error))
+                })?;
+                Ok(TransitionRecord {
+                    initiation_id: row.get(0)?, epic_id: row.get(1)?, proposal_revision_id: row.get(2)?, material_snapshot_hash: row.get(3)?,
+                    proposal_json, proposal, preparation_id: row.get(5)?, prepared_root: row.get(6)?, approved_plan_path: row.get(7)?,
+                    manifest_path: row.get(8)?, overview_path: row.get(9)?, runner_brief_path: row.get(10)?, bootstrap_session_id: row.get(11)?,
+                    bootstrap_invocation_id: row.get(12)?, runner_session_id: row.get(13)?, runner_invocation_id: row.get(14)?, prepared_at: row.get(15)?,
+                    bootstrap_session_created_at: row.get(16)?, bootstrap_launched_at: row.get(17)?, bootstrap_lifecycle_status: row.get(18)?,
+                    semantic_completion_fact_id: row.get(19)?, material_accepted_at: row.get(20)?, runner_session_created_at: row.get(21)?, runner_launched_at: row.get(22)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(sql_unavailable("read bootstrap transition"))?
+        .ok_or(TransitionError::NotFound)
+}
+
+fn read_attempt(
+    connection: &Connection,
+    attempt_id: &str,
+) -> Result<BootstrapAttemptRecord, TransitionError> {
+    connection
+        .query_row(
+            "SELECT id,transition_id,ordinal,agent_session_id,agent_invocation_id,launched_at,lifecycle_status,lifecycle_observed_at,semantic_completion_fact_id,semantic_completed_at,retry_disposition,retry_reason,retry_attempt_id,accepted_at FROM epic_bootstrap_attempts WHERE id=?1",
+            params![attempt_id],
+            map_attempt,
+        )
+        .optional()
+        .map_err(sql_unavailable("read bootstrap attempt"))?
+        .ok_or(TransitionError::NotFound)
+}
+
+fn read_current_attempt(
+    connection: &Connection,
+    transition_id: &str,
+) -> Result<BootstrapAttemptRecord, TransitionError> {
+    connection
+        .query_row(
+            "SELECT id,transition_id,ordinal,agent_session_id,agent_invocation_id,launched_at,lifecycle_status,lifecycle_observed_at,semantic_completion_fact_id,semantic_completed_at,retry_disposition,retry_reason,retry_attempt_id,accepted_at FROM epic_bootstrap_attempts WHERE transition_id=?1 ORDER BY ordinal DESC LIMIT 1",
+            params![transition_id],
+            map_attempt,
+        )
+        .optional()
+        .map_err(sql_unavailable("read current bootstrap attempt"))?
+        .ok_or(TransitionError::NotFound)
+}
+
+fn read_attempts(
+    connection: &Connection,
+    transition_id: &str,
+) -> Result<Vec<BootstrapAttemptRecord>, TransitionError> {
+    let mut statement = connection
+        .prepare("SELECT id,transition_id,ordinal,agent_session_id,agent_invocation_id,launched_at,lifecycle_status,lifecycle_observed_at,semantic_completion_fact_id,semantic_completed_at,retry_disposition,retry_reason,retry_attempt_id,accepted_at FROM epic_bootstrap_attempts WHERE transition_id=?1 ORDER BY ordinal")
+        .map_err(sql_unavailable("prepare bootstrap attempts"))?;
+    let attempts = statement
+        .query_map(params![transition_id], map_attempt)
+        .map_err(sql_unavailable("read bootstrap attempts"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sql_unavailable("collect bootstrap attempts"))?;
+    Ok(attempts)
+}
+
+fn map_attempt(row: &rusqlite::Row<'_>) -> rusqlite::Result<BootstrapAttemptRecord> {
+    Ok(BootstrapAttemptRecord {
+        id: row.get(0)?,
+        transition_id: row.get(1)?,
+        ordinal: row.get(2)?,
+        agent_session_id: row.get(3)?,
+        agent_invocation_id: row.get(4)?,
+        launched_at: row.get(5)?,
+        lifecycle_status: row.get(6)?,
+        lifecycle_observed_at: row.get(7)?,
+        semantic_completion_fact_id: row.get(8)?,
+        semantic_completed_at: row.get(9)?,
+        retry_disposition: row.get(10)?,
+        retry_reason: row.get(11)?,
+        retry_attempt_id: row.get(12)?,
+        accepted_at: row.get(13)?,
+    })
+}
+
+fn sql_unavailable(context: &'static str) -> impl FnOnce(rusqlite::Error) -> TransitionError {
+    move |error| TransitionError::Unavailable(format!("{context}: {error}"))
+}
+
+#[derive(Clone, Debug)]
+struct PreparedPaths {
+    preparation_id: String,
+    root: String,
+    approved_plan: String,
+    manifest: String,
+    overview: String,
+    runner_brief: String,
+}
+
+impl PreparedPaths {
+    fn derive(
+        base: &Path,
+        snapshot: &ConfirmedInitiationSnapshot,
+    ) -> Result<Self, TransitionError> {
+        if !safe_segment(&snapshot.epic_id) {
+            return Err(TransitionError::IdentityMismatch(
+                "Epic identity is not a safe path segment".into(),
+            ));
+        }
+        let root = base.join("epics").join(&snapshot.epic_id);
+        Ok(Self {
+            preparation_id: stable_id("epic-bootstrap-preparation", &snapshot.initiation_id),
+            approved_plan: path_text(&root.join("approved-plan.json"))?,
+            manifest: path_text(&root.join("transition-manifest.json"))?,
+            overview: path_text(&root.join("epic-overview.md"))?,
+            runner_brief: path_text(&root.join("runner-brief.md"))?,
+            root: path_text(&root)?,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ApprovedPlanInput<'a> {
+    contract: &'static str,
+    initiation_id: &'a str,
+    epic_id: &'a str,
+    proposal_revision_id: &'a str,
+    material_snapshot_hash: &'a str,
+    proposal: &'a PlanBuilderProposal,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TransitionManifestInput<'a> {
+    contract: &'static str,
+    preparation_id: &'a str,
+    prepared_root: &'a str,
+    approved_plan_path: &'a str,
+    overview_path: &'a str,
+    runner_brief_path: &'a str,
+    semantic_action: &'static str,
+}
+
+fn prepare_inputs(
+    base: &Path,
+    snapshot: &ConfirmedInitiationSnapshot,
+    paths: &PreparedPaths,
+) -> Result<(), TransitionError> {
+    fs::create_dir_all(base).map_err(fs_unavailable("create orchestration material root"))?;
+    let base =
+        fs::canonicalize(base).map_err(fs_unavailable("resolve orchestration material root"))?;
+    let root = PathBuf::from(&paths.root);
+    fs::create_dir_all(&root).map_err(fs_unavailable("create prepared Epic root"))?;
+    let canonical_root =
+        fs::canonicalize(&root).map_err(fs_unavailable("resolve prepared Epic root"))?;
+    if !canonical_root.starts_with(&base) || canonical_root == base {
+        return Err(TransitionError::IdentityMismatch(
+            "prepared Epic root escapes the application material root".into(),
+        ));
+    }
+    let approved = json_bytes(&ApprovedPlanInput {
+        contract: "epic-approved-plan-input/v1",
+        initiation_id: &snapshot.initiation_id,
+        epic_id: &snapshot.epic_id,
+        proposal_revision_id: &snapshot.proposal_revision_id,
+        material_snapshot_hash: &snapshot.material_snapshot_hash,
+        proposal: &snapshot.proposal,
+    })?;
+    let manifest = json_bytes(&TransitionManifestInput {
+        contract: "epic-bootstrap-transition-manifest/v1",
+        preparation_id: &paths.preparation_id,
+        prepared_root: &paths.root,
+        approved_plan_path: &paths.approved_plan,
+        overview_path: &paths.overview,
+        runner_brief_path: &paths.runner_brief,
+        semantic_action: "complete_epic_bootstrap",
+    })?;
+    write_exact_contained(&canonical_root, Path::new(&paths.approved_plan), &approved)?;
+    write_exact_contained(&canonical_root, Path::new(&paths.manifest), &manifest)?;
+    Ok(())
+}
+
+fn write_materials(
+    record: &TransitionRecord,
+    input: &BootstrapMaterialInput,
+) -> Result<Vec<MaterialInventoryItem>, TransitionError> {
+    input.validate()?;
+    let root = fs::canonicalize(&record.prepared_root)
+        .map_err(fs_unavailable("resolve prepared Epic root"))?;
+    let outputs = [
+        (
+            "epic_overview",
+            &record.overview_path,
+            input.epic_overview_markdown.as_bytes(),
+        ),
+        (
+            "runner_brief",
+            &record.runner_brief_path,
+            input.runner_brief_markdown.as_bytes(),
+        ),
+    ];
+    let mut inventory = Vec::new();
+    for (kind, path, bytes) in outputs {
+        let target = Path::new(path);
+        write_exact_contained(&root, target, bytes)?;
+        inventory.push(MaterialInventoryItem {
+            kind: kind.into(),
+            path: path.clone(),
+            sha256: sha256(bytes),
+            size_bytes: bytes.len() as u64,
+        });
+    }
+    Ok(inventory)
+}
+
+fn write_exact_contained(root: &Path, target: &Path, bytes: &[u8]) -> Result<(), TransitionError> {
+    let parent = target.parent().ok_or_else(|| {
+        TransitionError::IdentityMismatch("material destination has no parent".into())
+    })?;
+    let canonical_parent =
+        fs::canonicalize(parent).map_err(fs_unavailable("resolve material destination"))?;
+    if canonical_parent != root
+        || target
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(TransitionError::IdentityMismatch(
+            "material destination escapes the prepared Epic root".into(),
+        ));
+    }
+    reject_link_or_reparse(target)?;
+    if target.exists() {
+        let existing =
+            fs::read(target).map_err(fs_unavailable("read existing prepared material"))?;
+        if existing != bytes {
+            return Err(TransitionError::IdentityMismatch(format!(
+                "prepared material already exists with different bytes: {}",
+                target.display()
+            )));
+        }
+        return Ok(());
+    }
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)
+        .map_err(fs_unavailable("create prepared material"))?;
+    file.write_all(bytes)
+        .map_err(fs_unavailable("write prepared material"))?;
+    file.sync_all()
+        .map_err(fs_unavailable("sync prepared material"))?;
+    Ok(())
+}
+
+fn reject_link_or_reparse(path: &Path) -> Result<(), TransitionError> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(fs_unavailable("inspect prepared material target")(error)),
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(TransitionError::IdentityMismatch(format!(
+            "prepared material target is a symbolic link or reparse point: {}",
+            path.display()
+        )));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(TransitionError::IdentityMismatch(format!(
+                "prepared material target is a symbolic link or reparse point: {}",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn fs_unavailable(context: &'static str) -> impl FnOnce(std::io::Error) -> TransitionError {
+    move |error| TransitionError::Unavailable(format!("{context}: {error}"))
+}
+
+fn json_bytes(value: &impl Serialize) -> Result<Vec<u8>, TransitionError> {
+    let mut bytes = serde_json::to_vec_pretty(value)
+        .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+fn path_text(path: &Path) -> Result<String, TransitionError> {
+    path.to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| TransitionError::IdentityMismatch("prepared path is not valid UTF-8".into()))
+}
+
+fn safe_segment(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 200
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn stable_id(prefix: &str, source: &str) -> String {
+    format!("{prefix}-{}", sha256(source.as_bytes()))
+}
+
+fn bootstrap_attempt_id(initiation_id: &str, ordinal: i64) -> String {
+    format!("epic-bootstrap-attempt-{ordinal}-{initiation_id}")
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct BootstrapTransitionQueryV2 {
+    pub(crate) contract: String,
+    pub(crate) schema_version: u16,
+    pub(crate) transitions: Vec<BootstrapTransitionStatusV2>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct BootstrapTransitionStatusV2 {
+    pub(crate) initiation_id: String,
+    pub(crate) epic_id: String,
+    pub(crate) preparation_id: String,
+    pub(crate) prepared_root: String,
+    pub(crate) approved_plan_path: String,
+    pub(crate) manifest_path: String,
+    pub(crate) overview_path: String,
+    pub(crate) runner_brief_path: String,
+    pub(crate) bootstrap_session_id: String,
+    pub(crate) bootstrap_invocation_id: String,
+    pub(crate) prepared_at: Option<String>,
+    pub(crate) bootstrap_session_created_at: Option<String>,
+    pub(crate) bootstrap_launched_at: Option<String>,
+    pub(crate) bootstrap_lifecycle_status: Option<String>,
+    pub(crate) bootstrap_lifecycle_observed_at: Option<String>,
+    pub(crate) semantic_completion_fact_id: Option<String>,
+    pub(crate) semantic_completed_at: Option<String>,
+    pub(crate) material_accepted_at: Option<String>,
+    pub(crate) runner_session_id: String,
+    pub(crate) runner_invocation_id: String,
+    pub(crate) runner_session_created_at: Option<String>,
+    pub(crate) runner_launched_at: Option<String>,
+    pub(crate) runner_lifecycle_status: Option<String>,
+    pub(crate) runner_lifecycle_observed_at: Option<String>,
+    pub(crate) current_attempt_id: String,
+    pub(crate) retry_state: String,
+    pub(crate) blocked_reason: Option<String>,
+    pub(crate) accepted_attempt_id: Option<String>,
+    pub(crate) bootstrap_attempts: Vec<BootstrapAttemptStatusV2>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct BootstrapAttemptStatusV2 {
+    pub(crate) attempt_id: String,
+    pub(crate) ordinal: i64,
+    pub(crate) agent_session_id: String,
+    pub(crate) agent_invocation_id: String,
+    pub(crate) launched_at: Option<String>,
+    pub(crate) lifecycle_status: Option<String>,
+    pub(crate) lifecycle_observed_at: Option<String>,
+    pub(crate) semantic_completion_fact_id: Option<String>,
+    pub(crate) semantic_completed_at: Option<String>,
+    pub(crate) retry_disposition: String,
+    pub(crate) retry_reason: Option<String>,
+    pub(crate) retry_attempt_id: Option<String>,
+    pub(crate) accepted_at: Option<String>,
+}
+
+impl From<BootstrapAttemptRecord> for BootstrapAttemptStatusV2 {
+    fn from(attempt: BootstrapAttemptRecord) -> Self {
+        Self {
+            attempt_id: attempt.id,
+            ordinal: attempt.ordinal,
+            agent_session_id: attempt.agent_session_id,
+            agent_invocation_id: attempt.agent_invocation_id,
+            launched_at: attempt.launched_at,
+            lifecycle_status: attempt.lifecycle_status,
+            lifecycle_observed_at: attempt.lifecycle_observed_at,
+            semantic_completion_fact_id: attempt.semantic_completion_fact_id,
+            semantic_completed_at: attempt.semantic_completed_at,
+            retry_disposition: attempt.retry_disposition,
+            retry_reason: attempt.retry_reason,
+            retry_attempt_id: attempt.retry_attempt_id,
+            accepted_at: attempt.accepted_at,
+        }
+    }
+}

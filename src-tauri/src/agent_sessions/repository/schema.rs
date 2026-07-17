@@ -5,7 +5,6 @@ CREATE TABLE agent_sessions (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   availability TEXT NOT NULL CHECK (availability IN ('available', 'archived')),
-  runtime_kind TEXT NOT NULL CHECK (runtime_kind IN ('codex_cli')),
   external_context_id TEXT,
   runtime_version TEXT,
   working_directory TEXT,
@@ -18,6 +17,7 @@ CREATE TABLE agent_session_invocations (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
   submitted_text TEXT NOT NULL,
+  input_provenance TEXT NOT NULL CHECK (input_provenance IN ('user', 'application')),
   status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'canceled', 'interrupted')),
   requested_options_json TEXT NOT NULL CHECK (json_valid(requested_options_json)),
   effective_options_json TEXT CHECK (effective_options_json IS NULL OR json_valid(effective_options_json)),
@@ -37,6 +37,12 @@ WHERE status IN ('pending', 'running');
 
 CREATE INDEX agent_session_invocations_history
 ON agent_session_invocations(session_id, created_at, id);
+
+CREATE TABLE agent_session_invocation_launch_acceptances (
+  invocation_id TEXT PRIMARY KEY,
+  accepted_at TEXT NOT NULL,
+  FOREIGN KEY (invocation_id) REFERENCES agent_session_invocations(id) ON DELETE CASCADE
+);
 
 CREATE TABLE agent_session_runtime_events (
   id TEXT PRIMARY KEY,
@@ -60,6 +66,14 @@ CREATE TABLE agent_session_invocation_diagnostics (
   recorded_at TEXT NOT NULL,
   FOREIGN KEY (invocation_id) REFERENCES agent_session_invocations(id) ON DELETE CASCADE,
   PRIMARY KEY (invocation_id, sequence)
+);
+"#;
+
+pub(crate) const AGENT_SESSION_LAUNCH_ACCEPTANCE_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS agent_session_invocation_launch_acceptances (
+  invocation_id TEXT PRIMARY KEY,
+  accepted_at TEXT NOT NULL,
+  FOREIGN KEY (invocation_id) REFERENCES agent_session_invocations(id) ON DELETE CASCADE
 );
 "#;
 

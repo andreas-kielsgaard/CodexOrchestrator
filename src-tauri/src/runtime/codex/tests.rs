@@ -1,5 +1,5 @@
 use super::{
-    arguments::{build_args, prepare_options, InvocationCommand},
+    arguments::{build_args_from_effective_options, prepare_options, InvocationCommand},
     capabilities::{resolve_program, CodexCliCapabilities, CodexCliCapabilityProbe},
     protocol::{CodexJsonlProtocol, JsonlTerminalEvidence},
     runtime::reconcile_terminal,
@@ -12,8 +12,11 @@ use crate::{
             ExternalRuntimeContextId, NormalizedRuntimeEventKind, RuntimeSandboxMode,
         },
         ports::{
-            AgentRuntime, AgentRuntimeUpdateSink, RuntimeInvocationMode, RuntimeInvocationRequest,
-            RuntimePortError, RuntimePortErrorKind, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
+            AgentAccessCapabilities, AgentAccessCapabilityDiscovery, AgentAccessCapabilitySnapshot,
+            AgentRuntime, AgentRuntimeUpdateSink, CapabilityDiscoveryState, CapabilityProvenance,
+            CapabilitySupport, InvocationCapabilities, RuntimeInvocationMode,
+            RuntimeInvocationRequest, RuntimeLaunchExtension, RuntimePortError,
+            RuntimePortErrorKind, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
         },
     },
     runtime::processes::{
@@ -21,12 +24,13 @@ use crate::{
         ProcessTerminalOutcome, SpawnedProcess, SupervisedChild,
     },
 };
+use chrono::{Duration as ChronoDuration, Utc};
 use serde::Deserialize;
 use std::{
     collections::VecDeque,
     io::{self, Cursor},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Condvar, Mutex,
     },
     time::{Duration, Instant},
@@ -46,6 +50,84 @@ fn capabilities() -> CodexCliCapabilities {
         exec_sandbox: Some(true),
         resume_sandbox: Some(false),
     }
+}
+
+fn invocation_capabilities(resume: bool) -> InvocationCapabilities {
+    InvocationCapabilities {
+        structured_events: CapabilitySupport::Supported,
+        model_selection: CapabilitySupport::Supported,
+        sandbox_selection: if resume {
+            CapabilitySupport::Unsupported
+        } else {
+            CapabilitySupport::Supported
+        },
+    }
+}
+
+struct SnapshotDiscovery {
+    count: AtomicUsize,
+    start: InvocationCapabilities,
+    resume: InvocationCapabilities,
+    state: CapabilityDiscoveryState,
+}
+
+struct MutableSnapshotDiscovery {
+    count: AtomicUsize,
+    capabilities: Mutex<AgentAccessCapabilities>,
+}
+
+impl AgentAccessCapabilityDiscovery for MutableSnapshotDiscovery {
+    fn discover_capabilities(
+        &self,
+        observed_at: chrono::DateTime<Utc>,
+    ) -> AgentAccessCapabilitySnapshot {
+        self.count.fetch_add(1, Ordering::SeqCst);
+        AgentAccessCapabilitySnapshot {
+            capabilities: self.capabilities.lock().expect("capabilities").clone(),
+            discovery_state: CapabilityDiscoveryState::Observed,
+            provenance: CapabilityProvenance {
+                source: "mutable_test_codex_probe".to_string(),
+                runtime_version: Some("codex-cli mutable-test".to_string()),
+            },
+            observed_at,
+            valid_until: observed_at + ChronoDuration::minutes(30),
+            unavailable_reason: None,
+        }
+    }
+}
+
+impl AgentAccessCapabilityDiscovery for SnapshotDiscovery {
+    fn discover_capabilities(
+        &self,
+        observed_at: chrono::DateTime<Utc>,
+    ) -> AgentAccessCapabilitySnapshot {
+        self.count.fetch_add(1, Ordering::SeqCst);
+        AgentAccessCapabilitySnapshot {
+            capabilities: AgentAccessCapabilities {
+                start: self.start.clone(),
+                resume: self.resume.clone(),
+            },
+            discovery_state: self.state,
+            provenance: CapabilityProvenance {
+                source: "test_codex_probe".to_string(),
+                runtime_version: (self.state == CapabilityDiscoveryState::Observed)
+                    .then(|| "codex-cli test".to_string()),
+            },
+            observed_at,
+            valid_until: observed_at + ChronoDuration::minutes(30),
+            unavailable_reason: (self.state == CapabilityDiscoveryState::Unavailable)
+                .then(|| "test probe unavailable".to_string()),
+        }
+    }
+}
+
+fn observed_discovery() -> Arc<SnapshotDiscovery> {
+    Arc::new(SnapshotDiscovery {
+        count: AtomicUsize::new(0),
+        start: invocation_capabilities(false),
+        resume: invocation_capabilities(true),
+        state: CapabilityDiscoveryState::Observed,
+    })
 }
 
 #[cfg(windows)]
@@ -90,18 +172,43 @@ fn explicit_cmd_without_native_binary_is_rejected_before_process_launch() {
 }
 
 #[test]
+fn failed_codex_probe_is_unavailable_with_unknown_semantics() {
+    let missing = std::env::temp_dir().join(format!(
+        "missing-codex-capability-probe-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let snapshot = CodexCliCapabilityProbe::new(missing.to_string_lossy().into_owned())
+        .discover_capabilities(Utc::now());
+
+    assert_eq!(
+        snapshot.discovery_state,
+        CapabilityDiscoveryState::Unavailable
+    );
+    assert_eq!(
+        snapshot.capabilities.start,
+        InvocationCapabilities::default()
+    );
+    assert_eq!(
+        snapshot.capabilities.resume,
+        InvocationCapabilities::default()
+    );
+    assert!(snapshot.unavailable_reason.is_some());
+}
+
+#[test]
 fn builds_supported_first_turn_and_resume_commands() {
     let options = AgentRuntimeOptions {
         model: Some("gpt-5".to_string()),
         sandbox: Some(RuntimeSandboxMode::WorkspaceWrite),
     };
-    let start = build_args(
+    let start_effective =
+        prepare_options(&options, &invocation_capabilities(false)).expect("start preflight");
+    let start = build_args_from_effective_options(
         InvocationCommand::Start,
         "hello",
-        &options,
-        Some(&capabilities()),
-    )
-    .expect("start args");
+        &start_effective,
+        None,
+    );
     assert_eq!(
         start,
         [
@@ -114,22 +221,20 @@ fn builds_supported_first_turn_and_resume_commands() {
             "hello"
         ]
     );
-    assert_eq!(
-        prepare_options(false, &options, Some(&capabilities())).expect("start preflight"),
-        options
-    );
+    assert_eq!(start_effective, options);
     let context = ExternalRuntimeContextId::new("thread-external").expect("context");
     let resume_options = AgentRuntimeOptions {
         model: Some("gpt-5".to_string()),
         sandbox: None,
     };
-    let resume = build_args(
+    let resume_effective =
+        prepare_options(&resume_options, &invocation_capabilities(true)).expect("resume preflight");
+    let resume = build_args_from_effective_options(
         InvocationCommand::Resume(&context),
         "continue",
-        &resume_options,
-        Some(&capabilities()),
-    )
-    .expect("resume args");
+        &resume_effective,
+        None,
+    );
     assert_eq!(
         resume,
         [
@@ -142,9 +247,41 @@ fn builds_supported_first_turn_and_resume_commands() {
             "continue"
         ]
     );
+    assert_eq!(resume_effective, resume_options);
+}
+
+#[test]
+fn resume_assembles_sandbox_through_the_supported_strict_config_surface() {
+    let options = AgentRuntimeOptions {
+        model: None,
+        sandbox: Some(RuntimeSandboxMode::ReadOnly),
+    };
+    let effective = prepare_options(
+        &options,
+        &InvocationCapabilities {
+            structured_events: CapabilitySupport::Supported,
+            model_selection: CapabilitySupport::Supported,
+            sandbox_selection: CapabilitySupport::Supported,
+        },
+    )
+    .unwrap();
+    let context = ExternalRuntimeContextId::new("thread-resume").unwrap();
     assert_eq!(
-        prepare_options(true, &resume_options, Some(&capabilities())).expect("resume preflight"),
-        resume_options
+        build_args_from_effective_options(
+            InvocationCommand::Resume(&context),
+            "continue",
+            &effective,
+            None,
+        ),
+        [
+            "exec",
+            "resume",
+            "--json",
+            "-c",
+            "sandbox_mode=\"read-only\"",
+            "thread-resume",
+            "continue",
+        ]
     );
 }
 
@@ -152,31 +289,158 @@ fn builds_supported_first_turn_and_resume_commands() {
 fn omits_optional_options_when_capability_data_is_absent() {
     let options = AgentRuntimeOptions {
         model: Some("unverified-model".to_string()),
+        sandbox: None,
+    };
+    let effective =
+        prepare_options(&options, &InvocationCapabilities::default()).expect("preflight defaults");
+    let args =
+        build_args_from_effective_options(InvocationCommand::Start, "hello", &effective, None);
+    assert_eq!(args, ["exec", "--json", "hello"]);
+    assert_eq!(effective, AgentRuntimeOptions::default());
+}
+
+#[test]
+fn rejects_requested_sandbox_when_support_is_unknown() {
+    let options = AgentRuntimeOptions {
+        model: None,
         sandbox: Some(RuntimeSandboxMode::ReadOnly),
     };
-    let args = build_args(InvocationCommand::Start, "hello", &options, None).expect("defaults");
-    assert_eq!(args, ["exec", "--json", "hello"]);
+    let error = prepare_options(&options, &InvocationCapabilities::default())
+        .expect_err("sandbox enforcement must fail closed");
+    assert_eq!(error.kind, RuntimePortErrorKind::UnsupportedOptions);
+    assert!(error.message.contains("sandbox support is unknown"));
+}
+
+#[test]
+fn assembles_enforced_plan_builder_runtime_and_child_configuration() {
+    let effective = AgentRuntimeOptions {
+        model: None,
+        sandbox: Some(RuntimeSandboxMode::ReadOnly),
+    };
+    let extension = RuntimeLaunchExtension {
+        additional_args: vec![
+            "-c".into(),
+            "approval_policy=\"never\"".into(),
+            "-c".into(),
+            "mcp_servers.role.required=true".into(),
+        ],
+        environment: vec![],
+        initial_prompt_prefix: None,
+    };
     assert_eq!(
-        prepare_options(false, &options, None).expect("preflight defaults"),
-        AgentRuntimeOptions::default()
+        build_args_from_effective_options(
+            InvocationCommand::Start,
+            "plan",
+            &effective,
+            Some(&extension),
+        ),
+        [
+            "exec",
+            "--json",
+            "--sandbox",
+            "read-only",
+            "-c",
+            "approval_policy=\"never\"",
+            "-c",
+            "mcp_servers.role.required=true",
+            "plan",
+        ]
     );
 }
 
 #[test]
 fn rejects_a_confirmed_unsupported_resume_sandbox() {
-    let context = ExternalRuntimeContextId::new("thread-external").expect("context");
     let options = AgentRuntimeOptions {
         model: None,
         sandbox: Some(RuntimeSandboxMode::ReadOnly),
     };
-    let error = build_args(
-        InvocationCommand::Resume(&context),
-        "continue",
-        &options,
-        Some(&capabilities()),
-    )
-    .expect_err("unsupported sandbox");
+    let error =
+        prepare_options(&options, &invocation_capabilities(true)).expect_err("unsupported sandbox");
     assert!(error.message.contains("sandbox"));
+}
+
+#[test]
+fn runtime_reuses_discovery_and_exposes_refresh_and_invalidation() {
+    let discovery = observed_discovery();
+    let factory = Arc::new(FixtureFactory::default());
+    let runtime = CodexCliRuntime::new_with_discovery("fixture-codex", discovery.clone(), factory);
+
+    runtime
+        .preflight_invocation(
+            RuntimeInvocationMode::Start,
+            &AgentRuntimeOptions::default(),
+        )
+        .expect("first preflight");
+    runtime
+        .preflight_invocation(
+            RuntimeInvocationMode::Resume,
+            &AgentRuntimeOptions::default(),
+        )
+        .expect("cached resume preflight");
+    assert_eq!(discovery.count.load(Ordering::SeqCst), 1);
+
+    runtime.refresh_capabilities();
+    assert_eq!(discovery.count.load(Ordering::SeqCst), 2);
+    runtime.invalidate_capabilities();
+    runtime
+        .preflight_invocation(
+            RuntimeInvocationMode::Start,
+            &AgentRuntimeOptions::default(),
+        )
+        .expect("preflight after invalidation");
+    assert_eq!(discovery.count.load(Ordering::SeqCst), 3);
+}
+
+#[test]
+fn unavailable_discovery_rejects_a_required_sandbox_before_launch() {
+    let discovery = Arc::new(SnapshotDiscovery {
+        count: AtomicUsize::new(0),
+        start: InvocationCapabilities::default(),
+        resume: InvocationCapabilities::default(),
+        state: CapabilityDiscoveryState::Unavailable,
+    });
+    let runtime = CodexCliRuntime::new_with_discovery(
+        "fixture-codex",
+        discovery.clone(),
+        Arc::new(FixtureFactory::default()),
+    );
+    let requested = AgentRuntimeOptions {
+        model: Some("unverified-model".to_string()),
+        sandbox: Some(RuntimeSandboxMode::ReadOnly),
+    };
+
+    let error = runtime
+        .preflight_invocation(RuntimeInvocationMode::Start, &requested)
+        .expect_err("unknown sandbox support must fail closed");
+
+    assert_eq!(error.kind, RuntimePortErrorKind::UnsupportedOptions);
+    assert_eq!(discovery.count.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn start_and_resume_use_distinct_capability_surfaces() {
+    let discovery = observed_discovery();
+    let runtime = CodexCliRuntime::new_with_discovery(
+        "fixture-codex",
+        discovery,
+        Arc::new(FixtureFactory::default()),
+    );
+    let requested = AgentRuntimeOptions {
+        model: None,
+        sandbox: Some(RuntimeSandboxMode::WorkspaceWrite),
+    };
+
+    assert_eq!(
+        runtime
+            .preflight_invocation(RuntimeInvocationMode::Start, &requested)
+            .expect("start sandbox")
+            .effective_options,
+        requested
+    );
+    let error = runtime
+        .preflight_invocation(RuntimeInvocationMode::Resume, &requested)
+        .expect_err("resume sandbox is independently unsupported");
+    assert_eq!(error.kind, RuntimePortErrorKind::UnsupportedOptions);
 }
 
 #[derive(Deserialize)]
@@ -326,6 +590,84 @@ impl ChildProcessFactory for FixtureFactory {
             stderr: Box::new(Cursor::new(stderr)),
         })
     }
+}
+
+#[test]
+fn launch_uses_persisted_preflight_options_without_rediscovery() {
+    let discovery = Arc::new(MutableSnapshotDiscovery {
+        count: AtomicUsize::new(0),
+        capabilities: Mutex::new(AgentAccessCapabilities {
+            start: invocation_capabilities(false),
+            resume: invocation_capabilities(true),
+        }),
+    });
+    let factory = Arc::new(FixtureFactory::default());
+    factory
+        .stdout
+        .lock()
+        .expect("stdout")
+        .push_back(FIRST_TURN.as_bytes().to_vec());
+    let runtime =
+        CodexCliRuntime::new_with_discovery("fixture-codex", discovery.clone(), factory.clone());
+    let requested = AgentRuntimeOptions {
+        model: Some("gpt-5".to_string()),
+        sandbox: Some(RuntimeSandboxMode::WorkspaceWrite),
+    };
+    let preflight = runtime
+        .preflight_invocation(RuntimeInvocationMode::Start, &requested)
+        .expect("preflight");
+    assert_eq!(discovery.count.load(Ordering::SeqCst), 1);
+
+    *discovery.capabilities.lock().expect("capabilities") = AgentAccessCapabilities {
+        start: InvocationCapabilities {
+            structured_events: CapabilitySupport::Unsupported,
+            model_selection: CapabilitySupport::Unsupported,
+            sandbox_selection: CapabilitySupport::Unsupported,
+        },
+        resume: InvocationCapabilities::default(),
+    };
+    runtime.refresh_capabilities();
+    assert_eq!(discovery.count.load(Ordering::SeqCst), 2);
+
+    let mut invocation = request("preflight-options", "first");
+    invocation.options = preflight.effective_options;
+    let sink = Arc::new(CollectingSink::default());
+    runtime
+        .start_invocation(invocation, sink.clone())
+        .expect("launch uses persisted effective options");
+    sink.wait_finished();
+
+    assert_eq!(discovery.count.load(Ordering::SeqCst), 2);
+    let specs = factory.specs.lock().expect("specs");
+    assert_eq!(
+        specs[0].args,
+        [
+            "exec",
+            "--json",
+            "--model",
+            "gpt-5",
+            "--sandbox",
+            "workspace-write",
+            "first"
+        ]
+    );
+}
+
+#[test]
+fn confirmed_unsupported_requested_option_fails_before_process_launch() {
+    let discovery = observed_discovery();
+    let factory = Arc::new(FixtureFactory::default());
+    let runtime = CodexCliRuntime::new_with_discovery("fixture-codex", discovery, factory.clone());
+    let requested = AgentRuntimeOptions {
+        model: None,
+        sandbox: Some(RuntimeSandboxMode::WorkspaceWrite),
+    };
+    let error = runtime
+        .preflight_invocation(RuntimeInvocationMode::Resume, &requested)
+        .expect_err("unsupported resume sandbox");
+
+    assert_eq!(error.kind, RuntimePortErrorKind::UnsupportedOptions);
+    assert!(factory.specs.lock().expect("specs").is_empty());
 }
 
 #[test]
@@ -680,6 +1022,7 @@ fn launch_observer_sees_resume_external_context_not_local_ids() {
                 submitted_text: "continue".to_string(),
                 working_directory: None,
                 options: AgentRuntimeOptions::default(),
+                launch_extension: None,
             },
             external_context.clone(),
             sink.clone(),
@@ -744,6 +1087,7 @@ fn request(invocation: &str, prompt: &str) -> RuntimeInvocationRequest {
         submitted_text: prompt.to_string(),
         working_directory: Some("C:/work/project".to_string()),
         options: AgentRuntimeOptions::default(),
+        launch_extension: None,
     }
 }
 
@@ -763,5 +1107,5 @@ fn installed_codex_help_is_compatible_without_running_an_agent_prompt() {
     assert_eq!(discovered.exec_model, Some(true));
     assert_eq!(discovered.resume_model, Some(true));
     assert_eq!(discovered.exec_sandbox, Some(true));
-    assert_eq!(discovered.resume_sandbox, Some(false));
+    assert_eq!(discovered.resume_sandbox, Some(true));
 }

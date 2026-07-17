@@ -2,8 +2,8 @@ use super::{
     domain::{
         validate_new_invocation, validate_next_event, validate_runtime_binding_update,
         validate_session, AgentDiagnostic, AgentInvocation, AgentInvocationId,
-        AgentInvocationStatus, AgentInvocationTerminalStatus, AgentRuntimeBinding,
-        AgentRuntimeEvent, AgentRuntimeEventId, AgentRuntimeEventSource, AgentRuntimeKind,
+        AgentInvocationInputProvenance, AgentInvocationStatus, AgentInvocationTerminalStatus,
+        AgentRuntimeBinding, AgentRuntimeEvent, AgentRuntimeEventId, AgentRuntimeEventSource,
         AgentRuntimeOptions, AgentSession, AgentSessionAvailability, AgentSessionId,
         ContractViolation, ExternalRuntimeContextId, InvocationCompletion, NormalizedRuntimeEvent,
         NormalizedRuntimeEventKind,
@@ -34,7 +34,7 @@ fn session_serialization_keeps_local_and_external_identity_separate() {
         serialized["runtimeBinding"]["externalContextId"],
         "runtime-external"
     );
-    assert_eq!(serialized["runtimeBinding"]["kind"], "codex_cli");
+    assert!(serialized["runtimeBinding"].get("kind").is_none());
     assert_eq!(serialized["availability"], "available");
     assert_eq!(serialized["workingDirectory"], "C:/work/session-local");
 }
@@ -298,6 +298,7 @@ fn fake_runtime_requires_external_identity_only_for_resume_and_streams_updates()
         submitted_text: "Continue the work".to_string(),
         working_directory: Some("C:/work/session-local".to_string()),
         options: runtime_options(),
+        launch_extension: None,
     };
 
     let start_preflight = runtime
@@ -346,6 +347,7 @@ struct FakeRepository {
 struct FakeRepositoryState {
     sessions: BTreeMap<AgentSessionId, AgentSession>,
     invocations: BTreeMap<AgentInvocationId, AgentInvocation>,
+    launch_acceptances: BTreeMap<AgentInvocationId, DateTime<Utc>>,
     events: BTreeMap<AgentInvocationId, Vec<AgentRuntimeEvent>>,
 }
 
@@ -608,6 +610,38 @@ impl AgentSessionRepository for FakeRepository {
         Ok(updated)
     }
 
+    fn record_invocation_launch_accepted(
+        &self,
+        invocation_id: &AgentInvocationId,
+        accepted_at: DateTime<Utc>,
+    ) -> Result<(), RepositoryError> {
+        let mut state = self.state.lock().expect("fake repository");
+        if !state.invocations.contains_key(invocation_id) {
+            return Err(repository_error(
+                RepositoryErrorKind::NotFound,
+                "invocation not found",
+            ));
+        }
+        state
+            .launch_acceptances
+            .entry(invocation_id.clone())
+            .or_insert(accepted_at);
+        Ok(())
+    }
+
+    fn invocation_launch_accepted_at(
+        &self,
+        invocation_id: &AgentInvocationId,
+    ) -> Result<Option<DateTime<Utc>>, RepositoryError> {
+        Ok(self
+            .state
+            .lock()
+            .expect("fake repository")
+            .launch_acceptances
+            .get(invocation_id)
+            .copied())
+    }
+
     fn finish_invocation(
         &self,
         invocation_id: &AgentInvocationId,
@@ -780,7 +814,6 @@ fn session(id: &str, external_context_id: Option<&str>) -> AgentSession {
 
 fn binding(external_context_id_value: Option<&str>) -> AgentRuntimeBinding {
     AgentRuntimeBinding {
-        kind: AgentRuntimeKind::CodexCli,
         external_context_id: external_context_id_value.map(external_context_id),
         runtime_version: Some("runtime-test".to_string()),
     }
@@ -791,6 +824,7 @@ fn invocation(id: &str, session: &str, status: AgentInvocationStatus) -> AgentIn
         id: invocation_id(id),
         session_id: session_id(session),
         submitted_text: "Do the work".to_string(),
+        input_provenance: AgentInvocationInputProvenance::User,
         status,
         requested_options: runtime_options(),
         effective_options: None,

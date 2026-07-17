@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 2,
+  "harnesses": [
+    {
+      "key": "epic_plan_builder",
+      "version": 4,
+      "context": "You are the Epic Plan Builder in a product-owned pre-initiation conversation. Ordinary discussion explores goals, Sprint boundaries, ambiguity, risks, and alternatives without changing structured product state. Use epic-plan-builder only when the user asks to build, structure, or revise the proposal. Persist structured state only through submit_epic_plan_proposal. Request initiation only through request_epic_initiation; the application obtains explicit user confirmation and rejects unconfirmed requests. Do not generate materials, create downstream sessions, or imply that an initiation request was applied.",
+      "skillGuidance": [
+        {
+          "canonicalName": "epic-plan-builder",
+          "canonicalPath": ".agents/skills/epic-plan-builder/SKILL.md",
+          "purpose": "Shape and submit one structured Epic proposal before initiation.",
+          "useWhen": "the user asks to build, structure, or revise the proposal."
+        }
+      ],
+      "runtime": {
+        "model": null,
+        "reasoningEffort": null,
+        "sandbox": "read_only",
+        "approvalPolicy": "never"
+      },
+      "mcp": {
+        "required": true,
+        "enabledTools": ["submit_epic_plan_proposal", "request_epic_initiation"]
+      },
+      "lifecycle": {
+        "contextDelivery": "first_query",
+        "completionCriteria": ["proposal_persisted_or_user_ends_discussion"]
+      }
+    },
+    {
+      "key": "epic_bootstrap_generator",
+      "version": 2,
+      "context": "You are the Epic Bootstrap Generator for one application-prepared initiated Epic. Read the supplied approved plan and prepared paths. Generate only the requested bounded content and submit it through complete_epic_bootstrap. Do not write files directly. Session completion alone does not prove material acceptance.",
+      "skillGuidance": [
+        {
+          "canonicalName": "epic-bootstrap-generator",
+          "canonicalPath": ".agents/skills/epic-bootstrap-generator/SKILL.md",
+          "purpose": "Generate the approved materials required for one Epic Runner.",
+          "useWhen": "the application has supplied an initiated Epic and prepared working root."
+        }
+      ],
+      "runtime": {
+        "model": null,
+        "reasoningEffort": null,
+        "sandbox": "read_only",
+        "approvalPolicy": "never"
+      },
+      "mcp": {
+        "required": true,
+        "enabledTools": ["complete_epic_bootstrap"]
+      },
+      "lifecycle": {
+        "contextDelivery": "first_query",
+        "completionCriteria": ["semantic_material_completion_and_terminal_observation"]
+      }
+    },
+    {
+      "key": "epic_runner",
+      "version": 1,
+      "context": "You are the Epic Runner for one initiated Epic whose accepted bootstrap materials are supplied by the application. Read the plan, materials, and current durable state. In this Sprint, reach only a truthful ready state; do not start a product Sprint or create child sessions.",
+      "skillGuidance": [
+        {
+          "canonicalName": "epic-runner",
+          "canonicalPath": ".agents/skills/epic-runner/SKILL.md",
+          "purpose": "Advance one initiated Epic from durable product state.",
+          "useWhen": "the application has supplied accepted bootstrap materials and ready-state authority."
+        }
+      ],
+      "runtime": {
+        "model": null,
+        "reasoningEffort": null,
+        "sandbox": "read_only",
+        "approvalPolicy": "never"
+      },
+      "mcp": {
+        "required": false,
+        "enabledTools": []
+      },
+      "lifecycle": {
+        "contextDelivery": "first_query",
+        "completionCriteria": ["application_observed_ready_state"]
+      }
+    }
+  ]
+}

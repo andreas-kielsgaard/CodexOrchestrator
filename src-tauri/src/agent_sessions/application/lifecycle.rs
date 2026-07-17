@@ -2,15 +2,16 @@ use super::update_sink::{InvocationUpdateLanes, PersistedRuntimeUpdateSink};
 use crate::agent_sessions::{
     domain::{
         AgentDiagnostic, AgentDiagnosticSeverity, AgentDiagnosticSource, AgentInvocation,
-        AgentInvocationId, AgentInvocationStatus, AgentInvocationTerminalStatus,
-        AgentRuntimeBinding, AgentRuntimeEvent, AgentRuntimeEventId, AgentRuntimeFailure,
-        AgentRuntimeKind, AgentRuntimeOptions, AgentSession, AgentSessionAvailability,
+        AgentInvocationId, AgentInvocationInputProvenance, AgentInvocationStatus,
+        AgentInvocationTerminalStatus, AgentRuntimeBinding, AgentRuntimeEvent, AgentRuntimeEventId,
+        AgentRuntimeFailure, AgentRuntimeOptions, AgentSession, AgentSessionAvailability,
         AgentSessionId, InvocationCompletion,
     },
     ports::{
         AgentRuntime, AgentRuntimeUpdateSink, AgentSessionHistory, AgentSessionRepository,
         AgentSessionSummary, ListAgentSessionsQuery, RepositoryError, RuntimeInvocationMode,
-        RuntimeInvocationOutcome, RuntimeInvocationRequest, RuntimePortError, RuntimeUpdate,
+        RuntimeInvocationOutcome, RuntimeInvocationRequest, RuntimeLaunchExtension,
+        RuntimePortError, RuntimeUpdate,
     },
 };
 use chrono::{DateTime, Utc};
@@ -22,8 +23,13 @@ use uuid::Uuid;
 pub(crate) struct CreateAgentSessionCommand {
     pub(crate) title: Option<String>,
     pub(crate) working_directory: Option<String>,
-    pub(crate) runtime_kind: Option<AgentRuntimeKind>,
     pub(crate) requested_options: AgentRuntimeOptions,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CreateApplicationAgentSessionCommand {
+    pub(crate) session_id: AgentSessionId,
+    pub(crate) session: CreateAgentSessionCommand,
 }
 
 #[derive(Clone, Debug)]
@@ -35,10 +41,28 @@ pub(crate) struct SendAgentSessionMessageCommand {
     pub(crate) requested_options: Option<AgentRuntimeOptions>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct SendIdempotentApplicationAgentSessionMessageCommand {
+    pub(crate) invocation_id: AgentInvocationId,
+    pub(crate) message: SendAgentSessionMessageCommand,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SendAgentSessionMessageResult {
     pub(crate) session_id: AgentSessionId,
     pub(crate) invocation_id: AgentInvocationId,
+}
+
+pub(crate) struct SendAgentSessionMessageLaunchResult {
+    pub(crate) acknowledgement: SendAgentSessionMessageResult,
+    pub(crate) launch_accepted: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ApplicationInvocationLaunchEvidence {
+    NeverPersisted,
+    PersistedNotAccepted,
+    LaunchAccepted,
 }
 
 #[derive(Clone, Debug)]
@@ -135,21 +159,44 @@ impl AgentSessionApplication {
         &self,
         command: CreateAgentSessionCommand,
     ) -> Result<AgentSession, AgentSessionApplicationError> {
-        if command
-            .runtime_kind
-            .is_some_and(|kind| kind != AgentRuntimeKind::CodexCli)
+        self.create_session_with_id(command, self.ids.session_id())
+    }
+
+    pub(crate) fn create_application_session(
+        &self,
+        command: CreateApplicationAgentSessionCommand,
+    ) -> Result<AgentSession, AgentSessionApplicationError> {
+        if let Some(existing) = self
+            .repository
+            .get_session(&command.session_id)
+            .map_err(AgentSessionApplicationError::repository)?
         {
-            return Err(AgentSessionApplicationError::invalid(
-                "only the codex_cli runtime is supported",
-            ));
+            let expected_title = normalize_title(command.session.title.as_deref(), "Agent Session");
+            let expected_directory = normalize_optional(command.session.working_directory);
+            if existing.title != expected_title
+                || existing.working_directory != expected_directory
+                || existing.requested_options != command.session.requested_options
+            {
+                return Err(AgentSessionApplicationError::conflict(
+                    "application Agent Session identity was already used for different semantics",
+                ));
+            }
+            return Ok(existing);
         }
+        self.create_session_with_id(command.session, command.session_id)
+    }
+
+    fn create_session_with_id(
+        &self,
+        command: CreateAgentSessionCommand,
+        session_id: AgentSessionId,
+    ) -> Result<AgentSession, AgentSessionApplicationError> {
         let now = self.clock.now();
         let session = AgentSession {
-            id: self.ids.session_id(),
+            id: session_id,
             title: normalize_title(command.title.as_deref(), "Agent Session"),
             availability: AgentSessionAvailability::Available,
             runtime_binding: AgentRuntimeBinding {
-                kind: AgentRuntimeKind::CodexCli,
                 external_context_id: None,
                 runtime_version: self.runtime_version.clone(),
             },
@@ -186,6 +233,120 @@ impl AgentSessionApplication {
         &self,
         command: SendAgentSessionMessageCommand,
     ) -> Result<SendAgentSessionMessageResult, AgentSessionApplicationError> {
+        self.send_message_with_launch_extension(command, None)
+    }
+
+    /// Explicit opt-in for a role-specific application service. Generic callers cannot acquire
+    /// an extension accidentally because the normal send path always supplies `None`.
+    pub(crate) fn send_message_with_launch_extension(
+        &self,
+        command: SendAgentSessionMessageCommand,
+        launch_extension: Option<RuntimeLaunchExtension>,
+    ) -> Result<SendAgentSessionMessageResult, AgentSessionApplicationError> {
+        self.send_message_with_provenance(
+            command,
+            launch_extension,
+            AgentInvocationInputProvenance::User,
+            None,
+        )
+        .map(|result| result.acknowledgement)
+    }
+
+    pub(crate) fn send_idempotent_application_message_with_launch_observation(
+        &self,
+        command: SendIdempotentApplicationAgentSessionMessageCommand,
+        launch_extension: Option<RuntimeLaunchExtension>,
+    ) -> Result<SendAgentSessionMessageLaunchResult, AgentSessionApplicationError> {
+        self.send_message_with_provenance(
+            command.message,
+            launch_extension,
+            AgentInvocationInputProvenance::Application,
+            Some(command.invocation_id),
+        )
+    }
+
+    pub(crate) fn send_idempotent_user_message_with_launch_observation(
+        &self,
+        command: SendIdempotentApplicationAgentSessionMessageCommand,
+        launch_extension: Option<RuntimeLaunchExtension>,
+    ) -> Result<SendAgentSessionMessageLaunchResult, AgentSessionApplicationError> {
+        self.send_message_with_provenance(
+            command.message,
+            launch_extension,
+            AgentInvocationInputProvenance::User,
+            Some(command.invocation_id),
+        )
+    }
+
+    pub(crate) fn allocate_application_invocation_id(&self) -> AgentInvocationId {
+        self.ids.invocation_id()
+    }
+
+    pub(crate) fn application_invocation_launch_evidence(
+        &self,
+        invocation_id: &AgentInvocationId,
+        expected_session_id: &AgentSessionId,
+    ) -> Result<ApplicationInvocationLaunchEvidence, AgentSessionApplicationError> {
+        self.invocation_launch_evidence(
+            invocation_id,
+            expected_session_id,
+            AgentInvocationInputProvenance::Application,
+        )
+    }
+
+    pub(crate) fn user_invocation_launch_evidence(
+        &self,
+        invocation_id: &AgentInvocationId,
+        expected_session_id: &AgentSessionId,
+    ) -> Result<ApplicationInvocationLaunchEvidence, AgentSessionApplicationError> {
+        self.invocation_launch_evidence(
+            invocation_id,
+            expected_session_id,
+            AgentInvocationInputProvenance::User,
+        )
+    }
+
+    fn invocation_launch_evidence(
+        &self,
+        invocation_id: &AgentInvocationId,
+        expected_session_id: &AgentSessionId,
+        expected_provenance: AgentInvocationInputProvenance,
+    ) -> Result<ApplicationInvocationLaunchEvidence, AgentSessionApplicationError> {
+        let Some(invocation) = self
+            .repository
+            .get_invocation(invocation_id)
+            .map_err(AgentSessionApplicationError::repository)?
+        else {
+            return Ok(ApplicationInvocationLaunchEvidence::NeverPersisted);
+        };
+        if invocation.session_id != *expected_session_id
+            || invocation.input_provenance != expected_provenance
+        {
+            return Err(AgentSessionApplicationError::conflict(
+                "allocated Agent Invocation launch evidence does not match the expected session and provenance",
+            ));
+        }
+        Ok(
+            if self
+                .repository
+                .invocation_launch_accepted_at(invocation_id)
+                .map_err(AgentSessionApplicationError::repository)?
+                .is_some()
+            {
+                ApplicationInvocationLaunchEvidence::LaunchAccepted
+            } else {
+                ApplicationInvocationLaunchEvidence::PersistedNotAccepted
+            },
+        )
+    }
+
+    fn send_message_with_provenance(
+        &self,
+        command: SendAgentSessionMessageCommand,
+        launch_extension: Option<RuntimeLaunchExtension>,
+        input_provenance: AgentInvocationInputProvenance,
+        requested_invocation_id: Option<AgentInvocationId>,
+    ) -> Result<SendAgentSessionMessageLaunchResult, AgentSessionApplicationError> {
         if command.submitted_text.trim().is_empty() {
             return Err(AgentSessionApplicationError::invalid(
                 "submitted text cannot be empty",
@@ -206,7 +367,6 @@ impl AgentSessionApplication {
                     .clone()
                     .or_else(|| Some(title_from_message(&command.submitted_text))),
                 working_directory: command.working_directory.clone(),
-                runtime_kind: Some(AgentRuntimeKind::CodexCli),
                 requested_options: command.requested_options.clone().unwrap_or_default(),
             })?,
         };
@@ -221,13 +381,43 @@ impl AgentSessionApplication {
             .requested_options
             .clone()
             .unwrap_or_else(|| session.requested_options.clone());
+        if let Some(invocation_id) = requested_invocation_id.as_ref() {
+            if let Some(existing) = self
+                .repository
+                .get_invocation(invocation_id)
+                .map_err(AgentSessionApplicationError::repository)?
+            {
+                if existing.session_id != session.id
+                    || existing.submitted_text != command.submitted_text
+                    || existing.input_provenance != input_provenance
+                    || existing.requested_options != requested_options
+                {
+                    return Err(AgentSessionApplicationError::conflict(
+                        "application Agent Invocation identity was already used for different semantics",
+                    ));
+                }
+                let launch_accepted = self
+                    .repository
+                    .invocation_launch_accepted_at(invocation_id)
+                    .map_err(AgentSessionApplicationError::repository)?
+                    .is_some();
+                return Ok(SendAgentSessionMessageLaunchResult {
+                    acknowledgement: SendAgentSessionMessageResult {
+                        session_id: session.id,
+                        invocation_id: existing.id,
+                    },
+                    launch_accepted,
+                });
+            }
+        }
         let created_at = self.clock.now();
         let invocation = self
             .repository
             .create_pending_invocation(AgentInvocation {
-                id: self.ids.invocation_id(),
+                id: requested_invocation_id.unwrap_or_else(|| self.ids.invocation_id()),
                 session_id: session.id.clone(),
                 submitted_text: command.submitted_text.clone(),
+                input_provenance,
                 status: AgentInvocationStatus::Pending,
                 requested_options: requested_options.clone(),
                 effective_options: None,
@@ -255,7 +445,10 @@ impl AgentSessionApplication {
             Ok(preflight) => preflight,
             Err(error) => {
                 self.finish_preflight_failure(&invocation, error)?;
-                return Ok(acknowledgement);
+                return Ok(SendAgentSessionMessageLaunchResult {
+                    acknowledgement,
+                    launch_accepted: false,
+                });
             }
         };
 
@@ -272,9 +465,20 @@ impl AgentSessionApplication {
         let request = RuntimeInvocationRequest {
             session_id: session.id.clone(),
             invocation_id: invocation.id.clone(),
-            submitted_text: invocation.submitted_text.clone(),
-            working_directory: session.working_directory.clone(),
+            submitted_text: launch_extension
+                .as_ref()
+                .and_then(|extension| extension.initial_prompt_prefix.as_ref())
+                .map(|context| context.render_before_user_query(&invocation.submitted_text))
+                .unwrap_or_else(|| invocation.submitted_text.clone()),
+            // Product-specific callers may select a neutral per-invocation discovery root without
+            // mutating the provider-neutral Agent Session identity. Ordinary sends continue to
+            // inherit the durable session directory because they do not supply an override.
+            working_directory: command
+                .working_directory
+                .clone()
+                .or_else(|| session.working_directory.clone()),
             options: preflight.effective_options,
+            launch_extension,
         };
         let sink: Arc<dyn AgentRuntimeUpdateSink> = Arc::new(PersistedRuntimeUpdateSink::new(
             self.repository.clone(),
@@ -290,10 +494,22 @@ impl AgentSessionApplication {
             }
             None => self.runtime.start_invocation(request, sink),
         };
-        if let Err(error) = launch {
-            self.handle_launch_error(&invocation.id, error)?;
-        }
-        Ok(acknowledgement)
+        let launch_accepted = match launch {
+            Ok(()) => {
+                self.repository
+                    .record_invocation_launch_accepted(&invocation.id, self.clock.now())
+                    .map_err(AgentSessionApplicationError::repository)?;
+                true
+            }
+            Err(error) => {
+                self.handle_launch_error(&invocation.id, error)?;
+                false
+            }
+        };
+        Ok(SendAgentSessionMessageLaunchResult {
+            acknowledgement,
+            launch_accepted,
+        })
     }
 
     pub(crate) fn cancel_invocation(

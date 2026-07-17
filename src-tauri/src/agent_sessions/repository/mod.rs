@@ -4,7 +4,10 @@ mod schema;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use schema::{quarantine_archived_prototype_tables, AGENT_SESSION_SCHEMA};
+pub(crate) use schema::{
+    quarantine_archived_prototype_tables, AGENT_SESSION_LAUNCH_ACCEPTANCE_SCHEMA,
+    AGENT_SESSION_SCHEMA,
+};
 
 use self::mapping::*;
 use super::{
@@ -229,9 +232,8 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         validate_session_update(&current, &candidate).map_err(contract_error)?;
         transaction
             .execute(
-                "UPDATE agent_sessions SET runtime_kind = ?1, external_context_id = ?2, runtime_version = ?3, updated_at = ?4 WHERE id = ?5",
+                "UPDATE agent_sessions SET external_context_id = ?1, runtime_version = ?2, updated_at = ?3 WHERE id = ?4",
                 params![
-                    runtime_kind_text(candidate.runtime_binding.kind),
                     candidate.runtime_binding.external_context_id.as_ref().map(|id| id.as_str()),
                     candidate.runtime_binding.runtime_version,
                     timestamp(updated_at),
@@ -309,6 +311,37 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
             .commit()
             .map_err(sql_unavailable("commit invocation start"))?;
         Ok(updated)
+    }
+
+    fn record_invocation_launch_accepted(
+        &self,
+        invocation_id: &AgentInvocationId,
+        accepted_at: DateTime<Utc>,
+    ) -> Result<(), RepositoryError> {
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO agent_session_invocation_launch_acceptances (invocation_id, accepted_at) VALUES (?1, ?2)",
+                params![invocation_id.as_str(), timestamp(accepted_at)],
+            )
+            .map_err(sql_write("record invocation launch acceptance"))?;
+        Ok(())
+    }
+
+    fn invocation_launch_accepted_at(
+        &self,
+        invocation_id: &AgentInvocationId,
+    ) -> Result<Option<DateTime<Utc>>, RepositoryError> {
+        let connection = self.lock()?;
+        let accepted_at = connection
+            .query_row(
+                "SELECT accepted_at FROM agent_session_invocation_launch_acceptances WHERE invocation_id = ?1",
+                params![invocation_id.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(sql_unavailable("load invocation launch acceptance"))?;
+        accepted_at.map(|value| parse_timestamp(&value)).transpose()
     }
 
     fn finish_invocation(

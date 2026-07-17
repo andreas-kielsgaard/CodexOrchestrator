@@ -1,8 +1,9 @@
 use super::*;
 use crate::agent_sessions::domain::{
-    AgentDiagnosticSeverity, AgentDiagnosticSource, AgentInvocationTerminalStatus,
-    AgentRuntimeEventId, AgentRuntimeEventSource, AgentRuntimeFailure, AgentRuntimeKind,
-    ExternalRuntimeContextId, NormalizedRuntimeEvent, NormalizedRuntimeEventKind,
+    AgentDiagnosticSeverity, AgentDiagnosticSource, AgentInvocationInputProvenance,
+    AgentInvocationTerminalStatus, AgentRuntimeEventId, AgentRuntimeEventSource,
+    AgentRuntimeFailure, ExternalRuntimeContextId, NormalizedRuntimeEvent,
+    NormalizedRuntimeEventKind,
 };
 use serde_json::json;
 use std::{fs, path::PathBuf};
@@ -20,7 +21,6 @@ fn survives_close_and_reopen_with_complete_multi_invocation_history() {
         .update_runtime_binding(
             &session.id,
             AgentRuntimeBinding {
-                kind: AgentRuntimeKind::CodexCli,
                 external_context_id: Some(
                     ExternalRuntimeContextId::new("provider-thread").expect("external ID"),
                 ),
@@ -36,6 +36,9 @@ fn survives_close_and_reopen_with_complete_multi_invocation_history() {
     repository
         .mark_invocation_running(&first.id, at(3), options(), at(3))
         .expect("start first invocation");
+    repository
+        .record_invocation_launch_accepted(&first.id, at(4))
+        .expect("record launch acceptance");
     repository
         .append_event(unknown_event(
             "event-b2",
@@ -62,8 +65,10 @@ fn survives_close_and_reopen_with_complete_multi_invocation_history() {
         .finish_invocation(&first.id, first_completion, at(30))
         .expect("repeat identical completion idempotently");
 
+    let mut application_invocation = test_invocation("invocation-a", &session.id, at(7));
+    application_invocation.input_provenance = AgentInvocationInputProvenance::Application;
     let second = repository
-        .create_pending_invocation(test_invocation("invocation-a", &session.id, at(7)))
+        .create_pending_invocation(application_invocation)
         .expect("create second invocation");
     repository
         .append_invocation_diagnostic(
@@ -107,6 +112,12 @@ fn survives_close_and_reopen_with_complete_multi_invocation_history() {
     drop(repository);
 
     let reopened = SqliteAgentSessionRepository::open(&path).expect("reopen repository");
+    assert_eq!(
+        reopened
+            .invocation_launch_accepted_at(&first.id)
+            .expect("load launch acceptance"),
+        Some(at(4))
+    );
     let history = reopened
         .load_session_history(&session.id)
         .expect("load complete history")
@@ -143,6 +154,14 @@ fn survives_close_and_reopen_with_complete_multi_invocation_history() {
         json!({"type":"future.event","nested":{"unchanged":[1,true,null]}})
     );
     assert_eq!(history.invocations[1].invocation.diagnostics.len(), 1);
+    assert_eq!(
+        history.invocations[0].invocation.input_provenance,
+        AgentInvocationInputProvenance::User
+    );
+    assert_eq!(
+        history.invocations[1].invocation.input_provenance,
+        AgentInvocationInputProvenance::Application
+    );
     assert_eq!(
         history.invocations[1].events[0].raw_payload["large"]
             .as_str()
@@ -330,7 +349,6 @@ fn test_session(id: &str, created_at: DateTime<Utc>) -> AgentSession {
         title: format!("Session {id}"),
         availability: AgentSessionAvailability::Available,
         runtime_binding: AgentRuntimeBinding {
-            kind: AgentRuntimeKind::CodexCli,
             external_context_id: None,
             runtime_version: None,
         },
@@ -350,6 +368,7 @@ fn test_invocation(
         id: AgentInvocationId::new(id).expect("invocation ID"),
         session_id: session_id.clone(),
         submitted_text: format!("input for {id}"),
+        input_provenance: AgentInvocationInputProvenance::User,
         status: AgentInvocationStatus::Pending,
         requested_options: options(),
         effective_options: None,

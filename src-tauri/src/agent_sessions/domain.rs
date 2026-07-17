@@ -48,12 +48,6 @@ id_type!(ExternalRuntimeContextId, "external runtime context");
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AgentRuntimeKind {
-    CodexCli,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
 pub(crate) enum AgentSessionAvailability {
     Available,
     Archived,
@@ -77,7 +71,6 @@ pub(crate) struct AgentRuntimeOptions {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentRuntimeBinding {
-    pub(crate) kind: AgentRuntimeKind,
     pub(crate) external_context_id: Option<ExternalRuntimeContextId>,
     pub(crate) runtime_version: Option<String>,
 }
@@ -126,6 +119,13 @@ pub(crate) enum AgentInvocationTerminalStatus {
     Failed,
     Canceled,
     Interrupted,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AgentInvocationInputProvenance {
+    User,
+    Application,
 }
 
 impl From<AgentInvocationTerminalStatus> for AgentInvocationStatus {
@@ -179,6 +179,7 @@ pub(crate) struct AgentInvocation {
     pub(crate) id: AgentInvocationId,
     pub(crate) session_id: AgentSessionId,
     pub(crate) submitted_text: String,
+    pub(crate) input_provenance: AgentInvocationInputProvenance,
     pub(crate) status: AgentInvocationStatus,
     pub(crate) requested_options: AgentRuntimeOptions,
     pub(crate) effective_options: Option<AgentRuntimeOptions>,
@@ -297,7 +298,6 @@ pub(crate) enum ContractViolation {
         kind: &'static str,
     },
     SessionIdentityChanged,
-    RuntimeKindChanged,
     ExternalRuntimeContextChanged,
     InvalidSessionRecord {
         reason: &'static str,
@@ -329,9 +329,6 @@ impl fmt::Display for ContractViolation {
         match self {
             Self::EmptyIdentifier { kind } => write!(formatter, "{kind} ID cannot be empty"),
             Self::SessionIdentityChanged => formatter.write_str("local session ID cannot change"),
-            Self::RuntimeKindChanged => {
-                formatter.write_str("a session runtime kind cannot change in the first slice")
-            }
             Self::ExternalRuntimeContextChanged => formatter
                 .write_str("an established external runtime context cannot be cleared or replaced"),
             Self::InvalidSessionRecord { reason } => formatter.write_str(reason),
@@ -410,10 +407,6 @@ pub(crate) fn validate_runtime_binding_update(
     current: &AgentRuntimeBinding,
     candidate: &AgentRuntimeBinding,
 ) -> Result<(), ContractViolation> {
-    if current.kind != candidate.kind {
-        return Err(ContractViolation::RuntimeKindChanged);
-    }
-
     if let Some(current_external_id) = current.external_context_id.as_ref() {
         if candidate.external_context_id.as_ref() != Some(current_external_id) {
             return Err(ContractViolation::ExternalRuntimeContextChanged);
