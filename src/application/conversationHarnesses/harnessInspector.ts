@@ -1,7 +1,8 @@
 export type HarnessInspectorScope =
-  'delivered_to_session' | 'future_invocation' | 'application_owned';
+  'profile_configuration' | 'future_invocation' | 'application_owned';
 
 export type HarnessInspectorEditability = 'immutable' | 'read_only' | 'unsupported';
+export type HarnessInspectorDeliveryStatus = 'delivered' | 'not_delivered' | 'not_evidenced';
 
 export interface HarnessInspectorSectionState {
   readonly scope: HarnessInspectorScope;
@@ -32,7 +33,11 @@ export interface ConversationHarnessInspectorSnapshot {
   };
   readonly promptContext: {
     readonly content: string;
-    readonly delivery: 'first_query';
+    readonly delivery: {
+      readonly policy: 'first_query';
+      readonly status: HarnessInspectorDeliveryStatus;
+      readonly detail: string;
+    };
     readonly state: HarnessInspectorSectionState;
   };
   readonly skills: {

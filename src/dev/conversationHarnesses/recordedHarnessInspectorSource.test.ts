@@ -19,8 +19,12 @@ describe('recordedHarnessInspectorSource', () => {
     expect(read.snapshot.provenance.kind).toBe('recorded_adapter');
     expect(read.snapshot.validation.status).toBe('unverified');
     expect(read.snapshot.promptContext.state).toMatchObject({
-      scope: 'delivered_to_session',
-      editability: 'immutable',
+      scope: 'profile_configuration',
+      editability: 'read_only',
+    });
+    expect(read.snapshot.promptContext.delivery).toMatchObject({
+      policy: 'first_query',
+      status: 'not_evidenced',
     });
     expect(read.snapshot.mcp.tools).toEqual([
       'submit_epic_plan_proposal',

@@ -3,6 +3,7 @@ import {
   recordedHarnessInspectorSessionId,
   recordedHarnessInspectorSource,
 } from '../../dev/conversationHarnesses/recordedHarnessInspectorSource';
+import { ConversationHarnessInspector } from './ConversationHarnessInspector';
 import { HarnessAwareAgentSessionPane } from './HarnessAwareAgentSessionPane';
 
 describe('HarnessAwareAgentSessionPane', () => {
@@ -42,8 +43,11 @@ describe('HarnessAwareAgentSessionPane', () => {
     ).toBeVisible();
     expect(screen.queryByLabelText('Product conversation')).toBeNull();
     expect(screen.getByRole('heading', { name: 'Epic Plan Builder' })).toBeVisible();
-    expect(screen.getByText('Delivered · immutable')).toBeVisible();
-    expect(screen.getAllByText('Next invocation · read only')).toHaveLength(3);
+    expect(screen.getByText('Profile configuration · Read only')).toBeVisible();
+    expect(screen.getByText('Delivery not evidenced')).toBeVisible();
+    expect(screen.getByText('Validation unverified')).toBeVisible();
+    expect(screen.queryByText('Delivered · immutable')).toBeNull();
+    expect(screen.getAllByText('Future invocation · Read only')).toHaveLength(4);
     expect(screen.getByLabelText('Initial context prefix')).toHaveAttribute('readonly');
     expect(screen.getByLabelText('Model')).toBeDisabled();
     expect(screen.getByLabelText('Sandbox')).toBeDisabled();
@@ -72,5 +76,44 @@ describe('HarnessAwareAgentSessionPane', () => {
       screen.getByText('This recorded Agent Session has no product harness configuration.'),
     ).toBeVisible();
     expect(screen.getByRole('button', { name: 'Back to conversation' })).toBeVisible();
+  });
+
+  it('presents invalid validation separately from unverified validation', async () => {
+    const read = await recordedHarnessInspectorSource.load({
+      sessionId: recordedHarnessInspectorSessionId,
+    });
+    expect(read.kind).toBe('available');
+    if (read.kind !== 'available') return;
+
+    render(
+      <ConversationHarnessInspector
+        read={{
+          kind: 'available',
+          snapshot: {
+            ...read.snapshot,
+            validation: { ...read.snapshot.validation, status: 'invalid' },
+            promptContext: {
+              ...read.snapshot.promptContext,
+              delivery: {
+                ...read.snapshot.promptContext.delivery,
+                status: 'delivered',
+                detail: 'A durable delivery record exists.',
+              },
+              state: {
+                scope: 'application_owned',
+                editability: 'unsupported',
+                reason: 'Application-owned context.',
+              },
+            },
+          },
+        }}
+        onBack={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText('Validation invalid')).toBeVisible();
+    expect(screen.queryByText('Validation unverified')).toBeNull();
+    expect(screen.getByText('Delivery evidenced')).toBeVisible();
+    expect(screen.getAllByText('Application owned · Unsupported')).toHaveLength(2);
   });
 });

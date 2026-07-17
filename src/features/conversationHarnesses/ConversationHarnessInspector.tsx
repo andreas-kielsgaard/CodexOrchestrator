@@ -1,6 +1,10 @@
 import { ArrowLeft, CheckCircle2, CircleHelp, LockKeyhole, ShieldAlert } from 'lucide-react';
 import type { ReactNode } from 'react';
-import type { ConversationHarnessInspectorRead } from '../../application/conversationHarnesses';
+import type {
+  ConversationHarnessInspectorRead,
+  HarnessInspectorDeliveryStatus,
+  HarnessInspectorSectionState,
+} from '../../application/conversationHarnesses';
 
 export interface ConversationHarnessInspectorProps {
   readonly read: ConversationHarnessInspectorRead | null;
@@ -31,6 +35,8 @@ export function ConversationHarnessInspector({ read, onBack }: ConversationHarne
     );
 
   const { snapshot } = read;
+  const validation = validationPresentation(snapshot.validation.status);
+  const delivery = deliveryPresentation(snapshot.promptContext.delivery.status);
   return (
     <InspectorShell onBack={onBack}>
       <header className="harness-inspector__title">
@@ -42,28 +48,29 @@ export function ConversationHarnessInspector({ read, onBack }: ConversationHarne
           </p>
         </div>
         <div className="harness-inspector__title-badges" aria-label="Inspector status">
-          <StatusBadge
-            tone={snapshot.validation.status === 'valid' ? 'positive' : 'caution'}
-            label={snapshot.validation.status === 'valid' ? 'Validated snapshot' : 'Unverified'}
-          />
+          <StatusBadge {...validation} />
           <StatusBadge tone="neutral" label="Read-only exploration" />
         </div>
       </header>
 
       <div className="harness-inspector__boundary-note">
-        <LockKeyhole size={18} aria-hidden="true" />
+        {snapshot.promptContext.delivery.status === 'delivered' ? (
+          <LockKeyhole size={18} aria-hidden="true" />
+        ) : (
+          <CircleHelp size={18} aria-hidden="true" />
+        )}
         <p>
-          Delivered context is locked to this session. Controls marked{' '}
-          <strong>Next invocation</strong> show the proposed editing surface, but this prototype
-          cannot apply changes.
+          <strong>{delivery.label}.</strong> {snapshot.promptContext.delivery.detail} Controls
+          marked <strong>Future invocation</strong> show proposed later configuration, but this
+          prototype cannot apply changes.
         </p>
       </div>
 
       <div className="harness-inspector__grid">
         <InspectorCard
           title="Prompt and context"
-          stateLabel="Delivered · immutable"
-          stateTone="locked"
+          state={snapshot.promptContext.state}
+          status={delivery}
           description={snapshot.promptContext.state.reason}
           wide
         >
@@ -72,14 +79,14 @@ export function ConversationHarnessInspector({ read, onBack }: ConversationHarne
             <textarea value={snapshot.promptContext.content} readOnly rows={8} />
           </label>
           <p className="harness-inspector__field-note">
-            Delivery: {humanize(snapshot.promptContext.delivery)}
+            Delivery policy: {humanize(snapshot.promptContext.delivery.policy)} · Evidence:{' '}
+            {delivery.label}
           </p>
         </InspectorCard>
 
         <InspectorCard
           title="Skills"
-          stateLabel="Next invocation · read only"
-          stateTone="future"
+          state={snapshot.skills.state}
           description={snapshot.skills.state.reason}
         >
           <div className="harness-inspector__choice-list">
@@ -99,8 +106,7 @@ export function ConversationHarnessInspector({ read, onBack }: ConversationHarne
 
         <InspectorCard
           title="MCP tools"
-          stateLabel="Next invocation · read only"
-          stateTone="future"
+          state={snapshot.mcp.state}
           description={snapshot.mcp.state.reason}
         >
           <div className="harness-inspector__choice-list">
@@ -121,8 +127,7 @@ export function ConversationHarnessInspector({ read, onBack }: ConversationHarne
 
         <InspectorCard
           title="Model and reasoning"
-          stateLabel="Next invocation · read only"
-          stateTone="future"
+          state={snapshot.runtime.state}
           description={snapshot.runtime.state.reason}
         >
           <div className="harness-inspector__field-row">
@@ -151,8 +156,7 @@ export function ConversationHarnessInspector({ read, onBack }: ConversationHarne
 
         <InspectorCard
           title="Sandbox and authority"
-          stateLabel="Next invocation · policy bounded"
-          stateTone="future"
+          state={snapshot.runtime.state}
           description={snapshot.runtime.authorityBoundary}
         >
           <div className="harness-inspector__field-row">
@@ -177,8 +181,7 @@ export function ConversationHarnessInspector({ read, onBack }: ConversationHarne
 
         <InspectorCard
           title="Application hooks"
-          stateLabel="Application owned"
-          stateTone="locked"
+          state={snapshot.hooks.state}
           description={snapshot.hooks.state.reason}
           wide
         >
@@ -200,8 +203,10 @@ export function ConversationHarnessInspector({ read, onBack }: ConversationHarne
 
         <InspectorCard
           title="Validation and provenance"
-          stateLabel={`Catalog schema v${snapshot.profile.catalogSchemaVersion}`}
-          stateTone="neutral"
+          status={{
+            tone: 'neutral',
+            label: `Catalog schema v${snapshot.profile.catalogSchemaVersion}`,
+          }}
           description={snapshot.provenance.summary}
           wide
         >
@@ -221,9 +226,11 @@ export function ConversationHarnessInspector({ read, onBack }: ConversationHarne
           </dl>
           <ul className="harness-inspector__validation-list">
             {snapshot.validation.checks.map((check) => (
-              <li key={check.label}>
+              <li key={check.label} className={`is-${check.status}`}>
                 {check.status === 'passed' ? (
                   <CheckCircle2 size={17} aria-hidden="true" />
+                ) : check.status === 'failed' ? (
+                  <ShieldAlert size={17} aria-hidden="true" />
                 ) : (
                   <CircleHelp size={17} aria-hidden="true" />
                 )}
@@ -272,15 +279,15 @@ function InspectorShell({ children, onBack }: { readonly children: ReactNode; on
 
 function InspectorCard({
   title,
-  stateLabel,
-  stateTone,
+  state,
+  status,
   description,
   wide = false,
   children,
 }: {
   readonly title: string;
-  readonly stateLabel: string;
-  readonly stateTone: 'locked' | 'future' | 'neutral';
+  readonly state?: HarnessInspectorSectionState;
+  readonly status?: StatusPresentation;
   readonly description: string;
   readonly wide?: boolean;
   readonly children: ReactNode;
@@ -289,7 +296,14 @@ function InspectorCard({
     <section className={`harness-inspector__card${wide ? ' is-wide' : ''}`}>
       <header>
         <h3>{title}</h3>
-        <span className={`harness-inspector__scope is-${stateTone}`}>{stateLabel}</span>
+        <div className="harness-inspector__card-badges">
+          {status && <StatusBadge {...status} />}
+          {state && (
+            <span className={`harness-inspector__scope is-${scopeTone(state.scope)}`}>
+              {scopeLabel(state.scope)} · {editabilityLabel(state.editability)}
+            </span>
+          )}
+        </div>
       </header>
       <p className="harness-inspector__description">{description}</p>
       {children}
@@ -297,14 +311,43 @@ function InspectorCard({
   );
 }
 
-function StatusBadge({
-  tone,
-  label,
-}: {
-  readonly tone: 'positive' | 'caution' | 'neutral';
-  readonly label: string;
-}) {
+function StatusBadge({ tone, label }: StatusPresentation) {
   return <span className={`harness-inspector__status is-${tone}`}>{label}</span>;
+}
+
+interface StatusPresentation {
+  readonly tone: 'positive' | 'caution' | 'negative' | 'neutral';
+  readonly label: string;
+}
+
+function validationPresentation(status: 'valid' | 'invalid' | 'unverified'): StatusPresentation {
+  if (status === 'valid') return { tone: 'positive', label: 'Validated snapshot' };
+  if (status === 'invalid') return { tone: 'negative', label: 'Validation invalid' };
+  return { tone: 'caution', label: 'Validation unverified' };
+}
+
+function deliveryPresentation(status: HarnessInspectorDeliveryStatus): StatusPresentation {
+  if (status === 'delivered') return { tone: 'positive', label: 'Delivery evidenced' };
+  if (status === 'not_delivered') return { tone: 'neutral', label: 'Not yet delivered' };
+  return { tone: 'caution', label: 'Delivery not evidenced' };
+}
+
+function scopeTone(scope: HarnessInspectorSectionState['scope']): 'locked' | 'future' | 'neutral' {
+  if (scope === 'future_invocation') return 'future';
+  if (scope === 'application_owned') return 'locked';
+  return 'neutral';
+}
+
+function scopeLabel(scope: HarnessInspectorSectionState['scope']): string {
+  if (scope === 'profile_configuration') return 'Profile configuration';
+  if (scope === 'future_invocation') return 'Future invocation';
+  return 'Application owned';
+}
+
+function editabilityLabel(editability: HarnessInspectorSectionState['editability']): string {
+  if (editability === 'read_only') return 'Read only';
+  if (editability === 'immutable') return 'Immutable';
+  return 'Unsupported';
 }
 
 function humanize(value: string): string {

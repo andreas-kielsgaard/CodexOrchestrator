@@ -29,13 +29,18 @@ receive the tab or source.
 
 ## State and safe-apply semantics
 
-- Initial prompt/context is **delivered and immutable** for the existing session.
+- Initial prompt/context is a **configured profile value**. Configuration scope, durable delivery
+  evidence, and editability are separate read facts.
+- The recorded source reports delivery as **not evidenced**. A fixture session does not prove that
+  the configured prefix reached it.
+- Context durably evidenced as delivered cannot be rewritten for that existing session. This
+  exploration does not claim that evidence and keeps the configured value read only.
 - Skills, MCP allow-list, model/reasoning, and sandbox settings are shown as **future invocation**
   configuration. Their controls are disabled in this exploration.
 - Application hooks are **application owned**. Declarative completion criteria do not apply product
   effects.
-- Catalog/profile shape checks can pass while skill discovery and actual session delivery remain
-  unverified. The recorded adapter says so instead of presenting live provenance.
+- Catalog/profile shape checks can pass while skill discovery and session delivery remain
+  unverified. Invalid validation is presented separately from unverified validation.
 - An unavailable source produces an explicit unavailable state and retains the return path.
 - A future apply must validate the complete profile, reject stale revisions, create a new version
   for future invocations, preserve product authority limits, and record configuration provenance
@@ -54,12 +59,13 @@ receive the tab or source.
 
 ## Validation
 
-- Focused inspector and app tests: 4 files / 7 tests passed.
-- Serial frontend aggregate: 90 files / 608 tests passed.
+- Focused corrected inspector and app tests: 3 files / 7 tests passed.
+- Serial frontend aggregate: 90 files / 609 tests passed.
 - TypeScript, production Vite build, and touched-file ESLint passed.
 - Headless Edge review passed at 1440 × 1000 and 760 × 900. The control placement, pane
   replacement, return path, internal scrolling, responsive layout, and disabled apply state were
-  inspected.
+  inspected. The corrected recorded view showed **Delivery not evidenced**, **Profile
+  configuration · Read only**, and **Validation unverified**, with no delivered-context claim.
 - The aggregate retained existing non-failing React `act(...)` and Node SQLite experimental
   warnings.
 
@@ -67,7 +73,8 @@ receive the tab or source.
 
 1. Is the over-pane **Inspect harness** control discoverable without competing with session actions?
 2. Is one scrollable inspector clearer than nested tabs for this amount of configuration?
-3. Are **Delivered**, **Next invocation**, and **Application owned** the right scope labels?
+3. Are **Profile configuration**, **Future invocation**, and **Application owned** the right scope
+   labels, with delivery evidence shown separately?
 4. Should full prompt/context stay visible by default, or collapse behind a summary?
 5. Which future settings should ever be editable, especially sandbox, MCP tools, and hooks?
 6. Are the proposed stale-revision and new-version rules sufficient before any apply work?

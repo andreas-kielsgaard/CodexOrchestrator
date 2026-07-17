@@ -181,6 +181,11 @@
   color: #7b5620;
 }
 
+.harness-inspector__status.is-negative {
+  background: #f5dfda;
+  color: #8a3528;
+}
+
 .harness-inspector__status.is-neutral,
 .harness-inspector__scope.is-neutral {
   background: #e7eae5;
@@ -234,6 +239,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.harness-inspector__card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: 6px;
 }
 
 .harness-inspector__card h3 {
@@ -410,6 +422,14 @@
   color: #326248;
 }
 
+.harness-inspector__validation-list li.is-unverified {
+  color: #7b5620;
+}
+
+.harness-inspector__validation-list li.is-failed {
+  color: #8a3528;
+}
+
 .harness-inspector__apply {
   display: flex;
   align-items: end;
@@ -482,6 +502,10 @@
   }
 
   .harness-inspector__title-badges {
+    justify-content: start;
+  }
+
+  .harness-inspector__card-badges {
     justify-content: start;
   }
 

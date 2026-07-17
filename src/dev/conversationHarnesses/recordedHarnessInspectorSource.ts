@@ -121,7 +121,7 @@ function buildSnapshot(sessionId: string): ConversationHarnessInspectorSnapshot 
             'The canonical path is recorded; this browser adapter does not prove file discovery.',
         },
         {
-          label: 'Delivered session context',
+          label: 'Session context delivery evidence',
           status: 'unverified',
           detail: 'Delivery is fixture state, not a durable product observation from this session.',
         },
@@ -129,12 +129,17 @@ function buildSnapshot(sessionId: string): ConversationHarnessInspectorSnapshot 
     },
     promptContext: {
       content: profile.context,
-      delivery: 'first_query',
+      delivery: {
+        policy: 'first_query',
+        status: 'not_evidenced',
+        detail:
+          'The recorded adapter has no durable observation that this configured prefix reached the session.',
+      },
       state: {
-        scope: 'delivered_to_session',
-        editability: 'immutable',
+        scope: 'profile_configuration',
+        editability: 'read_only',
         reason:
-          'The recorded adapter marks this prefix delivered before the first user query. Editing cannot change context already received by the session.',
+          'This is the configured profile value. A future versioned editor could revise later configuration, but this exploration is read only.',
       },
     },
     skills: {
@@ -207,7 +212,7 @@ function buildSnapshot(sessionId: string): ConversationHarnessInspectorSnapshot 
       safeSemantics: [
         'Validate the complete proposed profile before persistence.',
         'Reject stale revisions instead of overwriting newer configuration.',
-        'Create a new version for future invocations; never rewrite delivered context.',
+        'Create a new version for future invocations; never rewrite context evidenced as delivered.',
         'Keep sandbox, tools, and hooks within product policy and server-side authority.',
         'Record configuration provenance and the activation result separately.',
       ],
