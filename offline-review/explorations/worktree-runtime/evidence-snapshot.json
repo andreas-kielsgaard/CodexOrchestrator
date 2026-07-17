@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "inspectedDate": "2026-07-17",
+  "source": {
+    "branch": "codex/explore-worktree-runtime",
+    "head": "4e5027cc1fe48dee830ad5a3f7e61d84ef664f48",
+    "explorationCommits": [
+      "c25239f",
+      "673ddf3",
+      "35587bb",
+      "4e5027c"
+    ],
+    "dirtyFiles": []
+  },
+  "documentedProof": {
+    "codeCommit": "673ddf321d230f4ff497b5603efef42208d30dc4",
+    "instances": [
+      {
+        "instanceId": "proof-a",
+        "sessionId": "session-a",
+        "vitePort": 1640,
+        "statusPort": 41635,
+        "tauriIdentifier": "dev.codex-orchestrator.worktree.cdf64003c5ad82d4"
+      },
+      {
+        "instanceId": "proof-b",
+        "sessionId": "session-b",
+        "vitePort": 1660,
+        "statusPort": 41655,
+        "tauriIdentifier": "dev.codex-orchestrator.worktree.33c29a7678495d1f"
+      }
+    ],
+    "sourceFingerprint": "5385c14073cb9f61284bf509",
+    "nodeCacheKey": "830eef2fd65c896590699e19",
+    "rustCacheKey": "875525942ded2e09d7e10617",
+    "rustCacheMode": "isolated-target-only",
+    "claims": [
+      "both concurrent builds exited 0",
+      "both focused test actions exited 0",
+      "both status owners matched identity",
+      "both Tauri executables were observed",
+      "stopping proof-a left proof-b healthy",
+      "final teardown left zero recorded processes",
+      "stale recovery returned the drilled instance to zero processes"
+    ],
+    "provenance": "recorded historical exploration evidence"
+  },
+  "currentLocalManifest": {
+    "path": ".dev/worktree-runtime/proof-a/manifest.json",
+    "instanceId": "proof-a",
+    "sessionId": "session-a",
+    "gitCommit": "35587bb29f5436fb3cbdc999294ffccc43a745aa",
+    "sourceFingerprint": "fc5f0835159d5e8f70319018",
+    "dirty": true,
+    "buildObserved": false,
+    "testsObserved": false,
+    "launchObserved": false,
+    "note": "fresh prepare at the prior head; stale relative to current head and not evidence of the historical proof"
+  },
+  "boundedCorrections": {
+    "state": "accepted after Epic review at 4e5027c",
+    "prepare": {
+      "existingManifestInspected": true,
+      "refusesLiveOwned": true,
+      "refusesLiveUnowned": true,
+      "refusesEndpointOnlyLive": true,
+      "refusesStale": true,
+      "allowsCleanStopped": true
+    },
+    "fingerprint": {
+      "gitUntrackedFilesMode": "all",
+      "regularFileContentHashed": true,
+      "nonRegularOrUnreadable": "fail closed",
+      "nestedContentInvalidationTestPresent": true
+    },
+    "nodeHarnessTestsPresent": 7,
+    "offlineValidation": {
+      "command": "npm run test:worktree-runtime",
+      "passed": 7,
+      "failed": 0
+    }
+  },
+  "visualEvidence": {
+    "liveRenderSize": "1280x820",
+    "tauriWindowsObserved": [
+      "Codex Orchestrator [proof-a]",
+      "Codex Orchestrator [proof-b]"
+    ],
+    "directTauriCapture": "manual gate; Windows was locked",
+    "staticAsset": "worktree-runtime-static-review.html",
+    "staticPreview": "worktree-runtime-static-review.png",
+    "staticAssetProvenance": "recorded, not live"
+  },
+  "criticalLimits": [
+    "detached launch to manifest write is not crash-atomic",
+    "taskkill /T ownership lookup and teardown are not atomic",
+    "ports are explicit slots rather than durable leases",
+    "shared Rust compilation was not proved",
+    "provider credentials are not provisioned",
+    "visual capture is unsupported",
+    "pause/resume is stop and explicit restart only",
+    "the exploration JS harness is disposable"
+  ],
+  "networkRequired": false
+}

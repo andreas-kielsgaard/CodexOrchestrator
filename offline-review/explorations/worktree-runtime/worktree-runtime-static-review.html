@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Worktree Runtime — static offline review</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+        color: #17211b;
+        background: #f4f2eb;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 88% 8%, #d7e6db 0, transparent 30%),
+          #f4f2eb;
+      }
+      header,
+      main {
+        width: min(1180px, calc(100% - 40px));
+        margin: auto;
+      }
+      nav {
+        padding: 12px 20px;
+        border-bottom: 1px solid #d5dbd4;
+        background: #fffdf8;
+        font-size: 14px;
+        font-weight: 700;
+      }
+      nav span {
+        margin-right: 28px;
+        color: #6e7a73;
+      }
+      nav strong {
+        padding: 8px 12px;
+        border-radius: 8px;
+        background: #e7ebe4;
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        gap: 28px;
+        padding: 34px 0 22px;
+      }
+      h1 {
+        margin: 4px 0 8px;
+        font-size: clamp(36px, 5vw, 58px);
+        letter-spacing: -0.05em;
+      }
+      h2 {
+        margin: 4px 0 14px;
+        font-size: 20px;
+      }
+      p {
+        margin: 0;
+        color: #58655e;
+        line-height: 1.55;
+      }
+      .eyebrow {
+        color: #62736a;
+        font-size: 12px;
+        font-weight: 850;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .static-note {
+        align-self: flex-start;
+        max-width: 340px;
+        padding: 12px 14px;
+        border: 1px solid #c7d2df;
+        border-radius: 10px;
+        background: #edf4fb;
+        color: #34536f;
+        font-size: 13px;
+      }
+      .identity {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        overflow: hidden;
+        margin-bottom: 18px;
+        border: 1px solid #d5dbd4;
+        border-radius: 12px;
+        background: #fffdf8;
+      }
+      .identity div {
+        min-width: 0;
+        padding: 14px;
+        border-right: 1px solid #d5dbd4;
+      }
+      .identity small,
+      th {
+        display: block;
+        color: #6e7a73;
+        font-size: 10px;
+        font-weight: 850;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .identity code {
+        display: block;
+        overflow: hidden;
+        margin-top: 6px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1.15fr 0.85fr;
+        gap: 18px;
+        margin-bottom: 18px;
+      }
+      section {
+        padding: 20px;
+        border: 1px solid #d5dbd4;
+        border-radius: 12px;
+        background: #fffdf8;
+        box-shadow: 0 10px 30px rgb(36 50 42 / 5%);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        padding: 10px 8px;
+        border-top: 1px solid #e1e5de;
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        display: table-cell;
+        border-top: 0;
+      }
+      td {
+        font-size: 13px;
+      }
+      td code {
+        display: block;
+        max-width: 360px;
+        overflow: hidden;
+        margin-top: 4px;
+        color: #69756e;
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border: 1px solid #ccd5cd;
+        border-radius: 999px;
+        background: #eef2ec;
+        color: #42534a;
+        font-size: 10px;
+        font-weight: 850;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+      .projected {
+        border-color: #d7c898;
+        background: #fff8dd;
+        color: #645521;
+      }
+      .recorded {
+        border-color: #c7d2df;
+        background: #edf4fb;
+        color: #34536f;
+      }
+      .unsupported {
+        border-color: #dfc5bd;
+        background: #fff0ec;
+        color: #7a3f32;
+      }
+      ol,
+      ul {
+        display: grid;
+        gap: 10px;
+        margin: 0;
+        padding-left: 22px;
+        color: #4f5f56;
+        font-size: 14px;
+        line-height: 1.45;
+      }
+      .timeline li {
+        padding-bottom: 8px;
+      }
+      .timeline strong {
+        color: #17211b;
+      }
+      .timeline .badge {
+        float: right;
+      }
+      .review {
+        background: #edf3ec;
+      }
+      .corrections {
+        margin-bottom: 18px;
+        background: #f8f5e9;
+      }
+      .correction-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 24px;
+      }
+      .correction-grid p {
+        font-size: 14px;
+      }
+      footer {
+        padding: 4px 0 34px;
+        color: #718078;
+        font-size: 12px;
+      }
+      @media (max-width: 850px) {
+        header,
+        .grid {
+          grid-template-columns: 1fr;
+          flex-direction: column;
+        }
+        .identity {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <nav>
+      <span>Orchestration</span><span>Agent Sessions</span><strong>Worktree Runtime · STATIC</strong>
+    </nav>
+    <header>
+      <div>
+        <div class="eyebrow">Offline development review</div>
+        <h1>Worktree runtime</h1>
+        <p>Two-worktree identity, isolation, lifecycle, and product-boundary evidence.</p>
+      </div>
+      <div class="static-note">
+        <strong>Recorded snapshot — not live health.</strong><br />
+        No JavaScript, server, provider, or network access is used by this file.
+      </div>
+    </header>
+    <main>
+      <div class="identity">
+        <div><small>Instance</small><code>proof-a</code></div>
+        <div><small>Build fingerprint</small><code>5385c14073cb</code></div>
+        <div><small>Session</small><code>session-a</code></div>
+        <div><small>Proof commit</small><code>673ddf321d23</code></div>
+      </div>
+
+      <div class="grid">
+        <section>
+          <div class="eyebrow">Material boundary</div>
+          <h2>Shared only when keyed</h2>
+          <table>
+            <thead>
+              <tr><th>Material</th><th>Boundary</th><th>Evidence at proof</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Source + modules<code>worktree · local node_modules</code></td><td><span class="badge">isolated</span></td><td><span class="badge projected">projected</span></td></tr>
+              <tr><td>npm download cache<code>830eef2fd65c896590699e19</code></td><td><span class="badge projected">shared · keyed</span></td><td><span class="badge projected">projected</span></td></tr>
+              <tr><td>Rust compilation<code>instance Cargo target · no sccache</code></td><td><span class="badge">isolated</span></td><td><span class="badge recorded">observed then</span></td></tr>
+              <tr><td>Frontend + Tauri output<code>instance dist + target</code></td><td><span class="badge">isolated</span></td><td><span class="badge recorded">observed then</span></td></tr>
+              <tr><td>App data + database<code>instance app-data</code></td><td><span class="badge">isolated</span></td><td><span class="badge projected">projected</span></td></tr>
+              <tr><td>Ports<code>1640 · 41635 · strict</code></td><td><span class="badge">isolated</span></td><td><span class="badge recorded">observed then</span></td></tr>
+              <tr><td>Credentials<code>empty instance CODEX_HOME</code></td><td><span class="badge">isolated</span></td><td><span class="badge projected">projected</span></td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section>
+          <div class="eyebrow">Lifecycle</div>
+          <h2>Historical proof, recorded now</h2>
+          <ol class="timeline">
+            <li><span class="badge recorded">recorded</span><strong>Prepared</strong><br />Instance/worktree/build/session identity.</li>
+            <li><span class="badge recorded">recorded</span><strong>Built</strong><br />Both debug Tauri builds exited 0.</li>
+            <li><span class="badge recorded">recorded</span><strong>Tested</strong><br />Both focused test actions exited 0.</li>
+            <li><span class="badge recorded">recorded</span><strong>Running</strong><br />Both owner/status/Tauri process trees matched.</li>
+            <li><span class="badge recorded">recorded</span><strong>Teardown</strong><br />Stopping A left B healthy; final roots were zero.</li>
+            <li><span class="badge recorded">recorded</span><strong>Recovery</strong><br />Stale drill returned to zero processes.</li>
+          </ol>
+        </section>
+      </div>
+
+      <div class="grid">
+        <section>
+          <div class="eyebrow">Not established</div>
+          <h2>Unsupported boundaries</h2>
+          <ul>
+            <li>Crash-atomic launch-to-manifest ownership.</li>
+            <li>Windows Job Object and durable port lease.</li>
+            <li>Provider credential provisioning and approval policy.</li>
+            <li>Visual capture, attention router, or parallel scheduler.</li>
+            <li>True pause/resume or resumable application actions.</li>
+            <li>Product registry/process-owner module structure.</li>
+          </ul>
+        </section>
+        <section class="review">
+          <div class="eyebrow">Human control</div>
+          <h2>Review before product work</h2>
+          <ol>
+            <li>May test instances receive provider credentials?</li>
+            <li>Which events deserve human attention?</li>
+            <li>Is stop + explicit restart the first pause model?</li>
+            <li>Which observed gates may continue automatically?</li>
+          </ol>
+        </section>
+      </div>
+
+      <section class="corrections">
+        <div class="eyebrow">Bounded Epic corrections</div>
+        <h2>Accepted after Epic review at <code>4e5027c</code></h2>
+        <div class="correction-grid">
+          <p><strong>Safe re-prepare:</strong> inspect existing roots/health and refuse live, unowned, endpoint-only, or stale state.</p>
+          <p><strong>Complete fingerprint:</strong> enumerate all untracked files, hash regular-file content, and fail closed otherwise.</p>
+        </div>
+      </section>
+
+      <footer>
+        Static artifact generated for offline review. Direct Tauri-window capture remains a truthful
+        manual gate; the accepted exploration evidence used an indirect 1280×820 live render and
+        observed both titled Tauri windows.
+      </footer>
+    </main>
+  </body>
+</html>
