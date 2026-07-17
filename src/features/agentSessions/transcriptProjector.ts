@@ -12,6 +12,7 @@ export type TranscriptActivityKind =
 
 export interface TranscriptActivity {
   id: string;
+  sequence: number;
   kind: TranscriptActivityKind;
   text: string;
   source: AgentRuntimeEventDto['source'];
@@ -25,16 +26,44 @@ export interface TranscriptOutcome {
   message: string | null;
 }
 
+export type TranscriptAnchorKind = 'submitted_input' | 'activity' | 'final_response' | 'outcome';
+
+/** A durable pointer into one persisted Agent Session invocation. */
+export interface TranscriptAnchor {
+  sessionId: string;
+  invocationId: string;
+  kind: TranscriptAnchorKind;
+  runtimeEventId?: string;
+}
+
+export interface TranscriptFinalResponse {
+  anchor: TranscriptAnchor;
+  eventId: string;
+  text: string;
+}
+
+export type ProjectedTranscriptContent =
+  | { anchor: TranscriptAnchor; kind: 'submitted_input'; text: string }
+  | { anchor: TranscriptAnchor; kind: 'activity'; activity: TranscriptActivity }
+  | { anchor: TranscriptAnchor; kind: 'final_response'; response: TranscriptFinalResponse }
+  | { anchor: TranscriptAnchor; kind: 'outcome'; outcome: TranscriptOutcome };
+
+export interface TranscriptAnchorRange {
+  start: TranscriptAnchor;
+  end: TranscriptAnchor;
+}
+
 export interface ProjectedInvocation {
   id: string;
   submittedText: string;
+  inputProvenance: 'user' | 'application';
   status: AgentInvocationStatusDto;
   isActive: boolean;
   createdAt: IsoDateTimeDto;
   processing: TranscriptActivity[];
   technical: TranscriptActivity[];
   diagnostics: AgentDiagnosticDto[];
-  finalResponse: string | null;
+  finalResponse: TranscriptFinalResponse | null;
   outcome: TranscriptOutcome;
 }
 
@@ -87,15 +116,27 @@ export function projectAgentSessionTranscript(
       return {
         id: invocation.id,
         submittedText: invocation.submittedText,
+        inputProvenance: invocation.inputProvenance,
         status: invocation.status,
         isActive: activeStatuses.has(invocation.status),
         createdAt: invocation.createdAt,
-        processing,
+        processing: coalesceLifecycleActivities(processing),
         technical,
         diagnostics: [...invocation.diagnostics].sort((left, right) =>
           left.recordedAt.localeCompare(right.recordedAt),
         ),
-        finalResponse: finalEvent?.normalized?.text?.trim() || null,
+        finalResponse: finalEvent?.normalized?.text?.trim()
+          ? {
+              anchor: eventAnchor(
+                details.session.id,
+                invocation.id,
+                'final_response',
+                finalEvent.id,
+              ),
+              eventId: finalEvent.id,
+              text: finalEvent.normalized.text.trim(),
+            }
+          : null,
         outcome: projectOutcome(invocation.status, invocation.runtimeError?.message ?? null),
       };
     });
@@ -105,6 +146,161 @@ export function projectAgentSessionTranscript(
     invocations,
     activeInvocationId: invocations.find((invocation) => invocation.isActive)?.id ?? null,
   };
+}
+
+/**
+ * Runtime JSONL emits lifecycle rows for one command or MCP item. Preserve those raw rows, but
+ * render the paired start/completion as one logical activity so a completed operation is not
+ * misrepresented as two calls.
+ */
+function coalesceLifecycleActivities(activities: TranscriptActivity[]): TranscriptActivity[] {
+  const active = new Map<string, number>();
+  const projected: TranscriptActivity[] = [];
+
+  for (const activity of activities) {
+    const lifecycle = lifecycleIdentity(activity);
+    if (!lifecycle) {
+      projected.push(activity);
+      continue;
+    }
+    if (lifecycle.eventType === 'item.started') {
+      active.set(lifecycle.key, projected.length);
+      projected.push(activity);
+      continue;
+    }
+    if (lifecycle.eventType === 'item.completed') {
+      const index = active.get(lifecycle.key);
+      if (index !== undefined) {
+        const started = projected[index];
+        projected[index] = {
+          ...started,
+          text: activity.text === toolLabelFromActivity(activity) ? started.text : activity.text,
+          rawPayload: { lifecycleEvents: [started.rawPayload, activity.rawPayload] },
+        };
+        active.delete(lifecycle.key);
+        continue;
+      }
+    }
+    projected.push(activity);
+  }
+  return projected;
+}
+
+function lifecycleIdentity(
+  activity: TranscriptActivity,
+): { key: string; eventType: 'item.started' | 'item.completed' } | null {
+  if (activity.kind !== 'tool' || !activity.rawPayload || typeof activity.rawPayload !== 'object') {
+    return null;
+  }
+  const raw = activity.rawPayload as Record<string, unknown>;
+  const item = raw.item;
+  if (!item || typeof item !== 'object') return null;
+  const itemId = (item as Record<string, unknown>).id;
+  const itemType = (item as Record<string, unknown>).type;
+  const eventType = raw.type;
+  if (
+    typeof itemId !== 'string' ||
+    typeof itemType !== 'string' ||
+    (eventType !== 'item.started' && eventType !== 'item.completed')
+  ) {
+    return null;
+  }
+  return { key: `${itemType}:${itemId}`, eventType };
+}
+
+function toolLabelFromActivity(activity: TranscriptActivity): string {
+  const raw = activity.rawPayload;
+  if (raw && typeof raw === 'object') {
+    const item = (raw as Record<string, unknown>).item;
+    if (item && typeof item === 'object') {
+      const itemType = (item as Record<string, unknown>).type;
+      if (typeof itemType === 'string') return itemType.replaceAll('_', ' ');
+    }
+  }
+  return 'Tool activity';
+}
+
+/**
+ * Returns projected content in durable session/invocation/event order.  It deliberately never
+ * compares timestamps from different sessions; callers compose those sessions explicitly.
+ */
+export function projectedTranscriptContent(
+  transcript: ProjectedTranscript,
+): ProjectedTranscriptContent[] {
+  return transcript.invocations.flatMap((invocation) => {
+    const input: ProjectedTranscriptContent = {
+      anchor: eventAnchor(transcript.sessionId, invocation.id, 'submitted_input'),
+      kind: 'submitted_input',
+      text: invocation.submittedText,
+    };
+    const activity = [...invocation.processing, ...invocation.technical]
+      .sort(
+        (left, right) =>
+          left.sequence - right.sequence ||
+          left.recordedAt.localeCompare(right.recordedAt) ||
+          left.id.localeCompare(right.id),
+      )
+      .map((item): ProjectedTranscriptContent => ({
+        anchor: eventAnchor(transcript.sessionId, invocation.id, 'activity', item.id),
+        kind: 'activity',
+        activity: item,
+      }));
+    const final = invocation.finalResponse
+      ? [
+          {
+            anchor: invocation.finalResponse.anchor,
+            kind: 'final_response' as const,
+            response: invocation.finalResponse,
+          },
+        ]
+      : [];
+    const outcome: ProjectedTranscriptContent = {
+      anchor: eventAnchor(transcript.sessionId, invocation.id, 'outcome'),
+      kind: 'outcome',
+      outcome: invocation.outcome,
+    };
+    return [input, ...activity, ...final, outcome];
+  });
+}
+
+/** Returns an inclusive excerpt, or an empty array when either anchor is stale or reversed. */
+export function selectTranscriptRange(
+  transcript: ProjectedTranscript,
+  range: TranscriptAnchorRange,
+): ProjectedTranscriptContent[] {
+  const content = projectedTranscriptContent(transcript);
+  const start = content.findIndex((item) => anchorsEqual(item.anchor, range.start));
+  const end = content.findIndex((item) => anchorsEqual(item.anchor, range.end));
+  return start < 0 || end < start ? [] : content.slice(start, end + 1);
+}
+
+/** Anchors the newest projected final agent response without including its input or older turns. */
+export function selectLatestFinalAgentResponseRange(
+  transcript: ProjectedTranscript,
+): TranscriptAnchorRange | null {
+  for (let index = transcript.invocations.length - 1; index >= 0; index -= 1) {
+    const response = transcript.invocations[index].finalResponse;
+    if (response) return { start: response.anchor, end: response.anchor };
+  }
+  return null;
+}
+
+export function anchorsEqual(left: TranscriptAnchor, right: TranscriptAnchor): boolean {
+  return (
+    left.sessionId === right.sessionId &&
+    left.invocationId === right.invocationId &&
+    left.kind === right.kind &&
+    left.runtimeEventId === right.runtimeEventId
+  );
+}
+
+function eventAnchor(
+  sessionId: string,
+  invocationId: string,
+  kind: TranscriptAnchorKind,
+  runtimeEventId?: string,
+): TranscriptAnchor {
+  return { sessionId, invocationId, kind, ...(runtimeEventId ? { runtimeEventId } : {}) };
 }
 
 function findLastFinalAgentMessage(
@@ -128,6 +324,7 @@ function projectActivity(event: AgentRuntimeEventDto): TranscriptActivity | null
   const kind = normalized?.kind;
   const base = {
     id: event.id,
+    sequence: event.sequence,
     source: event.source,
     recordedAt: event.recordedAt,
     rawPayload: event.rawPayload,

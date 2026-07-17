@@ -1,13 +1,17 @@
 import { Send, Square } from 'lucide-react';
 import type { FormEvent, KeyboardEvent } from 'react';
 
-interface AgentSessionComposerProps {
+export interface AgentSessionComposerProps {
   draft: string;
   workingDirectory: string;
   isNewSession: boolean;
   sending: boolean;
   active: boolean;
   canceling: boolean;
+  messageLabel?: string;
+  messagePlaceholder?: string;
+  showWorkingDirectory: boolean;
+  keyboardHint: 'tooltip' | 'hidden';
   onDraftChange(value: string): void;
   onWorkingDirectoryChange(value: string): void;
   onSend(): void;
@@ -28,7 +32,7 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
 
   return (
     <form className="agent-session-composer" onSubmit={submit} aria-label="Send a message">
-      {props.isNewSession && (
+      {props.isNewSession && props.showWorkingDirectory && (
         <label className="working-directory-field">
           <span>
             Working directory <small>optional</small>
@@ -46,8 +50,8 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
           value={props.draft}
           onChange={(event) => props.onDraftChange(event.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="What would you like the agent to do?"
-          aria-label="Message"
+          placeholder={props.messagePlaceholder ?? 'What would you like the agent to do?'}
+          aria-label={props.messageLabel ?? 'Message'}
           disabled={props.active || props.sending}
           rows={4}
         />
@@ -62,14 +66,28 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
             {props.canceling ? 'Canceling…' : 'Cancel'}
           </button>
         ) : (
-          <button
-            className="send-agent-button"
-            type="submit"
-            disabled={!props.draft.trim() || props.sending}
-          >
-            <Send size={16} aria-hidden="true" />
-            {props.sending ? 'Sending…' : 'Send'}
-          </button>
+          <span className="composer-send-action">
+            <button
+              className="send-agent-button"
+              type="submit"
+              disabled={!props.draft.trim() || props.sending}
+              aria-describedby={
+                props.keyboardHint === 'tooltip' ? 'composer-keyboard-hint' : undefined
+              }
+            >
+              <Send size={16} aria-hidden="true" />
+              {props.sending ? 'Sending…' : 'Send'}
+            </button>
+            {props.keyboardHint === 'tooltip' && (
+              <span
+                className="composer-keyboard-tooltip"
+                id="composer-keyboard-hint"
+                role="tooltip"
+              >
+                Enter to send. Shift+Enter adds a new line.
+              </span>
+            )}
+          </span>
         )}
       </div>
       <p className="composer-hint">Enter to send · Shift+Enter for a new line</p>

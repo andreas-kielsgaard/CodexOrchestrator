@@ -25,7 +25,7 @@ import type {
 } from '../application/taskRunDetailClient';
 
 const now = '2026-07-02T12:00:00.000Z';
-const workerPath = 'C:/Repos/Codex Orchestrator Worktrees/042';
+const workerPath = 'C:/Repos/Codex Epic Runner Worktrees/042';
 
 describe('quarantined TaskDashboardScreen', () => {
   it('loads tasks through the injected client and supports create, edit, state change, and archive', async () => {
@@ -305,10 +305,10 @@ describe('quarantined TaskDashboardScreen', () => {
     expect(await screen.findByText('No persisted projects')).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('Repo root path'), {
-      target: { value: 'C:/Repos/Codex Orchestrator' },
+      target: { value: 'C:/Repos/Codex Epic Runner' },
     });
     fireEvent.change(screen.getByLabelText('Project name'), {
-      target: { value: 'Codex Orchestrator' },
+      target: { value: 'Codex Epic Runner' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Add repo' }));
 
@@ -352,8 +352,8 @@ describe('quarantined TaskDashboardScreen', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
 
-    expect(await screen.findByText('Codex Orchestrator')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /Codex Orchestrator/i }));
+    expect(await screen.findByText('Codex Epic Runner')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Codex Epic Runner/i }));
 
     expect(await screen.findByText('0 open')).toBeInTheDocument();
     expect(screen.getByLabelText('Worktree')).toHaveValue('worktree-1');
@@ -556,7 +556,7 @@ class FakeTaskDashboardClient implements TaskDashboardClient {
           projects: [
             {
               id: 'project-1',
-              name: 'Codex Orchestrator',
+              name: 'Codex Epic Runner',
               createdAt: now,
               updatedAt: now,
             },
@@ -566,8 +566,8 @@ class FakeTaskDashboardClient implements TaskDashboardClient {
                 {
                   id: 'repo-1',
                   projectId: 'project-1',
-                  name: 'Codex Orchestrator',
-                  rootPath: 'C:/Repos/Codex Orchestrator',
+                  name: 'Codex Epic Runner',
+                  rootPath: 'C:/Repos/Codex Epic Runner',
                   createdAt: now,
                   updatedAt: now,
                 },
@@ -657,7 +657,7 @@ class FakeTaskDashboardClient implements TaskDashboardClient {
   }
 
   async registerRepo(input: RegisterTaskRepoInput): Promise<TaskDashboardSnapshot> {
-    const repoName = input.repoName ?? 'Codex Orchestrator';
+    const repoName = input.repoName ?? 'Codex Epic Runner';
     const projectName = input.projectName ?? repoName;
     const project = this.records.projects.find((record) => record.name === projectName) ?? {
       id: `project-${this.nextProjectIndex++}`,
@@ -704,7 +704,7 @@ class FakeTaskDashboardClient implements TaskDashboardClient {
   }
 
   async discoverRepos(): Promise<DiscoveredTaskRepo[]> {
-    return [{ name: 'Codex Orchestrator', path: 'C:/Repos/Codex Orchestrator' }];
+    return [{ name: 'Codex Epic Runner', path: 'C:/Repos/Codex Epic Runner' }];
   }
 
   async updateTask(
@@ -897,15 +897,15 @@ function createTaskDetailSnapshot(
       },
       project: {
         id: 'project-1',
-        name: 'Codex Orchestrator',
+        name: 'Codex Epic Runner',
         createdAt: now,
         updatedAt: now,
       },
       repo: {
         id: 'repo-1',
         projectId: 'project-1',
-        name: 'Codex Orchestrator',
-        rootPath: 'C:/Repos/Codex Orchestrator',
+        name: 'Codex Epic Runner',
+        rootPath: 'C:/Repos/Codex Epic Runner',
         createdAt: now,
         updatedAt: now,
       },

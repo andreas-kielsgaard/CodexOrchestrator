@@ -72,6 +72,7 @@ const terminal = (
   id,
   sessionId,
   submittedText: text,
+  inputProvenance: 'user',
   status,
   requestedOptions: { model: null, sandbox: null },
   effectiveOptions: { model: null, sandbox: null },

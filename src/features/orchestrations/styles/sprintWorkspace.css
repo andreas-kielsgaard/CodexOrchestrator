@@ -1,0 +1,107 @@
+.sprint-context {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.sprint-context > p:last-child {
+  color: #42545f;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.sprint-surface-host {
+  display: grid;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
+.sprint-auto-flow {
+  flex: 0 0 auto;
+  padding-left: 12px;
+  border-left: 1px solid #d5dce2;
+}
+
+.sprint-auto-flow__switch {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+}
+
+.sprint-auto-flow__switch > span {
+  display: grid;
+  gap: 2px;
+  text-align: right;
+}
+
+.sprint-auto-flow__switch strong {
+  color: #42545f;
+  font-size: 0.72rem;
+}
+
+.sprint-auto-flow__switch small {
+  color: #71808a;
+  font-size: 0.62rem;
+}
+
+.sprint-auto-flow__switch input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.sprint-auto-flow__switch i {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  background: #aeb8be;
+}
+
+.sprint-auto-flow__switch i::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  content: '';
+  transition: transform 120ms ease;
+}
+
+.sprint-auto-flow__switch input:checked + i {
+  background: #267aaa;
+}
+
+.sprint-auto-flow__switch input:checked + i::after {
+  transform: translateX(14px);
+}
+
+.sprint-auto-flow__switch input:focus-visible + i {
+  outline: 3px solid #cf7b32;
+  outline-offset: 3px;
+}
+
+@media (max-width: 720px) {
+  .sprint-context {
+    gap: 6px;
+  }
+
+  .sprint-auto-flow {
+    padding-left: 7px;
+  }
+
+  .sprint-auto-flow__switch > span {
+    text-align: left;
+  }
+
+  .sprint-auto-flow__switch strong {
+    font-size: 0.67rem;
+  }
+}

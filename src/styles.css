@@ -12,6 +12,7 @@
   font-synthesis: none;
   line-height: 1.5;
   text-rendering: optimizeLegibility;
+  overscroll-behavior: none;
 }
 
 * {
@@ -20,8 +21,19 @@
 
 body {
   margin: 0;
+  height: 100vh;
   min-width: 320px;
-  min-height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+html,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .startup-screen {
@@ -778,8 +790,13 @@ h3 {
 
 /* Shared shell; feature styles are owned beside their screens. */
 .primary-app-shell {
-  min-height: 100vh;
+  width: 100%;
+  height: 100vh;
+  min-width: 0;
+  min-height: 0;
   padding-top: 48px;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .surface-switcher {
@@ -799,6 +816,7 @@ h3 {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  min-width: 0;
   padding: 0 12px;
   border: 0;
   border-radius: 7px;
@@ -807,6 +825,7 @@ h3 {
   font: inherit;
   font-size: 0.82rem;
   font-weight: 750;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -875,4 +894,72 @@ h3 {
     flex: 1;
     justify-content: center;
   }
+}
+/* One application-owned modal serves button and agent initiation requests. */
+.epic-initiation-confirmation {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(18 28 34 / 52%);
+}
+
+.epic-initiation-confirmation__dialog {
+  width: min(520px, 100%);
+  padding: 24px;
+  border: 1px solid #c8d2d8;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 18px 60px rgb(18 28 34 / 24%);
+}
+
+.epic-initiation-confirmation__dialog dl {
+  display: grid;
+  gap: 10px;
+  margin: 20px 0;
+}
+
+.epic-initiation-confirmation__dialog dl div {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 12px;
+}
+
+.epic-initiation-confirmation__dialog dt {
+  font-weight: 700;
+}
+
+.epic-initiation-confirmation__dialog dd {
+  margin: 0;
+}
+
+.epic-initiation-confirmation__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.application-confirmation-error {
+  position: fixed;
+  z-index: 900;
+  right: 18px;
+  bottom: 18px;
+  max-width: 420px;
+  padding: 12px 16px;
+  border: 1px solid #c25b4b;
+  border-radius: 8px;
+  background: #fff4f1;
+  color: #7c2f24;
+}
+
+.orchestration-transition {
+  display: block;
+  margin-top: 4px;
+  color: #356372;
+}
+
+.orchestration-transition--blocked {
+  color: #8a3428;
 }

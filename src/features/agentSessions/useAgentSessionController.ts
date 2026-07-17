@@ -24,13 +24,101 @@ export interface AgentSessionController {
   setDraft(value: string): void;
   setWorkingDirectory(value: string): void;
   send(): Promise<void>;
+  /** Submits caller-supplied text without replacing or clearing the visible composer draft. */
+  sendText?(value: string): Promise<void>;
   cancel(): Promise<void>;
   reload(): Promise<void>;
   toggleProcessing(invocationId: string): void;
   clearError(): void;
 }
 
-export function useAgentSessionController(client: AgentSessionClient): AgentSessionController {
+export type AgentSessionCollectionController = Pick<
+  AgentSessionController,
+  'summaries' | 'selectedSessionId' | 'loading' | 'selectSession' | 'startNewSession' | 'reload'
+> & {
+  error: string | null;
+  clearError(): void;
+};
+export type AgentSessionWorkspaceController = Omit<
+  AgentSessionController,
+  'summaries' | 'selectSession' | 'startNewSession'
+>;
+
+export function useAgentSessionCollection(
+  client: AgentSessionClient,
+): AgentSessionCollectionController {
+  const [summaries, setSummaries] = useState<AgentSessionSummaryDto[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const next = await client.listSessions({ availability: 'available' });
+      setSummaries(next);
+      setSelectedSessionId((current) => current ?? next[0]?.id ?? null);
+    } catch (caught) {
+      if (mountedRef.current) setError(`Session list reload failed: ${errorMessage(caught)}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [client]);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    void reload();
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [reload]);
+  return {
+    summaries,
+    selectedSessionId,
+    loading,
+    error,
+    selectSession: async (id) => {
+      setError(null);
+      setSelectedSessionId(id);
+    },
+    startNewSession: () => {
+      setError(null);
+      setSelectedSessionId(null);
+    },
+    reload,
+    clearError: () => setError(null),
+  };
+}
+
+export interface UseAgentSessionOptions {
+  selectedSessionId: string | null;
+  onSessionCreated?(sessionId: string): void;
+  /** Optional managed-composition metadata for first-session creation. */
+  sessionTitle?: string;
+}
+
+export function useAgentSession(
+  client: AgentSessionClient,
+  options: UseAgentSessionOptions,
+): AgentSessionWorkspaceController {
+  return useAgentSessionController(client, {
+    controlledSessionId: options.selectedSessionId,
+    skipCollection: true,
+    onSessionCreated: options.onSessionCreated,
+    sessionTitle: options.sessionTitle,
+  });
+}
+
+interface ControllerOptions {
+  controlledSessionId?: string | null;
+  skipCollection?: boolean;
+  onSessionCreated?(id: string): void;
+  sessionTitle?: string;
+}
+export function useAgentSessionController(
+  client: AgentSessionClient,
+  options: ControllerOptions = {},
+): AgentSessionController {
   const [summaries, setSummaries] = useState<AgentSessionSummaryDto[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [details, setDetails] = useState<AgentSessionDetailsDto | null>(null);
@@ -48,10 +136,11 @@ export function useAgentSessionController(client: AgentSessionClient): AgentSess
   const subscriptionReadyRef = useRef<Promise<void>>(Promise.resolve());
 
   const refreshSummaries = useCallback(async () => {
+    if (options.skipCollection) return [];
     const next = await client.listSessions({ availability: 'available' });
     if (mountedRef.current) setSummaries(next);
     return next;
-  }, [client]);
+  }, [client, options.skipCollection]);
 
   const loadSelected = useCallback(
     async (sessionId: string, reload = false) => {
@@ -109,7 +198,9 @@ export function useAgentSessionController(client: AgentSessionClient): AgentSess
       }
       const nextSummaries = await refreshSummaries();
       if (canceled) return;
-      const initialId = selectedIdRef.current ?? nextSummaries[0]?.id ?? null;
+      const initialId = options.skipCollection
+        ? null
+        : (selectedIdRef.current ?? nextSummaries[0]?.id ?? null);
       if (initialId) {
         selectedIdRef.current = initialId;
         setSelectedSessionId(initialId);
@@ -129,7 +220,7 @@ export function useAgentSessionController(client: AgentSessionClient): AgentSess
       mountedRef.current = false;
       unsubscribe?.();
     };
-  }, [client, loadSelected, reconcileUpdate, refreshSummaries]);
+  }, [client, loadSelected, options.skipCollection, reconcileUpdate, refreshSummaries]);
 
   const selectSession = useCallback(
     async (sessionId: string) => {
@@ -161,6 +252,16 @@ export function useAgentSessionController(client: AgentSessionClient): AgentSess
     setLoading(false);
   }, []);
 
+  useEffect(() => {
+    if (
+      options.controlledSessionId === undefined ||
+      options.controlledSessionId === selectedIdRef.current
+    )
+      return;
+    if (options.controlledSessionId) void selectSession(options.controlledSessionId);
+    else startNewSession();
+  }, [options.controlledSessionId, selectSession, startNewSession]);
+
   const reload = useCallback(async () => {
     const sessionId = selectedIdRef.current;
     if (!sessionId) {
@@ -179,33 +280,40 @@ export function useAgentSessionController(client: AgentSessionClient): AgentSess
     }
   }, [loadSelected, refreshSummaries]);
 
-  const send = useCallback(async () => {
-    const submittedText = draft.trim();
-    if (!submittedText || sending) return;
-    setSending(true);
-    setError(null);
-    try {
-      await subscriptionReadyRef.current;
-      const sessionId = selectedIdRef.current;
-      const acknowledgement = await client.sendMessage({
-        ...(sessionId ? { sessionId } : {}),
-        submittedText,
-        ...(!sessionId && workingDirectory.trim()
-          ? { workingDirectory: workingDirectory.trim() }
-          : {}),
-      });
-      selectedIdRef.current = acknowledgement.sessionId;
-      invocationIdsRef.current.add(acknowledgement.invocationId);
-      setSelectedSessionId(acknowledgement.sessionId);
-      setDraft('');
-      await loadSelected(acknowledgement.sessionId, true);
-      await refreshSummaries();
-    } catch (caught) {
-      if (mountedRef.current) setError(errorMessage(caught));
-    } finally {
-      if (mountedRef.current) setSending(false);
-    }
-  }, [client, draft, loadSelected, refreshSummaries, sending, workingDirectory]);
+  const sendText = useCallback(
+    async (value: string, clearComposer = false) => {
+      const submittedText = value.trim();
+      if (!submittedText || sending) return;
+      setSending(true);
+      setError(null);
+      try {
+        await subscriptionReadyRef.current;
+        const existingSessionId = selectedIdRef.current;
+        const acknowledgement = await client.sendMessage({
+          ...(existingSessionId ? { sessionId: existingSessionId } : {}),
+          submittedText,
+          ...(!existingSessionId && options.sessionTitle ? { title: options.sessionTitle } : {}),
+          ...(!existingSessionId && workingDirectory.trim()
+            ? { workingDirectory: workingDirectory.trim() }
+            : {}),
+        });
+        selectedIdRef.current = acknowledgement.sessionId;
+        invocationIdsRef.current.add(acknowledgement.invocationId);
+        setSelectedSessionId(acknowledgement.sessionId);
+        if (!existingSessionId) options.onSessionCreated?.(acknowledgement.sessionId);
+        if (clearComposer) setDraft('');
+        await loadSelected(acknowledgement.sessionId, true);
+        await refreshSummaries();
+      } catch (caught) {
+        if (mountedRef.current) setError(errorMessage(caught));
+      } finally {
+        if (mountedRef.current) setSending(false);
+      }
+    },
+    [client, loadSelected, options, refreshSummaries, sending, workingDirectory],
+  );
+
+  const send = useCallback(() => sendText(draft, true), [draft, sendText]);
 
   const cancel = useCallback(async () => {
     const activeInvocationId = details
@@ -277,6 +385,7 @@ export function useAgentSessionController(client: AgentSessionClient): AgentSess
     setDraft,
     setWorkingDirectory,
     send,
+    sendText: (value) => sendText(value),
     cancel,
     reload,
     toggleProcessing,

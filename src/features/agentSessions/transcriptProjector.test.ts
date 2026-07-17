@@ -3,7 +3,12 @@ import type {
   AgentRuntimeEventDto,
   AgentSessionDetailsDto,
 } from '../../application/agentSessions';
-import { projectAgentSessionTranscript } from './transcriptProjector';
+import {
+  projectAgentSessionTranscript,
+  projectedTranscriptContent,
+  selectLatestFinalAgentResponseRange,
+  selectTranscriptRange,
+} from './transcriptProjector';
 
 const timestamp = '2026-07-10T12:00:00.000Z';
 
@@ -34,6 +39,31 @@ describe('projectAgentSessionTranscript', () => {
     expect(projected.invocations[0].finalResponse).toBeNull();
   });
 
+  it('projects paired MCP lifecycle events as one logical activity while retaining both raw events', () => {
+    const started = event(1, 'tool_activity', null, {
+      itemType: 'mcp_tool_call',
+      eventType: 'item.started',
+    });
+    started.rawPayload = { type: 'item.started', item: { id: 'item-5', type: 'mcp_tool_call' } };
+    const completed = event(2, 'tool_activity', null, {
+      itemType: 'mcp_tool_call',
+      eventType: 'item.completed',
+    });
+    completed.rawPayload = {
+      type: 'item.completed',
+      item: { id: 'item-5', type: 'mcp_tool_call' },
+    };
+
+    const invocation = projectAgentSessionTranscript(details('completed', [started, completed]))
+      .invocations[0];
+
+    expect(invocation.processing).toHaveLength(1);
+    expect(invocation.processing[0]).toMatchObject({ text: 'mcp tool call' });
+    expect(invocation.processing[0].rawPayload).toMatchObject({
+      lifecycleEvents: [started.rawPayload, completed.rawPayload],
+    });
+  });
+
   it('keeps only the last backend-final message prominent and groups earlier agent messages', () => {
     const projected = projectAgentSessionTranscript(
       details('completed', [
@@ -44,7 +74,11 @@ describe('projectAgentSessionTranscript', () => {
       ]),
     );
 
-    expect(projected.invocations[0].finalResponse).toBe('Comprehensive final response');
+    expect(projected.invocations[0].finalResponse).toMatchObject({
+      eventId: 'event-invocation-1-4',
+      text: 'Comprehensive final response',
+      anchor: { sessionId: 'session-1', invocationId: 'invocation-1', kind: 'final_response' },
+    });
     expect(projected.invocations[0].processing.map((item) => item.text)).toEqual([
       'First update',
       'Earlier candidate',
@@ -106,6 +140,70 @@ describe('projectAgentSessionTranscript', () => {
       projectAgentSessionTranscript(value).invocations.map((item) => item.submittedText),
     ).toEqual(['First', 'Second']);
   });
+
+  it('creates durable anchors and selects an inclusive excerpt', () => {
+    const projected = projectAgentSessionTranscript(
+      details('completed', [
+        event(1, 'processing_update', 'Thinking'),
+        event(2, 'agent_message', 'Done', { role: 'final' }),
+      ]),
+    );
+    const content = projectedTranscriptContent(projected);
+    expect(content.map((item) => item.kind)).toEqual([
+      'submitted_input',
+      'activity',
+      'final_response',
+      'outcome',
+    ]);
+    expect(
+      selectTranscriptRange(projected, { start: content[1].anchor, end: content[2].anchor }),
+    ).toEqual(content.slice(1, 3));
+  });
+
+  it('returns no content for stale or reversed anchors', () => {
+    const projected = projectAgentSessionTranscript(
+      details('completed', [event(1, 'processing_update', 'Thinking')]),
+    );
+    const content = projectedTranscriptContent(projected);
+    expect(
+      selectTranscriptRange(projected, {
+        start: { ...content[0].anchor, sessionId: 'missing' },
+        end: content[1].anchor,
+      }),
+    ).toEqual([]);
+    expect(
+      selectTranscriptRange(projected, { start: content[1].anchor, end: content[0].anchor }),
+    ).toEqual([]);
+  });
+
+  it('anchors only the latest final agent response without older turns or user input', () => {
+    const value = details();
+    value.invocations = [
+      invocation('invocation-1', 'Older user input', '2026-07-10T12:01:00.000Z', [
+        event(1, 'agent_message', 'Older final', { role: 'final' }, 'invocation-1'),
+      ]),
+      invocation('invocation-2', 'Latest user input', '2026-07-10T12:02:00.000Z', [
+        event(1, 'agent_message', 'Latest final', { role: 'final' }, 'invocation-2'),
+      ]),
+    ];
+    const projected = projectAgentSessionTranscript(value);
+    const range = selectLatestFinalAgentResponseRange(projected);
+
+    expect(range).not.toBeNull();
+    expect(selectTranscriptRange(projected, range!)).toMatchObject([
+      {
+        kind: 'final_response',
+        response: { text: 'Latest final' },
+        anchor: { invocationId: 'invocation-2', kind: 'final_response' },
+      },
+    ]);
+  });
+
+  it('returns no latest-response range when the transcript has no final agent response', () => {
+    expect(
+      selectLatestFinalAgentResponseRange(projectAgentSessionTranscript(details())),
+    ).toBeNull();
+  });
 });
 
 function details(
@@ -118,7 +216,7 @@ function details(
       id: 'session-1',
       title: 'Session',
       availability: 'available',
-      runtimeBinding: { kind: 'codex_cli', externalContextId: null, runtimeVersion: null },
+      runtimeBinding: { externalContextId: null, runtimeVersion: null },
       workingDirectory: null,
       requestedOptions: { model: null, sandbox: null },
       createdAt: timestamp,
@@ -143,6 +241,7 @@ function invocation(
       id,
       sessionId: 'session-1',
       submittedText,
+      inputProvenance: 'user' as const,
       status,
       requestedOptions: { model: null, sandbox: null },
       effectiveOptions: null,

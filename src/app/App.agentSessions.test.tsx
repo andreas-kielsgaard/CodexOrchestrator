@@ -1,17 +1,26 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import type { AgentSessionClient } from '../application/agentSessions';
 import { sessionDetails } from '../features/agentSessions/testFixtures';
+import type { OrchestrationApplicationClient } from '../application/orchestrations';
 import { App } from './App';
 
-describe('App Agent Session shell', () => {
-  it('mounts Agent Sessions as the only application surface', async () => {
-    render(<App agentSessionClient={emptyAgentClient()} />);
+describe('App application surfaces', () => {
+  it('switches between peer Orchestration and Agent Sessions capability surfaces', async () => {
+    render(
+      <App
+        agentSessionClient={emptyAgentClient()}
+        orchestrationClient={emptyOrchestrationClient()}
+      />,
+    );
 
+    expect(screen.getByRole('navigation', { name: 'Application surfaces' })).toBeVisible();
+    expect(screen.getByRole('main', { name: 'Orchestration' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Sessions' }));
     expect(await screen.findByText('Start with a message')).toBeInTheDocument();
-    expect(
-      screen.queryByRole('navigation', { name: 'Application surfaces' }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Legacy Tasks' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestration' }));
+    expect(screen.getByRole('main', { name: 'Orchestration' })).toBeVisible();
   });
 });
 
@@ -26,4 +35,8 @@ function emptyAgentClient(): AgentSessionClient {
     cancelInvocation: async () => sessionDetails('canceled').invocations[0].invocation,
     disconnectUpdates: async () => undefined,
   };
+}
+
+function emptyOrchestrationClient(): OrchestrationApplicationClient {
+  return { load: async () => ({ kind: 'empty', reason: 'No orchestration records.' }) };
 }

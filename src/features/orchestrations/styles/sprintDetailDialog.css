@@ -1,0 +1,88 @@
+.sprint-dialog-backdrop {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(17 29 38 / 42%);
+}
+
+.sprint-dialog {
+  display: grid;
+  gap: 18px;
+  width: min(100%, 620px);
+  max-height: calc(100vh - 40px);
+  padding: 22px;
+  overflow: auto;
+  border: 1px solid #b9c5cc;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgb(12 29 40 / 28%);
+}
+
+.sprint-dialog > header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.sprint-dialog > header h2 {
+  font-size: 1.25rem;
+}
+
+.sprint-dialog > header button {
+  display: grid;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid #cbd4da;
+  border-radius: 7px;
+  background: #f7f8f9;
+  color: #344854;
+  cursor: pointer;
+}
+
+.sprint-dialog > p {
+  color: #596974;
+  font-size: 0.86rem;
+}
+
+.sprint-dialog dl {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.sprint-dialog dl > div {
+  padding: 12px;
+  border: 1px solid #dbe1e5;
+  border-radius: 8px;
+  background: #f7f9fa;
+}
+
+.sprint-dialog dt {
+  color: #61717b;
+  font-size: 0.68rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.sprint-dialog dd {
+  margin: 4px 0 0;
+  font-size: 0.84rem;
+}
+
+.sprint-dialog__session {
+  display: grid;
+  gap: 3px;
+  padding-top: 14px;
+  border-top: 1px solid #dbe1e5;
+}
+
+.sprint-dialog__session code {
+  overflow-wrap: anywhere;
+  font-size: 0.7rem;
+}

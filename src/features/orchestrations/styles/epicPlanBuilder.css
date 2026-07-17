@@ -1,0 +1,357 @@
+.epic-plan-builder {
+  display: flex;
+  position: fixed;
+  inset: 48px 0 0;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: #f4f6f8;
+}
+
+.epic-plan-builder__toolbar {
+  display: flex;
+  min-width: 0;
+  min-height: 48px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #d5dce2;
+  background: #fffdf8;
+}
+
+.epic-plan-builder__back,
+.epic-plan-builder__cancel-draft {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.epic-plan-builder__back {
+  color: #344854;
+}
+
+.epic-plan-builder__back:hover {
+  background: #edf1f4;
+}
+
+.epic-plan-builder__toolbar-context {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: #657680;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.epic-plan-builder__cancel-draft {
+  border: 1px solid #d6afa4;
+  color: #8c3928;
+}
+
+.epic-plan-builder__cancel-draft:hover:not(:disabled) {
+  background: #fff5f2;
+}
+
+.epic-plan-builder__body {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.epic-plan-builder__cancel-error {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 8px 11px;
+  border: 1px solid #d6afa4;
+  border-radius: 7px;
+  background: #fff5f2;
+  color: #7a2e20;
+  font-size: 0.8rem;
+}
+
+.epic-plan-builder__layout {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(200px, 230px) minmax(400px, 1fr) minmax(320px, 420px);
+  gap: 10px;
+  overflow: hidden;
+}
+
+.epic-plan-builder__controls,
+.epic-plan-builder__conversation,
+.epic-plan-builder__proposal {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  border: 1px solid #d5dce2;
+  border-radius: 8px;
+  background: #fffdf8;
+  overflow: hidden;
+}
+
+.epic-plan-builder__controls {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 16px;
+  overflow-y: auto;
+  overscroll-behavior: none;
+}
+
+.epic-plan-builder__controls-primary {
+  display: grid;
+  gap: 8px;
+}
+
+.epic-plan-builder__controls h1 {
+  margin: 0 0 14px;
+  font-size: clamp(1.5rem, 2vw, 2rem);
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+}
+
+.epic-plan-builder__controls label {
+  color: #59655e;
+  font-size: 0.76rem;
+  font-weight: 780;
+}
+
+.epic-plan-builder__name {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  background: #fff;
+  font-weight: 650;
+}
+
+.epic-plan-builder__controls-actions {
+  display: grid;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px solid #e0e4dd;
+}
+
+.epic-plan-builder__plan-action,
+.epic-plan-builder__initiate-action {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid #17211b;
+  border-radius: 8px;
+  background: #17211b;
+  color: #fffdf8;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.epic-plan-builder__initiate-action {
+  background: #fffdf8;
+  color: #17211b;
+}
+
+.epic-plan-builder__controls-actions p {
+  color: #718077;
+  font-size: 0.7rem;
+  line-height: 1.35;
+}
+
+.epic-plan-builder__conversation .agent-session-workspace {
+  height: 100%;
+  min-height: 0;
+}
+
+.epic-plan-builder__proposal {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.epic-plan-builder__proposal-header {
+  position: relative;
+  z-index: 1;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e0e4dd;
+  background: #fffdf8;
+}
+
+.epic-plan-builder__proposal h2 {
+  margin: 0;
+  font-size: 1.08rem;
+}
+
+.epic-plan-builder__proposal-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: none;
+  padding: 0 16px 16px;
+}
+
+.epic-plan-builder__proposal ol {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: sprint;
+}
+
+.epic-plan-builder__sprint {
+  position: relative;
+  border-bottom: 1px solid #e4e9ed;
+}
+
+.epic-plan-builder__proposal p {
+  margin: 0;
+  color: #52616c;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.epic-plan-builder__proposal ul {
+  margin: 9px 0 0;
+  padding-left: 18px;
+  color: #40515d;
+  font-size: 0.82rem;
+}
+
+.epic-plan-builder__empty {
+  margin-top: 16px !important;
+  padding: 12px;
+  border-left: 3px solid #8598a6;
+  background: #f1f4f6;
+}
+
+.epic-plan-builder__sprint-toggle {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.epic-plan-builder__sprint-card {
+  pointer-events: none;
+}
+
+.epic-plan-builder__sprint-heading {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 9px;
+  padding: 14px 0 8px;
+  color: #172532;
+}
+
+.epic-plan-builder__sprint-heading > span {
+  color: #52616c;
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.epic-plan-builder__sprint-heading strong {
+  font-size: 0.94rem;
+  line-height: 1.2;
+}
+
+.epic-plan-builder__sprint-details {
+  padding: 0 0 14px 73px;
+}
+
+.epic-plan-builder button:focus-visible {
+  outline: 3px solid #cf7b32;
+  outline-offset: 2px;
+}
+
+@media (max-width: 1100px) {
+  .epic-plan-builder__layout {
+    grid-template-columns: minmax(180px, 210px) minmax(300px, 1fr) minmax(280px, 340px);
+  }
+}
+
+@media (max-width: 900px) {
+  .epic-plan-builder__body {
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .epic-plan-builder__layout {
+    min-height: 980px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(520px, 1fr) minmax(320px, 0.7fr);
+    overflow: visible;
+    overscroll-behavior: none;
+  }
+
+  .epic-plan-builder__controls {
+    height: auto;
+    flex-direction: row;
+    gap: 20px;
+  }
+
+  .epic-plan-builder__controls-primary,
+  .epic-plan-builder__controls-actions {
+    flex: 1;
+  }
+
+  .epic-plan-builder__toolbar-context {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .epic-plan-builder__toolbar {
+    gap: 4px;
+    padding: 6px 8px;
+  }
+
+  .epic-plan-builder__back,
+  .epic-plan-builder__cancel-draft {
+    padding: 0 6px;
+    font-size: 0.7rem;
+  }
+
+  .epic-plan-builder__back {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .epic-plan-builder__controls {
+    flex-direction: column;
+  }
+}

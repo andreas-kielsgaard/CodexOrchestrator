@@ -1,0 +1,174 @@
+.epic-plan {
+  overflow: auto;
+  overscroll-behavior: none;
+}
+
+.epic-plan ol {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 10px 16px 18px;
+  list-style: none;
+}
+
+.sprint-plan-item {
+  position: relative;
+}
+
+.sprint-plan-item:not(:last-child)::after {
+  position: absolute;
+  z-index: 0;
+  top: 49px;
+  bottom: -12px;
+  left: 21px;
+  width: 3px;
+  border-radius: 3px;
+  background: #cad5dd;
+  content: '';
+}
+
+.sprint-plan-item--completed:not(:last-child)::after {
+  background: #63a47d;
+}
+
+.sprint-plan-item > button,
+.sprint-plan-item > div {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 14px;
+  width: 100%;
+  margin: 8px 0;
+  padding: 15px 17px 15px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: #172532;
+  font: inherit;
+  text-align: left;
+}
+
+.sprint-plan-item > button {
+  cursor: pointer;
+}
+
+.sprint-plan-item--completed > button {
+  border-color: #bcdac8;
+  background: #edf8f1;
+}
+
+.sprint-plan-item--in_progress > button {
+  border-color: #95c4e5;
+  background: #eaf5fc;
+  box-shadow: inset 4px 0 #2881b9;
+}
+
+.sprint-plan-item--not_started > div {
+  border-color: #dbe1e5;
+  background: #f7f8f9;
+  color: #67747c;
+}
+
+.sprint-plan-item > button:hover {
+  filter: brightness(0.98);
+  border-color: #3c7192;
+}
+
+.sprint-plan-item__marker {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 2px solid #9eabb3;
+  border-radius: 50%;
+  background: #fff;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.sprint-plan-item--completed .sprint-plan-item__marker {
+  border-color: #2f8150;
+  background: #2f8150;
+  color: #fff;
+}
+
+.sprint-plan-item--in_progress .sprint-plan-item__marker {
+  border-color: #267aaa;
+  background: #267aaa;
+  color: #fff;
+  box-shadow: 0 0 0 4px #d3ebfa;
+}
+
+.sprint-plan-item__body {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.sprint-plan-item__body > strong {
+  font-size: 0.96rem;
+}
+
+.sprint-plan-item__body > small {
+  color: #5f6d76;
+  font-size: 0.8rem;
+}
+
+.sprint-plan-item__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: #526772;
+  font-size: 0.7rem;
+  font-weight: 850;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.sprint-plan-item__meta code {
+  color: #78858c;
+  font-size: 0.67rem;
+  text-transform: none;
+}
+
+.sprint-session-reference {
+  margin-top: 3px;
+  color: #336382;
+  font-size: 0.74rem;
+  font-weight: 750;
+}
+
+.sprint-blocker {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+  margin-top: 7px;
+  padding: 9px 10px;
+  border: 1px solid #e2aaa3;
+  border-radius: 8px;
+  background: #fff4f2;
+  color: #9b3026;
+}
+
+.sprint-blocker > span {
+  display: grid;
+  gap: 2px;
+}
+
+.sprint-blocker small {
+  color: #794b46;
+  font-size: 0.73rem;
+}
+
+@media (max-width: 720px) {
+  .epic-plan ol {
+    padding: 8px 10px 14px;
+  }
+
+  .sprint-plan-item > button,
+  .sprint-plan-item > div {
+    gap: 10px;
+    padding-right: 11px;
+  }
+}
