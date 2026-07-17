@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { appendFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, lstat, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
@@ -197,13 +197,14 @@ async function prepare(args) {
   const sessionId = validateInstanceId(String(args.session ?? instanceId));
   const slot = Number.parseInt(String(args.slot ?? ''), 10);
   const ports = portsForSlot(slot);
+  const runtimeRoot = path.join(workspace, '.dev', 'worktree-runtime', instanceId);
+  const manifestPath = path.join(runtimeRoot, 'manifest.json');
+  await ensureExistingManifestReplaceable(manifestPath, workspace, instanceId);
   const gitCommit = await git('rev-parse', 'HEAD');
   const branch = await git('branch', '--show-current');
   const gitDirectory = path.resolve(workspace, await git('rev-parse', '--git-dir'));
   const gitCommonDirectory = path.resolve(workspace, await git('rev-parse', '--git-common-dir'));
   const dirtyState = await sourceState(workspace, gitCommit);
-  const runtimeRoot = path.join(workspace, '.dev', 'worktree-runtime', instanceId);
-  const manifestPath = path.join(runtimeRoot, 'manifest.json');
   const repoKey = keyedHash([normalizePath(gitCommonDirectory)]);
   const sharedRoot =
     args['cache-root'] ??
@@ -315,6 +316,66 @@ async function prepare(args) {
   await writeJson(manifest.projected.paths.tauriConfig, tauriOverride(manifest));
   await writeManifest(manifest);
   console.log(manifest.projected.paths.manifest);
+}
+
+async function ensureExistingManifestReplaceable(manifestPath, workspace, instanceId) {
+  let existing;
+  try {
+    existing = await readJson(manifestPath);
+  } catch (error) {
+    if (error && typeof error === 'object' && error.code === 'ENOENT') {
+      return;
+    }
+    throw new Error(
+      `refusing to prepare ${instanceId}: the existing manifest could not be inspected: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (
+    existing?.identity?.instanceId !== instanceId ||
+    !samePath(existing?.identity?.worktreePath, workspace) ||
+    !samePath(existing?.projected?.paths?.manifest, manifestPath)
+  ) {
+    throw new Error(
+      `refusing to prepare ${instanceId}: the existing manifest identity or worktree route does not match`,
+    );
+  }
+  let observation;
+  try {
+    observation = await observe(existing);
+  } catch (error) {
+    throw new Error(
+      `refusing to prepare ${instanceId}: current ownership could not be inspected: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  assertSafeToReprepare(observation, instanceId);
+}
+
+export function assertSafeToReprepare(observation, instanceId = 'instance') {
+  const processes = Array.isArray(observation?.processes) ? observation.processes : [];
+  const unowned = processes.filter((process) => process.alive && !process.owned);
+  if (unowned.length > 0) {
+    throw new Error(
+      `refusing to prepare ${instanceId}: ownership is unproven for live PIDs ${unowned
+        .map((process) => process.pid)
+        .join(', ')}`,
+    );
+  }
+  if (observation?.stale) {
+    throw new Error(
+      `refusing to prepare ${instanceId}: stale launch state must be recovered first`,
+    );
+  }
+  const live = processes.filter((process) => process.alive && process.owned);
+  if (live.length > 0 || observation?.applicationProcessObserved) {
+    throw new Error(
+      `refusing to prepare ${instanceId}: the owned instance is live and must be stopped first`,
+    );
+  }
+  if (observation?.health?.status?.ok || observation?.health?.vite?.ok) {
+    throw new Error(
+      `refusing to prepare ${instanceId}: a runtime endpoint is live without a replaceable stopped owner`,
+    );
+  }
 }
 
 async function install(manifest) {
@@ -685,10 +746,14 @@ async function readJson(filePath) {
   return JSON.parse(await readFile(filePath, 'utf8'));
 }
 
-async function sourceState(workspace, commit) {
-  const status = spawnSync('git', ['-C', workspace, 'status', '--porcelain=v1', '-z'], {
-    encoding: null,
-  });
+export async function sourceState(workspace, commit) {
+  const status = spawnSync(
+    'git',
+    ['-C', workspace, 'status', '--porcelain=v1', '-z', '--untracked-files=all'],
+    {
+      encoding: null,
+    },
+  );
   if (status.status !== 0) {
     throw new Error(status.stderr?.toString('utf8').trim() || 'git status failed');
   }
@@ -709,9 +774,15 @@ async function sourceState(workspace, commit) {
   for (const relative of untracked) {
     const absolute = path.join(workspace, relative);
     try {
+      const entry = await lstat(absolute);
+      if (!entry.isFile()) {
+        throw new Error('entry is not a regular file');
+      }
       untrackedParts.push(relative, await readFile(absolute));
-    } catch {
-      untrackedParts.push(relative);
+    } catch (error) {
+      throw new Error(
+        `cannot fingerprint untracked entry ${relative}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
   return {
@@ -979,6 +1050,17 @@ function requiredPath(value) {
 
 function normalizePath(value) {
   return path.resolve(value).replaceAll('\\', '/');
+}
+
+function samePath(left, right) {
+  if (typeof left !== 'string' || typeof right !== 'string') {
+    return false;
+  }
+  const normalizedLeft = normalizePath(left);
+  const normalizedRight = normalizePath(right);
+  return process.platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
 }
 
 function delay(milliseconds) {

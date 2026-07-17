@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import test from 'node:test';
+import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
+  assertSafeToReprepare,
   isolatedEnvironment,
   keyedHash,
   portsForSlot,
+  sourceState,
   tauriOverride,
   validateInstanceId,
 } from './worktree-runtime.mjs';
@@ -79,3 +84,93 @@ test('launch environment isolates instance state and removes ambient provider cr
   assert.equal(result.environment.VITE_RUNTIME_BUILD_OBSERVED, 'false');
   assert.deepEqual(result.scrubbed, ['GITHUB_TOKEN', 'OPENAI_API_KEY']);
 });
+
+test('allows re-prepare only after the recorded instance is cleanly stopped', () => {
+  assert.doesNotThrow(() =>
+    assertSafeToReprepare(
+      {
+        processes: [],
+        health: { status: { ok: false }, vite: { ok: false } },
+        applicationProcessObserved: false,
+        stale: false,
+      },
+      'alpha',
+    ),
+  );
+});
+
+test('refuses re-prepare for live, unowned, endpoint-only, or stale launch state', () => {
+  const stopped = {
+    processes: [],
+    health: { status: { ok: false }, vite: { ok: false } },
+    applicationProcessObserved: false,
+    stale: false,
+  };
+  assert.throws(
+    () =>
+      assertSafeToReprepare(
+        { ...stopped, processes: [{ pid: 10, alive: true, owned: true }] },
+        'alpha',
+      ),
+    /must be stopped first/,
+  );
+  assert.throws(
+    () =>
+      assertSafeToReprepare(
+        { ...stopped, processes: [{ pid: 11, alive: true, owned: false }] },
+        'alpha',
+      ),
+    /ownership is unproven/,
+  );
+  assert.throws(
+    () =>
+      assertSafeToReprepare(
+        { ...stopped, health: { status: { ok: true }, vite: { ok: false } } },
+        'alpha',
+      ),
+    /runtime endpoint is live/,
+  );
+  assert.throws(
+    () => assertSafeToReprepare({ ...stopped, stale: true }, 'alpha'),
+    /must be recovered first/,
+  );
+});
+
+test('nested untracked file content changes invalidate the source fingerprint', async () => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'worktree-runtime-source-state-'));
+  try {
+    runGit(workspace, 'init');
+    await writeFile(path.join(workspace, 'tracked.txt'), 'baseline\n', 'utf8');
+    runGit(workspace, 'add', 'tracked.txt');
+    runGit(
+      workspace,
+      '-c',
+      'user.name=Worktree Runtime Test',
+      '-c',
+      'user.email=worktree-runtime@example.invalid',
+      'commit',
+      '-m',
+      'baseline',
+    );
+    const commit = runGit(workspace, 'rev-parse', 'HEAD');
+    const nested = path.join(workspace, 'untracked', 'nested', 'proof.txt');
+    await mkdir(path.dirname(nested), { recursive: true });
+    await writeFile(nested, 'first\n', 'utf8');
+    const first = await sourceState(workspace, commit);
+
+    await writeFile(nested, 'second\n', 'utf8');
+    const second = await sourceState(workspace, commit);
+
+    assert.equal(first.dirty, true);
+    assert.equal(second.dirty, true);
+    assert.notEqual(first.fingerprint, second.fingerprint);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+function runGit(workspace, ...args) {
+  const result = spawnSync('git', ['-C', workspace, ...args], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+}

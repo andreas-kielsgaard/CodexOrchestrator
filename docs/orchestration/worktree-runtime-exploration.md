@@ -75,7 +75,9 @@ OS, and architecture. When `sccache` is available, its cache is shared only insi
 it, the manifest records `isolated-target-only`; it does not imply shared Rust compilation.
 
 Source edits do not reuse a prepared identity silently. Build, test, and launch fail until
-`prepare` records the new source fingerprint.
+`prepare` records the new source fingerprint. The fingerprint asks Git to enumerate every untracked
+file, hashes each regular file's content, and fails closed when an untracked entry cannot be read as
+a regular file.
 
 ## Executed two-worktree proof
 
@@ -98,7 +100,7 @@ On 2026-07-17, `proof-a` and `proof-b` used the same committed source
   `status` reported stale, `recover` stopped the remaining owned tree, and the final observation had
   zero processes and closed endpoints.
 
-Focused validation covered 4 Node harness tests, 2 development-source tests, 2 application-surface
+Focused validation covered 7 Node harness tests, 2 development-source tests, 2 application-surface
 tests, 15 application status tests, 2 Rust app-data override tests, TypeScript, ESLint, formatting,
 the production frontend build, and the per-instance Rust runtime/process test action. The production
 composition does not supply the peer view; its feature implementation is excluded from the
@@ -159,6 +161,10 @@ can show both without turning a launch request into launch evidence.
 - Windows teardown currently uses verified wrapper command lines plus `taskkill /T`. This is
   reversible developer tooling, but process lookup and teardown are not one atomic ownership
   operation. A product runtime needs a Job Object.
+- Launch is not crash-atomic. Detached wrappers start before their PIDs and ownership route reach
+  the manifest; a crash in that interval can leave a process tree the manifest cannot recover.
+- `scripts/worktree-runtime.mjs` began as a 981-line prototype. It is disposable exploration
+  tooling, not the module structure for a product registry or process owner.
 - `sccache` was not installed during implementation. Shared Rust compilation must remain reported as
   unavailable until installed and measured.
 - Port slots are explicit, not leased by a durable broker.
@@ -183,7 +189,8 @@ may continue automatically.
 ## Exact next product slice
 
 Build a focused **Worktree Test Instance Registry and Windows Process Owner** outside legacy
-`lib.rs`.
+`lib.rs`. Implement it as focused identity, registry, cache, launch, ownership, health, and recovery
+modules rather than extending the exploration script into product infrastructure.
 
 The slice should:
 
