@@ -19,6 +19,13 @@ import {
   createRecordedAgentSessionStore,
 } from '../agentSessions';
 import { recordedLocalEpicPlanProposalSource } from './recordedEpicPlanProposalSource';
+import {
+  recordedHarnessInspectorSessionDetails,
+  recordedHarnessInspectorSessionId,
+  recordedHarnessInspectorSource,
+} from '../conversationHarnesses/recordedHarnessInspectorSource';
+import { createElement } from 'react';
+import { HarnessInspectorDevelopmentSurface } from '../../features/conversationHarnesses';
 
 /** Recorded development data enters through canonical composition; it is not a product connector. */
 export const recordedDevelopmentOrchestrationClient = recordedOrchestrationClient(
@@ -27,7 +34,10 @@ export const recordedDevelopmentOrchestrationClient = recordedOrchestrationClien
 
 /** Deterministic Agent Session client for the same embedded component tree in recorded mode. */
 export const recordedDevelopmentAgentSessionClient = createRecordedAgentSessionClient({
-  store: createRecordedAgentSessionStore(recordedAgentSessionDetails),
+  store: createRecordedAgentSessionStore([
+    ...recordedAgentSessionDetails,
+    recordedHarnessInspectorSessionDetails,
+  ]),
 });
 
 /** Compatibility-only transcripts and workflow geometry are adjuncts, never product read facts. */
@@ -44,7 +54,9 @@ export const recordedDevelopmentOrchestrationPresentation: OrchestrationPresenta
 };
 
 /** Development-only adapter: recorded reads use the product tree, while effects remain unsupported. */
-export function createRecordedDevelopmentApplicationComposition(): AppProps {
+export function createRecordedDevelopmentApplicationComposition(options?: {
+  readonly initialSurface?: AppProps['initialSurface'];
+}): AppProps {
   return {
     agentSessionClient: recordedDevelopmentAgentSessionClient,
     orchestrationClient: recordedDevelopmentOrchestrationClient,
@@ -56,5 +68,13 @@ export function createRecordedDevelopmentApplicationComposition(): AppProps {
     epicAutomaticContinuationPolicyController:
       unsupportedProductEpicAutomaticContinuationPolicyController,
     epicPlanProposalSource: recordedLocalEpicPlanProposalSource,
+    harnessInspectorDevelopmentSurface: createElement(HarnessInspectorDevelopmentSurface, {
+      composition: {
+        client: recordedDevelopmentAgentSessionClient,
+        sessionId: recordedHarnessInspectorSessionId,
+        source: recordedHarnessInspectorSource,
+      },
+    }),
+    initialSurface: options?.initialSurface,
   };
 }
