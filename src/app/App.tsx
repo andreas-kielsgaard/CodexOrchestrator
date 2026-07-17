@@ -81,6 +81,7 @@ export function App({
   const [surface, setSurface] = useState<ApplicationSurface>(() =>
     initialSurface === 'file-review' && !fileReviewClient ? 'epics' : initialSurface,
   );
+  const [fileReviewSourceId, setFileReviewSourceId] = useState<string | undefined>();
   const [orchestrationRoute, setOrchestrationRoute] = useState<'overview' | 'plan-builder'>(
     'overview',
   );
@@ -282,6 +283,14 @@ export function App({
           sprintAutomaticContinuationPolicyController={sprintAutomaticContinuationPolicyController}
           epicAutomaticContinuationPolicyController={epicAutomaticContinuationPolicyController}
           planningDrafts={planningDrafts}
+          onOpenFileReviewSource={
+            fileReviewClient
+              ? (sourceId) => {
+                  setFileReviewSourceId(sourceId);
+                  setSurface('file-review');
+                }
+              : undefined
+          }
           onOpenDraft={(draft) => {
             setSelectedDraft({
               draftId: draft.epicPlanningDraftId,
@@ -296,7 +305,7 @@ export function App({
           }}
         />
       ) : surface === 'file-review' && fileReviewClient ? (
-        <FileReviewScreen client={fileReviewClient} />
+        <FileReviewScreen client={fileReviewClient} initialSourceId={fileReviewSourceId} />
       ) : (
         <StandaloneAgentSessionScreen client={agentSessionClient} />
       )}
@@ -314,6 +323,7 @@ function OrchestrationSurface({
   onPlanEpic,
   planningDrafts,
   onOpenDraft,
+  onOpenFileReviewSource,
 }: {
   readonly load: ReturnType<typeof useOrchestrationLoad>;
   readonly presentation: OrchestrationPresentationAdapter;
@@ -324,6 +334,7 @@ function OrchestrationSurface({
   readonly onPlanEpic: () => void;
   readonly planningDrafts: readonly EpicPlanningDraftSummary[];
   readonly onOpenDraft: (draft: EpicPlanningDraftSummary) => void;
+  readonly onOpenFileReviewSource?: (sourceId: string) => void;
 }) {
   if (load.kind === 'ready')
     return (
@@ -336,6 +347,7 @@ function OrchestrationSurface({
         onPlanEpic={onPlanEpic}
         planningDrafts={planningDrafts}
         onOpenPlanningDraft={onOpenDraft}
+        onOpenFileReviewSource={onOpenFileReviewSource}
       />
     );
   const copy =
