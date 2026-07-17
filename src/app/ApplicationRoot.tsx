@@ -1,31 +1,43 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ComponentType } from 'react';
 import { createProductApplicationComposition } from '../bootstrap/productApplicationComposition';
 import { App, type AppProps } from './App';
 
-/** The optional recorded review composition is development-only and never enters product boot. */
+type ApplicationRootState =
+  | { readonly kind: 'app'; readonly composition: AppProps }
+  | { readonly kind: 'test_mode'; readonly Component: ComponentType };
+
+/** Optional development compositions never enter product boot. */
 export function ApplicationRoot() {
-  const [composition, setComposition] = useState<AppProps | null>(null);
+  const [state, setState] = useState<ApplicationRootState | null>(null);
 
   useEffect(() => {
     let active = true;
-    if (
-      viteDevelopmentMode() &&
-      new URLSearchParams(window.location.search).has('recorded-plan-builder')
-    ) {
+    const query = new URLSearchParams(window.location.search);
+    if (viteDevelopmentMode() && query.has('agent-test-mode')) {
+      void import('../dev/applicationTesting/AgentTestModeRoot').then(({ AgentTestModeRoot }) => {
+        if (active) setState({ kind: 'test_mode', Component: AgentTestModeRoot });
+      });
+    } else if (viteDevelopmentMode() && query.has('recorded-plan-builder')) {
       void import('../dev/orchestrationSection/recordedOrchestrationClient').then(
         ({ createRecordedDevelopmentApplicationComposition }) => {
-          if (active) setComposition(createRecordedDevelopmentApplicationComposition());
+          if (active)
+            setState({
+              kind: 'app',
+              composition: createRecordedDevelopmentApplicationComposition(),
+            });
         },
       );
     } else {
-      setComposition(createProductApplicationComposition());
+      setState({ kind: 'app', composition: createProductApplicationComposition() });
     }
     return () => {
       active = false;
     };
   }, []);
 
-  return composition ? <App {...composition} /> : null;
+  if (!state) return null;
+  if (state.kind === 'test_mode') return <state.Component />;
+  return <App {...state.composition} />;
 }
 
 function viteDevelopmentMode(): boolean {
