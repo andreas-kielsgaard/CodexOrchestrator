@@ -50,10 +50,11 @@ impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBui
 pub(crate) fn run() {
     let app = tauri::Builder::default()
         .setup(|app| {
-            let app_data_dir = app
+            let default_app_data_dir = app
                 .path()
                 .app_data_dir()
                 .map_err(|error| format!("Unable to resolve app data directory: {error}"))?;
+            let app_data_dir = crate::runtime::instance::app_data_dir(default_app_data_dir)?;
             fs::create_dir_all(&app_data_dir)
                 .map_err(|error| format!("Unable to create app data directory: {error}"))?;
             let database_path = crate::storage::active_database_path(&app_data_dir);

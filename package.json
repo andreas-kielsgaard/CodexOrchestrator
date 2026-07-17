@@ -8,6 +8,7 @@
     "dev": "vite",
     "dev:status": "node scripts/runtime-status-server.mjs",
     "dev:tauri": "tauri dev",
+    "runtime:worktree": "node scripts/worktree-runtime.mjs",
     "mark:stale": "node scripts/mark-stale.mjs",
     "clear:stale": "node scripts/clear-stale.mjs",
     "build": "tsc --noEmit && vite build",
@@ -16,6 +17,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
+    "test:worktree-runtime": "node --test scripts/worktree-runtime.node-test.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {

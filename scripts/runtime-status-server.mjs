@@ -8,6 +8,7 @@ const host = process.env.RUNTIME_STATUS_HOST ?? '127.0.0.1';
 const stateFile =
   process.env.RUNTIME_STATUS_FILE ?? path.join(process.cwd(), '.dev', 'runtime-status.json');
 const serverStartedAt = new Date().toISOString();
+const owner = runtimeOwner();
 
 await ensureStateFile();
 
@@ -26,7 +27,7 @@ const server = createServer(async (request, response) => {
 
   try {
     if (request.method === 'GET' && requestUrl.pathname === '/health') {
-      writeJson(response, 200, { ok: true, serverStartedAt });
+      writeJson(response, 200, { ok: true, serverStartedAt, owner });
       return;
     }
 
@@ -92,6 +93,7 @@ async function writeState(state) {
 function freshState() {
   return {
     statusVersion: 1,
+    owner,
     stale: false,
     staleTargets: [],
     generation: new Date().toISOString(),
@@ -116,6 +118,7 @@ function markStale(state, input) {
 function normalizeState(value) {
   return {
     statusVersion: 1,
+    owner,
     stale: value?.stale === true,
     staleTargets: Array.isArray(value?.staleTargets) ? normalizeTargets(value.staleTargets) : [],
     ...(typeof value?.reason === 'string' && value.reason.trim()
@@ -124,6 +127,15 @@ function normalizeState(value) {
     ...(typeof value?.generation === 'string' ? { generation: value.generation } : {}),
     ...(typeof value?.markedAt === 'string' ? { markedAt: value.markedAt } : {}),
     serverStartedAt,
+  };
+}
+
+function runtimeOwner() {
+  return {
+    instanceId: process.env.RUNTIME_INSTANCE_ID ?? 'legacy-dev',
+    sessionId: process.env.RUNTIME_SESSION_ID ?? 'unassigned',
+    worktreePath: process.env.RUNTIME_WORKTREE_PATH ?? process.cwd(),
+    gitCommit: process.env.RUNTIME_GIT_COMMIT ?? 'unknown',
   };
 }
 
