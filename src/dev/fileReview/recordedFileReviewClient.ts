@@ -5,8 +5,17 @@ import type {
   FileReviewSnapshot,
   FileReviewSourceSummary,
 } from '../../application/fileReview';
+import {
+  STORED_FILE_REVIEW_ARTIFACT_V1,
+  combineFileReviewClients,
+  createApplicationOwnedFileReviewClient,
+  type ApplicationFileReviewDocument,
+  type FileReviewDocumentPort,
+  type StoredFileReviewArtifactPort,
+} from '../../application/applicationOwnedFileReview';
 import type { AppProps } from '../../app/App';
 import { createRecordedDevelopmentApplicationComposition } from '../orchestrationSection/recordedOrchestrationClient';
+import { recordedProductReadCompositionInput } from '../orchestrationSection/recordedProductReadCompositionInput';
 
 interface RecordedSource {
   /** Adapter-private locator facts are intentionally excluded from the returned snapshot. */
@@ -42,13 +51,6 @@ const generatedSource = source(
   'Generated material',
   'Bootstrap preview · not persisted',
 );
-const applicationOwnedSource = source(
-  'source-application-owned',
-  'application_owned',
-  'Application-owned record',
-  'Accepted review note · durable product record',
-);
-
 const recordedSources: readonly RecordedSource[] = [
   {
     locator: {
@@ -287,28 +289,9 @@ interface FileReviewClient {
       ],
     },
   },
-  {
-    locator: {
-      repository: 'product-records:orchestration',
-      revision: 'record:review-note-017',
-    },
-    snapshot: {
-      source: applicationOwnedSource,
-      files: [
-        markdownFile(
-          'application-review-note',
-          'review-notes/file-viewer.md',
-          'modified',
-          6,
-          1,
-          '# Accepted review note\n\nThis content is application-owned, not a repository file.\n',
-        ),
-      ],
-    },
-  },
 ];
 
-export const recordedFileReviewClient: FileReviewClient = {
+const recordedPresentationFileReviewClient: FileReviewClient = {
   async listSources() {
     return recordedSources.map(({ snapshot }) => structuredClone(snapshot.source));
   },
@@ -319,6 +302,101 @@ export const recordedFileReviewClient: FileReviewClient = {
   },
 };
 
+const artifactAccess = recordedProductReadCompositionInput.artifactAccess;
+const changedFilesById = new Map(
+  artifactAccess.changedFileReferences.map((file) => [file.changedFileReferenceId, file]),
+);
+const documentsById: ReadonlyMap<string, (typeof artifactAccess.documents)[number]> = new Map(
+  artifactAccess.documents.map((document) => [document.documentRefId, document]),
+);
+
+const recordedFileReviewDocumentPort: FileReviewDocumentPort = {
+  async listDocuments() {
+    return artifactAccess.documents.map(toApplicationFileReviewDocument);
+  },
+  async loadDocument(documentRefId) {
+    const document = documentsById.get(documentRefId);
+    return document ? toApplicationFileReviewDocument(document) : null;
+  },
+};
+
+const storedFileReviewArtifact = {
+  documentRefId: 'doc-file-review',
+  artifactId: 'artifact-file-review',
+  bytes: new TextEncoder().encode(
+    JSON.stringify({
+      contractVersion: STORED_FILE_REVIEW_ARTIFACT_V1,
+      documentRefId: 'doc-file-review',
+      artifactId: 'artifact-file-review',
+      files: [
+        {
+          changedFileReferenceId: 'changed-file-review-doc',
+          content: {
+            encoding: 'utf-8',
+            bytesBase64: base64(
+              new TextEncoder().encode(
+                '# In-app file and diff viewer exploration\n\nThis recorded review material is supplied by the stored-artifact read port.\n',
+              ),
+            ),
+          },
+          hunks: [
+            {
+              header: '@@ -51,4 +51,5 @@ Exact next product slice',
+              lines: [
+                {
+                  kind: 'context',
+                  oldLineNumber: 51,
+                  newLineNumber: 51,
+                  text: '## Exact next product slice',
+                },
+                {
+                  kind: 'deletion',
+                  oldLineNumber: 52,
+                  text: 'Use a recorded application-owned source.',
+                },
+                {
+                  kind: 'addition',
+                  newLineNumber: 52,
+                  text: 'Resolve an authorized changed-files Document.',
+                },
+                {
+                  kind: 'addition',
+                  newLineNumber: 53,
+                  text: 'Load its stored diff artifact through a read-only port.',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }),
+  ),
+} as const;
+
+const recordedStoredFileReviewArtifactPort: StoredFileReviewArtifactPort = {
+  async loadArtifact(request) {
+    if (
+      request.documentRefId !== storedFileReviewArtifact.documentRefId ||
+      request.artifactId !== storedFileReviewArtifact.artifactId
+    )
+      return null;
+    return {
+      ...storedFileReviewArtifact,
+      bytes: storedFileReviewArtifact.bytes.slice(),
+    };
+  },
+};
+
+const applicationOwnedFileReviewClient = createApplicationOwnedFileReviewClient(
+  recordedFileReviewDocumentPort,
+  recordedStoredFileReviewArtifactPort,
+);
+
+export const recordedFileReviewClient = combineFileReviewClients([
+  recordedPresentationFileReviewClient,
+  applicationOwnedFileReviewClient,
+]);
+
 /** Development-only tab composition. Product boot does not receive this client or surface. */
 export function createRecordedFileReviewApplicationComposition(): AppProps {
   return {
@@ -326,6 +404,27 @@ export function createRecordedFileReviewApplicationComposition(): AppProps {
     fileReviewClient: recordedFileReviewClient,
     initialSurface: 'file-review',
   };
+}
+
+function toApplicationFileReviewDocument(
+  document: (typeof artifactAccess.documents)[number],
+): ApplicationFileReviewDocument {
+  return {
+    documentRefId: document.documentRefId,
+    classification: document.classification,
+    title: document.title,
+    ...(document.summary ? { summary: document.summary } : {}),
+    artifactIds: document.artifactIds,
+    changedFiles: document.changedFileReferenceIds.map((id) => {
+      const changedFile = changedFilesById.get(id);
+      if (!changedFile) throw new Error(`Missing recorded changed-file reference: ${id}`);
+      return changedFile;
+    }),
+  };
+}
+
+function base64(bytes: Uint8Array) {
+  return btoa(String.fromCharCode(...bytes));
 }
 
 function source(

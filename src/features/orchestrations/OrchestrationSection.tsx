@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { EpicDetail } from './components/EpicDetail';
 import { MovementBadge, StateBadge } from './components/EpicStatusBadges';
 import type { SprintWorkspaceDetailLocation, OrchestrationSectionView } from './orchestrationModel';
@@ -11,7 +11,6 @@ import {
 } from '../../application/orchestrations';
 import './styles/orchestrationSection.css';
 import type { EpicPlanningDraftSummary } from '../../application/orchestrations';
-import type { AgentSessionProductLocation } from '../../application/agentSessionNavigation';
 
 export interface OrchestrationSectionProps {
   readonly view: OrchestrationSectionView;
@@ -22,8 +21,6 @@ export interface OrchestrationSectionProps {
   readonly onPlanEpic?: () => void;
   readonly planningDrafts?: readonly EpicPlanningDraftSummary[];
   readonly onOpenPlanningDraft?: (draft: EpicPlanningDraftSummary) => void;
-  readonly requestedLocation?: AgentSessionProductLocation | null;
-  readonly onOpenAgentSession?: (sessionId: string) => void;
   readonly onOpenFileReviewSource?: (sourceId: string) => void;
 }
 
@@ -36,11 +33,9 @@ export function OrchestrationSection({
   onPlanEpic,
   planningDrafts = [],
   onOpenPlanningDraft,
-  requestedLocation,
-  onOpenAgentSession,
   onOpenFileReviewSource,
 }: OrchestrationSectionProps) {
-  const workspace = useOrchestrationWorkspace(requestedLocation);
+  const workspace = useOrchestrationWorkspace();
   const selected = view.epics.find(({ id }) => id === workspace.epicId);
 
   if (selected) {
@@ -59,7 +54,6 @@ export function OrchestrationSection({
         onSelectedRevisionChange={workspace.selectRevision}
         onDetailLocationChange={workspace.setDetailLocation}
         onBack={workspace.backToOverview}
-        onOpenAgentSession={onOpenAgentSession}
         onOpenFileReviewSource={onOpenFileReviewSource}
       />
     );
@@ -143,45 +137,13 @@ export function OrchestrationSection({
 }
 
 /** The feature tree has one owner for Orchestration, Sprint, and revision selection. */
-function useOrchestrationWorkspace(requestedLocation?: AgentSessionProductLocation | null) {
+function useOrchestrationWorkspace() {
   const [epicId, setEpicId] = useState<string | null>(null);
   const [sprintId, setSprintId] = useState<string | null>(null);
   const [selectedRevisionId, setSelectedRevisionId] = useState<string | null>(null);
   const [detailLocation, setDetailLocation] = useState<SprintWorkspaceDetailLocation>({
     kind: 'sprint',
   });
-  useEffect(() => {
-    if (!requestedLocation || requestedLocation.kind === 'epic_planning_draft') return;
-    setEpicId(requestedLocation.epicId);
-    if (requestedLocation.kind === 'epic') {
-      setSprintId(null);
-      setSelectedRevisionId(null);
-      setDetailLocation({ kind: 'sprint' });
-      return;
-    }
-    setSprintId(requestedLocation.sprintId);
-    if (requestedLocation.kind === 'sprint') {
-      setSelectedRevisionId(null);
-      setDetailLocation({ kind: 'sprint' });
-      return;
-    }
-    setSelectedRevisionId(requestedLocation.revisionId);
-    if (requestedLocation.kind === 'work_slice_planning_point') {
-      setDetailLocation({
-        kind: 'work_slice_planning_point',
-        revisionId: requestedLocation.revisionId,
-        workSlicePlanningPointId: requestedLocation.workSlicePlanningPointId,
-      });
-      return;
-    }
-    setDetailLocation({
-      kind: 'work_unit',
-      revisionId: requestedLocation.revisionId,
-      workSlicePlanningPointId: requestedLocation.workSlicePlanningPointId,
-      workUnitId: requestedLocation.workUnitId,
-      origin: 'work_slice_planning_point',
-    });
-  }, [requestedLocation]);
   return {
     epicId,
     sprintId,

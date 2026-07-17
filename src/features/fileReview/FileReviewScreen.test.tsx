@@ -63,12 +63,29 @@ describe('FileReviewScreen', () => {
       ['source-staged', 'Index snapshot · ready for commit review'],
       ['source-commit-range', 'main…exploration · three commits'],
       ['source-generated', 'Bootstrap preview · not persisted'],
-      ['source-application-owned', 'Accepted review note · durable product record'],
+      ['doc-file-review', 'Recorded application-owned review material'],
     ] as const) {
       fireEvent.change(source, { target: { value: sourceId } });
       expect(await screen.findByText(expectedDetail)).toBeVisible();
     }
 
     expect(screen.queryByText(/C:\\|C:\//)).toBeNull();
+  });
+
+  it('names the empty authorized-source state instead of remaining in loading', async () => {
+    render(
+      <FileReviewScreen
+        client={{
+          listSources: async () => [],
+          loadSource: async () => {
+            throw new Error('No source is authorized.');
+          },
+        }}
+      />,
+    );
+
+    expect(await screen.findByRole('heading', { name: 'No review sources' })).toBeVisible();
+    expect(screen.getByText('No authorized review material is currently available.')).toBeVisible();
+    expect(screen.queryByText('Loading review material')).toBeNull();
   });
 });

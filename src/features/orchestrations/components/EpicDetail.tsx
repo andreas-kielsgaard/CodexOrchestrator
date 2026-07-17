@@ -33,7 +33,6 @@ export interface EpicDetailProps {
   readonly onSelectedRevisionChange: (revisionId: string) => void;
   readonly onDetailLocationChange: (location: SprintWorkspaceDetailLocation) => void;
   readonly onBack: () => void;
-  readonly onOpenAgentSession?: (sessionId: string) => void;
   readonly onOpenFileReviewSource?: (sourceId: string) => void;
 }
 
@@ -51,7 +50,6 @@ export function EpicDetail({
   onSelectedRevisionChange,
   onDetailLocationChange,
   onBack,
-  onOpenAgentSession,
   onOpenFileReviewSource,
 }: EpicDetailProps) {
   const restoreSprintIdRef = useRef<string | null>(null);
@@ -92,7 +90,6 @@ export function EpicDetail({
           restoreSprintIdRef.current = selectedSprint.id;
           onCloseSprint();
         }}
-        onOpenAgentSession={onOpenAgentSession}
       />
     );
   }
@@ -152,7 +149,6 @@ export function EpicDetail({
               conversationAriaLabel="Epic Runner Agent Session conversation"
               session={epic.epicRunnerSession}
               composition={agentSessionComposition}
-              onOpenStandalone={onOpenAgentSession}
             />
           ) : undefined
         }

@@ -91,7 +91,7 @@ export function createApplicationOwnedFileReviewClient(
       if (!document || document.documentRefId !== sourceId || !isEligibleDocument(document))
         fail(
           'source_unauthorized',
-          'The requested Document review is unavailable or not authorized.',
+          'The requested changed-files Document is unavailable or not authorized.',
         );
       validateDocument(document);
 
@@ -307,13 +307,12 @@ function toSource(document: ApplicationFileReviewDocument): FileReviewSourceSumm
     sourceId: document.documentRefId,
     kind: 'application_owned',
     label: document.title,
-    detail: document.summary ?? 'Application-owned Document',
-    comparisonLabel: 'Compare with Sprint start',
+    detail: document.summary ?? 'Application-owned changed-files Document',
   };
 }
 
 function isEligibleDocument(document: ApplicationFileReviewDocument) {
-  return document.artifactIds.length === 1 && document.changedFiles.length > 0;
+  return document.classification === 'changed_files' && document.artifactIds.length === 1;
 }
 
 function validateDocument(document: ApplicationFileReviewDocument) {

@@ -55,11 +55,7 @@ export function SprintDocumentsPanel({
             <button
               type="button"
               className="sprint-document-card__content"
-              onClick={() =>
-                onOpenFileReviewSource
-                  ? onOpenFileReviewSource(document.documentRefId)
-                  : void run('openWithSystemDefault', document)
-              }
+              onClick={() => void run('openWithSystemDefault', document)}
             >
               <span className="sprint-document-card__title">
                 <FileUp size={17} aria-hidden="true" />
@@ -81,8 +77,8 @@ export function SprintDocumentsPanel({
                 {document.sprintPlanRevisionIds.map((id) => (
                   <span key={id}>Plan {id}</span>
                 ))}
-                {document.workSlicePlanningPointIds.map((id) => (
-                  <span key={id}>Work Slice planning point {id}</span>
+                {document.sprintPlannerActivityIds.map((id) => (
+                  <span key={id}>Planner Activity {id}</span>
                 ))}
                 {document.workUnitScopeIds.map((id) => (
                   <span key={id}>Work Unit scope {id}</span>
@@ -93,13 +89,15 @@ export function SprintDocumentsPanel({
               className="sprint-document-card__actions"
               aria-label={`${document.title} artifact actions`}
             >
-              {onOpenFileReviewSource && document.artifactIds.length === 1 ? (
+              {onOpenFileReviewSource &&
+              document.classification === 'changed_files' &&
+              document.artifactIds.length === 1 ? (
                 <button
                   type="button"
                   onClick={() => onOpenFileReviewSource(document.documentRefId)}
                 >
                   <FileDiff size={14} aria-hidden="true" />
-                  View document
+                  Review files
                 </button>
               ) : null}
               <button type="button" onClick={() => void run('resolveForOpen', document)}>
