@@ -35,6 +35,12 @@ The lifecycle is explicit:
 7. `stop` tears down only wrapper trees whose command lines prove the manifest and role.
 8. `recover` clears stale launch state only after the same ownership check.
 
+The development composition also adds one peer **Worktree Runtime** application tab. It consumes a
+small `WorktreeRuntimeExplorationSource` contract and is absent from product composition. The live
+development adapter combines launch-time manifest metadata with the current status owner. It labels
+manifest paths as projected, completed build/test and matching health as observed, the earlier
+teardown drill as recorded, and absent product controls as unsupported.
+
 Example:
 
 ```powershell
@@ -70,6 +76,47 @@ it, the manifest records `isolated-target-only`; it does not imply shared Rust c
 
 Source edits do not reuse a prepared identity silently. Build, test, and launch fail until
 `prepare` records the new source fingerprint.
+
+## Executed two-worktree proof
+
+On 2026-07-17, `proof-a` and `proof-b` used the same committed source
+(`673ddf321d230f4ff497b5603efef42208d30dc4`) in two Git worktrees.
+
+- Both selected the same Node and Rust cache keys. The npm download cache was shared by key;
+  `sccache` was unavailable, so both manifests truthfully selected isolated Cargo targets.
+- Concurrent installs completed on the harness commit. After the peer view was added without
+  dependency-lock changes, concurrent debug Tauri builds and focused test actions completed with
+  exit code `0` for both instances on the final proof commit.
+- Both launched simultaneously. `proof-a` owned Vite/status ports `1640`/`41635`; `proof-b` owned
+  `1660`/`41655`. Each status owner matched its instance, session, worktree, and commit, and each
+  process tree contained its own `codex-orchestrator.exe`.
+- Dist, Cargo target, application data, credentials, logs, screenshots, and recordings resolved to
+  distinct instance roots.
+- After stopping `proof-a`, `proof-b` remained healthy with two owned wrapper roots and its Tauri
+  process. Final teardown left both manifests with zero processes and both port pairs closed.
+- A separate stale-instance drill killed one owned status tree while its application stayed live.
+  `status` reported stale, `recover` stopped the remaining owned tree, and the final observation had
+  zero processes and closed endpoints.
+
+Focused validation covered 4 Node harness tests, 2 development-source tests, 2 application-surface
+tests, 15 application status tests, 2 Rust app-data override tests, TypeScript, ESLint, formatting,
+the production frontend build, and the per-instance Rust runtime/process test action. The production
+composition does not supply the peer view; its feature implementation is excluded from the
+production bundle.
+
+## Visual inspection
+
+The running Tauri processes exposed separate windows titled `Codex Orchestrator [proof-a]` and
+`Codex Orchestrator [proof-b]`. The Windows desktop was locked, so safe interaction with and capture
+of the Tauri window itself was unavailable.
+
+The same live `proof-a` application URL was rendered non-interactively at the intended 1280 by 820
+window size. The peer tab showed the correct instance, build, session, commit, worktree, and Tauri
+identity; shared-keyed and isolated material were visually distinct; lifecycle evidence separated
+observed, projected, and recorded states; and the unsupported boundaries and four user-review
+decisions were readable. The live `proof-b` view independently reported `proof-b`, `session-b`, its
+second worktree, and its distinct Tauri identity. A direct Tauri-window screenshot remains a manual
+review gate when the desktop is unlocked.
 
 ## Human-control model
 
