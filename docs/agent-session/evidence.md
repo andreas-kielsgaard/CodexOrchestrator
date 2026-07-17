@@ -48,6 +48,18 @@ boundaries:
 | E-11       | Contract, repository, supervisor, fixture, application, transport, controller, projection, component, and shell tests now cover the actual boundaries.                         |
 | E-12       | Migration `009` has an immutable position after reserved prototype IDs; tests cover clean, archived-ledger, recognized-prototype quarantine, and unrecognized-table rejection. |
 
+### Process ownership boundary
+
+The active supervisor owns each process returned by its factory from reservation through output
+reader completion, reap, and the terminal callback. The current system factory promises authority
+over that direct child only; it does not claim descendant-tree cleanup. Application shutdown stops
+new launches, gives active children a bounded natural-completion window, then escalates and waits
+for every owned direct child and terminal callback. A reported shutdown error prevents Tauri exit
+so cleanup uncertainty is not silently accepted. Stronger platform ownership can later replace the
+`ChildProcessFactory` and `SupervisedChild` implementation without changing provider adapters.
+Invocation cancellation remains an immediate direct-child termination request; it does not inherit
+the application-shutdown grace window. Session archive/close semantics remain a separate concern.
+
 ### AS-07 gate results
 
 Verified on 2026-07-10:

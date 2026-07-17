@@ -19,6 +19,9 @@ the complete technical record.
 This plan supersedes Agent Session implementation assumptions found in the archived integrated
 overlay. It does not adopt the old task dashboard or orchestration models as prerequisites.
 
+The current Agent Session-to-runtime contract and Sprint 3 capability-discovery extension protocol
+are recorded in [agent-access-boundary.md](./agent-access-boundary.md).
+
 ## Implemented Baseline
 
 1. The structural baseline was recovered selectively without merging either archive wholesale.
