@@ -1,4 +1,4 @@
-import { FileUp } from 'lucide-react';
+import { FileDiff, FileUp } from 'lucide-react';
 import { useState } from 'react';
 import type {
   ArtifactAccessController,
@@ -9,9 +9,11 @@ import '../styles/sprintInformationSurfaces.css';
 export function SprintDocumentsPanel({
   documents,
   artifactAccess,
+  onOpenFileReviewSource,
 }: {
   readonly documents: SprintWorkspacePresentationV1['documents'];
   readonly artifactAccess: ArtifactAccessController;
+  readonly onOpenFileReviewSource?: (sourceId: string) => void;
 }) {
   const [feedback, setFeedback] = useState<Awaited<
     ReturnType<ArtifactAccessController['resolveForOpen']>
@@ -87,6 +89,17 @@ export function SprintDocumentsPanel({
               className="sprint-document-card__actions"
               aria-label={`${document.title} artifact actions`}
             >
+              {onOpenFileReviewSource &&
+              document.classification === 'changed_files' &&
+              document.artifactIds.length === 1 ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenFileReviewSource(document.documentRefId)}
+                >
+                  <FileDiff size={14} aria-hidden="true" />
+                  Review files
+                </button>
+              ) : null}
               <button type="button" onClick={() => void run('resolveForOpen', document)}>
                 Resolve
               </button>

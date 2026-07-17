@@ -21,13 +21,15 @@ import './fileReview.css';
 
 export interface FileReviewScreenProps {
   readonly client: FileReviewClient;
+  readonly initialSourceId?: string;
 }
 
 type ContentMode = 'changes' | 'file';
 type DiffLayout = 'unified' | 'split';
 
-export function FileReviewScreen({ client }: FileReviewScreenProps) {
+export function FileReviewScreen({ client, initialSourceId }: FileReviewScreenProps) {
   const [sources, setSources] = useState<Awaited<ReturnType<FileReviewClient['listSources']>>>([]);
+  const [sourcesLoaded, setSourcesLoaded] = useState(false);
   const [selectedSourceId, setSelectedSourceId] = useState('');
   const [snapshot, setSnapshot] = useState<Awaited<
     ReturnType<FileReviewClient['loadSource']>
@@ -44,16 +46,24 @@ export function FileReviewScreen({ client }: FileReviewScreenProps) {
       (nextSources) => {
         if (!active) return;
         setSources(nextSources);
-        setSelectedSourceId((current) => current || nextSources[0]?.sourceId || '');
+        setSourcesLoaded(true);
+        setSelectedSourceId((current) => {
+          if (initialSourceId && nextSources.some(({ sourceId }) => sourceId === initialSourceId))
+            return initialSourceId;
+          return current || nextSources[0]?.sourceId || '';
+        });
       },
       () => {
-        if (active) setError('Review sources could not be loaded.');
+        if (active) {
+          setSourcesLoaded(true);
+          setError('Review sources could not be loaded.');
+        }
       },
     );
     return () => {
       active = false;
     };
-  }, [client]);
+  }, [client, initialSourceId]);
 
   useEffect(() => {
     if (!selectedSourceId) return;
@@ -138,6 +148,17 @@ export function FileReviewScreen({ client }: FileReviewScreenProps) {
           <FileArchive size={28} aria-hidden="true" />
           <h2>Review unavailable</h2>
           <p>{error}</p>
+        </section>
+      ) : !sourcesLoaded ? (
+        <section className="file-review-state" role="status">
+          <FolderGit2 size={28} aria-hidden="true" />
+          <h2>Loading review sources</h2>
+        </section>
+      ) : sources.length === 0 ? (
+        <section className="file-review-state" role="status">
+          <FileArchive size={28} aria-hidden="true" />
+          <h2>No review sources</h2>
+          <p>No authorized review material is currently available.</p>
         </section>
       ) : !snapshot ? (
         <section className="file-review-state" role="status">

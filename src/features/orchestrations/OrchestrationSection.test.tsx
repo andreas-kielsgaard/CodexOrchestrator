@@ -444,13 +444,14 @@ describe('OrchestrationSection', () => {
       .querySelector<HTMLElement>('.sprint-documents__list')!;
     const documents = within(list).getAllByRole('article');
     expect(documents.map((document) => document.textContent)).toEqual([
+      expect.stringContaining('Application-owned file review'),
       expect.stringContaining('Original ECS-R1 plan'),
       expect.stringContaining('G1 feedback and ECS-R2 replan'),
       expect.stringContaining('WU-ECS2E corrected visual review'),
     ]);
     expect(documents[0]).toHaveTextContent('Provenance: recorded-development');
-    expect(documents[2]).toHaveTextContent('Work Unit scope ECS-R4:WU-ECS2E');
-    expect(documents[1]).toHaveTextContent('Plan ECS-R2');
+    expect(documents[3]).toHaveTextContent('Work Unit scope ECS-R4:WU-ECS2E');
+    expect(documents[2]).toHaveTextContent('Plan ECS-R2');
   });
 
   it('focuses the Sprint dialog and restores its opener after Escape closes it', () => {

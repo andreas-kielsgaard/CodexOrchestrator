@@ -33,6 +33,7 @@ export interface EpicDetailProps {
   readonly onSelectedRevisionChange: (revisionId: string) => void;
   readonly onDetailLocationChange: (location: SprintWorkspaceDetailLocation) => void;
   readonly onBack: () => void;
+  readonly onOpenFileReviewSource?: (sourceId: string) => void;
 }
 
 export function EpicDetail({
@@ -49,6 +50,7 @@ export function EpicDetail({
   onSelectedRevisionChange,
   onDetailLocationChange,
   onBack,
+  onOpenFileReviewSource,
 }: EpicDetailProps) {
   const restoreSprintIdRef = useRef<string | null>(null);
   const [selectedSprintOpener, setSelectedSprintOpener] = useState<{
@@ -83,6 +85,7 @@ export function EpicDetail({
         onSelectedRevisionChange={onSelectedRevisionChange}
         detailLocation={detailLocation}
         onDetailLocationChange={onDetailLocationChange}
+        onOpenFileReviewSource={onOpenFileReviewSource}
         onBack={() => {
           restoreSprintIdRef.current = selectedSprint.id;
           onCloseSprint();

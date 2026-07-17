@@ -390,11 +390,13 @@ export const recordedProductReadCompositionInput = {
       { artifactId: 'artifact-ecs-r1', provenanceId },
       { artifactId: 'artifact-g1', provenanceId },
       { artifactId: 'artifact-ecs2e-review', provenanceId },
+      { artifactId: 'artifact-file-review', provenanceId },
     ],
     documentReferences: [
       { documentRefId: 'doc-ecs-r1', artifactIds: ['artifact-ecs-r1'], provenanceId },
       { documentRefId: 'doc-g1', artifactIds: ['artifact-g1'], provenanceId },
       { documentRefId: 'doc-ecs2e-review', artifactIds: ['artifact-ecs2e-review'], provenanceId },
+      { documentRefId: 'doc-file-review', artifactIds: ['artifact-file-review'], provenanceId },
     ],
     provenance: [
       {
@@ -446,8 +448,19 @@ export const recordedProductReadCompositionInput = {
         kind: 'review_material',
         provenanceReference: provenanceId,
       },
+      {
+        artifactId: 'artifact-file-review',
+        kind: 'changed_file_manifest',
+        provenanceReference: provenanceId,
+      },
     ],
-    changedFileReferences: [],
+    changedFileReferences: [
+      {
+        changedFileReferenceId: 'changed-file-review-doc',
+        displayName: 'docs/orchestration/file-diff-viewer-exploration.md',
+        changeKind: 'modified',
+      },
+    ],
     documents: [
       {
         documentRefId: 'doc-ecs-r1',
@@ -474,6 +487,15 @@ export const recordedProductReadCompositionInput = {
         summary: 'Recorded accepted review.',
         artifactIds: ['artifact-ecs2e-review'],
         changedFileReferenceIds: [],
+        provenanceReference: provenanceId,
+      },
+      {
+        documentRefId: 'doc-file-review',
+        classification: 'changed_files',
+        title: 'Application-owned file review',
+        summary: 'Recorded application-owned review material',
+        artifactIds: ['artifact-file-review'],
+        changedFileReferenceIds: ['changed-file-review-doc'],
         provenanceReference: provenanceId,
       },
     ],
@@ -608,11 +630,13 @@ export const recordedProductReadCompositionInput = {
       { artifactId: 'artifact-ecs-r1', sprintId: controlSprintId, source: source() },
       { artifactId: 'artifact-g1', sprintId: controlSprintId, source: source() },
       { artifactId: 'artifact-ecs2e-review', sprintId: controlSprintId, source: source() },
+      { artifactId: 'artifact-file-review', sprintId: controlSprintId, source: source() },
     ],
     documentOwnership: [
       { documentRefId: 'doc-ecs-r1', sprintId: controlSprintId, source: source() },
       { documentRefId: 'doc-g1', sprintId: controlSprintId, source: source() },
       { documentRefId: 'doc-ecs2e-review', sprintId: controlSprintId, source: source() },
+      { documentRefId: 'doc-file-review', sprintId: controlSprintId, source: source() },
     ],
     sprintWorkspacePresentation: {
       plannerActivityMembership: [
@@ -650,8 +674,17 @@ export const recordedProductReadCompositionInput = {
       })),
       documents: [
         {
-          documentRefId: 'doc-ecs-r1',
+          documentRefId: 'doc-file-review',
           displayOrder: 0,
+          recordedAt: { source: source(), value: '2026-07-17T05:00:00.000Z' },
+          displayCategory: { source: source(), value: 'changed files' },
+          sprintPlanRevisionIds: ['ECS-R4'],
+          sprintPlannerActivityIds: ['planner-r4-integration'],
+          workUnitScopeIds: [scoped('ECS-R4', 'WU-ECS2E')],
+        },
+        {
+          documentRefId: 'doc-ecs-r1',
+          displayOrder: 1,
           recordedAt: { source: source(), value: '2026-07-10T09:00:00.000Z' },
           displayCategory: { source: source(), value: 'plan' },
           sprintPlanRevisionIds: ['ECS-R1'],
@@ -660,7 +693,7 @@ export const recordedProductReadCompositionInput = {
         },
         {
           documentRefId: 'doc-g1',
-          displayOrder: 1,
+          displayOrder: 2,
           recordedAt: { source: source(), value: '2026-07-13T09:00:00.000Z' },
           displayCategory: { source: source(), value: 'decision' },
           sprintPlanRevisionIds: ['ECS-R2'],
@@ -669,7 +702,7 @@ export const recordedProductReadCompositionInput = {
         },
         {
           documentRefId: 'doc-ecs2e-review',
-          displayOrder: 2,
+          displayOrder: 3,
           recordedAt: { source: source(), value: '2026-07-14T19:31:00.000Z' },
           displayCategory: { source: source(), value: 'review' },
           sprintPlanRevisionIds: ['ECS-R4'],
