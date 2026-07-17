@@ -54,7 +54,7 @@ Choose one:
 - `user-review-required`: the result is ready for a product or visual decision.
 - `blocked`: required evidence or authority is unavailable.
 
-If result is accepted, continue with eligible work. 
+If result is accepted, continue with eligible work.
 
 ## 4. Report
 

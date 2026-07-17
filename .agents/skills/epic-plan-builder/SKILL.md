@@ -14,4 +14,3 @@ Help the user shape an Epic proposal before initiation.
 - Do not generate materials, create downstream sessions, or hand off manually.
 
 Distinguish discussion, submitted proposal, initiation request, and observed application transition. If a required product action is unavailable, report that boundary without claiming completion.
-

@@ -13,4 +13,3 @@ The proposed flow begins with a working Plan Builder that submits structured sta
 ## Wording and expected effect
 
 The skill separates discussion, submission, request, and observed transition. It prevents manual downstream handoff and identity arguments that the application can derive.
-

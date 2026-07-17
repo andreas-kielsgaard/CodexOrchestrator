@@ -72,14 +72,14 @@ Prefer a small hierarchy of meaningful concerns over a deep taxonomy.
 
 For each concern assess:
 
-| Dimension | Guidance |
-|---|---|
-| Definition | High: outcome and constraints are known. Medium: bounded choices remain. Low: product or technical meaning needs exploration. |
-| Complexity | Narrow: local/mechanical. Medium: several collaborating boundaries. Broad: cross-system or high coordination. |
-| Risk/blast radius | Data loss, process ownership, concurrency, migrations, security, public contracts, or broad UX assumptions raise risk. |
-| Reversibility | Prefer earlier experiments when choices are expensive to unwind. |
-| Verification | Identify deterministic evidence available before launch. |
-| Work mode | Executable, executable-with-design-reasoning, exploration-led, or integration/review. |
+| Dimension         | Guidance                                                                                                                      |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Definition        | High: outcome and constraints are known. Medium: bounded choices remain. Low: product or technical meaning needs exploration. |
+| Complexity        | Narrow: local/mechanical. Medium: several collaborating boundaries. Broad: cross-system or high coordination.                 |
+| Risk/blast radius | Data loss, process ownership, concurrency, migrations, security, public contracts, or broad UX assumptions raise risk.        |
+| Reversibility     | Prefer earlier experiments when choices are expensive to unwind.                                                              |
+| Verification      | Identify deterministic evidence available before launch.                                                                      |
+| Work mode         | Executable, executable-with-design-reasoning, exploration-led, or integration/review.                                         |
 
 Use these assessments as the basis for model, reasoning, sequencing, and evaluation gates.
 
@@ -161,10 +161,10 @@ Validation placement does not revise a Work Unit. Deferring validation never def
 
 ## 8. Select model and reasoning
 
-Reflect on the clarity of the task context. 
+Reflect on the clarity of the task context.
 If the requirements, problem and solution model is clearly defined use the Luna model.
 If on-the-fly reasoning, evidence collection and more complex decisionmaking need to be made, use the Terra model.
-Depending on the scope of the implementation slice, how much cross-application work is and how much evidence needs to be gathered, use reasoning level low - high. 
+Depending on the scope of the implementation slice, how much cross-application work is and how much evidence needs to be gathered, use reasoning level low - high.
 
 ## 9. Map execution
 
@@ -190,7 +190,7 @@ End every planning revision with a launch register immediately before the concis
 Use this table shape:
 
 | Unit / gate | Expected work | Status | Reason |
-|---|---|---|---|
+| ----------- | ------------- | ------ | ------ |
 
 - Include one row for every projected or actual Work Unit and every named evaluation gate, in execution order.
 - In **Expected work**, summarize a Work Unit's intended action and outcome in one brief sentence; use `—` for a gate unless brief gate work is genuinely useful.

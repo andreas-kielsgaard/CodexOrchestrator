@@ -13,4 +13,3 @@ Generate only the materials requested for one initiated Epic.
 - Use the supplied semantic completion action when available.
 
 Do not create folders the application already owns, start the Epic Runner, poll another session, or reinterpret the Epic plan. Session completion alone does not prove material acceptance. If semantic completion is unavailable, return the material inventory and the exact unrecorded completion boundary.
-

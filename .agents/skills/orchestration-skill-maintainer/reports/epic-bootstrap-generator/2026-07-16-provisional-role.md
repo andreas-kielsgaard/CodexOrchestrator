@@ -13,4 +13,3 @@ Plan Builder owns proposal intent; Epic Runner owns the initiated Epic. Neither 
 ## Wording and expected effect
 
 The skill limits the generator to supplied inputs and semantic completion. It leaves folders, supervision, acceptance, and Epic Runner launch with the application.
-

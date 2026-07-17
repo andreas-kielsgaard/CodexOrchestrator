@@ -1,5 +1,4 @@
 interface:
-  display_name: "Epic Plan Builder"
-  short_description: "Build and submit an Epic proposal"
-  default_prompt: "Use $epic-plan-builder to discuss and build this Epic proposal in the Plan Builder context."
-
+  display_name: 'Epic Plan Builder'
+  short_description: 'Build and submit an Epic proposal'
+  default_prompt: 'Use $epic-plan-builder to discuss and build this Epic proposal in the Plan Builder context.'

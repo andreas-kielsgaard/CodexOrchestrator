@@ -7,27 +7,27 @@ description: Maintain skills used by agents in the Codex Orchestrator product. U
 
 Maintain skills for agent roles in the Codex Orchestrator product.
 
-`../_shared-skill-concepts/` may contain relevant context. This folder is for you to use and maintain. 
+`../_shared-skill-concepts/` may contain relevant context. This folder is for you to use and maintain.
 Do not reference that library directly in skills. If ideas in a shared concept are relevant to a skill, translate them role-local wording.
 If you revise a shared skill, this should not automatically trigger changes in all skills that use that concept. Only if revision of that skill is part of the scope of your skill maintenance task.
 
-Before revising a skill, understand how that skill is used in the context of Orchestration product. 
+Before revising a skill, understand how that skill is used in the context of Orchestration product.
 
 # Revision procedure
 
 For each revision:
 
-1. If possible, find and inspect conversations that have exhibited behavior relevant to the skill revision. 
+1. If possible, find and inspect conversations that have exhibited behavior relevant to the skill revision.
 2. Propose a theory for why the current skill, or lack of a skill, led to the behavior that the skill revision aims to change.
 3. Propose a revision concept.
 4. Reason about whether that concept is likely to correct the behavior.
 5. Apply the revision.
-6. Save the analysis and revi   sion details under `reports/[skill-name]` in this skill directory. If you rename a skill, also rename the corresponding reports folder.
+6. Save the analysis and revi sion details under `reports/[skill-name]` in this skill directory. If you rename a skill, also rename the corresponding reports folder.
 7. Report changes
 
 If user provides feedback on the revision, take it into consideration. If that results in further changes, rewrite the revision report instead of making another one, or appending the new information to the first one.
 
-Do not prompt running agents to apply the revision concepts ad-hoc. You role is just to observe agent behavior and maintain the skill definitions. 
+Do not prompt running agents to apply the revision concepts ad-hoc. You role is just to observe agent behavior and maintain the skill definitions.
 
 # Creating a new skill
 
@@ -40,7 +40,7 @@ Write an initial report that explains
 
 # Skill writing guidlines
 
-- Prefer low-verbosity skill wording. 
-- Prefer clues over rules until clues have proven ineffective. 
+- Prefer low-verbosity skill wording.
+- Prefer clues over rules until clues have proven ineffective.
 - If a skill's scope, or the revision's relationship to that scope, is unclear, prefer vague guidance over premature constraint.
 - Prefer iterative low-risk revision that is likely to improve behavior somewhat over a potentially perfect revision that may make behavior worse or introduce new problems.
