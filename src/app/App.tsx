@@ -28,6 +28,10 @@ import { useOrchestrationLoad } from './useOrchestrationLoad';
 import type { ManagedPlanBuilderSessionClient } from '../infrastructure/orchestrations/tauriManagedPlanBuilderSessionClient';
 import { useEpicInitiationConfirmation } from './useEpicInitiationConfirmation';
 import { EpicInitiationConfirmationModal } from './EpicInitiationConfirmationModal';
+import type { FileReviewClient } from '../application/fileReview';
+import { FileReviewScreen } from '../features/fileReview';
+
+export type ApplicationSurface = 'epics' | 'agent-sessions' | 'file-review';
 
 export interface AppProps {
   readonly agentSessionClient: AgentSessionClient;
@@ -47,6 +51,8 @@ export interface AppProps {
   readonly epicPlanningDraftLifecycleClient?: EpicPlanningDraftLifecycleClient;
   readonly epicPlanProposalSourceForDraft?: (draftId: string) => EpicPlanProposalSource;
   readonly epicInitiationConfirmationClient?: EpicInitiationConfirmationClient;
+  readonly fileReviewClient?: FileReviewClient;
+  readonly initialSurface?: ApplicationSurface;
 }
 
 export function App({
@@ -69,8 +75,12 @@ export function App({
   epicPlanningDraftLifecycleClient,
   epicPlanProposalSourceForDraft,
   epicInitiationConfirmationClient,
+  fileReviewClient,
+  initialSurface = 'epics',
 }: AppProps) {
-  const [surface, setSurface] = useState<'epics' | 'agent-sessions'>('epics');
+  const [surface, setSurface] = useState<ApplicationSurface>(() =>
+    initialSurface === 'file-review' && !fileReviewClient ? 'epics' : initialSurface,
+  );
   const [orchestrationRoute, setOrchestrationRoute] = useState<'overview' | 'plan-builder'>(
     'overview',
   );
@@ -236,6 +246,16 @@ export function App({
         >
           Agent Sessions
         </button>
+        {fileReviewClient ? (
+          <button
+            className={surface === 'file-review' ? 'active' : undefined}
+            type="button"
+            aria-current={surface === 'file-review' ? 'page' : undefined}
+            onClick={() => setSurface('file-review')}
+          >
+            Files &amp; diffs
+          </button>
+        ) : null}
       </nav>
       {surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
         <EpicPlanBuilder
@@ -275,6 +295,8 @@ export function App({
             setOrchestrationRoute('plan-builder');
           }}
         />
+      ) : surface === 'file-review' && fileReviewClient ? (
+        <FileReviewScreen client={fileReviewClient} />
       ) : (
         <StandaloneAgentSessionScreen client={agentSessionClient} />
       )}
