@@ -1,22 +1,11 @@
 .agent-test-mode {
   width: 100%;
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
   background: #eef1eb;
 }
 
-.agent-test-mode__nav {
-  display: flex;
-  height: 48px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 16px;
-  border-bottom: 1px solid #cad2c8;
-  background: #17211b;
-  color: #fffdf8;
-}
-
-.agent-test-mode__nav span,
+.agent-test-mode__scope,
 .agent-test-mode__controls header,
 .agent-test-mode__controls button,
 .agent-test-mode__boundary {
@@ -25,19 +14,8 @@
   gap: 8px;
 }
 
-.agent-test-mode__nav span {
-  font-size: 0.86rem;
-  font-weight: 800;
-}
-
-.agent-test-mode__nav small {
-  color: #cbd6ce;
-  font-size: 0.74rem;
-  font-weight: 700;
-}
-
 .agent-test-mode__workspace {
-  height: calc(100vh - 48px);
+  height: 100%;
   overflow: auto;
   padding: 20px;
 }
@@ -56,10 +34,17 @@
   font-size: clamp(1.7rem, 2.4vw, 2.3rem);
 }
 
-.agent-test-mode__header > div > p:last-child {
+.agent-test-mode__description {
   max-width: 760px;
   color: #59655e;
   font-size: 0.9rem;
+}
+
+.agent-test-mode__scope {
+  margin-top: 10px;
+  color: #496052;
+  font-size: 0.76rem;
+  font-weight: 750;
 }
 
 .agent-test-mode__header dl {

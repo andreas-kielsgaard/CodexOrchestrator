@@ -6,6 +6,7 @@ describe('product application composition', () => {
   it('boots with an honest unavailable native-query state and unsupported effect boundaries', async () => {
     const composition = createProductApplicationComposition();
 
+    expect(composition.developmentSurface).toBeUndefined();
     await expect(composition.orchestrationClient.load()).resolves.toEqual({
       kind: 'unavailable',
       reason: 'The durable orchestration query is unavailable.',

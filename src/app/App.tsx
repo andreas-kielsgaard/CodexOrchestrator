@@ -19,7 +19,7 @@ import {
 } from '../application/orchestrations';
 import { EpicPlanBuilder, OrchestrationSection } from '../features/orchestrations';
 import type { EmbeddedAgentSessionComposition } from '../features/agentSessions';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   productOrchestrationPresentationAdapter,
   type OrchestrationPresentationAdapter,
@@ -28,6 +28,13 @@ import { useOrchestrationLoad } from './useOrchestrationLoad';
 import type { ManagedPlanBuilderSessionClient } from '../infrastructure/orchestrations/tauriManagedPlanBuilderSessionClient';
 import { useEpicInitiationConfirmation } from './useEpicInitiationConfirmation';
 import { EpicInitiationConfirmationModal } from './EpicInitiationConfirmationModal';
+
+type ApplicationSurface = 'epics' | 'agent-sessions' | 'development';
+
+export interface DevelopmentApplicationSurface {
+  readonly label: string;
+  readonly render: () => ReactNode;
+}
 
 export interface AppProps {
   readonly agentSessionClient: AgentSessionClient;
@@ -47,6 +54,8 @@ export interface AppProps {
   readonly epicPlanningDraftLifecycleClient?: EpicPlanningDraftLifecycleClient;
   readonly epicPlanProposalSourceForDraft?: (draftId: string) => EpicPlanProposalSource;
   readonly epicInitiationConfirmationClient?: EpicInitiationConfirmationClient;
+  readonly developmentSurface?: DevelopmentApplicationSurface;
+  readonly initialSurface?: ApplicationSurface;
 }
 
 export function App({
@@ -69,8 +78,12 @@ export function App({
   epicPlanningDraftLifecycleClient,
   epicPlanProposalSourceForDraft,
   epicInitiationConfirmationClient,
+  developmentSurface,
+  initialSurface = 'epics',
 }: AppProps) {
-  const [surface, setSurface] = useState<'epics' | 'agent-sessions'>('epics');
+  const [surface, setSurface] = useState<ApplicationSurface>(() =>
+    initialSurface === 'development' && !developmentSurface ? 'epics' : initialSurface,
+  );
   const [orchestrationRoute, setOrchestrationRoute] = useState<'overview' | 'plan-builder'>(
     'overview',
   );
@@ -236,6 +249,16 @@ export function App({
         >
           Agent Sessions
         </button>
+        {developmentSurface && (
+          <button
+            className={surface === 'development' ? 'active' : undefined}
+            type="button"
+            aria-current={surface === 'development' ? 'page' : undefined}
+            onClick={() => setSurface('development')}
+          >
+            {developmentSurface.label}
+          </button>
+        )}
       </nav>
       {surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
         <EpicPlanBuilder
@@ -275,9 +298,11 @@ export function App({
             setOrchestrationRoute('plan-builder');
           }}
         />
-      ) : (
+      ) : surface === 'agent-sessions' ? (
         <StandaloneAgentSessionScreen client={agentSessionClient} />
-      )}
+      ) : developmentSurface ? (
+        developmentSurface.render()
+      ) : null}
     </div>
   );
 }

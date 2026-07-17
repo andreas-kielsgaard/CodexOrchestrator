@@ -6,8 +6,9 @@ Use one application-owned Test Session with semantic view, element, action, and 
 future invocation-scoped MCP server should expose only those typed operations. Test Session
 authority is separate from production Agent Control authority.
 
-The reversible proof is available in development at `/?agent-test-mode`. It uses the real Agent
-Session screen with the recorded Agent Session adapter and synthetic data.
+The reversible proof is available in development at `/?agent-test-mode`. The route uses the normal
+App shell with recorded Orchestration and Agent Session adapters, adds Test mode as a peer tab, and
+selects it initially. The proof itself uses the real Agent Session screen with synthetic data.
 
 ## Proof
 
@@ -29,6 +30,8 @@ commands.
 
 - Product boot does not receive a test-mode controller. The proof loads only when Vite development
   mode and the explicit query flag are both present.
+- Test mode is injected as an optional peer application surface. It does not replace
+  `ApplicationRoot` or create a second application shell.
 - The proof allows synthetic data only.
 - View, element, action, and condition IDs are allowlisted. There are no coordinates, selectors,
   arbitrary scripts, or generic filesystem/process operations.

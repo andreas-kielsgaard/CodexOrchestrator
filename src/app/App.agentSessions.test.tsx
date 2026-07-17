@@ -22,6 +22,29 @@ describe('App application surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Orchestration' }));
     expect(screen.getByRole('main', { name: 'Orchestration' })).toBeVisible();
   });
+
+  it('presents an injected development view as an optional peer surface', async () => {
+    render(
+      <App
+        agentSessionClient={emptyAgentClient()}
+        orchestrationClient={pendingOrchestrationClient()}
+        initialSurface="development"
+        developmentSurface={{
+          label: 'Development proof',
+          render: () => <main aria-label="Development proof">Injected development view</main>,
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Development proof' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(screen.getByRole('main', { name: 'Development proof' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestration' }));
+    expect(await screen.findByRole('main', { name: 'Orchestration' })).toBeVisible();
+  });
 });
 
 function emptyAgentClient(): AgentSessionClient {
@@ -39,4 +62,8 @@ function emptyAgentClient(): AgentSessionClient {
 
 function emptyOrchestrationClient(): OrchestrationApplicationClient {
   return { load: async () => ({ kind: 'empty', reason: 'No orchestration records.' }) };
+}
+
+function pendingOrchestrationClient(): OrchestrationApplicationClient {
+  return { load: () => new Promise(() => undefined) };
 }

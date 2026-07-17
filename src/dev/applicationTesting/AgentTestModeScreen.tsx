@@ -129,21 +129,18 @@ export function AgentTestModeScreen({ agentSessionClient, controller }: AgentTes
 
   return (
     <div className="agent-test-mode">
-      <nav className="agent-test-mode__nav" aria-label="Test mode surface">
-        <span>
-          <FlaskConical size={16} aria-hidden="true" />
-          Agent test mode
-        </span>
-        <small>Development-only · synthetic data · feedback-only authority</small>
-      </nav>
       <main className="agent-test-mode__workspace">
         <header className="agent-test-mode__header">
           <div>
             <p className="eyebrow">Agent-native application evidence</p>
             <h1>Exercise the app through semantic controls</h1>
-            <p>
+            <p className="agent-test-mode__description">
               This proof drives a recorded Agent Session component. It exposes no coordinates,
               production Agent Control commands, or broad desktop capture.
+            </p>
+            <p className="agent-test-mode__scope">
+              <FlaskConical size={15} aria-hidden="true" />
+              Development-only · synthetic data · feedback-only authority
             </p>
           </div>
           <dl>
