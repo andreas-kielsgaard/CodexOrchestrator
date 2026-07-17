@@ -2,6 +2,7 @@ import type {
   AgentInvocationDto,
   AgentRuntimeEventDto,
   AgentSessionDto,
+  CreateAgentSessionCommandDto,
   SendAgentSessionMessageCommandDto,
   SendAgentSessionMessageResultDto,
 } from './contracts';
@@ -9,6 +10,18 @@ import type {
 const timestamp = '2026-07-10T12:00:00Z';
 
 describe('Agent Session client contracts', () => {
+  it('keeps adapter selection out of Agent Session creation', () => {
+    const command: CreateAgentSessionCommandDto = {
+      title: 'Provider-neutral session',
+      requestedOptions: { sandbox: 'workspace_write' },
+    };
+
+    expect(JSON.parse(JSON.stringify(command))).toEqual({
+      title: 'Provider-neutral session',
+      requestedOptions: { sandbox: 'workspace_write' },
+    });
+  });
+
   it('serializes local identity separately from nullable external runtime context identity', () => {
     const unbound = session(null);
     const bound = session('runtime-external');
@@ -16,7 +29,6 @@ describe('Agent Session client contracts', () => {
     expect(JSON.parse(JSON.stringify(unbound))).toMatchObject({
       id: 'session-local',
       runtimeBinding: {
-        kind: 'codex_cli',
         externalContextId: null,
       },
     });
@@ -33,6 +45,7 @@ describe('Agent Session client contracts', () => {
       id: 'invocation-1',
       sessionId: 'session-local',
       submittedText: 'Do the work',
+      inputProvenance: 'user',
       status: 'completed',
       requestedOptions: { model: null, sandbox: null },
       effectiveOptions: { model: 'runtime-default', sandbox: 'workspace_write' },
@@ -95,7 +108,6 @@ function session(externalContextId: string | null): AgentSessionDto {
     title: 'Agent session',
     availability: 'available',
     runtimeBinding: {
-      kind: 'codex_cli',
       externalContextId,
       runtimeVersion: 'runtime-test',
     },

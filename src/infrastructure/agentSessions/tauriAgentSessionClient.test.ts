@@ -79,7 +79,6 @@ function completedDetails(): AgentSessionDetailsDto {
       title: 'Session',
       availability: 'available',
       runtimeBinding: {
-        kind: 'codex_cli',
         externalContextId: 'thread-1',
         runtimeVersion: 'codex-test',
       },
@@ -94,6 +93,7 @@ function completedDetails(): AgentSessionDetailsDto {
           id: 'invocation-1',
           sessionId: 'session-1',
           submittedText: 'Hello',
+          inputProvenance: 'user',
           status: 'completed',
           requestedOptions: { model: null, sandbox: null },
           effectiveOptions: { model: null, sandbox: null },

@@ -4,7 +4,6 @@ export type AgentRuntimeEventIdDto = string;
 export type ExternalRuntimeContextIdDto = string;
 export type IsoDateTimeDto = string;
 
-export type AgentRuntimeKindDto = 'codex_cli';
 export type AgentSessionAvailabilityDto = 'available' | 'archived';
 export type RuntimeSandboxModeDto = 'read_only' | 'workspace_write' | 'danger_full_access';
 
@@ -14,7 +13,6 @@ export interface AgentRuntimeOptionsDto {
 }
 
 export interface AgentRuntimeBindingDto {
-  kind: AgentRuntimeKindDto;
   externalContextId: ExternalRuntimeContextIdDto | null;
   runtimeVersion: string | null;
 }
@@ -32,6 +30,7 @@ export interface AgentSessionDto {
 
 export type AgentInvocationStatusDto =
   'pending' | 'running' | 'completed' | 'failed' | 'canceled' | 'interrupted';
+export type AgentInvocationInputProvenanceDto = 'user' | 'application';
 
 export interface AgentRuntimeFailureDto {
   code: string;
@@ -55,6 +54,7 @@ export interface AgentInvocationDto {
   id: AgentInvocationIdDto;
   sessionId: AgentSessionIdDto;
   submittedText: string;
+  inputProvenance: AgentInvocationInputProvenanceDto;
   status: AgentInvocationStatusDto;
   requestedOptions: AgentRuntimeOptionsDto;
   effectiveOptions: AgentRuntimeOptionsDto | null;
@@ -119,7 +119,6 @@ export interface AgentSessionSummaryDto {
   id: AgentSessionIdDto;
   title: string;
   availability: AgentSessionAvailabilityDto;
-  runtimeKind: AgentRuntimeKindDto;
   hasActiveInvocation: boolean;
   createdAt: IsoDateTimeDto;
   updatedAt: IsoDateTimeDto;
@@ -128,7 +127,6 @@ export interface AgentSessionSummaryDto {
 export interface CreateAgentSessionCommandDto {
   title?: string;
   workingDirectory?: string;
-  runtimeKind?: AgentRuntimeKindDto;
   requestedOptions?: PartialAgentRuntimeOptionsDto;
 }
 
