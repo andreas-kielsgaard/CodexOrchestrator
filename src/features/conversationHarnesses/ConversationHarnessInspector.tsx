@@ -21,18 +21,20 @@ export function ConversationHarnessInspector({ read, onBack }: ConversationHarne
       </InspectorShell>
     );
 
-  if (read.kind === 'unavailable')
+  if (read.kind !== 'available') {
+    const unavailable = unavailablePresentation(read);
     return (
       <InspectorShell onBack={onBack}>
         <div className="harness-inspector__unavailable" role="alert">
           <ShieldAlert size={20} aria-hidden="true" />
           <div>
-            <h2>Harness configuration unavailable</h2>
+            <h2>{unavailable.heading}</h2>
             <p>{read.reason}</p>
           </div>
         </div>
       </InspectorShell>
     );
+  }
 
   const { snapshot } = read;
   const validation = validationPresentation(snapshot.validation.status);
@@ -324,6 +326,14 @@ function validationPresentation(status: 'valid' | 'invalid' | 'unverified'): Sta
   if (status === 'valid') return { tone: 'positive', label: 'Validated snapshot' };
   if (status === 'invalid') return { tone: 'negative', label: 'Validation invalid' };
   return { tone: 'caution', label: 'Validation unverified' };
+}
+
+function unavailablePresentation(
+  read: Exclude<ConversationHarnessInspectorRead, { readonly kind: 'available' }>,
+): { readonly heading: string } {
+  if (read.kind === 'invalid_catalog') return { heading: 'Harness catalog invalid' };
+  if (read.kind === 'unbound') return { heading: 'Session not bound' };
+  return { heading: 'Harness configuration unavailable' };
 }
 
 function deliveryPresentation(status: HarnessInspectorDeliveryStatus): StatusPresentation {

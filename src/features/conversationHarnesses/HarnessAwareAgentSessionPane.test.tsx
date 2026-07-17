@@ -7,7 +7,7 @@ import { ConversationHarnessInspector } from './ConversationHarnessInspector';
 import { HarnessAwareAgentSessionPane } from './HarnessAwareAgentSessionPane';
 
 describe('HarnessAwareAgentSessionPane', () => {
-  it('only offers inspection when a product context supplies a harness source', () => {
+  it('only offers inspection after the product context returns a bound harness', async () => {
     const { rerender } = render(
       <HarnessAwareAgentSessionPane sessionId="session-without-harness">
         <div>Neutral conversation</div>
@@ -23,7 +23,7 @@ describe('HarnessAwareAgentSessionPane', () => {
         <div>Product conversation</div>
       </HarnessAwareAgentSessionPane>,
     );
-    expect(screen.getByRole('button', { name: 'Inspect harness' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Inspect harness' })).toBeVisible();
   });
 
   it('replaces the conversation with a truthful read-only inspector and returns clearly', async () => {
@@ -36,7 +36,7 @@ describe('HarnessAwareAgentSessionPane', () => {
       </HarnessAwareAgentSessionPane>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Inspect harness' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Inspect harness' }));
 
     expect(
       await screen.findByRole('region', { name: 'Conversation Harness inspector' }),
@@ -60,22 +60,49 @@ describe('HarnessAwareAgentSessionPane', () => {
     expect(screen.queryByRole('region', { name: 'Conversation Harness inspector' })).toBeNull();
   });
 
-  it('keeps an unavailable source explicit and still provides a return', async () => {
+  it('keeps unavailable, invalid-catalog, and unbound reads explicit', () => {
+    const { rerender } = render(
+      <ConversationHarnessInspector
+        read={{ kind: 'unavailable', reason: 'The application query failed.' }}
+        onBack={() => undefined}
+      />,
+    );
+    expect(screen.getByText('Harness configuration unavailable')).toBeVisible();
+    expect(screen.getByText('The application query failed.')).toBeVisible();
+
+    rerender(
+      <ConversationHarnessInspector
+        read={{ kind: 'invalid_catalog', reason: 'The catalog failed validation.' }}
+        onBack={() => undefined}
+      />,
+    );
+    expect(screen.getByText('Harness catalog invalid')).toBeVisible();
+    expect(screen.getByText('The catalog failed validation.')).toBeVisible();
+
+    rerender(
+      <ConversationHarnessInspector
+        read={{ kind: 'unbound', reason: 'The session has no Plan Builder binding.' }}
+        onBack={() => undefined}
+      />,
+    );
+    expect(screen.getByText('Session not bound')).toBeVisible();
+    expect(screen.getByText('The session has no Plan Builder binding.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Back to conversation' })).toBeVisible();
+  });
+
+  it('does not offer a control when the product query reports an unbound session', async () => {
+    const source = {
+      load: vi.fn(recordedHarnessInspectorSource.load),
+    };
     render(
-      <HarnessAwareAgentSessionPane
-        sessionId="unknown-session"
-        source={recordedHarnessInspectorSource}
-      >
+      <HarnessAwareAgentSessionPane sessionId="unknown-session" source={source}>
         <div>Conversation body</div>
       </HarnessAwareAgentSessionPane>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Inspect harness' }));
-    expect(await screen.findByText('Harness configuration unavailable')).toBeVisible();
-    expect(
-      screen.getByText('This recorded Agent Session has no product harness configuration.'),
-    ).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Back to conversation' })).toBeVisible();
+    await waitFor(() => expect(source.load).toHaveBeenCalledWith({ sessionId: 'unknown-session' }));
+    expect(screen.queryByRole('button', { name: 'Inspect harness' })).toBeNull();
+    expect(screen.getByText('Conversation body')).toBeVisible();
   });
 
   it('presents invalid validation separately from unverified validation', async () => {

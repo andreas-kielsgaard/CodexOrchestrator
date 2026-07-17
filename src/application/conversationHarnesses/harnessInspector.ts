@@ -85,6 +85,14 @@ export type ConversationHarnessInspectorRead =
   | {
       readonly kind: 'unavailable';
       readonly reason: string;
+    }
+  | {
+      readonly kind: 'invalid_catalog';
+      readonly reason: string;
+    }
+  | {
+      readonly kind: 'unbound';
+      readonly reason: string;
     };
 
 /** Product contexts may expose this read boundary without adding harness concerns to Agent Session. */

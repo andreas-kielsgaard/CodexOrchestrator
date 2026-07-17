@@ -25,6 +25,9 @@ describe('product application composition', () => {
         automaticEnabled: true,
       }),
     ).resolves.toMatchObject({ status: 'unsupported' });
+    await expect(
+      composition.epicPlanBuilderHarnessInspectorSource?.load({ sessionId: 'session-1' }),
+    ).resolves.toMatchObject({ kind: 'unavailable' });
   });
 
   it('keeps product startup free of development fixture authority', () => {

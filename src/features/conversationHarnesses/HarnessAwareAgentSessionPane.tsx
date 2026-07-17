@@ -5,6 +5,7 @@ import type {
   ConversationHarnessInspectorSource,
 } from '../../application/conversationHarnesses';
 import { ConversationHarnessInspector } from './ConversationHarnessInspector';
+import './harnessInspector.css';
 
 export interface HarnessAwareAgentSessionPaneProps {
   readonly sessionId: string;
@@ -19,7 +20,28 @@ export function HarnessAwareAgentSessionPane({
   children,
 }: HarnessAwareAgentSessionPaneProps) {
   const [mode, setMode] = useState<'conversation' | 'inspector'>('conversation');
+  const [boundRead, setBoundRead] = useState<ConversationHarnessInspectorRead | null>(null);
   const [read, setRead] = useState<ConversationHarnessInspectorRead | null>(null);
+
+  useEffect(() => {
+    setMode('conversation');
+    setRead(null);
+    setBoundRead(null);
+    if (!source) return;
+    let active = true;
+    void source.load({ sessionId }).then(
+      (next) => active && setBoundRead(next),
+      () =>
+        active &&
+        setBoundRead({
+          kind: 'unavailable',
+          reason: 'The product context could not load this harness configuration.',
+        }),
+    );
+    return () => {
+      active = false;
+    };
+  }, [sessionId, source]);
 
   useEffect(() => {
     if (mode !== 'inspector' || !source) return;
@@ -39,15 +61,20 @@ export function HarnessAwareAgentSessionPane({
     };
   }, [mode, sessionId, source]);
 
+  const openInspector = () => {
+    if (!source || boundRead?.kind !== 'available') return;
+    setMode('inspector');
+  };
+
   return (
     <div className="harness-aware-agent-session-pane">
       {mode === 'conversation' ? (
         <>
-          {source && (
+          {boundRead?.kind === 'available' && (
             <button
               className="harness-aware-agent-session-pane__inspect"
               type="button"
-              onClick={() => setMode('inspector')}
+              onClick={openInspector}
             >
               <SlidersHorizontal size={15} aria-hidden="true" />
               Inspect harness

@@ -4,6 +4,7 @@ import type {
   AgentSessionClient,
   SendAgentSessionMessageCommandDto,
 } from '../../application/agentSessions';
+import type { ConversationHarnessInspectorSource } from '../../application/conversationHarnesses';
 import type {
   EpicPlanningDraftBinding,
   EpicPlanningDraftLifecycleClient,
@@ -16,6 +17,7 @@ import {
   managedPlanBuilderSessionConfiguration,
 } from '../../application/orchestrations';
 import { AgentSessionWorkspace, useAgentSession } from '../agentSessions';
+import { HarnessAwareAgentSessionPane } from '../conversationHarnesses';
 import './styles/epicPlanBuilder.css';
 
 export const BUILD_EPIC_PLAN_PROMPT = 'Build the epic plan based on what we have discussed';
@@ -39,6 +41,7 @@ export interface EpicPlanBuilderProps {
   onBack(): void;
   readonly draft?: EpicPlanningDraftBinding;
   readonly lifecycleClient?: EpicPlanningDraftLifecycleClient;
+  readonly harnessInspectorSource?: ConversationHarnessInspectorSource;
 }
 
 /** One normal-app workspace: the shared conversation is primary; the proposal is source-owned. */
@@ -55,6 +58,7 @@ export function EpicPlanBuilder({
   onBack,
   draft,
   lifecycleClient,
+  harnessInspectorSource,
 }: EpicPlanBuilderProps) {
   const proposal = useSyncExternalStore(
     proposalSource.subscribe,
@@ -184,6 +188,24 @@ export function EpicPlanBuilder({
       setCancelingDraft(false);
     }
   };
+  const conversation = (
+    <AgentSessionWorkspace
+      controller={session}
+      presentation={{
+        showHeader: false,
+        ariaLabel: 'Epic Plan Builder conversation',
+        emptyState: {
+          heading: 'Let’s build a plan',
+          guidance: 'Paste a prepared Epic description or begin discussing what you want to build.',
+        },
+        composer: {
+          messageLabel: 'Describe what we are working on',
+          messagePlaceholder: 'Describe what we are working on',
+          keyboardHint: 'tooltip',
+        },
+      }}
+    />
+  );
 
   return (
     <main className="epic-plan-builder" aria-label="Plan an Epic">
@@ -299,23 +321,16 @@ export function EpicPlanBuilder({
             </div>
           </aside>
           <div className="epic-plan-builder__conversation">
-            <AgentSessionWorkspace
-              controller={session}
-              presentation={{
-                showHeader: false,
-                ariaLabel: 'Epic Plan Builder conversation',
-                emptyState: {
-                  heading: 'Let’s build a plan',
-                  guidance:
-                    'Paste a prepared Epic description or begin discussing what you want to build.',
-                },
-                composer: {
-                  messageLabel: 'Describe what we are working on',
-                  messagePlaceholder: 'Describe what we are working on',
-                  keyboardHint: 'tooltip',
-                },
-              }}
-            />
+            {harnessInspectorSource && session.selectedSessionId ? (
+              <HarnessAwareAgentSessionPane
+                sessionId={session.selectedSessionId}
+                source={harnessInspectorSource}
+              >
+                {conversation}
+              </HarnessAwareAgentSessionPane>
+            ) : (
+              conversation
+            )}
           </div>
           <aside
             className="epic-plan-builder__proposal"

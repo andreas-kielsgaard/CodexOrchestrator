@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { vi } from 'vitest';
 import type {
   AgentInvocationDto,
@@ -14,6 +14,7 @@ import type {
 } from '../../application/orchestrations';
 import { EpicInitiationError } from '../../application/orchestrations';
 import { sessionDetails } from '../agentSessions/testFixtures';
+import { recordedHarnessInspectorSource } from '../../dev/conversationHarnesses/recordedHarnessInspectorSource';
 import { BUILD_EPIC_PLAN_PROMPT, EpicPlanBuilder } from './EpicPlanBuilder';
 
 describe('EpicPlanBuilder', () => {
@@ -102,7 +103,9 @@ describe('EpicPlanBuilder', () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Plan Epic' }));
+    const planButton = await screen.findByRole('button', { name: 'Plan Epic' });
+    await waitFor(() => expect(planButton).toBeEnabled());
+    fireEvent.click(planButton);
     expect(await screen.findByText(BUILD_EPIC_PLAN_PROMPT)).toBeVisible();
     expect(screen.getByText('Plan Builder / Application')).toBeVisible();
     expect(client.requestPlanCalls).toBe(1);
@@ -221,6 +224,37 @@ describe('EpicPlanBuilder', () => {
     await act(async () => undefined);
     expect(screen.getByText('Epic initiation confirmed')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Cancel draft' })).toBeNull();
+  });
+
+  it('offers the read-only harness inspector only through the bound Plan Builder context', async () => {
+    const recorded = await recordedHarnessInspectorSource.load({
+      sessionId: 'recorded-harness-inspector-plan-builder',
+    });
+    expect(recorded.kind).toBe('available');
+    if (recorded.kind !== 'available') return;
+    const harnessInspectorSource = {
+      load: vi.fn(async ({ sessionId }: { readonly sessionId: string }) => ({
+        kind: 'available' as const,
+        snapshot: { ...recorded.snapshot, sessionId },
+      })),
+    };
+    render(
+      <EpicPlanBuilder
+        agentSessionClient={createPlanBuilderClient(sessionDetails('completed'))}
+        proposalSource={createDurableProposalSource({ kind: 'unavailable' })}
+        draft={{ draftId: 'draft-1', sessionId: 'session-1' }}
+        harnessInspectorSource={harnessInspectorSource}
+        onBack={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Inspect harness' }));
+
+    expect(
+      await screen.findByRole('region', { name: 'Conversation Harness inspector' }),
+    ).toBeVisible();
+    expect(screen.queryByLabelText('Epic Plan Builder conversation')).toBeNull();
+    expect(harnessInspectorSource.load).toHaveBeenCalledWith({ sessionId: 'session-1' });
   });
 
   it('keeps safe stale-proposal guidance visible and reloads capability authority for retry', async () => {

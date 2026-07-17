@@ -13,7 +13,7 @@ use crate::{
         },
         domain::{
             AgentInvocation, AgentInvocationId, AgentInvocationInputProvenance,
-            AgentRuntimeOptions, AgentSessionId,
+            AgentInvocationStatus, AgentRuntimeOptions, AgentSessionId,
         },
         ports::RuntimeLaunchExtension,
     },
@@ -235,6 +235,95 @@ impl ManagedPlanBuilderService {
             .repository
             .cancel_planning_draft(&draft, session_id, idempotency_key)
             .map_err(|e| e.to_string())
+    }
+
+    pub(crate) fn inspect_conversation_harness(
+        &self,
+        session_id: AgentSessionId,
+    ) -> Result<ManagedPlanBuilderHarnessInspection, String> {
+        let history = self
+            .sessions
+            .load_session(&session_id)
+            .map_err(|error| error.to_string())?;
+        let Some(binding) = self
+            .orchestration
+            .repository
+            .load_managed_plan_builder_binding(session_id.as_str())
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(ManagedPlanBuilderHarnessInspection::Unbound {
+                session_id: session_id.as_str().into(),
+            });
+        };
+        let catalog = match super::conversation_harness::catalog_profile(
+            super::conversation_harness::ConversationHarnessRole::EpicPlanBuilder,
+        ) {
+            Ok(catalog) => catalog,
+            Err(_) => {
+                return Ok(ManagedPlanBuilderHarnessInspection::InvalidCatalog {
+                    session_id: session_id.as_str().into(),
+                })
+            }
+        };
+        let delivery = match history.invocations.first() {
+            None => ManagedPlanBuilderHarnessDelivery::NotDelivered {
+                reason: HarnessNotDeliveredReason::NoFirstQuery,
+            },
+            Some(first) if first.invocation.created_at < binding.associated_at => {
+                ManagedPlanBuilderHarnessDelivery::NotEvidenced {
+                    invocation_id: first.invocation.id.as_str().into(),
+                    reason: HarnessNotEvidencedReason::BindingPostdatesFirstQuery,
+                }
+            }
+            Some(first) => {
+                let evidence = match first.invocation.input_provenance {
+                    AgentInvocationInputProvenance::User => self
+                        .sessions
+                        .user_invocation_launch_evidence(&first.invocation.id, &session_id),
+                    AgentInvocationInputProvenance::Application => self
+                        .sessions
+                        .application_invocation_launch_evidence(&first.invocation.id, &session_id),
+                }
+                .map_err(|error| error.to_string())?;
+                match evidence {
+                    ApplicationInvocationLaunchEvidence::LaunchAccepted => {
+                        ManagedPlanBuilderHarnessDelivery::Delivered {
+                            invocation_id: first.invocation.id.as_str().into(),
+                        }
+                    }
+                    ApplicationInvocationLaunchEvidence::PersistedNotAccepted
+                        if first.invocation.status == AgentInvocationStatus::Failed
+                            && first
+                                .invocation
+                                .runtime_error
+                                .as_ref()
+                                .is_some_and(|error| {
+                                    matches!(
+                                        error.code.as_str(),
+                                        "runtime_preflight_failed" | "runtime_launch_failed"
+                                    )
+                                }) =>
+                    {
+                        ManagedPlanBuilderHarnessDelivery::NotDelivered {
+                            reason: HarnessNotDeliveredReason::LaunchRejected,
+                        }
+                    }
+                    ApplicationInvocationLaunchEvidence::PersistedNotAccepted
+                    | ApplicationInvocationLaunchEvidence::NeverPersisted => {
+                        ManagedPlanBuilderHarnessDelivery::NotEvidenced {
+                            invocation_id: first.invocation.id.as_str().into(),
+                            reason: HarnessNotEvidencedReason::LaunchAcceptanceMissing,
+                        }
+                    }
+                }
+            }
+        };
+        Ok(ManagedPlanBuilderHarnessInspection::Bound {
+            session_id: session_id.as_str().into(),
+            catalog_schema_version: catalog.catalog_schema_version,
+            profile: catalog.profile,
+            delivery,
+        })
     }
 
     pub(crate) fn send(
@@ -505,6 +594,60 @@ impl ManagedPlanBuilderService {
 pub(crate) struct ManagedPlanBuilderDraft {
     pub(crate) draft_id: String,
     pub(crate) session_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub(crate) enum ManagedPlanBuilderHarnessInspection {
+    Bound {
+        session_id: String,
+        catalog_schema_version: u16,
+        profile: super::conversation_harness::ConversationHarnessProfile,
+        delivery: ManagedPlanBuilderHarnessDelivery,
+    },
+    Unbound {
+        session_id: String,
+    },
+    InvalidCatalog {
+        session_id: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(
+    tag = "status",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub(crate) enum ManagedPlanBuilderHarnessDelivery {
+    Delivered {
+        invocation_id: String,
+    },
+    NotDelivered {
+        reason: HarnessNotDeliveredReason,
+    },
+    NotEvidenced {
+        invocation_id: String,
+        reason: HarnessNotEvidencedReason,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum HarnessNotDeliveredReason {
+    NoFirstQuery,
+    LaunchRejected,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum HarnessNotEvidencedReason {
+    BindingPostdatesFirstQuery,
+    LaunchAcceptanceMissing,
 }
 
 impl OrchestrationApplication {
@@ -1094,6 +1237,120 @@ mod tests {
             }
             let _ = fs::remove_file(path);
         }
+    }
+
+    #[test]
+    fn harness_inspection_requires_binding_and_uses_durable_launch_acceptance() {
+        let (service, _runtime, _factory, _registry, path) = service_fixture(RuntimeMode::Active);
+        let session = service
+            .sessions
+            .create_session(CreateAgentSessionCommand {
+                title: Some("Harness inspection".into()),
+                working_directory: None,
+                requested_options: AgentRuntimeOptions::default(),
+            })
+            .unwrap();
+        assert_eq!(
+            service
+                .inspect_conversation_harness(session.id.clone())
+                .unwrap(),
+            ManagedPlanBuilderHarnessInspection::Unbound {
+                session_id: session.id.as_str().into(),
+            }
+        );
+
+        service
+            .orchestration
+            .repository
+            .bootstrap_managed_plan_builder(session.id.as_str())
+            .unwrap();
+        assert!(matches!(
+            service
+                .inspect_conversation_harness(session.id.clone())
+                .unwrap(),
+            ManagedPlanBuilderHarnessInspection::Bound {
+                delivery: ManagedPlanBuilderHarnessDelivery::NotDelivered {
+                    reason: HarnessNotDeliveredReason::NoFirstQuery,
+                },
+                ..
+            }
+        ));
+
+        let sent = service
+            .send(
+                Some(session.id.clone()),
+                "First managed query.".into(),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let delivered = service
+            .inspect_conversation_harness(session.id.clone())
+            .unwrap();
+        assert!(matches!(
+            delivered,
+            ManagedPlanBuilderHarnessInspection::Bound {
+                catalog_schema_version: 2,
+                delivery: ManagedPlanBuilderHarnessDelivery::Delivered {
+                    ref invocation_id,
+                },
+                ..
+            } if invocation_id == sent.invocation_id.as_str()
+        ));
+        let transport = serde_json::to_value(
+            service
+                .inspect_conversation_harness(session.id.clone())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(transport["kind"], "bound");
+        assert_eq!(transport["catalogSchemaVersion"], 2);
+        assert_eq!(transport["profile"]["key"], "epic_plan_builder");
+        assert_eq!(transport["delivery"]["status"], "delivered");
+
+        Connection::open(&path)
+            .unwrap()
+            .execute(
+                "DELETE FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1",
+                params![sent.invocation_id.as_str()],
+            )
+            .unwrap();
+        assert!(matches!(
+            service
+                .inspect_conversation_harness(session.id.clone())
+                .unwrap(),
+            ManagedPlanBuilderHarnessInspection::Bound {
+                delivery: ManagedPlanBuilderHarnessDelivery::NotEvidenced {
+                    reason: HarnessNotEvidencedReason::LaunchAcceptanceMissing,
+                    ..
+                },
+                ..
+            }
+        ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn harness_inspection_reports_rejected_first_launch_as_not_delivered() {
+        let (service, _runtime, _factory, _registry, path) =
+            service_fixture(RuntimeMode::LaunchError);
+        let sent = service
+            .send(None, "First rejected query.".into(), None, None, None)
+            .unwrap();
+
+        assert!(matches!(
+            service
+                .inspect_conversation_harness(sent.session_id)
+                .unwrap(),
+            ManagedPlanBuilderHarnessInspection::Bound {
+                delivery: ManagedPlanBuilderHarnessDelivery::NotDelivered {
+                    reason: HarnessNotDeliveredReason::LaunchRejected,
+                },
+                ..
+            }
+        ));
+        let _ = fs::remove_file(path);
     }
 
     #[test]

@@ -4,7 +4,7 @@ use crate::agent_sessions::{
     domain::{AgentRuntimeOptions, RuntimeSandboxMode},
     ports::InitialPromptPrefix,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
 const CATALOG_JSON: &str = include_str!("conversation_harness_catalog.json");
@@ -33,7 +33,7 @@ struct HarnessCatalog {
     harnesses: Vec<ConversationHarnessProfile>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ConversationHarnessProfile {
     pub(crate) key: String,
@@ -45,7 +45,7 @@ pub(crate) struct ConversationHarnessProfile {
     pub(crate) lifecycle: HarnessLifecycle,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SkillGuidance {
     canonical_name: String,
@@ -54,7 +54,7 @@ struct SkillGuidance {
     use_when: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct HarnessRuntime {
     model: Option<String>,
@@ -63,37 +63,57 @@ struct HarnessRuntime {
     approval_policy: HarnessApprovalPolicy,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum HarnessApprovalPolicy {
     Never,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct HarnessMcpExposure {
     pub(crate) required: bool,
     pub(crate) enabled_tools: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct HarnessLifecycle {
     pub(crate) context_delivery: HarnessContextDelivery,
     pub(crate) completion_criteria: Vec<String>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum HarnessContextDelivery {
     FirstQuery,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ConversationHarnessCatalogProfile {
+    pub(crate) catalog_schema_version: u16,
+    pub(crate) profile: ConversationHarnessProfile,
+}
+
 pub(crate) fn profile(role: ConversationHarnessRole) -> Result<ConversationHarnessProfile, String> {
-    profile_from_catalog(CATALOG_JSON, role.key())
+    catalog_profile(role).map(|catalog| catalog.profile)
+}
+
+pub(crate) fn catalog_profile(
+    role: ConversationHarnessRole,
+) -> Result<ConversationHarnessCatalogProfile, String> {
+    catalog_profile_from_catalog(CATALOG_JSON, role.key())
 }
 
 fn profile_from_catalog(json: &str, key: &str) -> Result<ConversationHarnessProfile, String> {
+    catalog_profile_from_catalog(json, key).map(|catalog| catalog.profile)
+}
+
+fn catalog_profile_from_catalog(
+    json: &str,
+    key: &str,
+) -> Result<ConversationHarnessCatalogProfile, String> {
     let catalog: HarnessCatalog = serde_json::from_str(json)
         .map_err(|error| format!("invalid Conversation Harness catalog: {error}"))?;
     if catalog.schema_version != 2 {
@@ -108,7 +128,10 @@ fn profile_from_catalog(json: &str, key: &str) -> Result<ConversationHarnessProf
         .find(|candidate| candidate.key == key)
         .ok_or_else(|| format!("Conversation Harness configuration '{key}' is unavailable"))?;
     validate_profile(&configuration)?;
-    Ok(configuration)
+    Ok(ConversationHarnessCatalogProfile {
+        catalog_schema_version: catalog.schema_version,
+        profile: configuration,
+    })
 }
 
 fn validate_profile(profile: &ConversationHarnessProfile) -> Result<(), String> {

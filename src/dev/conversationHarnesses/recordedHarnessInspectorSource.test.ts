@@ -41,7 +41,7 @@ describe('recordedHarnessInspectorSource', () => {
 
   it('does not invent a harness for an unbound session', async () => {
     await expect(recordedHarnessInspectorSource.load({ sessionId: 'not-bound' })).resolves.toEqual({
-      kind: 'unavailable',
+      kind: 'unbound',
       reason: 'This recorded Agent Session has no product harness configuration.',
     });
   });

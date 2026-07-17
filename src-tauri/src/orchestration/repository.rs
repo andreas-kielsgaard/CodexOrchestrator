@@ -219,6 +219,11 @@ pub(crate) struct PendingPlanBuilderContextDelivery {
     pub(crate) target_invocation_id: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ManagedPlanBuilderBinding {
+    pub(crate) associated_at: DateTime<Utc>,
+}
+
 pub(crate) struct SqliteOrchestrationRepository {
     connection: Mutex<Connection>,
     clock: Arc<dyn OrchestrationClock>,
@@ -609,6 +614,41 @@ impl SqliteOrchestrationRepository {
             .commit()
             .map_err(sql_error("commit managed Plan Builder bootstrap"))?;
         Ok((draft, profile, association))
+    }
+
+    pub(crate) fn load_managed_plan_builder_binding(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<ManagedPlanBuilderBinding>, SaveProposalError> {
+        let connection = self.lock()?;
+        let associated_at = connection
+            .query_row(
+                "SELECT association.associated_at
+                 FROM planning_draft_agent_session_associations association
+                 JOIN planning_draft_profile_assignments assignment
+                   ON assignment.agent_session_association_id=association.id
+                  AND assignment.draft_id=association.draft_id
+                 WHERE association.agent_session_id=?1
+                   AND association.actor_id='managed-plan-builder'
+                 ORDER BY association.associated_at,association.id
+                 LIMIT 1",
+                params![session_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(sql_error("load managed Plan Builder binding"))?;
+        associated_at
+            .map(|value| {
+                DateTime::parse_from_rfc3339(&value)
+                    .map(|associated_at| associated_at.with_timezone(&Utc))
+                    .map(|associated_at| ManagedPlanBuilderBinding { associated_at })
+                    .map_err(|error| {
+                        SaveProposalError::Unavailable(format!(
+                            "load managed Plan Builder binding timestamp: {error}"
+                        ))
+                    })
+            })
+            .transpose()
     }
 
     pub(crate) fn update_planning_draft_title(

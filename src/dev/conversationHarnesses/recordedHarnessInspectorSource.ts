@@ -48,7 +48,7 @@ export const recordedHarnessInspectorSource: ConversationHarnessInspectorSource 
   async load({ sessionId }) {
     if (sessionId !== recordedHarnessInspectorSessionId)
       return {
-        kind: 'unavailable',
+        kind: 'unbound',
         reason: 'This recorded Agent Session has no product harness configuration.',
       };
     try {
