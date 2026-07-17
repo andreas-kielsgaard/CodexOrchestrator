@@ -834,6 +834,16 @@ h3 {
   color: #17211b;
 }
 
+.surface-switcher button small {
+  padding: 2px 5px;
+  border: 1px solid #c4cec6;
+  border-radius: 999px;
+  color: #6b786f;
+  font-size: 0.56rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
 @media (max-width: 860px) {
   .startup-panel {
     grid-template-columns: 1fr;

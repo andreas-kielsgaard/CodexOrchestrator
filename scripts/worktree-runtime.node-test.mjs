@@ -75,5 +75,7 @@ test('launch environment isolates instance state and removes ambient provider cr
     result.environment.CODEX_ORCHESTRATOR_APP_DATA_DIR,
     manifest().projected.paths.appData,
   );
+  assert.equal(result.environment.VITE_RUNTIME_INSTANCE_ID, 'alpha');
+  assert.equal(result.environment.VITE_RUNTIME_BUILD_OBSERVED, 'false');
   assert.deepEqual(result.scrubbed, ['GITHUB_TOKEN', 'OPENAI_API_KEY']);
 });

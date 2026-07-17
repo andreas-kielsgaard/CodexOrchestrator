@@ -19,7 +19,7 @@ import {
 } from '../application/orchestrations';
 import { EpicPlanBuilder, OrchestrationSection } from '../features/orchestrations';
 import type { EmbeddedAgentSessionComposition } from '../features/agentSessions';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   productOrchestrationPresentationAdapter,
   type OrchestrationPresentationAdapter,
@@ -47,6 +47,8 @@ export interface AppProps {
   readonly epicPlanningDraftLifecycleClient?: EpicPlanningDraftLifecycleClient;
   readonly epicPlanProposalSourceForDraft?: (draftId: string) => EpicPlanProposalSource;
   readonly epicInitiationConfirmationClient?: EpicInitiationConfirmationClient;
+  /** Supplied only by the development composition. */
+  readonly worktreeRuntimeExplorationView?: ReactNode;
 }
 
 export function App({
@@ -69,8 +71,9 @@ export function App({
   epicPlanningDraftLifecycleClient,
   epicPlanProposalSourceForDraft,
   epicInitiationConfirmationClient,
+  worktreeRuntimeExplorationView,
 }: AppProps) {
-  const [surface, setSurface] = useState<'epics' | 'agent-sessions'>('epics');
+  const [surface, setSurface] = useState<'epics' | 'agent-sessions' | 'worktree-runtime'>('epics');
   const [orchestrationRoute, setOrchestrationRoute] = useState<'overview' | 'plan-builder'>(
     'overview',
   );
@@ -236,6 +239,17 @@ export function App({
         >
           Agent Sessions
         </button>
+        {worktreeRuntimeExplorationView && (
+          <button
+            className={surface === 'worktree-runtime' ? 'active' : undefined}
+            type="button"
+            aria-current={surface === 'worktree-runtime' ? 'page' : undefined}
+            onClick={() => setSurface('worktree-runtime')}
+          >
+            Worktree Runtime
+            <small>Dev</small>
+          </button>
+        )}
       </nav>
       {surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
         <EpicPlanBuilder
@@ -275,8 +289,10 @@ export function App({
             setOrchestrationRoute('plan-builder');
           }}
         />
-      ) : (
+      ) : surface === 'agent-sessions' ? (
         <StandaloneAgentSessionScreen client={agentSessionClient} />
+      ) : (
+        worktreeRuntimeExplorationView
       )}
     </div>
   );
