@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import type { AgentSessionClient } from '../application/agentSessions';
 import { sessionDetails } from '../features/agentSessions/testFixtures';
 import type { OrchestrationApplicationClient } from '../application/orchestrations';
+import { createRecordedFileReviewApplicationComposition } from '../dev/fileReview/recordedFileReviewClient';
 import { App } from './App';
 
 describe('App application surfaces', () => {
@@ -21,6 +22,25 @@ describe('App application surfaces', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Orchestration' }));
     expect(screen.getByRole('main', { name: 'Orchestration' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Files & diffs' })).toBeNull();
+  });
+
+  it('adds the development-only file review tab only when its client is injected', async () => {
+    render(<App {...createRecordedFileReviewApplicationComposition()} />);
+
+    expect(await screen.findByRole('main', { name: 'Files and diffs' })).toBeVisible();
+    expect(await screen.findByText('5 changed files')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Files & diffs' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Sessions' }));
+    expect(await screen.findByText('Start with a message')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Files & diffs' }));
+    expect(screen.getByRole('main', { name: 'Files and diffs' })).toBeVisible();
+    expect(await screen.findByText('5 changed files')).toBeVisible();
   });
 });
 
