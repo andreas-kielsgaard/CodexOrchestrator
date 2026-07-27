@@ -7,8 +7,7 @@ import {
 
 const request = {
   id: 'review-request-1',
-  revision: '0123456789abcdef',
-  worktree: 'C:/worktrees/review',
+  source: 'repository/review' as AgentReviewRequest['source'],
   surface: { id: 'agent-session', name: 'Agent Session' },
   scenario: {
     id: 'send-message',
@@ -70,12 +69,24 @@ describe('agent application review contracts', () => {
         },
       ],
       producedFiles: [
-        { path: 'evidence/renderer/message.png', kind: 'screenshot' },
-        { path: 'evidence/renderer/results.json', kind: 'artifact' },
+        {
+          evidence:
+            'renderer/message' as AgentReviewEvidenceBundle['producedFiles'][number]['evidence'],
+          kind: 'screenshot',
+        },
+        {
+          evidence:
+            'renderer/results' as AgentReviewEvidenceBundle['producedFiles'][number]['evidence'],
+          kind: 'artifact',
+        },
       ],
       runtimeEvidence: {
-        instanceId: 'review-instance-1',
-        runtimeManifestPath: 'evidence/runtime/manifest.json',
+        instance: 'review-instance-1' as NonNullable<
+          AgentReviewEvidenceBundle['runtimeEvidence']
+        >['instance'],
+        evidence: 'runtime/manifest' as NonNullable<
+          AgentReviewEvidenceBundle['runtimeEvidence']
+        >['evidence'],
       },
       observations: ['The scenario completed from its declared starting state.'],
       unverifiedClaims: [],
@@ -114,7 +125,13 @@ describe('agent application review contracts', () => {
           outcome: 'not-run',
         },
       ],
-      producedFiles: [{ path: 'evidence/native/observation.json', kind: 'native-observation' }],
+      producedFiles: [
+        {
+          evidence:
+            'native/observation' as AgentReviewEvidenceBundle['producedFiles'][number]['evidence'],
+          kind: 'native-observation',
+        },
+      ],
       runtimeEvidence: null,
       observations: ['The development shell accepted an inspection attachment.'],
       unverifiedClaims: ['message-visible'],

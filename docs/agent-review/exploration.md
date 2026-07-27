@@ -166,11 +166,12 @@ convergence section explicitly labels the application/runtime integration as unp
 
 ## Review boundary
 
-A review request should identify revision, worktree, surface, scenario, platform or viewport,
-claims, granted capabilities, and required evidence. An evidence bundle should identify application
-mode, driver/version, start state, actions, assertions, observations, produced files, and unverified
-claims. Evidence acquired from an owned instance should also link its instance ID and runtime
-manifest; `null` means the evidence predates that integration. Agent judgement returns one of:
+A review request should identify an application-resolved opaque source reference, surface,
+scenario, platform or viewport, claims, granted capabilities, and required evidence. An evidence
+bundle should identify application mode, driver/version, start state, actions, assertions,
+observations, opaque produced-evidence references, and unverified claims. When a future
+application-owned evidence port links a bundle to runtime evidence, it should expose only opaque
+instance and evidence references. Agent judgement returns one of:
 
 - `accepted`
 - `changes-required`

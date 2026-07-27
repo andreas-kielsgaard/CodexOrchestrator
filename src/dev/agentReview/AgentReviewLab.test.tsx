@@ -54,6 +54,11 @@ describe('AgentReviewLab', () => {
         /This branch defines but does not yet integrate the application-to-worktree-runtime/,
       ),
     ).toBeVisible();
-    expect(screen.getByText(/semantic references, not process or driver authority/)).toBeVisible();
+    expect(
+      screen.getByText(/resolves the agent worktree to an opaque source reference/),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/Endpoint, window, filesystem, process, and driver details stay inside/),
+    ).toBeVisible();
   });
 });

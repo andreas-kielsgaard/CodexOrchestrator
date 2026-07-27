@@ -51,10 +51,28 @@ export interface AgentReviewEvidenceRequirement {
   readonly evidenceKinds: readonly AgentReviewEvidenceKind[];
 }
 
+declare const agentReviewTestSourceRefBrand: unique symbol;
+declare const agentReviewEvidenceRefBrand: unique symbol;
+declare const agentReviewInstanceRefBrand: unique symbol;
+
+/** Application-resolved source identity. Filesystem and Git details stay behind the source port. */
+export type AgentReviewTestSourceRef = string & {
+  readonly [agentReviewTestSourceRefBrand]: true;
+};
+
+/** Adapter-resolved evidence identity. Storage locations stay behind the evidence port. */
+export type AgentReviewEvidenceRef = string & {
+  readonly [agentReviewEvidenceRefBrand]: true;
+};
+
+/** Runtime-owned instance identity. Runtime resources stay behind the lifecycle port. */
+export type AgentReviewInstanceRef = string & {
+  readonly [agentReviewInstanceRefBrand]: true;
+};
+
 export interface AgentReviewRequest {
   readonly id: string;
-  readonly revision: string;
-  readonly worktree: string;
+  readonly source: AgentReviewTestSourceRef;
   readonly surface: AgentReviewSurface;
   readonly scenario: AgentReviewScenario;
   readonly environment: AgentReviewEnvironment;
@@ -93,13 +111,13 @@ export interface AgentReviewAssertionEvidence {
 }
 
 export interface AgentReviewProducedFile {
-  readonly path: string;
+  readonly evidence: AgentReviewEvidenceRef;
   readonly kind: AgentReviewEvidenceKind;
 }
 
 export interface AgentReviewRuntimeEvidenceReference {
-  readonly instanceId: string;
-  readonly runtimeManifestPath: string;
+  readonly instance: AgentReviewInstanceRef;
+  readonly evidence: AgentReviewEvidenceRef;
 }
 
 export interface AgentReviewEvidenceBundle {
@@ -114,7 +132,7 @@ export interface AgentReviewEvidenceBundle {
   readonly actions: readonly AgentReviewActionEvidence[];
   readonly assertions: readonly AgentReviewAssertionEvidence[];
   readonly producedFiles: readonly AgentReviewProducedFile[];
-  /** Null only when evidence predates the worktree-runtime handoff. */
+  /** Null when no application evidence port linked this bundle to runtime evidence. */
   readonly runtimeEvidence: AgentReviewRuntimeEvidenceReference | null;
   readonly observations: readonly string[];
   readonly unverifiedClaims: readonly string[];

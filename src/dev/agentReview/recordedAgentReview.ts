@@ -218,11 +218,11 @@ export const recordedAgentReviewLab: AgentReviewLabRecord = {
   worktreeHandoff: {
     status: 'Interface defined · application integration unproven',
     request:
-      'The application requests one development/test instance for an expected worktree path, commit, and source fingerprint, with isolated data, scrubbed credentials, ephemeral ports, required capabilities, and mandatory cleanup.',
+      'The application resolves the agent worktree to an opaque source reference, requests an instance for a semantic purpose, and keeps worktree paths, commits, and fingerprints behind that resolver.',
     instance:
-      'The worktree runtime owns build and launch, then returns named instance/build/session identity, an HTTP endpoint or opaque window reference, semantic capabilities, and runtime/review evidence roots.',
+      'The runtime returns an opaque instance handle. Build, test, start, status, stop, and recover remain separate and expose only action outcome plus semantic phase, health, and staleness.',
     review:
-      'A lane adapter validates the handoff, performs driver-specific interaction, retains evidence beside the runtime manifest, and returns neutral evidence for a separate review judgement.',
+      'A development lane adapter resolves attachment and evidence details internally, then returns opaque evidence references for a separate review judgement.',
     unverified:
       'The current proofs were launched by dedicated scripts. This branch defines but does not yet integrate the application-to-worktree-runtime lifecycle port.',
   },
@@ -230,7 +230,7 @@ export const recordedAgentReviewLab: AgentReviewLabRecord = {
     {
       label: 'Worktree instance',
       detail:
-        'Build, launch, endpoint/window ownership, and cleanup belong to the worktree runtime. Review adapters receive semantic references, not process or driver authority.',
+        'The runtime owns lifecycle operations behind an opaque handle. Endpoint, window, filesystem, process, and driver details stay inside development adapters and runtime infrastructure.',
     },
     {
       label: 'Security',
