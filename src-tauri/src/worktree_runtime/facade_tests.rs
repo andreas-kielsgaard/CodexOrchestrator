@@ -1,3 +1,5 @@
+#[cfg(windows)]
+use super::registry::RegistryErrorKind;
 use super::{
     application::{
         PrepareInstanceCommand, ReadInstanceQuery, RecoverInstanceCommand, RuntimeApplicationError,
@@ -29,6 +31,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
+    panic::{catch_unwind, AssertUnwindSafe},
     path::{Path, PathBuf},
     process::Command,
     sync::{Arc, Condvar, Mutex},
@@ -147,10 +150,181 @@ fn real_registry_facade_concurrent_stop_recover_conflicts_without_orphan() {
     assert_concurrent_terminal_call(ConcurrentTerminalCall::Recover);
 }
 
+#[test]
+fn real_registry_facade_stop_cannot_supersede_executing_start() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let source_path = fixture_worktree(directory.path(), "start-stop");
+    let registry_path = directory.path().join("registry.sqlite");
+    let world = Arc::new(BlockingLaunchWorld::default());
+    let facade = Arc::new(real_registry_facade(
+        directory.path(),
+        &registry_path,
+        source_path,
+        Arc::new(BlockingLaunchProcessOwner(world.clone())),
+        Arc::new(BlockingLaunchHealthProbe(world.clone())),
+    ));
+    let requested = request_lifecycle_instance(&facade, "start stop serialization");
+
+    let start_facade = facade.clone();
+    let start_handle = requested.handle.clone();
+    let start = thread::spawn(move || start_facade.start(&start_handle));
+    world.wait_for_launch();
+    let stop_result = facade.stop(&requested.handle);
+    world.release_launch();
+    let start_result = start.join().expect("start thread");
+
+    assert_eq!(
+        stop_result
+            .expect_err("stop must not supersede active start")
+            .kind,
+        TestInstanceErrorKind::OperationInProgress
+    );
+    assert_eq!(
+        start_result.expect("start completes").phase,
+        TestInstancePhase::Running
+    );
+    let raw = Connection::open(&registry_path).expect("inspect real registry");
+    assert_eq!(command_count(&raw, "status='pending'"), 0);
+    assert_eq!(
+        command_count(&raw, "operation='start' AND status='succeeded'"),
+        1
+    );
+    assert_eq!(command_count(&raw, "operation='stop'"), 0);
+}
+
+#[test]
+fn real_registry_facade_recovery_fails_abandoned_start_before_reserving_recovery() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let source_path = fixture_worktree(directory.path(), "interrupted-start");
+    let registry_path = directory.path().join("registry.sqlite");
+    let facade = real_registry_facade(
+        directory.path(),
+        &registry_path,
+        source_path.clone(),
+        Arc::new(PanickingLaunchProcessOwner),
+        Arc::new(ClosedHealthProbe),
+    );
+    let requested = request_lifecycle_instance(&facade, "interrupted start recovery");
+    #[cfg(windows)]
+    assert_eq!(
+        SqliteInstanceRegistry::open(&registry_path)
+            .err()
+            .expect("second live registry must fail closed")
+            .kind,
+        RegistryErrorKind::Conflict
+    );
+    let interrupted = catch_unwind(AssertUnwindSafe(|| facade.start(&requested.handle)));
+    assert!(
+        interrupted.is_err(),
+        "test launch must simulate interruption"
+    );
+    drop(facade);
+
+    let recovery_facade = real_registry_facade(
+        directory.path(),
+        &registry_path,
+        source_path,
+        Arc::new(AbsentProcessOwner),
+        Arc::new(ClosedHealthProbe),
+    );
+    let resumed = request_lifecycle_instance(&recovery_facade, "interrupted start recovery");
+    assert_eq!(resumed.status.phase, TestInstancePhase::Starting);
+    assert!(resumed.status.stale);
+    assert_eq!(
+        recovery_facade
+            .recover(&resumed.handle)
+            .expect("recover abandoned start")
+            .phase,
+        TestInstancePhase::Recovered
+    );
+
+    let raw = Connection::open(&registry_path).expect("inspect real registry");
+    assert_eq!(command_count(&raw, "status='pending'"), 0);
+    assert_eq!(
+        command_count(&raw, "operation='start' AND status='failed'"),
+        1
+    );
+    assert_eq!(
+        command_count(&raw, "operation='recover' AND status='succeeded'"),
+        1
+    );
+    let start_failure: String = raw
+        .query_row(
+            "SELECT failure_json FROM worktree_runtime_commands WHERE operation='start'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("abandoned start failure");
+    assert!(start_failure.contains("abandoned"));
+    assert!(start_failure.contains("superseded by recovery"));
+}
+
 #[derive(Clone, Copy)]
 enum ConcurrentTerminalCall {
     Stop,
     Recover,
+}
+
+fn real_registry_facade(
+    root: &Path,
+    registry_path: &Path,
+    source_path: PathBuf,
+    owner: Arc<dyn ProcessOwner>,
+    health: Arc<dyn HealthProbe>,
+) -> WorktreeTestInstanceFacade {
+    let executable = std::env::current_exe().expect("test executable");
+    WorktreeTestInstanceFacade::new(
+        Arc::new(WorktreeRuntimeApplication::system(
+            Arc::new(SqliteInstanceRegistry::open(registry_path).expect("real registry")),
+            owner,
+            health,
+        )),
+        Arc::new(MapSources(HashMap::from([(
+            "repository/lifecycle".into(),
+            source_path,
+        )]))),
+        Arc::new(FixedInspector),
+        Arc::new(RecordingExecutor::default()),
+        RuntimeSettings {
+            instances_root: root.join("instances"),
+            shared_cache_root: root.join("shared-cache"),
+            port_start: 33200,
+            port_end: 33231,
+        },
+        ToolchainPrograms {
+            git: executable.clone(),
+            node: executable.clone(),
+            cargo: executable.clone(),
+            rustc: executable,
+        },
+        AuthoritySecret::new("lifecycle-facade-authority-secret").expect("authority"),
+    )
+    .expect("facade")
+}
+
+fn request_lifecycle_instance(
+    facade: &WorktreeTestInstanceFacade,
+    purpose: &str,
+) -> super::facade::RequestedTestInstance {
+    facade
+        .request(
+            IsolatedTestRequest::new(
+                TestSourceRef::new("repository/lifecycle").expect("source"),
+                purpose,
+            )
+            .expect("request"),
+        )
+        .expect("prepare instance")
+}
+
+fn command_count(connection: &Connection, predicate: &str) -> i64 {
+    connection
+        .query_row(
+            &format!("SELECT COUNT(*) FROM worktree_runtime_commands WHERE {predicate}"),
+            [],
+            |row| row.get(0),
+        )
+        .expect("runtime command count")
 }
 
 fn assert_concurrent_terminal_call(second_call: ConcurrentTerminalCall) {
@@ -269,6 +443,149 @@ fn assert_concurrent_terminal_call(second_call: ConcurrentTerminalCall) {
 struct BlockingRuntimeWorld {
     state: Mutex<BlockingRuntimeState>,
     changed: Condvar,
+}
+
+#[derive(Default)]
+struct BlockingLaunchWorld {
+    state: Mutex<BlockingLaunchState>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct BlockingLaunchState {
+    active: bool,
+    launch_entered: bool,
+    release_launch: bool,
+}
+
+impl BlockingLaunchWorld {
+    fn wait_for_launch(&self) {
+        let state = self.state.lock().expect("launch state");
+        let (state, timeout) = self
+            .changed
+            .wait_timeout_while(state, Duration::from_secs(5), |state| !state.launch_entered)
+            .expect("wait for launch");
+        assert!(!timeout.timed_out(), "start did not enter process launch");
+        assert!(state.launch_entered);
+    }
+
+    fn release_launch(&self) {
+        let mut state = self.state.lock().expect("launch state");
+        state.release_launch = true;
+        self.changed.notify_all();
+    }
+
+    fn active(&self) -> bool {
+        self.state.lock().expect("launch state").active
+    }
+}
+
+struct BlockingLaunchProcessOwner(Arc<BlockingLaunchWorld>);
+
+impl ProcessOwner for BlockingLaunchProcessOwner {
+    fn launch(
+        &self,
+        _route: &OwnerRoute,
+        launches: &[OwnedProcessLaunch],
+    ) -> Result<OwnerObservation, OwnershipError> {
+        let mut state = self.0.state.lock().expect("launch state");
+        state.launch_entered = true;
+        self.0.changed.notify_all();
+        while !state.release_launch {
+            state = self.0.changed.wait(state).expect("release launch");
+        }
+        state.active = true;
+        Ok(OwnerObservation::Owned {
+            active_processes: launches.len() as u32,
+        })
+    }
+
+    fn observe(&self, _route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
+        Ok(if self.0.active() {
+            OwnerObservation::Owned {
+                active_processes: 3,
+            }
+        } else {
+            OwnerObservation::Absent
+        })
+    }
+
+    fn terminate(&self, _route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
+        self.0.state.lock().expect("launch state").active = false;
+        Ok(OwnerObservation::Absent)
+    }
+}
+
+struct BlockingLaunchHealthProbe(Arc<BlockingLaunchWorld>);
+
+impl HealthProbe for BlockingLaunchHealthProbe {
+    fn observe(&self, projection: &InstanceProjection) -> HealthObservation {
+        health_observation(projection, self.0.active())
+    }
+}
+
+struct PanickingLaunchProcessOwner;
+
+impl ProcessOwner for PanickingLaunchProcessOwner {
+    fn launch(
+        &self,
+        _route: &OwnerRoute,
+        _launches: &[OwnedProcessLaunch],
+    ) -> Result<OwnerObservation, OwnershipError> {
+        panic!("simulate process interruption after durable start reservation")
+    }
+
+    fn observe(&self, _route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
+        Ok(OwnerObservation::Absent)
+    }
+
+    fn terminate(&self, _route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
+        Ok(OwnerObservation::Absent)
+    }
+}
+
+struct AbsentProcessOwner;
+
+impl ProcessOwner for AbsentProcessOwner {
+    fn launch(
+        &self,
+        _route: &OwnerRoute,
+        _launches: &[OwnedProcessLaunch],
+    ) -> Result<OwnerObservation, OwnershipError> {
+        Err(OwnershipError {
+            kind: OwnershipErrorKind::LaunchFailed,
+            message: "absent test owner cannot launch".into(),
+        })
+    }
+
+    fn observe(&self, _route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
+        Ok(OwnerObservation::Absent)
+    }
+
+    fn terminate(&self, _route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
+        Ok(OwnerObservation::Absent)
+    }
+}
+
+struct ClosedHealthProbe;
+
+impl HealthProbe for ClosedHealthProbe {
+    fn observe(&self, projection: &InstanceProjection) -> HealthObservation {
+        health_observation(projection, false)
+    }
+}
+
+fn health_observation(projection: &InstanceProjection, reachable: bool) -> HealthObservation {
+    HealthObservation {
+        vite: EndpointObservation {
+            port: projection.ports.vite,
+            reachable,
+        },
+        status: EndpointObservation {
+            port: projection.ports.status,
+            reachable,
+        },
+    }
 }
 
 #[derive(Default)]

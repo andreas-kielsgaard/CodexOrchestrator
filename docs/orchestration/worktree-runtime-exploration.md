@@ -210,10 +210,14 @@ unchanged.
 - The SQLite registry uses immediate transactions for exact identity, hashed authority, two-port
   leases, idempotent lifecycle commands, durable ownership routes, and observed transitions.
 - One partial unique index and the same immediate reservation transaction allow only one pending
-  stop/recover command per instance. A concurrent same-operation request receives the semantic
-  `OperationInProgress` result; a conflicting stop/recover request receives `Conflict`. Focused
-  facade tests hold the first teardown open across the real registry boundary and verify that both
-  stop/stop and stop/recover leave exactly one completed stop and no pending command.
+  start/stop/recover command per instance. The registry holds a path-keyed Windows named mutex so a
+  second live application execution cannot misclassify an executing start as abandoned. Within
+  that lease, process-lifetime start ownership makes stop/recover return `OperationInProgress`
+  while launch is executing. After the OS releases the lease on exit, restart recovery atomically
+  fails the abandoned start before reserving recovery; ordinary stop refuses that repair path.
+- Focused facade tests hold start or stop execution open across the real registry boundary. They
+  verify start/stop, stop/stop, stop/recover, and interrupted-start recovery behavior, including
+  the required semantic errors and zero pending commands after the owning operation completes.
 - The Windows owner creates three helper roots suspended, assigns them to one exact named Job Object
   with kill-on-close, and resumes only after assignment. Its integration proof starts two isolated
   jobs, stops one while the other remains healthy, drops the owner, reopens SQLite, and recovers the
@@ -232,7 +236,7 @@ The focused command is:
 cargo test --manifest-path src-tauri\Cargo.toml worktree_runtime -- --nocapture
 ```
 
-Its current expected result is 14 passed and 2 ignored helpers. The original developer script,
+Its current expected result is 16 passed and 2 ignored helpers. The original developer script,
 not this Rust facade, remains the evidence for two real concurrent Tauri builds/windows.
 
 Checkpoint validation on 2026-07-27 also passed `cargo fmt --check`, `cargo check`, the ordinary

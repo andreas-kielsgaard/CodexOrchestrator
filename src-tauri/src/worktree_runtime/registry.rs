@@ -5,10 +5,13 @@ use super::domain::{
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
+#[cfg(windows)]
+use sha2::{Digest, Sha256};
 use std::{
+    collections::HashSet,
     error::Error,
     fmt,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Mutex, MutexGuard},
 };
 
@@ -50,9 +53,9 @@ CREATE TABLE IF NOT EXISTS worktree_runtime_commands (
     (status = 'failed' AND result_json IS NULL AND failure_json IS NOT NULL)
   )
 );
-CREATE UNIQUE INDEX IF NOT EXISTS worktree_runtime_one_pending_terminal_command
+CREATE UNIQUE INDEX IF NOT EXISTS worktree_runtime_one_pending_lifecycle_command
   ON worktree_runtime_commands(instance_id)
-  WHERE status = 'pending' AND operation IN ('stop', 'recover');
+  WHERE status = 'pending' AND operation IN ('start', 'stop', 'recover');
 CREATE TABLE IF NOT EXISTS worktree_runtime_observations (
   sequence INTEGER PRIMARY KEY AUTOINCREMENT,
   instance_id TEXT NOT NULL REFERENCES worktree_runtime_instances(instance_id),
@@ -193,11 +196,15 @@ pub(crate) trait InstanceRegistry: Send + Sync {
 }
 
 pub(crate) struct SqliteInstanceRegistry {
+    _execution_lease: RegistryExecutionLease,
     connection: Mutex<Connection>,
+    active_starts: Mutex<HashSet<String>>,
 }
 
 impl SqliteInstanceRegistry {
     pub(crate) fn open(path: impl AsRef<Path>) -> Result<Self, RegistryError> {
+        let path = path.as_ref();
+        let execution_lease = RegistryExecutionLease::acquire(path)?;
         let connection = Connection::open(path).map_err(sql_error("open worktree registry"))?;
         connection
             .busy_timeout(std::time::Duration::from_secs(5))
@@ -212,7 +219,9 @@ impl SqliteInstanceRegistry {
             .execute_batch(REGISTRY_SCHEMA)
             .map_err(sql_error("initialize worktree registry"))?;
         Ok(Self {
+            _execution_lease: execution_lease,
             connection: Mutex::new(connection),
+            active_starts: Mutex::new(HashSet::new()),
         })
     }
 
@@ -224,6 +233,121 @@ impl SqliteInstanceRegistry {
             )
         })
     }
+
+    fn lock_active_starts(&self) -> Result<MutexGuard<'_, HashSet<String>>, RegistryError> {
+        self.active_starts.lock().map_err(|_| {
+            RegistryError::new(
+                RegistryErrorKind::Unavailable,
+                "active start ownership is unavailable",
+            )
+        })
+    }
+}
+
+#[cfg(windows)]
+struct RegistryExecutionLease(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+unsafe impl Send for RegistryExecutionLease {}
+#[cfg(windows)]
+unsafe impl Sync for RegistryExecutionLease {}
+
+#[cfg(windows)]
+impl RegistryExecutionLease {
+    fn acquire(path: &Path) -> Result<Self, RegistryError> {
+        use std::{os::windows::ffi::OsStrExt, ptr::null};
+        use windows_sys::Win32::{
+            Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS},
+            System::Threading::CreateMutexW,
+        };
+
+        let identity = registry_path_identity(path)?;
+        let digest = format!(
+            "{:x}",
+            Sha256::digest(identity.to_string_lossy().as_bytes())
+        );
+        let name = format!("Local\\CodexOrchestrator.WorktreeRuntime.Registry.{digest}");
+        let wide = std::ffi::OsStr::new(&name)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let handle = unsafe { CreateMutexW(null(), 0, wide.as_ptr()) };
+        if handle.is_null() {
+            return Err(RegistryError::new(
+                RegistryErrorKind::Unavailable,
+                format!(
+                    "create worktree registry execution lease: Windows error {}",
+                    unsafe { GetLastError() }
+                ),
+            ));
+        }
+        if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            unsafe {
+                CloseHandle(handle);
+            }
+            return Err(RegistryError::new(
+                RegistryErrorKind::Conflict,
+                "the worktree registry is already owned by another live application execution",
+            ));
+        }
+        Ok(Self(handle))
+    }
+}
+
+#[cfg(windows)]
+impl Drop for RegistryExecutionLease {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe {
+                windows_sys::Win32::Foundation::CloseHandle(self.0);
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+struct RegistryExecutionLease;
+
+#[cfg(not(windows))]
+impl RegistryExecutionLease {
+    fn acquire(path: &Path) -> Result<Self, RegistryError> {
+        registry_path_identity(path)?;
+        Ok(Self)
+    }
+}
+
+fn registry_path_identity(path: &Path) -> Result<PathBuf, RegistryError> {
+    if path.exists() {
+        return path.canonicalize().map_err(|error| {
+            RegistryError::new(RegistryErrorKind::Unavailable, error.to_string())
+        });
+    }
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| RegistryError::new(RegistryErrorKind::Unavailable, error.to_string()))?
+            .join(path)
+    };
+    let parent = absolute.parent().ok_or_else(|| {
+        RegistryError::new(
+            RegistryErrorKind::Unavailable,
+            "worktree registry path has no parent directory",
+        )
+    })?;
+    let parent = parent.canonicalize().map_err(|error| {
+        RegistryError::new(
+            RegistryErrorKind::Unavailable,
+            format!("resolve worktree registry directory: {error}"),
+        )
+    })?;
+    let name = absolute.file_name().ok_or_else(|| {
+        RegistryError::new(
+            RegistryErrorKind::Unavailable,
+            "worktree registry path has no file name",
+        )
+    })?;
+    Ok(parent.join(name))
 }
 
 impl InstanceRegistry for SqliteInstanceRegistry {
@@ -384,6 +508,13 @@ impl InstanceRegistry for SqliteInstanceRegistry {
         route: &OwnerRoute,
         recorded_at: DateTime<Utc>,
     ) -> Result<CommandStart, RegistryError> {
+        let mut active_starts = self.lock_active_starts()?;
+        if active_starts.contains(instance_id.as_str()) {
+            return Err(RegistryError::new(
+                RegistryErrorKind::OperationInProgress,
+                "the start transition is already executing for this instance",
+            ));
+        }
         let mut connection = self.lock()?;
         let transaction = immediate(&mut connection, "begin instance start")?;
         if let Some(replay) = command_replay(
@@ -433,6 +564,7 @@ impl InstanceRegistry for SqliteInstanceRegistry {
         transaction
             .commit()
             .map_err(sql_error("commit instance start reservation"))?;
+        active_starts.insert(instance_id.as_str().to_owned());
         Ok(CommandStart::Execute(next))
     }
 
@@ -444,6 +576,7 @@ impl InstanceRegistry for SqliteInstanceRegistry {
         authority_hash: &str,
         recorded_at: DateTime<Utc>,
     ) -> Result<CommandStart, RegistryError> {
+        let active_starts = self.lock_active_starts()?;
         let mut connection = self.lock()?;
         begin_terminal_transition(
             &mut connection,
@@ -453,6 +586,7 @@ impl InstanceRegistry for SqliteInstanceRegistry {
             authority_hash,
             "stop",
             InstanceState::StopPending,
+            active_starts.contains(instance_id.as_str()),
             recorded_at,
         )
     }
@@ -465,6 +599,7 @@ impl InstanceRegistry for SqliteInstanceRegistry {
         authority_hash: &str,
         recorded_at: DateTime<Utc>,
     ) -> Result<CommandStart, RegistryError> {
+        let active_starts = self.lock_active_starts()?;
         let mut connection = self.lock()?;
         begin_terminal_transition(
             &mut connection,
@@ -474,6 +609,7 @@ impl InstanceRegistry for SqliteInstanceRegistry {
             authority_hash,
             "recover",
             InstanceState::RecoveryPending,
+            active_starts.contains(instance_id.as_str()),
             recorded_at,
         )
     }
@@ -486,10 +622,11 @@ impl InstanceRegistry for SqliteInstanceRegistry {
         transition_kind: &str,
         observation: RuntimeObservation,
     ) -> Result<InstanceSnapshot, RegistryError> {
+        let mut active_starts = self.lock_active_starts()?;
         let mut connection = self.lock()?;
         let transaction = immediate(&mut connection, "complete runtime transition")?;
         let command = load_pending_command(&transaction, request_id)?;
-        let instance_id = InstanceId::new(command.instance_id)
+        let instance_id = InstanceId::new(command.instance_id.clone())
             .map_err(contract_error("decode command instance ID"))?;
         let record = load_required_record(&transaction, &instance_id)?;
         if record.state != expected {
@@ -528,6 +665,9 @@ impl InstanceRegistry for SqliteInstanceRegistry {
         transaction
             .commit()
             .map_err(sql_error("commit completed runtime transition"))?;
+        if command.operation == "start" {
+            active_starts.remove(&command.instance_id);
+        }
         Ok(snapshot)
     }
 
@@ -539,10 +679,11 @@ impl InstanceRegistry for SqliteInstanceRegistry {
         failure: StoredFailure,
         observation: Option<RuntimeObservation>,
     ) -> Result<(), RegistryError> {
+        let mut active_starts = self.lock_active_starts()?;
         let mut connection = self.lock()?;
         let transaction = immediate(&mut connection, "record failed runtime transition")?;
         let command = load_pending_command(&transaction, request_id)?;
-        let instance_id = InstanceId::new(command.instance_id)
+        let instance_id = InstanceId::new(command.instance_id.clone())
             .map_err(contract_error("decode command instance ID"))?;
         let record = load_required_record(&transaction, &instance_id)?;
         if record.state != expected {
@@ -589,7 +730,11 @@ impl InstanceRegistry for SqliteInstanceRegistry {
             .map_err(sql_error("persist failed command"))?;
         transaction
             .commit()
-            .map_err(sql_error("commit failed runtime transition"))
+            .map_err(sql_error("commit failed runtime transition"))?;
+        if command.operation == "start" {
+            active_starts.remove(&command.instance_id);
+        }
+        Ok(())
     }
 
     fn record_observation(
@@ -618,6 +763,7 @@ fn begin_terminal_transition(
     authority_hash: &str,
     operation: &'static str,
     pending_state: InstanceState,
+    active_start: bool,
     recorded_at: DateTime<Utc>,
 ) -> Result<CommandStart, RegistryError> {
     let transaction = immediate(connection, "begin terminal runtime transition")?;
@@ -631,22 +777,44 @@ fn begin_terminal_transition(
         return finish_replay(transaction, replay);
     }
     let record = authorized_record(&transaction, instance_id, authority_hash)?;
-    if let Some(active) = load_pending_terminal_command(&transaction, instance_id)? {
-        let (kind, message) = if active.operation == operation {
-            (
-                RegistryErrorKind::OperationInProgress,
-                format!("the {operation} transition is already in progress for this instance"),
-            )
+    if let Some(active) = load_pending_lifecycle_command(&transaction, instance_id)? {
+        if active.operation == "start" {
+            if active_start {
+                return Err(RegistryError::new(
+                    RegistryErrorKind::OperationInProgress,
+                    "the start transition is still executing for this instance",
+                ));
+            }
+            if operation != "recover" {
+                return Err(RegistryError::new(
+                    RegistryErrorKind::Conflict,
+                    "an abandoned start must be resolved with recover",
+                ));
+            }
+            if record.state != InstanceState::LaunchPending {
+                return Err(RegistryError::new(
+                    RegistryErrorKind::Conflict,
+                    "the abandoned start command conflicts with durable instance state",
+                ));
+            }
+            fail_abandoned_start(&transaction, &active.request_id, recorded_at)?;
         } else {
-            (
-                RegistryErrorKind::Conflict,
-                format!(
-                    "cannot begin {operation} while the {} transition is in progress",
-                    active.operation
-                ),
-            )
-        };
-        return Err(RegistryError::new(kind, message));
+            let (kind, message) = if active.operation == operation {
+                (
+                    RegistryErrorKind::OperationInProgress,
+                    format!("the {operation} transition is already in progress for this instance"),
+                )
+            } else {
+                (
+                    RegistryErrorKind::Conflict,
+                    format!(
+                        "cannot begin {operation} while the {} transition is in progress",
+                        active.operation
+                    ),
+                )
+            };
+            return Err(RegistryError::new(kind, message));
+        }
     }
     if matches!(
         record.state,
@@ -880,29 +1048,64 @@ fn load_record(
 
 struct PendingCommand {
     instance_id: String,
-}
-
-struct PendingTerminalCommand {
     operation: String,
 }
 
-fn load_pending_terminal_command(
+struct PendingLifecycleCommand {
+    request_id: String,
+    operation: String,
+}
+
+fn load_pending_lifecycle_command(
     transaction: &Transaction<'_>,
     instance_id: &InstanceId,
-) -> Result<Option<PendingTerminalCommand>, RegistryError> {
+) -> Result<Option<PendingLifecycleCommand>, RegistryError> {
     transaction
         .query_row(
-            "SELECT operation FROM worktree_runtime_commands
-             WHERE instance_id=?1 AND status='pending' AND operation IN ('stop', 'recover')",
+            "SELECT request_id, operation FROM worktree_runtime_commands
+             WHERE instance_id=?1 AND status='pending'
+               AND operation IN ('start', 'stop', 'recover')",
             params![instance_id.as_str()],
             |row| {
-                Ok(PendingTerminalCommand {
-                    operation: row.get(0)?,
+                Ok(PendingLifecycleCommand {
+                    request_id: row.get(0)?,
+                    operation: row.get(1)?,
                 })
             },
         )
         .optional()
-        .map_err(sql_error("load active terminal runtime command"))
+        .map_err(sql_error("load active lifecycle runtime command"))
+}
+
+fn fail_abandoned_start(
+    transaction: &Transaction<'_>,
+    request_id: &str,
+    recorded_at: DateTime<Utc>,
+) -> Result<(), RegistryError> {
+    let failure = StoredFailure {
+        kind: "ownership_ambiguous".into(),
+        message: "start was abandoned by the previous runtime execution and superseded by recovery"
+            .into(),
+    };
+    let changed = transaction
+        .execute(
+            "UPDATE worktree_runtime_commands
+             SET status='failed', failure_json=?2, updated_at=?3
+             WHERE request_id=?1 AND operation='start' AND status='pending'",
+            params![
+                request_id,
+                json(&failure, "serialize abandoned start failure")?,
+                timestamp(recorded_at)
+            ],
+        )
+        .map_err(sql_error("fail abandoned start command"))?;
+    if changed != 1 {
+        return Err(RegistryError::new(
+            RegistryErrorKind::Conflict,
+            "the abandoned start command changed before recovery reserved the instance",
+        ));
+    }
+    Ok(())
 }
 
 fn load_pending_command(
@@ -911,9 +1114,16 @@ fn load_pending_command(
 ) -> Result<PendingCommand, RegistryError> {
     transaction
         .query_row(
-            "SELECT instance_id, status FROM worktree_runtime_commands WHERE request_id=?1",
+            "SELECT instance_id, operation, status
+             FROM worktree_runtime_commands WHERE request_id=?1",
             params![request_id.as_str()],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
         )
         .optional()
         .map_err(sql_error("load pending runtime command"))?
@@ -923,9 +1133,12 @@ fn load_pending_command(
                 "pending runtime command was not found",
             )
         })
-        .and_then(|(instance_id, status)| {
+        .and_then(|(instance_id, operation, status)| {
             if status == "pending" {
-                Ok(PendingCommand { instance_id })
+                Ok(PendingCommand {
+                    instance_id,
+                    operation,
+                })
             } else {
                 Err(RegistryError::new(
                     RegistryErrorKind::InvalidState,
