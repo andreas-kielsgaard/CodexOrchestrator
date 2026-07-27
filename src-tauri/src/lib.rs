@@ -18,6 +18,9 @@ mod agent_sessions;
 mod orchestration;
 mod runtime;
 mod storage;
+// Candidate runtime remains uncomposed; its semantic facade is verified in focused tests.
+#[allow(dead_code)]
+mod worktree_runtime;
 
 const APP_DATABASE_FILE_NAME: &str = "codex-orchestrator.sqlite";
 

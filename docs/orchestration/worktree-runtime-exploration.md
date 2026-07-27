@@ -1,7 +1,7 @@
 # Worktree-aware application runtime exploration
 
-Status: adjacent product exploration. The prototype is developer tooling, not a parallel
-orchestrator or evidence that product-owned controls exist.
+Status: developer-tooling proof plus an uncomposed product ownership core. Neither is a parallel
+orchestrator, and the core is not evidence that product UI or scheduling controls exist.
 
 ## Current architecture evidence
 
@@ -158,25 +158,28 @@ can show both without turning a launch request into launch evidence.
 
 ## Prototype limits and review points
 
-- Windows teardown currently uses verified wrapper command lines plus `taskkill /T`. This is
-  reversible developer tooling, but process lookup and teardown are not one atomic ownership
-  operation. A product runtime needs a Job Object.
-- Launch is not crash-atomic. Detached wrappers start before their PIDs and ownership route reach
-  the manifest; a crash in that interval can leave a process tree the manifest cannot recover.
+- The prototype still uses verified wrapper command lines plus `taskkill /T`; its process lookup and
+  teardown are not atomic. The uncomposed Rust core has a separately tested named-Job-Object
+  replacement.
+- Prototype launch is not crash-atomic. The Rust core separately proves route-before-launch and
+  assign-suspended-before-resume ordering; it has not launched a real Tauri build through the new
+  facade.
 - `scripts/worktree-runtime.mjs` began as a 981-line prototype. It is disposable exploration
   tooling, not the module structure for a product registry or process owner.
 - `sccache` was not installed during implementation. Shared Rust compilation must remain reported as
   unavailable until installed and measured.
-- Port slots are explicit, not leased by a durable broker.
+- Prototype port slots are explicit. The Rust core separately proves durable SQLite leases.
 - The Tauri override isolates active database/application data and WebView identity. Installer,
   updater, protocol registration, notification identity, and other OS-global integration were not
   exercised.
 - Credential isolation is fail-closed, not credential provisioning. Product work needs an explicit
   per-instance secret source and approval policy.
-- Screenshot and recording roots are isolated, but capture is not implemented.
-- No product UI, durable instance registry, attention router, approval queue, or pause/resume
-  controller was added.
-- Local manifests are developer evidence. They are not authoritative orchestration events.
+- Screenshot and recording roots are projected per instance, but capture is not implemented.
+- The Rust core contains a durable instance registry and semantic application facade, but neither is
+  composed into product boot. There is no product UI, attention router, approval queue, or
+  pause/resume controller.
+- Local manifests remain developer evidence. The uncomposed registry proves local lifecycle
+  persistence; neither source is an orchestration event stream.
 - The full frontend suite reached 601/602 tests in this checkout but one `EpicPlanBuilder` text
   lookup exceeded its one-second timeout in every full-suite run. The same file passed 10/10 in
   isolation. The prototype records this as an unrelated timing-sensitive gate; it does not weaken or
@@ -186,22 +189,98 @@ User review should decide whether parallel test instances may receive provider c
 events deserve attention, whether stop/restart is an acceptable first pause model, and which gates
 may continue automatically.
 
-## Exact next product slice
+## Rust ownership checkpoint on this branch
 
-Build a focused **Worktree Test Instance Registry and Windows Process Owner** outside legacy
-`lib.rs`. Implement it as focused identity, registry, cache, launch, ownership, health, and recovery
-modules rather than extending the exploration script into product infrastructure.
+The bounded candidate core lives under `src-tauri/src/worktree_runtime/`, outside legacy `lib.rs`.
+Only its module registration was added to `lib.rs`. Ordinary `npm run dev`, `npm run build:tauri`,
+the production Tauri identifier, development URL, frontend output, and bundle default remain
+unchanged.
 
-The slice should:
+### Verified in the focused Rust proof
 
-1. persist projected instance identity, worktree/build/session links, cache keys, paths, and port
-   leases;
-2. launch Vite and Tauri inside a named Windows Job Object with kill-on-close;
-3. record observed process, health, build, test, stop, and recovery transitions without inferring
-   success;
-4. expose read/start/stop/recover application ports with explicit authority and idempotency;
-5. prove two worktrees can run simultaneously, one can be stopped without affecting the other, and a
-   stale owner can be recovered after application restart.
+- `SystemSourceInspector` fingerprints the commit, tracked binary diff, every Git-enumerated
+  untracked regular file, Node/package-lock state, and Rust/Cargo state. A nested untracked content
+  change changes the identity. The facade re-inspects before build, test, and start and refuses a
+  changed source or toolchain.
+- Per-instance projections isolate frontend output, Cargo target, application data, credentials,
+  temporary files, logs, evidence, screenshots, recordings, status state, and strict port pairs.
+  Worktree-local `node_modules` is not shared. A package-lock/Node/OS keyed npm download cache is
+  shared when its directory is usable; otherwise Node falls back to an instance cache. Rust
+  compilation and Cargo home remain instance-local because no measured compiler cache is available.
+- The SQLite registry uses immediate transactions for exact identity, hashed authority, two-port
+  leases, idempotent lifecycle commands, durable ownership routes, and observed transitions.
+- The Windows owner creates three helper roots suspended, assigns them to one exact named Job Object
+  with kill-on-close, and resumes only after assignment. Its integration proof starts two isolated
+  jobs, stops one while the other remains healthy, drops the owner, reopens SQLite, and recovers the
+  stale record.
+- Start becomes `Running` only after the exact job is active and both projected TCP endpoints are
+  reachable. Stop/recover complete only after the job is absent and both endpoints are closed.
+- The system action executor runs with an explicit cleared environment, writes an instance action
+  log, and returns semantic pass/fail plus the failed step.
+- The semantic facade proof requests two sources, receives opaque handles, projects distinct mutable
+  state and ports, uses the same safe Node cache key, runs build/test through an injected executor,
+  starts both through an injected lifecycle port, and stops one without changing the other.
+
+The focused command is:
+
+```powershell
+cargo test --manifest-path src-tauri\Cargo.toml worktree_runtime -- --nocapture
+```
+
+Its current expected result is 12 passed and 2 ignored helpers. The original developer script,
+not this Rust facade, remains the evidence for two real concurrent Tauri builds/windows.
+
+Checkpoint validation on 2026-07-27 also passed `cargo fmt --check`, `cargo check`, the ordinary
+`npm run build`, and `npm run build:tauri -- --debug --no-bundle`. The latter used the unchanged
+production Tauri config and produced the normal debug application binary. Existing unrelated
+dead-code warnings and the pre-existing macOS `.app` identifier warning remain.
+
+### Intended but not yet established
+
+- No product composition supplies the registry location, authority secret, semantic source resolver,
+  or facade instance. There is no Tauri command or UI route to this core.
+- Build/test plans point at the exact worktree and isolated outputs, but the focused suite does not
+  execute those real Node, Vite, Cargo, or Tauri plans. Worktree-local dependencies must already
+  exist; dependency restoration and its lock-to-modules proof are not owned yet.
+- Build/test outcomes and logs are synchronous results, not durable registry evidence. Launched
+  Vite/status/Tauri stdout and stderr are not redirected to the projected log root.
+- TCP reachability does not prove that the endpoint belongs to the named job. The preflight and
+  strict ports fail closed for normal collisions, but an untrusted local bind race remains.
+- Source reinspection narrows but cannot eliminate the edit-after-check race during a running
+  build/test command.
+- Port leases are durable and never silently reassigned, but pruning/releasing retired instance
+  records is not implemented.
+- Unique Tauri configuration and projected application paths are planned, but database/WebView
+  isolation has not been re-proven through this Rust facade.
+
+## Review/test host integration seam
+
+A review driver should receive an application-composed `Arc<dyn WorktreeTestInstances>`. It should
+not construct the concrete facade or import planning, registry, projection, ownership, or process
+types.
+
+1. Create `TestSourceRef` from an application-owned source route and call
+   `request(IsolatedTestRequest { source, purpose })`.
+2. Retain the returned opaque `TestInstanceHandle`.
+3. Call `build` or `test` and consume only `TestActionResult`: `Passed` or `Failed`, optional failed
+   step, and current semantic status.
+4. Call `start`, `status`, `stop`, or `recover` and consume only `TestInstanceStatus`: lifecycle
+   phase, `NotObserved`/`Healthy`/`Unhealthy`/`Closed` health, and stale ownership/endpoint state.
+
+That seam intentionally supplies no worktree path, port, cache path, Tauri identifier, manifest,
+Job Object name, authority secret, or raw launch description. Detailed durable build/test evidence
+and evidence-file access are future application ports, not fields for this lifecycle facade.
+
+## Next bounded product slice
+
+Compose the semantic facade behind an application-owned source resolver, registry location, and
+durable authority source, then:
+
+1. bind status/Vite endpoint identity to the exact owned job;
+2. own dependency restoration and prove its lock-to-worktree-local-modules invariant;
+3. execute two real worktree builds/tests/launches through the facade and persist observed outcomes;
+4. add the smallest review-host adapter while keeping ordinary development and packaging defaults
+   unchanged.
 
 Defer parallel scheduling, automatic approvals, provider credential injection, visual capture, and
 full pause/resume until that ownership and evidence slice is accepted.

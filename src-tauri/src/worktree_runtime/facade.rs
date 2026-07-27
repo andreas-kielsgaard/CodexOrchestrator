@@ -1,0 +1,460 @@
+use super::{
+    application::{
+        PrepareInstanceCommand, ReadInstanceQuery, RecoverInstanceCommand, RuntimeApplicationError,
+        RuntimeApplicationErrorKind, StartInstanceCommand, StopInstanceCommand,
+        WorktreeRuntimeControl,
+    },
+    domain::{AuthoritySecret, InstanceId, InstanceSnapshot, InstanceState, RequestId},
+    execution::{ActionExecutor, ExecutionError},
+    planning::{
+        action_plan, derive_identity, launch_plan, project_runtime, ActionKind, PlanningError,
+        RuntimeSettings, SourceInspector, ToolchainPrograms,
+    },
+};
+use std::{error::Error, fmt, path::PathBuf, sync::Arc};
+use uuid::Uuid;
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct TestSourceRef(String);
+
+impl TestSourceRef {
+    pub(crate) fn new(value: impl Into<String>) -> Result<Self, TestInstanceError> {
+        let value = value.into();
+        if value.is_empty()
+            || value.len() > 128
+            || !value.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/')
+            })
+        {
+            return Err(TestInstanceError::new(
+                TestInstanceErrorKind::InvalidRequest,
+                "test source reference must be a bounded application identifier",
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct IsolatedTestRequest {
+    pub(crate) source: TestSourceRef,
+    pub(crate) purpose: String,
+}
+
+impl IsolatedTestRequest {
+    pub(crate) fn new(
+        source: TestSourceRef,
+        purpose: impl Into<String>,
+    ) -> Result<Self, TestInstanceError> {
+        let purpose = purpose.into();
+        if purpose.is_empty()
+            || purpose.len() > 96
+            || !purpose.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b' ' | b'.' | b'_' | b'-')
+            })
+        {
+            return Err(TestInstanceError::new(
+                TestInstanceErrorKind::InvalidRequest,
+                "test purpose must be a short semantic label",
+            ));
+        }
+        Ok(Self { source, purpose })
+    }
+}
+
+/// Opaque to feature callers. Resource routes remain owned by this facade.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct TestInstanceHandle(InstanceId);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TestInstancePhase {
+    Prepared,
+    Starting,
+    Running,
+    Stopping,
+    Stopped,
+    Recovering,
+    Recovered,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HealthState {
+    NotObserved,
+    Healthy,
+    Unhealthy,
+    Closed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TestInstanceStatus {
+    pub(crate) phase: TestInstancePhase,
+    pub(crate) health: HealthState,
+    pub(crate) stale: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RequestedTestInstance {
+    pub(crate) handle: TestInstanceHandle,
+    pub(crate) status: TestInstanceStatus,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TestActionOutcome {
+    Passed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TestActionResult {
+    pub(crate) outcome: TestActionOutcome,
+    pub(crate) failed_step: Option<String>,
+    pub(crate) status: TestInstanceStatus,
+}
+
+/// Application-owned lookup. Feature callers pass a semantic source reference, never a path.
+pub(crate) trait TestSourceResolver: Send + Sync {
+    fn resolve(&self, source: &TestSourceRef) -> Result<PathBuf, TestInstanceError>;
+}
+
+/// The only caller-facing lifecycle port for an isolated application test instance.
+pub(crate) trait WorktreeTestInstances: Send + Sync {
+    fn request(
+        &self,
+        request: IsolatedTestRequest,
+    ) -> Result<RequestedTestInstance, TestInstanceError>;
+    fn build(&self, handle: &TestInstanceHandle) -> Result<TestActionResult, TestInstanceError>;
+    fn test(&self, handle: &TestInstanceHandle) -> Result<TestActionResult, TestInstanceError>;
+    fn start(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError>;
+    fn status(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError>;
+    fn stop(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError>;
+    fn recover(&self, handle: &TestInstanceHandle)
+        -> Result<TestInstanceStatus, TestInstanceError>;
+}
+
+pub(crate) struct WorktreeTestInstanceFacade {
+    runtime: Arc<dyn WorktreeRuntimeControl>,
+    sources: Arc<dyn TestSourceResolver>,
+    inspector: Arc<dyn SourceInspector>,
+    executor: Arc<dyn ActionExecutor>,
+    settings: RuntimeSettings,
+    programs: ToolchainPrograms,
+    authority: AuthoritySecret,
+}
+
+impl WorktreeTestInstanceFacade {
+    pub(crate) fn new(
+        runtime: Arc<dyn WorktreeRuntimeControl>,
+        sources: Arc<dyn TestSourceResolver>,
+        inspector: Arc<dyn SourceInspector>,
+        executor: Arc<dyn ActionExecutor>,
+        settings: RuntimeSettings,
+        programs: ToolchainPrograms,
+        authority: AuthoritySecret,
+    ) -> Result<Self, TestInstanceError> {
+        settings.validate().map_err(planning_error)?;
+        programs.validate().map_err(planning_error)?;
+        Ok(Self {
+            runtime,
+            sources,
+            inspector,
+            executor,
+            settings,
+            programs,
+            authority,
+        })
+    }
+
+    fn snapshot(&self, handle: &TestInstanceHandle) -> Result<InstanceSnapshot, TestInstanceError> {
+        self.runtime
+            .read(ReadInstanceQuery {
+                authority: self.authority.clone(),
+                instance_id: handle.0.clone(),
+            })
+            .map_err(runtime_error)
+    }
+
+    fn require_current_source(&self, snapshot: &InstanceSnapshot) -> Result<(), TestInstanceError> {
+        let identity = &snapshot.projected.identity;
+        let observed = self
+            .inspector
+            .inspect(&identity.worktree_path, &self.programs)
+            .map_err(planning_error)?;
+        if observed.git_commit != identity.git_commit
+            || observed.source_fingerprint != identity.source_fingerprint
+            || observed.node_cache_key != snapshot.projected.projection.caches.node_key
+            || observed.rust_cache_key != snapshot.projected.projection.caches.rust_key
+        {
+            return Err(TestInstanceError::new(
+                TestInstanceErrorKind::Conflict,
+                "the worktree source or toolchain changed; request a new isolated test instance",
+            ));
+        }
+        Ok(())
+    }
+
+    fn action(
+        &self,
+        handle: &TestInstanceHandle,
+        kind: ActionKind,
+    ) -> Result<TestActionResult, TestInstanceError> {
+        let snapshot = self.snapshot(handle)?;
+        self.require_current_source(&snapshot)?;
+        if !matches!(
+            snapshot.projected.state,
+            InstanceState::Prepared | InstanceState::Stopped | InstanceState::Recovered
+        ) {
+            return Err(TestInstanceError::new(
+                TestInstanceErrorKind::InvalidState,
+                "build and test require a non-running isolated instance",
+            ));
+        }
+        let plan = action_plan(
+            kind,
+            &snapshot.projected.identity,
+            &snapshot.projected.projection,
+            &tauri_identifier(&snapshot.projected.identity.instance_id),
+            &self.programs,
+        )
+        .map_err(planning_error)?;
+        let execution = self.executor.execute(&plan).map_err(execution_error)?;
+        Ok(TestActionResult {
+            outcome: if execution.succeeded {
+                TestActionOutcome::Passed
+            } else {
+                TestActionOutcome::Failed
+            },
+            failed_step: execution.failed_step,
+            status: semantic_status(&snapshot),
+        })
+    }
+}
+
+impl WorktreeTestInstances for WorktreeTestInstanceFacade {
+    fn request(
+        &self,
+        request: IsolatedTestRequest,
+    ) -> Result<RequestedTestInstance, TestInstanceError> {
+        let worktree = self.sources.resolve(&request.source)?;
+        let worktree = worktree
+            .canonicalize()
+            .map_err(|error| unavailable("resolve test source", error))?;
+        let source = self
+            .inspector
+            .inspect(&worktree, &self.programs)
+            .map_err(planning_error)?;
+        let internal =
+            derive_identity(worktree, request.source.as_str(), &request.purpose, &source)
+                .map_err(planning_error)?;
+        let handle = TestInstanceHandle(internal.identity.instance_id.clone());
+
+        match self.snapshot(&handle) {
+            Ok(snapshot) => {
+                return Ok(RequestedTestInstance {
+                    handle,
+                    status: semantic_status(&snapshot),
+                });
+            }
+            Err(error) if error.kind == TestInstanceErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+
+        for ports in self
+            .settings
+            .candidate_ports(internal.identity.instance_id.as_str())
+            .map_err(planning_error)?
+        {
+            let projection = project_runtime(&self.settings, &internal.identity, &source, ports)
+                .map_err(planning_error)?;
+            let result = self.runtime.prepare(PrepareInstanceCommand {
+                request_id: request_id("prepare")?,
+                authority: self.authority.clone(),
+                identity: internal.identity.clone(),
+                projection,
+            });
+            match result {
+                Ok(snapshot) => {
+                    return Ok(RequestedTestInstance {
+                        handle,
+                        status: semantic_status(&snapshot),
+                    });
+                }
+                Err(error) if error.kind == RuntimeApplicationErrorKind::PortLeaseConflict => {
+                    continue;
+                }
+                Err(error) => return Err(runtime_error(error)),
+            }
+        }
+        Err(TestInstanceError::new(
+            TestInstanceErrorKind::Unavailable,
+            "no isolated runtime port pair could be leased",
+        ))
+    }
+
+    fn build(&self, handle: &TestInstanceHandle) -> Result<TestActionResult, TestInstanceError> {
+        self.action(handle, ActionKind::Build)
+    }
+
+    fn test(&self, handle: &TestInstanceHandle) -> Result<TestActionResult, TestInstanceError> {
+        self.action(handle, ActionKind::Test)
+    }
+
+    fn start(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError> {
+        let snapshot = self.snapshot(handle)?;
+        self.require_current_source(&snapshot)?;
+        let launches = launch_plan(
+            &snapshot.projected.identity,
+            &snapshot.projected.projection,
+            &tauri_identifier(&snapshot.projected.identity.instance_id),
+            &self.programs,
+        )
+        .map_err(planning_error)?;
+        self.runtime
+            .start(StartInstanceCommand {
+                request_id: request_id("start")?,
+                authority: self.authority.clone(),
+                instance_id: handle.0.clone(),
+                launches,
+            })
+            .map(|snapshot| semantic_status(&snapshot))
+            .map_err(runtime_error)
+    }
+
+    fn status(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError> {
+        self.snapshot(handle)
+            .map(|snapshot| semantic_status(&snapshot))
+    }
+
+    fn stop(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError> {
+        self.runtime
+            .stop(StopInstanceCommand {
+                request_id: request_id("stop")?,
+                authority: self.authority.clone(),
+                instance_id: handle.0.clone(),
+            })
+            .map_err(runtime_error)?;
+        self.status(handle)
+    }
+
+    fn recover(
+        &self,
+        handle: &TestInstanceHandle,
+    ) -> Result<TestInstanceStatus, TestInstanceError> {
+        self.runtime
+            .recover(RecoverInstanceCommand {
+                request_id: request_id("recover")?,
+                authority: self.authority.clone(),
+                instance_id: handle.0.clone(),
+            })
+            .map_err(runtime_error)?;
+        self.status(handle)
+    }
+}
+
+fn semantic_status(snapshot: &InstanceSnapshot) -> TestInstanceStatus {
+    let phase = match snapshot.projected.state {
+        InstanceState::Prepared => TestInstancePhase::Prepared,
+        InstanceState::LaunchPending => TestInstancePhase::Starting,
+        InstanceState::Running => TestInstancePhase::Running,
+        InstanceState::StopPending => TestInstancePhase::Stopping,
+        InstanceState::Stopped => TestInstancePhase::Stopped,
+        InstanceState::RecoveryPending => TestInstancePhase::Recovering,
+        InstanceState::Recovered => TestInstancePhase::Recovered,
+    };
+    let health = match snapshot.observed.as_ref() {
+        None => HealthState::NotObserved,
+        Some(observed) if observed.health.healthy() => HealthState::Healthy,
+        Some(observed) if observed.health.all_closed() => HealthState::Closed,
+        Some(_) => HealthState::Unhealthy,
+    };
+    TestInstanceStatus {
+        phase,
+        health,
+        stale: snapshot.stale,
+    }
+}
+
+fn tauri_identifier(instance_id: &InstanceId) -> String {
+    format!(
+        "dev.codex-orchestrator.worktree.{}",
+        instance_id.as_str().trim_start_matches("wt-")
+    )
+}
+
+fn request_id(operation: &str) -> Result<RequestId, TestInstanceError> {
+    RequestId::new(format!("{operation}-{}", Uuid::new_v4().simple())).map_err(|error| {
+        TestInstanceError::new(
+            TestInstanceErrorKind::Unavailable,
+            format!("create internal request identity: {error}"),
+        )
+    })
+}
+
+fn planning_error(error: PlanningError) -> TestInstanceError {
+    TestInstanceError::new(TestInstanceErrorKind::Unavailable, error.message)
+}
+
+fn execution_error(error: ExecutionError) -> TestInstanceError {
+    TestInstanceError::new(TestInstanceErrorKind::Unavailable, error.message)
+}
+
+fn runtime_error(error: RuntimeApplicationError) -> TestInstanceError {
+    let kind = match error.kind {
+        RuntimeApplicationErrorKind::NotFound => TestInstanceErrorKind::NotFound,
+        RuntimeApplicationErrorKind::Unauthorized => TestInstanceErrorKind::Unauthorized,
+        RuntimeApplicationErrorKind::InvalidState
+        | RuntimeApplicationErrorKind::OperationInProgress
+        | RuntimeApplicationErrorKind::NotStale => TestInstanceErrorKind::InvalidState,
+        RuntimeApplicationErrorKind::Conflict
+        | RuntimeApplicationErrorKind::PortLeaseConflict
+        | RuntimeApplicationErrorKind::IdempotencyConflict
+        | RuntimeApplicationErrorKind::OwnershipAmbiguous => TestInstanceErrorKind::Conflict,
+        RuntimeApplicationErrorKind::LaunchFailed
+        | RuntimeApplicationErrorKind::HealthFailed
+        | RuntimeApplicationErrorKind::Unavailable => TestInstanceErrorKind::Unavailable,
+    };
+    TestInstanceError::new(kind, error.message)
+}
+
+fn unavailable(operation: &str, error: impl fmt::Display) -> TestInstanceError {
+    TestInstanceError::new(
+        TestInstanceErrorKind::Unavailable,
+        format!("{operation}: {error}"),
+    )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TestInstanceErrorKind {
+    InvalidRequest,
+    NotFound,
+    Unauthorized,
+    InvalidState,
+    Conflict,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TestInstanceError {
+    pub(crate) kind: TestInstanceErrorKind,
+    pub(crate) message: String,
+}
+
+impl TestInstanceError {
+    pub(crate) fn new(kind: TestInstanceErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for TestInstanceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl Error for TestInstanceError {}
