@@ -405,9 +405,12 @@ fn runtime_error(error: RuntimeApplicationError) -> TestInstanceError {
     let kind = match error.kind {
         RuntimeApplicationErrorKind::NotFound => TestInstanceErrorKind::NotFound,
         RuntimeApplicationErrorKind::Unauthorized => TestInstanceErrorKind::Unauthorized,
-        RuntimeApplicationErrorKind::InvalidState
-        | RuntimeApplicationErrorKind::OperationInProgress
-        | RuntimeApplicationErrorKind::NotStale => TestInstanceErrorKind::InvalidState,
+        RuntimeApplicationErrorKind::OperationInProgress => {
+            TestInstanceErrorKind::OperationInProgress
+        }
+        RuntimeApplicationErrorKind::InvalidState | RuntimeApplicationErrorKind::NotStale => {
+            TestInstanceErrorKind::InvalidState
+        }
         RuntimeApplicationErrorKind::Conflict
         | RuntimeApplicationErrorKind::PortLeaseConflict
         | RuntimeApplicationErrorKind::IdempotencyConflict
@@ -432,6 +435,7 @@ pub(crate) enum TestInstanceErrorKind {
     NotFound,
     Unauthorized,
     InvalidState,
+    OperationInProgress,
     Conflict,
     Unavailable,
 }

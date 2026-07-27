@@ -209,6 +209,11 @@ unchanged.
   compilation and Cargo home remain instance-local because no measured compiler cache is available.
 - The SQLite registry uses immediate transactions for exact identity, hashed authority, two-port
   leases, idempotent lifecycle commands, durable ownership routes, and observed transitions.
+- One partial unique index and the same immediate reservation transaction allow only one pending
+  stop/recover command per instance. A concurrent same-operation request receives the semantic
+  `OperationInProgress` result; a conflicting stop/recover request receives `Conflict`. Focused
+  facade tests hold the first teardown open across the real registry boundary and verify that both
+  stop/stop and stop/recover leave exactly one completed stop and no pending command.
 - The Windows owner creates three helper roots suspended, assigns them to one exact named Job Object
   with kill-on-close, and resumes only after assignment. Its integration proof starts two isolated
   jobs, stops one while the other remains healthy, drops the owner, reopens SQLite, and recovers the
@@ -227,7 +232,7 @@ The focused command is:
 cargo test --manifest-path src-tauri\Cargo.toml worktree_runtime -- --nocapture
 ```
 
-Its current expected result is 12 passed and 2 ignored helpers. The original developer script,
+Its current expected result is 14 passed and 2 ignored helpers. The original developer script,
 not this Rust facade, remains the evidence for two real concurrent Tauri builds/windows.
 
 Checkpoint validation on 2026-07-27 also passed `cargo fmt --check`, `cargo check`, the ordinary
@@ -266,6 +271,9 @@ types.
    step, and current semantic status.
 4. Call `start`, `status`, `stop`, or `recover` and consume only `TestInstanceStatus`: lifecycle
    phase, `NotObserved`/`Healthy`/`Unhealthy`/`Closed` health, and stale ownership/endpoint state.
+   Concurrent terminal callers may instead receive `OperationInProgress` for the already-running
+   operation or `Conflict` for the opposite operation; refresh status rather than constructing a
+   second low-level command.
 
 That seam intentionally supplies no worktree path, port, cache path, Tauri identifier, manifest,
 Job Object name, authority secret, or raw launch description. Detailed durable build/test evidence

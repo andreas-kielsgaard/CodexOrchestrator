@@ -50,6 +50,9 @@ CREATE TABLE IF NOT EXISTS worktree_runtime_commands (
     (status = 'failed' AND result_json IS NULL AND failure_json IS NOT NULL)
   )
 );
+CREATE UNIQUE INDEX IF NOT EXISTS worktree_runtime_one_pending_terminal_command
+  ON worktree_runtime_commands(instance_id)
+  WHERE status = 'pending' AND operation IN ('stop', 'recover');
 CREATE TABLE IF NOT EXISTS worktree_runtime_observations (
   sequence INTEGER PRIMARY KEY AUTOINCREMENT,
   instance_id TEXT NOT NULL REFERENCES worktree_runtime_instances(instance_id),
@@ -628,6 +631,23 @@ fn begin_terminal_transition(
         return finish_replay(transaction, replay);
     }
     let record = authorized_record(&transaction, instance_id, authority_hash)?;
+    if let Some(active) = load_pending_terminal_command(&transaction, instance_id)? {
+        let (kind, message) = if active.operation == operation {
+            (
+                RegistryErrorKind::OperationInProgress,
+                format!("the {operation} transition is already in progress for this instance"),
+            )
+        } else {
+            (
+                RegistryErrorKind::Conflict,
+                format!(
+                    "cannot begin {operation} while the {} transition is in progress",
+                    active.operation
+                ),
+            )
+        };
+        return Err(RegistryError::new(kind, message));
+    }
     if matches!(
         record.state,
         InstanceState::Prepared | InstanceState::Stopped | InstanceState::Recovered
@@ -860,6 +880,29 @@ fn load_record(
 
 struct PendingCommand {
     instance_id: String,
+}
+
+struct PendingTerminalCommand {
+    operation: String,
+}
+
+fn load_pending_terminal_command(
+    transaction: &Transaction<'_>,
+    instance_id: &InstanceId,
+) -> Result<Option<PendingTerminalCommand>, RegistryError> {
+    transaction
+        .query_row(
+            "SELECT operation FROM worktree_runtime_commands
+             WHERE instance_id=?1 AND status='pending' AND operation IN ('stop', 'recover')",
+            params![instance_id.as_str()],
+            |row| {
+                Ok(PendingTerminalCommand {
+                    operation: row.get(0)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(sql_error("load active terminal runtime command"))
 }
 
 fn load_pending_command(

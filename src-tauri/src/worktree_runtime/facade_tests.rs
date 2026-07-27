@@ -2,11 +2,12 @@ use super::{
     application::{
         PrepareInstanceCommand, ReadInstanceQuery, RecoverInstanceCommand, RuntimeApplicationError,
         RuntimeApplicationErrorKind, StartInstanceCommand, StopInstanceCommand,
-        WorktreeRuntimeControl,
+        WorktreeRuntimeApplication, WorktreeRuntimeControl,
     },
     domain::{
-        CacheReuse, EndpointObservation, HealthObservation, InstanceRecord, InstanceSnapshot,
-        InstanceState, OwnerObservation, RuntimeObservation,
+        AuthoritySecret, CacheReuse, EndpointObservation, HealthObservation, InstanceProjection,
+        InstanceRecord, InstanceSnapshot, InstanceState, OwnedProcessLaunch, OwnerObservation,
+        OwnerRoute, RuntimeObservation,
     },
     execution::{ActionExecution, ActionExecutor, ExecutionError, SystemActionExecutor},
     facade::{
@@ -14,19 +15,25 @@ use super::{
         TestInstancePhase, TestSourceRef, TestSourceResolver, WorktreeTestInstanceFacade,
         WorktreeTestInstances,
     },
+    health::HealthProbe,
+    ownership::{OwnershipError, OwnershipErrorKind, ProcessOwner},
     planning::{
         ActionKind, ActionPlan, PlanningError, ProcessCommand, RuntimeSettings, SourceInspector,
         SourceSnapshot, SystemSourceInspector, ToolchainPrograms,
     },
+    registry::SqliteInstanceRegistry,
 };
 use chrono::Utc;
+use rusqlite::Connection;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::{Arc, Mutex},
+    sync::{Arc, Condvar, Mutex},
+    thread,
+    time::Duration,
 };
 
 #[test]
@@ -128,6 +135,235 @@ fn semantic_facade_projects_and_controls_two_isolated_instances() {
         assert!(Path::new(&environment["CODEX_HOME"]).starts_with(directory.path()));
     }
     assert_eq!(executor.plans.lock().expect("plans").len(), 2);
+}
+
+#[test]
+fn real_registry_facade_concurrent_stop_reports_in_progress_without_orphan() {
+    assert_concurrent_terminal_call(ConcurrentTerminalCall::Stop);
+}
+
+#[test]
+fn real_registry_facade_concurrent_stop_recover_conflicts_without_orphan() {
+    assert_concurrent_terminal_call(ConcurrentTerminalCall::Recover);
+}
+
+#[derive(Clone, Copy)]
+enum ConcurrentTerminalCall {
+    Stop,
+    Recover,
+}
+
+fn assert_concurrent_terminal_call(second_call: ConcurrentTerminalCall) {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let source_path = fixture_worktree(directory.path(), "concurrent");
+    let registry_path = directory.path().join("registry.sqlite");
+    let world = Arc::new(BlockingRuntimeWorld::default());
+    let runtime = Arc::new(WorktreeRuntimeApplication::system(
+        Arc::new(SqliteInstanceRegistry::open(&registry_path).expect("real registry")),
+        Arc::new(BlockingProcessOwner(world.clone())),
+        Arc::new(BlockingHealthProbe(world.clone())),
+    ));
+    let executable = std::env::current_exe().expect("test executable");
+    let facade = Arc::new(
+        WorktreeTestInstanceFacade::new(
+            runtime,
+            Arc::new(MapSources(HashMap::from([(
+                "repository/concurrent".into(),
+                source_path,
+            )]))),
+            Arc::new(FixedInspector),
+            Arc::new(RecordingExecutor::default()),
+            RuntimeSettings {
+                instances_root: directory.path().join("instances"),
+                shared_cache_root: directory.path().join("shared-cache"),
+                port_start: 33100,
+                port_end: 33131,
+            },
+            ToolchainPrograms {
+                git: executable.clone(),
+                node: executable.clone(),
+                cargo: executable.clone(),
+                rustc: executable,
+            },
+            AuthoritySecret::new("concurrent-facade-authority-secret").expect("authority"),
+        )
+        .expect("facade"),
+    );
+    let requested = facade
+        .request(
+            IsolatedTestRequest::new(
+                TestSourceRef::new("repository/concurrent").expect("source"),
+                "concurrent terminal proof",
+            )
+            .expect("request"),
+        )
+        .expect("prepare instance");
+    assert_eq!(
+        facade.start(&requested.handle).expect("start").phase,
+        TestInstancePhase::Running
+    );
+
+    let first_facade = facade.clone();
+    let first_handle = requested.handle.clone();
+    let first_stop = thread::spawn(move || first_facade.stop(&first_handle));
+    world.wait_for_termination();
+
+    let second_result = match second_call {
+        ConcurrentTerminalCall::Stop => facade.stop(&requested.handle),
+        ConcurrentTerminalCall::Recover => facade.recover(&requested.handle),
+    };
+    world.release_termination();
+    let first_result = first_stop.join().expect("first stop thread");
+
+    assert_eq!(
+        first_result.expect("first stop completes").phase,
+        TestInstancePhase::Stopped
+    );
+    let second_error = second_result.expect_err("second terminal call must not execute");
+    match second_call {
+        ConcurrentTerminalCall::Stop => {
+            assert_eq!(
+                second_error.kind,
+                TestInstanceErrorKind::OperationInProgress
+            );
+            assert!(second_error
+                .message
+                .contains("stop transition is already in progress"));
+        }
+        ConcurrentTerminalCall::Recover => {
+            assert_eq!(second_error.kind, TestInstanceErrorKind::Conflict);
+            assert!(second_error
+                .message
+                .contains("cannot begin recover while the stop transition is in progress"));
+        }
+    }
+
+    let raw = Connection::open(&registry_path).expect("inspect real registry");
+    let pending_commands: i64 = raw
+        .query_row(
+            "SELECT COUNT(*) FROM worktree_runtime_commands WHERE status='pending'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("pending command count");
+    let stop_commands: i64 = raw
+        .query_row(
+            "SELECT COUNT(*) FROM worktree_runtime_commands WHERE operation='stop'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("stop command count");
+    let recover_commands: i64 = raw
+        .query_row(
+            "SELECT COUNT(*) FROM worktree_runtime_commands WHERE operation='recover'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("recover command count");
+    assert_eq!(pending_commands, 0);
+    assert_eq!(stop_commands, 1);
+    assert_eq!(recover_commands, 0);
+}
+
+#[derive(Default)]
+struct BlockingRuntimeWorld {
+    state: Mutex<BlockingRuntimeState>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct BlockingRuntimeState {
+    active: bool,
+    termination_entered: bool,
+    release_termination: bool,
+}
+
+impl BlockingRuntimeWorld {
+    fn wait_for_termination(&self) {
+        let state = self.state.lock().expect("runtime state");
+        let (state, timeout) = self
+            .changed
+            .wait_timeout_while(state, Duration::from_secs(5), |state| {
+                !state.termination_entered
+            })
+            .expect("wait for termination");
+        assert!(!timeout.timed_out(), "first stop did not begin termination");
+        assert!(state.termination_entered);
+    }
+
+    fn release_termination(&self) {
+        let mut state = self.state.lock().expect("runtime state");
+        state.release_termination = true;
+        self.changed.notify_all();
+    }
+
+    fn active(&self) -> bool {
+        self.state.lock().expect("runtime state").active
+    }
+}
+
+struct BlockingProcessOwner(Arc<BlockingRuntimeWorld>);
+
+impl ProcessOwner for BlockingProcessOwner {
+    fn launch(
+        &self,
+        _route: &OwnerRoute,
+        launches: &[OwnedProcessLaunch],
+    ) -> Result<OwnerObservation, OwnershipError> {
+        let mut state = self.0.state.lock().expect("runtime state");
+        if state.active {
+            return Err(OwnershipError {
+                kind: OwnershipErrorKind::AlreadyExists,
+                message: "test owner is already active".into(),
+            });
+        }
+        state.active = true;
+        Ok(OwnerObservation::Owned {
+            active_processes: launches.len() as u32,
+        })
+    }
+
+    fn observe(&self, _route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
+        Ok(if self.0.active() {
+            OwnerObservation::Owned {
+                active_processes: 3,
+            }
+        } else {
+            OwnerObservation::Absent
+        })
+    }
+
+    fn terminate(&self, _route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
+        let mut state = self.0.state.lock().expect("runtime state");
+        state.active = false;
+        if state.termination_entered {
+            return Ok(OwnerObservation::Absent);
+        }
+        state.termination_entered = true;
+        self.0.changed.notify_all();
+        while !state.release_termination {
+            state = self.0.changed.wait(state).expect("release termination");
+        }
+        Ok(OwnerObservation::Absent)
+    }
+}
+
+struct BlockingHealthProbe(Arc<BlockingRuntimeWorld>);
+
+impl HealthProbe for BlockingHealthProbe {
+    fn observe(&self, projection: &InstanceProjection) -> HealthObservation {
+        let reachable = self.0.active();
+        HealthObservation {
+            vite: EndpointObservation {
+                port: projection.ports.vite,
+                reachable,
+            },
+            status: EndpointObservation {
+                port: projection.ports.status,
+                reachable,
+            },
+        }
+    }
 }
 
 #[test]
