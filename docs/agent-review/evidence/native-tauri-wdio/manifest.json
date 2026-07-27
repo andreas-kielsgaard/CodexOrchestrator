@@ -1,0 +1,123 @@
+{
+  "disposition": "passed",
+  "startedAt": "2026-07-27T13:27:35.827Z",
+  "completedAt": "2026-07-27T13:29:57.267Z",
+  "repository": {
+    "branch": "codex/explore-agent-app-review",
+    "revision": "f23f5fdcd3ae9298261e81db52366854c00dc4a0",
+    "worktree": "C:\\Users\\user\\.codex\\worktrees\\5634\\Codex Orchestrator",
+    "workingTreeChanges": [
+      "M .gitignore",
+      " M eslint.config.js",
+      " M package-lock.json",
+      " M package.json",
+      " M src-tauri/Cargo.lock",
+      " M src-tauri/Cargo.toml",
+      " M src-tauri/src/active_app.rs",
+      " M src/app/App.agentSessions.test.tsx",
+      " M src/app/App.tsx",
+      " M src/app/ApplicationRoot.tsx",
+      " M src/bootstrap/productApplicationComposition.test.ts",
+      "?? docs/agent-review/",
+      "?? playwright.review.config.ts",
+      "?? scripts/agent-review/",
+      "?? src-tauri/tauri.native-review.conf.json",
+      "?? src/application/agentReview/",
+      "?? src/dev/agentReview/",
+      "?? src/nativeReview.ts",
+      "?? tests/",
+      "?? vite.native-review.config.ts",
+      "?? wdio.native-review.conf.mjs"
+    ]
+  },
+  "application": {
+    "mode": "release Tauri binary with the native-review Cargo feature and alternate Tauri config",
+    "binaryPath": "C:\\Users\\user\\.codex\\worktrees\\5634\\Codex Orchestrator\\src-tauri\\target\\release\\codex-orchestrator.exe",
+    "config": "src-tauri/tauri.native-review.conf.json",
+    "appDataDir": "C:\\Users\\user\\.codex\\worktrees\\5634\\Codex Orchestrator\\test-results\\native-tauri-wdio\\latest\\app-data",
+    "webview2Profile": "C:\\Users\\user\\.codex\\worktrees\\5634\\Codex Orchestrator\\test-results\\native-tauri-wdio\\latest\\webview2-profile",
+    "isolatedStateRetained": false
+  },
+  "driver": {
+    "service": "@wdio/tauri-service",
+    "serviceVersion": "1.2.0",
+    "provider": "embedded",
+    "webdriverPlugin": "tauri-plugin-wdio-webdriver",
+    "webdriverPluginVersion": "1.2.0",
+    "bridgePluginVersion": "1.2.0",
+    "nativeUtilsVersion": "2.5.0",
+    "embeddedPort": 4445,
+    "processOwnership": "The WDIO Tauri service spawns the application, supplies TAURI_WEBDRIVER_PORT, and terminates the owned application when the session ends."
+  },
+  "platform": {
+    "platform": "win32",
+    "release": "10.0.26200",
+    "arch": "x64",
+    "node": "v24.14.1",
+    "configuredWindow": {
+      "width": 1280,
+      "height": 820
+    },
+    "observedWindow": "See assertions.json."
+  },
+  "security": {
+    "ambientCredentials": "scrubbed before build and launch",
+    "scrubbedVariableCount": 1,
+    "retainedCredentialValues": false
+  },
+  "scenario": {
+    "startingState": "Fresh worktree-local application data and WebView2 profile.",
+    "actions": [
+      "Launch the real Tauri release binary through the embedded WebDriver server.",
+      "Observe the rendered application root.",
+      "Invoke load_orchestration_native_query through browser.tauri.execute.",
+      "Retain the returned contract assertion and native shell screenshot."
+    ],
+    "assertions": [
+      "The window title is Codex Orchestrator and #root is displayed.",
+      "The real Rust command returns orchestration-native-query/v2.",
+      "Every persisted collection is empty in the fresh isolated database.",
+      "The native shell screenshot is non-empty."
+    ]
+  },
+  "commands": {
+    "build": "npm run build:native-review-tauri",
+    "test": "npx wdio run wdio.native-review.conf.mjs",
+    "complete": "npm run review:native"
+  },
+  "exitCodes": {
+    "build": 0,
+    "test": 0
+  },
+  "logObservations": {
+    "backendForwarded": true,
+    "frontendForwarded": true,
+    "commandMockingWarningObserved": true,
+    "forwardingJsonWarningCount": 4,
+    "files": [
+      "test-results\\native-tauri-wdio\\latest\\wdio-output\\wdio-2026-07-27T13-29-49-585Z.log"
+    ]
+  },
+  "lifecycle": {
+    "embeddedPortClosed": true,
+    "appDataRemoved": true,
+    "webview2ProfileRemoved": true,
+    "serviceSessionEnded": true
+  },
+  "producedFiles": [
+    "manifest.json",
+    "build.log",
+    "wdio-run.log",
+    "assertions.json",
+    "native-shell.png",
+    "wdio-output/"
+  ],
+  "unverifiedClaims": [
+    "A screenshot is retained as an observation, not standalone proof of behavior or visual fidelity.",
+    "This run does not exercise a production build or production data.",
+    "Command mocking was not exercised. The frontend bridge reported that defineProperty interception failed, while browser.tauri.execute and the real IPC command still passed."
+  ],
+  "compatibilityNotes": [
+    "@wdio/tauri-service 1.2.0 declares @wdio/native-utils 2.4.0 but imports installMockSyncOverride, which first appears in 2.5.0. The package override is required for service initialization."
+  ]
+}

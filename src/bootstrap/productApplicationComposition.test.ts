@@ -28,6 +28,8 @@ describe('product application composition', () => {
   });
 
   it('keeps product startup free of development fixture authority', () => {
+    expect(createProductApplicationComposition()).not.toHaveProperty('agentReviewSurface');
+
     for (const file of ['src/main.tsx', 'src/app/App.tsx']) {
       expect(readFileSync(resolve(file), 'utf8')).not.toMatch(
         /disposableRecordedOrchestrationView|recordedDevelopment|recordedOrchestrationClient/,

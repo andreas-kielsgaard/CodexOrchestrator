@@ -1,0 +1,112 @@
+        Info Looking up installed tauri packages to check mismatched versions...
+     Running beforeBuildCommand `npm run build:native-review-frontend`
+
+> codex-orchestrator@0.1.0 build:native-review-frontend
+> vite build --config vite.native-review.config.ts
+
+[36mvite v7.3.6 [32mbuilding client environment for production...[36m[39m
+transforming...
+[32m✓[39m 2007 modules transformed.
+rendering chunks...
+computing gzip size...
+[2mdist-native-review/[22m[32mindex.html                [39m[1m[2m  0.40 kB[22m[1m[22m[2m │ gzip:   0.27 kB[22m
+[2mdist-native-review/[22m[35massets/app-Bauil_Jo.css   [39m[1m[2m 58.97 kB[22m[1m[22m[2m │ gzip:  11.71 kB[22m
+[2mdist-native-review/[22m[36massets/event-BK_86lmQ.js  [39m[1m[2m  1.41 kB[22m[1m[22m[2m │ gzip:   0.68 kB[22m
+[2mdist-native-review/[22m[36massets/core-DhEqZVGG.js   [39m[1m[2m  2.44 kB[22m[1m[22m[2m │ gzip:   0.98 kB[22m
+[2mdist-native-review/[22m[36massets/app-x8hnb_Y4.js    [39m[1m[33m552.74 kB[39m[22m[2m │ gzip: 161.64 kB[22m
+[33m
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
+[32m✓ built in 8.88s[39m
+   Compiling codex-orchestrator v0.1.0 (C:\Users\user\.codex\worktrees\5634\Codex Orchestrator\src-tauri)
+warning: methods `list_sessions`, `set_session_availability`, and `list_invocations` are never used
+  --> src\agent_sessions\ports.rs:54:8
+   |
+46 | pub(crate) trait AgentSessionRepository: Send + Sync {
+   |                  ---------------------- methods in this trait
+...
+54 |     fn list_sessions(
+   |        ^^^^^^^^^^^^^
+...
+71 |     fn set_session_availability(
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+95 |     fn list_invocations(
+   |        ^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `Refresh` is never constructed
+   --> src\agent_sessions\ports.rs:288:5
+    |
+285 | pub(crate) enum CapabilityRefresh {
+    |                 ----------------- variant in this enum
+...
+288 |     Refresh,
+    |     ^^^^^^^
+    |
+    = note: `CapabilityRefresh` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: associated function `open` is never used
+  --> src\agent_sessions\repository\mod.rs:52:19
+   |
+34 | impl SqliteAgentSessionRepository {
+   | --------------------------------- associated function in this implementation
+...
+52 |     pub(crate) fn open(path: impl AsRef<Path>) -> Result<Self, RepositoryError> {
+   |                   ^^^^
+
+warning: methods `snapshot` and `invalidate` are never used
+  --> src\runtime\capabilities.rs:40:19
+   |
+17 | impl AgentAccessCapabilityCache {
+   | ------------------------------- methods in this implementation
+...
+40 |     pub(crate) fn snapshot(&self) -> Option<AgentAccessCapabilitySnapshot> {
+   |                   ^^^^^^^^
+...
+44 |     pub(crate) fn invalidate(&self) {
+   |                   ^^^^^^^^^^
+
+warning: associated items `new` and `discover` are never used
+  --> src\runtime\codex\capabilities.rs:32:19
+   |
+31 | impl CodexCliCapabilityProbe {
+   | ---------------------------- associated items in this implementation
+32 |     pub(crate) fn new(program: impl Into<String>) -> Self {
+   |                   ^^^
+...
+42 |     pub(crate) fn discover(&self) -> CodexCliCapabilities {
+   |                   ^^^^^^^^
+
+warning: methods `refresh_capabilities` and `invalidate_capabilities` are never used
+   --> src\runtime\codex\runtime.rs:231:19
+    |
+178 | impl CodexCliRuntime {
+    | -------------------- methods in this implementation
+...
+231 |     pub(crate) fn refresh_capabilities(&self) -> AgentAccessCapabilitySnapshot {
+    |                   ^^^^^^^^^^^^^^^^^^^^
+...
+236 |     pub(crate) fn invalidate_capabilities(&self) {
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated items `system`, `active_count`, and `is_active` are never used
+   --> src\runtime\processes\supervisor.rs:51:19
+    |
+ 50 | impl ProcessSupervisor {
+    | ---------------------- associated items in this implementation
+ 51 |     pub(crate) fn system(sink: Arc<dyn ProcessEventSink>) -> Self {
+    |                   ^^^^^^
+...
+288 |     pub(crate) fn active_count(&self) -> Result<usize, SupervisorError> {
+    |                   ^^^^^^^^^^^^
+...
+292 |     pub(crate) fn is_active(
+    |                   ^^^^^^^^^
+
+warning: `codex-orchestrator` (lib) generated 7 warnings
+    Finished `release` profile [optimized] target(s) in 1m 50s
+       Built application at: C:\Users\user\.codex\worktrees\5634\Codex Orchestrator\src-tauri\target\release\codex-orchestrator.exe

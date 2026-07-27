@@ -6,7 +6,18 @@ import tseslint from 'typescript-eslint';
 import prettier from 'eslint-config-prettier';
 
 export default tseslint.config(
-  { ignores: ['dist', 'coverage', 'storybook-static', 'src-tauri/target'] },
+  {
+    ignores: [
+      'dist',
+      'dist-native-review',
+      'coverage',
+      'storybook-static',
+      'src-tauri/target',
+      '.dev',
+      'playwright-report',
+      'test-results',
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -14,6 +25,17 @@ export default tseslint.config(
     languageOptions: {
       ecmaVersion: 2022,
       globals: globals.node,
+    },
+  },
+  {
+    files: ['wdio.*.mjs', 'tests/agent-review/*wdio*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      globals: {
+        ...globals.node,
+        ...globals.mocha,
+        browser: 'readonly',
+      },
     },
   },
   {

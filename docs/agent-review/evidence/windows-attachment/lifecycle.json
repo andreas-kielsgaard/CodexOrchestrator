@@ -1,0 +1,11 @@
+﻿{
+    "debugPort":  52232,
+    "capturedAt":  "2026-07-27T13:27:27.7086796Z",
+    "launcherProcessId":  15620,
+    "descendantsStopped":  18,
+    "worktreeProfileRemoved":  true,
+    "hostProcessId":  2824,
+    "hostStopped":  true,
+    "schemaVersion":  1,
+    "debugPortClosed":  true
+}

@@ -1,0 +1,17 @@
+{
+  "title": "Codex Orchestrator",
+  "rootDisplayed": true,
+  "windowSize": {
+    "width": 1618,
+    "height": 1072
+  },
+  "nativeQuery": {
+    "contractVersion": "orchestration-native-query/v2",
+    "generatedAt": "2026-07-27T13:29:56.707Z",
+    "emptyCollections": true
+  },
+  "screenshot": {
+    "path": "C:\\Users\\user\\.codex\\worktrees\\5634\\Codex Orchestrator\\test-results\\native-tauri-wdio\\latest\\native-shell.png",
+    "bytes": 27402
+  }
+}

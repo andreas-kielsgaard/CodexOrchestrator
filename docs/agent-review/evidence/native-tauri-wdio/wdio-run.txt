@@ -1,0 +1,19 @@
+
+Execution of 1 workers started at 2026-07-27T13:29:52.679Z
+
+[0-0] RUNNING in undefined - file:///C:/Users/user/.codex/worktrees/5634/Codex%20Orchestrator/tests/agent-review/native-tauri-wdio.wdio.mjs
+[0-0] PASSED in undefined - file:///C:/Users/user/.codex/worktrees/5634/Codex%20Orchestrator/tests/agent-review/native-tauri-wdio.wdio.mjs
+
+ "spec" Reporter:
+------------------------------------------------------------------
+[msedge 150.0.0.0 windows #0-0] Running: msedge (v150.0.0.0) on windows
+[msedge 150.0.0.0 windows #0-0] Session ID: d2205b84-a1ab-42fa-b6eb-342a9d4998e7
+[msedge 150.0.0.0 windows #0-0]
+[msedge 150.0.0.0 windows #0-0] » tests\agent-review\native-tauri-wdio.wdio.mjs
+[msedge 150.0.0.0 windows #0-0] native Tauri review proof
+[msedge 150.0.0.0 windows #0-0]    ✓ launches the real shell and crosses the active native-query IPC boundary
+[msedge 150.0.0.0 windows #0-0]
+[msedge 150.0.0.0 windows #0-0] 1 passing (233ms)
+
+
+Spec Files:	 1 passed, 1 total (100% completed) in 00:00:04

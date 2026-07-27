@@ -28,6 +28,9 @@ import { useOrchestrationLoad } from './useOrchestrationLoad';
 import type { ManagedPlanBuilderSessionClient } from '../infrastructure/orchestrations/tauriManagedPlanBuilderSessionClient';
 import { useEpicInitiationConfirmation } from './useEpicInitiationConfirmation';
 import { EpicInitiationConfirmationModal } from './EpicInitiationConfirmationModal';
+import type { ReactNode } from 'react';
+
+type ApplicationSurface = 'epics' | 'agent-sessions' | 'agent-review';
 
 export interface AppProps {
   readonly agentSessionClient: AgentSessionClient;
@@ -47,6 +50,9 @@ export interface AppProps {
   readonly epicPlanningDraftLifecycleClient?: EpicPlanningDraftLifecycleClient;
   readonly epicPlanProposalSourceForDraft?: (draftId: string) => EpicPlanProposalSource;
   readonly epicInitiationConfirmationClient?: EpicInitiationConfirmationClient;
+  /** Only development/test composition supplies this retained-evidence surface. */
+  readonly agentReviewSurface?: ReactNode;
+  readonly initialSurface?: ApplicationSurface;
 }
 
 export function App({
@@ -69,8 +75,12 @@ export function App({
   epicPlanningDraftLifecycleClient,
   epicPlanProposalSourceForDraft,
   epicInitiationConfirmationClient,
+  agentReviewSurface,
+  initialSurface = 'epics',
 }: AppProps) {
-  const [surface, setSurface] = useState<'epics' | 'agent-sessions'>('epics');
+  const [surface, setSurface] = useState<ApplicationSurface>(
+    initialSurface === 'agent-review' && !agentReviewSurface ? 'epics' : initialSurface,
+  );
   const [orchestrationRoute, setOrchestrationRoute] = useState<'overview' | 'plan-builder'>(
     'overview',
   );
@@ -236,8 +246,20 @@ export function App({
         >
           Agent Sessions
         </button>
+        {agentReviewSurface && (
+          <button
+            className={surface === 'agent-review' ? 'active' : undefined}
+            type="button"
+            aria-current={surface === 'agent-review' ? 'page' : undefined}
+            onClick={() => setSurface('agent-review')}
+          >
+            Agent Review
+          </button>
+        )}
       </nav>
-      {surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
+      {surface === 'agent-review' && agentReviewSurface ? (
+        agentReviewSurface
+      ) : surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
         <EpicPlanBuilder
           agentSessionClient={managedPlanBuilderSessionClient}
           proposalSource={planProposalSource}

@@ -1,0 +1,17 @@
+2026-07-27T13:29:50.967Z INFO tauri-service:service: [Tauri:Backend:0] active Tauri composition initialized with isolated database C:\Users\user\.codex\worktrees\5634\Codex Orchestrator\test-results\native-tauri-wdio\latest\app-data\codex-orchestrator-active-v3.sqlite
+2026-07-27T13:29:51.191Z INFO tauri-service:service: [frontend] [WDIO-FRONTEND][INFO] [WDIO][Frontend] Installing backend-log listener
+2026-07-27T13:29:51.192Z INFO tauri-service:service: [frontend] [WDIO-FRONTEND][INFO] [WDIO][Frontend] Waiting for Tauri (attempt 1/100)
+2026-07-27T13:29:51.192Z INFO tauri-service:service: [frontend] [WDIO-FRONTEND][INFO] [WDIO][Frontend] Tauri ready - setting up backend-log listener
+2026-07-27T13:29:51.194Z INFO tauri-service:service: [frontend] [WDIO-FRONTEND][INFO] [WDIO][Frontend] Importing @tauri-apps/api/event
+2026-07-27T13:29:51.195Z INFO tauri-service:service: [Tauri:Frontend:0] [WDIO Tauri Plugin] ⚠️ Invoke interception via defineProperty failed; mock routing via window.__wdio_mocks__ remains active
+2026-07-27T13:29:51.197Z INFO tauri-service:service: [Tauri:Frontend:0] [WDIO Tauri Plugin] TEST: This is a test INFO log after setupConsoleForwarding()
+2026-07-27T13:29:51.197Z INFO tauri-service:service: [Tauri:Frontend:0] [WDIO Tauri Plugin] TEST: This is a test WARN log after setupConsoleForwarding()
+2026-07-27T13:29:51.199Z INFO tauri-service:service: [Tauri:Frontend:0] WebdriverIO frontend bridge loaded
+2026-07-27T13:29:51.199Z INFO tauri-service:service: [frontend] [WDIO-FRONTEND][INFO] [WDIO][Frontend] Event module imported successfully
+2026-07-27T13:29:51.314Z INFO tauri-service:service: [frontend] [WDIO-FRONTEND][INFO] [WDIO][Frontend] Backend log listener registered successfully
+2026-07-27T13:29:56.617Z INFO tauri-service:service: [Tauri:Frontend:0] JSON error: invalid type: null, expected u32 at line 1 column 213
+2026-07-27T13:29:56.645Z INFO tauri-service:service: [Tauri:Frontend:0] JSON error: invalid type: null, expected u32 at line 1 column 213
+2026-07-27T13:29:56.666Z INFO tauri-service:service: [Tauri:Frontend:0] JSON error: invalid type: null, expected u32 at line 1 column 213
+2026-07-27T13:29:56.705Z INFO tauri-service:service: [Tauri:Frontend:0] invoking load_orchestration_native_query
+2026-07-27T13:29:56.711Z INFO tauri-service:service: [Tauri:Frontend:0] native query returned
+2026-07-27T13:29:56.712Z INFO tauri-service:service: [Tauri:Frontend:0] JSON error: invalid type: null, expected u32 at line 1 column 503

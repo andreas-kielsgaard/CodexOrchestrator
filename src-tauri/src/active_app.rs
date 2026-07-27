@@ -48,8 +48,27 @@ impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBui
 }
 
 pub(crate) fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "native-review")]
+    let builder = builder
+        .plugin(tauri_plugin_wdio::init())
+        .plugin(tauri_plugin_wdio_webdriver::init());
+
+    let app = builder
         .setup(|app| {
+            #[cfg(feature = "native-review")]
+            let app_data_dir =
+                std::env::var_os("CODEX_ORCHESTRATOR_NATIVE_REVIEW_APP_DATA_DIR")
+                    .map(std::path::PathBuf::from)
+                    .map(Ok)
+                    .unwrap_or_else(|| {
+                        app.path()
+                            .app_data_dir()
+                            .map_err(|error| {
+                                format!("Unable to resolve app data directory: {error}")
+                            })
+                    })?;
+            #[cfg(not(feature = "native-review"))]
             let app_data_dir = app
                 .path()
                 .app_data_dir()
@@ -57,6 +76,11 @@ pub(crate) fn run() {
             fs::create_dir_all(&app_data_dir)
                 .map_err(|error| format!("Unable to create app data directory: {error}"))?;
             let database_path = crate::storage::active_database_path(&app_data_dir);
+            #[cfg(feature = "native-review")]
+            println!(
+                "[native-review] active Tauri composition initialized with isolated database {}",
+                database_path.display()
+            );
             let connection = crate::storage::open_active_database(&database_path)?;
             let repository = Arc::new(
                 crate::agent_sessions::repository::SqliteAgentSessionRepository::new(connection)

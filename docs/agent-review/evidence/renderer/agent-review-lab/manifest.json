@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-07-27T13:30:48.206Z",
+  "repository": {
+    "revision": "f23f5fdcd3ae9298261e81db52366854c00dc4a0",
+    "branch": "codex/explore-agent-app-review",
+    "worktree": "C:\\Users\\user\\.codex\\worktrees\\5634\\Codex Orchestrator",
+    "workingTreeChanges": [
+      "M .gitignore",
+      " M eslint.config.js",
+      " M package-lock.json",
+      " M package.json",
+      " M src-tauri/Cargo.lock",
+      " M src-tauri/Cargo.toml",
+      " M src-tauri/src/active_app.rs",
+      " M src/app/App.agentSessions.test.tsx",
+      " M src/app/App.tsx",
+      " M src/app/ApplicationRoot.tsx",
+      " M src/bootstrap/productApplicationComposition.test.ts",
+      "?? docs/agent-review/",
+      "?? playwright.review.config.ts",
+      "?? scripts/agent-review/",
+      "?? src-tauri/tauri.native-review.conf.json",
+      "?? src/application/agentReview/",
+      "?? src/dev/agentReview/",
+      "?? src/nativeReview.ts",
+      "?? tests/",
+      "?? vite.native-review.config.ts",
+      "?? wdio.native-review.conf.mjs"
+    ]
+  },
+  "application": {
+    "mode": "Vite development server with effect-limited recorded composition",
+    "route": "/?agent-review",
+    "productionAuthority": false
+  },
+  "driver": {
+    "name": "Playwright Test",
+    "version": "1.61.1",
+    "browser": "Microsoft Edge",
+    "browserVersion": "150.0.4078.99"
+  },
+  "platform": {
+    "os": "Windows_NT 10.0.26200",
+    "architecture": "x64",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    }
+  },
+  "scenario": {
+    "id": "agent-review-lab",
+    "startingState": "Development-only Agent Review surface selected through the URL.",
+    "actions": [
+      "Opened the native-lane evidence disclosure.",
+      "Inspected the worktree-runtime convergence boundary."
+    ],
+    "assertions": [
+      "All three review lanes are present.",
+      "The proven CDP route remains distinct from the uninvoked Chrome DevTools MCP route.",
+      "No synthetic Run or Attach control grants authority.",
+      "The worktree-runtime application integration is explicitly labeled unproven."
+    ]
+  },
+  "files": [
+    "agent-review-lab-1920x1080.png",
+    "agent-review-lab-evidence-1920x1080.png",
+    "semantic-snapshot.yml",
+    "trace.zip",
+    "manifest.json"
+  ],
+  "observations": {
+    "pageErrors": [],
+    "requestFailures": []
+  },
+  "disposition": "user-review-required",
+  "unverifiedClaims": [
+    "The screenshot requires review before visual quality is accepted.",
+    "This renderer run does not establish the native lane claims displayed by the tab.",
+    "The development tab is not evidence of production composition or authority."
+  ]
+}

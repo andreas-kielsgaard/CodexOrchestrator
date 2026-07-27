@@ -1,0 +1,39 @@
+- main "Plan an Epic":
+  - button "Back to orchestration overview"
+  - text: Pre-initiation Epic planning draft
+  - complementary "Epic planning controls":
+    - paragraph: Epic planning draft
+    - heading "Plan an Epic" [level=1]
+    - text: Epic name
+    - textbox "Epic name":
+      - /placeholder: Name this Epic
+    - button "Rebuild plan" [disabled]
+    - button "Initiate Epic" [disabled]
+    - paragraph: Select an active Epic Planning Draft with a current proposal before initiation.
+  - region "Epic Plan Builder conversation":
+    - button "Copy entire session" [disabled]
+    - status
+    - heading "Let’s build a plan" [level=2]
+    - paragraph: Paste a prepared Epic description or begin discussing what you want to build.
+    - form "Send a message":
+      - textbox "Describe what we are working on"
+      - button "Send" [disabled]
+      - tooltip "Enter to send. Shift+Enter adds a new line."
+  - complementary "Proposed Epic plan":
+    - heading "Proposed Epic plan" [level=2]
+    - list:
+      - listitem:
+        - button "Sprint 1 Plan Builder foundation" [expanded]
+        - text: Sprint 1
+        - strong: Plan Builder foundation
+        - paragraph: Establish a reviewable planning conversation and compact proposal readout.
+        - list "Concerns addressed by Plan Builder foundation":
+          - listitem: Keep proposed planning separate from accepted orchestration facts.
+          - listitem: Make source availability explicit before a product proposal source exists.
+      - listitem:
+        - button "Sprint 2 State and integration proof" [expanded]
+        - text: Sprint 2
+        - strong: State and integration proof
+        - paragraph: Define the later boundary for durable state and product-tool integration.
+        - list "Concerns addressed by State and integration proof":
+          - listitem: Do not infer provider acknowledgement from conversation text.

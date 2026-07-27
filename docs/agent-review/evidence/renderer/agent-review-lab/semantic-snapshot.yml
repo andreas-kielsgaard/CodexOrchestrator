@@ -1,0 +1,142 @@
+- main "Agent Review Lab":
+  - paragraph: Development / test
+  - heading "Agent Review Lab" [level=1]
+  - paragraph: Three evidence lanes keep renderer checks, real-window inspection, and native contracts distinct while converging on one owned worktree instance.
+  - term: Revision
+  - definition: f23f5fdcd3ae
+  - term: Branch
+  - definition: codex/explore-agent-app-review
+  - term: Worktree
+  - definition: C:\Users\user\.codex\worktrees\5634\Codex Orchestrator
+  - note "Production warning":
+    - strong: Development evidence only
+    - text: This screen reports bounded observations. It grants no production, native, or orchestration authority.
+  - region "Request → evidence → disposition":
+    - paragraph: Review lanes
+    - heading "Request → evidence → disposition" [level=2]
+    - paragraph: Drivers stay in development adapters; retained facts cross the review boundary.
+    - list:
+      - listitem:
+        - article:
+          - paragraph: Recorded browser scenario · deterministic verification
+          - heading "Deterministic renderer" [level=3]
+          - text: Verified run
+          - heading "Request" [level=4]
+          - paragraph: Inspect the recorded Plan Builder layout and exercise its semantic Sprint control.
+          - heading "Evidence" [level=4]
+          - paragraph: Playwright Test opened the development-only scenario, asserted the workspace and proposal rail, and collapsed and expanded Sprint 1.
+          - heading "Dispositionuser-review-required" [level=4]:
+            - text: Disposition
+            - code: user-review-required
+          - paragraph: Behavior assertions passed. The retained screenshots still require review before visual fidelity is accepted.
+          - term: Application
+          - definition: Vite development server · recorded Plan Builder
+          - term: Driver
+          - definition: Playwright Test 1.61.1 · Microsoft Edge 150.0.4078.99
+          - term: Platform
+          - definition: Windows x64 · 1920 × 1080 viewport
+          - term: Starting state
+          - definition: Effect-limited recorded orchestration overview
+          - link "Open recorded Plan Builder":
+            - /url: "?recorded-plan-builder"
+          - group: Reproduce and inspect evidence
+      - listitem:
+        - article:
+          - paragraph: Real development host · exploratory control
+          - heading "Windows Tauri / WebView2 attachment" [level=3]
+          - text: Verified attachment
+          - heading "Request" [level=4]
+          - paragraph: Inspect the launched Windows Tauri host through a process-scoped development endpoint.
+          - heading "Evidence" [level=4]
+          - paragraph: Playwright connectOverCDP attached to exactly one WebView2 150 page target discovered through DevToolsActivePort, then exercised the recorded Plan Builder.
+          - heading "Dispositionaccepted" [level=4]:
+            - text: Disposition
+            - code: accepted
+          - paragraph: Accepted for bounded Windows attachment feasibility. Playwright CDP was proven; Chrome DevTools MCP was not invoked.
+          - term: Application
+          - definition: Tauri development shell · recorded Plan Builder composition
+          - term: Driver
+          - definition: Playwright connectOverCDP 1.61.1 · WebView2 150.0.4078.99
+          - term: Endpoint
+          - definition: "--remote-debugging-port=0 · observed port recorded in the manifest"
+          - term: Target
+          - definition: Exactly one page · Tauri internals observed
+          - group: Reproduce and inspect evidence
+      - listitem:
+        - article:
+          - paragraph: Shell and IPC contract · deterministic verification
+          - heading "Native Tauri E2E" [level=3]
+          - text: Verified native IPC
+          - heading "Request" [level=4]
+          - paragraph: Verify a real Tauri shell and active Rust IPC contract through an isolated build.
+          - heading "Evidence" [level=4]
+          - paragraph: "WebdriverIO launched the release Tauri shell, displayed #root, and browser.tauri.execute returned orchestration-native-query/v2 with 12 empty collections from isolated app data."
+          - heading "Dispositionaccepted" [level=4]:
+            - text: Disposition
+            - code: accepted
+          - paragraph: Accepted for this Windows shell and native-query contract. Command mocking, cross-platform behavior, visual fidelity, and production behavior remain unverified.
+          - term: Application
+          - definition: Release Tauri shell · native-review feature
+          - term: Driver
+          - definition: "@wdio/tauri-service 1.2.0 · embedded provider · msedge 150"
+          - term: Platform
+          - definition: Windows x64 · observed window 1618 × 1072
+          - term: Starting state
+          - definition: Fresh isolated app data and WebView2 profile
+          - group:
+            - text: Reproduce and inspect evidence
+            - heading "Reproduce" [level=4]
+            - code: npm run review:native
+            - paragraph: The runner builds only the alternate feature/config, selects an available loopback port, owns the session, then verifies closure and deletes isolated application/browser state.
+            - heading "Retained files" [level=4]
+            - list:
+              - listitem:
+                - text: Native proof manifest
+                - code: docs/agent-review/evidence/native-tauri-wdio/manifest.json
+              - listitem:
+                - text: IPC assertions
+                - code: docs/agent-review/evidence/native-tauri-wdio/assertions.json
+              - listitem:
+                - text: Native shell screenshot
+                - code: docs/agent-review/evidence/native-tauri-wdio/native-shell.png
+              - listitem:
+                - text: Frontend/backend service log
+                - code: docs/agent-review/evidence/native-tauri-wdio/wdio-service.txt
+            - heading "Not established" [level=4]
+            - list:
+              - listitem: – Command mocking remains unproven after the frontend invoke-interception warning.
+              - listitem: – Forwarded frontend logs contain non-fatal JSON deserialization warnings.
+              - listitem: – The screenshot is an observation, not visual-fidelity proof.
+              - listitem: – This Windows run does not establish macOS, Linux, or production behavior.
+  - region "Owned instance → bounded evidence":
+    - paragraph: Worktree convergence
+    - heading "Owned instance → bounded evidence" [level=2]
+    - paragraph: Interface defined · application integration unproven
+    - heading "Application request" [level=4]
+    - paragraph: The application requests one development/test instance for an expected worktree path, commit, and source fingerprint, with isolated data, scrubbed credentials, ephemeral ports, required capabilities, and mandatory cleanup.
+    - heading "Runtime result" [level=4]
+    - paragraph: The worktree runtime owns build and launch, then returns named instance/build/session identity, an HTTP endpoint or opaque window reference, semantic capabilities, and runtime/review evidence roots.
+    - heading "Review adapter" [level=4]
+    - paragraph: A lane adapter validates the handoff, performs driver-specific interaction, retains evidence beside the runtime manifest, and returns neutral evidence for a separate review judgement.
+    - paragraph: The current proofs were launched by dedicated scripts. This branch defines but does not yet integrate the application-to-worktree-runtime lifecycle port.
+  - region "Keep inspection contained":
+    - paragraph: Operating boundary
+    - heading "Keep inspection contained" [level=2]
+    - term: Worktree instance
+    - definition: Build, launch, endpoint/window ownership, and cleanup belong to the worktree runtime. Review adapters receive semantic references, not process or driver authority.
+    - term: Security
+    - definition: Remote debugging is development-only. The recorded endpoint was consumed through loopback and must never be enabled in production.
+    - term: Dependency risk
+    - definition: The 2026-07-27 npm audit reports one unchanged-baseline high production finding and 28 full-tree package findings; 22 affected packages belong to the development-only WDIO chain.
+    - term: Sandbox
+    - definition: Renderer scenarios are effect-limited. CDP page access grants inspection only, not orchestration or native authority.
+    - term: Lifecycle
+    - definition: The launched app/server process tree was cleaned up after capture; the endpoint is no longer active.
+    - term: Process ownership
+    - definition: Attach only to the launched development host and its single expected target, never unrelated browser processes.
+    - term: Port
+    - definition: Port 0 selects an ephemeral port. Discover it from DevToolsActivePort; do not hard-code or expose it.
+    - term: Credentials
+    - definition: The launch adapters removed CODEX_HOME and credential-shaped environment variables. The scenarios required and retained no credentials.
+    - term: Production exclusion
+    - definition: This lab, recorded clients, debugging arguments, and scoped user-data folder belong only to development/test composition.

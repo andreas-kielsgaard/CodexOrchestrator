@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-07-27T13:30:46.697Z",
+  "repository": {
+    "revision": "f23f5fdcd3ae9298261e81db52366854c00dc4a0",
+    "branch": "codex/explore-agent-app-review",
+    "worktree": "C:\\Users\\user\\.codex\\worktrees\\5634\\Codex Orchestrator",
+    "workingTreeChanges": [
+      "M .gitignore",
+      " M eslint.config.js",
+      " M package-lock.json",
+      " M package.json",
+      " M src-tauri/Cargo.lock",
+      " M src-tauri/Cargo.toml",
+      " M src-tauri/src/active_app.rs",
+      " M src/app/App.agentSessions.test.tsx",
+      " M src/app/App.tsx",
+      " M src/app/ApplicationRoot.tsx",
+      " M src/bootstrap/productApplicationComposition.test.ts",
+      "?? docs/agent-review/",
+      "?? playwright.review.config.ts",
+      "?? scripts/agent-review/",
+      "?? src-tauri/tauri.native-review.conf.json",
+      "?? src/application/agentReview/",
+      "?? src/dev/agentReview/",
+      "?? src/nativeReview.ts",
+      "?? tests/",
+      "?? vite.native-review.config.ts",
+      "?? wdio.native-review.conf.mjs"
+    ]
+  },
+  "application": {
+    "mode": "Vite development server with recorded Plan Builder composition",
+    "route": "/?recorded-plan-builder",
+    "productionAuthority": false
+  },
+  "driver": {
+    "name": "Playwright Test",
+    "version": "1.61.1",
+    "browser": "Microsoft Edge",
+    "browserVersion": "150.0.4078.99"
+  },
+  "platform": {
+    "os": "Windows_NT 10.0.26200",
+    "architecture": "x64",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    }
+  },
+  "scenario": {
+    "id": "recorded-plan-builder",
+    "startingState": "Recorded orchestration overview with effect-limited development clients."
+  },
+  "actions": [
+    "Opened the development-only recorded Plan Builder composition.",
+    "Opened Plan an Epic through the visible orchestration action.",
+    "Collapsed the first proposed Sprint through its semantic button.",
+    "Expanded the first proposed Sprint again.",
+    "Captured the full page and focused proposal rail."
+  ],
+  "assertions": [
+    "The normal application surface navigation rendered.",
+    "The Plan Builder workspace, conversation, and proposal rail are visible.",
+    "The first proposed Sprint collapses and expands through one semantic control."
+  ],
+  "observations": {
+    "layout": {
+      "controls": {
+        "x": 10,
+        "y": 106,
+        "width": 230,
+        "height": 964,
+        "clientHeight": 962,
+        "scrollHeight": 962,
+        "overflowY": "auto"
+      },
+      "conversation": {
+        "x": 250,
+        "y": 106,
+        "width": 1230,
+        "height": 964,
+        "clientHeight": 962,
+        "scrollHeight": 962,
+        "overflowY": "hidden"
+      },
+      "proposal": {
+        "x": 1490,
+        "y": 106,
+        "width": 420,
+        "height": 964,
+        "clientHeight": 962,
+        "scrollHeight": 962,
+        "overflowY": "hidden"
+      },
+      "proposalBody": {
+        "x": 1491,
+        "y": 162,
+        "width": 418,
+        "height": 907,
+        "clientHeight": 907,
+        "scrollHeight": 907,
+        "overflowY": "auto"
+      }
+    },
+    "consoleEntries": [
+      {
+        "type": "debug",
+        "text": "[vite] connecting...",
+        "location": {
+          "url": "http://127.0.0.1:1437/@vite/client",
+          "line": 732,
+          "column": 8,
+          "lineNumber": 732,
+          "columnNumber": 8
+        }
+      },
+      {
+        "type": "debug",
+        "text": "[vite] connected.",
+        "location": {
+          "url": "http://127.0.0.1:1437/@vite/client",
+          "line": 826,
+          "column": 11,
+          "lineNumber": 826,
+          "columnNumber": 11
+        }
+      },
+      {
+        "type": "info",
+        "text": "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold",
+        "location": {
+          "url": "http://127.0.0.1:1437/node_modules/.vite/deps/react-dom_client.js?v=03db1f50",
+          "line": 20102,
+          "column": 53,
+          "lineNumber": 20102,
+          "columnNumber": 53
+        }
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "location": {
+          "url": "http://127.0.0.1:1437/favicon.ico",
+          "line": 0,
+          "column": 0,
+          "lineNumber": 0,
+          "columnNumber": 0
+        }
+      }
+    ],
+    "pageErrors": [],
+    "requestFailures": [],
+    "httpErrors": []
+  },
+  "files": [
+    "plan-builder-1920x1080.png",
+    "proposal-rail.png",
+    "semantic-snapshot.yml",
+    "trace.zip",
+    "manifest.json"
+  ],
+  "disposition": "user-review-required",
+  "unverifiedClaims": [
+    "The screenshots require visual review before layout fidelity is accepted.",
+    "This renderer run does not verify a Tauri window, native IPC, or production behavior."
+  ]
+}

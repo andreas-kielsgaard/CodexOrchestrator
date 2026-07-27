@@ -8,18 +8,33 @@ export function ApplicationRoot() {
 
   useEffect(() => {
     let active = true;
-    if (
-      viteDevelopmentMode() &&
-      new URLSearchParams(window.location.search).has('recorded-plan-builder')
-    ) {
-      void import('../dev/orchestrationSection/recordedOrchestrationClient').then(
-        ({ createRecordedDevelopmentApplicationComposition }) => {
-          if (active) setComposition(createRecordedDevelopmentApplicationComposition());
-        },
-      );
-    } else {
+    const search = new URLSearchParams(window.location.search);
+
+    if (!viteDevelopmentMode()) {
       setComposition(createProductApplicationComposition());
+      return () => {
+        active = false;
+      };
     }
+
+    void Promise.all([
+      import('../dev/agentReview'),
+      search.has('recorded-plan-builder') || search.has('agent-review')
+        ? import('../dev/orchestrationSection/recordedOrchestrationClient').then(
+            ({ createRecordedDevelopmentApplicationComposition }) =>
+              createRecordedDevelopmentApplicationComposition(),
+          )
+        : Promise.resolve(createProductApplicationComposition()),
+    ]).then(([{ AgentReviewLab }, baseComposition]) => {
+      if (!active) return;
+
+      setComposition({
+        ...baseComposition,
+        agentReviewSurface: <AgentReviewLab />,
+        ...(search.has('agent-review') ? { initialSurface: 'agent-review' as const } : {}),
+      });
+    });
+
     return () => {
       active = false;
     };
