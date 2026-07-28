@@ -45,6 +45,11 @@ describe('HarnessAwareAgentSessionPane', () => {
     expect(screen.getByRole('heading', { name: 'Skills' })).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Tools' })).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Models and reasoning' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Application hooks' })).toBeVisible();
+    expect(screen.getByText(/Proposed application hook reference:/)).toBeVisible();
+    expect(screen.getByText('Proposed', { selector: '.harness-management__badge' })).toBeVisible();
+    expect(screen.queryByText(/Connected application hook:/)).toBeNull();
+    expect(screen.queryByText('Exposed', { selector: '.harness-management__badge' })).toBeNull();
     expect(screen.getByRole('table')).toHaveAccessibleName('');
     expect(screen.getByRole('heading', { name: 'Version history' })).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Agent Session updates' })).toBeNull();

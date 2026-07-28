@@ -52,7 +52,7 @@ export interface HarnessEffectiveConfiguration {
   };
   readonly hooks: readonly {
     readonly name: string;
-    readonly status: 'exposed' | 'not_connected';
+    readonly status: 'exposed' | 'proposed' | 'not_connected';
     readonly detail: string;
   }[];
   readonly updatePolicy:

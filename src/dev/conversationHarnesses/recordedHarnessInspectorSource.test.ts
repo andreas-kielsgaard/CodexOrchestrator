@@ -70,6 +70,14 @@ describe('recorded Harness Management source', () => {
       'submit_epic_plan_proposal',
       'request_epic_initiation',
     ]);
+    expect(current?.hooks).toEqual([
+      {
+        name: 'proposal persisted or user ends discussion',
+        status: 'proposed',
+        detail: 'Proposed application hook reference: proposal_persisted_or_user_ends_discussion.',
+      },
+    ]);
+    expect(current?.hooks.map((hook) => hook.status)).not.toContain('exposed');
   });
 
   it('persists a complete draft across views without renaming the existing Session', async () => {

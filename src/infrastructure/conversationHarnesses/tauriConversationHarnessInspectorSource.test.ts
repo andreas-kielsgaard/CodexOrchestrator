@@ -75,9 +75,20 @@ describe('Tauri Conversation Harness Management source', () => {
       revision: 4,
       configuration: {
         identity: { name: 'Epic Plan Builder', machineKey: 'epic_plan_builder' },
+        hooks: [
+          {
+            name: 'proposal saved',
+            status: 'not_connected',
+            detail:
+              'Harness catalog reference: proposal_saved. No typed Application hook registry confirms a connection.',
+          },
+        ],
         updatePolicy: { status: 'not_configured' },
       },
     });
+    expect(read.snapshot.versionControl.versions[0]?.configuration.hooks).not.toContainEqual(
+      expect.objectContaining({ status: 'exposed' }),
+    );
   });
 
   it('keeps transport read states distinct while leaving management commands unavailable', async () => {

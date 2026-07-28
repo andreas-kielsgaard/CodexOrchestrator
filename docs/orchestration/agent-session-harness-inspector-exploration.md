@@ -11,9 +11,9 @@ Agent Sessions, Harness Management, and invocation adapters consume the same rea
 chooses a Harness, assembles individual settings, or infers a revision.
 
 A Harness revision is an immutable, atomic effective configuration. It includes the prompt prefix,
-skill policies, tool policies, allowed models and reasoning levels, sandbox and authority, exposed
-Application hooks, update policy, permitted agent-name pool, and visual identity. Individual
-elements cannot advance independently.
+skill policies, tool policies, allowed models and reasoning levels, sandbox and authority,
+Application hook references, update policy, permitted agent-name pool, and visual identity.
+Individual elements cannot advance independently.
 
 The session also owns its assigned agent name and the visual identity copied from its applied
 Harness revision. Assignment happens once during session creation. Reopening the session through
@@ -56,7 +56,8 @@ The prototype records these product concepts without claiming production effects
   discovery.
 - Current sandbox and authority values are inspectable and editable in the recorded working copy.
   Expanded sandbox customization is deferred.
-- Application hooks remain visible. Initial prompt delivery is not modeled as a hook.
+- Application hook references remain visible and are labeled **Proposed**. They are not presented
+  as connected or exposed. Initial prompt delivery is not modeled as a hook.
 - The version table shows status, active Session count, the selected Session indicator, and bulk
   next-prompt actions. Push moves the recorded local active revision and queues relevant recorded
   Sessions only for their next prompt. The separate Harness Management update panel and all
@@ -64,8 +65,9 @@ The prototype records these product concepts without claiming production effects
 
 The product-backed source remains read-only. It adapts the existing managed Plan Builder query to
 the same view contract, reports the session binding as untracked, supplies no agent identity, and
-does not expose edit commands. It therefore does not claim Git history, durable assignment,
-activation, update delivery, interruption, or compression.
+does not expose edit commands. Free-form `completionCriteria` entries are labeled **Not connected**
+because no typed registry result confirms them. It therefore does not claim Git history, durable
+assignment, activation, update delivery, interruption, or compression.
 
 ## Production repository and commands
 
@@ -164,8 +166,9 @@ section.
 
 The current repository has no application-owned typed hook registry that guarantees every
 connectable hook is discoverable by Harness configuration. The compiled Harness profile supplies
-free-form `lifecycle.completionCriteria` strings, and the prototype maps those strings for display;
-that is not implementation wiring, availability discovery, or validation.
+free-form `lifecycle.completionCriteria` strings. The recorded prototype maps those strings as
+**Proposed** references, while the connected product inspection maps them as **Not connected**.
+Neither state is implementation wiring, availability discovery, exposure, or validation.
 
 Production should define one typed Application hook catalog as the source for:
 
@@ -184,10 +187,14 @@ owns enforcement. Deeper hook configuration UI remains deferred.
   identities, deterministic assignment, uniqueness, exhausted-pool fallback, and invalid pools.
 - Recorded-source tests cover committed version history, the complete checked-in skill catalog,
   recorded tool/model catalogs, full atomic configuration, stable identity across draft pool
-  changes, local draft/commit/Push transitions, next-prompt queues, and default-range validation.
+  changes, local draft/commit/Push transitions, next-prompt queues, default-range validation, and
+  ensure free-form completion criteria remain proposed rather than connected or exposed.
 - Pane tests cover Session-version entry, state cues, cached edits and dirty state across remount,
   Markdown/Plain editing, fuzzy dialog search/add/change/remove, policy counts and collapse state,
-  accessible range controls, and confirmation-gated commit/Push/single/bulk next-prompt changes.
+  accessible range controls, confirmation-gated commit/Push/single/bulk next-prompt changes, and
+  truthful proposed hook presentation.
+- Product-source tests ensure completion criteria remain not connected without a typed hook
+  registry result.
 - App and planning tests cover the same source and identity presentation across Harness Management,
   Epic planning, and independent Agent Sessions, including persisted Agent names on transcript
   responses and the agent-authored proposal heading.

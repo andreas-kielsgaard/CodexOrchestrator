@@ -569,7 +569,7 @@ function AvailableHarnessManagement({
 
           <ManagementCard
             title="Application hooks"
-            description="Hooks currently exposed to this harness. Deeper hook design is deferred."
+            description="Hook references for this harness. Connection requires an Application hook registry."
             wide
           >
             <ul className="harness-management__hook-list">
@@ -580,7 +580,11 @@ function AvailableHarnessManagement({
                     <p>{hook.detail}</p>
                   </div>
                   <StateBadge tone={hook.status === 'exposed' ? 'positive' : 'neutral'}>
-                    {hook.status === 'exposed' ? 'Exposed' : 'Not connected'}
+                    {hook.status === 'exposed'
+                      ? 'Exposed'
+                      : hook.status === 'proposed'
+                        ? 'Proposed'
+                        : 'Not connected'}
                   </StateBadge>
                 </li>
               ))}

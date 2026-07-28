@@ -214,8 +214,8 @@ function buildConfiguration(
     },
     hooks: profile.lifecycle.completionCriteria.map((criterion) => ({
       name: humanize(criterion),
-      status: 'exposed',
-      detail: `Application hook exposed as ${criterion}.`,
+      status: 'not_connected',
+      detail: `Harness catalog reference: ${criterion}. No typed Application hook registry confirms a connection.`,
     })),
     updatePolicy: {
       status: 'not_configured',

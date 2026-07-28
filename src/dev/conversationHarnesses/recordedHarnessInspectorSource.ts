@@ -281,8 +281,8 @@ function buildConfiguration(
     },
     hooks: profile.lifecycle.completionCriteria.map((criterion) => ({
       name: humanize(criterion),
-      status: 'exposed',
-      detail: `Connected application hook: ${criterion}.`,
+      status: 'proposed',
+      detail: `Proposed application hook reference: ${criterion}.`,
     })),
     updatePolicy: {
       status: 'configured',
