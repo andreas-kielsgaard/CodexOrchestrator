@@ -26,7 +26,7 @@ export function createProductApplicationComposition(): AppProps {
       tauriAgentSessionClient,
       invoke,
     ),
-    epicPlanBuilderHarnessInspectorSource: createTauriConversationHarnessInspectorSource(invoke),
+    agentSessionHarnessManagementSource: createTauriConversationHarnessInspectorSource(invoke),
     orchestrationClient: createNativeQueryOrchestrationClient(
       tauriOrchestrationNativeQueryClient,
       tauriEpicBootstrapTransitionClient,

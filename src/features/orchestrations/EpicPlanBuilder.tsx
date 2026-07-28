@@ -4,7 +4,7 @@ import type {
   AgentSessionClient,
   SendAgentSessionMessageCommandDto,
 } from '../../application/agentSessions';
-import type { ConversationHarnessInspectorSource } from '../../application/conversationHarnesses';
+import type { ConversationHarnessManagementSource } from '../../application/conversationHarnesses';
 import type {
   EpicPlanningDraftBinding,
   EpicPlanningDraftLifecycleClient,
@@ -17,6 +17,7 @@ import {
   managedPlanBuilderSessionConfiguration,
 } from '../../application/orchestrations';
 import { AgentSessionWorkspace, useAgentSession } from '../agentSessions';
+import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
 import { HarnessAwareAgentSessionPane } from '../conversationHarnesses';
 import './styles/epicPlanBuilder.css';
 
@@ -41,7 +42,7 @@ export interface EpicPlanBuilderProps {
   onBack(): void;
   readonly draft?: EpicPlanningDraftBinding;
   readonly lifecycleClient?: EpicPlanningDraftLifecycleClient;
-  readonly harnessInspectorSource?: ConversationHarnessInspectorSource;
+  readonly harnessManagementSource?: ConversationHarnessManagementSource;
 }
 
 /** One normal-app workspace: the shared conversation is primary; the proposal is source-owned. */
@@ -58,7 +59,7 @@ export function EpicPlanBuilder({
   onBack,
   draft,
   lifecycleClient,
-  harnessInspectorSource,
+  harnessManagementSource,
 }: EpicPlanBuilderProps) {
   const proposal = useSyncExternalStore(
     proposalSource.subscribe,
@@ -91,6 +92,7 @@ export function EpicPlanBuilder({
         managedPlanBuilderSessionConfiguration.titleForEpicName(epicName),
       ),
   });
+  const agentIdentity = session.details?.session.agentIdentity ?? null;
   // Session loads are a re-query fallback for missed notifications and restart recovery.
   useEffect(() => {
     if (session.details) void proposalSource.refresh();
@@ -214,8 +216,13 @@ export function EpicPlanBuilder({
           <ArrowLeft size={16} aria-hidden="true" />
           Back to orchestration overview
         </button>
+        {agentIdentity && <AgentIdentityBadge identity={agentIdentity} compact />}
         <span className="epic-plan-builder__toolbar-context">
-          {alreadyInitiated ? 'Epic initiation confirmed' : 'Pre-initiation Epic planning draft'}
+          {agentIdentity
+            ? `${agentIdentity.name}: ${agentIdentity.harnessRole}`
+            : alreadyInitiated
+              ? 'Epic initiation confirmed'
+              : 'Pre-initiation Epic planning draft'}
         </span>
         {draft && lifecycleClient && !alreadyInitiated && (
           <button
@@ -321,10 +328,10 @@ export function EpicPlanBuilder({
             </div>
           </aside>
           <div className="epic-plan-builder__conversation">
-            {harnessInspectorSource && session.selectedSessionId ? (
+            {harnessManagementSource && session.selectedSessionId ? (
               <HarnessAwareAgentSessionPane
                 sessionId={session.selectedSessionId}
-                source={harnessInspectorSource}
+                source={harnessManagementSource}
               >
                 {conversation}
               </HarnessAwareAgentSessionPane>
@@ -337,7 +344,9 @@ export function EpicPlanBuilder({
             aria-labelledby="proposed-epic-plan-heading"
           >
             <header className="epic-plan-builder__proposal-header">
-              <h2 id="proposed-epic-plan-heading">Proposed Epic plan</h2>
+              <h2 id="proposed-epic-plan-heading">
+                {agentIdentity ? `${agentIdentity.name}’s Proposed Plan:` : 'Proposed Epic plan'}
+              </h2>
             </header>
             <div className="epic-plan-builder__proposal-body">
               {proposal.kind === 'available' ? (

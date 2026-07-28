@@ -17,6 +17,26 @@ export interface AgentRuntimeBindingDto {
   runtimeVersion: string | null;
 }
 
+export type AgentVisualTokenDto =
+  'default_agent' | 'drafting_compass' | 'bootstrap_package' | 'runner_route';
+
+export interface AgentVisualIdentityDto {
+  token: AgentVisualTokenDto;
+  accent: string;
+}
+
+export interface AgentIdentityDto {
+  name: string;
+  harnessRole: string;
+  visualIdentity: AgentVisualIdentityDto;
+  appliedHarnessRevision: number;
+  assignment: {
+    kind: 'recorded_preview' | 'durable';
+    pool: 'product_default' | 'harness_subset';
+    assignedAt: IsoDateTimeDto;
+  };
+}
+
 export interface AgentSessionDto {
   id: AgentSessionIdDto;
   title: string;
@@ -24,6 +44,8 @@ export interface AgentSessionDto {
   runtimeBinding: AgentRuntimeBindingDto;
   workingDirectory: string | null;
   requestedOptions: AgentRuntimeOptionsDto;
+  /** Optional until the durable Session-owned identity migration is implemented. */
+  agentIdentity?: AgentIdentityDto | null;
   createdAt: IsoDateTimeDto;
   updatedAt: IsoDateTimeDto;
 }
@@ -120,6 +142,7 @@ export interface AgentSessionSummaryDto {
   title: string;
   availability: AgentSessionAvailabilityDto;
   hasActiveInvocation: boolean;
+  agentIdentity?: AgentIdentityDto | null;
   createdAt: IsoDateTimeDto;
   updatedAt: IsoDateTimeDto;
 }

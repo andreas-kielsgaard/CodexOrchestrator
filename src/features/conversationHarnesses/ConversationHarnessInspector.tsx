@@ -1,363 +1,835 @@
-import { ArrowLeft, CheckCircle2, CircleHelp, LockKeyhole, ShieldAlert } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { ArrowLeft, Check, GitCommitHorizontal, RefreshCw, Upload } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { MarkdownEditor } from '../../components/MarkdownEditor';
+import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
 import type {
-  ConversationHarnessInspectorRead,
-  HarnessInspectorDeliveryStatus,
-  HarnessInspectorSectionState,
+  ConversationHarnessManagementCommand,
+  ConversationHarnessManagementRead,
+  ConversationHarnessManagementSnapshot,
+  HarnessEffectiveConfiguration,
+  HarnessSkillPolicy,
+  HarnessToolGuidancePolicy,
+  HarnessUpdateStrategy,
 } from '../../application/conversationHarnesses';
 
-export interface ConversationHarnessInspectorProps {
-  readonly read: ConversationHarnessInspectorRead | null;
+export interface ConversationHarnessManagementProps {
+  readonly read: ConversationHarnessManagementRead | null;
+  readonly commandPending?: boolean;
+  readonly commandError?: string | null;
   onBack(): void;
+  onCommand?(command: ConversationHarnessManagementCommand): void;
 }
 
-export function ConversationHarnessInspector({ read, onBack }: ConversationHarnessInspectorProps) {
+export function ConversationHarnessManagement({
+  read,
+  commandPending = false,
+  commandError,
+  onBack,
+  onCommand,
+}: ConversationHarnessManagementProps) {
   if (!read)
     return (
-      <InspectorShell onBack={onBack}>
-        <p className="harness-inspector__loading" role="status">
-          Loading harness configuration...
+      <ManagementShell onBack={onBack}>
+        <p className="harness-management__loading" role="status">
+          Loading harness...
         </p>
-      </InspectorShell>
+      </ManagementShell>
     );
 
   if (read.kind !== 'available') {
-    const unavailable = unavailablePresentation(read);
     return (
-      <InspectorShell onBack={onBack}>
-        <div className="harness-inspector__unavailable" role="alert">
-          <ShieldAlert size={20} aria-hidden="true" />
+      <ManagementShell onBack={onBack}>
+        <div className="harness-management__unavailable" role="alert">
           <div>
-            <h2>{unavailable.heading}</h2>
+            <h2>{read.kind === 'unbound' ? 'No harness assigned' : 'Harness unavailable'}</h2>
             <p>{read.reason}</p>
           </div>
         </div>
-      </InspectorShell>
+      </ManagementShell>
     );
   }
 
   const { snapshot } = read;
-  const validation = validationPresentation(snapshot.validation.status);
-  const delivery = deliveryPresentation(snapshot.promptContext.delivery.status);
+  const configuration = snapshot.workingCopy.configuration;
+  const editable = Boolean(onCommand);
+  const saveConfiguration = (next: HarnessEffectiveConfiguration) =>
+    onCommand?.({
+      kind: 'save_working_copy',
+      expectedDraftRevision: snapshot.workingCopy.draftRevision,
+      configuration: next,
+    });
+
   return (
-    <InspectorShell onBack={onBack}>
-      <header className="harness-inspector__title">
-        <div>
-          <p className="eyebrow">Conversation Harness</p>
-          <h2>{snapshot.profile.title}</h2>
-          <p>
-            {snapshot.profile.key} · profile v{snapshot.profile.version}
-          </p>
-        </div>
-        <div className="harness-inspector__title-badges" aria-label="Inspector status">
-          <StatusBadge {...validation} />
-          <StatusBadge tone="neutral" label="Read-only exploration" />
-        </div>
-      </header>
-
-      <div className="harness-inspector__boundary-note">
-        {snapshot.promptContext.delivery.status === 'delivered' ? (
-          <LockKeyhole size={18} aria-hidden="true" />
-        ) : (
-          <CircleHelp size={18} aria-hidden="true" />
-        )}
-        <p>
-          <strong>{delivery.label}.</strong> {snapshot.promptContext.delivery.detail} Controls
-          marked <strong>Future invocation</strong> show proposed later configuration, but this
-          prototype cannot apply changes.
+    <ManagementShell snapshot={snapshot} onBack={onBack}>
+      <h1 className="visually-hidden">{configuration.identity.name} Harness Management</h1>
+      {commandError && (
+        <p className="harness-management__command-error" role="alert">
+          {commandError}
         </p>
-      </div>
+      )}
+      <SessionVersionNotice snapshot={snapshot} />
 
-      <div className="harness-inspector__grid">
-        <InspectorCard
-          title="Prompt and context"
-          state={snapshot.promptContext.state}
-          status={delivery}
-          description={snapshot.promptContext.state.reason}
+      <div className="harness-management__grid">
+        <ManagementCard
+          title="Harness details"
+          description="Identity and version state for this harness."
           wide
         >
-          <label className="harness-inspector__field">
-            <span>Initial context prefix</span>
-            <textarea value={snapshot.promptContext.content} readOnly rows={8} />
-          </label>
-          <p className="harness-inspector__field-note">
-            Delivery policy: {humanize(snapshot.promptContext.delivery.policy)} · Evidence:{' '}
-            {delivery.label}
-          </p>
-        </InspectorCard>
+          <div className="harness-management__field-row is-three">
+            <ManagementField label="Harness name">
+              <input
+                value={configuration.identity.name}
+                disabled={!editable}
+                onChange={(event) =>
+                  saveConfiguration({
+                    ...configuration,
+                    identity: { ...configuration.identity, name: event.target.value },
+                  })
+                }
+              />
+            </ManagementField>
+            <ManagementField label="Machine key">
+              <input
+                value={configuration.identity.machineKey}
+                disabled={!editable}
+                onChange={(event) =>
+                  saveConfiguration({
+                    ...configuration,
+                    identity: { ...configuration.identity, machineKey: event.target.value },
+                  })
+                }
+              />
+            </ManagementField>
+            <ManagementField label="Harness role">
+              <input
+                value={configuration.identity.role}
+                disabled={!editable}
+                onChange={(event) =>
+                  saveConfiguration({
+                    ...configuration,
+                    identity: { ...configuration.identity, role: event.target.value },
+                  })
+                }
+              />
+            </ManagementField>
+          </div>
+          <VersionTiles snapshot={snapshot} />
+          <div className="harness-management__identity-policy">
+            {snapshot.agentIdentity ? (
+              <AgentIdentityBadge identity={snapshot.agentIdentity} />
+            ) : (
+              <p>This session does not yet have a durable Agent identity.</p>
+            )}
+            <div>
+              <span>Permitted name pool</span>
+              <strong>
+                {configuration.identity.permittedAgentNames
+                  ? `Harness subset · ${configuration.identity.permittedAgentNames.length} names`
+                  : 'Product default · 100 names'}
+              </strong>
+              <small>Existing sessions keep their assigned name when this pool changes.</small>
+            </div>
+            <div>
+              <span>Visual identity</span>
+              <strong>
+                {configuration.identity.visualIdentity
+                  ? humanize(configuration.identity.visualIdentity.token)
+                  : 'Not configured'}
+              </strong>
+              <small>Stored with the applied Session revision.</small>
+            </div>
+          </div>
+        </ManagementCard>
 
-        <InspectorCard
-          title="Skills"
-          state={snapshot.skills.state}
-          description={snapshot.skills.state.reason}
+        <ManagementCard
+          title="Prompt prefix"
+          description="Prepended to the initial prompt for a new session. It is also intended to be re-ingested after context compression; the custom compression routine is deferred."
+          wide
         >
-          <div className="harness-inspector__choice-list">
-            {snapshot.skills.items.map((skill) => (
-              <label key={skill.name} className="harness-inspector__choice">
-                <input type="checkbox" checked disabled readOnly />
-                <span>
+          <MarkdownEditor
+            label="Prompt prefix"
+            value={configuration.promptPrefix.content}
+            editable={editable}
+            onChange={(content) =>
+              saveConfiguration({
+                ...configuration,
+                promptPrefix: { ...configuration.promptPrefix, content },
+              })
+            }
+          />
+        </ManagementCard>
+
+        <ManagementCard
+          title="Skill policy"
+          description="Choose when each skill is included and how available skills are discovered."
+        >
+          <PolicyGuide />
+          <ManagementField label="Available-skill discovery">
+            <select
+              value={configuration.skills.discoveryPolicy}
+              disabled={!editable}
+              onChange={(event) =>
+                saveConfiguration({
+                  ...configuration,
+                  skills: {
+                    ...configuration.skills,
+                    discoveryPolicy: event.target.value as 'whitelist' | 'blacklist',
+                  },
+                })
+              }
+            >
+              <option value="whitelist">Whitelist</option>
+              <option value="blacklist">Blacklist</option>
+            </select>
+          </ManagementField>
+          <div className="harness-management__policy-list">
+            {configuration.skills.items.map((skill) => (
+              <div className="harness-management__policy-item" key={skill.name}>
+                <div>
                   <strong>{skill.name}</strong>
-                  <small>{skill.purpose}</small>
+                  <p>{skill.purpose}</p>
                   <code>{skill.path}</code>
-                  <small>Use when {skill.useWhen}</small>
-                </span>
-              </label>
+                </div>
+                <ManagementField label={`Policy for ${skill.name}`} compact>
+                  <select
+                    value={skill.policy}
+                    disabled={!editable}
+                    onChange={(event) =>
+                      saveConfiguration({
+                        ...configuration,
+                        skills: {
+                          ...configuration.skills,
+                          items: configuration.skills.items.map((item) =>
+                            item.name === skill.name
+                              ? { ...item, policy: event.target.value as HarnessSkillPolicy }
+                              : item,
+                          ),
+                        },
+                      })
+                    }
+                  >
+                    <option value="always_applicable">Always applicable</option>
+                    <option value="initial_ingestion">Initial ingestion only</option>
+                    <option value="available">Available</option>
+                  </select>
+                </ManagementField>
+              </div>
             ))}
           </div>
-        </InspectorCard>
+        </ManagementCard>
 
-        <InspectorCard
-          title="MCP tools"
-          state={snapshot.mcp.state}
-          description={snapshot.mcp.state.reason}
-        >
-          <div className="harness-inspector__choice-list">
-            {snapshot.mcp.tools.map((tool) => (
-              <label key={tool} className="harness-inspector__choice">
-                <input type="checkbox" checked disabled readOnly />
-                <span>
-                  <strong>{tool}</strong>
-                  <small>Enabled by the profile allow-list</small>
-                </span>
-              </label>
+        <ManagementCard title="Tool policy" description={configuration.tools.schemaBoundary}>
+          <ManagementField label="Tool discovery">
+            <select
+              value={configuration.tools.discoveryPolicy}
+              disabled={!editable}
+              onChange={(event) =>
+                saveConfiguration({
+                  ...configuration,
+                  tools: {
+                    ...configuration.tools,
+                    discoveryPolicy: event.target.value as 'whitelist' | 'blacklist',
+                  },
+                })
+              }
+            >
+              <option value="whitelist">Whitelist</option>
+              <option value="blacklist">Blacklist</option>
+            </select>
+          </ManagementField>
+          <div className="harness-management__policy-list">
+            {configuration.tools.items.map((tool) => (
+              <div className="harness-management__policy-item is-tool" key={tool.name}>
+                <label className="harness-management__check">
+                  <input
+                    type="checkbox"
+                    checked={tool.exposed}
+                    disabled={!editable}
+                    onChange={(event) =>
+                      saveConfiguration({
+                        ...configuration,
+                        tools: {
+                          ...configuration.tools,
+                          items: configuration.tools.items.map((item) =>
+                            item.name === tool.name
+                              ? { ...item, exposed: event.target.checked }
+                              : item,
+                          ),
+                        },
+                      })
+                    }
+                  />
+                  <span>{tool.name}</span>
+                </label>
+                <ManagementField label={`Guidance for ${tool.name}`} compact>
+                  <select
+                    value={tool.guidancePolicy}
+                    disabled={!editable}
+                    onChange={(event) =>
+                      saveConfiguration({
+                        ...configuration,
+                        tools: {
+                          ...configuration.tools,
+                          items: configuration.tools.items.map((item) =>
+                            item.name === tool.name
+                              ? {
+                                  ...item,
+                                  guidancePolicy: event.target.value as HarnessToolGuidancePolicy,
+                                }
+                              : item,
+                          ),
+                        },
+                      })
+                    }
+                  >
+                    <option value="none">Available when exposed</option>
+                    <option value="initial_ingestion">Initial guidance only</option>
+                    <option value="always_applicable">Initial + compression guidance</option>
+                  </select>
+                </ManagementField>
+              </div>
             ))}
           </div>
-          <p className="harness-inspector__field-note">
-            MCP server: {snapshot.mcp.required ? 'required' : 'optional'}
-          </p>
-        </InspectorCard>
+        </ManagementCard>
 
-        <InspectorCard
-          title="Model and reasoning"
-          state={snapshot.runtime.state}
-          description={snapshot.runtime.state.reason}
+        <ManagementCard
+          title="Allowed model and reasoning"
+          description="Callers may inherit the product default or choose any checked option."
         >
-          <div className="harness-inspector__field-row">
-            <label className="harness-inspector__field">
-              <span>Model</span>
-              <select value={snapshot.runtime.model ?? 'inherited'} disabled>
-                <option value="inherited">Inherited</option>
-                {snapshot.runtime.model && (
-                  <option value={snapshot.runtime.model}>{snapshot.runtime.model}</option>
-                )}
-              </select>
-            </label>
-            <label className="harness-inspector__field">
-              <span>Reasoning effort</span>
-              <select value={snapshot.runtime.reasoningEffort ?? 'inherited'} disabled>
-                <option value="inherited">Inherited</option>
-                {snapshot.runtime.reasoningEffort && (
-                  <option value={snapshot.runtime.reasoningEffort}>
-                    {snapshot.runtime.reasoningEffort}
-                  </option>
-                )}
-              </select>
-            </label>
-          </div>
-        </InspectorCard>
+          <OptionGroup
+            label="Models"
+            inheritedLabel="Allow inherited/default model"
+            inherited={configuration.runtime.allowInheritedModel}
+            options={configuration.runtime.availableModels}
+            selected={configuration.runtime.allowedModels}
+            editable={editable}
+            onInheritedChange={(allowInheritedModel) =>
+              saveConfiguration({
+                ...configuration,
+                runtime: { ...configuration.runtime, allowInheritedModel },
+              })
+            }
+            onSelectedChange={(allowedModels) =>
+              saveConfiguration({
+                ...configuration,
+                runtime: { ...configuration.runtime, allowedModels },
+              })
+            }
+          />
+          <OptionGroup
+            label="Reasoning levels"
+            inheritedLabel="Allow inherited/default reasoning"
+            inherited={configuration.runtime.allowInheritedReasoning}
+            options={configuration.runtime.availableReasoningEfforts}
+            selected={configuration.runtime.allowedReasoningEfforts}
+            editable={editable}
+            onInheritedChange={(allowInheritedReasoning) =>
+              saveConfiguration({
+                ...configuration,
+                runtime: { ...configuration.runtime, allowInheritedReasoning },
+              })
+            }
+            onSelectedChange={(allowedReasoningEfforts) =>
+              saveConfiguration({
+                ...configuration,
+                runtime: { ...configuration.runtime, allowedReasoningEfforts },
+              })
+            }
+          />
+        </ManagementCard>
 
-        <InspectorCard
+        <ManagementCard
           title="Sandbox and authority"
-          state={snapshot.runtime.state}
-          description={snapshot.runtime.authorityBoundary}
+          description={configuration.runtime.authoritySummary}
         >
-          <div className="harness-inspector__field-row">
-            <label className="harness-inspector__field">
-              <span>Sandbox</span>
-              <select value={snapshot.runtime.sandbox} disabled>
-                <option value={snapshot.runtime.sandbox}>
-                  {humanize(snapshot.runtime.sandbox)}
-                </option>
+          <div className="harness-management__field-row">
+            <ManagementField label="Sandbox">
+              <select
+                value={configuration.runtime.sandbox}
+                disabled={!editable}
+                onChange={(event) =>
+                  saveConfiguration({
+                    ...configuration,
+                    runtime: {
+                      ...configuration.runtime,
+                      sandbox: event.target
+                        .value as HarnessEffectiveConfiguration['runtime']['sandbox'],
+                    },
+                  })
+                }
+              >
+                {configuration.runtime.sandboxOptions.map((option) => (
+                  <option value={option} key={option}>
+                    {humanize(option)}
+                  </option>
+                ))}
               </select>
-            </label>
-            <label className="harness-inspector__field">
-              <span>Approval policy</span>
-              <select value={snapshot.runtime.approvalPolicy} disabled>
-                <option value={snapshot.runtime.approvalPolicy}>
-                  {snapshot.runtime.approvalPolicy}
-                </option>
+            </ManagementField>
+            <ManagementField label="Approval policy">
+              <select
+                value={configuration.runtime.approvalPolicy}
+                disabled={!editable}
+                onChange={(event) =>
+                  saveConfiguration({
+                    ...configuration,
+                    runtime: {
+                      ...configuration.runtime,
+                      approvalPolicy: event.target.value as 'never',
+                    },
+                  })
+                }
+              >
+                {configuration.runtime.approvalPolicyOptions.map((option) => (
+                  <option value={option} key={option}>
+                    {humanize(option)}
+                  </option>
+                ))}
               </select>
-            </label>
+            </ManagementField>
           </div>
-        </InspectorCard>
+          <p className="harness-management__deferred-note">
+            Broader sandbox customization is deferred.
+          </p>
+        </ManagementCard>
 
-        <InspectorCard
+        <ManagementCard
           title="Application hooks"
-          state={snapshot.hooks.state}
-          description={snapshot.hooks.state.reason}
+          description="Application-owned hooks exposed to this harness. Deeper hook design is deferred."
           wide
         >
-          <ul className="harness-inspector__hook-list">
-            {snapshot.hooks.items.map((hook) => (
+          <ul className="harness-management__hook-list">
+            {configuration.hooks.map((hook) => (
               <li key={hook.name}>
                 <div>
                   <strong>{hook.name}</strong>
                   <p>{hook.detail}</p>
                 </div>
-                <StatusBadge
-                  tone={hook.status === 'configured' ? 'positive' : 'caution'}
-                  label={humanize(hook.status)}
-                />
+                <StateBadge tone={hook.status === 'exposed' ? 'positive' : 'neutral'}>
+                  {hook.status === 'exposed' ? 'Exposed' : 'Not connected'}
+                </StateBadge>
               </li>
             ))}
           </ul>
-        </InspectorCard>
+        </ManagementCard>
 
-        <InspectorCard
-          title="Validation and provenance"
-          status={{
-            tone: 'neutral',
-            label: `Catalog schema v${snapshot.profile.catalogSchemaVersion}`,
-          }}
-          description={snapshot.provenance.summary}
-          wide
-        >
-          <dl className="harness-inspector__provenance">
-            <div>
-              <dt>Source</dt>
-              <dd>{snapshot.provenance.source}</dd>
-            </div>
-            <div>
-              <dt>Read boundary</dt>
-              <dd>{humanize(snapshot.provenance.kind)}</dd>
-            </div>
-            <div>
-              <dt>Session binding</dt>
-              <dd>{snapshot.sessionId}</dd>
-            </div>
-          </dl>
-          <ul className="harness-inspector__validation-list">
-            {snapshot.validation.checks.map((check) => (
-              <li key={check.label} className={`is-${check.status}`}>
-                {check.status === 'passed' ? (
-                  <CheckCircle2 size={17} aria-hidden="true" />
-                ) : check.status === 'failed' ? (
-                  <ShieldAlert size={17} aria-hidden="true" />
-                ) : (
-                  <CircleHelp size={17} aria-hidden="true" />
-                )}
-                <span>
-                  <strong>{check.label}</strong>
-                  <small>{check.detail}</small>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </InspectorCard>
+        <VersionControlCard
+          snapshot={snapshot}
+          commandPending={commandPending}
+          onCommand={onCommand}
+        />
+        <SessionUpdateCard
+          snapshot={snapshot}
+          commandPending={commandPending}
+          onCommand={onCommand}
+        />
       </div>
-
-      <section className="harness-inspector__apply" aria-label="Safe apply semantics">
-        <div>
-          <p className="eyebrow">Safe apply boundary</p>
-          <h3>Changes would create future configuration, not rewrite this session.</h3>
-          <ul>
-            {snapshot.apply.safeSemantics.map((semantic) => (
-              <li key={semantic}>{semantic}</li>
-            ))}
-          </ul>
-          <p>{snapshot.apply.reason}</p>
-        </div>
-        <button type="button" disabled>
-          Apply to future invocation
-        </button>
-      </section>
-    </InspectorShell>
+    </ManagementShell>
   );
 }
 
-function InspectorShell({ children, onBack }: { readonly children: ReactNode; onBack(): void }) {
+function ManagementShell({
+  snapshot,
+  onBack,
+  children,
+}: {
+  readonly snapshot?: ConversationHarnessManagementSnapshot;
+  onBack(): void;
+  readonly children: ReactNode;
+}) {
+  const name = snapshot?.workingCopy.configuration.identity.name;
   return (
-    <section className="harness-inspector" aria-label="Conversation Harness inspector">
-      <div className="harness-inspector__toolbar">
-        <button type="button" onClick={onBack}>
+    <section className="harness-management" aria-label="Harness Management">
+      <div className="harness-management__toolbar" aria-label="Harness Management controls">
+        <button className="harness-management__back" type="button" onClick={onBack}>
           <ArrowLeft size={16} aria-hidden="true" />
           Back to conversation
         </button>
+        <div className="harness-management__toolbar-context">
+          {snapshot?.agentIdentity && (
+            <AgentIdentityBadge identity={snapshot.agentIdentity} compact />
+          )}
+          <span>Harness</span>
+          <strong>{name ?? 'Management'}</strong>
+        </div>
+        {snapshot && (
+          <div className="harness-management__toolbar-status" aria-live="polite">
+            <StateBadge tone={workingStateTone(snapshot.workingCopy.state)}>
+              {workingStateLabel(snapshot.workingCopy.state)}
+            </StateBadge>
+            {snapshot.versionControl.support === 'recorded_preview' && (
+              <StateBadge tone="neutral">Preview only</StateBadge>
+            )}
+          </div>
+        )}
       </div>
-      <div className="harness-inspector__scroll">{children}</div>
+      <div className="harness-management__scroll">{children}</div>
     </section>
   );
 }
 
-function InspectorCard({
+function SessionVersionNotice({
+  snapshot,
+}: {
+  readonly snapshot: ConversationHarnessManagementSnapshot;
+}) {
+  const binding = snapshot.sessionBinding;
+  if (binding.state === 'untracked')
+    return (
+      <section
+        className="harness-management__notice is-neutral"
+        aria-label="Session harness version"
+      >
+        <strong>Session version is not tracked yet.</strong>
+        <span>{binding.reason}</span>
+      </section>
+    );
+  if (binding.state === 'current')
+    return (
+      <section
+        className="harness-management__notice is-current"
+        aria-label="Session harness version"
+      >
+        <Check size={18} aria-hidden="true" />
+        <strong>This Agent Session uses the active harness version.</strong>
+      </section>
+    );
+  return (
+    <section className="harness-management__notice" aria-label="Session harness version">
+      <RefreshCw size={18} aria-hidden="true" />
+      <div>
+        <strong>
+          This Agent Session uses v{binding.appliedRevision}; v{binding.desiredRevision} is
+          available.
+        </strong>
+        <span>{binding.reason}</span>
+      </div>
+    </section>
+  );
+}
+
+function ManagementCard({
   title,
-  state,
-  status,
   description,
   wide = false,
   children,
 }: {
   readonly title: string;
-  readonly state?: HarnessInspectorSectionState;
-  readonly status?: StatusPresentation;
   readonly description: string;
   readonly wide?: boolean;
   readonly children: ReactNode;
 }) {
   return (
-    <section className={`harness-inspector__card${wide ? ' is-wide' : ''}`}>
+    <section className={`harness-management__card${wide ? ' is-wide' : ''}`}>
       <header>
-        <h3>{title}</h3>
-        <div className="harness-inspector__card-badges">
-          {status && <StatusBadge {...status} />}
-          {state && (
-            <span className={`harness-inspector__scope is-${scopeTone(state.scope)}`}>
-              {scopeLabel(state.scope)} · {editabilityLabel(state.editability)}
-            </span>
-          )}
-        </div>
+        <h2>{title}</h2>
+        <p>{description}</p>
       </header>
-      <p className="harness-inspector__description">{description}</p>
       {children}
     </section>
   );
 }
 
-function StatusBadge({ tone, label }: StatusPresentation) {
-  return <span className={`harness-inspector__status is-${tone}`}>{label}</span>;
-}
-
-interface StatusPresentation {
-  readonly tone: 'positive' | 'caution' | 'negative' | 'neutral';
+function ManagementField({
+  label,
+  compact = false,
+  children,
+}: {
   readonly label: string;
+  readonly compact?: boolean;
+  readonly children: ReactNode;
+}) {
+  return (
+    <label className={`harness-management__field${compact ? ' is-compact' : ''}`}>
+      <span>{label}</span>
+      {children}
+    </label>
+  );
 }
 
-function validationPresentation(status: 'valid' | 'invalid' | 'unverified'): StatusPresentation {
-  if (status === 'valid') return { tone: 'positive', label: 'Validated snapshot' };
-  if (status === 'invalid') return { tone: 'negative', label: 'Validation invalid' };
-  return { tone: 'caution', label: 'Validation unverified' };
+function VersionTiles({ snapshot }: { readonly snapshot: ConversationHarnessManagementSnapshot }) {
+  const values = [
+    ['Catalog', `v${snapshot.catalogRevision}`],
+    ['Committed', versionLabel(snapshot.versionControl.committedRevision)],
+    ['Active', versionLabel(snapshot.versionControl.activeRevision)],
+    ['This session', versionLabel(snapshot.sessionBinding.appliedRevision)],
+  ];
+  return (
+    <dl className="harness-management__versions">
+      {values.map(([label, value]) => (
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd>{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
-function unavailablePresentation(
-  read: Exclude<ConversationHarnessInspectorRead, { readonly kind: 'available' }>,
-): { readonly heading: string } {
-  if (read.kind === 'invalid_catalog') return { heading: 'Harness catalog invalid' };
-  if (read.kind === 'unbound') return { heading: 'Session not bound' };
-  return { heading: 'Harness configuration unavailable' };
+function PolicyGuide() {
+  return (
+    <dl className="harness-management__policy-guide">
+      <div>
+        <dt>Always applicable</dt>
+        <dd>Full text at the start and after harness-aware compression.</dd>
+      </div>
+      <div>
+        <dt>Initial ingestion only</dt>
+        <dd>Full text when a new session begins.</dd>
+      </div>
+      <div>
+        <dt>Available</dt>
+        <dd>Exposed through the whitelist or blacklist.</dd>
+      </div>
+    </dl>
+  );
 }
 
-function deliveryPresentation(status: HarnessInspectorDeliveryStatus): StatusPresentation {
-  if (status === 'delivered') return { tone: 'positive', label: 'Delivery evidenced' };
-  if (status === 'not_delivered') return { tone: 'neutral', label: 'Not yet delivered' };
-  return { tone: 'caution', label: 'Delivery not evidenced' };
+function OptionGroup({
+  label,
+  inheritedLabel,
+  inherited,
+  options,
+  selected,
+  editable,
+  onInheritedChange,
+  onSelectedChange,
+}: {
+  readonly label: string;
+  readonly inheritedLabel: string;
+  readonly inherited: boolean;
+  readonly options: readonly string[];
+  readonly selected: readonly string[];
+  readonly editable: boolean;
+  onInheritedChange(value: boolean): void;
+  onSelectedChange(value: readonly string[]): void;
+}) {
+  const toggle = (option: string, checked: boolean) =>
+    onSelectedChange(checked ? [...selected, option] : selected.filter((item) => item !== option));
+  return (
+    <fieldset className="harness-management__option-group">
+      <legend>{label}</legend>
+      <label className="harness-management__check">
+        <input
+          type="checkbox"
+          checked={inherited}
+          disabled={!editable}
+          onChange={(event) => onInheritedChange(event.target.checked)}
+        />
+        <span>{inheritedLabel}</span>
+      </label>
+      {options.map((option) => (
+        <label className="harness-management__check" key={option}>
+          <input
+            type="checkbox"
+            checked={selected.includes(option)}
+            disabled={!editable}
+            onChange={(event) => toggle(option, event.target.checked)}
+          />
+          <span>{option}</span>
+        </label>
+      ))}
+      {options.length === 0 && <p>No restricted options are configured.</p>}
+    </fieldset>
+  );
 }
 
-function scopeTone(scope: HarnessInspectorSectionState['scope']): 'locked' | 'future' | 'neutral' {
-  if (scope === 'future_invocation') return 'future';
-  if (scope === 'application_owned') return 'locked';
-  return 'neutral';
+function VersionControlCard({
+  snapshot,
+  commandPending,
+  onCommand,
+}: {
+  readonly snapshot: ConversationHarnessManagementSnapshot;
+  readonly commandPending: boolean;
+  onCommand?(command: ConversationHarnessManagementCommand): void;
+}) {
+  const supported = snapshot.versionControl.support === 'recorded_preview' && Boolean(onCommand);
+  const canCommit = supported && snapshot.workingCopy.state === 'uncommitted' && !commandPending;
+  const canPush =
+    supported && snapshot.workingCopy.state === 'committed_not_active' && !commandPending;
+  return (
+    <ManagementCard
+      title="Version history"
+      description="Commit records a version. Push makes that committed version active locally; it does not publish to a remote."
+      wide
+    >
+      <div className="harness-management__lifecycle">
+        <div>
+          <span>Working copy</span>
+          <strong>{workingStateLabel(snapshot.workingCopy.state)}</strong>
+          <small>Based on v{snapshot.workingCopy.baseRevision}</small>
+        </div>
+        <div>
+          <span>Committed</span>
+          <strong>{versionLabel(snapshot.versionControl.committedRevision)}</strong>
+          <small>Recorded history</small>
+        </div>
+        <div>
+          <span>Active</span>
+          <strong>{versionLabel(snapshot.versionControl.activeRevision)}</strong>
+          <small>Used for new sessions</small>
+        </div>
+      </div>
+      <p className="harness-management__support-note">{snapshot.versionControl.reason}</p>
+      <div className="harness-management__actions">
+        <button
+          type="button"
+          disabled={!canCommit}
+          onClick={() =>
+            onCommand?.({
+              kind: 'commit',
+              expectedDraftRevision: snapshot.workingCopy.draftRevision,
+            })
+          }
+        >
+          <GitCommitHorizontal size={16} aria-hidden="true" />
+          Commit version
+        </button>
+        <button
+          className="is-primary"
+          type="button"
+          disabled={!canPush || snapshot.versionControl.committedRevision === null}
+          onClick={() => {
+            if (snapshot.versionControl.committedRevision === null) return;
+            onCommand?.({
+              kind: 'push',
+              expectedCommittedRevision: snapshot.versionControl.committedRevision,
+            });
+          }}
+        >
+          <Upload size={16} aria-hidden="true" />
+          Push version
+        </button>
+      </div>
+    </ManagementCard>
+  );
 }
 
-function scopeLabel(scope: HarnessInspectorSectionState['scope']): string {
-  if (scope === 'profile_configuration') return 'Profile configuration';
-  if (scope === 'future_invocation') return 'Future invocation';
-  return 'Application owned';
+function SessionUpdateCard({
+  snapshot,
+  commandPending,
+  onCommand,
+}: {
+  readonly snapshot: ConversationHarnessManagementSnapshot;
+  readonly commandPending: boolean;
+  onCommand?(command: ConversationHarnessManagementCommand): void;
+}) {
+  const configuredPolicy = snapshot.workingCopy.configuration.updatePolicy;
+  const defaultStrategy =
+    configuredPolicy.status === 'configured' ? configuredPolicy.defaultStrategy : 'next_prompt';
+  const [strategy, setStrategy] = useState<HarnessUpdateStrategy>(
+    snapshot.sessionBinding.updateStrategy ?? defaultStrategy,
+  );
+  const activeRevision = snapshot.versionControl.activeRevision;
+  const supported =
+    snapshot.versionControl.support === 'recorded_preview' &&
+    snapshot.sessionBinding.state !== 'untracked' &&
+    activeRevision !== null &&
+    Boolean(onCommand);
+  const request = (scope: 'current_session' | 'all_relevant_sessions') => {
+    if (activeRevision === null) return;
+    onCommand?.({
+      kind: 'request_session_update',
+      expectedActiveRevision: activeRevision,
+      scope,
+      strategy,
+    });
+  };
+  return (
+    <ManagementCard
+      title="Agent Session updates"
+      description="Choose how the active version should reach this session or every relevant session."
+      wide
+    >
+      <fieldset className="harness-management__update-choice" disabled={!supported}>
+        <legend>When to update</legend>
+        <label>
+          <input
+            type="radio"
+            name={`harness-update-${snapshot.sessionId}`}
+            value="next_prompt"
+            checked={strategy === 'next_prompt'}
+            onChange={() => setStrategy('next_prompt')}
+          />
+          <span>
+            <strong>Wait until next prompt</strong>
+            <small>Use the application send boundary before the next invocation.</small>
+          </span>
+        </label>
+        <label>
+          <input
+            type="radio"
+            name={`harness-update-${snapshot.sessionId}`}
+            value="interrupt"
+            checked={strategy === 'interrupt'}
+            onChange={() => setStrategy('interrupt')}
+          />
+          <span>
+            <strong>Interrupt now</strong>
+            <small>Requires a supported application/runtime interrupt path.</small>
+          </span>
+        </label>
+      </fieldset>
+      {configuredPolicy.status === 'configured' ? (
+        <ul className="harness-management__update-behavior" aria-label="Planned update behavior">
+          <li>Avoid re-prefixing skill or tool guidance already present.</li>
+          <li>Append changed guidance and tell the agent when removed items no longer apply.</li>
+          <li>Prompt reconstruction remains deferred.</li>
+        </ul>
+      ) : (
+        <p className="harness-management__support-note">{configuredPolicy.reason}</p>
+      )}
+      <div className="harness-management__actions">
+        <button
+          className="is-primary"
+          type="button"
+          disabled={!supported || commandPending}
+          onClick={() => request('current_session')}
+        >
+          Apply updated harness
+        </button>
+        <button
+          type="button"
+          disabled={!supported || commandPending}
+          onClick={() => request('all_relevant_sessions')}
+        >
+          Apply to all relevant sessions
+          {snapshot.sessionBinding.relevantSessionCount !== null
+            ? ` (${snapshot.sessionBinding.relevantSessionCount})`
+            : ''}
+        </button>
+      </div>
+    </ManagementCard>
+  );
 }
 
-function editabilityLabel(editability: HarnessInspectorSectionState['editability']): string {
-  if (editability === 'read_only') return 'Read only';
-  if (editability === 'immutable') return 'Immutable';
-  return 'Unsupported';
+function StateBadge({
+  tone,
+  children,
+}: {
+  readonly tone: 'positive' | 'caution' | 'neutral';
+  readonly children: ReactNode;
+}) {
+  return <span className={`harness-management__badge is-${tone}`}>{children}</span>;
+}
+
+function workingStateTone(
+  state: ConversationHarnessManagementSnapshot['workingCopy']['state'],
+): 'positive' | 'caution' | 'neutral' {
+  if (state === 'uncommitted') return 'caution';
+  if (state === 'committed_not_active') return 'neutral';
+  return 'positive';
+}
+
+function workingStateLabel(
+  state: ConversationHarnessManagementSnapshot['workingCopy']['state'],
+): string {
+  if (state === 'uncommitted') return 'Uncommitted changes';
+  if (state === 'committed_not_active') return 'Committed, not active';
+  return 'Up to date';
+}
+
+function versionLabel(revision: number | null): string {
+  return revision === null ? 'Not connected' : `v${revision}`;
 }
 
 function humanize(value: string): string {

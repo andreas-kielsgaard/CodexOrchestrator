@@ -1,8 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
-  ConversationHarnessInspectorSnapshot,
-  ConversationHarnessInspectorSource,
-  HarnessInspectorDeliveryStatus,
+  ConversationHarnessManagementSnapshot,
+  ConversationHarnessManagementSource,
+  HarnessEffectiveConfiguration,
 } from '../../application/conversationHarnesses';
 
 type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -56,7 +56,7 @@ type ProductHarnessInspection =
 
 export function createTauriConversationHarnessInspectorSource(
   invokeCommand: TauriInvoke = invoke,
-): ConversationHarnessInspectorSource {
+): ConversationHarnessManagementSource {
   return {
     async load({ sessionId }) {
       try {
@@ -88,171 +88,102 @@ export function createTauriConversationHarnessInspectorSource(
 
 function buildSnapshot(
   read: Extract<ProductHarnessInspection, { readonly kind: 'bound' }>,
-): ConversationHarnessInspectorSnapshot {
-  const delivery = deliverySnapshot(read.delivery);
+): ConversationHarnessManagementSnapshot {
   const profile = read.profile;
   return {
     sessionId: read.sessionId,
-    profile: {
-      key: profile.key,
-      title: 'Epic Plan Builder',
-      version: profile.version,
-      catalogSchemaVersion: read.catalogSchemaVersion,
+    harnessKey: profile.key,
+    agentIdentity: null,
+    catalogRevision: profile.version,
+    workingCopy: {
+      baseRevision: profile.version,
+      draftRevision: 0,
+      state: 'clean',
+      configuration: buildConfiguration(profile),
     },
-    provenance: {
-      kind: 'product_query',
-      source: 'Managed Plan Builder application query',
-      summary:
-        'Loaded through the Epic Plan Builder product boundary from its current validated catalog and durable Agent Session records.',
+    versionControl: {
+      support: 'not_connected',
+      committedRevision: null,
+      activeRevision: null,
+      reason: 'Version history and activation are not connected to the product yet.',
     },
-    validation: {
-      status: 'unverified',
-      checks: [
-        {
-          label: 'Catalog schema and profile',
-          status: 'passed',
-          detail: `The application validated catalog schema v${read.catalogSchemaVersion} and profile v${profile.version}.`,
-        },
-        {
-          label: 'Runtime policy shape',
-          status: 'passed',
-          detail: 'Sandbox, approval policy, skills, and MCP allow-list passed product validation.',
-        },
-        {
-          label: 'Repository skill source',
-          status: 'unverified',
-          detail:
-            'The catalog records canonical paths; this read does not prove per-invocation Codex discovery or selection.',
-        },
-        {
-          label: 'First-query delivery evidence',
-          status: delivery.validationStatus,
-          detail: delivery.detail,
-        },
-      ],
+    sessionBinding: {
+      state: 'untracked',
+      appliedRevision: null,
+      desiredRevision: null,
+      updateStrategy: null,
+      relevantSessionCount: null,
+      reason: 'This session association does not yet record an applied or desired harness version.',
     },
-    promptContext: {
+  };
+}
+
+function buildConfiguration(profile: ProductProfile): HarnessEffectiveConfiguration {
+  return {
+    identity: {
+      name: 'Epic Plan Builder',
+      machineKey: profile.key,
+      role: 'Epic Plan Builder',
+      permittedAgentNames: null,
+      visualIdentity: null,
+    },
+    promptPrefix: {
       content: profile.context,
-      delivery: {
-        policy: 'first_query',
-        status: delivery.status,
-        detail: delivery.detail,
-      },
-      state: {
-        scope: 'profile_configuration',
-        editability: 'read_only',
-        reason:
-          'This is the currently configured profile value. Delivery evidence is reported separately and does not rewrite the session.',
-      },
+      initialDelivery: 'prepend',
+      contextCompressionDelivery: 'deferred',
     },
     skills: {
+      discoveryPolicy: 'whitelist',
       items: profile.skillGuidance.map((skill) => ({
         name: skill.canonicalName,
         path: skill.canonicalPath,
         purpose: skill.purpose,
         useWhen: skill.useWhen,
+        policy: 'available',
       })),
-      state: {
-        scope: 'future_invocation',
-        editability: 'read_only',
-        reason:
-          'Skill guidance applies to a future invocation. Catalog presence does not prove Codex discovery or selection.',
-      },
     },
-    mcp: {
-      required: profile.mcp.required,
-      tools: profile.mcp.enabledTools,
-      state: {
-        scope: 'future_invocation',
-        editability: 'read_only',
-        reason:
-          'The managed product service assembles this allow-list before launch. This read does not mutate the invocation.',
-      },
+    tools: {
+      discoveryPolicy: 'whitelist',
+      items: profile.mcp.enabledTools.map((name) => ({
+        name,
+        exposed: true,
+        guidancePolicy: 'none',
+      })),
+      schemaBoundary:
+        'Tool schemas come from the runtime. The harness controls exposure and guidance timing, not schema text.',
     },
     runtime: {
-      model: profile.runtime.model,
-      reasoningEffort: profile.runtime.reasoningEffort,
+      allowInheritedModel: profile.runtime.model === null,
+      availableModels: profile.runtime.model ? [profile.runtime.model] : [],
+      allowedModels: profile.runtime.model ? [profile.runtime.model] : [],
+      allowInheritedReasoning: profile.runtime.reasoningEffort === null,
+      availableReasoningEfforts: profile.runtime.reasoningEffort
+        ? [profile.runtime.reasoningEffort]
+        : [],
+      allowedReasoningEfforts: profile.runtime.reasoningEffort
+        ? [profile.runtime.reasoningEffort]
+        : [],
       sandbox: profile.runtime.sandbox,
+      sandboxOptions: [profile.runtime.sandbox],
       approvalPolicy: profile.runtime.approvalPolicy,
-      authorityBoundary:
-        'Sandbox limits runtime access; product effects still require the MCP allow-list and server-side semantic authorization.',
-      state: {
-        scope: 'future_invocation',
-        editability: 'read_only',
-        reason:
-          'Model, reasoning, sandbox, and approval settings are assembled before launch. Inherited values remain explicit.',
-      },
+      approvalPolicyOptions: [profile.runtime.approvalPolicy],
+      authoritySummary:
+        'Sandbox and approval settings limit runtime access. Application actions still require product authorization.',
     },
-    hooks: {
-      items: [
-        {
-          name: 'Initial prompt delivery',
-          status: 'configured',
-          detail: 'The managed product service supplies the prefix on the first query only.',
-        },
-        {
-          name: 'Completion criteria',
-          status: 'declarative_only',
-          detail: `${profile.lifecycle.completionCriteria.join(', ')}. These criteria do not apply a product effect.`,
-        },
-        {
-          name: 'Configuration apply',
-          status: 'unsupported',
-          detail: 'No application command is connected to persist or activate harness edits.',
-        },
-      ],
-      state: {
-        scope: 'application_owned',
-        editability: 'unsupported',
-        reason:
-          'Hooks remain product-owned integration points. This inspector can report them but cannot grant or invoke them.',
-      },
-    },
-    apply: {
-      status: 'unsupported',
-      reason:
-        'This read-only integration has no persistence command, authorization decision, or runtime mutation transport.',
-      safeSemantics: [
-        'Validate the complete proposed profile before persistence.',
-        'Reject stale revisions instead of overwriting newer configuration.',
-        'Create a new version for future invocations; never rewrite delivered context.',
-        'Keep sandbox, tools, and hooks within product policy and server-side authority.',
-        'Record configuration provenance and activation separately.',
-      ],
+    hooks: profile.lifecycle.completionCriteria.map((criterion) => ({
+      name: humanize(criterion),
+      status: 'exposed',
+      detail: `Application hook exposed as ${criterion}.`,
+    })),
+    updatePolicy: {
+      status: 'not_configured',
+      reason: 'The compiled catalog does not yet contain an atomic session-update policy.',
     },
   };
 }
 
-function deliverySnapshot(
-  delivery: Extract<ProductHarnessInspection, { kind: 'bound' }>['delivery'],
-): {
-  readonly status: HarnessInspectorDeliveryStatus;
-  readonly validationStatus: 'passed' | 'unverified';
-  readonly detail: string;
-} {
-  if (delivery.status === 'delivered')
-    return {
-      status: 'delivered',
-      validationStatus: 'passed',
-      detail: `Durable launch acceptance exists for first-query invocation ${delivery.invocationId}. The acceptance fact does not retain the exact prompt bytes.`,
-    };
-  if (delivery.status === 'not_delivered')
-    return {
-      status: 'not_delivered',
-      validationStatus: 'passed',
-      detail:
-        delivery.reason === 'no_first_query'
-          ? 'No first query is durably recorded for this bound Agent Session.'
-          : 'The first query failed before the runtime accepted its launch.',
-    };
-  return {
-    status: 'not_evidenced',
-    validationStatus: 'unverified',
-    detail:
-      delivery.reason === 'binding_postdates_first_query'
-        ? 'The durable Plan Builder binding postdates the first query, so this query does not attribute that launch to the harness.'
-        : `First-query invocation ${delivery.invocationId} has no durable launch-acceptance fact. A started or terminal invocation alone is not delivery evidence.`,
-  };
+function humanize(value: string): string {
+  return value.replaceAll('_', ' ');
 }
 
 function decodeInspection(value: unknown): ProductHarnessInspection {

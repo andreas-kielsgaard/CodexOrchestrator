@@ -1,0 +1,47 @@
+.agent-identity-badge {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-identity-badge__marker {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--agent-accent) 38%, white);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--agent-accent) 12%, white);
+  color: var(--agent-accent);
+  place-items: center;
+}
+
+.agent-identity-badge__text {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.agent-identity-badge__text strong,
+.agent-identity-badge__text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-identity-badge__text strong {
+  color: #283a30;
+  font-size: 0.76rem;
+}
+
+.agent-identity-badge__text small {
+  color: #718077;
+  font-size: 0.65rem;
+}
+
+.agent-identity-badge.is-compact .agent-identity-badge__marker {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+}

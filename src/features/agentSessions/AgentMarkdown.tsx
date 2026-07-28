@@ -1,5 +1,4 @@
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { MarkdownContent } from '../../components/MarkdownContent';
 
 interface AgentMarkdownProps {
   children: string;
@@ -8,19 +7,8 @@ interface AgentMarkdownProps {
 
 export function AgentMarkdown({ children, className }: AgentMarkdownProps) {
   return (
-    <div className={['agent-markdown', className].filter(Boolean).join(' ')}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        skipHtml
-        components={{
-          a: ({ node, ...props }) => {
-            void node;
-            return <a {...props} target="_blank" rel="noreferrer" />;
-          },
-        }}
-      >
-        {children}
-      </ReactMarkdown>
-    </div>
+    <MarkdownContent className={['agent-markdown', className].filter(Boolean).join(' ')}>
+      {children}
+    </MarkdownContent>
   );
 }

@@ -1,5 +1,6 @@
 import { MessageSquarePlus, RefreshCw } from 'lucide-react';
 import type { AgentSessionSummaryDto } from '../../application/agentSessions';
+import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
 
 interface SessionSelectorProps {
   summaries: AgentSessionSummaryDto[];
@@ -44,7 +45,16 @@ export function SessionSelector({
               onClick={() => onSelect(summary.id)}
               aria-current={summary.id === selectedSessionId ? 'page' : undefined}
             >
-              <span>{summary.title}</span>
+              <div className="session-list-item__identity">
+                {summary.agentIdentity && (
+                  <AgentIdentityBadge identity={summary.agentIdentity} compact />
+                )}
+                <span className="session-list-item__title">
+                  {summary.agentIdentity
+                    ? `${summary.agentIdentity.name}: ${summary.agentIdentity.harnessRole}`
+                    : summary.title}
+                </span>
+              </div>
               <small>
                 {summary.hasActiveInvocation ? 'Working' : formatDate(summary.updatedAt)}
               </small>

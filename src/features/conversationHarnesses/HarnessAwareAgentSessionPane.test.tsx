@@ -1,146 +1,151 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import {
+  createRecordedHarnessManagementSource,
   recordedHarnessInspectorSessionId,
-  recordedHarnessInspectorSource,
 } from '../../dev/conversationHarnesses/recordedHarnessInspectorSource';
-import { ConversationHarnessInspector } from './ConversationHarnessInspector';
+import { ConversationHarnessManagement } from './ConversationHarnessInspector';
 import { HarnessAwareAgentSessionPane } from './HarnessAwareAgentSessionPane';
 
 describe('HarnessAwareAgentSessionPane', () => {
-  it('only offers inspection after the product context returns a bound harness', async () => {
+  it('offers management only after the Session-owned source returns a harness relationship', async () => {
+    const source = createRecordedHarnessManagementSource();
     const { rerender } = render(
       <HarnessAwareAgentSessionPane sessionId="session-without-harness">
         <div>Neutral conversation</div>
       </HarnessAwareAgentSessionPane>,
     );
-    expect(screen.queryByRole('button', { name: 'Inspect harness' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Manage harness' })).toBeNull();
 
     rerender(
-      <HarnessAwareAgentSessionPane
-        sessionId={recordedHarnessInspectorSessionId}
-        source={recordedHarnessInspectorSource}
-      >
+      <HarnessAwareAgentSessionPane sessionId={recordedHarnessInspectorSessionId} source={source}>
         <div>Product conversation</div>
       </HarnessAwareAgentSessionPane>,
     );
-    expect(await screen.findByRole('button', { name: 'Inspect harness' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Manage harness' })).toBeVisible();
   });
 
-  it('replaces the conversation with a truthful read-only inspector and returns clearly', async () => {
+  it('presents the management hierarchy without development proof language', async () => {
     render(
       <HarnessAwareAgentSessionPane
         sessionId={recordedHarnessInspectorSessionId}
-        source={recordedHarnessInspectorSource}
+        source={createRecordedHarnessManagementSource()}
       >
         <section aria-label="Product conversation">Conversation body</section>
       </HarnessAwareAgentSessionPane>,
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Inspect harness' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
 
-    expect(
-      await screen.findByRole('region', { name: 'Conversation Harness inspector' }),
-    ).toBeVisible();
+    expect(await screen.findByRole('region', { name: 'Harness Management' })).toBeVisible();
     expect(screen.queryByLabelText('Product conversation')).toBeNull();
-    expect(screen.getByRole('heading', { name: 'Epic Plan Builder' })).toBeVisible();
-    expect(screen.getByText('Profile configuration · Read only')).toBeVisible();
-    expect(screen.getByText('Delivery not evidenced')).toBeVisible();
-    expect(screen.getByText('Validation unverified')).toBeVisible();
-    expect(screen.queryByText('Delivered · immutable')).toBeNull();
-    expect(screen.getAllByText('Future invocation · Read only')).toHaveLength(4);
-    expect(screen.getByLabelText('Initial context prefix')).toHaveAttribute('readonly');
-    expect(screen.getByLabelText('Model')).toBeDisabled();
-    expect(screen.getByLabelText('Sandbox')).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Apply to future invocation' })).toBeDisabled();
-    expect(screen.getByText('Configuration apply')).toBeVisible();
-    expect(screen.getAllByText('unsupported')).not.toHaveLength(0);
+    expect(screen.getByText('Harness')).toBeVisible();
+    expect(screen.getAllByText('Epic Plan Builder').length).toBeGreaterThan(0);
+    expect(screen.getByRole('heading', { name: 'Prompt prefix' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Skill policy' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Tool policy' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Version history' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Agent Session updates' })).toBeVisible();
+    expect(
+      screen.getAllByLabelText(
+        /Antoni Gaudi|Zaha Hadid|Maya Lin|I M Pei|Frank Lloyd Wright|Eero Saarinen|Lina Bo Bardi|Buckminster Fuller|Jane Jacobs|Christopher Wren/,
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.queryByText(/validation|provenance|delivery not evidenced|future invocation/i),
+    ).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeEnabled();
+    expect(screen.getByLabelText('Sandbox')).toBeEnabled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Back to conversation' }));
     await waitFor(() => expect(screen.getByLabelText('Product conversation')).toBeVisible());
-    expect(screen.queryByRole('region', { name: 'Conversation Harness inspector' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Harness Management' })).toBeNull();
   });
 
-  it('keeps unavailable, invalid-catalog, and unbound reads explicit', () => {
+  it('keeps edited Markdown in the Session-owned working copy across navigation and remount', async () => {
+    const source = createRecordedHarnessManagementSource();
+    const first = render(
+      <HarnessAwareAgentSessionPane sessionId={recordedHarnessInspectorSessionId} source={source}>
+        <section aria-label="Planning view conversation">Conversation body</section>
+      </HarnessAwareAgentSessionPane>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText('Prompt prefix'), {
+      target: { value: '# Revised prefix\n\nKeep this durable working copy.' },
+    });
+    expect((await screen.findAllByText('Uncommitted changes')).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Back to conversation' }));
+    await screen.findByLabelText('Planning view conversation');
+    first.unmount();
+
+    render(
+      <HarnessAwareAgentSessionPane sessionId={recordedHarnessInspectorSessionId} source={source}>
+        <section aria-label="Agent Sessions view conversation">Conversation body</section>
+      </HarnessAwareAgentSessionPane>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
+
+    expect(await screen.findByRole('heading', { name: 'Revised prefix' })).toBeVisible();
+    expect(screen.getAllByText('Uncommitted changes').length).toBeGreaterThan(0);
+  });
+
+  it('records commit, push, and next-prompt update choices as separate preview transitions', async () => {
+    render(
+      <HarnessAwareAgentSessionPane
+        sessionId={recordedHarnessInspectorSessionId}
+        source={createRecordedHarnessManagementSource()}
+      >
+        <div>Conversation body</div>
+      </HarnessAwareAgentSessionPane>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
+    fireEvent.change(await screen.findByLabelText('Harness name'), {
+      target: { value: 'Epic Plan Builder Plus' },
+    });
+    expect((await screen.findAllByText('Uncommitted changes')).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Commit version' }));
+    expect((await screen.findAllByText('Committed, not active')).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Push version' }));
+    await waitFor(() => expect(screen.getAllByText('Up to date').length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply updated harness' }));
+    expect(
+      await screen.findByText('The update choice is recorded for this session in the preview.'),
+    ).toBeVisible();
+  });
+
+  it('keeps unavailable and unbound reads explicit', () => {
     const { rerender } = render(
-      <ConversationHarnessInspector
+      <ConversationHarnessManagement
         read={{ kind: 'unavailable', reason: 'The application query failed.' }}
         onBack={() => undefined}
       />,
     );
-    expect(screen.getByText('Harness configuration unavailable')).toBeVisible();
+    expect(screen.getByText('Harness unavailable')).toBeVisible();
     expect(screen.getByText('The application query failed.')).toBeVisible();
 
     rerender(
-      <ConversationHarnessInspector
-        read={{ kind: 'invalid_catalog', reason: 'The catalog failed validation.' }}
+      <ConversationHarnessManagement
+        read={{ kind: 'unbound', reason: 'The Session has no harness relationship.' }}
         onBack={() => undefined}
       />,
     );
-    expect(screen.getByText('Harness catalog invalid')).toBeVisible();
-    expect(screen.getByText('The catalog failed validation.')).toBeVisible();
-
-    rerender(
-      <ConversationHarnessInspector
-        read={{ kind: 'unbound', reason: 'The session has no Plan Builder binding.' }}
-        onBack={() => undefined}
-      />,
-    );
-    expect(screen.getByText('Session not bound')).toBeVisible();
-    expect(screen.getByText('The session has no Plan Builder binding.')).toBeVisible();
+    expect(screen.getByText('No harness assigned')).toBeVisible();
+    expect(screen.getByText('The Session has no harness relationship.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Back to conversation' })).toBeVisible();
   });
 
-  it('does not offer a control when the product query reports an unbound session', async () => {
-    const source = {
-      load: vi.fn(recordedHarnessInspectorSource.load),
-    };
+  it('does not offer a control when the source reports an unbound Session', async () => {
+    const source = createRecordedHarnessManagementSource();
     render(
       <HarnessAwareAgentSessionPane sessionId="unknown-session" source={source}>
         <div>Conversation body</div>
       </HarnessAwareAgentSessionPane>,
     );
 
-    await waitFor(() => expect(source.load).toHaveBeenCalledWith({ sessionId: 'unknown-session' }));
-    expect(screen.queryByRole('button', { name: 'Inspect harness' })).toBeNull();
-    expect(screen.getByText('Conversation body')).toBeVisible();
-  });
-
-  it('presents invalid validation separately from unverified validation', async () => {
-    const read = await recordedHarnessInspectorSource.load({
-      sessionId: recordedHarnessInspectorSessionId,
-    });
-    expect(read.kind).toBe('available');
-    if (read.kind !== 'available') return;
-
-    render(
-      <ConversationHarnessInspector
-        read={{
-          kind: 'available',
-          snapshot: {
-            ...read.snapshot,
-            validation: { ...read.snapshot.validation, status: 'invalid' },
-            promptContext: {
-              ...read.snapshot.promptContext,
-              delivery: {
-                ...read.snapshot.promptContext.delivery,
-                status: 'delivered',
-                detail: 'A durable delivery record exists.',
-              },
-              state: {
-                scope: 'application_owned',
-                editability: 'unsupported',
-                reason: 'Application-owned context.',
-              },
-            },
-          },
-        }}
-        onBack={() => undefined}
-      />,
+    expect(await screen.findByText('Conversation body')).toBeVisible();
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Manage harness' })).toBeNull(),
     );
-
-    expect(screen.getByText('Validation invalid')).toBeVisible();
-    expect(screen.queryByText('Validation unverified')).toBeNull();
-    expect(screen.getByText('Delivery evidenced')).toBeVisible();
-    expect(screen.getAllByText('Application owned · Unsupported')).toHaveLength(2);
   });
 });

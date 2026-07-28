@@ -22,7 +22,7 @@ import { recordedLocalEpicPlanProposalSource } from './recordedEpicPlanProposalS
 import {
   recordedHarnessInspectorSessionDetails,
   recordedHarnessInspectorSessionId,
-  recordedHarnessInspectorSource,
+  createRecordedHarnessManagementSource,
 } from '../conversationHarnesses/recordedHarnessInspectorSource';
 import { createElement } from 'react';
 import { HarnessInspectorDevelopmentSurface } from '../../features/conversationHarnesses';
@@ -57,6 +57,7 @@ export const recordedDevelopmentOrchestrationPresentation: OrchestrationPresenta
 export function createRecordedDevelopmentApplicationComposition(options?: {
   readonly initialSurface?: AppProps['initialSurface'];
 }): AppProps {
+  const harnessManagementSource = createRecordedHarnessManagementSource();
   return {
     agentSessionClient: recordedDevelopmentAgentSessionClient,
     orchestrationClient: recordedDevelopmentOrchestrationClient,
@@ -68,11 +69,12 @@ export function createRecordedDevelopmentApplicationComposition(options?: {
     epicAutomaticContinuationPolicyController:
       unsupportedProductEpicAutomaticContinuationPolicyController,
     epicPlanProposalSource: recordedLocalEpicPlanProposalSource,
-    harnessInspectorDevelopmentSurface: createElement(HarnessInspectorDevelopmentSurface, {
+    agentSessionHarnessManagementSource: harnessManagementSource,
+    harnessManagementPreviewSurface: createElement(HarnessInspectorDevelopmentSurface, {
       composition: {
         client: recordedDevelopmentAgentSessionClient,
         sessionId: recordedHarnessInspectorSessionId,
-        source: recordedHarnessInspectorSource,
+        source: harnessManagementSource,
       },
     }),
     initialSurface: options?.initialSurface,

@@ -26,7 +26,7 @@ import {
 } from './orchestrationPresentation';
 import { useOrchestrationLoad } from './useOrchestrationLoad';
 import type { ManagedPlanBuilderSessionClient } from '../infrastructure/orchestrations/tauriManagedPlanBuilderSessionClient';
-import type { ConversationHarnessInspectorSource } from '../application/conversationHarnesses';
+import type { ConversationHarnessManagementSource } from '../application/conversationHarnesses';
 import { useEpicInitiationConfirmation } from './useEpicInitiationConfirmation';
 import { EpicInitiationConfirmationModal } from './EpicInitiationConfirmationModal';
 
@@ -50,9 +50,9 @@ export interface AppProps {
   readonly epicPlanningDraftLifecycleClient?: EpicPlanningDraftLifecycleClient;
   readonly epicPlanProposalSourceForDraft?: (draftId: string) => EpicPlanProposalSource;
   readonly epicInitiationConfirmationClient?: EpicInitiationConfirmationClient;
-  readonly epicPlanBuilderHarnessInspectorSource?: ConversationHarnessInspectorSource;
+  readonly agentSessionHarnessManagementSource?: ConversationHarnessManagementSource;
   /** Present only in an injected development composition; production boot does not expose it. */
-  readonly harnessInspectorDevelopmentSurface?: ReactNode;
+  readonly harnessManagementPreviewSurface?: ReactNode;
   readonly initialSurface?: ApplicationSurface;
 }
 
@@ -76,12 +76,12 @@ export function App({
   epicPlanningDraftLifecycleClient,
   epicPlanProposalSourceForDraft,
   epicInitiationConfirmationClient,
-  epicPlanBuilderHarnessInspectorSource,
-  harnessInspectorDevelopmentSurface,
+  agentSessionHarnessManagementSource,
+  harnessManagementPreviewSurface,
   initialSurface = 'epics',
 }: AppProps) {
   const [surface, setSurface] = useState<ApplicationSurface>(() =>
-    initialSurface === 'harness-inspector' && !harnessInspectorDevelopmentSurface
+    initialSurface === 'harness-inspector' && !harnessManagementPreviewSurface
       ? 'epics'
       : initialSurface,
   );
@@ -250,14 +250,14 @@ export function App({
         >
           Agent Sessions
         </button>
-        {harnessInspectorDevelopmentSurface && (
+        {harnessManagementPreviewSurface && (
           <button
             className={surface === 'harness-inspector' ? 'active' : undefined}
             type="button"
             aria-current={surface === 'harness-inspector' ? 'page' : undefined}
             onClick={() => setSurface('harness-inspector')}
           >
-            Harness Inspector
+            Harness Management
           </button>
         )}
       </nav>
@@ -270,7 +270,7 @@ export function App({
           onInitiationFailure={refreshInitiationFailure}
           draft={selectedDraft ?? undefined}
           lifecycleClient={epicPlanningDraftLifecycleClient}
-          harnessInspectorSource={epicPlanBuilderHarnessInspectorSource}
+          harnessManagementSource={agentSessionHarnessManagementSource}
           onSessionCreated={bindCreatedPlanBuilderSession}
           onBack={() => {
             setSelectedDraft(null);
@@ -301,9 +301,12 @@ export function App({
           }}
         />
       ) : surface === 'agent-sessions' ? (
-        <StandaloneAgentSessionScreen client={agentSessionClient} />
+        <StandaloneAgentSessionScreen
+          client={agentSessionClient}
+          harnessManagementSource={agentSessionHarnessManagementSource}
+        />
       ) : (
-        harnessInspectorDevelopmentSurface
+        harnessManagementPreviewSurface
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 import { Check, ClipboardCopy } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ConversationViewport } from './ConversationViewport';
+import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
 import {
   browserAgentSessionClipboard,
   formatAgentSessionContext,
@@ -33,7 +34,10 @@ export function AgentSessionWorkspace({
   clipboard = browserAgentSessionClipboard,
 }: AgentSessionWorkspaceProps) {
   const active = Boolean(controller.transcript?.activeInvocationId);
-  const title = controller.details?.session.title ?? 'New Agent Session';
+  const identity = controller.details?.session.agentIdentity ?? null;
+  const title = identity
+    ? `${identity.name}: ${identity.harnessRole}`
+    : (controller.details?.session.title ?? 'New Agent Session');
   const showHeader = presentation.showHeader ?? true;
   const [copyState, setCopyState] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle');
   useEffect(() => {
@@ -84,18 +88,21 @@ export function AgentSessionWorkspace({
     >
       {showHeader && (
         <header className="agent-session-header">
-          <div>
-            <p className="eyebrow">Agent Session</p>
-            <h2>{title}</h2>
-            {presentation.composer?.showWorkingDirectory &&
-              controller.details?.session.workingDirectory && (
-                <p
-                  className="session-working-directory"
-                  title={controller.details.session.workingDirectory}
-                >
-                  {controller.details.session.workingDirectory}
-                </p>
-              )}
+          <div className="agent-session-header__identity">
+            {identity && <AgentIdentityBadge identity={identity} compact />}
+            <div>
+              <p className="eyebrow">Agent Session</p>
+              <h2>{title}</h2>
+              {presentation.composer?.showWorkingDirectory &&
+                controller.details?.session.workingDirectory && (
+                  <p
+                    className="session-working-directory"
+                    title={controller.details.session.workingDirectory}
+                  >
+                    {controller.details.session.workingDirectory}
+                  </p>
+                )}
+            </div>
           </div>
           <div className="agent-session-header__actions">
             {copyAction}

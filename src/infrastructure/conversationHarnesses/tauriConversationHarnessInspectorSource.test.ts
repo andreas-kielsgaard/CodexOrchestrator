@@ -28,8 +28,8 @@ const profile = {
   },
 } as const;
 
-describe('Tauri Conversation Harness inspector source', () => {
-  it('adapts the bound product query and preserves durable delivery states', async () => {
+describe('Tauri Conversation Harness Management source', () => {
+  it('adapts the product query without inventing version history, identity, or update support', async () => {
     const invoke = vi.fn().mockResolvedValue({
       kind: 'bound',
       sessionId: 'session-1',
@@ -47,58 +47,36 @@ describe('Tauri Conversation Harness inspector source', () => {
     expect(invoke).toHaveBeenCalledWith('load_managed_plan_builder_harness_inspection', {
       input: { sessionId: 'session-1' },
     });
+    expect(source.dispatch).toBeUndefined();
     expect(read.kind).toBe('available');
     if (read.kind !== 'available') return;
     expect(read.snapshot).toMatchObject({
       sessionId: 'session-1',
-      profile: {
-        key: 'epic_plan_builder',
-        version: 4,
-        catalogSchemaVersion: 2,
+      harnessKey: 'epic_plan_builder',
+      agentIdentity: null,
+      catalogRevision: 4,
+      versionControl: {
+        support: 'not_connected',
+        committedRevision: null,
+        activeRevision: null,
       },
-      provenance: { kind: 'product_query' },
-      validation: { status: 'unverified' },
-      promptContext: {
-        delivery: { status: 'delivered' },
+      sessionBinding: {
+        state: 'untracked',
+        appliedRevision: null,
+        desiredRevision: null,
       },
-    });
-    expect(read.snapshot.promptContext.delivery.detail).toContain('Durable launch acceptance');
-
-    invoke.mockResolvedValueOnce({
-      kind: 'bound',
-      sessionId: 'session-1',
-      catalogSchemaVersion: 2,
-      profile,
-      delivery: {
-        status: 'not_delivered',
-        reason: 'launch_rejected',
-      },
-    });
-    const notDelivered = await source.load({ sessionId: 'session-1' });
-    expect(notDelivered.kind).toBe('available');
-    if (notDelivered.kind === 'available')
-      expect(notDelivered.snapshot.promptContext.delivery.status).toBe('not_delivered');
-
-    invoke.mockResolvedValueOnce({
-      kind: 'bound',
-      sessionId: 'session-1',
-      catalogSchemaVersion: 2,
-      profile,
-      delivery: {
-        status: 'not_evidenced',
-        invocationId: 'invocation-1',
-        reason: 'launch_acceptance_missing',
+      workingCopy: {
+        baseRevision: 4,
+        state: 'clean',
+        configuration: {
+          identity: { name: 'Epic Plan Builder', machineKey: 'epic_plan_builder' },
+          updatePolicy: { status: 'not_configured' },
+        },
       },
     });
-    const notEvidenced = await source.load({ sessionId: 'session-1' });
-    expect(notEvidenced.kind).toBe('available');
-    if (notEvidenced.kind === 'available') {
-      expect(notEvidenced.snapshot.promptContext.delivery.status).toBe('not_evidenced');
-      expect(notEvidenced.snapshot.validation.checks.at(-1)?.status).toBe('unverified');
-    }
   });
 
-  it('keeps unbound, invalid-catalog, unavailable, and invalid transport states distinct', async () => {
+  it('keeps transport read states distinct while leaving management commands unavailable', async () => {
     const invoke = vi.fn();
     const source = createTauriConversationHarnessInspectorSource(invoke);
 
@@ -121,5 +99,6 @@ describe('Tauri Conversation Harness inspector source', () => {
     await expect(source.load({ sessionId: 'session-1' })).resolves.toMatchObject({
       kind: 'unavailable',
     });
+    expect(source.dispatch).toBeUndefined();
   });
 });

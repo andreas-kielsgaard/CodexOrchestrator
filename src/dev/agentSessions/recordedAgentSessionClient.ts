@@ -311,6 +311,7 @@ function summary(
     hasActiveInvocation: invocations.some(({ invocation }) =>
       ['pending', 'running'].includes(invocation.status),
     ),
+    agentIdentity: session.agentIdentity,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
   };

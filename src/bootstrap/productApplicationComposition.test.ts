@@ -26,7 +26,7 @@ describe('product application composition', () => {
       }),
     ).resolves.toMatchObject({ status: 'unsupported' });
     await expect(
-      composition.epicPlanBuilderHarnessInspectorSource?.load({ sessionId: 'session-1' }),
+      composition.agentSessionHarnessManagementSource?.load({ sessionId: 'session-1' }),
     ).resolves.toMatchObject({ kind: 'unavailable' });
   });
 

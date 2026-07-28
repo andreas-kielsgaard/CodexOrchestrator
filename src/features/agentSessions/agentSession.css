@@ -69,7 +69,8 @@
   background: #e9ede7;
 }
 
-.session-list-item span {
+.session-list-item > span,
+.session-list-item__title {
   overflow: hidden;
   font-size: 0.84rem;
   font-weight: 720;
@@ -129,6 +130,18 @@
 
 .agent-session-header h2 {
   font-size: 1.15rem;
+}
+
+.agent-session-header__identity,
+.session-list-item__identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.session-list-item__identity > span {
+  min-width: 0;
 }
 
 .agent-session-header__actions,

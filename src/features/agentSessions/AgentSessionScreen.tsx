@@ -1,5 +1,7 @@
 import { AlertCircle, X } from 'lucide-react';
 import type { AgentSessionClient } from '../../application/agentSessions';
+import type { ConversationHarnessManagementSource } from '../../application/conversationHarnesses';
+import { HarnessAwareAgentSessionPane } from '../conversationHarnesses/HarnessAwareAgentSessionPane';
 import { AgentSessionWorkspace } from './AgentSessionWorkspace';
 import { SessionSelector } from './SessionSelector';
 import { useAgentSession, useAgentSessionCollection } from './useAgentSessionController';
@@ -7,8 +9,12 @@ import './agentSession.css';
 
 export interface AgentSessionScreenProps {
   client: AgentSessionClient;
+  harnessManagementSource?: ConversationHarnessManagementSource;
 }
-export function StandaloneAgentSessionScreen({ client }: AgentSessionScreenProps) {
+export function StandaloneAgentSessionScreen({
+  client,
+  harnessManagementSource,
+}: AgentSessionScreenProps) {
   const collection = useAgentSessionCollection(client);
   const session = useAgentSession(client, {
     selectedSessionId: collection.selectedSessionId,
@@ -33,7 +39,16 @@ export function StandaloneAgentSessionScreen({ client }: AgentSessionScreenProps
           </button>
         </section>
       )}
-      <AgentSessionWorkspace controller={session} />
+      {collection.selectedSessionId && harnessManagementSource ? (
+        <HarnessAwareAgentSessionPane
+          sessionId={collection.selectedSessionId}
+          source={harnessManagementSource}
+        >
+          <AgentSessionWorkspace controller={session} />
+        </HarnessAwareAgentSessionPane>
+      ) : (
+        <AgentSessionWorkspace controller={session} />
+      )}
     </main>
   );
 }

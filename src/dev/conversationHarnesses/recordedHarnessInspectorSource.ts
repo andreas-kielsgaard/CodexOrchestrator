@@ -1,7 +1,15 @@
 import type { AgentRuntimeEventDto, AgentSessionDetailsDto } from '../../application/agentSessions';
+import {
+  assignAgentIdentity,
+  harnessAgentNamePools,
+  harnessVisualIdentities,
+} from '../../application/agentSessions';
 import type {
-  ConversationHarnessInspectorSnapshot,
-  ConversationHarnessInspectorSource,
+  ConversationHarnessManagementCommand,
+  ConversationHarnessManagementRead,
+  ConversationHarnessManagementSnapshot,
+  ConversationHarnessManagementSource,
+  HarnessEffectiveConfiguration,
 } from '../../application/conversationHarnesses';
 import catalogJson from '../../../src-tauri/src/orchestration/conversation_harness_catalog.json';
 
@@ -40,35 +48,66 @@ const catalog = catalogJson as RecordedCatalog;
 export const recordedHarnessInspectorSessionId = 'recorded-harness-inspector-plan-builder';
 const profileKey = 'epic_plan_builder';
 const recordedAt = '2026-07-17T09:00:00.000Z';
+const recordedProfile = catalog.harnesses.find((profile) => profile.key === profileKey);
+if (!recordedProfile) throw new Error('Recorded Harness profile is missing.');
+const recordedSessionAppliedRevision = Math.max(1, recordedProfile.version - 1);
+const recordedAgentIdentity = assignAgentIdentity({
+  sessionId: recordedHarnessInspectorSessionId,
+  harnessKey: profileKey,
+  harnessRole: 'Epic Plan Builder',
+  harnessRevision: recordedSessionAppliedRevision,
+  visualIdentity: harnessVisualIdentities.epic_plan_builder,
+  permittedNames: harnessAgentNamePools.epic_plan_builder,
+  assignedAt: recordedAt,
+  assignmentKind: 'recorded_preview',
+});
 
 export const recordedHarnessInspectorSessionDetails: AgentSessionDetailsDto =
   createRecordedHarnessInspectorSession();
 
-export const recordedHarnessInspectorSource: ConversationHarnessInspectorSource = {
-  async load({ sessionId }) {
-    if (sessionId !== recordedHarnessInspectorSessionId)
-      return {
-        kind: 'unbound',
-        reason: 'This recorded Agent Session has no product harness configuration.',
-      };
-    try {
-      return { kind: 'available', snapshot: buildSnapshot(sessionId) };
-    } catch {
-      return {
-        kind: 'unavailable',
-        reason: 'The checked-in Conversation Harness catalog is invalid or unavailable.',
-      };
-    }
-  },
-};
+export function createRecordedHarnessManagementSource(): ConversationHarnessManagementSource {
+  let snapshot: ConversationHarnessManagementSnapshot | null = null;
+  return {
+    async load({ sessionId }) {
+      if (sessionId !== recordedHarnessInspectorSessionId) return unboundRead();
+      try {
+        snapshot ??= buildSnapshot(sessionId);
+        return availableRead(snapshot);
+      } catch {
+        return {
+          kind: 'unavailable',
+          reason: 'The harness configuration could not be loaded.',
+        };
+      }
+    },
+    async dispatch({ sessionId, command }) {
+      if (sessionId !== recordedHarnessInspectorSessionId) return unboundRead();
+      try {
+        snapshot ??= buildSnapshot(sessionId);
+        snapshot = reduceRecordedCommand(snapshot, command);
+        return availableRead(snapshot);
+      } catch (error) {
+        return {
+          kind: 'unavailable',
+          reason:
+            error instanceof Error ? error.message : 'The preview action could not be recorded.',
+        };
+      }
+    },
+  };
+}
 
-function buildSnapshot(sessionId: string): ConversationHarnessInspectorSnapshot {
-  if (catalog.schemaVersion !== 2) throw new Error('unsupported schema');
+export const recordedHarnessInspectorSource = createRecordedHarnessManagementSource();
+
+function buildSnapshot(sessionId: string): ConversationHarnessManagementSnapshot {
+  if (catalog.schemaVersion !== 2) throw new Error('Unsupported harness catalog.');
   const profile = catalog.harnesses.find((candidate) => candidate.key === profileKey);
   if (!profile || profile.version < 1 || !profile.context.trim())
-    throw new Error('invalid profile');
-  if (profile.lifecycle.contextDelivery !== 'first_query') throw new Error('invalid delivery');
-  if (profile.runtime.approvalPolicy !== 'never') throw new Error('invalid approval policy');
+    throw new Error('Harness configuration is incomplete.');
+  if (profile.lifecycle.contextDelivery !== 'first_query')
+    throw new Error('Harness prompt policy is unsupported.');
+  if (profile.runtime.approvalPolicy !== 'never')
+    throw new Error('Harness approval policy is unsupported.');
   const sandbox = runtimeSandbox(profile.runtime.sandbox);
   if (
     (profile.runtime.model !== null && typeof profile.runtime.model !== 'string') ||
@@ -85,145 +124,214 @@ function buildSnapshot(sessionId: string): ConversationHarnessInspectorSnapshot 
     profile.mcp.enabledTools.some((tool) => !tool.trim()) ||
     profile.lifecycle.completionCriteria.some((criterion) => !criterion.trim())
   )
-    throw new Error('invalid declarative settings');
+    throw new Error('Harness configuration is incomplete.');
 
   return {
     sessionId,
-    profile: {
-      key: profile.key,
-      title: 'Epic Plan Builder',
-      version: profile.version,
-      catalogSchemaVersion: catalog.schemaVersion,
+    harnessKey: profile.key,
+    agentIdentity: recordedAgentIdentity,
+    catalogRevision: profile.version,
+    workingCopy: {
+      baseRevision: profile.version,
+      draftRevision: 1,
+      state: 'clean',
+      configuration: buildConfiguration(profile, sandbox),
     },
-    provenance: {
-      kind: 'recorded_adapter',
-      source: 'src-tauri/src/orchestration/conversation_harness_catalog.json',
-      summary:
-        'Parsed from the checked-in catalog by a recorded development adapter. No live product query or durable session binding was performed.',
+    versionControl: {
+      support: 'recorded_preview',
+      committedRevision: profile.version,
+      activeRevision: profile.version,
+      reason: 'Preview actions are kept only while this app remains open.',
     },
-    validation: {
-      status: 'unverified',
-      checks: [
-        {
-          label: 'Catalog schema',
-          status: 'passed',
-          detail: 'Schema v2 and the selected profile satisfy the recorded adapter shape checks.',
-        },
-        {
-          label: 'Runtime policy shape',
-          status: 'passed',
-          detail: 'Sandbox, approval policy, skills, and MCP allow-list are structurally valid.',
-        },
-        {
-          label: 'Repository skill source',
-          status: 'unverified',
-          detail:
-            'The canonical path is recorded; this browser adapter does not prove file discovery.',
-        },
-        {
-          label: 'Session context delivery evidence',
-          status: 'unverified',
-          detail: 'Delivery is fixture state, not a durable product observation from this session.',
-        },
-      ],
+    sessionBinding: {
+      state: 'update_available',
+      appliedRevision: recordedSessionAppliedRevision,
+      desiredRevision: profile.version,
+      updateStrategy: null,
+      relevantSessionCount: 1,
+      reason: 'This recorded session is one version behind the active preview.',
     },
-    promptContext: {
+  };
+}
+
+function buildConfiguration(
+  profile: RecordedProfile,
+  sandbox: HarnessEffectiveConfiguration['runtime']['sandbox'],
+): HarnessEffectiveConfiguration {
+  const availableModels = ['gpt-5.6-terra', 'gpt-5.6-sol'];
+  const availableReasoningEfforts = ['low', 'medium', 'high', 'xhigh'];
+  return {
+    identity: {
+      name: 'Epic Plan Builder',
+      machineKey: profile.key,
+      role: 'Epic Plan Builder',
+      permittedAgentNames: harnessAgentNamePools.epic_plan_builder,
+      visualIdentity: harnessVisualIdentities.epic_plan_builder,
+    },
+    promptPrefix: {
       content: profile.context,
-      delivery: {
-        policy: 'first_query',
-        status: 'not_evidenced',
-        detail:
-          'The recorded adapter has no durable observation that this configured prefix reached the session.',
-      },
-      state: {
-        scope: 'profile_configuration',
-        editability: 'read_only',
-        reason:
-          'This is the configured profile value. A future versioned editor could revise later configuration, but this exploration is read only.',
-      },
+      initialDelivery: 'prepend',
+      contextCompressionDelivery: 'deferred',
     },
     skills: {
+      discoveryPolicy: 'whitelist',
       items: profile.skillGuidance.map((skill) => ({
         name: skill.canonicalName,
         path: skill.canonicalPath,
         purpose: skill.purpose,
         useWhen: skill.useWhen,
+        policy: 'available',
       })),
-      state: {
-        scope: 'future_invocation',
-        editability: 'read_only',
-        reason:
-          'Skill guidance could be revised for a future invocation. Catalog presence does not prove that Codex discovered or selected a skill.',
-      },
     },
-    mcp: {
-      required: profile.mcp.required,
-      tools: profile.mcp.enabledTools,
-      state: {
-        scope: 'future_invocation',
-        editability: 'read_only',
-        reason:
-          'A specialized product service assembles this allow-list before launch. The current invocation is not mutated.',
-      },
+    tools: {
+      discoveryPolicy: 'whitelist',
+      items: profile.mcp.enabledTools.map((name) => ({
+        name,
+        exposed: true,
+        guidancePolicy: 'none',
+      })),
+      schemaBoundary:
+        'Tool schemas come from the runtime. The harness controls exposure and guidance timing, not schema text.',
     },
     runtime: {
-      model: profile.runtime.model,
-      reasoningEffort: profile.runtime.reasoningEffort,
+      allowInheritedModel: profile.runtime.model === null,
+      availableModels,
+      allowedModels: profile.runtime.model ? [profile.runtime.model] : availableModels,
+      allowInheritedReasoning: profile.runtime.reasoningEffort === null,
+      availableReasoningEfforts,
+      allowedReasoningEfforts: profile.runtime.reasoningEffort
+        ? [profile.runtime.reasoningEffort]
+        : ['medium', 'high', 'xhigh'],
       sandbox,
+      sandboxOptions: ['read_only', 'workspace_write', 'danger_full_access'],
       approvalPolicy: 'never',
-      authorityBoundary:
-        'Sandbox limits runtime access; product effects still require the MCP allow-list and server-side semantic authorization. A profile alone grants no effect.',
-      state: {
-        scope: 'future_invocation',
-        editability: 'read_only',
-        reason:
-          'Model, reasoning, sandbox, and approval settings are assembled before launch. Inherited values remain explicit.',
-      },
+      approvalPolicyOptions: ['never'],
+      authoritySummary:
+        'Sandbox and approval settings limit runtime access. Application actions still require product authorization.',
     },
-    hooks: {
-      items: [
-        {
-          name: 'Initial prompt delivery',
-          status: 'configured',
-          detail: 'The managed product service delivers the prefix on the first query only.',
-        },
-        {
-          name: 'Completion criteria',
-          status: 'declarative_only',
-          detail: `${profile.lifecycle.completionCriteria.join(', ')}. This criterion does not apply a product effect.`,
-        },
-        {
-          name: 'Configuration apply',
-          status: 'unsupported',
-          detail: 'No application command is connected to persist or activate harness edits.',
-        },
-      ],
-      state: {
-        scope: 'application_owned',
-        editability: 'unsupported',
-        reason:
-          'Hooks remain product-owned integration points. This inspector can report them but cannot grant or invoke them.',
-      },
-    },
-    apply: {
-      status: 'unsupported',
-      reason:
-        'This exploration has no persistence command, authorization decision, or runtime mutation transport.',
-      safeSemantics: [
-        'Validate the complete proposed profile before persistence.',
-        'Reject stale revisions instead of overwriting newer configuration.',
-        'Create a new version for future invocations; never rewrite context evidenced as delivered.',
-        'Keep sandbox, tools, and hooks within product policy and server-side authority.',
-        'Record configuration provenance and the activation result separately.',
-      ],
+    hooks: profile.lifecycle.completionCriteria.map((criterion) => ({
+      name: humanize(criterion),
+      status: 'exposed',
+      detail: `Application hook exposed as ${criterion}.`,
+    })),
+    updatePolicy: {
+      status: 'configured',
+      defaultStrategy: 'next_prompt',
+      avoidDuplicateGuidance: true,
+      notifyRemovedItems: true,
+      promptReconstruction: 'deferred',
     },
   };
 }
 
-function runtimeSandbox(value: string): ConversationHarnessInspectorSnapshot['runtime']['sandbox'] {
+function reduceRecordedCommand(
+  snapshot: ConversationHarnessManagementSnapshot,
+  command: ConversationHarnessManagementCommand,
+): ConversationHarnessManagementSnapshot {
+  if (command.kind === 'save_working_copy') {
+    assertDraftRevision(snapshot, command.expectedDraftRevision);
+    return {
+      ...snapshot,
+      workingCopy: {
+        ...snapshot.workingCopy,
+        draftRevision: snapshot.workingCopy.draftRevision + 1,
+        state: 'uncommitted',
+        configuration: command.configuration,
+      },
+    };
+  }
+  if (command.kind === 'commit') {
+    assertDraftRevision(snapshot, command.expectedDraftRevision);
+    if (snapshot.workingCopy.state !== 'uncommitted') return snapshot;
+    const committedRevision =
+      Math.max(
+        snapshot.versionControl.committedRevision ?? snapshot.workingCopy.baseRevision,
+        snapshot.versionControl.activeRevision ?? snapshot.workingCopy.baseRevision,
+      ) + 1;
+    return {
+      ...snapshot,
+      workingCopy: {
+        ...snapshot.workingCopy,
+        baseRevision: committedRevision,
+        draftRevision: snapshot.workingCopy.draftRevision + 1,
+        state: 'committed_not_active',
+      },
+      versionControl: {
+        ...snapshot.versionControl,
+        committedRevision,
+      },
+    };
+  }
+  if (command.kind === 'push') {
+    if (snapshot.versionControl.committedRevision !== command.expectedCommittedRevision)
+      throw new Error('The committed version changed. Reload before pushing.');
+    return {
+      ...snapshot,
+      workingCopy: {
+        ...snapshot.workingCopy,
+        state: 'clean',
+      },
+      versionControl: {
+        ...snapshot.versionControl,
+        activeRevision: command.expectedCommittedRevision,
+      },
+      sessionBinding: {
+        ...snapshot.sessionBinding,
+        state:
+          snapshot.sessionBinding.appliedRevision === command.expectedCommittedRevision
+            ? 'current'
+            : 'update_available',
+        desiredRevision: command.expectedCommittedRevision,
+        updateStrategy: null,
+      },
+    };
+  }
+  if (snapshot.versionControl.activeRevision !== command.expectedActiveRevision)
+    throw new Error('The active version changed. Reload before updating sessions.');
+  return {
+    ...snapshot,
+    sessionBinding: {
+      ...snapshot.sessionBinding,
+      state: 'queued',
+      desiredRevision: command.expectedActiveRevision,
+      updateStrategy: command.strategy,
+      reason:
+        command.scope === 'current_session'
+          ? 'The update choice is recorded for this session in the preview.'
+          : 'The update choice is recorded for every relevant preview session.',
+    },
+  };
+}
+
+function assertDraftRevision(
+  snapshot: ConversationHarnessManagementSnapshot,
+  expectedDraftRevision: number,
+) {
+  if (snapshot.workingCopy.draftRevision !== expectedDraftRevision)
+    throw new Error('The working copy changed. Reload before saving.');
+}
+
+function availableRead(
+  snapshot: ConversationHarnessManagementSnapshot,
+): ConversationHarnessManagementRead {
+  return { kind: 'available', snapshot };
+}
+
+function unboundRead(): ConversationHarnessManagementRead {
+  return {
+    kind: 'unbound',
+    reason: 'This Agent Session has no harness relationship.',
+  };
+}
+
+function runtimeSandbox(value: string): HarnessEffectiveConfiguration['runtime']['sandbox'] {
   if (value === 'read_only' || value === 'workspace_write' || value === 'danger_full_access')
     return value;
-  throw new Error('unsupported sandbox');
+  throw new Error('Unsupported sandbox.');
+}
+
+function humanize(value: string): string {
+  return value.replaceAll('_', ' ');
 }
 
 function createRecordedHarnessInspectorSession(): AgentSessionDetailsDto {
@@ -254,6 +362,7 @@ function createRecordedHarnessInspectorSession(): AgentSessionDetailsDto {
       },
       workingDirectory: null,
       requestedOptions: { model: null, sandbox: 'read_only' },
+      agentIdentity: recordedAgentIdentity,
       createdAt: recordedAt,
       updatedAt: recordedAt,
     },

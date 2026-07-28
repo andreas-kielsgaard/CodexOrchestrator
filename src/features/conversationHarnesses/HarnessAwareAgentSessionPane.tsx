@@ -1,15 +1,16 @@
 import { SlidersHorizontal } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import type {
-  ConversationHarnessInspectorRead,
-  ConversationHarnessInspectorSource,
+  ConversationHarnessManagementCommand,
+  ConversationHarnessManagementRead,
+  ConversationHarnessManagementSource,
 } from '../../application/conversationHarnesses';
-import { ConversationHarnessInspector } from './ConversationHarnessInspector';
+import { ConversationHarnessManagement } from './ConversationHarnessInspector';
 import './harnessInspector.css';
 
 export interface HarnessAwareAgentSessionPaneProps {
   readonly sessionId: string;
-  readonly source?: ConversationHarnessInspectorSource;
+  readonly source?: ConversationHarnessManagementSource;
   readonly children: ReactNode;
 }
 
@@ -19,14 +20,17 @@ export function HarnessAwareAgentSessionPane({
   source,
   children,
 }: HarnessAwareAgentSessionPaneProps) {
-  const [mode, setMode] = useState<'conversation' | 'inspector'>('conversation');
-  const [boundRead, setBoundRead] = useState<ConversationHarnessInspectorRead | null>(null);
-  const [read, setRead] = useState<ConversationHarnessInspectorRead | null>(null);
+  const [mode, setMode] = useState<'conversation' | 'management'>('conversation');
+  const [boundRead, setBoundRead] = useState<ConversationHarnessManagementRead | null>(null);
+  const [read, setRead] = useState<ConversationHarnessManagementRead | null>(null);
+  const [commandPending, setCommandPending] = useState(false);
+  const [commandError, setCommandError] = useState<string | null>(null);
 
   useEffect(() => {
     setMode('conversation');
     setRead(null);
     setBoundRead(null);
+    setCommandError(null);
     if (!source) return;
     let active = true;
     void source.load({ sessionId }).then(
@@ -44,7 +48,7 @@ export function HarnessAwareAgentSessionPane({
   }, [sessionId, source]);
 
   useEffect(() => {
-    if (mode !== 'inspector' || !source) return;
+    if (mode !== 'management' || !source) return;
     let active = true;
     setRead(null);
     void source.load({ sessionId }).then(
@@ -63,7 +67,26 @@ export function HarnessAwareAgentSessionPane({
 
   const openInspector = () => {
     if (!source || boundRead?.kind !== 'available') return;
-    setMode('inspector');
+    setMode('management');
+  };
+
+  const runCommand = async (command: ConversationHarnessManagementCommand) => {
+    if (!source?.dispatch || commandPending) return;
+    setCommandPending(true);
+    setCommandError(null);
+    try {
+      const next = await source.dispatch({ sessionId, command });
+      if (next.kind !== 'available') {
+        setCommandError(next.reason);
+        return;
+      }
+      setRead(next);
+      setBoundRead(next);
+    } catch {
+      setCommandError('The harness change could not be recorded.');
+    } finally {
+      setCommandPending(false);
+    }
   };
 
   return (
@@ -77,13 +100,19 @@ export function HarnessAwareAgentSessionPane({
               onClick={openInspector}
             >
               <SlidersHorizontal size={15} aria-hidden="true" />
-              Inspect harness
+              Manage harness
             </button>
           )}
           {children}
         </>
       ) : (
-        <ConversationHarnessInspector read={read} onBack={() => setMode('conversation')} />
+        <ConversationHarnessManagement
+          read={read}
+          commandPending={commandPending}
+          commandError={commandError}
+          onBack={() => setMode('conversation')}
+          onCommand={source?.dispatch ? (command) => void runCommand(command) : undefined}
+        />
       )}
     </div>
   );
