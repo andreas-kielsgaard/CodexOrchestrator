@@ -2,13 +2,13 @@ import { useEffect, useState } from 'react';
 import { createProductApplicationComposition } from '../bootstrap/productApplicationComposition';
 import { App, type AppProps } from './App';
 
-/** The optional recorded review composition is development-only and never enters product boot. */
+/** Development tools are composed only in the launcher build, never in isolated review windows. */
 export function ApplicationRoot() {
   const [composition, setComposition] = useState<AppProps | null>(null);
 
   useEffect(() => {
     let active = true;
-    if (!viteDevelopmentMode()) {
+    if (!viteDevelopmentMode() || humanReviewInstance()) {
       setComposition(createProductApplicationComposition());
       return () => {
         active = false;
@@ -35,20 +35,22 @@ async function loadDevelopmentComposition(): Promise<AppProps> {
           createRecordedDevelopmentApplicationComposition(),
       )
     : createProductApplicationComposition();
-  const [{ createDevelopmentWorktreeRuntimeSource }, { WorktreeRuntimeExplorationView }] =
-    await Promise.all([
-      import('../dev/worktreeRuntime/createDevelopmentWorktreeRuntimeSource'),
-      import('../features/worktreeRuntime/WorktreeRuntimeExplorationView'),
-    ]);
+  const [{ tauriHumanReviewLauncher }, { HumanReviewLauncherView }] = await Promise.all([
+    import('../infrastructure/tauriHumanReviewLauncher'),
+    import('../features/humanReviewLauncher/HumanReviewLauncherView'),
+  ]);
   return {
     ...productComposition,
-    worktreeRuntimeExplorationView: (
-      <WorktreeRuntimeExplorationView source={createDevelopmentWorktreeRuntimeSource()} />
-    ),
+    humanReviewLauncherView: <HumanReviewLauncherView client={tauriHumanReviewLauncher} />,
   };
 }
 
 function viteDevelopmentMode(): boolean {
   const env = (import.meta as unknown as { env?: { DEV?: boolean } }).env;
   return env?.DEV === true;
+}
+
+function humanReviewInstance(): boolean {
+  const env = (import.meta as unknown as { env?: { VITE_HUMAN_REVIEW_INSTANCE?: string } }).env;
+  return env?.VITE_HUMAN_REVIEW_INSTANCE === 'true';
 }

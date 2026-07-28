@@ -53,6 +53,8 @@ bounded_id!(RequestId, "request ID");
 #[serde(rename_all = "camelCase")]
 pub(crate) struct InstanceIdentity {
     pub(crate) instance_id: InstanceId,
+    #[serde(default = "default_review_name")]
+    pub(crate) review_name: String,
     pub(crate) worktree_path: PathBuf,
     pub(crate) git_commit: String,
     pub(crate) source_fingerprint: String,
@@ -62,6 +64,16 @@ pub(crate) struct InstanceIdentity {
 
 impl InstanceIdentity {
     pub(crate) fn validate(&self) -> Result<(), RuntimeContractError> {
+        if self.review_name.is_empty()
+            || self.review_name.len() > 96
+            || !self.review_name.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b' ' | b'.' | b'_' | b'-')
+            })
+        {
+            return Err(RuntimeContractError::new(
+                "review name must be a bounded human-readable label",
+            ));
+        }
         require_absolute(&self.worktree_path, "worktree path")?;
         if self.git_commit.len() < 7
             || self.git_commit.len() > 64
@@ -253,12 +265,14 @@ pub(crate) struct OwnedProcessLaunch {
     pub(crate) working_directory: PathBuf,
     /// This complete environment is supplied to the child. Ambient credentials are not inherited.
     pub(crate) environment: BTreeMap<String, String>,
+    pub(crate) log_path: PathBuf,
 }
 
 impl OwnedProcessLaunch {
     pub(crate) fn validate(&self) -> Result<(), RuntimeContractError> {
         require_absolute(&self.program, "launch program")?;
         require_absolute(&self.working_directory, "launch working directory")?;
+        require_absolute(&self.log_path, "launch log")?;
         if self.program.to_string_lossy().contains('\0')
             || self.working_directory.to_string_lossy().contains('\0')
         {
@@ -289,6 +303,10 @@ impl OwnedProcessLaunch {
         }
         Ok(())
     }
+}
+
+fn default_review_name() -> String {
+    "Isolated review".into()
 }
 
 pub(crate) fn validate_launches(

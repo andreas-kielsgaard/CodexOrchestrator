@@ -372,6 +372,14 @@ fn launch_planning_owns_vite_status_and_tauri_with_a_scrubbed_environment() {
             fixture.projection.paths.credentials_home.to_string_lossy()
         );
         assert_eq!(
+            launch.environment["CODEX_ORCHESTRATOR_APP_DATA_DIR"],
+            fixture.projection.paths.app_data.to_string_lossy()
+        );
+        assert_eq!(
+            launch.environment["VITE_RUNTIME_ROOT"],
+            fixture.projection.paths.instance_root.to_string_lossy()
+        );
+        assert_eq!(
             launch.environment["TEMP"],
             fixture.projection.paths.temp.to_string_lossy()
         );
@@ -501,6 +509,7 @@ fn fixture(root: &Path, name: &str, vite: u16, status: u16) -> Fixture {
     Fixture {
         identity: InstanceIdentity {
             instance_id: instance(name),
+            review_name: format!("Review {name}"),
             worktree_path: root.join("worktrees").join(name),
             git_commit: "0123456789abcdef0123456789abcdef01234567".into(),
             source_fingerprint: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
@@ -594,6 +603,7 @@ fn owned_launches(fixture: &Fixture) -> Vec<OwnedProcessLaunch> {
         },
         working_directory: fixture.identity.worktree_path.clone(),
         environment: child_environment(port),
+        log_path: fixture.projection.paths.logs.join(format!("{role:?}.log")),
     })
     .collect()
 }

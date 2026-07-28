@@ -1093,6 +1093,13 @@ impl WorktreeRuntimeControl for FakeRuntime {
             .ok_or_else(|| runtime_failure(RuntimeApplicationErrorKind::NotFound, "not found"))
     }
 
+    fn focus(
+        &self,
+        command: super::application::FocusInstanceCommand,
+    ) -> Result<InstanceSnapshot, RuntimeApplicationError> {
+        self.transition(&command.instance_id, InstanceState::Running, true)
+    }
+
     fn stop(
         &self,
         command: StopInstanceCommand,

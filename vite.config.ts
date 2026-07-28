@@ -2,8 +2,8 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 
-const runtimeRoot = process.env.WORKTREE_RUNTIME_ROOT;
-const runtimePort = Number.parseInt(process.env.WORKTREE_VITE_PORT ?? '1420', 10);
+const runtimeRoot = process.env.VITE_RUNTIME_ROOT;
+const runtimePort = Number.parseInt(process.env.VITE_RUNTIME_VITE_PORT ?? '1420', 10);
 
 export default defineConfig({
   plugins: [react()],

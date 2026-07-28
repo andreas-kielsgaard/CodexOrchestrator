@@ -48,7 +48,7 @@ export interface AppProps {
   readonly epicPlanProposalSourceForDraft?: (draftId: string) => EpicPlanProposalSource;
   readonly epicInitiationConfirmationClient?: EpicInitiationConfirmationClient;
   /** Supplied only by the development composition. */
-  readonly worktreeRuntimeExplorationView?: ReactNode;
+  readonly humanReviewLauncherView?: ReactNode;
 }
 
 export function App({
@@ -71,9 +71,9 @@ export function App({
   epicPlanningDraftLifecycleClient,
   epicPlanProposalSourceForDraft,
   epicInitiationConfirmationClient,
-  worktreeRuntimeExplorationView,
+  humanReviewLauncherView,
 }: AppProps) {
-  const [surface, setSurface] = useState<'epics' | 'agent-sessions' | 'worktree-runtime'>('epics');
+  const [surface, setSurface] = useState<'epics' | 'agent-sessions' | 'worktree-review'>('epics');
   const [orchestrationRoute, setOrchestrationRoute] = useState<'overview' | 'plan-builder'>(
     'overview',
   );
@@ -239,14 +239,14 @@ export function App({
         >
           Agent Sessions
         </button>
-        {worktreeRuntimeExplorationView && (
+        {humanReviewLauncherView && (
           <button
-            className={surface === 'worktree-runtime' ? 'active' : undefined}
+            className={surface === 'worktree-review' ? 'active' : undefined}
             type="button"
-            aria-current={surface === 'worktree-runtime' ? 'page' : undefined}
-            onClick={() => setSurface('worktree-runtime')}
+            aria-current={surface === 'worktree-review' ? 'page' : undefined}
+            onClick={() => setSurface('worktree-review')}
           >
-            Worktree Runtime
+            Worktree Review
             <small>Dev</small>
           </button>
         )}
@@ -292,7 +292,7 @@ export function App({
       ) : surface === 'agent-sessions' ? (
         <StandaloneAgentSessionScreen client={agentSessionClient} />
       ) : (
-        worktreeRuntimeExplorationView
+        humanReviewLauncherView
       )}
     </div>
   );

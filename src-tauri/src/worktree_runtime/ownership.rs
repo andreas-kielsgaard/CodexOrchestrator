@@ -10,6 +10,13 @@ pub(crate) trait ProcessOwner: Send + Sync {
 
     fn observe(&self, route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError>;
 
+    fn focus(&self, _route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
+        Err(OwnershipError::new(
+            OwnershipErrorKind::Unavailable,
+            "visible-window focus is unavailable for this process owner",
+        ))
+    }
+
     fn terminate(&self, route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError>;
 }
 
@@ -49,7 +56,7 @@ mod windows {
     use super::{OwnershipError, OwnershipErrorKind, ProcessOwner};
     use crate::worktree_runtime::domain::{OwnedProcessLaunch, OwnerObservation, OwnerRoute};
     use std::{
-        collections::HashMap,
+        collections::{HashMap, HashSet},
         ffi::{c_void, OsStr},
         mem::{size_of, zeroed},
         os::windows::ffi::OsStrExt,
@@ -58,20 +65,35 @@ mod windows {
         thread,
         time::{Duration, Instant},
     };
+    use windows_sys::core::BOOL;
     use windows_sys::Win32::{
-        Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE},
+        Foundation::{
+            CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HWND, INVALID_HANDLE_VALUE,
+            LPARAM,
+        },
+        Security::SECURITY_ATTRIBUTES,
+        Storage::FileSystem::{
+            CreateFileW, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_ALWAYS,
+        },
         System::{
             JobObjects::{
                 AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
-                JobObjectExtendedLimitInformation, OpenJobObjectW, QueryInformationJobObject,
-                SetInformationJobObject, TerminateJobObject,
-                JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                JobObjectBasicProcessIdList, JobObjectExtendedLimitInformation, OpenJobObjectW,
+                QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
+                JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_BASIC_PROCESS_ID_LIST,
+                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
             },
             Threading::{
                 CreateProcessW, ResumeThread, TerminateProcess, CREATE_NO_WINDOW, CREATE_SUSPENDED,
-                CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION, STARTUPINFOW,
+                CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION, STARTF_USESTDHANDLES,
+                STARTUPINFOW,
             },
+        },
+        UI::WindowsAndMessaging::{
+            BringWindowToTop, EnumWindows, GetForegroundWindow, GetWindow,
+            GetWindowThreadProcessId, IsWindowVisible, SetForegroundWindow, ShowWindow, GW_OWNER,
+            SW_RESTORE,
         },
     };
 
@@ -169,6 +191,35 @@ mod windows {
             observe_handle(handle.0)
         }
 
+        fn focus(&self, route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
+            validate_job_name(&route.job_name)?;
+            let handle = match self
+                .handles
+                .lock()
+                .map_err(|_| {
+                    OwnershipError::new(
+                        OwnershipErrorKind::Unavailable,
+                        "Windows Job Object handle registry is unavailable",
+                    )
+                })?
+                .get(&route.job_name)
+                .map(|owned| owned.0)
+            {
+                Some(handle) => handle,
+                None => {
+                    let Some(opened) = open_job(&route.job_name, JOB_OBJECT_QUERY_ACCESS)? else {
+                        return Err(OwnershipError::new(
+                            OwnershipErrorKind::Ambiguous,
+                            "the exact Job Object is absent while focusing its review window",
+                        ));
+                    };
+                    let observation = focus_owned_window(opened.0)?;
+                    return Ok(observation);
+                }
+            };
+            focus_owned_window(handle)
+        }
+
         fn terminate(&self, route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
             validate_job_name(&route.job_name)?;
             let owned = self
@@ -260,8 +311,12 @@ mod windows {
         let mut command_line = wide_null(build_command_line(launch));
         let working_directory = wide_null(launch.working_directory.as_os_str());
         let environment = environment_block(&launch.environment);
+        let log = open_inheritable_log(&launch.log_path)?;
         let mut startup: STARTUPINFOW = unsafe { zeroed() };
         startup.cb = size_of::<STARTUPINFOW>() as u32;
+        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdOutput = log.0;
+        startup.hStdError = log.0;
         let mut process: PROCESS_INFORMATION = unsafe { zeroed() };
         let created = unsafe {
             CreateProcessW(
@@ -269,7 +324,7 @@ mod windows {
                 command_line.as_mut_ptr(),
                 null(),
                 null(),
-                0,
+                1,
                 CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
                 environment.as_ptr() as *const c_void,
                 working_directory.as_ptr(),
@@ -304,6 +359,123 @@ mod windows {
             ));
         }
         Ok(())
+    }
+
+    fn open_inheritable_log(path: &std::path::Path) -> Result<OwnedHandle, OwnershipError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                OwnershipError::new(
+                    OwnershipErrorKind::Unavailable,
+                    format!("create review log directory: {error}"),
+                )
+            })?;
+        }
+        let mut security = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: null_mut(),
+            bInheritHandle: 1,
+        };
+        let wide = wide_null(path.as_os_str());
+        let handle = unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                FILE_APPEND_DATA,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                &mut security,
+                OPEN_ALWAYS,
+                FILE_ATTRIBUTE_NORMAL,
+                null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            Err(last_error(
+                OwnershipErrorKind::Unavailable,
+                "open isolated review process log",
+            ))
+        } else {
+            Ok(OwnedHandle(handle))
+        }
+    }
+
+    struct FocusContext {
+        process_ids: HashSet<u32>,
+        window: HWND,
+    }
+
+    unsafe extern "system" fn find_owned_window(window: HWND, data: LPARAM) -> BOOL {
+        let context = unsafe { &mut *(data as *mut FocusContext) };
+        let mut process_id = 0;
+        unsafe {
+            GetWindowThreadProcessId(window, &mut process_id);
+        }
+        if context.process_ids.contains(&process_id)
+            && unsafe { IsWindowVisible(window) } != 0
+            && unsafe { GetWindow(window, GW_OWNER) }.is_null()
+        {
+            context.window = window;
+            return 0;
+        }
+        1
+    }
+
+    fn focus_owned_window(handle: HANDLE) -> Result<OwnerObservation, OwnershipError> {
+        let process_ids = job_process_ids(handle)?;
+        let mut context = FocusContext {
+            process_ids,
+            window: null_mut(),
+        };
+        unsafe {
+            EnumWindows(
+                Some(find_owned_window),
+                &mut context as *mut FocusContext as LPARAM,
+            );
+        }
+        if context.window.is_null() {
+            return Err(OwnershipError::new(
+                OwnershipErrorKind::Ambiguous,
+                "the owned review process tree has no visible top-level window",
+            ));
+        }
+        unsafe {
+            ShowWindow(context.window, SW_RESTORE);
+            BringWindowToTop(context.window);
+            SetForegroundWindow(context.window);
+        }
+        if unsafe { GetForegroundWindow() } != context.window {
+            return Err(OwnershipError::new(
+                OwnershipErrorKind::Ambiguous,
+                "Windows did not grant foreground focus to the owned review window",
+            ));
+        }
+        observe_handle(handle)
+    }
+
+    fn job_process_ids(handle: HANDLE) -> Result<HashSet<u32>, OwnershipError> {
+        let capacity = 256usize;
+        let bytes = size_of::<JOBOBJECT_BASIC_PROCESS_ID_LIST>()
+            + capacity.saturating_sub(1) * size_of::<usize>();
+        let mut buffer = vec![0u8; bytes];
+        let result = unsafe {
+            QueryInformationJobObject(
+                handle,
+                JobObjectBasicProcessIdList,
+                buffer.as_mut_ptr() as *mut c_void,
+                bytes as u32,
+                null_mut(),
+            )
+        };
+        if result == 0 {
+            return Err(last_error(
+                OwnershipErrorKind::Unavailable,
+                "query review Job Object process list",
+            ));
+        }
+        let information = unsafe { &*(buffer.as_ptr() as *const JOBOBJECT_BASIC_PROCESS_ID_LIST) };
+        let count = information.NumberOfProcessIdsInList as usize;
+        let first = information.ProcessIdList.as_ptr();
+        Ok((0..count)
+            .filter_map(|index| u32::try_from(unsafe { *first.add(index) }).ok())
+            .collect())
     }
 
     fn observe_handle(handle: HANDLE) -> Result<OwnerObservation, OwnershipError> {

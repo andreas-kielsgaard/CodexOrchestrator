@@ -239,6 +239,7 @@ pub(crate) fn derive_identity(
     let instance_id = InstanceId::new(format!("wt-{suffix}")).map_err(contract)?;
     let identity = InstanceIdentity {
         instance_id,
+        review_name: purpose.to_owned(),
         worktree_path: worktree,
         git_commit: source.git_commit.clone(),
         source_fingerprint: source.source_fingerprint.clone(),
@@ -296,6 +297,8 @@ fn create_mutable_roots(projection: &InstanceProjection) -> Result<(), PlanningE
         &projection.paths.frontend_dist,
         &projection.paths.cargo_target,
         &projection.paths.app_data,
+        &projection.paths.app_data.join("roaming"),
+        &projection.paths.app_data.join("local"),
         &projection.paths.credentials_home,
         &projection.paths.temp,
         &projection.paths.logs,
@@ -405,13 +408,9 @@ pub(crate) fn action_plan(
                     arguments: vec![
                         "test".into(),
                         "--manifest-path".into(),
-                        identity
-                            .worktree_path
-                            .join("src-tauri/Cargo.toml")
-                            .to_string_lossy()
-                            .into_owned(),
+                        external_value(&identity.worktree_path.join("src-tauri/Cargo.toml")),
                     ],
-                    working_directory: identity.worktree_path.clone(),
+                    working_directory: external_path(&identity.worktree_path),
                     environment,
                 },
             ]
@@ -455,35 +454,38 @@ pub(crate) fn launch_plan(
             role: ProcessRole::Vite,
             program: programs.node.clone(),
             arguments: vec![
-                vite.to_string_lossy().into_owned(),
+                external_value(&vite),
                 "--host".into(),
                 "127.0.0.1".into(),
                 "--port".into(),
                 projection.ports.vite.to_string(),
                 "--strictPort".into(),
             ],
-            working_directory: identity.worktree_path.clone(),
+            working_directory: external_path(&identity.worktree_path),
             environment: environment.clone(),
+            log_path: projection.paths.logs.join("vite.log"),
         },
         OwnedProcessLaunch {
             role: ProcessRole::Status,
             program: programs.node.clone(),
-            arguments: vec![status.to_string_lossy().into_owned()],
-            working_directory: identity.worktree_path.clone(),
+            arguments: vec![external_value(&status)],
+            working_directory: external_path(&identity.worktree_path),
             environment: environment.clone(),
+            log_path: projection.paths.logs.join("status.log"),
         },
         OwnedProcessLaunch {
             role: ProcessRole::Tauri,
             program: programs.node.clone(),
             arguments: vec![
-                tauri.to_string_lossy().into_owned(),
+                external_value(&tauri),
                 "dev".into(),
                 "--no-watch".into(),
                 "--config".into(),
-                development_config(projection, tauri_identifier)?,
+                development_config(identity, projection, tauri_identifier)?,
             ],
-            working_directory: identity.worktree_path.clone(),
+            working_directory: external_path(&identity.worktree_path),
             environment,
+            log_path: projection.paths.logs.join("tauri.log"),
         },
     ])
 }
@@ -499,12 +501,24 @@ fn node_command<'a, const N: usize>(
     ProcessCommand {
         label,
         program: programs.node.clone(),
-        arguments: std::iter::once(script.to_string_lossy().into_owned())
+        arguments: std::iter::once(external_value(script))
             .chain(arguments.into_iter().map(str::to_owned))
             .collect(),
-        working_directory: identity.worktree_path.clone(),
+        working_directory: external_path(&identity.worktree_path),
         environment: environment.clone(),
     }
+}
+
+fn external_value(path: &Path) -> String {
+    let value = path.to_string_lossy();
+    if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{unc}");
+    }
+    value.strip_prefix(r"\\?\").unwrap_or(&value).to_owned()
+}
+
+fn external_path(path: &Path) -> PathBuf {
+    PathBuf::from(external_value(path))
 }
 
 fn build_config(
@@ -523,6 +537,7 @@ fn build_config(
 }
 
 fn development_config(
+    identity: &InstanceIdentity,
     projection: &InstanceProjection,
     tauri_identifier: &str,
 ) -> Result<String, PlanningError> {
@@ -535,10 +550,7 @@ fn development_config(
         },
         "app": {
             "windows": [{
-                "title": format!(
-                    "Codex Orchestrator [{}]",
-                    tauri_identifier.rsplit('.').next().unwrap_or("isolated")
-                ),
+                "title": format!("Codex Orchestrator [Review: {}]", identity.review_name),
                 "width": 1280,
                 "height": 820,
                 "minWidth": 960,
@@ -571,10 +583,22 @@ fn isolated_environment(
         CacheReuse::SharedKeyed => "shared_keyed",
         CacheReuse::IsolatedFallback => "isolated_fallback",
     };
+    let rustup_home = env::var_os("RUSTUP_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join(".rustup")));
     for (name, value) in [
         ("HOME", value(&projection.paths.credentials_home)),
         ("USERPROFILE", value(&projection.paths.credentials_home)),
         ("CODEX_HOME", value(&projection.paths.credentials_home)),
+        (
+            "CODEX_ORCHESTRATOR_APP_DATA_DIR",
+            value(&projection.paths.app_data),
+        ),
+        ("APPDATA", value(&projection.paths.app_data.join("roaming"))),
+        (
+            "LOCALAPPDATA",
+            value(&projection.paths.app_data.join("local")),
+        ),
         ("TEMP", value(&projection.paths.temp)),
         ("TMP", value(&projection.paths.temp)),
         ("TMPDIR", value(&projection.paths.temp)),
@@ -620,6 +644,8 @@ fn isolated_environment(
             identity.source_fingerprint.clone(),
         ),
         ("VITE_RUNTIME_TAURI_IDENTIFIER", tauri_identifier.to_owned()),
+        ("VITE_RUNTIME_REVIEW_NAME", identity.review_name.clone()),
+        ("VITE_HUMAN_REVIEW_INSTANCE", "true".into()),
         ("VITE_RUNTIME_ROOT", value(&projection.paths.instance_root)),
         ("VITE_RUNTIME_DIST", value(&projection.paths.frontend_dist)),
         (
@@ -664,6 +690,9 @@ fn isolated_environment(
         ),
     ] {
         environment.insert(name.into(), value);
+    }
+    if let Some(rustup_home) = rustup_home {
+        environment.insert("RUSTUP_HOME".into(), value(&rustup_home));
     }
     environment
 }

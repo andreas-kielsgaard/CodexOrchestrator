@@ -18,7 +18,8 @@ mod agent_sessions;
 mod orchestration;
 mod runtime;
 mod storage;
-// Candidate runtime remains uncomposed; its semantic facade is verified in focused tests.
+#[cfg(debug_assertions)]
+mod worktree_review;
 #[allow(dead_code)]
 mod worktree_runtime;
 

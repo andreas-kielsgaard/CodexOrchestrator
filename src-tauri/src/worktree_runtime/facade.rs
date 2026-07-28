@@ -1,8 +1,8 @@
 use super::{
     application::{
-        PrepareInstanceCommand, ReadInstanceQuery, RecoverInstanceCommand, RuntimeApplicationError,
-        RuntimeApplicationErrorKind, StartInstanceCommand, StopInstanceCommand,
-        WorktreeRuntimeControl,
+        FocusInstanceCommand, PrepareInstanceCommand, ReadInstanceQuery, RecoverInstanceCommand,
+        RuntimeApplicationError, RuntimeApplicationErrorKind, StartInstanceCommand,
+        StopInstanceCommand, WorktreeRuntimeControl,
     },
     domain::{AuthoritySecret, InstanceId, InstanceSnapshot, InstanceState, RequestId},
     execution::{ActionExecutor, ExecutionError},
@@ -70,6 +70,18 @@ impl IsolatedTestRequest {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct TestInstanceHandle(InstanceId);
 
+impl TestInstanceHandle {
+    pub(crate) fn from_opaque(value: impl Into<String>) -> Result<Self, TestInstanceError> {
+        InstanceId::new(value).map(Self).map_err(|error| {
+            TestInstanceError::new(TestInstanceErrorKind::InvalidRequest, error.to_string())
+        })
+    }
+
+    pub(crate) fn opaque_ref(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TestInstancePhase {
     Prepared,
@@ -130,6 +142,7 @@ pub(crate) trait WorktreeTestInstances: Send + Sync {
     fn test(&self, handle: &TestInstanceHandle) -> Result<TestActionResult, TestInstanceError>;
     fn start(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError>;
     fn status(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError>;
+    fn focus(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError>;
     fn stop(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError>;
     fn recover(&self, handle: &TestInstanceHandle)
         -> Result<TestInstanceStatus, TestInstanceError>;
@@ -326,6 +339,16 @@ impl WorktreeTestInstances for WorktreeTestInstanceFacade {
     fn status(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError> {
         self.snapshot(handle)
             .map(|snapshot| semantic_status(&snapshot))
+    }
+
+    fn focus(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError> {
+        self.runtime
+            .focus(FocusInstanceCommand {
+                authority: self.authority.clone(),
+                instance_id: handle.0.clone(),
+            })
+            .map(|snapshot| semantic_status(&snapshot))
+            .map_err(runtime_error)
     }
 
     fn stop(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError> {

@@ -43,6 +43,11 @@ pub(crate) struct RecoverInstanceCommand {
     pub(crate) instance_id: InstanceId,
 }
 
+pub(crate) struct FocusInstanceCommand {
+    pub(crate) authority: AuthoritySecret,
+    pub(crate) instance_id: InstanceId,
+}
+
 pub(crate) struct ReadInstanceQuery {
     pub(crate) authority: AuthoritySecret,
     pub(crate) instance_id: InstanceId,
@@ -61,6 +66,11 @@ pub(crate) trait WorktreeRuntimeControl: Send + Sync {
     ) -> Result<InstanceSnapshot, RuntimeApplicationError>;
 
     fn read(&self, query: ReadInstanceQuery) -> Result<InstanceSnapshot, RuntimeApplicationError>;
+
+    fn focus(
+        &self,
+        command: FocusInstanceCommand,
+    ) -> Result<InstanceSnapshot, RuntimeApplicationError>;
 
     fn stop(
         &self,
@@ -462,6 +472,39 @@ impl WorktreeRuntimeControl for WorktreeRuntimeApplication {
             .map_err(registry_error)
     }
 
+    fn focus(
+        &self,
+        command: FocusInstanceCommand,
+    ) -> Result<InstanceSnapshot, RuntimeApplicationError> {
+        let authority_hash = Self::authority_hash(&command.authority);
+        let record = self
+            .registry
+            .load_authorized(&command.instance_id, &authority_hash)
+            .map_err(registry_error)?;
+        if record.state != InstanceState::Running {
+            return Err(RuntimeApplicationError::new(
+                RuntimeApplicationErrorKind::InvalidState,
+                "only a running review instance can be focused",
+            ));
+        }
+        let route = required_owner_route(&record)?;
+        let owner = self.owner.focus(route).map_err(owner_error)?;
+        let observation = RuntimeObservation {
+            owner,
+            health: self.health.observe(&record.projection),
+            observed_at: self.clock.now(),
+        };
+        if !observation.owner.is_active() || !observation.health.healthy() {
+            return Err(RuntimeApplicationError::new(
+                RuntimeApplicationErrorKind::OwnershipAmbiguous,
+                "the review window focus target is not a healthy owned instance",
+            ));
+        }
+        self.registry
+            .record_observation(&command.instance_id, "window_focus_observed", observation)
+            .map_err(registry_error)
+    }
+
     fn stop(
         &self,
         command: StopInstanceCommand,
@@ -611,6 +654,7 @@ struct LaunchSemantics<'a> {
     arguments: &'a [String],
     working_directory: &'a std::path::Path,
     environment: &'a std::collections::BTreeMap<String, String>,
+    log_path: &'a std::path::Path,
 }
 
 impl<'a> From<&'a OwnedProcessLaunch> for LaunchSemantics<'a> {
@@ -621,6 +665,7 @@ impl<'a> From<&'a OwnedProcessLaunch> for LaunchSemantics<'a> {
             arguments: &value.arguments,
             working_directory: &value.working_directory,
             environment: &value.environment,
+            log_path: &value.log_path,
         }
     }
 }

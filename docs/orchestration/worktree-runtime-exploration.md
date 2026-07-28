@@ -1,7 +1,8 @@
 # Worktree-aware application runtime exploration
 
-Status: developer-tooling proof plus an uncomposed product ownership core. Neither is a parallel
-orchestrator, and the core is not evidence that product UI or scheduling controls exist.
+Status: historical developer-tooling proof plus a development-only, product-composed human review
+launcher backed by the Rust ownership core. It is not a parallel orchestrator or an agent-testing
+surface.
 
 ## Current architecture evidence
 
@@ -58,7 +59,7 @@ npm run runtime:worktree -- stop --instance worker-a
 | Concern                        | Prototype boundary                                                                |
 | ------------------------------ | --------------------------------------------------------------------------------- |
 | Source and modules             | Git worktree plus worktree-local `node_modules`                                   |
-| Vite cache and dist            | Instance-local paths selected by `WORKTREE_RUNTIME_ROOT`                          |
+| Vite cache and dist            | Instance-local paths selected by `VITE_RUNTIME_ROOT`                              |
 | Rust outputs                   | Instance-local `CARGO_TARGET_DIR`                                                 |
 | Database and application files | Instance-local `CODEX_ORCHESTRATOR_APP_DATA_DIR`                                  |
 | WebView and Tauri identity     | Unique config-overlay identifier and window title                                 |
@@ -105,6 +106,46 @@ tests, 15 application status tests, 2 Rust app-data override tests, TypeScript, 
 the production frontend build, and the per-instance Rust runtime/process test action. The production
 composition does not supply the peer view; its feature implementation is excluded from the
 production bundle.
+
+## Product-composed human review proof (2026-07-29)
+
+The active development composition now supplies a peer **Worktree Review** tab. Its catalog resolves
+an existing worktree to an opaque `sourceRef`; the UI retains only opaque instance references and a
+human name. Build and lifecycle requests cross the semantic `WorktreeTestInstances` facade. Raw
+paths, ports, identifiers, Job names, launch descriptions, and credentials do not cross the ordinary
+frontend contract. Release composition and normal dev/build/package commands remain unchanged.
+
+One fresh source-fingerprinted instance, `Runtime Review Proven`
+(`wt-f0493ca9ff73ce463ec2`), completed the following live proof while the isolated launcher remained
+open:
+
+- TypeScript, Vite, and a real Tauri debug build completed. The executable was
+  `C:\Users\user\cr-live\r\instances\wt-f0493ca9ff73ce463ec2\cargo-target\debug\codex-orchestrator.exe`;
+  build output is recorded in the instance `logs\build.log`.
+- The launcher was PID `37396`, titled `Codex Orchestrator`. The child was PID `37996`, titled
+  `Codex Orchestrator [Review: Runtime Review Proven]`. Both real Tauri windows were observed
+  concurrently, and the product Focus action returned the child to the foreground.
+- Private Vite/status ports were `18200`/`18201`. Dist, Cargo target, Vite cache, temp, credentials,
+  logs, database, and WebView2 profile all resolved below the instance root. The active database was
+  `app-data\codex-orchestrator-active-v3.sqlite`; WebView2 used the private executable profile below
+  the private Cargo target. The Tauri identifier was
+  `dev.codex-orchestrator.worktree.f0493ca9ff73ce463ec2`.
+- Registry ownership named the exact Job
+  `Local\CodexOrchestrator.WorktreeRuntime.wt-f0493ca9ff73ce463ec2.launch-c7e74c7fda9b4ad2ba2f31e45bc3ce81`.
+  Check status reported `Running / Healthy`. Stop removed only the owned child tree and its two
+  ports, transitioned to `Stopped / Closed`, and left the launcher and port `1420` alive.
+- A second start used launch
+  `Local\CodexOrchestrator.WorktreeRuntime.wt-f0493ca9ff73ce463ec2.launch-fea81b39c4414dd3a8719b174c2f225f`.
+  Terminating that exact Job simulated an owned-tree interruption. Check status reported
+  `Running / Needs Recovery`; Recover reconciled to `Recovered / Closed`, left zero pending
+  commands, and `OpenJobObject` returned file-not-found. Recover intentionally does not relaunch.
+
+The launcher used isolated roots `C:\Users\user\cr-live\launcher` and
+`C:\Users\user\cr-live\r`; it did not use the main/live application database. The proof required a
+short Windows runtime root because a prior long `%TEMP%` root exceeded Windows build-path limits.
+One real child plus launcher was proved. Two simultaneous real children were not attempted after the
+two cold builds; deterministic two-instance registry/Job/port isolation remains the evidence for
+that boundary.
 
 ## Visual inspection
 
@@ -161,9 +202,9 @@ can show both without turning a launch request into launch evidence.
 - The prototype still uses verified wrapper command lines plus `taskkill /T`; its process lookup and
   teardown are not atomic. The uncomposed Rust core has a separately tested named-Job-Object
   replacement.
-- Prototype launch is not crash-atomic. The Rust core separately proves route-before-launch and
-  assign-suspended-before-resume ordering; it has not launched a real Tauri build through the new
-  facade.
+- The disposable script's launch is not crash-atomic. The product-composed Rust path proves
+  route-before-launch and assign-suspended-before-resume ordering and has now launched one real
+  Tauri build through the facade. Cross-process registry exclusion remains Windows-only.
 - `scripts/worktree-runtime.mjs` began as a 981-line prototype. It is disposable exploration
   tooling, not the module structure for a product registry or process owner.
 - `sccache` was not installed during implementation. Shared Rust compilation must remain reported as
@@ -175,8 +216,8 @@ can show both without turning a launch request into launch evidence.
 - Credential isolation is fail-closed, not credential provisioning. Product work needs an explicit
   per-instance secret source and approval policy.
 - Screenshot and recording roots are projected per instance, but capture is not implemented.
-- The Rust core contains a durable instance registry and semantic application facade, but neither is
-  composed into product boot. There is no product UI, attention router, approval queue, or
+- The Rust registry and semantic facade are composed only into debug product boot behind the narrow
+  human review UI. There is no production composition, attention router, approval queue, or
   pause/resume controller.
 - Local manifests remain developer evidence. The uncomposed registry proves local lifecycle
   persistence; neither source is an orchestration event stream.
@@ -246,21 +287,21 @@ dead-code warnings and the pre-existing macOS `.app` identifier warning remain.
 
 ### Intended but not yet established
 
-- No product composition supplies the registry location, authority secret, semantic source resolver,
-  or facade instance. There is no Tauri command or UI route to this core.
-- Build/test plans point at the exact worktree and isolated outputs, but the focused suite does not
-  execute those real Node, Vite, Cargo, or Tauri plans. Worktree-local dependencies must already
-  exist; dependency restoration and its lock-to-modules proof are not owned yet.
-- Build/test outcomes and logs are synchronous results, not durable registry evidence. Launched
-  Vite/status/Tauri stdout and stderr are not redirected to the projected log root.
+- Product composition exists only for development builds. Release builds expose no command or UI
+  route. The authority secret and registry live below the explicitly selected review-runtime root.
+- Build plans now execute real TypeScript, Vite, Cargo, and Tauri work. Test plans were not exercised
+  through the live UI. Worktree-local dependencies must already exist; dependency restoration and
+  its lock-to-modules proof are not owned yet.
+- Build/test outcomes remain synchronous results rather than durable registry evidence. Build,
+  Vite, status, and Tauri output now use instance-local logs.
 - TCP reachability does not prove that the endpoint belongs to the named job. The preflight and
   strict ports fail closed for normal collisions, but an untrusted local bind race remains.
 - Source reinspection narrows but cannot eliminate the edit-after-check race during a running
   build/test command.
 - Port leases are durable and never silently reassigned, but pruning/releasing retired instance
   records is not implemented.
-- Unique Tauri configuration and projected application paths are planned, but database/WebView
-  isolation has not been re-proven through this Rust facade.
+- Unique Tauri configuration, database, and WebView profile isolation were observed for one live
+  child. A simultaneous two-child Tauri proof remains open.
 
 ## Review/test host integration seam
 
@@ -285,14 +326,14 @@ and evidence-file access are future application ports, not fields for this lifec
 
 ## Next bounded product slice
 
-Compose the semantic facade behind an application-owned source resolver, registry location, and
-durable authority source, then:
+Keep the development-only human review composition narrow, then:
 
 1. bind status/Vite endpoint identity to the exact owned job;
 2. own dependency restoration and prove its lock-to-worktree-local-modules invariant;
-3. execute two real worktree builds/tests/launches through the facade and persist observed outcomes;
-4. add the smallest review-host adapter while keeping ordinary development and packaging defaults
-   unchanged.
+3. execute two real child launches concurrently through the facade and persist observed build and
+   lifecycle outcomes;
+4. replace the in-memory build marker with durable, source-bound evidence while keeping ordinary
+   development and packaging defaults unchanged.
 
 Defer parallel scheduling, automatic approvals, provider credential injection, visual capture, and
 full pause/resume until that ownership and evidence slice is accepted.

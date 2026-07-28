@@ -1,0 +1,20 @@
+.human-review { height: 100%; overflow: auto; padding: 32px; background: #f6f7f4; }
+.human-review__header, .human-review__prepare, .human-review__card, .human-review__boundary { border: 1px solid #d8ddd5; border-radius: 12px; background: #fffdf8; }
+.human-review__header { display: flex; justify-content: space-between; gap: 24px; padding: 24px; }
+.human-review h1, .human-review h2, .human-review p { margin-top: 0; }
+.human-review__prepare { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(240px, 1fr) minmax(180px, .7fr) auto; gap: 16px; align-items: end; margin-top: 18px; padding: 20px; }
+.human-review label { display: grid; gap: 6px; font-size: .8rem; font-weight: 750; color: #4a564f; }
+.human-review select, .human-review input { width: 100%; min-height: 40px; border: 1px solid #aeb8b0; border-radius: 7px; padding: 8px 10px; background: white; color: #17211b; }
+.human-review button { min-height: 38px; border: 1px solid #748079; border-radius: 7px; padding: 7px 13px; background: #fff; color: #17211b; font-weight: 700; cursor: pointer; }
+.human-review button:hover:not(:disabled) { background: #edf1eb; }
+.human-review button:disabled { cursor: not-allowed; opacity: .48; }
+.human-review__error { margin: 16px 0 0; border-left: 3px solid #b44; padding: 8px 12px; color: #7d2727; }
+.human-review__instances { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 16px; margin-top: 18px; }
+.human-review__card { padding: 20px; }
+.human-review__card dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 18px 0; }
+.human-review__card dl div { border-radius: 7px; padding: 10px; background: #f2f4ef; }
+.human-review__card dt { color: #68736c; font-size: .72rem; font-weight: 750; text-transform: uppercase; }
+.human-review__card dd { margin: 3px 0 0; font-weight: 750; text-transform: capitalize; }
+.human-review__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.human-review__boundary { display: flex; gap: 12px; margin-top: 18px; padding: 14px 18px; color: #4a564f; font-size: .86rem; }
+@media (max-width: 900px) { .human-review__prepare { grid-template-columns: 1fr; } .human-review { padding: 18px; } }
