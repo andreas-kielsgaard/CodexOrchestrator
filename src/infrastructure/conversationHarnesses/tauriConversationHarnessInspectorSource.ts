@@ -2,7 +2,9 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   ConversationHarnessManagementSnapshot,
   ConversationHarnessManagementSource,
+  HarnessConfigurationCatalogs,
   HarnessEffectiveConfiguration,
+  HarnessReasoningLevel,
 } from '../../application/conversationHarnesses';
 
 type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -90,40 +92,80 @@ function buildSnapshot(
   read: Extract<ProductHarnessInspection, { readonly kind: 'bound' }>,
 ): ConversationHarnessManagementSnapshot {
   const profile = read.profile;
+  const catalogs = buildCatalogs(profile);
+  const configuration = buildConfiguration(profile, catalogs);
   return {
     sessionId: read.sessionId,
     harnessKey: profile.key,
     agentIdentity: null,
-    catalogRevision: profile.version,
-    workingCopy: {
-      baseRevision: profile.version,
-      draftRevision: 0,
-      state: 'clean',
-      configuration: buildConfiguration(profile),
-    },
+    catalogs,
+    workingCopy: null,
     versionControl: {
       support: 'not_connected',
-      committedRevision: null,
-      activeRevision: null,
+      pushedRevision: null,
+      versions: [
+        {
+          revision: profile.version,
+          configuration,
+          activeSessionCount: 0,
+          committedAt: '',
+        },
+      ],
       reason: 'Version history and activation are not connected to the product yet.',
     },
     sessionBinding: {
       state: 'untracked',
       appliedRevision: null,
       desiredRevision: null,
-      updateStrategy: null,
       relevantSessionCount: null,
+      executingPreviousInvocation: false,
       reason: 'This session association does not yet record an applied or desired harness version.',
     },
   };
 }
 
-function buildConfiguration(profile: ProductProfile): HarnessEffectiveConfiguration {
+function buildCatalogs(profile: ProductProfile): HarnessConfigurationCatalogs {
+  return {
+    skills: {
+      source: 'not_connected',
+      items: profile.skillGuidance.map((skill) => ({
+        name: skill.canonicalName,
+        path: skill.canonicalPath,
+        description: skill.purpose,
+      })),
+      reason: 'The complete product skill catalog is not connected to this query.',
+    },
+    tools: {
+      source: 'not_connected',
+      items: profile.mcp.enabledTools.map((name) => ({ name, description: '' })),
+      reason: 'The application tool catalog is not connected to this query.',
+    },
+    models: {
+      source: 'not_connected',
+      items: profile.runtime.model
+        ? [
+            {
+              id: profile.runtime.model,
+              label: profile.runtime.model,
+              reasoningLevels: profile.runtime.reasoningEffort
+                ? [reasoningLevel(profile.runtime.reasoningEffort)]
+                : [],
+            },
+          ]
+        : [],
+      reason: 'The application model capability catalog is not connected to this query.',
+    },
+  };
+}
+
+function buildConfiguration(
+  profile: ProductProfile,
+  catalogs: HarnessConfigurationCatalogs,
+): HarnessEffectiveConfiguration {
   return {
     identity: {
       name: 'Epic Plan Builder',
       machineKey: profile.key,
-      role: 'Epic Plan Builder',
       permittedAgentNames: null,
       visualIdentity: null,
     },
@@ -133,7 +175,7 @@ function buildConfiguration(profile: ProductProfile): HarnessEffectiveConfigurat
       contextCompressionDelivery: 'deferred',
     },
     skills: {
-      discoveryPolicy: 'whitelist',
+      availableDiscoveryPolicy: 'whitelist',
       items: profile.skillGuidance.map((skill) => ({
         name: skill.canonicalName,
         path: skill.canonicalPath,
@@ -143,26 +185,26 @@ function buildConfiguration(profile: ProductProfile): HarnessEffectiveConfigurat
       })),
     },
     tools: {
-      discoveryPolicy: 'whitelist',
+      availableDiscoveryPolicy: 'whitelist',
       items: profile.mcp.enabledTools.map((name) => ({
         name,
-        exposed: true,
-        guidancePolicy: 'none',
+        policy: 'every_invocation',
       })),
       schemaBoundary:
-        'Tool schemas come from the runtime. The harness controls exposure and guidance timing, not schema text.',
+        'Tool schemas remain runtime-owned. The harness controls whether and when a tool is exposed.',
     },
     runtime: {
-      allowInheritedModel: profile.runtime.model === null,
-      availableModels: profile.runtime.model ? [profile.runtime.model] : [],
-      allowedModels: profile.runtime.model ? [profile.runtime.model] : [],
-      allowInheritedReasoning: profile.runtime.reasoningEffort === null,
-      availableReasoningEfforts: profile.runtime.reasoningEffort
-        ? [profile.runtime.reasoningEffort]
-        : [],
-      allowedReasoningEfforts: profile.runtime.reasoningEffort
-        ? [profile.runtime.reasoningEffort]
-        : [],
+      models: catalogs.models.items.map((model) => ({
+        modelId: model.id,
+        allowed: true,
+        minReasoning: model.reasoningLevels[0] ?? 'low',
+        maxReasoning: model.reasoningLevels[model.reasoningLevels.length - 1] ?? 'xhigh',
+      })),
+      defaultModel: profile.runtime.model,
+      defaultReasoning:
+        profile.runtime.model && profile.runtime.reasoningEffort
+          ? reasoningLevel(profile.runtime.reasoningEffort)
+          : null,
       sandbox: profile.runtime.sandbox,
       sandboxOptions: [profile.runtime.sandbox],
       approvalPolicy: profile.runtime.approvalPolicy,
@@ -177,9 +219,14 @@ function buildConfiguration(profile: ProductProfile): HarnessEffectiveConfigurat
     })),
     updatePolicy: {
       status: 'not_configured',
-      reason: 'The compiled catalog does not yet contain an atomic session-update policy.',
+      reason: 'The compiled catalog does not contain an atomic Session update policy.',
     },
   };
+}
+
+function reasoningLevel(value: string): HarnessReasoningLevel {
+  if (value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh') return value;
+  throw new Error('Unsupported reasoning level.');
 }
 
 function humanize(value: string): string {

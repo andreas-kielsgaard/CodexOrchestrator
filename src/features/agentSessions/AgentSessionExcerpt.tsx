@@ -1,4 +1,5 @@
 import type { MouseEvent } from 'react';
+import type { AgentIdentityDto } from '../../application/agentSessions';
 import { AgentSessionTranscript } from './AgentSessionTranscript';
 import {
   selectTranscriptRange,
@@ -8,6 +9,7 @@ import {
 
 export interface AgentSessionExcerptProps {
   readonly transcript: ProjectedTranscript;
+  readonly agentIdentity?: AgentIdentityDto | null;
   readonly range: TranscriptAnchorRange;
   readonly actionLabel: string;
   readonly expanded?: boolean;
@@ -18,6 +20,7 @@ export interface AgentSessionExcerptProps {
 /** Read-only anchored Agent Session projection for compact or contextual surfaces. */
 export function AgentSessionExcerpt({
   transcript,
+  agentIdentity,
   range,
   actionLabel,
   expanded,
@@ -35,6 +38,7 @@ export function AgentSessionExcerpt({
       <div className="agent-session-excerpt__transcript">
         <AgentSessionTranscript
           transcript={transcript}
+          agentIdentity={agentIdentity}
           content={selectTranscriptRange(transcript, range)}
           loading={false}
           expandedProcessing={new Set()}

@@ -71,8 +71,9 @@ export function HarnessAwareAgentSessionPane({
   };
 
   const runCommand = async (command: ConversationHarnessManagementCommand) => {
-    if (!source?.dispatch || commandPending) return;
-    setCommandPending(true);
+    if (!source?.dispatch || (commandPending && command.kind !== 'save_working_copy')) return;
+    const tracksPending = command.kind !== 'save_working_copy';
+    if (tracksPending) setCommandPending(true);
     setCommandError(null);
     try {
       const next = await source.dispatch({ sessionId, command });
@@ -85,7 +86,7 @@ export function HarnessAwareAgentSessionPane({
     } catch {
       setCommandError('The harness change could not be recorded.');
     } finally {
-      setCommandPending(false);
+      if (tracksPending) setCommandPending(false);
     }
   };
 

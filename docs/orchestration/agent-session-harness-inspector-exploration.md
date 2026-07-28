@@ -30,22 +30,37 @@ state survive view navigation and component remount. They do not survive an appl
 
 The prototype records these product concepts without claiming production effects:
 
-- Harness details show its explicit name, machine key, role, working version, local active version,
-  session-applied version, and session-desired version.
-- **Prompt prefix** has View and Edit modes. View renders Markdown; Edit uses the reusable product
-  Markdown editor. The prefix is intended for a new session's initial prompt and for future
-  Harness-aware context compression. That compression routine is deferred.
-- Skill policy distinguishes **Always applicable**, **Initial ingestion only**, and
-  **Available for discovery** with whitelist or blacklist discovery. Skill groups are deferred.
-- Tool policy treats schema exposure as a provider/runtime capability, not prompt text. Exposure is
-  configured separately from optional initial or recurring human-readable guidance. Runtime tool
-  reconfiguration remains unimplemented.
-- Model and reasoning controls accept multiple allowed values and an inherited/default choice.
+- The Harness name is the user-facing role. The machine key remains an administrative property;
+  there is no second role field.
+- The toolbar selects the Session-applied version, any historical committed version, or the
+  working draft. It distinguishes a Session behind the pushed version, a viewed version that is not
+  pushed, a view different from the Session version, and an uncommitted draft.
+- **Edit harness** creates a cached draft from the viewed committed revision; **Edit draft** reopens
+  it. Commit and Push appear only in edit mode. Commit, Push, single-Session changes, and bulk
+  changes require plain-language confirmation.
+- **Prompt prefix** has two editable views over one stored value. Markdown is a formatted
+  content-editable surface with a formatting toolbar; Plain is raw Markdown without a toolbar. The
+  rich surface is not reconstructed after its own keystrokes, preserving its caret. The prefix is
+  intended for the first Session prompt and future Harness-aware context compression; that
+  compression routine is deferred.
+- Skills are summarized as **Always applicable**, **Initial ingestion only**, and **Available**.
+  The first two are selected whitelists. Only Available discovery can use whitelist or blacklist
+  policy. A fuzzy-search dialog reads the complete checked-in product skill catalog and owns
+  selection, timing, and removal. Skill groups remain deferred.
+- Tools use **Every invocation**, **Initial invocation only**, and **Available** exposure. A
+  fuzzy-search dialog reads the recorded Epic Plan Builder tool catalog. Provider-owned schemas
+  remain outside prompt content and runtime reconfiguration remains unimplemented.
+- Each recorded model has an allowed flag and an accessible minimum/maximum reasoning range, with
+  optional defaults constrained to an allowed model and range. No application capability catalog
+  exists, so the UI labels its two-model source as a recorded catalog rather than complete runtime
+  discovery.
 - Current sandbox and authority values are inspectable and editable in the recorded working copy.
   Expanded sandbox customization is deferred.
 - Application hooks remain visible. Initial prompt delivery is not modeled as a hook.
-- Commit, Push, and session-update choices operate only on the recorded repository. Labels and
-  notices identify this as a preview rather than a connected product lifecycle.
+- The version table shows status, active Session count, the selected Session indicator, and bulk
+  next-prompt actions. Push moves the recorded local active revision and queues relevant recorded
+  Sessions only for their next prompt. The separate Harness Management update panel and all
+  interrupt controls are removed.
 
 The product-backed source remains read-only. It adapts the existing managed Plan Builder query to
 the same view contract, reports the session binding as untracked, supplies no agent identity, and
@@ -62,16 +77,18 @@ before commit, with an optimistic draft revision and dirty flag.
 The command meanings are:
 
 1. `SaveHarnessWorkingCopy` validates command shape, records the whole working copy in the local
-   draft cache, and advances its optimistic revision.
+   draft cache, and advances its optimistic revision. The product editor may coalesce keystrokes,
+   but the repository persists whole atomic configurations.
 2. `CommitHarnessRevision` validates the complete effective configuration, writes one Git commit,
    records its object id and configuration digest, and clears the matching dirty draft. It does not
    activate the revision.
-3. `ActivateHarnessRevision` is presented as **Push**. It atomically advances the local product ref
-   `refs/orchestrator/harnesses/<harness-key>/active`. It performs no network operation. New sessions
-   resolve this active revision.
-4. `RequestSessionHarnessUpdate` sets a session's desired revision and strategy through the binding
-   repository. `RequestHarnessUpdateForRelevantSessions` performs the same checked transition for
-   each relevant session. Components never mutate applied or desired versions directly.
+3. `ActivateHarnessRevision` is presented as **Push**. One application transaction advances the
+   local product ref `refs/orchestrator/harnesses/<harness-key>/active` and sets that revision as the
+   desired next-prompt revision for every relevant existing Session. It performs no network
+   operation. New Sessions resolve the active ref.
+4. `RequestSessionHarnessUpdate` sets one Session's desired committed revision for next-prompt
+   consumption. `RequestHarnessUpdateForRelevantSessions` performs the same checked transition for
+   each relevant Session. Components never mutate applied or desired versions directly.
 
 Every command carries expected draft, binding, or active-ref revisions and is authorized at the
 Application boundary. A successful database write alone is not evidence that a running agent
@@ -113,10 +130,13 @@ user or Application-authored prompt, that boundary resolves the desired revision
 delivery transition, durably advances the applied revision, and records which revision the new
 invocation used. All send entry points must converge there.
 
-**Interrupt now** requires a supported runtime/Application path that can identify and stop the
-running invocation before restarting or continuing with the desired revision. Changing a database
-row cannot interrupt a process. This path is not implemented and must remain unavailable in the
-connected product until the runtime returns an observed interruption outcome.
+**Interrupt and update now** belongs in the Agent Session view only when that Session has a queued
+revision and is still executing an invocation resolved with the previous revision. It requires a
+supported runtime/Application path that identifies and stops the running invocation before
+restarting or continuing with the desired revision. Changing a database row cannot interrupt a
+process. The recorded fixture contains a completed invocation, so it exposes no interrupt action.
+This path is not implemented and must remain unavailable in the connected product until the
+runtime returns an observed interruption outcome.
 
 An update transition compares complete revisions. It does not re-prefix skills or tools already
 present. It appends changed guidance, tells the agent which removed guidance or resources no longer
@@ -140,24 +160,45 @@ interrupt delivery, apply-to-all, runtime tool changes, or context compression. 
 future implementations that own each setting; the management view has no Validation or provenance
 section.
 
+### Application hook registry conclusion
+
+The current repository has no application-owned typed hook registry that guarantees every
+connectable hook is discoverable by Harness configuration. The compiled Harness profile supplies
+free-form `lifecycle.completionCriteria` strings, and the prototype maps those strings for display;
+that is not implementation wiring, availability discovery, or validation.
+
+Production should define one typed Application hook catalog as the source for:
+
+- implementation registration and routing;
+- Harness catalog discovery and exposure choices;
+- availability/capability reporting; and
+- configuration and invocation-time validation.
+
+A hook implementation must not be connectable unless registered there, and Harness configuration
+must reference registry identifiers rather than unrelated strings. The Application composition
+owns enforcement. Deeper hook configuration UI remains deferred.
+
 ## Prototype and test evidence
 
 - Identity tests cover the 100-name pool, curated-pool validation, distinct Harness visual
   identities, deterministic assignment, uniqueness, exhausted-pool fallback, and invalid pools.
-- Recorded-source tests cover full atomic configuration, stable identity across working-copy pool
-  changes, local draft/commit/activation transitions, and per-session update recording.
-- Pane tests cover the return path, cached edits and dirty state across remount, and distinct
-  commit/Push/session-update transitions.
+- Recorded-source tests cover committed version history, the complete checked-in skill catalog,
+  recorded tool/model catalogs, full atomic configuration, stable identity across draft pool
+  changes, local draft/commit/Push transitions, next-prompt queues, and default-range validation.
+- Pane tests cover Session-version entry, state cues, cached edits and dirty state across remount,
+  Markdown/Plain editing, fuzzy dialog search/add/change/remove, policy counts and collapse state,
+  accessible range controls, and confirmation-gated commit/Push/single/bulk next-prompt changes.
 - App and planning tests cover the same source and identity presentation across Harness Management,
-  Epic planning, and independent Agent Sessions, including the agent-authored proposal heading.
+  Epic planning, and independent Agent Sessions, including persisted Agent names on transcript
+  responses and the agent-authored proposal heading.
 - Product-source tests preserve the current read-only, untracked production boundary.
-- The serial aggregate passes 93 files and 624 tests. ESLint, TypeScript and the production Vite
-  build, Rust formatting, touched-file Prettier, and `git diff --check` pass. The repository-wide
-  Prettier check still reports 39 pre-existing files outside this change.
-- In-app browser evidence at 1440 x 1000 and 760 x 900 covers View/Edit Markdown, immediate dirty
-  state, return and remount persistence, Commit then local Push then next-prompt queueing, and the
-  same Agent identity and Harness state when reopened from independent Agent Sessions. The narrow
-  viewport has no document-level horizontal overflow.
+- The aggregate passes 93 files and 629 tests. TypeScript/Vite build, ESLint, touched-file Prettier,
+  Rust formatting, and diff checks pass; the repository-wide Prettier baseline still contains
+  unrelated pre-existing findings.
+- In-app browser evidence at 1440 x 1000 and 390 x 844 verifies the Session entry, desktop and
+  narrow management layouts, real Markdown editing and Plain mode, fuzzy skill search, version
+  defaults and cues, accessible range controls, no entry-button overlap, and no document-level
+  horizontal overflow. The browser console has no warnings or errors.
 
 This evidence exercises only the recorded development composition and does not establish production
 runtime behavior.

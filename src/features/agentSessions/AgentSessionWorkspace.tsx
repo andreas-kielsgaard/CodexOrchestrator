@@ -89,20 +89,20 @@ export function AgentSessionWorkspace({
       {showHeader && (
         <header className="agent-session-header">
           <div className="agent-session-header__identity">
-            {identity && <AgentIdentityBadge identity={identity} compact />}
-            <div>
-              <p className="eyebrow">Agent Session</p>
+            <p className="eyebrow">Agent Session</p>
+            <div className="agent-session-header__title-row">
+              {identity && <AgentIdentityBadge identity={identity} compact />}
               <h2>{title}</h2>
-              {presentation.composer?.showWorkingDirectory &&
-                controller.details?.session.workingDirectory && (
-                  <p
-                    className="session-working-directory"
-                    title={controller.details.session.workingDirectory}
-                  >
-                    {controller.details.session.workingDirectory}
-                  </p>
-                )}
             </div>
+            {presentation.composer?.showWorkingDirectory &&
+              controller.details?.session.workingDirectory && (
+                <p
+                  className="session-working-directory"
+                  title={controller.details.session.workingDirectory}
+                >
+                  {controller.details.session.workingDirectory}
+                </p>
+              )}
           </div>
           <div className="agent-session-header__actions">
             {copyAction}
@@ -116,6 +116,7 @@ export function AgentSessionWorkspace({
       )}
       {!showHeader && <div className="agent-session-utility-bar">{copyAction}</div>}
       <ConversationViewport
+        agentIdentity={identity}
         segments={
           controller.transcript
             ? [{ id: controller.transcript.sessionId, transcript: controller.transcript }]

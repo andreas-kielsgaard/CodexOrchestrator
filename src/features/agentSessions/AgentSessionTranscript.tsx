@@ -3,12 +3,15 @@ import {
   type ProjectedTranscript,
   type ProjectedTranscriptContent,
 } from './transcriptProjector';
+import type { AgentIdentityDto } from '../../application/agentSessions';
+import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
 import { AgentMarkdown } from './AgentMarkdown';
 import { ProcessingDisclosure } from './ProcessingDisclosure';
 import { TechnicalDiagnosticDisclosure } from './TechnicalDiagnosticDisclosure';
 
 interface AgentSessionTranscriptProps {
   transcript: ProjectedTranscript | null;
+  agentIdentity?: AgentIdentityDto | null;
   content?: readonly ProjectedTranscriptContent[];
   loading: boolean;
   expandedProcessing: ReadonlySet<string>;
@@ -18,6 +21,7 @@ interface AgentSessionTranscriptProps {
 
 export function AgentSessionTranscript({
   transcript,
+  agentIdentity,
   content,
   loading,
   expandedProcessing,
@@ -76,7 +80,10 @@ export function AgentSessionTranscript({
             {invocation.finalResponse && (
               <article className="transcript-message agent-final-message">
                 <header>
-                  <span>Agent</span>
+                  <span className="transcript-message__agent">
+                    {agentIdentity && <AgentIdentityBadge identity={agentIdentity} compact />}
+                    <span>{agentIdentity?.name ?? 'Agent'}</span>
+                  </span>
                   <span className="outcome-label">{invocation.outcome.label}</span>
                 </header>
                 <AgentMarkdown>{invocation.finalResponse.text}</AgentMarkdown>

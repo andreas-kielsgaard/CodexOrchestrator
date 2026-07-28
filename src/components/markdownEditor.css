@@ -59,7 +59,8 @@
   color: #245f48;
 }
 
-.markdown-editor textarea {
+.markdown-editor__plain,
+.markdown-editor__rich {
   display: block;
   width: 100%;
   min-height: 250px;
@@ -68,12 +69,16 @@
   outline: 0;
   background: #fff;
   color: #283a30;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 0.78rem;
   line-height: 1.6;
+}
+
+.markdown-editor__plain {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   resize: vertical;
 }
 
+.markdown-editor__rich,
 .markdown-editor__preview {
   min-height: 180px;
   padding: 16px;
@@ -82,14 +87,24 @@
   line-height: 1.65;
 }
 
+.markdown-editor__rich > :first-child,
 .markdown-editor__preview > :first-child {
   margin-top: 0;
 }
 
+.markdown-editor__rich > :last-child,
 .markdown-editor__preview > :last-child {
   margin-bottom: 0;
 }
 
+.markdown-editor__rich h1,
+.markdown-editor__rich h2,
+.markdown-editor__rich h3,
+.markdown-editor__rich p,
+.markdown-editor__rich ul,
+.markdown-editor__rich ol,
+.markdown-editor__rich blockquote,
+.markdown-editor__rich pre,
 .markdown-editor__preview h1,
 .markdown-editor__preview h2,
 .markdown-editor__preview h3,
@@ -101,23 +116,29 @@
   margin: 0.8em 0;
 }
 
+.markdown-editor__rich h1,
 .markdown-editor__preview h1 {
   font-size: 1.3em;
 }
 
+.markdown-editor__rich h2,
 .markdown-editor__preview h2 {
   font-size: 1.16em;
 }
 
+.markdown-editor__rich h3,
 .markdown-editor__preview h3 {
   font-size: 1.05em;
 }
 
+.markdown-editor__rich ul,
+.markdown-editor__rich ol,
 .markdown-editor__preview ul,
 .markdown-editor__preview ol {
   padding-left: 1.5em;
 }
 
+.markdown-editor__rich code,
 .markdown-editor__preview code {
   padding: 0.1em 0.3em;
   border-radius: 4px;
@@ -125,6 +146,7 @@
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 
+.markdown-editor__rich pre,
 .markdown-editor__preview pre {
   overflow: auto;
   padding: 12px;
@@ -132,11 +154,18 @@
   background: #eef1eb;
 }
 
+.markdown-editor__rich pre code,
 .markdown-editor__preview pre code {
   padding: 0;
   background: transparent;
 }
 
+.markdown-editor__rich a,
 .markdown-editor__preview a {
   color: #245f48;
+}
+
+.markdown-editor__rich:focus {
+  outline: 2px solid #39745a;
+  outline-offset: -2px;
 }

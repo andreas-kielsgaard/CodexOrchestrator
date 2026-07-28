@@ -278,7 +278,8 @@ describe('EpicPlanBuilder', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
 
-    expect(await screen.findByRole('region', { name: 'Harness Management' })).toBeVisible();
+    await screen.findByRole('heading', { name: 'Harness details' });
+    expect(screen.getByRole('region', { name: 'Harness Management' })).toBeVisible();
     expect(screen.queryByLabelText('Epic Plan Builder conversation')).toBeNull();
     expect(harnessManagementSource.load).toHaveBeenCalledWith({ sessionId: 'session-1' });
   });

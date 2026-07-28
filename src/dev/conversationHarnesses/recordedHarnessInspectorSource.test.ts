@@ -4,7 +4,7 @@ import {
 } from './recordedHarnessInspectorSource';
 
 describe('recorded Harness Management source', () => {
-  it('resolves one complete recorded revision through the Session-owned relationship', async () => {
+  it('resolves committed revisions, catalogs, and one Session-owned applied revision', async () => {
     const source = createRecordedHarnessManagementSource();
     const read = await source.load({ sessionId: recordedHarnessInspectorSessionId });
 
@@ -13,18 +13,21 @@ describe('recorded Harness Management source', () => {
     expect(read.snapshot).toMatchObject({
       sessionId: recordedHarnessInspectorSessionId,
       harnessKey: 'epic_plan_builder',
-      catalogRevision: 4,
+      workingCopy: null,
       versionControl: {
         support: 'recorded_preview',
-        committedRevision: 4,
-        activeRevision: 4,
+        pushedRevision: 4,
       },
       sessionBinding: {
-        state: 'update_available',
+        state: 'behind',
         appliedRevision: 3,
-        desiredRevision: 4,
+        desiredRevision: null,
+        executingPreviousInvocation: false,
       },
     });
+    expect(read.snapshot.versionControl.versions.map((version) => version.revision)).toEqual([
+      3, 4,
+    ]);
     expect(read.snapshot.agentIdentity).toMatchObject({
       harnessRole: 'Epic Plan Builder',
       appliedHarnessRevision: 3,
@@ -33,51 +36,67 @@ describe('recorded Harness Management source', () => {
     expect(read.snapshot.agentIdentity?.appliedHarnessRevision).toBe(
       read.snapshot.sessionBinding.appliedRevision,
     );
-    expect(read.snapshot.workingCopy.configuration).toMatchObject({
+    const current = read.snapshot.versionControl.versions.at(-1)?.configuration;
+    expect(current).toMatchObject({
       identity: {
         name: 'Epic Plan Builder',
         machineKey: 'epic_plan_builder',
-        role: 'Epic Plan Builder',
       },
       promptPrefix: {
         initialDelivery: 'prepend',
         contextCompressionDelivery: 'deferred',
       },
-      skills: { discoveryPolicy: 'whitelist' },
-      tools: { discoveryPolicy: 'whitelist' },
+      skills: { availableDiscoveryPolicy: 'whitelist' },
+      tools: { availableDiscoveryPolicy: 'whitelist' },
       runtime: {
-        allowInheritedModel: true,
-        allowInheritedReasoning: true,
+        defaultModel: null,
+        defaultReasoning: null,
         sandbox: 'read_only',
         approvalPolicy: 'never',
       },
-      updatePolicy: { status: 'configured', promptReconstruction: 'deferred' },
+      updatePolicy: {
+        status: 'configured',
+        delivery: 'next_prompt',
+        promptReconstruction: 'deferred',
+      },
     });
-    expect(read.snapshot.workingCopy.configuration.skills.items[0]?.policy).toBe('available');
-    expect(read.snapshot.workingCopy.configuration.tools.items.map((tool) => tool.name)).toEqual([
+    expect(read.snapshot.catalogs.skills.source).toBe('checked_in_product_catalog');
+    expect(read.snapshot.catalogs.skills.items.length).toBeGreaterThan(20);
+    expect(read.snapshot.catalogs.skills.items.map((skill) => skill.name)).toContain(
+      'epic-plan-builder',
+    );
+    expect(read.snapshot.catalogs.models).toMatchObject({ source: 'recorded_catalog' });
+    expect(current?.tools.items.map((tool) => tool.name)).toEqual([
       'submit_epic_plan_proposal',
       'request_epic_initiation',
     ]);
   });
 
-  it('persists the complete working copy across views without renaming the existing Session', async () => {
+  it('persists a complete draft across views without renaming the existing Session', async () => {
     const source = createRecordedHarnessManagementSource();
     const initial = await source.load({ sessionId: recordedHarnessInspectorSessionId });
     expect(initial.kind).toBe('available');
     if (initial.kind !== 'available' || !source.dispatch) return;
     const identity = initial.snapshot.agentIdentity;
-    const configuration = initial.snapshot.workingCopy.configuration;
+    const base = initial.snapshot.versionControl.versions.find((version) => version.revision === 3);
+    expect(base).toBeDefined();
+    if (!base) return;
+    const started = await source.dispatch({
+      sessionId: recordedHarnessInspectorSessionId,
+      command: { kind: 'start_edit', baseRevision: 3 },
+    });
+    expect(started.kind).toBe('available');
+    if (started.kind !== 'available' || !started.snapshot.workingCopy) return;
 
     const saved = await source.dispatch({
       sessionId: recordedHarnessInspectorSessionId,
       command: {
         kind: 'save_working_copy',
-        expectedDraftRevision: initial.snapshot.workingCopy.draftRevision,
         configuration: {
-          ...configuration,
-          promptPrefix: { ...configuration.promptPrefix, content: '# Revised prefix' },
+          ...base.configuration,
+          promptPrefix: { ...base.configuration.promptPrefix, content: '# Revised prefix' },
           identity: {
-            ...configuration.identity,
+            ...base.configuration.identity,
             machineKey: 'replacement_key',
             permittedAgentNames: ['Grace Hopper'],
           },
@@ -89,34 +108,43 @@ describe('recorded Harness Management source', () => {
     expect(saved.kind).toBe('available');
     expect(reopened.kind).toBe('available');
     if (reopened.kind !== 'available') return;
-    expect(reopened.snapshot.workingCopy).toMatchObject({ state: 'uncommitted' });
-    expect(reopened.snapshot.workingCopy.configuration.promptPrefix.content).toBe(
+    expect(reopened.snapshot.workingCopy).toMatchObject({ dirty: true });
+    expect(reopened.snapshot.workingCopy?.configuration.promptPrefix.content).toBe(
       '# Revised prefix',
     );
     expect(reopened.snapshot.harnessKey).toBe('epic_plan_builder');
-    expect(reopened.snapshot.workingCopy.configuration.identity.machineKey).toBe('replacement_key');
+    expect(reopened.snapshot.workingCopy?.configuration.identity.machineKey).toBe(
+      'replacement_key',
+    );
     expect(reopened.snapshot.agentIdentity).toEqual(identity);
   });
 
-  it('records commit, local activation, and per-session delivery choices as distinct commands', async () => {
+  it('keeps commit, push, and next-prompt Session changes as distinct recorded commands', async () => {
     const source = createRecordedHarnessManagementSource();
     const initial = await source.load({ sessionId: recordedHarnessInspectorSessionId });
     expect(initial.kind).toBe('available');
     if (initial.kind !== 'available' || !source.dispatch) return;
-    const configuration = initial.snapshot.workingCopy.configuration;
+    const base = initial.snapshot.versionControl.versions.at(-1);
+    expect(base).toBeDefined();
+    if (!base) return;
+    const started = await source.dispatch({
+      sessionId: recordedHarnessInspectorSessionId,
+      command: { kind: 'start_edit', baseRevision: base.revision },
+    });
+    expect(started.kind).toBe('available');
+    if (started.kind !== 'available' || !started.snapshot.workingCopy) return;
     const saved = await source.dispatch({
       sessionId: recordedHarnessInspectorSessionId,
       command: {
         kind: 'save_working_copy',
-        expectedDraftRevision: initial.snapshot.workingCopy.draftRevision,
         configuration: {
-          ...configuration,
-          identity: { ...configuration.identity, name: 'Epic Plan Builder Plus' },
+          ...base.configuration,
+          identity: { ...base.configuration.identity, name: 'Epic Plan Builder Plus' },
         },
       },
     });
     expect(saved.kind).toBe('available');
-    if (saved.kind !== 'available') return;
+    if (saved.kind !== 'available' || !saved.snapshot.workingCopy) return;
     const committed = await source.dispatch({
       sessionId: recordedHarnessInspectorSessionId,
       command: {
@@ -124,37 +152,88 @@ describe('recorded Harness Management source', () => {
         expectedDraftRevision: saved.snapshot.workingCopy.draftRevision,
       },
     });
-    expect(committed.kind).toBe('available');
-    if (committed.kind !== 'available') return;
-    expect(committed.snapshot).toMatchObject({
-      workingCopy: { state: 'committed_not_active' },
-      versionControl: { committedRevision: 5, activeRevision: 4 },
+    expect(committed).toMatchObject({
+      kind: 'available',
+      snapshot: {
+        workingCopy: null,
+        versionControl: { pushedRevision: 4 },
+        sessionBinding: { state: 'behind', desiredRevision: null },
+      },
     });
+    if (committed.kind !== 'available') return;
+    expect(committed.snapshot.versionControl.versions.at(-1)?.revision).toBe(5);
+
     const pushed = await source.dispatch({
       sessionId: recordedHarnessInspectorSessionId,
-      command: { kind: 'push', expectedCommittedRevision: 5 },
+      command: { kind: 'push', revision: 5 },
     });
-    expect(pushed.kind).toBe('available');
-    if (pushed.kind !== 'available') return;
-    expect(pushed.snapshot).toMatchObject({
-      workingCopy: { state: 'clean' },
-      versionControl: { committedRevision: 5, activeRevision: 5 },
-      sessionBinding: { state: 'update_available', appliedRevision: 3, desiredRevision: 5 },
+    expect(pushed).toMatchObject({
+      kind: 'available',
+      snapshot: {
+        versionControl: { pushedRevision: 5 },
+        sessionBinding: {
+          state: 'queued',
+          appliedRevision: 3,
+          desiredRevision: 5,
+          executingPreviousInvocation: false,
+        },
+      },
     });
+
     const queued = await source.dispatch({
       sessionId: recordedHarnessInspectorSessionId,
       command: {
-        kind: 'request_session_update',
-        expectedActiveRevision: 5,
-        scope: 'current_session',
-        strategy: 'next_prompt',
+        kind: 'queue_version',
+        revision: 4,
+        scope: 'all_relevant_sessions',
       },
     });
     expect(queued).toMatchObject({
       kind: 'available',
       snapshot: {
-        sessionBinding: { state: 'queued', desiredRevision: 5, updateStrategy: 'next_prompt' },
+        sessionBinding: { state: 'queued', appliedRevision: 3, desiredRevision: 4 },
       },
+    });
+    if (queued.kind === 'available')
+      expect(queued.snapshot.sessionBinding.reason).toMatch(/next prompt/i);
+  });
+
+  it('rejects a default reasoning value outside the allowed model range', async () => {
+    const source = createRecordedHarnessManagementSource();
+    const initial = await source.load({ sessionId: recordedHarnessInspectorSessionId });
+    expect(initial.kind).toBe('available');
+    if (initial.kind !== 'available' || !source.dispatch) return;
+    const base = initial.snapshot.versionControl.versions.at(-1);
+    if (!base) return;
+    const started = await source.dispatch({
+      sessionId: recordedHarnessInspectorSessionId,
+      command: { kind: 'start_edit', baseRevision: base.revision },
+    });
+    if (started.kind !== 'available' || !started.snapshot.workingCopy) return;
+    const configuration = started.snapshot.workingCopy.configuration;
+    const rejected = await source.dispatch({
+      sessionId: recordedHarnessInspectorSessionId,
+      command: {
+        kind: 'save_working_copy',
+        configuration: {
+          ...configuration,
+          runtime: {
+            ...configuration.runtime,
+            models: configuration.runtime.models.map((model) =>
+              model.modelId === 'gpt-5.6-terra'
+                ? { ...model, minReasoning: 'high', maxReasoning: 'xhigh' }
+                : model,
+            ),
+            defaultModel: 'gpt-5.6-terra',
+            defaultReasoning: 'low',
+          },
+        },
+      },
+    });
+
+    expect(rejected).toEqual({
+      kind: 'unavailable',
+      reason: 'Default reasoning must fit the default model range.',
     });
   });
 

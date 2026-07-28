@@ -39,6 +39,36 @@ describe('AgentSessionTranscript', () => {
     expect(onToggle).toHaveBeenCalledWith('invocation-1');
   });
 
+  it('uses the persisted Agent name and marker for authored responses', () => {
+    render(
+      <AgentSessionTranscript
+        transcript={projectAgentSessionTranscript(
+          sessionDetails('completed', [
+            runtimeEvent(1, 'agent_message', 'Finished result', { role: 'final' }),
+          ]),
+        )}
+        agentIdentity={{
+          name: 'Antoni Gaudi',
+          harnessRole: 'Epic Plan Builder',
+          visualIdentity: { token: 'drafting_compass', accent: '#39745a' },
+          appliedHarnessRevision: 3,
+          assignment: {
+            kind: 'recorded_preview',
+            pool: 'harness_subset',
+            assignedAt: '2026-07-17T09:00:00.000Z',
+          },
+        }}
+        loading={false}
+        expandedProcessing={new Set()}
+        onToggleProcessing={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText('Antoni Gaudi')).toBeVisible();
+    expect(screen.getByLabelText('Antoni Gaudi, Epic Plan Builder')).toBeVisible();
+    expect(screen.queryByText('Agent')).toBeNull();
+  });
+
   it.each([
     ['failed', 'Failed. Runtime failed'],
     ['canceled', 'Canceled. This invocation was canceled.'],

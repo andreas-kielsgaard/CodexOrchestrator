@@ -1,4 +1,5 @@
 import { useId, useState } from 'react';
+import type { AgentIdentityDto } from '../../../application/agentSessions';
 import {
   ConversationViewport,
   embeddedSessionIsWritable,
@@ -12,6 +13,7 @@ import '../styles/sharedAgentSessionPanel.css';
 export interface SharedAgentSessionPresentation {
   readonly sessionId: string;
   readonly title: string;
+  readonly agentIdentity?: AgentIdentityDto | null;
   readonly transcript?: ProjectedTranscript;
   readonly latestAgentTurnRange?: TranscriptAnchorRange;
 }
@@ -107,6 +109,7 @@ function ConnectedAgentSessionConversation({
 
   return (
     <ConversationViewport
+      agentIdentity={controller.details?.session.agentIdentity ?? session.agentIdentity}
       segments={transcript ? [{ id: transcript.sessionId, transcript }] : []}
       loading={controller.loading}
       expandedProcessing={controller.expandedProcessing}
@@ -144,6 +147,7 @@ function ReadOnlyAgentSessionConversation({
   const [expandedProcessing, setExpandedProcessing] = useState<ReadonlySet<string>>(new Set());
   return (
     <ConversationViewport
+      agentIdentity={session.agentIdentity}
       segments={
         session.transcript ? [{ id: session.sessionId, transcript: session.transcript }] : []
       }

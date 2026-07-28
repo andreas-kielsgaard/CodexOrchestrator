@@ -54,24 +54,28 @@ describe('Tauri Conversation Harness Management source', () => {
       sessionId: 'session-1',
       harnessKey: 'epic_plan_builder',
       agentIdentity: null,
-      catalogRevision: 4,
       versionControl: {
         support: 'not_connected',
-        committedRevision: null,
-        activeRevision: null,
+        pushedRevision: null,
       },
       sessionBinding: {
         state: 'untracked',
         appliedRevision: null,
         desiredRevision: null,
       },
-      workingCopy: {
-        baseRevision: 4,
-        state: 'clean',
-        configuration: {
-          identity: { name: 'Epic Plan Builder', machineKey: 'epic_plan_builder' },
-          updatePolicy: { status: 'not_configured' },
-        },
+      workingCopy: null,
+      catalogs: {
+        skills: { source: 'not_connected' },
+        tools: { source: 'not_connected' },
+        models: { source: 'not_connected' },
+      },
+    });
+    expect(read.snapshot.versionControl.versions).toHaveLength(1);
+    expect(read.snapshot.versionControl.versions[0]).toMatchObject({
+      revision: 4,
+      configuration: {
+        identity: { name: 'Epic Plan Builder', machineKey: 'epic_plan_builder' },
+        updatePolicy: { status: 'not_configured' },
       },
     });
   });

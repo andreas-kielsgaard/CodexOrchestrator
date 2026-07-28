@@ -43,6 +43,7 @@
   font: inherit;
   font-size: 0.74rem;
   font-weight: 780;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -66,54 +67,67 @@
 .harness-management__toolbar {
   display: flex;
   min-width: 0;
-  min-height: 48px;
+  min-height: 54px;
   align-items: center;
-  gap: 10px;
-  padding: 6px 12px;
+  gap: 9px;
+  padding: 7px 12px;
   border-bottom: 1px solid #d8ddd5;
   background: #fffdf8;
 }
 
+.harness-management button,
+.harness-management select,
+.harness-management input {
+  font: inherit;
+}
+
 .harness-management__back,
-.harness-management__actions button {
+.harness-management__toolbar-actions button,
+.harness-management__version-cues button,
+.harness-management__card-action,
+.harness-management__history button,
+.harness-management__modal button {
   display: inline-flex;
   min-height: 32px;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 6px;
   padding: 0 9px;
   border: 1px solid #c4cec4;
   border-radius: 7px;
   background: #fffdf8;
   color: #34483d;
-  font: inherit;
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   font-weight: 800;
-  white-space: nowrap;
   cursor: pointer;
 }
 
 .harness-management__back {
   border-color: transparent;
+  white-space: nowrap;
 }
 
 .harness-management__back:hover,
-.harness-management__actions button:hover:not(:disabled) {
+.harness-management__toolbar-actions button:hover:not(:disabled),
+.harness-management__version-cues button:hover,
+.harness-management__card-action:hover,
+.harness-management__history button:hover:not(:disabled),
+.harness-management__modal button:hover:not(:disabled) {
   background: #edf1ee;
 }
 
 .harness-management__toolbar-context {
   display: flex;
-  min-width: 0;
+  min-width: 120px;
   flex: 1;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
   overflow: hidden;
 }
 
-.harness-management__toolbar-context > span:not(.agent-identity-badge) {
+.harness-management__toolbar-context > span:not(.agent-identity-badge, .harness-management__badge) {
   color: #718077;
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: 750;
 }
 
@@ -125,41 +139,50 @@
   white-space: nowrap;
 }
 
-.harness-management__toolbar-status {
+.harness-management__version-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #647169;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.harness-management__version-select select {
+  min-width: 154px;
+  min-height: 34px;
+  padding: 0 28px 0 8px;
+  border: 1px solid #c4cec4;
+  border-radius: 7px;
+  background: #fff;
+  color: #2e4036;
+  font-size: 0.72rem;
+  font-weight: 760;
+}
+
+.harness-management__toolbar-actions {
   display: flex;
   flex: 0 0 auto;
   gap: 6px;
 }
 
-.harness-management__badge {
-  display: inline-flex;
-  min-height: 24px;
-  align-items: center;
-  padding: 0 8px;
-  border-radius: 999px;
-  font-size: 0.67rem;
-  font-weight: 820;
-  white-space: nowrap;
+.harness-management__toolbar-actions button.is-primary,
+.harness-management__modal button.is-primary {
+  border-color: #17211b;
+  background: #17211b;
+  color: #fffdf8;
 }
 
-.harness-management__badge.is-positive {
-  background: #dff0e5;
-  color: #1d6844;
-}
-
-.harness-management__badge.is-caution {
-  background: #faedcf;
-  color: #7b5620;
-}
-
-.harness-management__badge.is-neutral {
-  background: #e7eae5;
-  color: #526058;
+.harness-management button:disabled,
+.harness-management select:disabled,
+.harness-management input:disabled {
+  cursor: default;
+  opacity: 0.52;
 }
 
 .harness-management__scroll {
   min-height: 0;
-  padding: 16px clamp(14px, 2.5vw, 30px) 30px;
+  padding: 15px clamp(13px, 2.5vw, 30px) 30px;
   overflow: auto;
 }
 
@@ -179,67 +202,69 @@
 }
 
 .harness-management__unavailable h2 {
-  margin-bottom: 4px;
-  font-size: 1rem;
+  font-size: 0.92rem;
 }
 
+.harness-management__unavailable p,
 .harness-management__command-error {
-  margin-bottom: 12px;
-  font-size: 0.78rem;
+  margin-top: 4px;
+  font-size: 0.76rem;
 }
 
-.harness-management__notice {
+.harness-management__version-cues {
   display: flex;
+  min-height: 30px;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-  padding: 11px 13px;
-  border: 1px solid #d8c998;
-  border-radius: 8px;
-  background: #fff8dc;
-  color: #66510f;
+  gap: 7px;
+  margin-bottom: 11px;
 }
 
-.harness-management__notice > div {
-  display: grid;
-  gap: 2px;
+.harness-management__version-cues button {
+  margin-left: auto;
 }
 
-.harness-management__notice strong {
-  font-size: 0.8rem;
+.harness-management__badge {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 0.64rem;
+  font-weight: 820;
+  white-space: nowrap;
 }
 
-.harness-management__notice span {
-  font-size: 0.72rem;
-  line-height: 1.4;
+.harness-management__badge.is-positive {
+  background: #dff0e5;
+  color: #1d6844;
 }
 
-.harness-management__notice.is-current {
-  border-color: #bcd6c5;
-  background: #edf6ef;
-  color: #1f6846;
+.harness-management__badge.is-caution {
+  background: #faedcf;
+  color: #7b5620;
 }
 
-.harness-management__notice.is-neutral {
-  display: grid;
-  gap: 2px;
-  border-color: #d8ddd5;
-  background: #eef1eb;
+.harness-management__badge.is-neutral {
+  background: #e7eae5;
   color: #526058;
 }
 
 .harness-management__grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 11px;
+  max-width: 1180px;
+  margin: 0 auto;
 }
 
 .harness-management__card {
   min-width: 0;
-  padding: 16px;
-  border: 1px solid #d7ddd6;
+  padding: 14px;
+  border: 1px solid #d8ddd5;
   border-radius: 9px;
   background: #fffdf8;
+  box-shadow: 0 1px 2px rgb(35 50 41 / 4%);
 }
 
 .harness-management__card.is-wide {
@@ -247,29 +272,37 @@
 }
 
 .harness-management__card > header {
-  margin-bottom: 14px;
+  display: flex;
+  min-width: 0;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
-.harness-management__card h2 {
-  font-size: 0.96rem;
+.harness-management__card > header h2 {
+  color: #283a30;
+  font-size: 0.88rem;
+  font-weight: 820;
 }
 
 .harness-management__card > header p {
-  max-width: 880px;
-  margin-top: 5px;
+  max-width: 760px;
+  margin-top: 3px;
   color: #69766f;
-  font-size: 0.75rem;
-  line-height: 1.48;
+  font-size: 0.7rem;
+  line-height: 1.45;
 }
 
-.harness-management__field-row {
+.harness-management__card-action {
+  flex: 0 0 auto;
+}
+
+.harness-management__field-row,
+.harness-management__defaults {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-}
-
-.harness-management__field-row.is-three {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .harness-management__field {
@@ -277,16 +310,14 @@
   gap: 6px;
   min-width: 0;
   color: #43534a;
-  font-size: 0.71rem;
+  font-size: 0.69rem;
   font-weight: 800;
 }
 
-.harness-management__field.is-compact {
-  align-self: start;
-}
-
 .harness-management__field input,
-.harness-management__field select {
+.harness-management__field select,
+.harness-management__discovery-policy select,
+.harness-management__catalog-row select {
   width: 100%;
   min-height: 37px;
   padding: 0 9px;
@@ -294,8 +325,7 @@
   border-radius: 7px;
   background: #fff;
   color: #283a30;
-  font: inherit;
-  font-size: 0.76rem;
+  font-size: 0.74rem;
 }
 
 .harness-management__field input:disabled,
@@ -305,40 +335,12 @@
   opacity: 1;
 }
 
-.harness-management__versions {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.harness-management__versions > div {
-  padding: 9px 10px;
-  border-radius: 7px;
-  background: #f1f3ee;
-}
-
-.harness-management__versions dt,
-.harness-management__lifecycle span {
-  color: #718077;
-  font-size: 0.65rem;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.harness-management__versions dd {
-  margin-top: 3px;
-  color: #2e4036;
-  font-size: 0.82rem;
-  font-weight: 820;
-}
-
 .harness-management__identity-policy {
   display: grid;
   grid-template-columns: minmax(190px, 1fr) repeat(2, minmax(170px, 1fr));
   gap: 8px;
-  margin-top: 8px;
-  padding-top: 8px;
+  margin-top: 9px;
+  padding-top: 9px;
   border-top: 1px solid #e0e4dd;
 }
 
@@ -353,142 +355,277 @@
 
 .harness-management__identity-policy > div > span {
   color: #718077;
-  font-size: 0.65rem;
+  font-size: 0.62rem;
   font-weight: 800;
   text-transform: uppercase;
 }
 
 .harness-management__identity-policy > div > strong {
   color: #2e4036;
-  font-size: 0.76rem;
+  font-size: 0.74rem;
 }
 
 .harness-management__identity-policy > div > small,
 .harness-management__identity-policy > p {
   color: #718077;
-  font-size: 0.67rem;
+  font-size: 0.66rem;
   line-height: 1.35;
 }
 
-.harness-management__policy-guide {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-  margin-bottom: 12px;
+.harness-management__markdown-view {
+  min-height: 160px;
+  padding: 14px;
+  border: 1px solid #d8ddd5;
+  border-radius: 8px;
+  background: #fff;
+  color: #283a30;
+  font-size: 0.8rem;
+  line-height: 1.6;
 }
 
-.harness-management__policy-guide > div {
-  padding: 8px;
-  border: 1px solid #e0e4dd;
-  border-radius: 7px;
-  background: #fafaf6;
-}
-
-.harness-management__policy-guide dt {
-  color: #30483b;
-  font-size: 0.69rem;
-  font-weight: 820;
-}
-
-.harness-management__policy-guide dd {
-  margin-top: 3px;
-  color: #69766f;
-  font-size: 0.65rem;
-  line-height: 1.35;
-}
-
-.harness-management__policy-list {
-  display: grid;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.harness-management__policy-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.55fr);
-  gap: 12px;
-  padding: 10px;
-  border: 1px solid #e0e4dd;
-  border-radius: 7px;
-  background: #fafaf6;
-}
-
-.harness-management__policy-item > div:first-child {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.harness-management__policy-item strong,
-.harness-management__check span {
-  color: #2e4036;
-  font-size: 0.76rem;
-  font-weight: 780;
-}
-
-.harness-management__policy-item p,
-.harness-management__policy-item code {
-  color: #69766f;
-  font-size: 0.68rem;
-  line-height: 1.4;
-}
-
-.harness-management__policy-item code {
-  overflow: hidden;
-  color: #3e5f4e;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.harness-management__policy-item.is-tool {
-  align-items: center;
-}
-
-.harness-management__check {
-  display: flex;
-  min-width: 0;
-  align-items: start;
-  gap: 7px;
-}
-
-.harness-management__check input {
-  margin-top: 2px;
-  accent-color: #2b7653;
-}
-
-.harness-management__option-group {
-  display: grid;
-  gap: 7px;
-  margin-top: 12px;
-  padding: 11px;
-  border: 1px solid #e0e4dd;
-  border-radius: 7px;
-  background: #fafaf6;
-}
-
-.harness-management__option-group:first-of-type {
+.harness-management__markdown-view > :first-child {
   margin-top: 0;
 }
 
-.harness-management__option-group legend,
-.harness-management__update-choice legend {
-  padding: 0 4px;
-  color: #43534a;
+.harness-management__markdown-view > :last-child {
+  margin-bottom: 0;
+}
+
+.harness-management__markdown-view h1,
+.harness-management__markdown-view h2,
+.harness-management__markdown-view h3,
+.harness-management__markdown-view p,
+.harness-management__markdown-view ul,
+.harness-management__markdown-view ol {
+  margin: 0.7em 0;
+}
+
+.harness-management__policy-groups {
+  display: grid;
+  gap: 7px;
+}
+
+.harness-management__policy-group {
+  overflow: hidden;
+  border: 1px solid #dfe4dd;
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: #fafaf6;
+}
+
+.harness-management__policy-group.priority-1 {
+  border-left-color: #39745a;
+}
+
+.harness-management__policy-group.priority-2 {
+  border-left-color: #75947e;
+}
+
+.harness-management__policy-group.priority-3 {
+  border-left-color: #b1bbb2;
+}
+
+.harness-management__policy-group > button {
+  display: grid;
+  width: 100%;
+  min-height: 38px;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 0;
+  background: transparent;
+  color: #30483b;
+  text-align: left;
+  cursor: pointer;
+}
+
+.harness-management__policy-group > button strong {
   font-size: 0.72rem;
+}
+
+.harness-management__policy-group > button span {
+  display: inline-grid;
+  min-width: 22px;
+  min-height: 22px;
+  border-radius: 999px;
+  background: #e7ebe5;
+  color: #526058;
+  font-size: 0.64rem;
   font-weight: 820;
+  place-items: center;
 }
 
-.harness-management__option-group > p {
+.harness-management__policy-group > button small {
   color: #718077;
-  font-size: 0.69rem;
+  font-size: 0.62rem;
+  font-weight: 760;
+  text-transform: capitalize;
 }
 
-.harness-management__deferred-note,
-.harness-management__support-note {
+.harness-management__policy-group ul {
+  display: grid;
+  gap: 1px;
+  padding: 0 9px 8px 31px;
+  list-style: none;
+}
+
+.harness-management__policy-group li {
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+  border-top: 1px solid #e7eae5;
+}
+
+.harness-management__policy-group li strong {
+  overflow-wrap: anywhere;
+  color: #35463c;
+  font-size: 0.7rem;
+}
+
+.harness-management__policy-group li small,
+.harness-management__policy-group li.is-empty {
+  color: #718077;
+  font-size: 0.64rem;
+  line-height: 1.35;
+}
+
+.harness-management__card-footer,
+.harness-management__catalog-boundary {
   margin-top: 10px;
   color: #718077;
-  font-size: 0.7rem;
+  font-size: 0.66rem;
   line-height: 1.4;
+}
+
+.harness-management__model-list {
+  display: grid;
+  gap: 8px;
+}
+
+.harness-management__model {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.65fr) minmax(290px, 1.35fr);
+  align-items: center;
+  gap: 20px;
+  padding: 11px;
+  border: 1px solid #e0e4dd;
+  border-radius: 8px;
+  background: #fafaf6;
+}
+
+.harness-management__model-allow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.harness-management__model-allow input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: #39745a;
+}
+
+.harness-management__model-allow span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.harness-management__model-allow strong {
+  color: #2e4036;
+  font-size: 0.76rem;
+}
+
+.harness-management__model-allow small {
+  color: #718077;
+  font-size: 0.64rem;
+}
+
+.harness-management__reasoning-range {
+  display: grid;
+  gap: 4px;
+}
+
+.harness-management__reasoning-range > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: #647169;
+  font-size: 0.66rem;
+}
+
+.harness-management__reasoning-range > div:first-child strong {
+  color: #35463c;
+  text-transform: capitalize;
+}
+
+.harness-management__dual-range {
+  position: relative;
+  height: 22px;
+}
+
+.harness-management__dual-range input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  pointer-events: none;
+  appearance: none;
+}
+
+.harness-management__dual-range input::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: #cbd5cc;
+}
+
+.harness-management__dual-range input::-webkit-slider-thumb {
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #39745a;
+  box-shadow: 0 0 0 1px #39745a;
+  pointer-events: auto;
+  appearance: none;
+}
+
+.harness-management__dual-range input::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: #cbd5cc;
+}
+
+.harness-management__dual-range input::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #39745a;
+  box-shadow: 0 0 0 1px #39745a;
+  pointer-events: auto;
+}
+
+.harness-management__range-labels {
+  display: flex;
+  justify-content: space-between;
+  color: #7a867f;
+  font-size: 0.58rem;
+  text-transform: capitalize;
+}
+
+.harness-management__defaults {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e1e5df;
 }
 
 .harness-management__hook-list {
@@ -503,7 +640,7 @@
   align-items: start;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 0;
+  padding: 9px 0;
   border-top: 1px solid #e6e8e3;
 }
 
@@ -513,128 +650,332 @@
 }
 
 .harness-management__hook-list strong {
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   text-transform: capitalize;
 }
 
 .harness-management__hook-list p {
   margin-top: 2px;
   color: #69766f;
+  font-size: 0.68rem;
+}
+
+.harness-management__history-wrap {
+  overflow-x: auto;
+}
+
+.harness-management__history {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  color: #415047;
   font-size: 0.7rem;
 }
 
-.harness-management__lifecycle {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.harness-management__lifecycle > div {
-  display: grid;
-  gap: 3px;
-  padding: 10px;
-  border-radius: 7px;
-  background: #f1f3ee;
-}
-
-.harness-management__lifecycle strong {
-  color: #2e4036;
-  font-size: 0.82rem;
-}
-
-.harness-management__lifecycle small {
+.harness-management__history th {
+  padding: 8px 9px;
+  border-bottom: 1px solid #d9ded7;
   color: #718077;
-  font-size: 0.67rem;
+  font-size: 0.62rem;
+  text-align: left;
+  text-transform: uppercase;
 }
 
-.harness-management__actions {
+.harness-management__history td {
+  padding: 9px;
+  border-bottom: 1px solid #e7eae5;
+}
+
+.harness-management__history tr.is-selected td {
+  background: #f0f5ef;
+}
+
+.harness-management__history td:first-child {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 12px;
+  align-items: center;
+  gap: 7px;
 }
 
-.harness-management__actions button.is-primary {
-  border-color: #17211b;
-  background: #17211b;
-  color: #fffdf8;
+.harness-management__history td:first-child > button {
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #285e46;
+  font-size: 0.74rem;
 }
 
-.harness-management__actions button:disabled {
-  cursor: default;
-  opacity: 0.48;
+.harness-management__history td:last-child {
+  color: #718077;
+  font-size: 0.64rem;
+  text-align: right;
 }
 
-.harness-management__update-choice {
+.harness-management__history td:last-child button {
+  margin-left: auto;
+}
+
+.harness-management__session-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #286b4a;
+  font-weight: 780;
+}
+
+.harness-management__modal-backdrop {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid #d7ddd6;
-  border-radius: 8px;
+  padding: 18px;
+  background: rgb(25 34 29 / 45%);
+  place-items: center;
 }
 
-.harness-management__update-choice > label {
+.harness-management__modal {
+  width: min(680px, 100%);
+  max-height: min(760px, calc(100vh - 36px));
+  padding: 16px;
+  overflow: hidden;
+  border: 1px solid #c9d0c8;
+  border-radius: 10px;
+  background: #fffdf8;
+  box-shadow: 0 18px 48px rgb(23 33 27 / 22%);
+}
+
+.harness-management__modal.is-catalog {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.harness-management__modal > header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 11px;
+}
+
+.harness-management__modal h2 {
+  color: #283a30;
+  font-size: 0.94rem;
+}
+
+.harness-management__modal h3 {
+  margin: 13px 0 6px;
+  color: #43534a;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+.harness-management__modal p {
+  margin-top: 3px;
+  color: #69766f;
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+
+.harness-management__modal > header button {
+  width: 32px;
+  padding: 0;
+  border-color: transparent;
+}
+
+.harness-management__catalog-search {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 39px;
+  padding: 0 10px;
+  border: 1px solid #cbd2ca;
+  border-radius: 8px;
+  background: #fff;
+  color: #718077;
+}
+
+.harness-management__catalog-search input {
+  min-width: 0;
+  height: 36px;
+  border: 0;
+  outline: 0;
+  color: #283a30;
+  font-size: 0.74rem;
+}
+
+.harness-management__modal-scroll {
+  min-height: 0;
+  padding-right: 3px;
+  overflow-y: auto;
+}
+
+.harness-management__discovery-policy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: #f2f4ef;
+  color: #43534a;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.harness-management__discovery-policy select {
+  width: auto;
+  min-width: 120px;
+}
+
+.harness-management__catalog-selected,
+.harness-management__catalog-results {
+  display: grid;
+  gap: 6px;
+}
+
+.harness-management__catalog-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 0.45fr) auto;
+  align-items: center;
   gap: 8px;
-  padding: 9px;
+  padding: 8px;
+  border: 1px solid #e0e4dd;
   border-radius: 7px;
   background: #fafaf6;
 }
 
-.harness-management__update-choice input {
-  margin-top: 3px;
-  accent-color: #2b7653;
+.harness-management__catalog-results .harness-management__catalog-row {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
-.harness-management__update-choice span {
+.harness-management__catalog-row > div {
   display: grid;
   gap: 2px;
+  min-width: 0;
 }
 
-.harness-management__update-choice strong {
-  font-size: 0.75rem;
+.harness-management__catalog-row strong {
+  overflow-wrap: anywhere;
+  color: #30483b;
+  font-size: 0.72rem;
 }
 
-.harness-management__update-choice small {
-  color: #69766f;
-  font-size: 0.68rem;
+.harness-management__catalog-row small {
+  color: #718077;
+  font-size: 0.64rem;
   line-height: 1.35;
 }
 
-.harness-management__update-behavior {
-  display: grid;
-  gap: 4px;
-  margin-top: 10px;
-  padding-left: 20px;
-  color: #59655e;
-  font-size: 0.7rem;
-  line-height: 1.4;
+.harness-management__catalog-row > button[aria-label^='Remove'] {
+  width: 32px;
+  padding: 0;
+}
+
+.harness-management__modal.is-confirmation {
+  width: min(440px, 100%);
+  padding: 19px;
+}
+
+.harness-management__modal.is-confirmation > p {
+  margin-top: 8px;
+  font-size: 0.74rem;
+}
+
+.harness-management__modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
 }
 
 @container (max-width: 760px) {
   .harness-management__grid,
   .harness-management__field-row,
-  .harness-management__field-row.is-three,
-  .harness-management__versions,
-  .harness-management__policy-guide,
-  .harness-management__lifecycle,
-  .harness-management__update-choice {
+  .harness-management__defaults {
     grid-template-columns: 1fr;
   }
 
-  .harness-management__identity-policy {
+  .harness-management__identity-policy,
+  .harness-management__model {
     grid-template-columns: 1fr;
   }
 
-  .harness-management__policy-item {
-    grid-template-columns: 1fr;
+  .harness-management__toolbar {
+    flex-wrap: wrap;
   }
 
-  .harness-management__toolbar-status .harness-management__badge.is-neutral {
-    display: none;
+  .harness-management__toolbar-context {
+    order: 3;
+    min-width: 0;
+    flex-basis: 100%;
+  }
+
+  .harness-management__version-select {
+    margin-left: auto;
+  }
+}
+
+@container (max-width: 520px) {
+  .harness-aware-agent-session-pane__inspect {
+    top: 72px;
+    right: 14px;
+  }
+
+  .harness-aware-agent-session-pane > .agent-session-workspace .agent-session-header {
+    min-height: 118px;
+    flex-wrap: wrap;
+  }
+
+  .harness-aware-agent-session-pane > .agent-session-workspace .agent-session-header__actions {
+    flex-wrap: wrap;
+  }
+
+  .epic-plan-builder__conversation .harness-aware-agent-session-pane__inspect {
+    top: 43px;
+    right: 9px;
+  }
+
+  .epic-plan-builder__conversation .agent-session-utility-bar {
+    min-height: 80px;
+    align-items: start;
+  }
+
+  .harness-management__toolbar-actions {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .harness-management__toolbar-actions button {
+    min-width: 0;
+    white-space: normal;
+  }
+
+  .harness-management__version-select {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .harness-management__version-select select {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .harness-management__version-cues button {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .harness-management__catalog-row,
+  .harness-management__catalog-results .harness-management__catalog-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .harness-management__catalog-row select {
+    grid-column: 1 / -1;
+    grid-row: 2;
   }
 }
 
@@ -646,25 +987,5 @@
   .harness-inspector-development__pane {
     border: 0;
     border-radius: 0;
-  }
-
-  .harness-aware-agent-session-pane__inspect {
-    top: 14px;
-    right: 14px;
-  }
-
-  .harness-management__toolbar {
-    flex-wrap: wrap;
-  }
-
-  .harness-management__toolbar-context {
-    order: 3;
-    width: 100%;
-    flex-basis: 100%;
-    padding: 0 4px 3px;
-  }
-
-  .harness-management__actions {
-    display: grid;
   }
 }

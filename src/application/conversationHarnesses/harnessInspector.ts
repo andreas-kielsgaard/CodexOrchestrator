@@ -1,15 +1,14 @@
 import type { AgentIdentityDto, AgentVisualIdentityDto } from '../agentSessions';
 
 export type HarnessSkillPolicy = 'always_applicable' | 'initial_ingestion' | 'available';
+export type HarnessToolPolicy = 'every_invocation' | 'initial_invocation' | 'available';
 export type HarnessDiscoveryPolicy = 'whitelist' | 'blacklist';
-export type HarnessToolGuidancePolicy = 'none' | 'initial_ingestion' | 'always_applicable';
-export type HarnessUpdateStrategy = 'next_prompt' | 'interrupt';
+export type HarnessReasoningLevel = 'low' | 'medium' | 'high' | 'xhigh';
 
 export interface HarnessEffectiveConfiguration {
   readonly identity: {
     readonly name: string;
     readonly machineKey: string;
-    readonly role: string;
     readonly permittedAgentNames: readonly string[] | null;
     readonly visualIdentity: AgentVisualIdentityDto | null;
   };
@@ -19,7 +18,7 @@ export interface HarnessEffectiveConfiguration {
     readonly contextCompressionDelivery: 'deferred';
   };
   readonly skills: {
-    readonly discoveryPolicy: HarnessDiscoveryPolicy;
+    readonly availableDiscoveryPolicy: HarnessDiscoveryPolicy;
     readonly items: readonly {
       readonly name: string;
       readonly path: string;
@@ -29,21 +28,22 @@ export interface HarnessEffectiveConfiguration {
     }[];
   };
   readonly tools: {
-    readonly discoveryPolicy: HarnessDiscoveryPolicy;
+    readonly availableDiscoveryPolicy: HarnessDiscoveryPolicy;
     readonly items: readonly {
       readonly name: string;
-      readonly exposed: boolean;
-      readonly guidancePolicy: HarnessToolGuidancePolicy;
+      readonly policy: HarnessToolPolicy;
     }[];
     readonly schemaBoundary: string;
   };
   readonly runtime: {
-    readonly allowInheritedModel: boolean;
-    readonly availableModels: readonly string[];
-    readonly allowedModels: readonly string[];
-    readonly allowInheritedReasoning: boolean;
-    readonly availableReasoningEfforts: readonly string[];
-    readonly allowedReasoningEfforts: readonly string[];
+    readonly models: readonly {
+      readonly modelId: string;
+      readonly allowed: boolean;
+      readonly minReasoning: HarnessReasoningLevel;
+      readonly maxReasoning: HarnessReasoningLevel;
+    }[];
+    readonly defaultModel: string | null;
+    readonly defaultReasoning: HarnessReasoningLevel | null;
     readonly sandbox: 'read_only' | 'workspace_write' | 'danger_full_access';
     readonly sandboxOptions: readonly ('read_only' | 'workspace_write' | 'danger_full_access')[];
     readonly approvalPolicy: 'never';
@@ -58,7 +58,7 @@ export interface HarnessEffectiveConfiguration {
   readonly updatePolicy:
     | {
         readonly status: 'configured';
-        readonly defaultStrategy: HarnessUpdateStrategy;
+        readonly delivery: 'next_prompt';
         readonly avoidDuplicateGuidance: boolean;
         readonly notifyRemovedItems: boolean;
         readonly promptReconstruction: 'deferred';
@@ -69,29 +69,65 @@ export interface HarnessEffectiveConfiguration {
       };
 }
 
+export interface HarnessConfigurationCatalogs {
+  readonly skills: {
+    readonly source: 'checked_in_product_catalog' | 'not_connected';
+    readonly items: readonly {
+      readonly name: string;
+      readonly path: string;
+      readonly description: string;
+    }[];
+    readonly reason: string;
+  };
+  readonly tools: {
+    readonly source: 'recorded_harness_tool_catalog' | 'not_connected';
+    readonly items: readonly {
+      readonly name: string;
+      readonly description: string;
+    }[];
+    readonly reason: string;
+  };
+  readonly models: {
+    readonly source: 'recorded_catalog' | 'not_connected';
+    readonly items: readonly {
+      readonly id: string;
+      readonly label: string;
+      readonly reasoningLevels: readonly HarnessReasoningLevel[];
+    }[];
+    readonly reason: string;
+  };
+}
+
+export interface ConversationHarnessVersion {
+  readonly revision: number;
+  readonly configuration: HarnessEffectiveConfiguration;
+  readonly activeSessionCount: number;
+  readonly committedAt: string;
+}
+
 export interface ConversationHarnessManagementSnapshot {
   readonly sessionId: string;
   readonly harnessKey: string;
   readonly agentIdentity: AgentIdentityDto | null;
-  readonly catalogRevision: number;
+  readonly catalogs: HarnessConfigurationCatalogs;
   readonly workingCopy: {
     readonly baseRevision: number;
     readonly draftRevision: number;
-    readonly state: 'clean' | 'uncommitted' | 'committed_not_active';
+    readonly dirty: boolean;
     readonly configuration: HarnessEffectiveConfiguration;
-  };
+  } | null;
   readonly versionControl: {
     readonly support: 'recorded_preview' | 'not_connected';
-    readonly committedRevision: number | null;
-    readonly activeRevision: number | null;
+    readonly pushedRevision: number | null;
+    readonly versions: readonly ConversationHarnessVersion[];
     readonly reason: string;
   };
   readonly sessionBinding: {
-    readonly state: 'current' | 'update_available' | 'queued' | 'untracked';
+    readonly state: 'current' | 'behind' | 'queued' | 'untracked';
     readonly appliedRevision: number | null;
     readonly desiredRevision: number | null;
-    readonly updateStrategy: HarnessUpdateStrategy | null;
     readonly relevantSessionCount: number | null;
+    readonly executingPreviousInvocation: boolean;
     readonly reason: string;
   };
 }
@@ -116,8 +152,11 @@ export type ConversationHarnessManagementRead =
 
 export type ConversationHarnessManagementCommand =
   | {
+      readonly kind: 'start_edit';
+      readonly baseRevision: number;
+    }
+  | {
       readonly kind: 'save_working_copy';
-      readonly expectedDraftRevision: number;
       readonly configuration: HarnessEffectiveConfiguration;
     }
   | {
@@ -126,13 +165,12 @@ export type ConversationHarnessManagementCommand =
     }
   | {
       readonly kind: 'push';
-      readonly expectedCommittedRevision: number;
+      readonly revision: number;
     }
   | {
-      readonly kind: 'request_session_update';
-      readonly expectedActiveRevision: number;
+      readonly kind: 'queue_version';
+      readonly revision: number;
       readonly scope: 'current_session' | 'all_relevant_sessions';
-      readonly strategy: HarnessUpdateStrategy;
     };
 
 /** Every view uses this session-keyed boundary; components never select a harness or revision. */

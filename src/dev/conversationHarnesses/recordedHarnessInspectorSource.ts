@@ -9,7 +9,9 @@ import type {
   ConversationHarnessManagementRead,
   ConversationHarnessManagementSnapshot,
   ConversationHarnessManagementSource,
+  HarnessConfigurationCatalogs,
   HarnessEffectiveConfiguration,
+  HarnessReasoningLevel,
 } from '../../application/conversationHarnesses';
 import catalogJson from '../../../src-tauri/src/orchestration/conversation_harness_catalog.json';
 
@@ -44,6 +46,11 @@ interface RecordedProfile {
   };
 }
 
+const skillDocuments = import.meta.glob('../../../.agents/skills/*/SKILL.md', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+}) as Record<string, string>;
 const catalog = catalogJson as RecordedCatalog;
 export const recordedHarnessInspectorSessionId = 'recorded-harness-inspector-plan-builder';
 const profileKey = 'epic_plan_builder';
@@ -126,30 +133,96 @@ function buildSnapshot(sessionId: string): ConversationHarnessManagementSnapshot
   )
     throw new Error('Harness configuration is incomplete.');
 
+  const catalogs = buildCatalogs();
+  const currentConfiguration = buildConfiguration(profile, sandbox, catalogs);
+  validateConfiguration(currentConfiguration, catalogs);
   return {
     sessionId,
     harnessKey: profile.key,
     agentIdentity: recordedAgentIdentity,
-    catalogRevision: profile.version,
-    workingCopy: {
-      baseRevision: profile.version,
-      draftRevision: 1,
-      state: 'clean',
-      configuration: buildConfiguration(profile, sandbox),
-    },
+    catalogs,
+    workingCopy: null,
     versionControl: {
       support: 'recorded_preview',
-      committedRevision: profile.version,
-      activeRevision: profile.version,
-      reason: 'Preview actions are kept only while this app remains open.',
+      pushedRevision: profile.version,
+      versions: [
+        {
+          revision: recordedSessionAppliedRevision,
+          configuration: currentConfiguration,
+          activeSessionCount: 1,
+          committedAt: '2026-07-11T14:30:00.000Z',
+        },
+        {
+          revision: profile.version,
+          configuration: currentConfiguration,
+          activeSessionCount: 0,
+          committedAt: recordedAt,
+        },
+      ],
+      reason: 'Recorded actions remain in memory until this preview is closed.',
     },
     sessionBinding: {
-      state: 'update_available',
+      state: 'behind',
       appliedRevision: recordedSessionAppliedRevision,
-      desiredRevision: profile.version,
-      updateStrategy: null,
+      desiredRevision: null,
       relevantSessionCount: 1,
-      reason: 'This recorded session is one version behind the active preview.',
+      executingPreviousInvocation: false,
+      reason: 'This Session is still using the previous pushed version.',
+    },
+  };
+}
+
+function buildCatalogs(): HarnessConfigurationCatalogs {
+  const skills = Object.entries(skillDocuments)
+    .map(([sourcePath, document]) => {
+      const pathMatch = sourcePath
+        .replaceAll('\\', '/')
+        .match(/\.agents\/skills\/([^/]+)\/SKILL\.md$/);
+      const name = frontmatterValue(document, 'name') ?? pathMatch?.[1] ?? '';
+      return {
+        name,
+        path: `.agents/skills/${pathMatch?.[1] ?? name}/SKILL.md`,
+        description: frontmatterValue(document, 'description') ?? 'Product skill.',
+      };
+    })
+    .filter((skill) => skill.name)
+    .sort((left, right) => left.name.localeCompare(right.name));
+  return {
+    skills: {
+      source: 'checked_in_product_catalog',
+      items: skills,
+      reason: 'This preview reads every checked-in product skill with a SKILL.md file.',
+    },
+    tools: {
+      source: 'recorded_harness_tool_catalog',
+      items: [
+        {
+          name: 'submit_epic_plan_proposal',
+          description: 'Save the Session proposal through the Plan Builder application boundary.',
+        },
+        {
+          name: 'request_epic_initiation',
+          description: 'Ask the application to start its explicit Epic initiation confirmation.',
+        },
+      ],
+      reason: 'This recorded catalog covers the tools connected to Epic Plan Builder.',
+    },
+    models: {
+      source: 'recorded_catalog',
+      items: [
+        {
+          id: 'gpt-5.6-terra',
+          label: 'GPT-5.6 Terra',
+          reasoningLevels: ['low', 'medium', 'high', 'xhigh'],
+        },
+        {
+          id: 'gpt-5.6-sol',
+          label: 'GPT-5.6 Sol',
+          reasoningLevels: ['medium', 'high', 'xhigh'],
+        },
+      ],
+      reason:
+        'No application model capability catalog is connected; these are recorded prototype options.',
     },
   };
 }
@@ -157,14 +230,12 @@ function buildSnapshot(sessionId: string): ConversationHarnessManagementSnapshot
 function buildConfiguration(
   profile: RecordedProfile,
   sandbox: HarnessEffectiveConfiguration['runtime']['sandbox'],
+  catalogs: HarnessConfigurationCatalogs,
 ): HarnessEffectiveConfiguration {
-  const availableModels = ['gpt-5.6-terra', 'gpt-5.6-sol'];
-  const availableReasoningEfforts = ['low', 'medium', 'high', 'xhigh'];
   return {
     identity: {
       name: 'Epic Plan Builder',
       machineKey: profile.key,
-      role: 'Epic Plan Builder',
       permittedAgentNames: harnessAgentNamePools.epic_plan_builder,
       visualIdentity: harnessVisualIdentities.epic_plan_builder,
     },
@@ -174,7 +245,7 @@ function buildConfiguration(
       contextCompressionDelivery: 'deferred',
     },
     skills: {
-      discoveryPolicy: 'whitelist',
+      availableDiscoveryPolicy: 'whitelist',
       items: profile.skillGuidance.map((skill) => ({
         name: skill.canonicalName,
         path: skill.canonicalPath,
@@ -184,24 +255,23 @@ function buildConfiguration(
       })),
     },
     tools: {
-      discoveryPolicy: 'whitelist',
+      availableDiscoveryPolicy: 'whitelist',
       items: profile.mcp.enabledTools.map((name) => ({
         name,
-        exposed: true,
-        guidancePolicy: 'none',
+        policy: 'every_invocation',
       })),
       schemaBoundary:
-        'Tool schemas come from the runtime. The harness controls exposure and guidance timing, not schema text.',
+        'Tool schemas remain runtime-owned. The harness controls whether and when a tool is exposed.',
     },
     runtime: {
-      allowInheritedModel: profile.runtime.model === null,
-      availableModels,
-      allowedModels: profile.runtime.model ? [profile.runtime.model] : availableModels,
-      allowInheritedReasoning: profile.runtime.reasoningEffort === null,
-      availableReasoningEfforts,
-      allowedReasoningEfforts: profile.runtime.reasoningEffort
-        ? [profile.runtime.reasoningEffort]
-        : ['medium', 'high', 'xhigh'],
+      models: catalogs.models.items.map((model) => ({
+        modelId: model.id,
+        allowed: profile.runtime.model === null || profile.runtime.model === model.id,
+        minReasoning: model.reasoningLevels[0],
+        maxReasoning: model.reasoningLevels[model.reasoningLevels.length - 1],
+      })),
+      defaultModel: profile.runtime.model,
+      defaultReasoning: reasoningLevel(profile.runtime.reasoningEffort),
       sandbox,
       sandboxOptions: ['read_only', 'workspace_write', 'danger_full_access'],
       approvalPolicy: 'never',
@@ -212,11 +282,11 @@ function buildConfiguration(
     hooks: profile.lifecycle.completionCriteria.map((criterion) => ({
       name: humanize(criterion),
       status: 'exposed',
-      detail: `Application hook exposed as ${criterion}.`,
+      detail: `Connected application hook: ${criterion}.`,
     })),
     updatePolicy: {
       status: 'configured',
-      defaultStrategy: 'next_prompt',
+      delivery: 'next_prompt',
       avoidDuplicateGuidance: true,
       notifyRemovedItems: true,
       promptReconstruction: 'deferred',
@@ -228,87 +298,173 @@ function reduceRecordedCommand(
   snapshot: ConversationHarnessManagementSnapshot,
   command: ConversationHarnessManagementCommand,
 ): ConversationHarnessManagementSnapshot {
-  if (command.kind === 'save_working_copy') {
-    assertDraftRevision(snapshot, command.expectedDraftRevision);
+  if (command.kind === 'start_edit') {
+    if (snapshot.workingCopy) return snapshot;
+    const base = findVersion(snapshot, command.baseRevision);
     return {
       ...snapshot,
       workingCopy: {
-        ...snapshot.workingCopy,
-        draftRevision: snapshot.workingCopy.draftRevision + 1,
-        state: 'uncommitted',
+        baseRevision: base.revision,
+        draftRevision: 1,
+        dirty: false,
+        configuration: base.configuration,
+      },
+    };
+  }
+  if (command.kind === 'save_working_copy') {
+    const workingCopy = requireWorkingCopy(snapshot);
+    validateConfiguration(command.configuration, snapshot.catalogs);
+    return {
+      ...snapshot,
+      workingCopy: {
+        ...workingCopy,
+        draftRevision: workingCopy.draftRevision + 1,
+        dirty: true,
         configuration: command.configuration,
       },
     };
   }
   if (command.kind === 'commit') {
-    assertDraftRevision(snapshot, command.expectedDraftRevision);
-    if (snapshot.workingCopy.state !== 'uncommitted') return snapshot;
-    const committedRevision =
-      Math.max(
-        snapshot.versionControl.committedRevision ?? snapshot.workingCopy.baseRevision,
-        snapshot.versionControl.activeRevision ?? snapshot.workingCopy.baseRevision,
-      ) + 1;
+    const workingCopy = requireWorkingCopy(snapshot);
+    assertDraftRevision(workingCopy.draftRevision, command.expectedDraftRevision);
+    if (!workingCopy.dirty) return snapshot;
+    validateConfiguration(workingCopy.configuration, snapshot.catalogs);
+    const revision =
+      Math.max(...snapshot.versionControl.versions.map((version) => version.revision)) + 1;
     return {
       ...snapshot,
-      workingCopy: {
-        ...snapshot.workingCopy,
-        baseRevision: committedRevision,
-        draftRevision: snapshot.workingCopy.draftRevision + 1,
-        state: 'committed_not_active',
-      },
+      workingCopy: null,
       versionControl: {
         ...snapshot.versionControl,
-        committedRevision,
+        versions: [
+          ...snapshot.versionControl.versions,
+          {
+            revision,
+            configuration: workingCopy.configuration,
+            activeSessionCount: 0,
+            committedAt: new Date().toISOString(),
+          },
+        ],
       },
     };
   }
   if (command.kind === 'push') {
-    if (snapshot.versionControl.committedRevision !== command.expectedCommittedRevision)
-      throw new Error('The committed version changed. Reload before pushing.');
+    findVersion(snapshot, command.revision);
     return {
       ...snapshot,
-      workingCopy: {
-        ...snapshot.workingCopy,
-        state: 'clean',
-      },
       versionControl: {
         ...snapshot.versionControl,
-        activeRevision: command.expectedCommittedRevision,
+        pushedRevision: command.revision,
       },
       sessionBinding: {
         ...snapshot.sessionBinding,
-        state:
-          snapshot.sessionBinding.appliedRevision === command.expectedCommittedRevision
-            ? 'current'
-            : 'update_available',
-        desiredRevision: command.expectedCommittedRevision,
-        updateStrategy: null,
+        state: snapshot.sessionBinding.appliedRevision === command.revision ? 'current' : 'queued',
+        desiredRevision:
+          snapshot.sessionBinding.appliedRevision === command.revision ? null : command.revision,
+        reason:
+          snapshot.sessionBinding.appliedRevision === command.revision
+            ? 'This Session already uses the pushed version.'
+            : 'The pushed version is queued for this Session at its next prompt.',
       },
     };
   }
-  if (snapshot.versionControl.activeRevision !== command.expectedActiveRevision)
-    throw new Error('The active version changed. Reload before updating sessions.');
+  findVersion(snapshot, command.revision);
   return {
     ...snapshot,
     sessionBinding: {
       ...snapshot.sessionBinding,
-      state: 'queued',
-      desiredRevision: command.expectedActiveRevision,
-      updateStrategy: command.strategy,
+      state: snapshot.sessionBinding.appliedRevision === command.revision ? 'current' : 'queued',
+      desiredRevision:
+        snapshot.sessionBinding.appliedRevision === command.revision ? null : command.revision,
       reason:
-        command.scope === 'current_session'
-          ? 'The update choice is recorded for this session in the preview.'
-          : 'The update choice is recorded for every relevant preview session.',
+        snapshot.sessionBinding.appliedRevision === command.revision
+          ? 'This Session already uses the selected version.'
+          : command.scope === 'current_session'
+            ? 'The selected version is queued for this Session at its next prompt.'
+            : 'The selected version is queued for every relevant Session at its next prompt.',
     },
   };
 }
 
-function assertDraftRevision(
+function validateConfiguration(
+  configuration: HarnessEffectiveConfiguration,
+  catalogs: HarnessConfigurationCatalogs,
+): void {
+  if (!configuration.identity.name.trim() || !configuration.identity.machineKey.trim())
+    throw new Error('Harness identity is incomplete.');
+  if (!configuration.promptPrefix.content.trim())
+    throw new Error('Prompt prefix must not be empty.');
+  const skillNames = new Set(catalogs.skills.items.map((skill) => skill.name));
+  assertUniqueCatalogItems(
+    configuration.skills.items.map((skill) => skill.name),
+    skillNames,
+    'skill',
+  );
+  const toolNames = new Set(catalogs.tools.items.map((tool) => tool.name));
+  assertUniqueCatalogItems(
+    configuration.tools.items.map((tool) => tool.name),
+    toolNames,
+    'tool',
+  );
+  const modelConfigurations = new Map(
+    configuration.runtime.models.map((model) => [model.modelId, model]),
+  );
+  if (modelConfigurations.size !== configuration.runtime.models.length)
+    throw new Error('Model options must be unique.');
+  for (const model of catalogs.models.items) {
+    const configurationModel = modelConfigurations.get(model.id);
+    if (!configurationModel) throw new Error(`Model option is missing: ${model.id}`);
+    const minimum = model.reasoningLevels.indexOf(configurationModel.minReasoning);
+    const maximum = model.reasoningLevels.indexOf(configurationModel.maxReasoning);
+    if (minimum < 0 || maximum < minimum)
+      throw new Error(`Reasoning range is invalid for ${model.label}.`);
+  }
+  if (configuration.runtime.defaultModel) {
+    const defaultModel = modelConfigurations.get(configuration.runtime.defaultModel);
+    if (!defaultModel?.allowed) throw new Error('Default model must be allowed.');
+    if (configuration.runtime.defaultReasoning) {
+      const catalogModel = catalogs.models.items.find(
+        (model) => model.id === configuration.runtime.defaultModel,
+      );
+      if (!catalogModel) throw new Error('Default model is outside the recorded catalog.');
+      const selected = catalogModel.reasoningLevels.indexOf(configuration.runtime.defaultReasoning);
+      const minimum = catalogModel.reasoningLevels.indexOf(defaultModel.minReasoning);
+      const maximum = catalogModel.reasoningLevels.indexOf(defaultModel.maxReasoning);
+      if (selected < minimum || selected > maximum)
+        throw new Error('Default reasoning must fit the default model range.');
+    }
+  } else if (configuration.runtime.defaultReasoning) {
+    throw new Error('Choose a default model before choosing default reasoning.');
+  }
+}
+
+function assertUniqueCatalogItems(
+  items: readonly string[],
+  catalogItems: ReadonlySet<string>,
+  label: string,
+): void {
+  if (new Set(items).size !== items.length) throw new Error(`Selected ${label}s must be unique.`);
+  const unknown = items.find((item) => !catalogItems.has(item));
+  if (unknown) throw new Error(`Unknown ${label}: ${unknown}`);
+}
+
+function requireWorkingCopy(
   snapshot: ConversationHarnessManagementSnapshot,
-  expectedDraftRevision: number,
-) {
-  if (snapshot.workingCopy.draftRevision !== expectedDraftRevision)
-    throw new Error('The working copy changed. Reload before saving.');
+): NonNullable<ConversationHarnessManagementSnapshot['workingCopy']> {
+  if (!snapshot.workingCopy) throw new Error('Start editing before saving or committing.');
+  return snapshot.workingCopy;
+}
+
+function findVersion(snapshot: ConversationHarnessManagementSnapshot, revision: number) {
+  const version = snapshot.versionControl.versions.find(
+    (candidate) => candidate.revision === revision,
+  );
+  if (!version) throw new Error('The selected version is no longer available.');
+  return version;
+}
+
+function assertDraftRevision(actual: number, expected: number): void {
+  if (actual !== expected) throw new Error('The working draft changed. Reload before saving.');
 }
 
 function availableRead(
@@ -328,6 +484,17 @@ function runtimeSandbox(value: string): HarnessEffectiveConfiguration['runtime']
   if (value === 'read_only' || value === 'workspace_write' || value === 'danger_full_access')
     return value;
   throw new Error('Unsupported sandbox.');
+}
+
+function reasoningLevel(value: string | null): HarnessReasoningLevel | null {
+  if (value === null) return null;
+  if (value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh') return value;
+  throw new Error('Unsupported reasoning level.');
+}
+
+function frontmatterValue(document: string, key: string): string | null {
+  const match = document.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'));
+  return match?.[1]?.trim() ?? null;
 }
 
 function humanize(value: string): string {

@@ -1,4 +1,5 @@
 import { AlertCircle, X } from 'lucide-react';
+import type { AgentIdentityDto } from '../../application/agentSessions';
 import { AgentSessionComposer } from './AgentSessionComposer';
 import { AgentSessionTranscript } from './AgentSessionTranscript';
 import {
@@ -43,6 +44,7 @@ export interface ConversationComposerPresentation {
 
 export interface ConversationViewportProps {
   segments: readonly ConversationViewportSegment[];
+  agentIdentity?: AgentIdentityDto | null;
   loading: boolean;
   expandedProcessing: ReadonlySet<string>;
   onToggleProcessing(invocationId: string): void;
@@ -57,6 +59,7 @@ export interface ConversationViewportProps {
 
 export function ConversationViewport({
   segments,
+  agentIdentity,
   loading,
   expandedProcessing,
   onToggleProcessing,
@@ -98,6 +101,7 @@ export function ConversationViewport({
           <AgentSessionTranscript
             key={segment.id}
             transcript={segment.transcript}
+            agentIdentity={agentIdentity}
             content={
               segment.range
                 ? selectTranscriptRange(segment.transcript, segment.range)
@@ -112,6 +116,7 @@ export function ConversationViewport({
         {!segments.length && (
           <AgentSessionTranscript
             transcript={null}
+            agentIdentity={agentIdentity}
             loading={loading}
             emptyState={emptyState}
             expandedProcessing={expandedProcessing}

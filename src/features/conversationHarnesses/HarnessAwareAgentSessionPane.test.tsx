@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import {
   createRecordedHarnessManagementSource,
   recordedHarnessInspectorSessionId,
@@ -24,7 +24,7 @@ describe('HarnessAwareAgentSessionPane', () => {
     expect(await screen.findByRole('button', { name: 'Manage harness' })).toBeVisible();
   });
 
-  it('presents the management hierarchy without development proof language', async () => {
+  it('defaults to the Session version and presents the corrected management hierarchy', async () => {
     render(
       <HarnessAwareAgentSessionPane
         sessionId={recordedHarnessInspectorSessionId}
@@ -35,16 +35,20 @@ describe('HarnessAwareAgentSessionPane', () => {
     );
 
     fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
-
-    expect(await screen.findByRole('region', { name: 'Harness Management' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Harness details' })).toBeVisible();
     expect(screen.queryByLabelText('Product conversation')).toBeNull();
-    expect(screen.getByText('Harness')).toBeVisible();
-    expect(screen.getAllByText('Epic Plan Builder').length).toBeGreaterThan(0);
+    expect(screen.getByLabelText('Viewed harness version')).toHaveValue('version:3');
+    expect(screen.getByText('Session uses v3 · pushed v4')).toBeVisible();
+    expect(screen.getByText('Epic Plan Builder', { selector: 'strong' })).toBeVisible();
+    expect(screen.queryByLabelText('Harness role')).toBeNull();
     expect(screen.getByRole('heading', { name: 'Prompt prefix' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Skill policy' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Tool policy' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Skills' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Tools' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Models and reasoning' })).toBeVisible();
+    expect(screen.getByRole('table')).toHaveAccessibleName('');
     expect(screen.getByRole('heading', { name: 'Version history' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Agent Session updates' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Agent Session updates' })).toBeNull();
+    expect(screen.getByRole('slider', { name: 'GPT-5.6 Terra minimum reasoning' })).toBeDisabled();
     expect(
       screen.getAllByLabelText(
         /Antoni Gaudi|Zaha Hadid|Maya Lin|I M Pei|Frank Lloyd Wright|Eero Saarinen|Lina Bo Bardi|Buckminster Fuller|Jane Jacobs|Christopher Wren/,
@@ -53,15 +57,19 @@ describe('HarnessAwareAgentSessionPane', () => {
     expect(
       screen.queryByText(/validation|provenance|delivery not evidenced|future invocation/i),
     ).toBeNull();
-    expect(screen.getByRole('button', { name: 'Edit' })).toBeEnabled();
-    expect(screen.getByLabelText('Sandbox')).toBeEnabled();
+
+    const always = screen.getAllByRole('button', { name: /Always applicable/ })[0];
+    const initial = screen.getAllByRole('button', { name: /Initial ingestion only/ })[0];
+    const available = screen.getAllByRole('button', { name: /^Available/ })[0];
+    expect(always).toHaveAttribute('aria-expanded', 'true');
+    expect(initial).toHaveAttribute('aria-expanded', 'true');
+    expect(available).toHaveAttribute('aria-expanded', 'false');
 
     fireEvent.click(screen.getByRole('button', { name: 'Back to conversation' }));
     await waitFor(() => expect(screen.getByLabelText('Product conversation')).toBeVisible());
-    expect(screen.queryByRole('region', { name: 'Harness Management' })).toBeNull();
   });
 
-  it('keeps edited Markdown in the Session-owned working copy across navigation and remount', async () => {
+  it('keeps one prompt value and caret-safe Markdown/Plain edits across navigation and remount', async () => {
     const source = createRecordedHarnessManagementSource();
     const first = render(
       <HarnessAwareAgentSessionPane sessionId={recordedHarnessInspectorSessionId} source={source}>
@@ -69,11 +77,16 @@ describe('HarnessAwareAgentSessionPane', () => {
       </HarnessAwareAgentSessionPane>,
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
-    fireEvent.change(screen.getByLabelText('Prompt prefix'), {
-      target: { value: '# Revised prefix\n\nKeep this durable working copy.' },
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit harness' }));
+    await waitFor(() => expect(screen.getByLabelText('Harness name')).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Plain' }));
+    const plain = screen.getByLabelText('Prompt prefix plain Markdown') as HTMLTextAreaElement;
+    fireEvent.change(plain, {
+      target: {
+        value: '# Revised prefix\n\nKeep this durable working copy.',
+      },
     });
-    expect((await screen.findAllByText('Uncommitted changes')).length).toBeGreaterThan(0);
+    expect(await screen.findByText('Uncommitted changes')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Back to conversation' }));
     await screen.findByLabelText('Planning view conversation');
     first.unmount();
@@ -84,12 +97,18 @@ describe('HarnessAwareAgentSessionPane', () => {
       </HarnessAwareAgentSessionPane>,
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
+    await screen.findByRole('heading', { name: 'Harness details' });
 
+    expect(screen.getByLabelText('Viewed harness version')).toHaveValue('version:3');
+    expect(screen.getByText('Draft has uncommitted changes')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Edit draft' })).toBeVisible();
+    fireEvent.change(screen.getByLabelText('Viewed harness version'), {
+      target: { value: 'draft' },
+    });
     expect(await screen.findByRole('heading', { name: 'Revised prefix' })).toBeVisible();
-    expect(screen.getAllByText('Uncommitted changes').length).toBeGreaterThan(0);
   });
 
-  it('records commit, push, and next-prompt update choices as separate preview transitions', async () => {
+  it('searches, adds, categorizes, collapses, and removes skills in the draft dialog', async () => {
     render(
       <HarnessAwareAgentSessionPane
         sessionId={recordedHarnessInspectorSessionId}
@@ -99,19 +118,127 @@ describe('HarnessAwareAgentSessionPane', () => {
       </HarnessAwareAgentSessionPane>,
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
-    fireEvent.change(await screen.findByLabelText('Harness name'), {
+    await screen.findByRole('heading', { name: 'Harness details' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit skills' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit skills' });
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    await waitFor(() => expect(within(dialog).getByLabelText('Available discovery')).toBeEnabled());
+    fireEvent.change(within(dialog).getByLabelText('Search all skills'), {
+      target: { value: 'sprnr' },
+    });
+    const result = await within(dialog).findByText('sprint-runner');
+    const resultRow = result.closest('.harness-management__catalog-row');
+    expect(resultRow).not.toBeNull();
+    if (!resultRow) return;
+    fireEvent.click(within(resultRow as HTMLElement).getByRole('button', { name: 'Add' }));
+    const applicability = await within(dialog).findByLabelText('sprint-runner applicability');
+    fireEvent.change(applicability, { target: { value: 'always_applicable' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close Edit skills' }));
+
+    const always = screen.getAllByRole('button', { name: /Always applicable/ })[0];
+    expect(always).toHaveAttribute('aria-expanded', 'true');
+    expect(await screen.findByText('sprint-runner')).toBeVisible();
+    fireEvent.click(always);
+    expect(always).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('sprint-runner')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit skills' }));
+    const reopened = await screen.findByRole('dialog', { name: 'Edit skills' });
+    fireEvent.click(await within(reopened).findByRole('button', { name: 'Remove sprint-runner' }));
+    await waitFor(() =>
+      expect(within(reopened).queryByLabelText('sprint-runner applicability')).toBeNull(),
+    );
+  });
+
+  it('edits and removes runtime-owned tools through the searchable tool dialog', async () => {
+    render(
+      <HarnessAwareAgentSessionPane
+        sessionId={recordedHarnessInspectorSessionId}
+        source={createRecordedHarnessManagementSource()}
+      >
+        <div>Conversation body</div>
+      </HarnessAwareAgentSessionPane>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
+    await screen.findByRole('heading', { name: 'Harness details' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tools' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit tools' });
+    await waitFor(() =>
+      expect(within(dialog).getByLabelText('request_epic_initiation exposure')).toBeEnabled(),
+    );
+    fireEvent.change(within(dialog).getByLabelText('Search all tools'), {
+      target: { value: 'reqinit' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('request_epic_initiation exposure'), {
+      target: { value: 'initial_invocation' },
+    });
+    fireEvent.click(
+      within(dialog).getByRole('button', {
+        name: 'Remove submit_epic_plan_proposal',
+      }),
+    );
+    await waitFor(() =>
+      expect(within(dialog).queryByLabelText('submit_epic_plan_proposal exposure')).toBeNull(),
+    );
+    expect(within(dialog).getByText(/schemas remain runtime-owned/i)).toBeVisible();
+  });
+
+  it('confirmation-gates Session changes, commit, push, and bulk next-prompt queues', async () => {
+    render(
+      <HarnessAwareAgentSessionPane
+        sessionId={recordedHarnessInspectorSessionId}
+        source={createRecordedHarnessManagementSource()}
+      >
+        <div>Conversation body</div>
+      </HarnessAwareAgentSessionPane>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
+    await screen.findByRole('heading', { name: 'Harness details' });
+
+    fireEvent.change(screen.getByLabelText('Viewed harness version'), {
+      target: { value: 'version:4' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Change this Session to v4' }));
+    let confirmation = screen.getByRole('alertdialog', {
+      name: 'Change this Session to v4?',
+    });
+    expect(within(confirmation).getByText(/until its next prompt/i)).toBeVisible();
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByText('Queued for next prompt')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit harness' }));
+    await waitFor(() => expect(screen.getByLabelText('Harness name')).toBeEnabled());
+    fireEvent.change(screen.getByLabelText('Harness name'), {
       target: { value: 'Epic Plan Builder Plus' },
     });
-    expect((await screen.findAllByText('Uncommitted changes')).length).toBeGreaterThan(0);
+    await screen.findByText('Uncommitted changes');
+    fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+    confirmation = screen.getByRole('alertdialog', {
+      name: 'Commit this harness version?',
+    });
+    expect(within(confirmation).getByText(/does not push.*Sessions/i)).toBeVisible();
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Commit version' }));
+    await waitFor(() =>
+      expect(screen.getByLabelText('Viewed harness version')).toHaveValue('version:5'),
+    );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Commit version' }));
-    expect((await screen.findAllByText('Committed, not active')).length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole('button', { name: 'Push version' }));
-    await waitFor(() => expect(screen.getAllByText('Up to date').length).toBeGreaterThan(0));
-    fireEvent.click(screen.getByRole('button', { name: 'Apply updated harness' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Push' }));
+    confirmation = screen.getByRole('alertdialog', { name: 'Push harness v5?' });
     expect(
-      await screen.findByText('The update choice is recorded for this session in the preview.'),
+      within(confirmation).getByText(/queues it.*next prompt.*does not contact a remote/i),
     ).toBeVisible();
+    expect(within(confirmation).queryByText(/interrupt now/i)).toBeNull();
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Push v5' }));
+    await waitFor(() => expect(screen.getByText('Queued for next prompt')).toBeVisible());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change all to v4' }));
+    confirmation = screen.getByRole('alertdialog', {
+      name: 'Change all relevant Sessions to v4?',
+    });
+    expect(within(confirmation).getByText(/each Session.*next prompt/i)).toBeVisible();
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Queue v4 for all' }));
+    await waitFor(() => expect(screen.getByText('Queued for next prompt')).toBeVisible());
+    expect(screen.queryByRole('button', { name: /interrupt/i })).toBeNull();
   });
 
   it('keeps unavailable and unbound reads explicit', () => {
@@ -132,17 +259,17 @@ describe('HarnessAwareAgentSessionPane', () => {
     );
     expect(screen.getByText('No harness assigned')).toBeVisible();
     expect(screen.getByText('The Session has no harness relationship.')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Back to conversation' })).toBeVisible();
   });
 
   it('does not offer a control when the source reports an unbound Session', async () => {
-    const source = createRecordedHarnessManagementSource();
     render(
-      <HarnessAwareAgentSessionPane sessionId="unknown-session" source={source}>
+      <HarnessAwareAgentSessionPane
+        sessionId="unknown-session"
+        source={createRecordedHarnessManagementSource()}
+      >
         <div>Conversation body</div>
       </HarnessAwareAgentSessionPane>,
     );
-
     expect(await screen.findByText('Conversation body')).toBeVisible();
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: 'Manage harness' })).toBeNull(),
