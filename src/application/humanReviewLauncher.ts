@@ -15,12 +15,27 @@ export interface HumanReviewInstance {
   readonly canFocus: boolean;
 }
 
+export interface HumanReviewOperationProgress {
+  readonly operationRef: string;
+  readonly operation: 'prepare' | 'build' | 'start';
+  readonly state: 'pending' | 'succeeded' | 'failed';
+  readonly stage: string;
+  readonly stageLabel: string;
+  readonly activity: 'working' | 'quiet' | 'finished';
+  readonly elapsedMs: number;
+  readonly evidenceAgeMs: number;
+  readonly recentOutput: readonly string[];
+}
+
 export interface HumanReviewLauncherClient {
   listSources(): Promise<readonly HumanReviewSource[]>;
   listInstances(): Promise<readonly HumanReviewInstance[]>;
-  prepare(sourceRef: string, name: string): Promise<HumanReviewInstance>;
-  build(instanceRef: string): Promise<HumanReviewInstance>;
-  start(instanceRef: string): Promise<HumanReviewInstance>;
+  prepare(operationRef: string, sourceRef: string, name: string): Promise<HumanReviewInstance>;
+  build(operationRef: string, instanceRef: string): Promise<HumanReviewInstance>;
+  start(operationRef: string, instanceRef: string): Promise<HumanReviewInstance>;
+  progress(operationRef: string): Promise<HumanReviewOperationProgress>;
+  listProgress(): Promise<readonly HumanReviewOperationProgress[]>;
+  proofNavigation?(): Promise<'worktree-review' | null>;
   status(instanceRef: string): Promise<HumanReviewInstance>;
   focus(instanceRef: string): Promise<HumanReviewInstance>;
   stop(instanceRef: string): Promise<HumanReviewInstance>;

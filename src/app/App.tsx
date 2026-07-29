@@ -49,6 +49,8 @@ export interface AppProps {
   readonly epicInitiationConfirmationClient?: EpicInitiationConfirmationClient;
   /** Supplied only by the development composition. */
   readonly humanReviewLauncherView?: ReactNode;
+  /** Enumerated debug-proof navigation; it cannot activate or focus a native window. */
+  readonly humanReviewLauncherNavigation?: () => Promise<'worktree-review' | null>;
 }
 
 export function App({
@@ -72,12 +74,31 @@ export function App({
   epicPlanProposalSourceForDraft,
   epicInitiationConfirmationClient,
   humanReviewLauncherView,
+  humanReviewLauncherNavigation,
 }: AppProps) {
   const [surface, setSurface] = useState<'epics' | 'agent-sessions' | 'worktree-review'>('epics');
   const [orchestrationRoute, setOrchestrationRoute] = useState<'overview' | 'plan-builder'>(
     'overview',
   );
   const orchestrationLoad = useOrchestrationLoad(orchestrationClient);
+
+  useEffect(() => {
+    if (!humanReviewLauncherView || !humanReviewLauncherNavigation) return;
+    let active = true;
+    const read = () =>
+      void humanReviewLauncherNavigation().then(
+        (route) => {
+          if (active && route === 'worktree-review') setSurface(route);
+        },
+        () => undefined,
+      );
+    read();
+    const timer = window.setInterval(read, 300);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [humanReviewLauncherNavigation, humanReviewLauncherView]);
   const [selectedDraft, setSelectedDraft] = useState<EpicPlanningDraftBinding | null>(null);
   const [planningDrafts, setPlanningDrafts] = useState<readonly EpicPlanningDraftSummary[]>([]);
   const [initiationCapability, setInitiationCapability] = useState<EpicInitiationCapability>(

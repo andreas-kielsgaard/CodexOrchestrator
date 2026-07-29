@@ -2,30 +2,36 @@
 use super::registry::RegistryErrorKind;
 use super::{
     application::{
-        PrepareInstanceCommand, ReadInstanceQuery, RecoverInstanceCommand, RuntimeApplicationError,
-        RuntimeApplicationErrorKind, StartInstanceCommand, StopInstanceCommand,
-        WorktreeRuntimeApplication, WorktreeRuntimeControl,
+        ObservationPolicy, PrepareInstanceCommand, ReadInstanceQuery, RecoverInstanceCommand,
+        RuntimeApplicationError, RuntimeApplicationErrorKind, RuntimeClock, StartInstanceCommand,
+        StopInstanceCommand, WorktreeRuntimeApplication, WorktreeRuntimeControl,
     },
     domain::{
         AuthoritySecret, CacheReuse, EndpointObservation, HealthObservation, InstanceProjection,
         InstanceRecord, InstanceSnapshot, InstanceState, OwnedProcessLaunch, OwnerObservation,
         OwnerRoute, RuntimeObservation,
     },
-    execution::{ActionExecution, ActionExecutor, ExecutionError, SystemActionExecutor},
+    execution::{
+        ActionExecution, ActionExecutor, ActionProgressObserver, ExecutionError,
+        NoopActionProgressObserver, SystemActionExecutor,
+    },
     facade::{
         IsolatedTestRequest, TestActionOutcome, TestInstanceError, TestInstanceErrorKind,
         TestInstancePhase, TestSourceRef, TestSourceResolver, WorktreeTestInstanceFacade,
         WorktreeTestInstances,
     },
     health::HealthProbe,
-    ownership::{OwnershipError, OwnershipErrorKind, ProcessOwner},
+    ownership::{
+        OwnershipError, OwnershipErrorKind, ProcessOwner, ReviewWindowExpectation,
+        ReviewWindowObservation,
+    },
     planning::{
         ActionKind, ActionPlan, PlanningError, ProcessCommand, RuntimeSettings, SourceInspector,
         SourceSnapshot, SystemSourceInspector, ToolchainPrograms,
     },
     registry::SqliteInstanceRegistry,
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
@@ -87,6 +93,10 @@ fn semantic_facade_projects_and_controls_two_isolated_instances() {
         TestActionOutcome::Passed
     );
     assert_eq!(
+        facade.build(&beta.handle).expect("build beta").outcome,
+        TestActionOutcome::Passed
+    );
+    assert_eq!(
         facade.start(&alpha.handle).expect("start alpha").phase,
         TestInstancePhase::Running
     );
@@ -137,7 +147,26 @@ fn semantic_facade_projects_and_controls_two_isolated_instances() {
         }));
         assert!(Path::new(&environment["CODEX_HOME"]).starts_with(directory.path()));
     }
-    assert_eq!(executor.plans.lock().expect("plans").len(), 2);
+    let plans = executor.plans.lock().expect("plans");
+    assert_eq!(plans.len(), 3);
+    for plan in plans.iter().filter(|plan| plan.kind == ActionKind::Build) {
+        let tauri = plan.commands.last().expect("Tauri build command");
+        let config_index = tauri
+            .arguments
+            .iter()
+            .position(|argument| argument == "--config")
+            .expect("Tauri config argument");
+        let config: serde_json::Value =
+            serde_json::from_str(&tauri.arguments[config_index + 1]).expect("Tauri config JSON");
+        let frontend_dist = config["build"]["frontendDist"]
+            .as_str()
+            .expect("frontend dist");
+        assert!(Path::new(frontend_dist).is_relative());
+        assert_ne!(
+            Path::new(frontend_dist),
+            Path::new(&tauri.environment["VITE_RUNTIME_DIST"])
+        );
+    }
 }
 
 #[test]
@@ -259,6 +288,238 @@ fn real_registry_facade_recovery_fails_abandoned_start_before_reserving_recovery
     assert!(start_failure.contains("superseded by recovery"));
 }
 
+#[test]
+fn public_facade_requires_exact_owned_usable_window_and_rendered_marker() {
+    let rejected = [
+        ReadinessCase::NoWindow,
+        ReadinessCase::Titleless,
+        ReadinessCase::Tiny,
+        ReadinessCase::Hidden,
+        ReadinessCase::Minimized,
+        ReadinessCase::Cloaked,
+        ReadinessCase::WrongTitle,
+        ReadinessCase::UnownedSimilar,
+        ReadinessCase::MissingMarker,
+    ];
+    for case in rejected {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let registry_path = directory.path().join("registry.sqlite");
+        let active = Arc::new(AtomicBool::new(false));
+        let facade = readiness_facade(directory.path(), &registry_path, case, active.clone());
+        let requested = request_readiness_instance(&facade);
+        let error = facade
+            .start(&requested.handle)
+            .expect_err("false-ready evidence must be rejected");
+        assert_eq!(error.kind, TestInstanceErrorKind::Unavailable, "{case:?}");
+        assert!(!active.load(Ordering::SeqCst), "{case:?} was not cleaned");
+        assert_eq!(
+            facade.status(&requested.handle).expect("status").phase,
+            TestInstancePhase::Stopped,
+            "{case:?}"
+        );
+        assert_eq!(
+            facade
+                .recover(&requested.handle)
+                .expect("recover failed start")
+                .phase,
+            TestInstancePhase::Stopped,
+            "{case:?}"
+        );
+        let raw = Connection::open(&registry_path).expect("registry");
+        assert_eq!(command_count(&raw, "status='pending'"), 0, "{case:?}");
+        assert_eq!(
+            command_count(&raw, "operation='start' AND status='failed'"),
+            1,
+            "{case:?}"
+        );
+        assert_eq!(
+            command_count(&raw, "operation='recover' AND status='succeeded'"),
+            1,
+            "{case:?}"
+        );
+    }
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let registry_path = directory.path().join("registry.sqlite");
+    let active = Arc::new(AtomicBool::new(false));
+    let facade = readiness_facade(
+        directory.path(),
+        &registry_path,
+        ReadinessCase::Usable,
+        active.clone(),
+    );
+    let requested = request_readiness_instance(&facade);
+    assert_eq!(
+        facade.start(&requested.handle).expect("usable start").phase,
+        TestInstancePhase::Running
+    );
+    assert!(active.load(Ordering::SeqCst));
+    assert_eq!(
+        facade.stop(&requested.handle).expect("stop usable").phase,
+        TestInstancePhase::Stopped
+    );
+    assert!(!active.load(Ordering::SeqCst));
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ReadinessCase {
+    NoWindow,
+    Titleless,
+    Tiny,
+    Hidden,
+    Minimized,
+    Cloaked,
+    WrongTitle,
+    UnownedSimilar,
+    MissingMarker,
+    Usable,
+}
+
+struct ReadinessOwner {
+    active: Arc<AtomicBool>,
+    case: ReadinessCase,
+}
+
+impl ProcessOwner for ReadinessOwner {
+    fn launch(
+        &self,
+        _route: &OwnerRoute,
+        launches: &[OwnedProcessLaunch],
+    ) -> Result<OwnerObservation, OwnershipError> {
+        self.active.store(true, Ordering::SeqCst);
+        if !matches!(self.case, ReadinessCase::MissingMarker) {
+            write_ready_marker(launches);
+        }
+        Ok(OwnerObservation::Owned {
+            active_processes: launches.len() as u32,
+        })
+    }
+
+    fn observe(&self, _route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
+        Ok(if self.active.load(Ordering::SeqCst) {
+            OwnerObservation::Owned {
+                active_processes: 3,
+            }
+        } else {
+            OwnerObservation::Absent
+        })
+    }
+
+    fn observe_review_window(
+        &self,
+        _route: &OwnerRoute,
+        expected: &ReviewWindowExpectation,
+    ) -> Result<Option<ReviewWindowObservation>, OwnershipError> {
+        if !self.active.load(Ordering::SeqCst)
+            || matches!(
+                self.case,
+                ReadinessCase::NoWindow | ReadinessCase::UnownedSimilar
+            )
+        {
+            return Ok(None);
+        }
+        let mut window = usable_window(expected);
+        match self.case {
+            ReadinessCase::Titleless => window.title.clear(),
+            ReadinessCase::Tiny => {
+                window.width = 18;
+                window.height = 18;
+                window.client_width = 1;
+                window.client_height = 1;
+            }
+            ReadinessCase::Hidden => window.visible = false,
+            ReadinessCase::Minimized => window.minimized = true,
+            ReadinessCase::Cloaked => window.cloaked = true,
+            ReadinessCase::WrongTitle => window.title.push_str(" copy"),
+            _ => {}
+        }
+        Ok(Some(window))
+    }
+
+    fn terminate(&self, _route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
+        self.active.store(false, Ordering::SeqCst);
+        Ok(OwnerObservation::Absent)
+    }
+}
+
+struct ReadinessHealth(Arc<AtomicBool>);
+
+impl HealthProbe for ReadinessHealth {
+    fn observe(&self, projection: &InstanceProjection) -> HealthObservation {
+        health_observation(projection, self.0.load(Ordering::SeqCst))
+    }
+}
+
+struct ReadinessClock;
+
+impl RuntimeClock for ReadinessClock {
+    fn now(&self) -> DateTime<Utc> {
+        Utc::now()
+    }
+}
+
+fn readiness_facade(
+    root: &Path,
+    registry_path: &Path,
+    case: ReadinessCase,
+    active: Arc<AtomicBool>,
+) -> WorktreeTestInstanceFacade {
+    let source = fixture_worktree(root, "readiness");
+    let application = Arc::new(WorktreeRuntimeApplication::new(
+        Arc::new(SqliteInstanceRegistry::open(registry_path).expect("registry")),
+        Arc::new(ReadinessOwner {
+            active: active.clone(),
+            case,
+        }),
+        Arc::new(ReadinessHealth(active)),
+        Arc::new(ReadinessClock),
+        ObservationPolicy {
+            attempts: 1,
+            interval: Duration::ZERO,
+        },
+    ));
+    let executable = std::env::current_exe().expect("test executable");
+    WorktreeTestInstanceFacade::new(
+        application,
+        Arc::new(MapSources(HashMap::from([(
+            "repository/readiness".into(),
+            source,
+        )]))),
+        Arc::new(FixedInspector),
+        Arc::new(RecordingExecutor::default()),
+        RuntimeSettings {
+            instances_root: root.join("instances"),
+            shared_cache_root: root.join("shared-cache"),
+            port_start: 33300,
+            port_end: 33331,
+        },
+        ToolchainPrograms {
+            git: executable.clone(),
+            node: executable.clone(),
+            cargo: executable.clone(),
+            rustc: executable,
+        },
+        AuthoritySecret::new("readiness-facade-authority-secret").expect("authority"),
+    )
+    .expect("facade")
+}
+
+fn request_readiness_instance(
+    facade: &WorktreeTestInstanceFacade,
+) -> super::facade::RequestedTestInstance {
+    let requested = facade
+        .request(
+            IsolatedTestRequest::new(
+                TestSourceRef::new("repository/readiness").expect("source"),
+                "readiness proof",
+            )
+            .expect("request"),
+        )
+        .expect("prepare");
+    facade.build(&requested.handle).expect("build");
+    requested
+}
+
 #[derive(Clone, Copy)]
 enum ConcurrentTerminalCall {
     Stop,
@@ -306,7 +567,7 @@ fn request_lifecycle_instance(
     facade: &WorktreeTestInstanceFacade,
     purpose: &str,
 ) -> super::facade::RequestedTestInstance {
-    facade
+    let requested = facade
         .request(
             IsolatedTestRequest::new(
                 TestSourceRef::new("repository/lifecycle").expect("source"),
@@ -314,7 +575,17 @@ fn request_lifecycle_instance(
             )
             .expect("request"),
         )
-        .expect("prepare instance")
+        .expect("prepare instance");
+    if requested.status.phase == TestInstancePhase::Prepared {
+        assert_eq!(
+            facade
+                .build(&requested.handle)
+                .expect("build lifecycle instance")
+                .outcome,
+            TestActionOutcome::Passed
+        );
+    }
+    requested
 }
 
 fn command_count(connection: &Connection, predicate: &str) -> i64 {
@@ -372,6 +643,9 @@ fn assert_concurrent_terminal_call(second_call: ConcurrentTerminalCall) {
             .expect("request"),
         )
         .expect("prepare instance");
+    facade
+        .build(&requested.handle)
+        .expect("build concurrent instance");
     assert_eq!(
         facade.start(&requested.handle).expect("start").phase,
         TestInstancePhase::Running
@@ -494,6 +768,7 @@ impl ProcessOwner for BlockingLaunchProcessOwner {
         while !state.release_launch {
             state = self.0.changed.wait(state).expect("release launch");
         }
+        write_ready_marker(launches);
         state.active = true;
         Ok(OwnerObservation::Owned {
             active_processes: launches.len() as u32,
@@ -508,6 +783,17 @@ impl ProcessOwner for BlockingLaunchProcessOwner {
         } else {
             OwnerObservation::Absent
         })
+    }
+
+    fn observe_review_window(
+        &self,
+        route: &OwnerRoute,
+        expected: &ReviewWindowExpectation,
+    ) -> Result<Option<ReviewWindowObservation>, OwnershipError> {
+        Ok(self
+            .observe(route)?
+            .is_active()
+            .then(|| usable_window(expected)))
     }
 
     fn terminate(&self, _route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
@@ -588,6 +874,33 @@ fn health_observation(projection: &InstanceProjection, reachable: bool) -> Healt
     }
 }
 
+fn write_ready_marker(launches: &[OwnedProcessLaunch]) {
+    if let Some(path) = launches.iter().find_map(|launch| {
+        launch
+            .environment
+            .get("CODEX_ORCHESTRATOR_WORKTREE_READY_PATH")
+    }) {
+        let path = Path::new(path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("ready marker parent");
+        }
+        fs::write(path, "application-surface-rendered").expect("ready marker");
+    }
+}
+
+fn usable_window(expected: &ReviewWindowExpectation) -> ReviewWindowObservation {
+    ReviewWindowObservation {
+        title: expected.title.clone(),
+        visible: true,
+        minimized: false,
+        cloaked: false,
+        width: expected.minimum_width + 200,
+        height: expected.minimum_height + 120,
+        client_width: expected.minimum_width + 160,
+        client_height: expected.minimum_height + 40,
+    }
+}
+
 #[derive(Default)]
 struct BlockingRuntimeState {
     active: bool,
@@ -634,6 +947,7 @@ impl ProcessOwner for BlockingProcessOwner {
                 message: "test owner is already active".into(),
             });
         }
+        write_ready_marker(launches);
         state.active = true;
         Ok(OwnerObservation::Owned {
             active_processes: launches.len() as u32,
@@ -648,6 +962,17 @@ impl ProcessOwner for BlockingProcessOwner {
         } else {
             OwnerObservation::Absent
         })
+    }
+
+    fn observe_review_window(
+        &self,
+        route: &OwnerRoute,
+        expected: &ReviewWindowExpectation,
+    ) -> Result<Option<ReviewWindowObservation>, OwnershipError> {
+        Ok(self
+            .observe(route)?
+            .is_active()
+            .then(|| usable_window(expected)))
     }
 
     fn terminate(&self, _route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
@@ -863,11 +1188,14 @@ fn system_action_executor_records_success_and_failure_semantically() {
     let executor = SystemActionExecutor;
     let passing_log = directory.path().join("passing.log");
     let passing = executor
-        .execute(&ActionPlan {
-            kind: ActionKind::Test,
-            log_path: passing_log.clone(),
-            commands: vec![command(false)],
-        })
+        .execute(
+            &ActionPlan {
+                kind: ActionKind::Test,
+                log_path: passing_log.clone(),
+                commands: vec![command(false)],
+            },
+            &NoopActionProgressObserver,
+        )
         .expect("passing execution");
     assert!(passing.succeeded);
     assert!(fs::read_to_string(passing_log)
@@ -875,11 +1203,14 @@ fn system_action_executor_records_success_and_failure_semantically() {
         .contains("action-executor-proof"));
 
     let failing = executor
-        .execute(&ActionPlan {
-            kind: ActionKind::Test,
-            log_path: directory.path().join("failing.log"),
-            commands: vec![command(true)],
-        })
+        .execute(
+            &ActionPlan {
+                kind: ActionKind::Test,
+                log_path: directory.path().join("failing.log"),
+                commands: vec![command(true)],
+            },
+            &NoopActionProgressObserver,
+        )
         .expect("failing execution is a semantic result");
     assert!(!failing.succeeded);
     assert_eq!(failing.failed_step.as_deref(), Some("failing proof"));
@@ -1017,8 +1348,30 @@ struct RecordingExecutor {
 }
 
 impl ActionExecutor for RecordingExecutor {
-    fn execute(&self, plan: &ActionPlan) -> Result<ActionExecution, ExecutionError> {
+    fn execute(
+        &self,
+        plan: &ActionPlan,
+        _progress: &dyn ActionProgressObserver,
+    ) -> Result<ActionExecution, ExecutionError> {
         self.plans.lock().expect("plans").push(plan.clone());
+        if plan.kind == ActionKind::Build {
+            let target = plan
+                .commands
+                .last()
+                .and_then(|command| command.environment.get("CARGO_TARGET_DIR"))
+                .ok_or_else(|| ExecutionError {
+                    message: "missing isolated Cargo target in build plan".into(),
+                })?;
+            let executable = PathBuf::from(target).join("debug/codex-orchestrator.exe");
+            fs::create_dir_all(executable.parent().expect("target parent")).map_err(|error| {
+                ExecutionError {
+                    message: error.to_string(),
+                }
+            })?;
+            fs::write(executable, "verified fixture build").map_err(|error| ExecutionError {
+                message: error.to_string(),
+            })?;
+        }
         Ok(ActionExecution {
             succeeded: true,
             failed_step: None,

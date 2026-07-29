@@ -1,8 +1,9 @@
 use super::{
     application::{
         ObservationPolicy, PrepareInstanceCommand, ReadInstanceQuery, RecoverInstanceCommand,
-        RuntimeApplicationErrorKind, RuntimeClock, StartInstanceCommand, StopInstanceCommand,
-        WorktreeRuntimeApplication, WorktreeRuntimeControl,
+        RuntimeApplicationErrorKind, RuntimeClock, RuntimeStartProgressSink, RuntimeStartStage,
+        StartInstanceCommand, StopInstanceCommand, WorktreeRuntimeApplication,
+        WorktreeRuntimeControl,
     },
     domain::{
         AuthoritySecret, BuildId, CacheReuse, EndpointObservation, HealthObservation, InstanceId,
@@ -10,7 +11,10 @@ use super::{
         OwnerRoute, PortProjection, ProcessRole, RequestId, SessionLink,
     },
     health::HealthProbe,
-    ownership::{OwnershipError, OwnershipErrorKind, ProcessOwner},
+    ownership::{
+        OwnershipError, OwnershipErrorKind, ProcessOwner, ReviewWindowExpectation,
+        ReviewWindowObservation,
+    },
     planning::{launch_plan, project_runtime, RuntimeSettings, SourceSnapshot, ToolchainPrograms},
     projection::{project_instance, ProjectionRequest},
     registry::SqliteInstanceRegistry,
@@ -337,13 +341,19 @@ fn launch_planning_owns_vite_status_and_tauri_with_a_scrubbed_environment() {
     let fixture = fixture(directory.path(), "launch-plan", 32321, 32322);
     for relative in [
         "node_modules/vite/bin/vite.js",
-        "node_modules/@tauri-apps/cli/tauri.js",
         "scripts/runtime-status-server.mjs",
     ] {
         let path = fixture.identity.worktree_path.join(relative);
         std::fs::create_dir_all(path.parent().expect("parent")).expect("tool parent");
         std::fs::write(path, "fixture").expect("tool file");
     }
+    let built = fixture
+        .projection
+        .paths
+        .cargo_target
+        .join("debug/codex-orchestrator.exe");
+    std::fs::create_dir_all(built.parent().expect("build parent")).expect("build directory");
+    std::fs::write(&built, "verified fixture build").expect("private executable");
     let program = directory.path().join("tool.exe");
     std::fs::write(&program, "fixture").expect("program");
     let launches = launch_plan(
@@ -365,7 +375,7 @@ fn launch_planning_owns_vite_status_and_tauri_with_a_scrubbed_environment() {
             .collect::<Vec<_>>(),
         vec![ProcessRole::Vite, ProcessRole::Status, ProcessRole::Tauri]
     );
-    for launch in launches {
+    for launch in &launches {
         assert!(!launch.environment.contains_key("OPENAI_API_KEY"));
         assert_eq!(
             launch.environment["CODEX_HOME"],
@@ -392,6 +402,41 @@ fn launch_planning_owns_vite_status_and_tauri_with_a_scrubbed_environment() {
             fixture.identity.instance_id.as_str()
         );
     }
+    let native = launches
+        .iter()
+        .find(|launch| launch.role == ProcessRole::Tauri)
+        .expect("native launch");
+    assert_eq!(native.program, built);
+    assert!(native.arguments.is_empty());
+}
+
+#[test]
+fn launch_planning_fails_closed_without_the_identity_scoped_private_build() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = fixture(directory.path(), "missing-build", 32323, 32324);
+    for relative in [
+        "node_modules/vite/bin/vite.js",
+        "scripts/runtime-status-server.mjs",
+    ] {
+        let path = fixture.identity.worktree_path.join(relative);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("tool parent");
+        std::fs::write(path, "fixture").expect("tool file");
+    }
+    let program = directory.path().join("tool.exe");
+    std::fs::write(&program, "fixture").expect("program");
+    let error = launch_plan(
+        &fixture.identity,
+        &fixture.projection,
+        "dev.codex-orchestrator.worktree.missing-build",
+        &ToolchainPrograms {
+            git: program.clone(),
+            node: program.clone(),
+            cargo: program.clone(),
+            rustc: program,
+        },
+    )
+    .expect_err("unbuilt artifact must not be reused");
+    assert!(error.message.contains("verified worktree build"));
 }
 
 #[cfg(windows)]
@@ -412,8 +457,8 @@ fn named_jobs_prove_dual_instance_stop_isolation_and_restart_recovery() {
     );
     prepare(&application, &alpha, "job-prepare-alpha");
     prepare(&application, &beta, "job-prepare-beta");
-    let alpha_running = start(&application, &alpha, "job-start-alpha");
-    let beta_running = start(&application, &beta, "job-start-beta");
+    let alpha_running = start_process_only(&application, &alpha, "job-start-alpha");
+    let beta_running = start_process_only(&application, &beta, "job-start-beta");
     assert!(matches!(
         alpha_running
             .observed
@@ -580,6 +625,34 @@ fn start(
         .expect("start instance")
 }
 
+struct ProcessOwnershipOnly;
+
+impl RuntimeStartProgressSink for ProcessOwnershipOnly {
+    fn progress(&self, _stage: RuntimeStartStage, _output: Option<&str>) {}
+
+    fn require_usable_window(&self) -> bool {
+        false
+    }
+}
+
+fn start_process_only(
+    application: &WorktreeRuntimeApplication,
+    fixture: &Fixture,
+    request_id: &str,
+) -> super::domain::InstanceSnapshot {
+    application
+        .start_with_progress(
+            StartInstanceCommand {
+                request_id: request(request_id),
+                authority: authority(),
+                instance_id: fixture.identity.instance_id.clone(),
+                launches: owned_launches(fixture),
+            },
+            &ProcessOwnershipOnly,
+        )
+        .expect("start process-ownership proof")
+}
+
 fn owned_launches(fixture: &Fixture) -> Vec<OwnedProcessLaunch> {
     let executable = std::env::current_exe().expect("test executable");
     [
@@ -588,22 +661,35 @@ fn owned_launches(fixture: &Fixture) -> Vec<OwnedProcessLaunch> {
         (ProcessRole::Tauri, None),
     ]
     .into_iter()
-    .map(|(role, port)| OwnedProcessLaunch {
-        role,
-        program: executable.clone(),
-        arguments: if cfg!(windows) {
-            vec![
-                "--ignored".into(),
-                "--exact".into(),
-                "worktree_runtime::tests::owned_child_tcp_server".into(),
-                "--nocapture".into(),
-            ]
-        } else {
-            Vec::new()
-        },
-        working_directory: fixture.identity.worktree_path.clone(),
-        environment: child_environment(port),
-        log_path: fixture.projection.paths.logs.join(format!("{role:?}.log")),
+    .map(|(role, port)| {
+        let mut environment = child_environment(port);
+        environment.insert(
+            "CODEX_ORCHESTRATOR_WORKTREE_READY_PATH".into(),
+            fixture
+                .projection
+                .paths
+                .app_data
+                .join("review-window-ready")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        OwnedProcessLaunch {
+            role,
+            program: executable.clone(),
+            arguments: if cfg!(windows) {
+                vec![
+                    "--ignored".into(),
+                    "--exact".into(),
+                    "worktree_runtime::tests::owned_child_tcp_server".into(),
+                    "--nocapture".into(),
+                ]
+            } else {
+                Vec::new()
+            },
+            working_directory: fixture.identity.worktree_path.clone(),
+            environment,
+            log_path: fixture.projection.paths.logs.join(format!("{role:?}.log")),
+        }
     })
     .collect()
 }
@@ -671,6 +757,7 @@ impl ProcessOwner for FakeOwner {
         route: &OwnerRoute,
         launches: &[OwnedProcessLaunch],
     ) -> Result<OwnerObservation, OwnershipError> {
+        write_ready_marker(launches);
         let ports = launches
             .iter()
             .filter_map(|launch| {
@@ -706,9 +793,47 @@ impl ProcessOwner for FakeOwner {
             .unwrap_or(OwnerObservation::Absent))
     }
 
+    fn observe_review_window(
+        &self,
+        route: &OwnerRoute,
+        expected: &ReviewWindowExpectation,
+    ) -> Result<Option<ReviewWindowObservation>, OwnershipError> {
+        Ok(self
+            .observe(route)?
+            .is_active()
+            .then(|| usable_window(expected)))
+    }
+
     fn terminate(&self, route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
         self.0.crash(&route.job_name);
         Ok(OwnerObservation::Absent)
+    }
+}
+
+fn write_ready_marker(launches: &[OwnedProcessLaunch]) {
+    if let Some(path) = launches.iter().find_map(|launch| {
+        launch
+            .environment
+            .get("CODEX_ORCHESTRATOR_WORKTREE_READY_PATH")
+    }) {
+        let path = Path::new(path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("ready marker parent");
+        }
+        std::fs::write(path, "application-surface-rendered").expect("ready marker");
+    }
+}
+
+fn usable_window(expected: &ReviewWindowExpectation) -> ReviewWindowObservation {
+    ReviewWindowObservation {
+        title: expected.title.clone(),
+        visible: true,
+        minimized: false,
+        cloaked: false,
+        width: expected.minimum_width + 200,
+        height: expected.minimum_height + 120,
+        client_width: expected.minimum_width + 160,
+        client_height: expected.minimum_height + 40,
     }
 }
 

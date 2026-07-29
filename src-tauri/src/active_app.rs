@@ -182,9 +182,19 @@ pub(crate) fn run() {
                             .unwrap_or(&app_data_dir)
                             .join("dev.codex-orchestrator.human-review")
                     });
-                let review = crate::worktree_review::compose(&source, &review_root)?;
+                let review = Arc::new(crate::worktree_review::compose(&source, &review_root)?);
+                if let Some(controller) =
+                    crate::worktree_review::debug_controller::start_if_enabled(
+                        review.clone(),
+                        &review_root,
+                    )?
+                {
+                    app.manage(controller);
+                }
                 app.manage(
-                    crate::worktree_review::transport::HumanReviewLauncherTauriState::new(review),
+                    crate::worktree_review::transport::HumanReviewLauncherTauriState::new(
+                        review.clone(),
+                    ),
                 );
             }
             Ok(())
@@ -220,6 +230,20 @@ pub(crate) fn run() {
             crate::worktree_review::transport::list_human_review_instances,
             #[cfg(debug_assertions)]
             crate::worktree_review::transport::prepare_human_review_instance,
+            #[cfg(debug_assertions)]
+            crate::worktree_review::transport::human_review_operation_progress,
+            #[cfg(debug_assertions)]
+            crate::worktree_review::transport::list_human_review_operation_progress,
+            #[cfg(debug_assertions)]
+            crate::worktree_review::transport::human_review_launcher_proof_navigation,
+            #[cfg(debug_assertions)]
+            crate::worktree_review::transport::mark_worktree_build_ready,
+            #[cfg(debug_assertions)]
+            crate::worktree_review::debug_controller::worktree_review_proof_navigation,
+            #[cfg(debug_assertions)]
+            crate::worktree_review::worktree_build::worktree_build_context,
+            #[cfg(debug_assertions)]
+            crate::worktree_review::comparison::worktree_build_comparison,
             #[cfg(debug_assertions)]
             crate::worktree_review::transport::build_human_review_instance,
             #[cfg(debug_assertions)]

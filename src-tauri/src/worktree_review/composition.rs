@@ -48,7 +48,12 @@ pub(crate) fn compose(
         )
         .map_err(|error| error.to_string())?,
     );
-    HumanReviewLauncherService::new(facade, catalog, &review_root.join("launcher.sqlite"))
+    HumanReviewLauncherService::new(
+        facade,
+        catalog,
+        &review_root.join("launcher.sqlite"),
+        review_root.join("instances"),
+    )
 }
 
 fn load_or_create_authority(root: &Path) -> Result<AuthoritySecret, String> {

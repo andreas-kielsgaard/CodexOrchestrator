@@ -1,11 +1,11 @@
 use super::{
     application::{
         FocusInstanceCommand, PrepareInstanceCommand, ReadInstanceQuery, RecoverInstanceCommand,
-        RuntimeApplicationError, RuntimeApplicationErrorKind, StartInstanceCommand,
-        StopInstanceCommand, WorktreeRuntimeControl,
+        RuntimeApplicationError, RuntimeApplicationErrorKind, RuntimeStartProgressSink,
+        RuntimeStartStage, StartInstanceCommand, StopInstanceCommand, WorktreeRuntimeControl,
     },
     domain::{AuthoritySecret, InstanceId, InstanceSnapshot, InstanceState, RequestId},
-    execution::{ActionExecutor, ExecutionError},
+    execution::{ActionExecutor, ActionProgressEvent, ActionProgressObserver, ExecutionError},
     planning::{
         action_plan, derive_identity, launch_plan, project_runtime, ActionKind, PlanningError,
         RuntimeSettings, SourceInspector, ToolchainPrograms,
@@ -127,6 +127,54 @@ pub(crate) struct TestActionResult {
     pub(crate) status: TestInstanceStatus,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TestActionStage {
+    SourceInspection,
+    Typecheck,
+    FrontendBuild,
+    TauriCompileLink,
+    Finalizing,
+}
+
+pub(crate) struct TestActionProgress<'a> {
+    pub(crate) stage: TestActionStage,
+    pub(crate) output: Option<&'a str>,
+}
+
+pub(crate) trait TestActionProgressSink: Send + Sync {
+    fn progress(&self, progress: TestActionProgress<'_>);
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TestStartStage {
+    Reservation,
+    SupportingServices,
+    NativeStart,
+    WaitingForWindow,
+    Ready,
+}
+
+pub(crate) struct TestStartProgress<'a> {
+    pub(crate) stage: TestStartStage,
+    pub(crate) output: Option<&'a str>,
+}
+
+pub(crate) trait TestStartProgressSink: Send + Sync {
+    fn progress(&self, progress: TestStartProgress<'_>);
+}
+
+struct NoopTestStartProgressSink;
+
+impl TestStartProgressSink for NoopTestStartProgressSink {
+    fn progress(&self, _progress: TestStartProgress<'_>) {}
+}
+
+struct NoopTestActionProgressSink;
+
+impl TestActionProgressSink for NoopTestActionProgressSink {
+    fn progress(&self, _progress: TestActionProgress<'_>) {}
+}
+
 /// Application-owned lookup. Feature callers pass a semantic source reference, never a path.
 pub(crate) trait TestSourceResolver: Send + Sync {
     fn resolve(&self, source: &TestSourceRef) -> Result<PathBuf, TestInstanceError>;
@@ -139,8 +187,24 @@ pub(crate) trait WorktreeTestInstances: Send + Sync {
         request: IsolatedTestRequest,
     ) -> Result<RequestedTestInstance, TestInstanceError>;
     fn build(&self, handle: &TestInstanceHandle) -> Result<TestActionResult, TestInstanceError>;
+    fn build_with_progress(
+        &self,
+        handle: &TestInstanceHandle,
+        progress: &dyn TestActionProgressSink,
+    ) -> Result<TestActionResult, TestInstanceError> {
+        let _ = progress;
+        self.build(handle)
+    }
     fn test(&self, handle: &TestInstanceHandle) -> Result<TestActionResult, TestInstanceError>;
     fn start(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError>;
+    fn start_with_progress(
+        &self,
+        handle: &TestInstanceHandle,
+        progress: &dyn TestStartProgressSink,
+    ) -> Result<TestInstanceStatus, TestInstanceError> {
+        let _ = progress;
+        self.start(handle)
+    }
     fn status(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError>;
     fn focus(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError>;
     fn stop(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError>;
@@ -213,7 +277,12 @@ impl WorktreeTestInstanceFacade {
         &self,
         handle: &TestInstanceHandle,
         kind: ActionKind,
+        progress: &dyn TestActionProgressSink,
     ) -> Result<TestActionResult, TestInstanceError> {
+        progress.progress(TestActionProgress {
+            stage: TestActionStage::SourceInspection,
+            output: Some("Inspecting the selected source and isolated build identity."),
+        });
         let snapshot = self.snapshot(handle)?;
         self.require_current_source(&snapshot)?;
         if !matches!(
@@ -233,7 +302,15 @@ impl WorktreeTestInstanceFacade {
             &self.programs,
         )
         .map_err(planning_error)?;
-        let execution = self.executor.execute(&plan).map_err(execution_error)?;
+        let observer = FacadeActionProgress { progress };
+        let execution = self
+            .executor
+            .execute(&plan, &observer)
+            .map_err(execution_error)?;
+        progress.progress(TestActionProgress {
+            stage: TestActionStage::Finalizing,
+            output: Some("Recording the isolated build result."),
+        });
         Ok(TestActionResult {
             outcome: if execution.succeeded {
                 TestActionOutcome::Passed
@@ -308,14 +385,30 @@ impl WorktreeTestInstances for WorktreeTestInstanceFacade {
     }
 
     fn build(&self, handle: &TestInstanceHandle) -> Result<TestActionResult, TestInstanceError> {
-        self.action(handle, ActionKind::Build)
+        self.action(handle, ActionKind::Build, &NoopTestActionProgressSink)
+    }
+
+    fn build_with_progress(
+        &self,
+        handle: &TestInstanceHandle,
+        progress: &dyn TestActionProgressSink,
+    ) -> Result<TestActionResult, TestInstanceError> {
+        self.action(handle, ActionKind::Build, progress)
     }
 
     fn test(&self, handle: &TestInstanceHandle) -> Result<TestActionResult, TestInstanceError> {
-        self.action(handle, ActionKind::Test)
+        self.action(handle, ActionKind::Test, &NoopTestActionProgressSink)
     }
 
     fn start(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError> {
+        self.start_with_progress(handle, &NoopTestStartProgressSink)
+    }
+
+    fn start_with_progress(
+        &self,
+        handle: &TestInstanceHandle,
+        progress: &dyn TestStartProgressSink,
+    ) -> Result<TestInstanceStatus, TestInstanceError> {
         let snapshot = self.snapshot(handle)?;
         self.require_current_source(&snapshot)?;
         let launches = launch_plan(
@@ -326,19 +419,34 @@ impl WorktreeTestInstances for WorktreeTestInstanceFacade {
         )
         .map_err(planning_error)?;
         self.runtime
-            .start(StartInstanceCommand {
-                request_id: request_id("start")?,
-                authority: self.authority.clone(),
-                instance_id: handle.0.clone(),
-                launches,
-            })
+            .start_with_progress(
+                StartInstanceCommand {
+                    request_id: request_id("start")?,
+                    authority: self.authority.clone(),
+                    instance_id: handle.0.clone(),
+                    launches,
+                },
+                &FacadeStartProgress { progress },
+            )
             .map(|snapshot| semantic_status(&snapshot))
             .map_err(runtime_error)
     }
 
     fn status(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError> {
-        self.snapshot(handle)
-            .map(|snapshot| semantic_status(&snapshot))
+        let snapshot = self.snapshot(handle)?;
+        let mut status = semantic_status(&snapshot);
+        if status.phase == TestInstancePhase::Running
+            && !self
+                .runtime
+                .review_window_ready(ReadInstanceQuery {
+                    authority: self.authority.clone(),
+                    instance_id: handle.0.clone(),
+                })
+                .map_err(runtime_error)?
+        {
+            status.health = HealthState::Unhealthy;
+        }
+        Ok(status)
     }
 
     fn focus(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError> {
@@ -374,6 +482,51 @@ impl WorktreeTestInstances for WorktreeTestInstanceFacade {
             })
             .map_err(runtime_error)?;
         self.status(handle)
+    }
+}
+
+struct FacadeStartProgress<'a> {
+    progress: &'a dyn TestStartProgressSink,
+}
+
+impl RuntimeStartProgressSink for FacadeStartProgress<'_> {
+    fn progress(&self, stage: RuntimeStartStage, output: Option<&str>) {
+        let stage = match stage {
+            RuntimeStartStage::Reservation => TestStartStage::Reservation,
+            RuntimeStartStage::SupportingServices => TestStartStage::SupportingServices,
+            RuntimeStartStage::NativeStart => TestStartStage::NativeStart,
+            RuntimeStartStage::WaitingForWindow => TestStartStage::WaitingForWindow,
+            RuntimeStartStage::Ready => TestStartStage::Ready,
+        };
+        self.progress.progress(TestStartProgress { stage, output });
+    }
+}
+
+struct FacadeActionProgress<'a> {
+    progress: &'a dyn TestActionProgressSink,
+}
+
+impl ActionProgressObserver for FacadeActionProgress<'_> {
+    fn progress(&self, event: ActionProgressEvent<'_>) {
+        let (step, output) = match event {
+            ActionProgressEvent::Started { step } => (step, None),
+            ActionProgressEvent::Output { step, line } => (step, Some(line)),
+            ActionProgressEvent::Finished { step, succeeded } => (
+                step,
+                Some(if succeeded {
+                    "Stage completed."
+                } else {
+                    "Stage failed."
+                }),
+            ),
+        };
+        let stage = match step {
+            "typecheck" => TestActionStage::Typecheck,
+            "frontend build" => TestActionStage::FrontendBuild,
+            "Tauri debug build" => TestActionStage::TauriCompileLink,
+            _ => TestActionStage::Finalizing,
+        };
+        self.progress.progress(TestActionProgress { stage, output });
     }
 }
 

@@ -1,14 +1,31 @@
 import { useEffect, useState } from 'react';
 import { createProductApplicationComposition } from '../bootstrap/productApplicationComposition';
 import { App, type AppProps } from './App';
+import type { WorktreeBuildClient } from '../application/worktreeBuild';
 
 /** Development tools are composed only in the launcher build, never in isolated review windows. */
 export function ApplicationRoot() {
   const [composition, setComposition] = useState<AppProps | null>(null);
+  const [worktreeBuild, setWorktreeBuild] = useState<{
+    client: WorktreeBuildClient;
+    Shell: (typeof import('../features/worktreeBuild'))['WorktreeBuildShell'];
+  } | null>(null);
 
   useEffect(() => {
     let active = true;
-    if (!viteDevelopmentMode() || humanReviewInstance()) {
+    if (humanReviewInstance()) {
+      setComposition(createProductApplicationComposition());
+      void Promise.all([
+        import('../infrastructure/tauriWorktreeBuild'),
+        import('../features/worktreeBuild'),
+      ]).then(([{ tauriWorktreeBuild }, { WorktreeBuildShell }]) => {
+        if (active) setWorktreeBuild({ client: tauriWorktreeBuild, Shell: WorktreeBuildShell });
+      });
+      return () => {
+        active = false;
+      };
+    }
+    if (!developmentToolsEnabled()) {
       setComposition(createProductApplicationComposition());
       return () => {
         active = false;
@@ -23,7 +40,16 @@ export function ApplicationRoot() {
     };
   }, []);
 
-  return composition ? <App {...composition} /> : null;
+  if (!composition) return null;
+  if (worktreeBuild) {
+    const { client, Shell } = worktreeBuild;
+    return (
+      <Shell client={client}>
+        <App {...composition} />
+      </Shell>
+    );
+  }
+  return <App {...composition} />;
 }
 
 async function loadDevelopmentComposition(): Promise<AppProps> {
@@ -42,12 +68,17 @@ async function loadDevelopmentComposition(): Promise<AppProps> {
   return {
     ...productComposition,
     humanReviewLauncherView: <HumanReviewLauncherView client={tauriHumanReviewLauncher} />,
+    humanReviewLauncherNavigation: () => tauriHumanReviewLauncher.proofNavigation!(),
   };
 }
 
-function viteDevelopmentMode(): boolean {
-  const env = (import.meta as unknown as { env?: { DEV?: boolean } }).env;
-  return env?.DEV === true;
+function developmentToolsEnabled(): boolean {
+  const env = (
+    import.meta as unknown as {
+      env?: { DEV?: boolean; VITE_WORKTREE_REVIEW_LAUNCHER?: string };
+    }
+  ).env;
+  return env?.DEV === true || env?.VITE_WORKTREE_REVIEW_LAUNCHER === 'true';
 }
 
 function humanReviewInstance(): boolean {

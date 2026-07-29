@@ -5,7 +5,7 @@ use super::{
         OwnerObservation, OwnerRoute, RequestId, RuntimeObservation,
     },
     health::HealthProbe,
-    ownership::{OwnershipError, ProcessOwner},
+    ownership::{OwnershipError, ProcessOwner, ReviewWindowExpectation},
     registry::{
         CommandStart, InstanceRegistry, PrepareRecord, RegistryError, RegistryErrorKind,
         StoredFailure,
@@ -53,6 +53,29 @@ pub(crate) struct ReadInstanceQuery {
     pub(crate) instance_id: InstanceId,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RuntimeStartStage {
+    Reservation,
+    SupportingServices,
+    NativeStart,
+    WaitingForWindow,
+    Ready,
+}
+
+pub(crate) trait RuntimeStartProgressSink: Send + Sync {
+    fn progress(&self, stage: RuntimeStartStage, output: Option<&str>);
+
+    fn require_usable_window(&self) -> bool {
+        true
+    }
+}
+
+struct NoopRuntimeStartProgressSink;
+
+impl RuntimeStartProgressSink for NoopRuntimeStartProgressSink {
+    fn progress(&self, _stage: RuntimeStartStage, _output: Option<&str>) {}
+}
+
 /// Explicit application lifecycle ports. These methods do not schedule, approve, or continue work.
 pub(crate) trait WorktreeRuntimeControl: Send + Sync {
     fn prepare(
@@ -65,7 +88,24 @@ pub(crate) trait WorktreeRuntimeControl: Send + Sync {
         command: StartInstanceCommand,
     ) -> Result<InstanceSnapshot, RuntimeApplicationError>;
 
+    fn start_with_progress(
+        &self,
+        command: StartInstanceCommand,
+        progress: &dyn RuntimeStartProgressSink,
+    ) -> Result<InstanceSnapshot, RuntimeApplicationError> {
+        let _ = progress;
+        self.start(command)
+    }
+
     fn read(&self, query: ReadInstanceQuery) -> Result<InstanceSnapshot, RuntimeApplicationError>;
+
+    fn review_window_ready(
+        &self,
+        query: ReadInstanceQuery,
+    ) -> Result<bool, RuntimeApplicationError> {
+        let _ = query;
+        Ok(false)
+    }
 
     fn focus(
         &self,
@@ -104,8 +144,8 @@ pub(crate) struct ObservationPolicy {
 impl Default for ObservationPolicy {
     fn default() -> Self {
         Self {
-            attempts: 40,
-            interval: Duration::from_millis(50),
+            attempts: 600,
+            interval: Duration::from_millis(500),
         }
     }
 }
@@ -175,8 +215,10 @@ impl WorktreeRuntimeApplication {
         &self,
         record: &InstanceRecord,
         route: &OwnerRoute,
+        progress: &dyn RuntimeStartProgressSink,
     ) -> Result<RuntimeObservation, RuntimeApplicationError> {
-        let mut latest = None;
+        let expected = review_window_expectation(record);
+        let ready_marker = record.projection.paths.app_data.join("review-window-ready");
         for attempt in 0..self.observation_policy.attempts.max(1) {
             let owner = self.owner.observe(route).map_err(owner_error)?;
             let observation = RuntimeObservation {
@@ -184,7 +226,26 @@ impl WorktreeRuntimeApplication {
                 health: self.health.observe(&record.projection),
                 observed_at: self.clock.now(),
             };
-            if observation.owner.is_active() && observation.health.healthy() {
+            let window = if progress.require_usable_window() {
+                self.owner
+                    .observe_review_window(route, &expected)
+                    .map_err(owner_error)?
+            } else {
+                None
+            };
+            let application_ready = ready_marker.is_file();
+            if observation.owner.is_active()
+                && observation.health.healthy()
+                && (!progress.require_usable_window()
+                    || (window
+                        .as_ref()
+                        .is_some_and(|window| window.usable(&expected))
+                        && application_ready))
+            {
+                progress.progress(
+                    RuntimeStartStage::Ready,
+                    Some("The owned worktree-build window is visible and application-ready."),
+                );
                 return Ok(observation);
             }
             if !observation.owner.is_active() {
@@ -193,18 +254,29 @@ impl WorktreeRuntimeApplication {
                     "the exact Job Object owner exited before both endpoints became healthy",
                 ));
             }
-            latest = Some(observation);
+            if attempt == 0 || attempt % 4 == 0 {
+                let evidence = match window {
+                    None => "Owned processes are active; waiting for the worktree-build window.",
+                    Some(window) if window.title != expected.title => {
+                        "An owned window exists, but its expected worktree-build identity is not ready."
+                    }
+                    Some(window) if !window.usable(&expected) => {
+                        "The owned worktree-build window exists but is not yet usable at review size."
+                    }
+                    Some(_) if !application_ready => {
+                        "The owned window is usable; waiting for the application surface to render."
+                    }
+                    Some(_) => "Waiting for isolated supporting services.",
+                };
+                progress.progress(RuntimeStartStage::WaitingForWindow, Some(evidence));
+            }
             if attempt + 1 < self.observation_policy.attempts.max(1) {
                 thread::sleep(self.observation_policy.interval);
             }
         }
-        let latest = latest.expect("at least one observation attempt");
         Err(RuntimeApplicationError::new(
             RuntimeApplicationErrorKind::HealthFailed,
-            format!(
-                "owned processes were observed but projected endpoints {}/{} were not both healthy",
-                latest.health.vite.port, latest.health.status.port
-            ),
+            "owned processes were observed, but a usable application-ready worktree-build window did not appear before the readiness limit",
         ))
     }
 
@@ -365,6 +437,18 @@ impl WorktreeRuntimeControl for WorktreeRuntimeApplication {
         &self,
         command: StartInstanceCommand,
     ) -> Result<InstanceSnapshot, RuntimeApplicationError> {
+        self.start_with_progress(command, &NoopRuntimeStartProgressSink)
+    }
+
+    fn start_with_progress(
+        &self,
+        command: StartInstanceCommand,
+        progress: &dyn RuntimeStartProgressSink,
+    ) -> Result<InstanceSnapshot, RuntimeApplicationError> {
+        progress.progress(
+            RuntimeStartStage::Reservation,
+            Some("Reserving the exact isolated lifecycle and ownership route."),
+        );
         validate_launches(&command.launches)
             .map_err(contract_error("invalid owned process launches"))?;
         let authority_hash = Self::authority_hash(&command.authority);
@@ -426,6 +510,24 @@ impl WorktreeRuntimeControl for WorktreeRuntimeApplication {
                 "durable launch route changed before process ownership began",
             ));
         }
+        let ready_marker = record.projection.paths.app_data.join("review-window-ready");
+        if ready_marker.exists() {
+            std::fs::remove_file(&ready_marker).map_err(|error| {
+                self.cleanup_failed_start(
+                    &command,
+                    &record,
+                    &route,
+                    RuntimeApplicationError::new(
+                        RuntimeApplicationErrorKind::Unavailable,
+                        format!("clear prior application readiness marker: {error}"),
+                    ),
+                )
+            })?;
+        }
+        progress.progress(
+            RuntimeStartStage::SupportingServices,
+            Some("Starting isolated supporting services and the verified private build."),
+        );
         let launched = self
             .owner
             .launch(&route, &command.launches)
@@ -443,8 +545,12 @@ impl WorktreeRuntimeControl for WorktreeRuntimeApplication {
                 ),
             ));
         }
+        progress.progress(
+            RuntimeStartStage::NativeStart,
+            Some("The owned process tree is active; checking native window readiness."),
+        );
         let observation = self
-            .wait_for_started(&record, &route)
+            .wait_for_started(&record, &route, progress)
             .map_err(|error| self.cleanup_failed_start(&command, &record, &route, error))?;
         match self.registry.complete_transition(
             &command.request_id,
@@ -472,6 +578,35 @@ impl WorktreeRuntimeControl for WorktreeRuntimeApplication {
             .map_err(registry_error)
     }
 
+    fn review_window_ready(
+        &self,
+        query: ReadInstanceQuery,
+    ) -> Result<bool, RuntimeApplicationError> {
+        let authority_hash = Self::authority_hash(&query.authority);
+        let record = self
+            .registry
+            .load_authorized(&query.instance_id, &authority_hash)
+            .map_err(registry_error)?;
+        let Some(route) = record.owner_route.as_ref() else {
+            return Ok(false);
+        };
+        validate_owner_route(&record.identity.instance_id, route)?;
+        let expected = review_window_expectation(&record);
+        let window = self
+            .owner
+            .observe_review_window(route, &expected)
+            .map_err(owner_error)?;
+        Ok(window
+            .as_ref()
+            .is_some_and(|window| window.usable(&expected))
+            && record
+                .projection
+                .paths
+                .app_data
+                .join("review-window-ready")
+                .is_file())
+    }
+
     fn focus(
         &self,
         command: FocusInstanceCommand,
@@ -488,7 +623,10 @@ impl WorktreeRuntimeControl for WorktreeRuntimeApplication {
             ));
         }
         let route = required_owner_route(&record)?;
-        let owner = self.owner.focus(route).map_err(owner_error)?;
+        let owner = self
+            .owner
+            .focus_review_window(route, &review_window_expectation(&record))
+            .map_err(owner_error)?;
         let observation = RuntimeObservation {
             owner,
             health: self.health.observe(&record.projection),
@@ -687,6 +825,17 @@ fn job_name(instance_id: &InstanceId, launch_id: &LaunchId) -> String {
         instance_id.as_str(),
         launch_id.as_str()
     )
+}
+
+fn review_window_expectation(record: &InstanceRecord) -> ReviewWindowExpectation {
+    ReviewWindowExpectation {
+        title: format!(
+            "Codex Orchestrator [Worktree build: {}]",
+            record.identity.review_name
+        ),
+        minimum_width: 900,
+        minimum_height: 600,
+    }
 }
 
 fn validate_owner_route(

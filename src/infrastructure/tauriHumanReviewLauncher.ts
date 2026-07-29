@@ -8,10 +8,16 @@ import type {
 export const tauriHumanReviewLauncher: HumanReviewLauncherClient = {
   listSources: () => invoke<HumanReviewSource[]>('list_human_review_worktrees'),
   listInstances: () => invoke<HumanReviewInstance[]>('list_human_review_instances'),
-  prepare: (sourceRef, name) =>
-    invoke('prepare_human_review_instance', { input: { sourceRef, name } }),
-  build: action('build_human_review_instance'),
-  start: action('start_human_review_instance'),
+  prepare: (operationRef, sourceRef, name) =>
+    invoke('prepare_human_review_instance', { input: { operationRef, sourceRef, name } }),
+  build: (operationRef, instanceRef) =>
+    invoke('build_human_review_instance', { input: { operationRef, instanceRef } }),
+  start: (operationRef, instanceRef) =>
+    invoke('start_human_review_instance', { input: { operationRef, instanceRef } }),
+  progress: (operationRef) =>
+    invoke('human_review_operation_progress', { input: { operationRef } }),
+  listProgress: () => invoke('list_human_review_operation_progress'),
+  proofNavigation: () => invoke('human_review_launcher_proof_navigation'),
   status: action('status_human_review_instance'),
   focus: action('focus_human_review_instance'),
   stop: action('stop_human_review_instance'),
@@ -19,6 +25,5 @@ export const tauriHumanReviewLauncher: HumanReviewLauncherClient = {
 };
 
 function action(command: string) {
-  return (instanceRef: string) =>
-    invoke<HumanReviewInstance>(command, { input: { instanceRef } });
+  return (instanceRef: string) => invoke<HumanReviewInstance>(command, { input: { instanceRef } });
 }

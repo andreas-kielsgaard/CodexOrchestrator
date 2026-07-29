@@ -18,6 +18,7 @@ pub(crate) struct ReviewWorktreeOption {
 pub(crate) struct ReviewWorktreeCatalog {
     options: Vec<ReviewWorktreeOption>,
     paths: HashMap<String, PathBuf>,
+    main_path: PathBuf,
 }
 
 impl ReviewWorktreeCatalog {
@@ -42,6 +43,7 @@ impl ReviewWorktreeCatalog {
     fn from_porcelain(text: &str, current_source: &Path) -> Result<Self, String> {
         let mut options = Vec::new();
         let mut paths = HashMap::new();
+        let mut main_path = None;
         for block in text.split("\n\n").filter(|block| !block.trim().is_empty()) {
             let mut path = None;
             let mut head = None;
@@ -59,6 +61,9 @@ impl ReviewWorktreeCatalog {
                 .ok_or_else(|| "Git returned a worktree without a path".to_string())?
                 .canonicalize()
                 .map_err(|error| format!("resolve discovered worktree: {error}"))?;
+            if main_path.is_none() {
+                main_path = Some(path.clone());
+            }
             let head = head.ok_or_else(|| "Git returned a worktree without HEAD".to_string())?;
             let digest = format!("{:x}", Sha256::digest(path.to_string_lossy().as_bytes()));
             let source_ref = format!("review-source-{}", &digest[..20]);
@@ -79,11 +84,22 @@ impl ReviewWorktreeCatalog {
             });
             paths.insert(source_ref, path);
         }
-        options.sort_by(|left, right| left.label.cmp(&right.label));
+        options.sort_by(|left, right| {
+            let left_current = left.label.ends_with(" - launcher source");
+            let right_current = right.label.ends_with(" - launcher source");
+            right_current
+                .cmp(&left_current)
+                .then_with(|| left.label.cmp(&right.label))
+        });
         if options.is_empty() {
             return Err("No Git worktrees were discovered".into());
         }
-        Ok(Self { options, paths })
+        Ok(Self {
+            options,
+            paths,
+            main_path: main_path
+                .ok_or_else(|| "No main Git worktree was discovered".to_string())?,
+        })
     }
 
     pub(crate) fn options(&self) -> &[ReviewWorktreeOption] {
@@ -95,6 +111,23 @@ impl ReviewWorktreeCatalog {
             .iter()
             .find(|option| option.source_ref == source_ref)
             .map(|option| option.label.clone())
+    }
+
+    pub(super) fn scope(
+        &self,
+        source_ref: &str,
+        name: String,
+    ) -> Result<super::worktree_build::WorktreeScope, String> {
+        let selected = self
+            .paths
+            .get(source_ref)
+            .cloned()
+            .ok_or_else(|| "The selected worktree is unavailable.".to_string())?;
+        Ok(super::worktree_build::WorktreeScope {
+            name,
+            selected,
+            main: self.main_path.clone(),
+        })
     }
 }
 
@@ -141,5 +174,6 @@ mod tests {
             .options
             .iter()
             .any(|option| option.label.contains("launcher source")));
+        assert!(catalog.options[0].label.contains("launcher source"));
     }
 }

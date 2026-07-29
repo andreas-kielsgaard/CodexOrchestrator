@@ -1,6 +1,38 @@
 use super::domain::{OwnedProcessLaunch, OwnerObservation, OwnerRoute};
 use std::{error::Error, fmt};
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ReviewWindowExpectation {
+    pub(crate) title: String,
+    pub(crate) minimum_width: i32,
+    pub(crate) minimum_height: i32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ReviewWindowObservation {
+    pub(crate) title: String,
+    pub(crate) visible: bool,
+    pub(crate) minimized: bool,
+    pub(crate) cloaked: bool,
+    pub(crate) width: i32,
+    pub(crate) height: i32,
+    pub(crate) client_width: i32,
+    pub(crate) client_height: i32,
+}
+
+impl ReviewWindowObservation {
+    pub(crate) fn usable(&self, expected: &ReviewWindowExpectation) -> bool {
+        self.title == expected.title
+            && self.visible
+            && !self.minimized
+            && !self.cloaked
+            && self.width >= expected.minimum_width
+            && self.height >= expected.minimum_height
+            && self.client_width >= expected.minimum_width.saturating_sub(40)
+            && self.client_height >= expected.minimum_height.saturating_sub(80)
+    }
+}
+
 pub(crate) trait ProcessOwner: Send + Sync {
     fn launch(
         &self,
@@ -15,6 +47,22 @@ pub(crate) trait ProcessOwner: Send + Sync {
             OwnershipErrorKind::Unavailable,
             "visible-window focus is unavailable for this process owner",
         ))
+    }
+
+    fn observe_review_window(
+        &self,
+        _route: &OwnerRoute,
+        _expected: &ReviewWindowExpectation,
+    ) -> Result<Option<ReviewWindowObservation>, OwnershipError> {
+        Ok(None)
+    }
+
+    fn focus_review_window(
+        &self,
+        route: &OwnerRoute,
+        _expected: &ReviewWindowExpectation,
+    ) -> Result<OwnerObservation, OwnershipError> {
+        self.focus(route)
     }
 
     fn terminate(&self, route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError>;
@@ -51,9 +99,110 @@ impl fmt::Display for OwnershipError {
 
 impl Error for OwnershipError {}
 
+#[cfg(test)]
+mod usable_window_tests {
+    use super::*;
+    use crate::worktree_runtime::domain::{OwnedProcessLaunch, OwnerObservation};
+
+    fn expected() -> ReviewWindowExpectation {
+        ReviewWindowExpectation {
+            title: "Codex Orchestrator [Worktree build: Alpha]".into(),
+            minimum_width: 900,
+            minimum_height: 600,
+        }
+    }
+
+    fn usable() -> ReviewWindowObservation {
+        ReviewWindowObservation {
+            title: expected().title,
+            visible: true,
+            minimized: false,
+            cloaked: false,
+            width: 1280,
+            height: 820,
+            client_width: 1264,
+            client_height: 781,
+        }
+    }
+
+    #[test]
+    fn only_exact_visible_useful_worktree_build_windows_are_usable() {
+        assert!(usable().usable(&expected()));
+        for rejected in [
+            ReviewWindowObservation {
+                title: String::new(),
+                ..usable()
+            },
+            ReviewWindowObservation {
+                title: "Codex Orchestrator [Worktree build: Other]".into(),
+                ..usable()
+            },
+            ReviewWindowObservation {
+                visible: false,
+                ..usable()
+            },
+            ReviewWindowObservation {
+                minimized: true,
+                ..usable()
+            },
+            ReviewWindowObservation {
+                cloaked: true,
+                ..usable()
+            },
+            ReviewWindowObservation {
+                width: 18,
+                height: 18,
+                client_width: 18,
+                client_height: 18,
+                ..usable()
+            },
+        ] {
+            assert!(!rejected.usable(&expected()));
+        }
+    }
+
+    #[test]
+    fn active_process_owner_default_does_not_synthesize_window_evidence() {
+        struct ProcessOnlyOwner;
+        impl ProcessOwner for ProcessOnlyOwner {
+            fn launch(
+                &self,
+                _route: &OwnerRoute,
+                _launches: &[OwnedProcessLaunch],
+            ) -> Result<OwnerObservation, OwnershipError> {
+                Ok(OwnerObservation::Owned {
+                    active_processes: 1,
+                })
+            }
+            fn observe(&self, _route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
+                Ok(OwnerObservation::Owned {
+                    active_processes: 1,
+                })
+            }
+            fn terminate(&self, _route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
+                Ok(OwnerObservation::Absent)
+            }
+        }
+        let route = OwnerRoute {
+            job_name: "Local\\fixture".into(),
+            launch_id: crate::worktree_runtime::domain::LaunchId::new("launch-fixture")
+                .expect("launch"),
+        };
+        assert_eq!(
+            ProcessOnlyOwner
+                .observe_review_window(&route, &expected())
+                .expect("window observation"),
+            None
+        );
+    }
+}
+
 #[cfg(windows)]
 mod windows {
-    use super::{OwnershipError, OwnershipErrorKind, ProcessOwner};
+    use super::{
+        OwnershipError, OwnershipErrorKind, ProcessOwner, ReviewWindowExpectation,
+        ReviewWindowObservation,
+    };
     use crate::worktree_runtime::domain::{OwnedProcessLaunch, OwnerObservation, OwnerRoute};
     use std::{
         collections::{HashMap, HashSet},
@@ -69,8 +218,9 @@ mod windows {
     use windows_sys::Win32::{
         Foundation::{
             CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HWND, INVALID_HANDLE_VALUE,
-            LPARAM,
+            LPARAM, RECT,
         },
+        Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED},
         Security::SECURITY_ATTRIBUTES,
         Storage::FileSystem::{
             CreateFileW, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE,
@@ -91,9 +241,9 @@ mod windows {
             },
         },
         UI::WindowsAndMessaging::{
-            BringWindowToTop, EnumWindows, GetForegroundWindow, GetWindow,
-            GetWindowThreadProcessId, IsWindowVisible, SetForegroundWindow, ShowWindow, GW_OWNER,
-            SW_RESTORE,
+            BringWindowToTop, EnumWindows, GetClientRect, GetForegroundWindow, GetWindow,
+            GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+            IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow, GW_OWNER, SW_RESTORE,
         },
     };
 
@@ -220,6 +370,58 @@ mod windows {
             focus_owned_window(handle)
         }
 
+        fn observe_review_window(
+            &self,
+            route: &OwnerRoute,
+            expected: &ReviewWindowExpectation,
+        ) -> Result<Option<ReviewWindowObservation>, OwnershipError> {
+            validate_job_name(&route.job_name)?;
+            if let Some(handle) = self
+                .handles
+                .lock()
+                .map_err(|_| {
+                    OwnershipError::new(
+                        OwnershipErrorKind::Unavailable,
+                        "Windows Job Object handle registry is unavailable",
+                    )
+                })?
+                .get(&route.job_name)
+            {
+                return inspect_owned_window(handle.0, expected);
+            }
+            let Some(handle) = open_job(&route.job_name, JOB_OBJECT_QUERY_ACCESS)? else {
+                return Ok(None);
+            };
+            inspect_owned_window(handle.0, expected)
+        }
+
+        fn focus_review_window(
+            &self,
+            route: &OwnerRoute,
+            expected: &ReviewWindowExpectation,
+        ) -> Result<OwnerObservation, OwnershipError> {
+            validate_job_name(&route.job_name)?;
+            if let Some(handle) = self
+                .handles
+                .lock()
+                .map_err(|_| {
+                    OwnershipError::new(
+                        OwnershipErrorKind::Unavailable,
+                        "Windows Job Object handle registry is unavailable",
+                    )
+                })?
+                .get(&route.job_name)
+            {
+                return focus_exact_window(handle.0, expected);
+            }
+            let Some(handle) = open_job(&route.job_name, JOB_OBJECT_QUERY_ACCESS)? else {
+                return Err(OwnershipError::new(
+                    OwnershipErrorKind::Ambiguous,
+                    "the exact Job Object is absent while focusing its worktree-build window",
+                ));
+            };
+            focus_exact_window(handle.0, expected)
+        }
         fn terminate(&self, route: &OwnerRoute) -> Result<OwnerObservation, OwnershipError> {
             validate_job_name(&route.job_name)?;
             let owned = self
@@ -448,6 +650,143 @@ mod windows {
             ));
         }
         observe_handle(handle)
+    }
+
+    struct ExactWindowContext {
+        process_ids: HashSet<u32>,
+        expected_title: String,
+        exact: HWND,
+        fallback: HWND,
+    }
+
+    unsafe extern "system" fn find_exact_owned_window(window: HWND, data: LPARAM) -> BOOL {
+        let context = unsafe { &mut *(data as *mut ExactWindowContext) };
+        let mut process_id = 0;
+        unsafe {
+            GetWindowThreadProcessId(window, &mut process_id);
+        }
+        if !context.process_ids.contains(&process_id)
+            || !unsafe { GetWindow(window, GW_OWNER) }.is_null()
+        {
+            return 1;
+        }
+        if context.fallback.is_null() {
+            context.fallback = window;
+        }
+        if window_title(window) == context.expected_title {
+            context.exact = window;
+            return 0;
+        }
+        1
+    }
+
+    fn find_exact_or_fallback_window(
+        handle: HANDLE,
+        expected: &ReviewWindowExpectation,
+    ) -> Result<(HWND, bool), OwnershipError> {
+        let mut context = ExactWindowContext {
+            process_ids: job_process_ids(handle)?,
+            expected_title: expected.title.clone(),
+            exact: null_mut(),
+            fallback: null_mut(),
+        };
+        unsafe {
+            EnumWindows(
+                Some(find_exact_owned_window),
+                &mut context as *mut ExactWindowContext as LPARAM,
+            );
+        }
+        if !context.exact.is_null() {
+            Ok((context.exact, true))
+        } else {
+            Ok((context.fallback, false))
+        }
+    }
+
+    fn inspect_owned_window(
+        handle: HANDLE,
+        expected: &ReviewWindowExpectation,
+    ) -> Result<Option<ReviewWindowObservation>, OwnershipError> {
+        let (window, _) = find_exact_or_fallback_window(handle, expected)?;
+        if window.is_null() {
+            return Ok(None);
+        }
+        let mut outer: RECT = unsafe { zeroed() };
+        let mut client: RECT = unsafe { zeroed() };
+        if unsafe { GetWindowRect(window, &mut outer) } == 0
+            || unsafe { GetClientRect(window, &mut client) } == 0
+        {
+            return Err(last_error(
+                OwnershipErrorKind::Unavailable,
+                "inspect owned worktree-build window bounds",
+            ));
+        }
+        let mut cloaked = 0u32;
+        let cloak_result = unsafe {
+            DwmGetWindowAttribute(
+                window,
+                DWMWA_CLOAKED as u32,
+                &mut cloaked as *mut u32 as *mut c_void,
+                size_of::<u32>() as u32,
+            )
+        };
+        Ok(Some(ReviewWindowObservation {
+            title: window_title(window),
+            visible: unsafe { IsWindowVisible(window) } != 0,
+            minimized: unsafe { IsIconic(window) } != 0,
+            cloaked: cloak_result != 0 || cloaked != 0,
+            width: outer.right.saturating_sub(outer.left),
+            height: outer.bottom.saturating_sub(outer.top),
+            client_width: client.right.saturating_sub(client.left),
+            client_height: client.bottom.saturating_sub(client.top),
+        }))
+    }
+
+    fn focus_exact_window(
+        handle: HANDLE,
+        expected: &ReviewWindowExpectation,
+    ) -> Result<OwnerObservation, OwnershipError> {
+        let (window, exact) = find_exact_or_fallback_window(handle, expected)?;
+        if window.is_null() || !exact {
+            return Err(OwnershipError::new(
+                OwnershipErrorKind::Ambiguous,
+                "the exact titled owned worktree-build window is not present",
+            ));
+        }
+        let observation = inspect_owned_window(handle, expected)?.ok_or_else(|| {
+            OwnershipError::new(
+                OwnershipErrorKind::Ambiguous,
+                "the exact owned worktree-build window is not present",
+            )
+        })?;
+        if !observation.usable(expected) {
+            return Err(OwnershipError::new(
+                OwnershipErrorKind::Ambiguous,
+                "the exact owned worktree-build window is not usable",
+            ));
+        }
+        unsafe {
+            ShowWindow(window, SW_RESTORE);
+            BringWindowToTop(window);
+            SetForegroundWindow(window);
+        }
+        if unsafe { GetForegroundWindow() } != window {
+            return Err(OwnershipError::new(
+                OwnershipErrorKind::Ambiguous,
+                "Windows did not grant foreground focus to the exact worktree-build window",
+            ));
+        }
+        observe_handle(handle)
+    }
+
+    fn window_title(window: HWND) -> String {
+        let length = unsafe { GetWindowTextLengthW(window) };
+        if length <= 0 {
+            return String::new();
+        }
+        let mut buffer = vec![0u16; length as usize + 1];
+        let copied = unsafe { GetWindowTextW(window, buffer.as_mut_ptr(), buffer.len() as i32) };
+        String::from_utf16_lossy(&buffer[..copied.max(0) as usize])
     }
 
     fn job_process_ids(handle: HANDLE) -> Result<HashSet<u32>, OwnershipError> {

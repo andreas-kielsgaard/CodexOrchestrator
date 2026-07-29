@@ -1,4 +1,9 @@
-use super::catalog::{ReviewWorktreeCatalog, ReviewWorktreeOption};
+use super::{
+    catalog::{ReviewWorktreeCatalog, ReviewWorktreeOption},
+    comparison::WorktreeComparisonView,
+    progress::{ProgressHandle, ProgressRegistry, ReviewOperationProgressView},
+    worktree_build::WorktreeBuildContextView,
+};
 use crate::worktree_runtime::{
     IsolatedTestRequest, TestActionOutcome, TestInstanceError, TestInstanceErrorKind,
     TestInstanceHandle, TestInstancePhase, TestInstanceStatus, TestSourceRef,
@@ -8,9 +13,11 @@ use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
-    path::Path,
+    fs,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
+use uuid::Uuid;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,10 +50,32 @@ pub(crate) struct ReviewInstanceView {
     pub(crate) can_focus: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AcceptedReviewOperationView {
+    pub(crate) operation_ref: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReviewOperationStatusView {
+    pub(crate) progress: ReviewOperationProgressView,
+    pub(crate) result: Option<ReviewInstanceView>,
+    pub(crate) error: Option<String>,
+}
+
 #[derive(Clone)]
 struct ReviewMetadata {
     name: String,
+    source_ref: String,
     source_label: String,
+}
+
+#[derive(Clone)]
+enum ReviewOperationResult {
+    Pending,
+    Succeeded(ReviewInstanceView),
+    Failed(String),
 }
 
 pub(crate) struct HumanReviewLauncherService {
@@ -55,6 +84,10 @@ pub(crate) struct HumanReviewLauncherService {
     instances: Mutex<HashMap<String, ReviewMetadata>>,
     built: Mutex<HashSet<String>>,
     store: Mutex<Connection>,
+    progress: Arc<ProgressRegistry>,
+    operation_results: Mutex<HashMap<String, ReviewOperationResult>>,
+    launcher_proof_navigation: Mutex<Option<String>>,
+    instances_root: PathBuf,
 }
 
 impl HumanReviewLauncherService {
@@ -62,6 +95,7 @@ impl HumanReviewLauncherService {
         runtime: Arc<dyn WorktreeTestInstances>,
         catalog: Arc<ReviewWorktreeCatalog>,
         store_path: &Path,
+        instances_root: PathBuf,
     ) -> Result<Self, String> {
         let store = Connection::open(store_path)
             .map_err(|error| format!("open review launcher state: {error}"))?;
@@ -70,11 +104,33 @@ impl HumanReviewLauncherService {
                 "CREATE TABLE IF NOT EXISTS review_sessions (
                 instance_ref TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
+                source_ref TEXT NOT NULL DEFAULT '',
                 source_label TEXT NOT NULL,
                 built INTEGER NOT NULL CHECK (built IN (0, 1))
             );",
             )
             .map_err(|error| format!("initialize review launcher state: {error}"))?;
+        let has_source_ref = {
+            let mut statement = store
+                .prepare("PRAGMA table_info(review_sessions)")
+                .map_err(|error| format!("inspect review launcher state: {error}"))?;
+            let columns = statement
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|error| format!("inspect review launcher columns: {error}"))?;
+            columns
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("read review launcher columns: {error}"))?
+                .iter()
+                .any(|column| column == "source_ref")
+        };
+        if !has_source_ref {
+            store
+                .execute(
+                    "ALTER TABLE review_sessions ADD COLUMN source_ref TEXT NOT NULL DEFAULT ''",
+                    [],
+                )
+                .map_err(|error| format!("migrate review launcher state: {error}"))?;
+        }
         let (instances, built) = load_sessions(&store)?;
         Ok(Self {
             runtime,
@@ -82,6 +138,10 @@ impl HumanReviewLauncherService {
             instances: Mutex::new(instances),
             built: Mutex::new(built),
             store: Mutex::new(store),
+            progress: Arc::new(ProgressRegistry::system()),
+            operation_results: Mutex::new(HashMap::new()),
+            launcher_proof_navigation: Mutex::new(None),
+            instances_root,
         })
     }
 
@@ -106,77 +166,263 @@ impl HumanReviewLauncherService {
 
     pub(crate) fn prepare(
         &self,
+        operation_ref: String,
         source_ref: String,
         name: String,
     ) -> Result<ReviewInstanceView, String> {
-        let source_label = self
-            .catalog
-            .label(&source_ref)
-            .ok_or_else(|| "The selected worktree is unavailable.".to_string())?;
-        let requested = self
-            .runtime
-            .request(
-                IsolatedTestRequest::new(
-                    TestSourceRef::new(source_ref).map_err(safe_error)?,
-                    name.clone(),
+        let progress = self.progress.begin(
+            &operation_ref,
+            format!("prepare:{source_ref}"),
+            "prepare",
+            "preparation",
+            "Preparing isolated review material",
+        )?;
+        self.prepare_with_progress(progress, source_ref, name)
+    }
+
+    fn prepare_with_progress(
+        &self,
+        progress: ProgressHandle,
+        source_ref: String,
+        name: String,
+    ) -> Result<ReviewInstanceView, String> {
+        progress.update(
+            "preparation",
+            "Preparing isolated review material",
+            Some("Resolving the selected worktree and projecting isolated mutable state."),
+        );
+        let result = (|| {
+            let source_label = self
+                .catalog
+                .label(&source_ref)
+                .ok_or_else(|| "The selected worktree is unavailable.".to_string())?;
+            let requested = self
+                .runtime
+                .request(
+                    IsolatedTestRequest::new(
+                        TestSourceRef::new(source_ref.clone()).map_err(safe_error)?,
+                        name.clone(),
+                    )
+                    .map_err(safe_error)?,
                 )
-                .map_err(safe_error)?,
-            )
-            .map_err(safe_error)?;
-        let instance_ref = requested.handle.opaque_ref().to_owned();
-        self.instances
-            .lock()
-            .map_err(|_| "Review instance state is unavailable.".to_string())?
-            .insert(
-                instance_ref.clone(),
-                ReviewMetadata {
-                    name: name.clone(),
-                    source_label: source_label.clone(),
-                },
-            );
-        self.persist(&instance_ref, &name, &source_label, false)?;
-        Ok(view(
-            instance_ref,
-            name,
-            source_label,
-            requested.status,
-            "not-built",
-        ))
+                .map_err(safe_error)?;
+            let instance_ref = requested.handle.opaque_ref().to_owned();
+            self.instances
+                .lock()
+                .map_err(|_| "Review instance state is unavailable.".to_string())?
+                .insert(
+                    instance_ref.clone(),
+                    ReviewMetadata {
+                        name: name.clone(),
+                        source_ref: source_ref.clone(),
+                        source_label: source_label.clone(),
+                    },
+                );
+            self.persist(&instance_ref, &name, &source_ref, &source_label, false)?;
+            Ok(view(
+                instance_ref,
+                name,
+                source_label,
+                requested.status,
+                "not-built",
+            ))
+        })();
+        finish_progress(&progress, result)
     }
 
-    pub(crate) fn build(&self, instance_ref: String) -> Result<ReviewInstanceView, String> {
-        let (handle, metadata) = self.resolve(&instance_ref)?;
-        let result = self.runtime.build(&handle).map_err(safe_error)?;
-        let build = match result.outcome {
-            TestActionOutcome::Passed => {
-                self.built
-                    .lock()
-                    .map_err(|_| "Review build state is unavailable.".to_string())?
-                    .insert(instance_ref.clone());
-                self.persist(&instance_ref, &metadata.name, &metadata.source_label, true)?;
-                "passed"
-            }
-            TestActionOutcome::Failed => "failed",
-        };
-        Ok(view(
-            instance_ref,
-            metadata.name,
-            metadata.source_label,
-            result.status,
-            build,
-        ))
+    pub(crate) fn build(
+        &self,
+        operation_ref: String,
+        instance_ref: String,
+    ) -> Result<ReviewInstanceView, String> {
+        let progress = self.progress.begin(
+            &operation_ref,
+            format!("build:{instance_ref}"),
+            "build",
+            "preparation",
+            "Checking source and build inputs",
+        )?;
+        self.build_with_progress(progress, instance_ref)
     }
 
-    pub(crate) fn start(&self, instance_ref: String) -> Result<ReviewInstanceView, String> {
+    fn build_with_progress(
+        &self,
+        progress: ProgressHandle,
+        instance_ref: String,
+    ) -> Result<ReviewInstanceView, String> {
+        let result = (|| {
+            let (handle, metadata) = self.resolve(&instance_ref)?;
+            let result = self
+                .runtime
+                .build_with_progress(&handle, &progress)
+                .map_err(safe_error)?;
+            let build = match result.outcome {
+                TestActionOutcome::Passed => {
+                    self.built
+                        .lock()
+                        .map_err(|_| "Review build state is unavailable.".to_string())?
+                        .insert(instance_ref.clone());
+                    self.persist(
+                        &instance_ref,
+                        &metadata.name,
+                        &metadata.source_ref,
+                        &metadata.source_label,
+                        true,
+                    )?;
+                    "passed"
+                }
+                TestActionOutcome::Failed => "failed",
+            };
+            Ok(view(
+                instance_ref,
+                metadata.name,
+                metadata.source_label,
+                result.status,
+                build,
+            ))
+        })();
+        finish_progress(&progress, result)
+    }
+
+    pub(crate) fn start(
+        &self,
+        operation_ref: String,
+        instance_ref: String,
+    ) -> Result<ReviewInstanceView, String> {
+        let progress = self.progress.begin(
+            &operation_ref,
+            format!("start:{instance_ref}"),
+            "start",
+            "reservation",
+            "Reserving the review instance",
+        )?;
+        self.start_with_progress(progress, instance_ref, true)
+    }
+
+    fn start_with_progress(
+        &self,
+        progress: ProgressHandle,
+        instance_ref: String,
+        activate_when_ready: bool,
+    ) -> Result<ReviewInstanceView, String> {
         if !self
             .built
             .lock()
             .map_err(|_| "Review build state is unavailable.".to_string())?
             .contains(&instance_ref)
         {
+            progress.fail();
             return Err("Build this review instance successfully before opening it.".into());
         }
-        self.lifecycle(instance_ref, |runtime, handle| runtime.start(handle))
+        let result = self.lifecycle(instance_ref, |runtime, handle| {
+            runtime.start_with_progress(handle, &progress)
+        });
+        let result = result.and_then(|view| {
+            if activate_when_ready {
+                self.focus(view.instance_ref.clone())
+            } else {
+                Ok(view)
+            }
+        });
+        finish_progress(&progress, result)
+    }
+
+    pub(crate) fn begin_prepare(
+        self: &Arc<Self>,
+        source_ref: String,
+        name: String,
+    ) -> Result<AcceptedReviewOperationView, String> {
+        let operation_ref = fresh_operation_ref();
+        let progress = self.progress.begin(
+            &operation_ref,
+            format!("prepare:{source_ref}"),
+            "prepare",
+            "preparation",
+            "Preparing isolated review material",
+        )?;
+        self.spawn_operation(operation_ref, move |service| {
+            service.prepare_with_progress(progress, source_ref, name)
+        })
+    }
+
+    pub(crate) fn begin_build(
+        self: &Arc<Self>,
+        instance_ref: String,
+    ) -> Result<AcceptedReviewOperationView, String> {
+        let operation_ref = fresh_operation_ref();
+        let progress = self.progress.begin(
+            &operation_ref,
+            format!("build:{instance_ref}"),
+            "build",
+            "preparation",
+            "Checking source and build inputs",
+        )?;
+        self.spawn_operation(operation_ref, move |service| {
+            service.build_with_progress(progress, instance_ref)
+        })
+    }
+
+    pub(crate) fn begin_open(
+        self: &Arc<Self>,
+        instance_ref: String,
+        activate_when_ready: bool,
+    ) -> Result<AcceptedReviewOperationView, String> {
+        let operation_ref = fresh_operation_ref();
+        let progress = self.progress.begin(
+            &operation_ref,
+            format!("start:{instance_ref}"),
+            "start",
+            "reservation",
+            "Reserving the review instance",
+        )?;
+        self.spawn_operation(operation_ref, move |service| {
+            service.start_with_progress(progress, instance_ref, activate_when_ready)
+        })
+    }
+
+    fn spawn_operation(
+        self: &Arc<Self>,
+        operation_ref: String,
+        operation: impl FnOnce(Arc<Self>) -> Result<ReviewInstanceView, String> + Send + 'static,
+    ) -> Result<AcceptedReviewOperationView, String> {
+        self.operation_results
+            .lock()
+            .map_err(|_| "Review operation state is unavailable.".to_string())?
+            .insert(operation_ref.clone(), ReviewOperationResult::Pending);
+        let service = self.clone();
+        let result_ref = operation_ref.clone();
+        let spawn = std::thread::Builder::new()
+            .name("worktree-review-operation".into())
+            .spawn(move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    operation(service.clone())
+                }))
+                .unwrap_or_else(|_| {
+                    service.progress.fail_operation(&result_ref);
+                    Err("The review operation ended unexpectedly.".into())
+                });
+                let terminal = match result {
+                    Ok(value) => ReviewOperationResult::Succeeded(value),
+                    Err(error) => ReviewOperationResult::Failed(error),
+                };
+                if let Ok(mut results) = service.operation_results.lock() {
+                    results.insert(result_ref, terminal);
+                }
+            });
+        if spawn.is_err() {
+            self.progress.fail_operation(&operation_ref);
+            self.operation_results
+                .lock()
+                .map_err(|_| "Review operation state is unavailable.".to_string())?
+                .insert(
+                    operation_ref,
+                    ReviewOperationResult::Failed(
+                        "The review operation could not be started.".into(),
+                    ),
+                );
+            return Err("The review operation could not be started.".into());
+        }
+        Ok(AcceptedReviewOperationView { operation_ref })
     }
 
     pub(crate) fn status(&self, instance_ref: String) -> Result<ReviewInstanceView, String> {
@@ -193,6 +439,101 @@ impl HumanReviewLauncherService {
 
     pub(crate) fn recover(&self, instance_ref: String) -> Result<ReviewInstanceView, String> {
         self.lifecycle(instance_ref, |runtime, handle| runtime.recover(handle))
+    }
+
+    pub(crate) fn operation_progress(
+        &self,
+        operation_ref: String,
+    ) -> Result<ReviewOperationProgressView, String> {
+        self.progress.get(&operation_ref)
+    }
+
+    pub(crate) fn operations(&self) -> Vec<ReviewOperationProgressView> {
+        self.progress.list()
+    }
+
+    pub(crate) fn operation_status(
+        &self,
+        operation_ref: String,
+    ) -> Result<ReviewOperationStatusView, String> {
+        let progress = self.progress.get(&operation_ref)?;
+        let result = self
+            .operation_results
+            .lock()
+            .map_err(|_| "Review operation state is unavailable.".to_string())?
+            .get(&operation_ref)
+            .cloned()
+            .ok_or_else(|| "The review operation is unavailable.".to_string())?;
+        let (result, error) = match result {
+            ReviewOperationResult::Pending => (None, None),
+            ReviewOperationResult::Succeeded(value) => (Some(value), None),
+            ReviewOperationResult::Failed(error) => (None, Some(error)),
+        };
+        Ok(ReviewOperationStatusView {
+            progress,
+            result,
+            error,
+        })
+    }
+
+    pub(crate) fn context(&self, instance_ref: String) -> Result<WorktreeBuildContextView, String> {
+        let (_, metadata) = self.resolve(&instance_ref)?;
+        self.catalog
+            .scope(&metadata.source_ref, metadata.name)?
+            .context()
+    }
+
+    pub(crate) fn comparison(
+        &self,
+        instance_ref: String,
+    ) -> Result<WorktreeComparisonView, String> {
+        let (_, metadata) = self.resolve(&instance_ref)?;
+        super::comparison::comparison(&self.catalog.scope(&metadata.source_ref, metadata.name)?)
+    }
+
+    pub(crate) fn proof_navigate(&self, instance_ref: String, route: &str) -> Result<(), String> {
+        self.resolve(&instance_ref)?;
+        if !matches!(route, "application" | "worktree-details" | "file-review") {
+            return Err("That proof surface is unavailable.".into());
+        }
+        let target = self
+            .instances_root
+            .join(&instance_ref)
+            .join("app-data")
+            .join("debug-proof-navigation.json");
+        let parent = target
+            .parent()
+            .ok_or_else(|| "Proof navigation storage is unavailable.".to_string())?;
+        fs::create_dir_all(parent)
+            .map_err(|_| "Proof navigation storage is unavailable.".to_string())?;
+        let temporary = target.with_extension("pending");
+        let body = serde_json::json!({
+            "route": route,
+            "sequence": Uuid::new_v4().simple().to_string(),
+        });
+        fs::write(
+            &temporary,
+            serde_json::to_vec(&body)
+                .map_err(|_| "Proof navigation could not be encoded.".to_string())?,
+        )
+        .and_then(|_| fs::rename(&temporary, &target))
+        .map_err(|_| "Proof navigation could not be recorded.".to_string())
+    }
+
+    pub(crate) fn proof_navigate_launcher(&self) -> Result<(), String> {
+        *self
+            .launcher_proof_navigation
+            .lock()
+            .map_err(|_| "Launcher proof navigation is unavailable.".to_string())? =
+            Some("worktree-review".into());
+        Ok(())
+    }
+
+    pub(crate) fn launcher_proof_navigation(&self) -> Result<Option<String>, String> {
+        self.launcher_proof_navigation
+            .lock()
+            .map(|route| route.clone())
+            .map_err(|_| "Launcher proof navigation is unavailable.".to_string())
     }
 
     fn lifecycle(
@@ -232,6 +573,7 @@ impl HumanReviewLauncherService {
             .get(instance_ref)
             .map(|value| ReviewMetadata {
                 name: value.name.clone(),
+                source_ref: value.source_ref.clone(),
                 source_label: value.source_label.clone(),
             })
             .ok_or_else(|| {
@@ -247,6 +589,7 @@ impl HumanReviewLauncherService {
         &self,
         instance_ref: &str,
         name: &str,
+        source_ref: &str,
         source_label: &str,
         built: bool,
     ) -> Result<(), String> {
@@ -254,24 +597,43 @@ impl HumanReviewLauncherService {
             .lock()
             .map_err(|_| "Review launcher state is unavailable.".to_string())?
             .execute(
-                "INSERT INTO review_sessions (instance_ref, name, source_label, built)
-                 VALUES (?1, ?2, ?3, ?4)
+                "INSERT INTO review_sessions (instance_ref, name, source_ref, source_label, built)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
                  ON CONFLICT(instance_ref) DO UPDATE SET
                     name = excluded.name,
+                    source_ref = excluded.source_ref,
                     source_label = excluded.source_label,
                     built = excluded.built",
-                params![instance_ref, name, source_label, i64::from(built)],
+                params![
+                    instance_ref,
+                    name,
+                    source_ref,
+                    source_label,
+                    i64::from(built)
+                ],
             )
             .map_err(|_| "Review launcher state could not be saved.".to_string())?;
         Ok(())
     }
 }
 
+fn finish_progress(
+    progress: &super::progress::ProgressHandle,
+    result: Result<ReviewInstanceView, String>,
+) -> Result<ReviewInstanceView, String> {
+    if result.is_ok() {
+        progress.succeed();
+    } else {
+        progress.fail();
+    }
+    result
+}
+
 fn load_sessions(
     store: &Connection,
 ) -> Result<(HashMap<String, ReviewMetadata>, HashSet<String>), String> {
     let mut statement = store
-        .prepare("SELECT instance_ref, name, source_label, built FROM review_sessions")
+        .prepare("SELECT instance_ref, name, source_ref, source_label, built FROM review_sessions")
         .map_err(|error| format!("read review launcher state: {error}"))?;
     let rows = statement
         .query_map([], |row| {
@@ -279,9 +641,10 @@ fn load_sessions(
                 row.get::<_, String>(0)?,
                 ReviewMetadata {
                     name: row.get(1)?,
-                    source_label: row.get(2)?,
+                    source_ref: row.get(2)?,
+                    source_label: row.get(3)?,
                 },
-                row.get::<_, i64>(3)? != 0,
+                row.get::<_, i64>(4)? != 0,
             ))
         })
         .map_err(|error| format!("read review launcher sessions: {error}"))?;
@@ -296,6 +659,10 @@ fn load_sessions(
         instances.insert(instance_ref, metadata);
     }
     Ok((instances, built))
+}
+
+fn fresh_operation_ref() -> String {
+    format!("review-operation-{}", Uuid::new_v4().simple())
 }
 
 fn view(
@@ -313,7 +680,9 @@ fn view(
         health: format!("{:?}", status.health).to_lowercase(),
         stale: status.stale,
         build: build.into(),
-        can_focus: status.phase == TestInstancePhase::Running && !status.stale,
+        can_focus: status.phase == TestInstancePhase::Running
+            && status.health == crate::worktree_runtime::HealthState::Healthy
+            && !status.stale,
     }
 }
 

@@ -1,0 +1,266 @@
+.file-review-screen {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: #f4f3ef;
+  color: #17211b;
+}
+.file-review-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 24px;
+  border-bottom: 1px solid #d7d8d2;
+  background: #fffdf8;
+}
+.file-review-header h1,
+.file-review-header p {
+  margin: 0;
+}
+.file-review-header p {
+  margin-top: 4px;
+  color: #657169;
+  font-size: 0.84rem;
+}
+.file-review-read-only {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: center;
+  border: 1px solid #a9b8aa;
+  border-radius: 99px;
+  padding: 7px 10px;
+  color: #3e5946;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+.file-review-workspace {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 270px minmax(0, 1fr);
+  margin: 14px;
+  border: 1px solid #d2d5ce;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+.file-review-files {
+  min-height: 0;
+  border-right: 1px solid #d7dad4;
+  background: #f9faf7;
+}
+.file-review-files > header {
+  display: flex;
+  justify-content: space-between;
+  padding: 14px;
+  border-bottom: 1px solid #dde0da;
+  font-size: 0.78rem;
+}
+.file-review-files b {
+  color: #287443;
+}
+.file-review-files i {
+  color: #a53b35;
+  font-style: normal;
+}
+.file-review-files nav {
+  overflow: auto;
+  height: calc(100% - 48px);
+}
+.file-review-files nav button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 0;
+  border-bottom: 1px solid #e7e9e4;
+  padding: 10px;
+  background: transparent;
+  text-align: left;
+}
+.file-review-files nav button.active {
+  background: #e8efe8;
+  box-shadow: inset 3px 0 #45735a;
+}
+.file-review-files nav button > span:nth-child(2) {
+  min-width: 0;
+  display: grid;
+}
+.file-review-files nav small {
+  overflow: hidden;
+  color: #788078;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-review-inspector {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+.file-review-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  padding: 11px 14px;
+  border-bottom: 1px solid #dbddd7;
+}
+.file-review-path {
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.file-review-path > div {
+  min-width: 0;
+  display: grid;
+}
+.file-review-path strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-review-path small {
+  color: #66736c;
+}
+.file-review-toolbar__modes {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+.file-review-layout-slot {
+  width: 152px;
+}
+.file-review-segment {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid #c7ccc5;
+  border-radius: 7px;
+  background: #f4f5f2;
+}
+.file-review-segment button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 30px;
+  border: 0;
+  border-radius: 5px;
+  padding: 5px 9px;
+  background: transparent;
+  font-size: 0.75rem;
+  font-weight: 750;
+}
+.file-review-segment button.active {
+  background: #fff;
+  box-shadow: 0 1px 3px #0002;
+}
+.file-review-body {
+  min-height: 0;
+  overflow: auto;
+  background: #fbfbf9;
+}
+.file-review-diff section > header {
+  position: sticky;
+  top: 0;
+  padding: 7px 12px;
+  background: #e8edf0;
+  color: #42505a;
+  font:
+    12px ui-monospace,
+    monospace;
+}
+.file-review-line {
+  display: grid;
+  grid-template-columns: 48px 48px minmax(0, 1fr);
+  min-height: 22px;
+  font:
+    12px/1.5 ui-monospace,
+    Consolas,
+    monospace;
+}
+.file-review-line > span {
+  padding: 2px 8px;
+  border-right: 1px solid #ddd;
+  color: #829087;
+  text-align: right;
+  user-select: none;
+}
+.file-review-line code {
+  padding: 2px 9px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.file-review-line--addition {
+  background: #e7f5e8;
+}
+.file-review-line--deletion {
+  background: #fae8e6;
+}
+.file-review-split > div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.file-review-split > div > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  border-right: 1px solid #d6d9d4;
+  font:
+    12px/1.5 ui-monospace,
+    Consolas,
+    monospace;
+}
+.file-review-split span {
+  padding: 2px 8px;
+  color: #829087;
+  text-align: right;
+}
+.file-review-split code {
+  padding: 2px 8px;
+  white-space: pre-wrap;
+}
+.file-review-source {
+  margin: 0;
+  padding: 16px;
+  font:
+    12px/1.55 ui-monospace,
+    Consolas,
+    monospace;
+  white-space: pre-wrap;
+}
+.file-review-rendered {
+  padding: 18px 24px;
+}
+.file-review-state {
+  padding: 36px;
+  text-align: center;
+}
+.file-review-change {
+  flex: none;
+  border-radius: 4px;
+  padding: 2px 5px;
+  background: #e6e9e4;
+  color: #465249;
+  font-size: 0.67rem;
+  font-weight: 850;
+}
+.file-review-change--added {
+  color: #287443;
+}
+.file-review-change--deleted {
+  color: #9d3731;
+}
+@media (max-width: 900px) {
+  .file-review-workspace {
+    grid-template-columns: 210px minmax(0, 1fr);
+  }
+  .file-review-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

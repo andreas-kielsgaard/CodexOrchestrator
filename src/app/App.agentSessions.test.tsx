@@ -38,6 +38,23 @@ describe('App application surfaces', () => {
     expect(await screen.findByRole('main', { name: 'Worktree review launcher' })).toBeVisible();
     expect(screen.getByText('Launcher proof')).toBeInTheDocument();
   });
+
+  it('accepts only the application-owned non-activating launcher proof route', async () => {
+    render(
+      <App
+        agentSessionClient={emptyAgentClient()}
+        orchestrationClient={emptyOrchestrationClient()}
+        humanReviewLauncherView={<main aria-label="Worktree review launcher">Launcher proof</main>}
+        humanReviewLauncherNavigation={async () => 'worktree-review'}
+      />,
+    );
+
+    expect(await screen.findByRole('main', { name: 'Worktree review launcher' })).toBeVisible();
+    expect(screen.getByRole('button', { name: /Worktree Review/ })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+  });
 });
 
 function emptyAgentClient(): AgentSessionClient {

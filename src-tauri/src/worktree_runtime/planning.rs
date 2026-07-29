@@ -386,7 +386,7 @@ pub(crate) fn action_plan(
                         "--debug",
                         "--no-bundle",
                         "--config",
-                        &build_config(projection, tauri_identifier)?,
+                        &build_config(identity, projection, tauri_identifier)?,
                     ],
                 ),
             ]
@@ -435,16 +435,17 @@ pub(crate) fn launch_plan(
 ) -> Result<Vec<OwnedProcessLaunch>, PlanningError> {
     programs.validate()?;
     let vite = identity.worktree_path.join("node_modules/vite/bin/vite.js");
-    let tauri = identity
-        .worktree_path
-        .join("node_modules/@tauri-apps/cli/tauri.js");
     let status = identity
         .worktree_path
         .join("scripts/runtime-status-server.mjs");
+    let executable = projection
+        .paths
+        .cargo_target
+        .join("debug/codex-orchestrator.exe");
     for (path, label) in [
         (&vite, "Vite"),
-        (&tauri, "Tauri"),
         (&status, "status server"),
+        (&executable, "verified worktree build"),
     ] {
         require_regular(path, label)?;
     }
@@ -475,15 +476,9 @@ pub(crate) fn launch_plan(
         },
         OwnedProcessLaunch {
             role: ProcessRole::Tauri,
-            program: programs.node.clone(),
-            arguments: vec![
-                external_value(&tauri),
-                "dev".into(),
-                "--no-watch".into(),
-                "--config".into(),
-                development_config(identity, projection, tauri_identifier)?,
-            ],
-            working_directory: external_path(&identity.worktree_path),
+            program: external_path(&executable),
+            arguments: Vec::new(),
+            working_directory: external_path(&projection.paths.cargo_target.join("debug")),
             environment,
             log_path: projection.paths.logs.join("tauri.log"),
         },
@@ -522,14 +517,29 @@ fn external_path(path: &Path) -> PathBuf {
 }
 
 fn build_config(
+    identity: &InstanceIdentity,
     projection: &InstanceProjection,
     tauri_identifier: &str,
 ) -> Result<String, PlanningError> {
+    let frontend_dist = tauri_frontend_dist(identity, projection)?;
     serde_json::to_string(&json!({
         "identifier": tauri_identifier,
         "build": {
             "beforeBuildCommand": null,
-            "frontendDist": projection.paths.frontend_dist,
+            "frontendDist": frontend_dist,
+        },
+        "app": {
+            "windows": [{
+                "label": "main",
+                "title": format!("Codex Orchestrator [Worktree build: {}]", identity.review_name),
+                "width": 1280,
+                "height": 820,
+                "minWidth": 960,
+                "minHeight": 640,
+                "visible": false,
+                "focus": false,
+                "resizable": true
+            }],
         },
         "bundle": { "active": false },
     }))
@@ -541,16 +551,18 @@ fn development_config(
     projection: &InstanceProjection,
     tauri_identifier: &str,
 ) -> Result<String, PlanningError> {
+    let frontend_dist = tauri_frontend_dist(identity, projection)?;
     serde_json::to_string(&json!({
         "identifier": tauri_identifier,
         "build": {
             "beforeDevCommand": null,
             "devUrl": format!("http://127.0.0.1:{}", projection.ports.vite),
-            "frontendDist": projection.paths.frontend_dist,
+            "frontendDist": frontend_dist,
         },
         "app": {
             "windows": [{
-                "title": format!("Codex Orchestrator [Review: {}]", identity.review_name),
+                "label": "main",
+                "title": format!("Codex Orchestrator [Worktree build: {}]", identity.review_name),
                 "width": 1280,
                 "height": 820,
                 "minWidth": 960,
@@ -560,6 +572,22 @@ fn development_config(
         "bundle": { "active": false },
     }))
     .map_err(|error| PlanningError::context("serialize Tauri development configuration", error))
+}
+
+fn tauri_frontend_dist(
+    identity: &InstanceIdentity,
+    projection: &InstanceProjection,
+) -> Result<String, PlanningError> {
+    let config_directory = external_path(&identity.worktree_path.join("src-tauri"));
+    let frontend_dist = external_path(&projection.paths.frontend_dist);
+    pathdiff::diff_paths(&frontend_dist, &config_directory)
+        .filter(|path| !path.as_os_str().is_empty() && path.is_relative())
+        .map(|path| external_value(&path))
+        .ok_or_else(|| {
+            PlanningError::new(
+                "isolated frontend output must be representable relative to the Tauri config",
+            )
+        })
 }
 
 fn isolated_environment(
@@ -593,6 +621,27 @@ fn isolated_environment(
         (
             "CODEX_ORCHESTRATOR_APP_DATA_DIR",
             value(&projection.paths.app_data),
+        ),
+        (
+            "CODEX_ORCHESTRATOR_WORKTREE_BUILD_PATH",
+            value(&identity.worktree_path),
+        ),
+        (
+            "CODEX_ORCHESTRATOR_WORKTREE_BUILD_NAME",
+            identity.review_name.clone(),
+        ),
+        (
+            "CODEX_ORCHESTRATOR_WORKTREE_READY_PATH",
+            value(&projection.paths.app_data.join("review-window-ready")),
+        ),
+        (
+            "CODEX_ORCHESTRATOR_REVIEW_NAVIGATION_PATH",
+            value(
+                &projection
+                    .paths
+                    .app_data
+                    .join("debug-proof-navigation.json"),
+            ),
         ),
         ("APPDATA", value(&projection.paths.app_data.join("roaming"))),
         (

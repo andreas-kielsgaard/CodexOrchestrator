@@ -1,6 +1,11 @@
 mod catalog;
+pub(crate) mod comparison;
 mod composition;
+#[cfg(debug_assertions)]
+pub(crate) mod debug_controller;
+mod progress;
 mod service;
 pub(crate) mod transport;
+pub(crate) mod worktree_build;
 
 pub(crate) use composition::compose;

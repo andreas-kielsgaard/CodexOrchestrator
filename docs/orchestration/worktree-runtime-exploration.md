@@ -147,6 +147,155 @@ One real child plus launcher was proved. Two simultaneous real children were not
 two cold builds; deterministic two-instance registry/Job/port isolation remains the evidence for
 that boundary.
 
+## Progress, provenance, and usable-window continuation
+
+The isolated sibling branch `codex/worktree-review-progress` continues the accepted launcher without
+changing ordinary development or packaging composition.
+
+- Prepare, Build, and Open now return an opaque operation reference. A typed progress query reports
+  the owned operation, stage, elapsed duration, evidence age, pending/succeeded/failed state, and at
+  most 12 sanitized output lines of 180 characters. Source inspection, TypeScript, frontend build,
+  Tauri compile/link, finalization, reservation, supporting services, native start, window wait, and
+  ready are distinct stages. Twenty seconds without new evidence is labelled quiet and still pending,
+  never stalled.
+- Output removes credentials, local endpoints, ports, process identities, long identifiers, absolute
+  paths, and relative private paths. Older operation references cannot update a newer operation in the
+  same scope.
+- Open requires the source/build identity and the instance-private executable recorded by Build. It
+  starts only supporting services plus that executable; it does not run `tauri dev` or silently
+  compile again. Source, build-plan, or private-artifact changes fail closed and require another Build.
+- Windows readiness is now an owned-window fact. The candidate HWND must belong to the exact named Job
+  process tree, have the expected `Codex Orchestrator [Worktree build: <name>]` title, be visible,
+  non-minimized, non-cloaked, at least 600 by 500, and have the application-rendered readiness marker.
+  Process and TCP health alone remain Starting/Waiting and can never produce Healthy. Focus uses only
+  that exact qualifying HWND.
+- A running worktree build wraps every ordinary child surface with a persistent provenance indicator.
+  Worktree details distinguish machine-main HEAD versus worktree HEAD, merge-base ahead/behind
+  relationship, and staged/unstaged/untracked state. Its scoped File Review uses the normalized f958
+  display boundary: one authorized opaque comparison source, no source selector, explicit committed
+  and uncommitted provenance, coherent file/hunk/full-file facts, and stable Changes/File then
+  Unified/Split controls.
+- The launcher now defaults its own worktree first and keeps Prepare controls usable at the standard
+  1280-pixel review width.
+
+### Debug controller boundary
+
+The continuation adds an application-owned background proof controller. It is compiled only in debug
+builds and starts only when `CODEX_ORCHESTRATOR_REVIEW_CONTROLLER=enabled` is inherited by an
+isolated launcher. It binds one ephemeral loopback endpoint. A fresh 256-bit capability is protected
+with current-user DPAPI and written only to the isolated runtime descriptor; the capability is never
+logged. Release builds and debug launches without the setting expose no controller.
+
+The schema permits only opaque source/instance listing, asynchronous Prepare/Build/Open, typed
+operation queries, Status/Stop/Recover, and enumerated launcher/child proof navigation and read
+queries. It has no Focus, arbitrary Tauri invoke, JavaScript evaluation, input injection, filesystem
+authority, command execution, capture, or provider access. Requests require the capability, a unique
+request reference, and the exact schema. Replay and in-flight reference collisions fail closed.
+Controller-started operations use the same application service and progress store rendered by the
+launcher; there is no proof-only lifecycle model.
+
+`worktree_review_controller` records the foreground HWND and owning process before and after every
+request and fails the proof if either changes. `Open` adds one typed `background_proof` activation
+policy to the normal artifact-verified launch pipeline. Neither that policy nor proof navigation
+calls `SetForegroundWindow`, activates, or focuses either window. The separate
+`worktree_review_background_launcher` creates and shows the launcher with no activation and aborts if
+foreground ownership changes. Neither helper grants an agent control of the reviewed application.
+
+### Accepted live continuation evidence
+
+The final source-matched proof used sibling source `codex/worktree-review-progress`, isolated runtime
+`C:\crp\live9\runtime`, launcher PID `33348`, and instance
+`wt-3c9c1913dbde260e7f0e` (`Background proof final`). Protected main PID `24060` remained responsive
+and untouched. Foreground HWND `131758`, owned by PID `15416`, was identical before and after every
+controller request, non-activating capture, Stop, recovery drill, and launcher teardown.
+
+- Prepare completed through the opaque catalog. Build reported source inspection, typecheck,
+  2,013-module Vite frontend build, Tauri compile/link, and finalization. A separate cold run
+  demonstrated `quiet` after 30.9 seconds without new evidence while remaining pending, then
+  succeeded. The final source-matched build completed in 167.8 seconds and recorded the private
+  29,039,616-byte executable with SHA-256
+  `21AD604E478E250FBE674279E14B9C4AB0ECCBDA2AD6ACDFC4F1032BEC192FFC`.
+- Open completed in 3.2 seconds through reservation, supporting services, waiting for the usable
+  window, and ready. It launched the recorded private executable directly. No matching `cargo`,
+  `rustc`, or `tauri dev` process existed.
+- The exact named Job owned child PID `37952` and its supporting tree. The child HWND `19010200` was
+  titled `Codex Orchestrator [Worktree build: Background proof final]`, rendered at 1294 by 858
+  (1280 by 820 client), was visible, non-minimized, non-cloaked, responsive, and had the
+  application-rendered readiness marker. Its database, identifier data, WebView profile, dist,
+  Cargo target, logs, credentials, and mutable state remained below the private instance roots.
+- Non-activating `PrintWindow` evidence showed the ordinary Orchestration surface with a complete
+  persistent **Worktree build** control. The same control remained visible on Worktree details and
+  scoped File Review. Details displayed branch, HEAD `44de3ce`, dirty counts, machine main
+  `55780da`, 8-ahead/2-behind history, and the explicit machine-main-HEAD comparison basis. File
+  Review displayed 106 coherent committed/uncommitted files through the normalized, source-scoped
+  viewer with no source selector or raw infrastructure.
+- Status returned `Running / Healthy` only with the exact usable window and marker. Final Stop
+  removed only the owned child and left the launcher and protected app alive. On an earlier instance
+  using the same runtime core, a second artifact-reusing Open completed without compilation; exact
+  Job termination produced `Running / Needs recovery`; Recover reconciled to
+  `Recovered / Closed`, left zero pending commands, removed the Job, and did not relaunch.
+
+Evidence is retained outside the checkout under `C:\crp\live9`: typed progress JSON, status/stop/
+recover results, exact Job/window/artifact facts, and
+`final2-child-provenance.png`, `final2-child-details.png`, and
+`final2-child-file-review.png`. Capture is not a controller capability; the proof used
+non-activating Windows `PrintWindow` only after typed readiness and rechecked foreground ownership.
+Focus was intentionally not called. Earlier accepted live Focus evidence plus deterministic
+exact-window targeting tests remain the Focus gate for human product review.
+
+At capture time the instance fingerprint exactly matched the sibling source. After teardown, only
+this evidence record and its validation counts changed before the checkpoint commit. Documentation
+participates in the fail-closed source fingerprint, so the retained executable is evidence for the
+captured implementation state, not a reusable artifact for the final commit; a new Open from the
+committed source correctly requires Prepare and Build.
+
+Final validation passed 12/12 `worktree_review` Rust tests, 21/21 `worktree_runtime` Rust tests with
+2 intentional helper-process tests ignored, 8/8 focused React tests, Cargo example check, Cargo
+formatting, TypeScript, the 2,013-module production Vite build, ESLint, changed-file Prettier, and
+`git diff --check`. Repository-wide Prettier still reports the same 39 files outside this slice.
+
+### Rejected and residual evidence
+
+The protected 1799 titleless/18-by-18 child remains rejected: process, WebView2, database, and port
+health without a usable owned window never establish readiness. An earlier sibling cold Build failed
+from packaged-path virtualization; it remains failure evidence for using short, non-virtualized
+developer roots. Two interim native captures found the provenance control hidden and then DPI-shifted
+off-screen; both led to the final fixed in-app disclosure lane and are not presented as accepted UI
+evidence.
+
+The continuation still does not prove two live children simultaneously, release packaging, provider
+credentials, automated application interaction, or product Focus during this background-only run.
+The debug controller is a same-user local developer boundary, not a remote service or agent-testing
+platform.
+
+### Isolated preview setup
+
+Use a fresh short root and this sibling checkout. These commands build the opt-in launcher and both
+background proof helpers without changing ordinary build/package defaults:
+
+```powershell
+$root = 'C:\crp\preview'
+$env:VITE_WORKTREE_REVIEW_LAUNCHER = 'true'
+npm run build
+$env:CARGO_TARGET_DIR = "$root\launcher-target"
+cargo build --manifest-path src-tauri\Cargo.toml --bin codex-orchestrator
+$env:CARGO_TARGET_DIR = "$root\proof-tools"
+cargo build --manifest-path src-tauri\Cargo.toml --examples
+
+$env:CODEX_ORCHESTRATOR_APP_DATA_DIR = "$root\launcher-data"
+$env:CODEX_ORCHESTRATOR_REVIEW_RUNTIME_DIR = "$root\runtime"
+$env:CODEX_ORCHESTRATOR_REVIEW_CONTROLLER = 'enabled'
+& "$root\proof-tools\debug\examples\worktree_review_background_launcher.exe" `
+  "$root\launcher-target\debug\codex-orchestrator.exe"
+& "$root\proof-tools\debug\examples\worktree_review_controller.exe" `
+  "$root\runtime" sources
+```
+
+Continue with the semantic helper's `prepare`, `build`, `open`, `operation`, `status`, `stop`, and
+`recover` actions. The launcher renders the same operation progress. Omit the controller setting and
+start the launcher normally for hands-on human review; no controller descriptor or listener is then
+created.
+
 ## Visual inspection
 
 The running Tauri processes exposed separate windows titled `Codex Orchestrator [proof-a]` and
@@ -326,14 +475,15 @@ and evidence-file access are future application ports, not fields for this lifec
 
 ## Next bounded product slice
 
-Keep the development-only human review composition narrow, then:
+Keep the accepted development-only human review composition narrow. A later explicitly authorized
+product slice should:
 
-1. bind status/Vite endpoint identity to the exact owned job;
-2. own dependency restoration and prove its lock-to-worktree-local-modules invariant;
-3. execute two real child launches concurrently through the facade and persist observed build and
-   lifecycle outcomes;
-4. replace the in-memory build marker with durable, source-bound evidence while keeping ordinary
-   development and packaging defaults unchanged.
+1. persist source-bound build evidence instead of the in-memory marker and prove restart-safe
+   invalidation;
+2. prove two simultaneous real review children and independent lifecycle teardown;
+3. bind status/Vite endpoint identity to the exact owned Job and own dependency restoration;
+4. run the remaining human Focus review and decide whether this debug-only composition should enter a
+   product integration plan.
 
 Defer parallel scheduling, automatic approvals, provider credential injection, visual capture, and
-full pause/resume until that ownership and evidence slice is accepted.
+full pause/resume. Do not extend the background proof controller into an agent-testing surface.

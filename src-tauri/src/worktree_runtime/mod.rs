@@ -21,9 +21,10 @@ pub(crate) use domain::AuthoritySecret;
 pub(crate) use execution::SystemActionExecutor;
 #[allow(unused_imports)]
 pub(crate) use facade::{
-    HealthState, IsolatedTestRequest, RequestedTestInstance, TestActionOutcome, TestActionResult,
-    TestInstanceError, TestInstanceErrorKind, TestInstanceHandle, TestInstancePhase,
-    TestInstanceStatus, TestSourceRef, WorktreeTestInstances,
+    HealthState, IsolatedTestRequest, RequestedTestInstance, TestActionOutcome, TestActionProgress,
+    TestActionProgressSink, TestActionResult, TestActionStage, TestInstanceError,
+    TestInstanceErrorKind, TestInstanceHandle, TestInstancePhase, TestInstanceStatus,
+    TestSourceRef, TestStartProgress, TestStartProgressSink, TestStartStage, WorktreeTestInstances,
 };
 #[cfg(any(debug_assertions, test))]
 pub(crate) use facade::{TestSourceResolver, WorktreeTestInstanceFacade};
