@@ -18,7 +18,6 @@ describe('Agent Session product navigation projection', () => {
         summary('recorded-sprint-control-surface-discovery'),
         summary('recorded-session-planner-r4-integration'),
         summary('recorded-session-WU-ECS2E'),
-        summary('recorded-session-reviewer-WU-ECS2E'),
         summary('independent-session'),
       ],
     });
@@ -59,16 +58,20 @@ describe('Agent Session product navigation projection', () => {
       planningStep.children,
       `${sprint.id}:activity:planner-r4-integration:work-unit:WU-ECS2E`,
     );
-    expect(sessionIds(workUnit)).toEqual(
-      expect.arrayContaining(['recorded-session-WU-ECS2E', 'recorded-session-reviewer-WU-ECS2E']),
-    );
-    expect(navigation.sessions.get('recorded-session-WU-ECS2E')?.productLocations).toEqual([
+    expect(sessionIds(workUnit)).toEqual(['recorded-session-WU-ECS2E']);
+    expect(navigation.sessions.get('recorded-session-WU-ECS2E')).toEqual(
       expect.objectContaining({
-        kind: 'work_unit',
-        workUnitId: 'WU-ECS2E',
-        sprintPlannerActivityId: 'planner-r4-integration',
+        relationshipRoles: ['Work Unit handler'],
+        productLocations: [
+          expect.objectContaining({
+            kind: 'work_unit',
+            workUnitId: 'WU-ECS2E',
+            sprintPlannerActivityId: 'planner-r4-integration',
+          }),
+        ],
       }),
-    ]);
+    );
+    expect(navigation.sessions.has('recorded-session-reviewer-WU-ECS2E')).toBe(false);
     expect(sessionIds(section(navigation, 'independent'))).toEqual(['independent-session']);
   });
 

@@ -14,6 +14,9 @@ Status: recorded product-review correction; no live orchestration support added.
 - the recorded WU-RD1 lifecycle includes its Sprint Planner action, worker turns, and Work Unit
   handler actions. The same handler performs review, reprompt, merge, and completion, so no separate
   Reviewer Session is recorded.
+- recorded WU-ECS2E retains both attempt outcomes, but its one Work Unit handler Session owns its
+  return, review, reprompt, renewed-work, and acceptance turns. Its Sprint Planner remains a separate
+  Session and lifecycle actor; no WU-ECS2E Reviewer Session or reference exists.
 - lifecycle invocation identifiers remain recorded-only because no authoritative invocation
   registry exists. This metadata is not a runtime lifecycle or persistence seam.
 - `ResizableSplitSurface` is the shared pointer- and keyboard-draggable boundary for vertical
@@ -46,6 +49,8 @@ Automated coverage exercises:
   repeated focus order;
 - proposed not-started Plans, historical revisions, concerns, Documents, and normalized file review;
 - nine WU-RD1 lifecycle entries, including exact Sprint Planner and same-handler review turn focus;
+- the WU-ECS2E Agent Sessions -> Work Unit -> Agent Sessions round trip, with one handler identity,
+  separate Sprint Planner/handler conversations, and no Reviewer surface;
 - pointer/keyboard resizers, compact axis changes, independent context scrolling, and route focus
   recovery;
 - Agent Sessions -> Work Unit -> Agent Sessions identity round trips.

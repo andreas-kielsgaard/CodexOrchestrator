@@ -32,6 +32,31 @@ const reviewSprintTranscript = transcript(
   'Recorded parallel review Sprint',
   'Recorded mixed-state review composition only; no live Sprint was started.',
 );
+const controlPlannerDetails = lifecycleSession(
+  'recorded-session-planner-r4-integration',
+  'Recorded planner R4 integration',
+  [['recorded-planner-r4-integration-scope', 'Recorded the Plan and Work Unit detail scope.']],
+);
+const ecs2eHandlerDetails = lifecycleSession(
+  'recorded-session-WU-ECS2E',
+  'Recorded WU-ECS2E Work Unit handler',
+  [
+    [
+      'recorded-handler-WU-ECS2E-first-return',
+      'Returned the first recorded detail-surface implementation.',
+    ],
+    [
+      'recorded-handler-WU-ECS2E-first-review',
+      'Reviewed the first return and requested a focused correction.',
+    ],
+    ['recorded-handler-WU-ECS2E-reprompt', 'Recorded the bounded correction request.'],
+    [
+      'recorded-handler-WU-ECS2E-second-return',
+      'Returned the corrected detail-surface implementation.',
+    ],
+    ['recorded-handler-WU-ECS2E-acceptance', 'Accepted the corrected result.'],
+  ],
+);
 const rdPlannerDetails = lifecycleSession(
   'recorded-planner-rd-r2',
   'Recorded review Sprint Planner',
@@ -89,22 +114,14 @@ export const recordedAgentSessionDetails: readonly AgentSessionDetailsDto[] = [
     'Sprint control surface discovery',
     'Recorded development facts are displayed through the canonical product composition.',
   ),
-  session(
-    'recorded-session-planner-r4-integration',
-    'Recorded planner R4 integration',
-    'Recorded planner session; no planning runtime was started.',
-  ),
-  session(
-    'recorded-session-reviewer-WU-ECS2E',
-    'Recorded reviewer WU-ECS2E',
-    'Recorded reviewer session; no review command was sent.',
-  ),
+  controlPlannerDetails,
+  ecs2eHandlerDetails,
   session(
     'recorded-independent-research',
     'Independent product research',
     'Recorded independent Agent Session with no Epic association.',
   ),
-  ...['WU-ECS2B', 'WU-ECS2C', 'WU-ECS2E', 'WU-ECS2D', 'WU-ECS3'].map((workUnitId) =>
+  ...['WU-ECS2B', 'WU-ECS2C', 'WU-ECS2D', 'WU-ECS3'].map((workUnitId) =>
     session(
       `recorded-session-${workUnitId}`,
       `Recorded ${workUnitId} worker`,
@@ -121,7 +138,7 @@ export const recordedPlanWorkflowAdjunct: RecordedPlanWorkflowV1 = {
   actors: [
     { id: 'sprint', kind: 'sprint', label: 'Sprint' },
     { id: 'planner', kind: 'planner', label: 'Planner' },
-    { id: 'worker', kind: 'worker', label: 'Recorded worker', workUnitId: 'WU-ECS2E' },
+    { id: 'handler', kind: 'worker', label: 'Work Unit handler', workUnitId: 'WU-ECS2E' },
   ],
   sharedStart: [step('ready', 'sprint', 'ready_scope', 'ready', 'Recorded ready scope')],
   workUnitLanes: [
@@ -130,10 +147,22 @@ export const recordedPlanWorkflowAdjunct: RecordedPlanWorkflowV1 = {
       workUnitId: 'WU-ECS2E',
       title: 'Recorded review lane',
       initiatorActorId: 'planner',
-      workerActorId: 'worker',
+      workerActorId: 'handler',
       steps: [
-        step('worker-return', 'worker', 'worker_return', 'first_return', 'Recorded worker return'),
-        step('planner-review', 'planner', 'initiator_review', 'first_review', 'Recorded review'),
+        step(
+          'handler-return',
+          'handler',
+          'worker_return',
+          'first_return',
+          'Recorded handler return',
+        ),
+        step(
+          'handler-review',
+          'handler',
+          'initiator_review',
+          'first_review',
+          'Recorded handler review',
+        ),
       ],
     },
   ],
@@ -144,8 +173,8 @@ export const recordedPlanWorkflowAdjunct: RecordedPlanWorkflowV1 = {
     {
       id: 'recorded-return',
       kind: 'return',
-      fromStepId: 'worker-return',
-      toStepId: 'planner-review',
+      fromStepId: 'handler-return',
+      toStepId: 'handler-review',
     },
   ],
 };
@@ -171,40 +200,33 @@ export const recordedPresentationAdjunct: RecordedPresentationAdjunct = {
         },
         plannerActivitySessions: [
           {
-            sessionId: 'recorded-session-planner-r4-integration',
-            title: 'Recorded planner R4 integration',
-            transcript: transcript(
-              'recorded-session-planner-r4-integration',
-              'Recorded planner R4 integration',
-              'Recorded planner session; no planning runtime was started.',
-            ),
+            sessionId: controlPlannerDetails.session.id,
+            title: controlPlannerDetails.session.title,
+            transcript: projectAgentSessionTranscript(controlPlannerDetails),
           },
         ],
-        workUnitSessions: ['WU-ECS2B', 'WU-ECS2C', 'WU-ECS2E', 'WU-ECS2D', 'WU-ECS3']
-          .map((workUnitId): WorkUnitAgentSessionPresentation => ({
-            sessionId: `recorded-session-${workUnitId}`,
-            title: `Recorded ${workUnitId} worker`,
-            workUnitId,
-            role: 'worker' as const,
-            transcript: transcript(
-              `recorded-session-${workUnitId}`,
-              `Recorded ${workUnitId} worker`,
-              'Recorded worker conversation; no live task was started.',
-            ),
-          }))
-          .concat([
-            {
-              sessionId: 'recorded-session-reviewer-WU-ECS2E',
-              title: 'Recorded reviewer WU-ECS2E',
-              workUnitId: 'WU-ECS2E',
-              role: 'reviewer' as const,
+        workUnitSessions: [
+          {
+            sessionId: ecs2eHandlerDetails.session.id,
+            title: ecs2eHandlerDetails.session.title,
+            workUnitId: 'WU-ECS2E',
+            role: 'handler',
+            transcript: projectAgentSessionTranscript(ecs2eHandlerDetails),
+          },
+          ...['WU-ECS2B', 'WU-ECS2C', 'WU-ECS2D', 'WU-ECS3'].map(
+            (workUnitId): WorkUnitAgentSessionPresentation => ({
+              sessionId: `recorded-session-${workUnitId}`,
+              title: `Recorded ${workUnitId} worker`,
+              workUnitId,
+              role: 'worker' as const,
               transcript: transcript(
-                'recorded-session-reviewer-WU-ECS2E',
-                'Recorded reviewer WU-ECS2E',
-                'Recorded reviewer session; no review command was sent.',
+                `recorded-session-${workUnitId}`,
+                `Recorded ${workUnitId} worker`,
+                'Recorded worker conversation; no live task was started.',
               ),
-            },
-          ]),
+            }),
+          ),
+        ],
         plannerActivityWorkflows: [recordedPlanWorkflowAdjunct],
       },
     },
