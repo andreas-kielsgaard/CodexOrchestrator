@@ -40,7 +40,7 @@ interface Confirmation {
 }
 
 type VersionSelection = `version:${number}` | 'draft';
-type CatalogDialog = 'skills' | 'tools' | null;
+type CatalogDialog = 'names' | 'skills' | 'tools' | null;
 
 export function ConversationHarnessManagement({
   read,
@@ -100,6 +100,7 @@ function AvailableHarnessManagement({
   const [selected, setSelected] = useState<VersionSelection>(`version:${initialRevision}`);
   const [editMode, setEditMode] = useState(false);
   const [catalogDialog, setCatalogDialog] = useState<CatalogDialog>(null);
+  const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [skillSections, setSkillSections] = useState({
     always_applicable: true,
@@ -175,14 +176,10 @@ function AvailableHarnessManagement({
   };
   const openConfirmation = (next: Confirmation) => setConfirmation(next);
 
-  const selectedIsPushed =
+  const selectedIsCurrentPushed =
     selectedRevision !== null && selectedRevision === snapshot.versionControl.pushedRevision;
   const selectedDiffersFromSession =
     selected === 'draft' || selectedRevision !== snapshot.sessionBinding.appliedRevision;
-  const sessionBehindPushed =
-    snapshot.sessionBinding.appliedRevision !== null &&
-    snapshot.versionControl.pushedRevision !== null &&
-    snapshot.sessionBinding.appliedRevision !== snapshot.versionControl.pushedRevision;
 
   return (
     <section className="harness-management" aria-label="Harness Management">
@@ -224,7 +221,13 @@ function AvailableHarnessManagement({
               .map((version) => (
                 <option value={`version:${version.revision}`} key={version.revision}>
                   v{version.revision}
-                  {version.revision === snapshot.versionControl.pushedRevision ? ' · pushed' : ''}
+                  {version.revision === snapshot.versionControl.pushedRevision
+                    ? ' · current pushed'
+                    : version.status === 'pushed'
+                      ? ' · previously pushed'
+                      : version.status === 'committed'
+                        ? ' · committed'
+                        : ' · inspected'}
                   {version.revision === snapshot.sessionBinding.appliedRevision
                     ? ' · this Session'
                     : ''}
@@ -268,7 +271,7 @@ function AvailableHarnessManagement({
                 type="button"
                 disabled={
                   selectedRevision === null ||
-                  selectedIsPushed ||
+                  selectedIsCurrentPushed ||
                   commandPending ||
                   !selectedVersion
                 }
@@ -300,17 +303,32 @@ function AvailableHarnessManagement({
         <div className="harness-management__version-cues" aria-live="polite">
           {snapshot.workingCopy?.dirty && (
             <StateBadge tone="caution">
-              {selected === 'draft' ? 'Uncommitted changes' : 'Draft has uncommitted changes'}
+              {selected === 'draft'
+                ? 'Working draft · uncommitted'
+                : 'Working draft has uncommitted changes'}
             </StateBadge>
           )}
-          {sessionBehindPushed && (
+          {snapshot.sessionBinding.appliedRevision !== null && (
             <StateBadge tone="caution">
-              Session uses v{snapshot.sessionBinding.appliedRevision} · pushed v
-              {snapshot.versionControl.pushedRevision}
+              Session version · v{snapshot.sessionBinding.appliedRevision}
             </StateBadge>
           )}
-          {!selectedIsPushed && (
-            <StateBadge tone="neutral">Viewed version is not pushed</StateBadge>
+          {snapshot.versionControl.pushedRevision !== null && (
+            <StateBadge tone="positive">
+              Current pushed · v{snapshot.versionControl.pushedRevision}
+            </StateBadge>
+          )}
+          {selectedVersion && (
+            <StateBadge tone="neutral">
+              Viewed v{selectedVersion.revision} ·{' '}
+              {selectedVersion.revision === snapshot.versionControl.pushedRevision
+                ? 'current pushed'
+                : selectedVersion.status === 'pushed'
+                  ? 'previously pushed'
+                  : selectedVersion.status === 'committed'
+                    ? 'committed, not pushed'
+                    : 'push history not connected'}
+            </StateBadge>
           )}
           {selectedDiffersFromSession && (
             <StateBadge tone="neutral">
@@ -378,7 +396,11 @@ function AvailableHarnessManagement({
               ) : (
                 <p>This Session does not yet have a stored Agent identity.</p>
               )}
-              <div>
+              <button
+                className="harness-management__identity-policy-button"
+                type="button"
+                onClick={() => setCatalogDialog('names')}
+              >
                 <span>Permitted name pool</span>
                 <strong>
                   {configuration.identity.permittedAgentNames
@@ -386,7 +408,7 @@ function AvailableHarnessManagement({
                     : 'Product default · 100 names'}
                 </strong>
                 <small>Existing Sessions keep their assigned names.</small>
-              </div>
+              </button>
               <div>
                 <span>Visual identity</span>
                 <strong>
@@ -428,6 +450,7 @@ function AvailableHarnessManagement({
             editLabel="Edit skills"
             editable={Boolean(onCommand)}
             onEdit={() => beginEdit('skills')}
+            onItemSelect={(skill) => setSelectedSkillName(skill.name)}
             groups={[
               {
                 key: 'always_applicable',
@@ -478,7 +501,7 @@ function AvailableHarnessManagement({
             groups={[
               {
                 key: 'every_invocation',
-                title: 'Every invocation',
+                title: 'Always applicable',
                 items: configuration.tools.items.filter(
                   (tool) => tool.policy === 'every_invocation',
                 ),
@@ -491,7 +514,7 @@ function AvailableHarnessManagement({
               },
               {
                 key: 'initial_invocation',
-                title: 'Initial invocation only',
+                title: 'Initial ingestion only',
                 items: configuration.tools.items.filter(
                   (tool) => tool.policy === 'initial_invocation',
                 ),
@@ -602,6 +625,17 @@ function AvailableHarnessManagement({
         </div>
       </div>
 
+      {catalogDialog === 'names' && (
+        <NamePoolDialog
+          snapshot={snapshot}
+          configuration={configuration}
+          editable={editable}
+          canEdit={Boolean(onCommand)}
+          onStartEdit={() => beginEdit('names')}
+          onChange={saveConfiguration}
+          onClose={() => setCatalogDialog(null)}
+        />
+      )}
       {catalogDialog === 'skills' && (
         <SkillCatalogDialog
           snapshot={snapshot}
@@ -609,6 +643,18 @@ function AvailableHarnessManagement({
           editable={editable}
           onChange={saveConfiguration}
           onClose={() => setCatalogDialog(null)}
+        />
+      )}
+      {selectedSkillName && (
+        <SkillDetailsDialog
+          skillName={selectedSkillName}
+          snapshot={snapshot}
+          configuration={configuration}
+          editable={editable}
+          canEdit={Boolean(onCommand)}
+          onStartEdit={() => beginEdit()}
+          onChange={saveConfiguration}
+          onClose={() => setSelectedSkillName(null)}
         />
       )}
       {catalogDialog === 'tools' && (
@@ -701,6 +747,7 @@ function PolicyCard({
   editLabel,
   editable,
   onEdit,
+  onItemSelect,
   groups,
   footer,
 }: {
@@ -708,6 +755,7 @@ function PolicyCard({
   readonly editLabel: string;
   readonly editable: boolean;
   onEdit(): void;
+  onItemSelect?(item: PolicyGroupItem): void;
   readonly groups: readonly {
     readonly key: string;
     readonly title: string;
@@ -757,8 +805,24 @@ function PolicyCard({
                 {group.items.length ? (
                   group.items.map((item) => (
                     <li key={item.name}>
-                      <strong>{item.name}</strong>
-                      {item.purpose && <small>{item.purpose}</small>}
+                      {onItemSelect ? (
+                        <button
+                          type="button"
+                          aria-label={`View ${item.name} skill details`}
+                          onClick={() => onItemSelect(item)}
+                        >
+                          <span>
+                            <strong>{item.name}</strong>
+                            {item.purpose && <small>{item.purpose}</small>}
+                          </span>
+                          <ChevronRight size={15} aria-hidden="true" />
+                        </button>
+                      ) : (
+                        <>
+                          <strong>{item.name}</strong>
+                          {item.purpose && <small>{item.purpose}</small>}
+                        </>
+                      )}
                     </li>
                   ))
                 ) : (
@@ -1030,8 +1094,12 @@ function VersionHistory({
                         }
                       >
                         {version.revision === snapshot.versionControl.pushedRevision
-                          ? 'Pushed'
-                          : 'Committed'}
+                          ? 'Current pushed'
+                          : version.status === 'pushed'
+                            ? 'Previously pushed'
+                            : version.status === 'committed'
+                              ? 'Committed'
+                              : 'Inspected'}
                       </StateBadge>
                     </td>
                     <td>{version.activeSessionCount}</td>
@@ -1078,6 +1146,227 @@ function VersionHistory({
       </div>
       <p className="harness-management__card-footer">{snapshot.versionControl.reason}</p>
     </ManagementCard>
+  );
+}
+
+function NamePoolDialog({
+  snapshot,
+  configuration,
+  editable,
+  canEdit,
+  onStartEdit,
+  onChange,
+  onClose,
+}: {
+  readonly snapshot: ConversationHarnessManagementSnapshot;
+  readonly configuration: HarnessEffectiveConfiguration;
+  readonly editable: boolean;
+  readonly canEdit: boolean;
+  onStartEdit(): void;
+  onChange(configuration: HarnessEffectiveConfiguration): void;
+  onClose(): void;
+}) {
+  const [query, setQuery] = useState('');
+  const catalog = snapshot.catalogs.agentNames;
+  const subset = configuration.identity.permittedAgentNames;
+  const selectedNames = new Set(subset ?? catalog.items);
+  const filteredNames = catalog.items.filter((name) => fuzzyMatch(name, '', query));
+  const updateNames = (names: readonly string[] | null) =>
+    onChange({
+      ...configuration,
+      identity: {
+        ...configuration.identity,
+        permittedAgentNames: names,
+      },
+    });
+
+  return (
+    <div className="harness-management__modal-backdrop">
+      <section
+        className="harness-management__modal is-details"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="harness-name-pool-title"
+      >
+        <header>
+          <div>
+            <h2 id="harness-name-pool-title">Permitted name pool</h2>
+            <p>Names available when this Harness creates a new Agent Session.</p>
+          </div>
+          <button type="button" aria-label="Close permitted name pool" onClick={onClose}>
+            <X size={18} aria-hidden="true" />
+          </button>
+        </header>
+        <div className="harness-management__details-actions">
+          {!editable && canEdit && (
+            <button type="button" onClick={onStartEdit}>
+              <Pencil size={14} aria-hidden="true" />
+              Edit name pool
+            </button>
+          )}
+          <small>Existing Sessions keep their assigned names.</small>
+        </div>
+        <div className="harness-management__modal-scroll">
+          <label className="harness-management__discovery-policy">
+            <span>Pool</span>
+            <select
+              aria-label="Name pool source"
+              value={subset ? 'harness_subset' : 'product_default'}
+              disabled={!editable}
+              onChange={(event) =>
+                updateNames(
+                  event.target.value === 'product_default'
+                    ? null
+                    : initialNameSubset(snapshot, catalog.items),
+                )
+              }
+            >
+              <option value="harness_subset">Harness subset</option>
+              <option value="product_default">Full product pool</option>
+            </select>
+          </label>
+          {catalog.source === 'not_connected' ? (
+            <p>{catalog.reason}</p>
+          ) : subset ? (
+            <>
+              <label className="harness-management__catalog-search">
+                <Search size={16} aria-hidden="true" />
+                <span className="visually-hidden">Search product names</span>
+                <input
+                  aria-label="Search product names"
+                  value={query}
+                  placeholder="Search product names"
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+              </label>
+              <div className="harness-management__name-grid">
+                {filteredNames.map((name) => {
+                  const checked = selectedNames.has(name);
+                  return (
+                    <label key={name}>
+                      <input
+                        type="checkbox"
+                        aria-label={`${name} permitted`}
+                        checked={checked}
+                        disabled={!editable || (checked && subset.length === 1)}
+                        onChange={(event) =>
+                          updateNames(
+                            event.target.checked
+                              ? [...subset, name]
+                              : subset.filter((candidate) => candidate !== name),
+                          )
+                        }
+                      />
+                      <span>{name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <p className="harness-management__pool-summary">
+              All {catalog.items.length} product names are permitted for new Sessions.
+            </p>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SkillDetailsDialog({
+  skillName,
+  snapshot,
+  configuration,
+  editable,
+  canEdit,
+  onStartEdit,
+  onChange,
+  onClose,
+}: {
+  readonly skillName: string;
+  readonly snapshot: ConversationHarnessManagementSnapshot;
+  readonly configuration: HarnessEffectiveConfiguration;
+  readonly editable: boolean;
+  readonly canEdit: boolean;
+  onStartEdit(): void;
+  onChange(configuration: HarnessEffectiveConfiguration): void;
+  onClose(): void;
+}) {
+  const skill = configuration.skills.items.find((item) => item.name === skillName);
+  const catalogSkill = snapshot.catalogs.skills.items.find((item) => item.name === skillName);
+  if (!skill) return null;
+
+  return (
+    <div className="harness-management__modal-backdrop">
+      <section
+        className="harness-management__modal is-details"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="harness-skill-details-title"
+      >
+        <header>
+          <div>
+            <h2 id="harness-skill-details-title">{skill.name}</h2>
+            <p>{skill.path}</p>
+          </div>
+          <button type="button" aria-label={`Close ${skill.name} details`} onClick={onClose}>
+            <X size={18} aria-hidden="true" />
+          </button>
+        </header>
+        <div className="harness-management__details-actions">
+          {!editable && canEdit && (
+            <button type="button" onClick={onStartEdit}>
+              <Pencil size={14} aria-hidden="true" />
+              Edit skill policy
+            </button>
+          )}
+          <label>
+            <span>Applicability</span>
+            <select
+              aria-label={`${skill.name} details applicability`}
+              value={skill.policy}
+              disabled={!editable}
+              onChange={(event) =>
+                onChange({
+                  ...configuration,
+                  skills: {
+                    ...configuration.skills,
+                    items: configuration.skills.items.map((item) =>
+                      item.name === skill.name
+                        ? { ...item, policy: event.target.value as HarnessSkillPolicy }
+                        : item,
+                    ),
+                  },
+                })
+              }
+            >
+              <option value="always_applicable">Always applicable</option>
+              <option value="initial_ingestion">Initial ingestion only</option>
+              <option value="available">Available</option>
+            </select>
+          </label>
+        </div>
+        <div className="harness-management__modal-scroll">
+          <dl className="harness-management__skill-facts">
+            <div>
+              <dt>Purpose</dt>
+              <dd>{skill.purpose}</dd>
+            </div>
+            <div>
+              <dt>Use when</dt>
+              <dd>{skill.useWhen}</dd>
+            </div>
+          </dl>
+          <h3>Full skill text</h3>
+          {catalogSkill?.text ? (
+            <pre className="harness-management__skill-text">{catalogSkill.text}</pre>
+          ) : (
+            <p>{snapshot.catalogs.skills.reason}</p>
+          )}
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -1304,8 +1593,8 @@ function ToolCatalogDialog({
                 })
               }
             >
-              <option value="every_invocation">Every invocation</option>
-              <option value="initial_invocation">Initial invocation only</option>
+              <option value="every_invocation">Always applicable</option>
+              <option value="initial_invocation">Initial ingestion only</option>
               <option value="available">Available</option>
             </select>
             <button
@@ -1471,6 +1760,15 @@ function fuzzyMatch(name: string, description: string, query: string): boolean {
     }
     return false;
   });
+}
+
+function initialNameSubset(
+  snapshot: ConversationHarnessManagementSnapshot,
+  names: readonly string[],
+): readonly string[] {
+  const assignedName = snapshot.agentIdentity?.name;
+  if (!assignedName || !names.includes(assignedName)) return names.slice(0, 10);
+  return [assignedName, ...names.filter((name) => name !== assignedName)].slice(0, 10);
 }
 
 function humanize(value: string): string {

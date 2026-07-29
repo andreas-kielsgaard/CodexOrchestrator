@@ -30,7 +30,7 @@
   position: absolute;
   z-index: 4;
   top: 18px;
-  right: clamp(172px, 17vw, 210px);
+  right: calc(clamp(18px, 4vw, 52px) + 172px);
   display: inline-flex;
   min-height: 30px;
   align-items: center;
@@ -53,7 +53,7 @@
 
 .epic-plan-builder__conversation .harness-aware-agent-session-pane__inspect {
   top: 4px;
-  right: 126px;
+  right: 173px;
 }
 
 .harness-management {
@@ -345,6 +345,7 @@
 }
 
 .harness-management__identity-policy > div,
+.harness-management__identity-policy-button,
 .harness-management__identity-policy > p {
   display: grid;
   align-content: center;
@@ -353,19 +354,37 @@
   padding: 8px 10px;
 }
 
-.harness-management__identity-policy > div > span {
+.harness-management__identity-policy-button {
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.harness-management__identity-policy-button:hover,
+.harness-management__identity-policy-button:focus-visible {
+  border-color: #c4cec4;
+  background: #f1f4ee;
+}
+
+.harness-management__identity-policy > div > span,
+.harness-management__identity-policy-button > span {
   color: #718077;
   font-size: 0.62rem;
   font-weight: 800;
   text-transform: uppercase;
 }
 
-.harness-management__identity-policy > div > strong {
+.harness-management__identity-policy > div > strong,
+.harness-management__identity-policy-button > strong {
   color: #2e4036;
   font-size: 0.74rem;
 }
 
 .harness-management__identity-policy > div > small,
+.harness-management__identity-policy-button > small,
 .harness-management__identity-policy > p {
   color: #718077;
   font-size: 0.66rem;
@@ -475,6 +494,31 @@
   gap: 2px;
   padding: 7px 8px;
   border-top: 1px solid #e7eae5;
+}
+
+.harness-management__policy-group li > button {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.harness-management__policy-group li > button > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.harness-management__policy-group li > button:hover strong,
+.harness-management__policy-group li > button:focus-visible strong {
+  color: #1f6846;
 }
 
 .harness-management__policy-group li strong {
@@ -749,6 +793,12 @@
   grid-template-rows: auto auto minmax(0, 1fr);
 }
 
+.harness-management__modal.is-details {
+  display: grid;
+  width: min(760px, 100%);
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
 .harness-management__modal > header {
   display: flex;
   align-items: start;
@@ -808,6 +858,117 @@
   min-height: 0;
   padding-right: 3px;
   overflow-y: auto;
+}
+
+.harness-management__details-actions {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.harness-management__details-actions > label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #647169;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.harness-management__details-actions select,
+.harness-management__discovery-policy select {
+  min-height: 34px;
+  padding: 0 28px 0 8px;
+  border: 1px solid #c4cec4;
+  border-radius: 7px;
+  background: #fff;
+  color: #2e4036;
+}
+
+.harness-management__details-actions small {
+  color: #718077;
+  font-size: 0.66rem;
+}
+
+.harness-management__name-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.harness-management__name-grid label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid #e0e4dd;
+  border-radius: 7px;
+  background: #fafaf6;
+  color: #405148;
+  font-size: 0.7rem;
+}
+
+.harness-management__name-grid input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.harness-management__pool-summary {
+  padding: 12px;
+  border: 1px solid #e0e4dd;
+  border-radius: 7px;
+  background: #fafaf6;
+}
+
+.harness-management__skill-facts {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.harness-management__skill-facts > div {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid #e0e4dd;
+  border-radius: 7px;
+  background: #fafaf6;
+}
+
+.harness-management__skill-facts dt {
+  color: #718077;
+  font-size: 0.62rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.harness-management__skill-facts dd {
+  margin: 0;
+  color: #35463c;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.harness-management__skill-text {
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid #d8ddd5;
+  border-radius: 7px;
+  background: #f7f8f4;
+  color: #2f4037;
+  font:
+    0.69rem/1.5 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+  white-space: pre-wrap;
 }
 
 .harness-management__discovery-policy {
@@ -920,7 +1081,8 @@
 @container (max-width: 520px) {
   .harness-aware-agent-session-pane__inspect {
     top: 72px;
-    right: 14px;
+    right: auto;
+    left: 16px;
   }
 
   .harness-aware-agent-session-pane > .agent-session-workspace .agent-session-header {
@@ -929,6 +1091,7 @@
   }
 
   .harness-aware-agent-session-pane > .agent-session-workspace .agent-session-header__actions {
+    margin-left: auto;
     flex-wrap: wrap;
   }
 
@@ -976,6 +1139,19 @@
   .harness-management__catalog-row select {
     grid-column: 1 / -1;
     grid-row: 2;
+  }
+
+  .harness-management__details-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .harness-management__details-actions > label {
+    justify-content: space-between;
+  }
+
+  .harness-management__name-grid {
+    grid-template-columns: 1fr;
   }
 }
 

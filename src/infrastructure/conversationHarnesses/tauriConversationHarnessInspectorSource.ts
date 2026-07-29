@@ -106,6 +106,7 @@ function buildSnapshot(
       versions: [
         {
           revision: profile.version,
+          status: 'inspected',
           configuration,
           activeSessionCount: 0,
           committedAt: '',
@@ -126,12 +127,18 @@ function buildSnapshot(
 
 function buildCatalogs(profile: ProductProfile): HarnessConfigurationCatalogs {
   return {
+    agentNames: {
+      source: 'not_connected',
+      items: [],
+      reason: 'The product Agent name pool is not connected to this query.',
+    },
     skills: {
       source: 'not_connected',
       items: profile.skillGuidance.map((skill) => ({
         name: skill.canonicalName,
         path: skill.canonicalPath,
         description: skill.purpose,
+        text: null,
       })),
       reason: 'The complete product skill catalog is not connected to this query.',
     },
@@ -191,7 +198,7 @@ function buildConfiguration(
         policy: 'every_invocation',
       })),
       schemaBoundary:
-        'Tool schemas remain runtime-owned. The harness controls whether and when a tool is exposed.',
+        'Applicability labels describe exposure timing only. Tool schemas remain runtime-owned and are not ingested as skill text.',
     },
     runtime: {
       models: catalogs.models.items.map((model) => ({

@@ -28,6 +28,10 @@ describe('recorded Harness Management source', () => {
     expect(read.snapshot.versionControl.versions.map((version) => version.revision)).toEqual([
       3, 4,
     ]);
+    expect(read.snapshot.versionControl.versions.map((version) => version.status)).toEqual([
+      'pushed',
+      'pushed',
+    ]);
     expect(read.snapshot.agentIdentity).toMatchObject({
       harnessRole: 'Epic Plan Builder',
       appliedHarnessRevision: 3,
@@ -62,9 +66,16 @@ describe('recorded Harness Management source', () => {
     });
     expect(read.snapshot.catalogs.skills.source).toBe('checked_in_product_catalog');
     expect(read.snapshot.catalogs.skills.items.length).toBeGreaterThan(20);
+    expect(read.snapshot.catalogs.agentNames).toMatchObject({
+      source: 'product_default_pool',
+    });
+    expect(read.snapshot.catalogs.agentNames.items).toHaveLength(100);
     expect(read.snapshot.catalogs.skills.items.map((skill) => skill.name)).toContain(
       'epic-plan-builder',
     );
+    expect(
+      read.snapshot.catalogs.skills.items.find((skill) => skill.name === 'epic-plan-builder')?.text,
+    ).toContain('# Epic Plan Builder');
     expect(read.snapshot.catalogs.models).toMatchObject({ source: 'recorded_catalog' });
     expect(current?.tools.items.map((tool) => tool.name)).toEqual([
       'submit_epic_plan_proposal',
@@ -169,7 +180,10 @@ describe('recorded Harness Management source', () => {
       },
     });
     if (committed.kind !== 'available') return;
-    expect(committed.snapshot.versionControl.versions.at(-1)?.revision).toBe(5);
+    expect(committed.snapshot.versionControl.versions.at(-1)).toMatchObject({
+      revision: 5,
+      status: 'committed',
+    });
 
     const pushed = await source.dispatch({
       sessionId: recordedHarnessInspectorSessionId,
@@ -187,6 +201,10 @@ describe('recorded Harness Management source', () => {
         },
       },
     });
+    if (pushed.kind === 'available')
+      expect(
+        pushed.snapshot.versionControl.versions.find((version) => version.revision === 5)?.status,
+      ).toBe('pushed');
 
     const queued = await source.dispatch({
       sessionId: recordedHarnessInspectorSessionId,

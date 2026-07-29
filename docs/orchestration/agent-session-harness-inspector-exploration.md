@@ -33,8 +33,10 @@ The prototype records these product concepts without claiming production effects
 - The Harness name is the user-facing role. The machine key remains an administrative property;
   there is no second role field.
 - The toolbar selects the Session-applied version, any historical committed version, or the
-  working draft. It distinguishes a Session behind the pushed version, a viewed version that is not
-  pushed, a view different from the Session version, and an uncommitted draft.
+  working draft. Session version, current pushed version, working/uncommitted draft, and viewed
+  revision history are separate facts. A historically pushed revision remains labeled
+  **Previously pushed** when a newer revision becomes current; a never-pushed revision is labeled
+  **Committed**.
 - **Edit harness** creates a cached draft from the viewed committed revision; **Edit draft** reopens
   it. Commit and Push appear only in edit mode. Commit, Push, single-Session changes, and bulk
   changes require plain-language confirmation.
@@ -46,16 +48,20 @@ The prototype records these product concepts without claiming production effects
 - Skills are summarized as **Always applicable**, **Initial ingestion only**, and **Available**.
   The first two are selected whitelists. Only Available discovery can use whitelist or blacklist
   policy. A fuzzy-search dialog reads the complete checked-in product skill catalog and owns
-  selection, timing, and removal. Skill groups remain deferred.
-- Tools use **Every invocation**, **Initial invocation only**, and **Available** exposure. A
-  fuzzy-search dialog reads the recorded Epic Plan Builder tool catalog. Provider-owned schemas
-  remain outside prompt content and runtime reconfiguration remains unimplemented.
+  selection, timing, and removal. Clicking a selected skill opens its purpose, use condition, path,
+  complete checked-in `SKILL.md` text, and applicability control. Skill groups remain deferred.
+- Tools use the same **Always applicable**, **Initial ingestion only**, and **Available** labels for
+  exposure timing. A fuzzy-search dialog reads the recorded Epic Plan Builder tool catalog. These
+  labels do not turn schemas into prompt text: provider-owned schemas remain runtime-owned and
+  runtime reconfiguration remains unimplemented.
 - Each recorded model has an allowed flag and an accessible minimum/maximum reasoning range, with
   optional defaults constrained to an allowed model and range. No application capability catalog
   exists, so the UI labels its two-model source as a recorded catalog rather than complete runtime
   discovery.
 - Current sandbox and authority values are inspectable and editable in the recorded working copy.
   Expanded sandbox customization is deferred.
+- The permitted-name summary opens the Harness-specific subset. Editing changes only the recorded
+  Harness draft; the Session-owned assigned name remains stable.
 - Application hook references remain visible and are labeled **Proposed**. They are not presented
   as connected or exposed. Initial prompt delivery is not modeled as a hook.
 - The version table shows status, active Session count, the selected Session indicator, and bulk
@@ -187,24 +193,28 @@ owns enforcement. Deeper hook configuration UI remains deferred.
   identities, deterministic assignment, uniqueness, exhausted-pool fallback, and invalid pools.
 - Recorded-source tests cover committed version history, the complete checked-in skill catalog,
   recorded tool/model catalogs, full atomic configuration, stable identity across draft pool
-  changes, local draft/commit/Push transitions, next-prompt queues, default-range validation, and
-  ensure free-form completion criteria remain proposed rather than connected or exposed.
+  changes, historical-push status, local draft/commit/Push transitions, next-prompt queues,
+  default-range validation, and ensure free-form completion criteria remain proposed rather than
+  connected or exposed.
 - Pane tests cover Session-version entry, state cues, cached edits and dirty state across remount,
-  Markdown/Plain editing, fuzzy dialog search/add/change/remove, policy counts and collapse state,
-  accessible range controls, confirmation-gated commit/Push/single/bulk next-prompt changes, and
-  truthful proposed hook presentation.
+  Markdown/Plain editing, permitted-name inspection/editing without Session renaming, full
+  selected-skill details and applicability changes, fuzzy catalog search/add/change/remove,
+  consistent skill/tool labels, policy counts and collapse state, accessible range controls,
+  confirmation-gated commit/Push/single/bulk next-prompt changes, and truthful proposed hook
+  presentation.
 - Product-source tests ensure completion criteria remain not connected without a typed hook
   registry result.
 - App and planning tests cover the same source and identity presentation across Harness Management,
   Epic planning, and independent Agent Sessions, including persisted Agent names on transcript
   responses and the agent-authored proposal heading.
 - Product-source tests preserve the current read-only, untracked production boundary.
-- The aggregate passes 93 files and 629 tests. TypeScript/Vite build, ESLint, touched-file Prettier,
-  Rust formatting, and diff checks pass; the repository-wide Prettier baseline still contains
-  unrelated pre-existing findings.
-- In-app browser evidence at 1440 x 1000 and 390 x 844 verifies the Session entry, desktop and
-  narrow management layouts, real Markdown editing and Plain mode, fuzzy skill search, version
-  defaults and cues, accessible range controls, no entry-button overlap, and no document-level
+- The aggregate passes 93 files and 631 tests with four workers. TypeScript/Vite build, ESLint,
+  touched-file Prettier, Rust formatting, and diff checks pass; the repository-wide Prettier
+  baseline still contains unrelated pre-existing findings.
+- In-app browser evidence at the reviewed 760 x 900 width, 1440 x 1000, and 390 x 844 verifies the
+  Session entry, desktop and narrow management layouts, real Markdown editing and Plain mode, fuzzy
+  skill search, version defaults and cues, the name-pool and selected-skill dialogs, accessible
+  range controls, preserved Manage-then-Copy order, no entry-button overlap, and no document-level
   horizontal overflow. The browser console has no warnings or errors.
 
 This evidence exercises only the recorded development composition and does not establish production

@@ -70,12 +70,18 @@ export interface HarnessEffectiveConfiguration {
 }
 
 export interface HarnessConfigurationCatalogs {
+  readonly agentNames: {
+    readonly source: 'product_default_pool' | 'not_connected';
+    readonly items: readonly string[];
+    readonly reason: string;
+  };
   readonly skills: {
     readonly source: 'checked_in_product_catalog' | 'not_connected';
     readonly items: readonly {
       readonly name: string;
       readonly path: string;
       readonly description: string;
+      readonly text: string | null;
     }[];
     readonly reason: string;
   };
@@ -100,6 +106,7 @@ export interface HarnessConfigurationCatalogs {
 
 export interface ConversationHarnessVersion {
   readonly revision: number;
+  readonly status: 'pushed' | 'committed' | 'inspected';
   readonly configuration: HarnessEffectiveConfiguration;
   readonly activeSessionCount: number;
   readonly committedAt: string;

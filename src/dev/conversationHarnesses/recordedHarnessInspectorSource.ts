@@ -3,6 +3,8 @@ import {
   assignAgentIdentity,
   harnessAgentNamePools,
   harnessVisualIdentities,
+  productDefaultAgentNames,
+  validateAgentNamePool,
 } from '../../application/agentSessions';
 import type {
   ConversationHarnessManagementCommand,
@@ -148,12 +150,14 @@ function buildSnapshot(sessionId: string): ConversationHarnessManagementSnapshot
       versions: [
         {
           revision: recordedSessionAppliedRevision,
+          status: 'pushed',
           configuration: currentConfiguration,
           activeSessionCount: 1,
           committedAt: '2026-07-11T14:30:00.000Z',
         },
         {
           revision: profile.version,
+          status: 'pushed',
           configuration: currentConfiguration,
           activeSessionCount: 0,
           committedAt: recordedAt,
@@ -183,11 +187,17 @@ function buildCatalogs(): HarnessConfigurationCatalogs {
         name,
         path: `.agents/skills/${pathMatch?.[1] ?? name}/SKILL.md`,
         description: frontmatterValue(document, 'description') ?? 'Product skill.',
+        text: document,
       };
     })
     .filter((skill) => skill.name)
     .sort((left, right) => left.name.localeCompare(right.name));
   return {
+    agentNames: {
+      source: 'product_default_pool',
+      items: productDefaultAgentNames,
+      reason: 'Harness subsets are selected from the 100-name product pool.',
+    },
     skills: {
       source: 'checked_in_product_catalog',
       items: skills,
@@ -261,7 +271,7 @@ function buildConfiguration(
         policy: 'every_invocation',
       })),
       schemaBoundary:
-        'Tool schemas remain runtime-owned. The harness controls whether and when a tool is exposed.',
+        'Applicability labels describe exposure timing only. Tool schemas remain runtime-owned and are not ingested as skill text.',
     },
     runtime: {
       models: catalogs.models.items.map((model) => ({
@@ -340,6 +350,7 @@ function reduceRecordedCommand(
           ...snapshot.versionControl.versions,
           {
             revision,
+            status: 'committed',
             configuration: workingCopy.configuration,
             activeSessionCount: 0,
             committedAt: new Date().toISOString(),
@@ -355,6 +366,9 @@ function reduceRecordedCommand(
       versionControl: {
         ...snapshot.versionControl,
         pushedRevision: command.revision,
+        versions: snapshot.versionControl.versions.map((version) =>
+          version.revision === command.revision ? { ...version, status: 'pushed' } : version,
+        ),
       },
       sessionBinding: {
         ...snapshot.sessionBinding,
@@ -392,6 +406,12 @@ function validateConfiguration(
 ): void {
   if (!configuration.identity.name.trim() || !configuration.identity.machineKey.trim())
     throw new Error('Harness identity is incomplete.');
+  if (configuration.identity.permittedAgentNames) {
+    const names = validateAgentNamePool(configuration.identity.permittedAgentNames);
+    const catalogNames = new Set(catalogs.agentNames.items);
+    const unknown = names.find((name) => !catalogNames.has(name));
+    if (unknown) throw new Error(`Agent name is outside the product pool: ${unknown}`);
+  }
   if (!configuration.promptPrefix.content.trim())
     throw new Error('Prompt prefix must not be empty.');
   const skillNames = new Set(catalogs.skills.items.map((skill) => skill.name));

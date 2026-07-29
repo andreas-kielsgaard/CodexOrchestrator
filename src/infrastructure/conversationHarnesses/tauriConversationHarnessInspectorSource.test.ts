@@ -65,6 +65,7 @@ describe('Tauri Conversation Harness Management source', () => {
       },
       workingCopy: null,
       catalogs: {
+        agentNames: { source: 'not_connected' },
         skills: { source: 'not_connected' },
         tools: { source: 'not_connected' },
         models: { source: 'not_connected' },
@@ -73,6 +74,7 @@ describe('Tauri Conversation Harness Management source', () => {
     expect(read.snapshot.versionControl.versions).toHaveLength(1);
     expect(read.snapshot.versionControl.versions[0]).toMatchObject({
       revision: 4,
+      status: 'inspected',
       configuration: {
         identity: { name: 'Epic Plan Builder', machineKey: 'epic_plan_builder' },
         hooks: [
@@ -86,6 +88,7 @@ describe('Tauri Conversation Harness Management source', () => {
         updatePolicy: { status: 'not_configured' },
       },
     });
+    expect(read.snapshot.catalogs.skills.items[0]?.text).toBeNull();
     expect(read.snapshot.versionControl.versions[0]?.configuration.hooks).not.toContainEqual(
       expect.objectContaining({ status: 'exposed' }),
     );
