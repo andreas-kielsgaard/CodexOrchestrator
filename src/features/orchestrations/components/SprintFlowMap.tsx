@@ -25,6 +25,17 @@ export interface SprintFlowMapProps {
     opener: HTMLButtonElement,
   ) => void;
   readonly onOpenWorkUnit?: (workUnitId: string, opener: HTMLButtonElement) => void;
+  readonly highlightedProblemId?: string | null;
+  readonly hoveredGraphElement?: {
+    readonly kind: 'sprint_planner_activity' | 'work_unit' | 'gate';
+    readonly id: string;
+  } | null;
+  readonly onHoveredGraphElementChange?: (
+    element: {
+      readonly kind: 'sprint_planner_activity' | 'work_unit' | 'gate';
+      readonly id: string;
+    } | null,
+  ) => void;
 }
 
 export function SprintFlowMap({
@@ -33,6 +44,9 @@ export function SprintFlowMap({
   onSelectedRevisionChange,
   onOpenSprintPlannerActivityGroup,
   onOpenWorkUnit,
+  highlightedProblemId,
+  hoveredGraphElement,
+  onHoveredGraphElementChange,
 }: SprintFlowMapProps) {
   const selectedView =
     workspace.revisionViews.find(
@@ -50,10 +64,25 @@ export function SprintFlowMap({
   const userReviews = selectedView.gates.filter(
     ({ presentationRole }) => presentationRole.kind === 'accepted_review_marker',
   );
+  const highlightedRefs = new Set(
+    workspace.problems
+      .find(({ problemId }) => problemId === highlightedProblemId)
+      ?.graphElementRefs.map(({ kind, id }) => `${kind}:${id}`) ?? [],
+  );
+  const priorRevision = workspace.revisionViews
+    .filter(({ revision }) => revision < selectedView.revision)
+    .sort((left, right) => right.revision - left.revision)[0];
+  const priorWorkUnitIds = new Set(priorRevision?.workUnits.map(({ workUnitId }) => workUnitId));
 
   return (
     <section className="sprint-flow" aria-label="Sprint plan overview">
       <div className="sprint-flow__overlay">
+        <div className="sprint-flow__legend" aria-label="Flow states">
+          <span data-state="planned">Planned</span>
+          <span data-state="processing">Processing</span>
+          <span data-state="completed">Completed</span>
+          <span data-state="divergent">Later divergence</span>
+        </div>
         <label className="sprint-revision-select">
           <span className="visually-hidden">Plan revision</span>
           <select
@@ -97,9 +126,25 @@ export function SprintFlowMap({
             return (
               <section
                 key={group.sprintPlannerActivityId}
-                className="sprint-plan-region"
+                className={`sprint-plan-region${
+                  highlightedRefs.has(`sprint_planner_activity:${group.sprintPlannerActivityId}`)
+                    ? ' is-problem-highlighted'
+                    : ''
+                }${
+                  hoveredGraphElement?.kind === 'sprint_planner_activity' &&
+                  hoveredGraphElement.id === group.sprintPlannerActivityId
+                    ? ' is-hovered'
+                    : ''
+                }`}
                 aria-label={`Plan: ${group.title}`}
                 style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
+                onPointerEnter={() =>
+                  onHoveredGraphElementChange?.({
+                    kind: 'sprint_planner_activity',
+                    id: group.sprintPlannerActivityId,
+                  })
+                }
+                onPointerLeave={() => onHoveredGraphElementChange?.(null)}
               >
                 <svg
                   className="sprint-plan-region__connectors"
@@ -127,6 +172,8 @@ export function SprintFlowMap({
                   type="button"
                   className="sprint-plan-region__open"
                   data-sprint-planner-activity-id={group.sprintPlannerActivityId}
+                  data-flow-element-kind="sprint_planner_activity"
+                  data-flow-element-id={group.sprintPlannerActivityId}
                   aria-label={`Open Plan: ${group.title}`}
                   onClick={(event) =>
                     onOpenSprintPlannerActivityGroup?.(
@@ -166,13 +213,39 @@ export function SprintFlowMap({
                     return (
                       <article
                         key={unit.workUnitId}
-                        className={`sprint-work-unit sprint-work-unit--${displayState(unit.presentationState)}`}
+                        className={`sprint-work-unit sprint-work-unit--${displayState(unit.presentationState)}${
+                          priorRevision && !priorWorkUnitIds.has(unit.workUnitId)
+                            ? ' sprint-work-unit--divergent'
+                            : ''
+                        }${
+                          highlightedRefs.has(`work_unit:${unit.workUnitId}`)
+                            ? ' is-problem-highlighted'
+                            : ''
+                        }${
+                          hoveredGraphElement?.kind === 'work_unit' &&
+                          hoveredGraphElement.id === unit.workUnitId
+                            ? ' is-hovered'
+                            : ''
+                        }`}
                         style={{ left: position.x - box.x, top: position.y - box.y }}
+                        onPointerEnter={(event) => {
+                          event.stopPropagation();
+                          onHoveredGraphElementChange?.({
+                            kind: 'work_unit',
+                            id: unit.workUnitId,
+                          });
+                        }}
+                        onPointerLeave={(event) => {
+                          event.stopPropagation();
+                          onHoveredGraphElementChange?.(null);
+                        }}
                       >
                         <button
                           type="button"
                           className="sprint-work-unit__open"
                           data-work-unit-id={unit.workUnitId}
+                          data-flow-element-kind="work_unit"
+                          data-flow-element-id={unit.workUnitId}
                           aria-label={`Open Work Unit ${unit.workUnitId}: ${unit.title}, ${statusLabel(unit.presentationState)}`}
                           title={unit.summary}
                           onClick={(event) => {
@@ -188,6 +261,9 @@ export function SprintFlowMap({
                           </span>
                           <strong>{unit.title}</strong>
                           <code>{unit.workUnitId}</code>
+                          {priorRevision && !priorWorkUnitIds.has(unit.workUnitId) ? (
+                            <small>Added in later plan</small>
+                          ) : null}
                         </button>
                         {attachedReviews.map((gate) => (
                           <span

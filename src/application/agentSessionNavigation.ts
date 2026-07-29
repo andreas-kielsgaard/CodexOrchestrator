@@ -70,8 +70,15 @@ export interface AgentSessionNavigationFolder {
 export type AgentSessionNavigationNode =
   AgentSessionNavigationFolder | AgentSessionNavigationSession;
 
+export interface AgentSessionNavigationSection {
+  readonly kind: 'section';
+  readonly id: 'epics' | 'independent';
+  readonly label: string;
+  readonly children: readonly AgentSessionNavigationNode[];
+}
+
 export interface AgentSessionNavigationModel {
-  readonly roots: readonly AgentSessionNavigationFolder[];
+  readonly sections: readonly AgentSessionNavigationSection[];
   readonly sessions: ReadonlyMap<string, AgentSessionNavigationSession>;
 }
 
@@ -95,11 +102,12 @@ interface ResolvedReference {
   readonly folderPath: readonly { readonly id: string; readonly label: string }[];
 }
 
-/** Cross-capability presentation projection. It records no ownership and performs no effects. */
+/** Read-only projection. Placement comes only from typed product references. */
 export function buildAgentSessionNavigation(
   input: AgentSessionNavigationInput,
 ): AgentSessionNavigationModel {
-  const roots: MutableFolder[] = [];
+  const epicRoots: MutableFolder[] = [];
+  const independentSessions: AgentSessionNavigationSession[] = [];
   const folders = new Map<string, MutableFolder>();
   const referencesBySession = collectReferences(input.orchestrations);
   const draftsBySession = new Map(
@@ -116,14 +124,14 @@ export function buildAgentSessionNavigation(
     const created: MutableFolder = { kind: 'folder', id, label, children: [] };
     folders.set(id, created);
     if (parent) parent.children.push(created);
-    else roots.push(created);
+    else epicRoots.push(created);
     return created;
   };
 
   const folderPath = (path: readonly { readonly id: string; readonly label: string }[]) => {
     let current: MutableFolder | null = null;
     for (const item of path) current = folder(current, item.id, item.label);
-    return current!;
+    return current;
   };
 
   for (const summary of input.summaries) {
@@ -156,80 +164,74 @@ export function buildAgentSessionNavigation(
     };
     sessions.set(summary.id, item);
 
-    const placementPaths = unique(resolved.map(({ folderPath: path }) => JSON.stringify(path)));
-    const ambiguous =
-      locations.length > 1 || placementPaths.length > 1 || Boolean(draft && resolved.length);
-    if (resolved.length > 0 && !draft && !ambiguous) {
-      folderPath(resolved[0].folderPath).children.push(item);
+    const placementPaths = uniquePaths(
+      resolved.map(({ folderPath: path }) => path).filter((path) => path.length > 0),
+    );
+    if (!draft && placementPaths.length === 1) {
+      folderPath(placementPaths[0])?.children.push(item);
       continue;
     }
-    if (resolved.length === 0 && draft) {
-      folderPath([
-        { id: 'independent', label: 'Independent Sessions' },
-        { id: 'independent:planning-drafts', label: 'Epic planning drafts' },
-      ]).children.push(item);
-      continue;
-    }
-    if (ambiguous) {
-      const epicIds = unique(
-        locations.flatMap((location) => ('epicId' in location ? [location.epicId] : [])),
-      );
-      if (epicIds.length === 1) {
-        const epic = input.orchestrations?.epics.find(({ epicId }) => epicId === epicIds[0]);
-        folderPath([
-          { id: `epic:${epicIds[0]}`, label: epic?.title ?? epicIds[0] },
-          { id: `epic:${epicIds[0]}:related`, label: 'Multiple related views' },
-        ]).children.push(item);
-      } else {
-        folderPath([
-          { id: 'independent', label: 'Independent Sessions' },
-          { id: 'independent:multiple', label: 'Multiple related views' },
-        ]).children.push(item);
+
+    if (!draft && placementPaths.length > 1) {
+      const epicRootIds = unique(placementPaths.map((path) => path[0].id));
+      if (epicRootIds.length === 1) {
+        folderPath([placementPaths[0][0]])?.children.push(item);
+        continue;
       }
-      continue;
     }
-    folderPath([
-      { id: 'independent', label: 'Independent Sessions' },
-      { id: 'independent:unassigned', label: 'Unassigned' },
-    ]).children.push(item);
+
+    independentSessions.push(item);
   }
 
-  return { roots: sortFolders(roots), sessions };
+  return {
+    sections: [
+      {
+        kind: 'section',
+        id: 'epics',
+        label: 'Epics',
+        children: sortNodes(epicRoots),
+      },
+      {
+        kind: 'section',
+        id: 'independent',
+        label: 'Independent Sessions',
+        children: sortNodes(independentSessions),
+      },
+    ],
+    sessions,
+  };
 }
 
 function collectReferences(orchestrations?: ProductReadModelsV1) {
   const result = new Map<string, ResolvedReference[]>();
   for (const epic of orchestrations?.epics ?? []) {
     for (const reference of epic.agentSessionReferences) {
-      const resolved = resolveReference(epic, reference);
-      const existing = result.get(reference.agentSessionId) ?? [];
-      if (
-        !existing.some(
-          ({ reference: item }) => item.agentSessionRefId === reference.agentSessionRefId,
-        )
-      )
-        existing.push(resolved);
-      result.set(reference.agentSessionId, existing);
+      addResolvedReference(result, reference.agentSessionId, resolveReference(epic, reference));
     }
   }
   for (const reference of orchestrations?.unassociatedAgentSessionReferences ?? []) {
-    const existing = result.get(reference.agentSessionId) ?? [];
-    if (
-      !existing.some(
-        ({ reference: item }) => item.agentSessionRefId === reference.agentSessionRefId,
-      )
-    )
-      existing.push({
-        reference,
-        locations: [],
-        folderPath: [
-          { id: 'independent', label: 'Independent Sessions' },
-          { id: 'independent:other', label: 'Other recorded relationships' },
-        ],
-      });
-    result.set(reference.agentSessionId, existing);
+    addResolvedReference(result, reference.agentSessionId, {
+      reference,
+      locations: [],
+      folderPath: [],
+    });
   }
   return result;
+}
+
+function addResolvedReference(
+  result: Map<string, ResolvedReference[]>,
+  sessionId: string,
+  resolved: ResolvedReference,
+) {
+  const existing = result.get(sessionId) ?? [];
+  if (
+    !existing.some(
+      ({ reference }) => reference.agentSessionRefId === resolved.reference.agentSessionRefId,
+    )
+  )
+    existing.push(resolved);
+  result.set(sessionId, existing);
 }
 
 function resolveReference(
@@ -243,6 +245,7 @@ function resolveReference(
       locations: [{ kind: 'epic', epicId: epic.epicId, label: epic.title }],
       folderPath: epicPath,
     };
+
   const sprint = epic.sprints.find(
     (item) =>
       (reference.targetKind === 'sprint' && item.sprintId === reference.targetId) ||
@@ -250,15 +253,8 @@ function resolveReference(
         ({ agentSessionRefId }) => agentSessionRefId === reference.agentSessionRefId,
       ),
   );
-  if (!sprint)
-    return {
-      reference,
-      locations: [],
-      folderPath: [
-        { id: 'independent', label: 'Independent Sessions' },
-        { id: 'independent:other', label: 'Other recorded relationships' },
-      ],
-    };
+  if (!sprint) return { reference, locations: [], folderPath: [] };
+
   const sprintPath = [
     ...epicPath,
     { id: `epic:${epic.epicId}:sprint:${sprint.sprintId}`, label: sprint.title },
@@ -276,6 +272,7 @@ function resolveReference(
       ],
       folderPath: sprintPath,
     };
+
   if (reference.targetKind === 'sprint_planner_activity') {
     const matches = sprint.revisionViews.flatMap((view) =>
       view.plannerActivityGroups
@@ -283,7 +280,7 @@ function resolveReference(
         .map((activity) => ({ view, activity })),
     );
     const match = matches[0];
-    if (!match) return { reference, locations: [], folderPath: sprintPath };
+    if (!match) return { reference, locations: [], folderPath: [] };
     return {
       reference,
       locations: matches.map(({ view, activity }) => ({
@@ -296,14 +293,14 @@ function resolveReference(
       })),
       folderPath: [
         ...sprintPath,
-        { id: `${sprintPath[1].id}:planning`, label: 'Planning' },
         {
-          id: `${sprintPath[1].id}:planning:${match.activity.sprintPlannerActivityId}`,
+          id: `${sprintPath[1].id}:activity:${match.activity.sprintPlannerActivityId}`,
           label: match.activity.title,
         },
       ],
     };
   }
+
   if (reference.targetKind === 'work_unit_execution') {
     const matches = sprint.revisionViews.flatMap((view) =>
       view.workUnits
@@ -320,7 +317,7 @@ function resolveReference(
         }),
     );
     const match = matches[0];
-    if (!match) return { reference, locations: [], folderPath: sprintPath };
+    if (!match) return { reference, locations: [], folderPath: [] };
     return {
       reference,
       locations: matches.map(({ view, activity, unit }) => ({
@@ -334,22 +331,19 @@ function resolveReference(
       })),
       folderPath: [
         ...sprintPath,
-        { id: `${sprintPath[1].id}:execution`, label: 'Execution' },
         {
-          id: `${sprintPath[1].id}:execution:${match.unit.workUnitId}`,
+          id: `${sprintPath[1].id}:activity:${match.activity.sprintPlannerActivityId}`,
+          label: match.activity.title,
+        },
+        {
+          id: `${sprintPath[1].id}:activity:${match.activity.sprintPlannerActivityId}:work-unit:${match.unit.workUnitId}`,
           label: match.unit.title,
         },
       ],
     };
   }
-  return {
-    reference,
-    locations: [],
-    folderPath: [
-      { id: 'independent', label: 'Independent Sessions' },
-      { id: 'independent:other', label: 'Other recorded relationships' },
-    ],
-  };
+
+  return { reference, locations: [], folderPath: [] };
 }
 
 function uniqueLocations(locations: readonly AgentSessionProductLocation[]) {
@@ -366,6 +360,18 @@ function unique(values: readonly string[]) {
   return [...new Set(values)];
 }
 
+function uniquePaths(
+  paths: readonly (readonly { readonly id: string; readonly label: string }[])[],
+) {
+  const seen = new Set<string>();
+  return paths.filter((path) => {
+    const key = JSON.stringify(path);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function roleLabel(role: AgentSessionSemanticRole, other?: string): string {
   if (role === 'other') return other ?? 'Other role';
   return {
@@ -380,11 +386,22 @@ function roleLabel(role: AgentSessionSemanticRole, other?: string): string {
   }[role];
 }
 
-function sortFolders(folders: readonly MutableFolder[]): readonly AgentSessionNavigationFolder[] {
-  return folders.map((item) => ({
-    ...item,
-    children: item.children.map((child) =>
-      child.kind === 'folder' ? (sortFolders([child])[0] as AgentSessionNavigationFolder) : child,
-    ),
-  }));
+function sortNodes(
+  nodes: readonly (MutableFolder | AgentSessionNavigationSession)[],
+): readonly AgentSessionNavigationNode[] {
+  return nodes
+    .map((node) =>
+      node.kind === 'folder'
+        ? {
+            ...node,
+            children: sortNodes(node.children),
+          }
+        : node,
+    )
+    .sort((left, right) => {
+      if (left.kind !== right.kind) return left.kind === 'session' ? -1 : 1;
+      const leftLabel = left.kind === 'session' ? left.summary.title : left.label;
+      const rightLabel = right.kind === 'session' ? right.summary.title : right.label;
+      return leftLabel.localeCompare(rightLabel);
+    });
 }

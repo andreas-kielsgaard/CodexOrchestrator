@@ -41,7 +41,6 @@ export function SprintContinuationControl({
       <label className="sprint-auto-flow__switch">
         <span>
           <strong>Sprint Auto-flow</strong>
-          <small>Recorded only</small>
         </span>
         <input
           type="checkbox"
@@ -53,9 +52,7 @@ export function SprintContinuationControl({
         <i aria-hidden="true" />
       </label>
       <span className="visually-hidden" id={descriptionId}>
-        Records whether accepted child Work Units should start the next planning round. This view
-        reflects recorded policy only and does not evaluate eligibility or execute work. Clicking
-        updates the injected policy controller and does not prove persistence or initiation.
+        Controls whether accepted child Work Units should start the next planning round.
       </span>
       <p role="status" aria-live="polite">
         {outcome}

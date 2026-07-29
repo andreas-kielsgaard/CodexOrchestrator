@@ -70,6 +70,46 @@ export interface ProductSprintWorkspacePresentationMetadataV1 {
     readonly sprintPlannerActivityIds: readonly string[];
     readonly workUnitScopeIds: readonly string[];
   }[];
+  /** Epic Planner-authored Sprint objectives. Global Epic goals are not substituted here. */
+  readonly epicPlannerObjectives?: readonly {
+    readonly objectiveId: string;
+    readonly sprintId: string;
+    readonly title: string;
+    readonly source: ReadSourceAuthorityV1;
+  }[];
+  /** Explicit Sprint Planner problem-to-graph links. Transcript prose is never parsed for these. */
+  readonly problems?: readonly {
+    readonly problemId: string;
+    readonly sprintId: string;
+    readonly title: string;
+    readonly source: ReadSourceAuthorityV1;
+    readonly graphElementRefs: readonly {
+      readonly kind: 'sprint_planner_activity' | 'work_unit' | 'gate';
+      readonly id: string;
+    }[];
+  }[];
+  /** Recorded navigation metadata only; runtime lifecycle support is not implied. */
+  readonly workUnitLifecycle?: readonly {
+    readonly entryId: string;
+    readonly sprintId: string;
+    readonly workUnitId: string;
+    readonly sequence: number;
+    readonly kind:
+      | 'planning'
+      | 'launch'
+      | 'work'
+      | 'review'
+      | 'reprompt'
+      | 'renewed_work'
+      | 'merge'
+      | 'completion';
+    readonly title: string;
+    readonly summary: string;
+    readonly agentSessionId: string;
+    readonly agentRole: 'sprint_planner' | 'work_unit_handler' | 'worker' | 'reviewer' | 'merger';
+    readonly invocationId: string;
+    readonly source: ReadSourceAuthorityV1;
+  }[];
   readonly narratives?: readonly (Readonly<{ readonly sprintId: string }> &
     ProductSprintWorkspaceNarrativesV1)[];
 }
@@ -383,6 +423,9 @@ export interface ProductSprintReadModelV1 {
     readonly plannerActivityMembership: ProductSprintWorkspacePresentationMetadataV1['plannerActivityMembership'];
     readonly gates: ProductSprintWorkspacePresentationMetadataV1['gates'];
     readonly documents: ProductSprintWorkspacePresentationMetadataV1['documents'];
+    readonly epicPlannerObjectives?: ProductSprintWorkspacePresentationMetadataV1['epicPlannerObjectives'];
+    readonly problems?: ProductSprintWorkspacePresentationMetadataV1['problems'];
+    readonly workUnitLifecycle?: ProductSprintWorkspacePresentationMetadataV1['workUnitLifecycle'];
     readonly narratives?: ProductSprintWorkspaceNarrativesV1;
   }>;
   readonly agentSessionReferences: readonly ProductAgentSessionReferenceReadModelV1[];

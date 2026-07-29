@@ -70,6 +70,23 @@ describe('Sprint workspace presentation projector', () => {
     expect(presentation.narratives?.progress).toEqual({
       source: { status: 'unavailable', reason: 'not recorded' },
     });
+    expect(presentation.epicPlannerObjectives.map(({ title }) => title)).toEqual([
+      'Preserve the Sprint task.',
+      'Make the plan reviewable.',
+    ]);
+    expect(presentation.problems).toEqual([
+      expect.objectContaining({
+        problemId: 'problem-1',
+        graphElementRefs: [
+          { kind: 'sprint_planner_activity', id: 'activity-a' },
+          { kind: 'work_unit', id: 'work-unit-1' },
+        ],
+      }),
+    ]);
+    expect(presentation.workUnitLifecycle.map(({ entryId }) => entryId)).toEqual([
+      'lifecycle-1',
+      'lifecycle-2',
+    ]);
     expect(presentation.continuation).toMatchObject({
       policy: { automaticEnabled: true },
       eligibility: { status: 'eligible' },
@@ -385,9 +402,73 @@ function sprintReadModel(): ProductSprintReadModelV1 {
           workUnitScopeIds: [],
         },
       ],
+      epicPlannerObjectives: [
+        {
+          objectiveId: 'objective-1',
+          sprintId: 'sprint-1',
+          title: 'Preserve the Sprint task.',
+          source: source(),
+        },
+        {
+          objectiveId: 'objective-2',
+          sprintId: 'sprint-1',
+          title: 'Make the plan reviewable.',
+          source: source(),
+        },
+      ],
+      problems: [
+        {
+          problemId: 'problem-1',
+          sprintId: 'sprint-1',
+          title: 'Connect the Plan and Work Unit.',
+          source: source(),
+          graphElementRefs: [
+            { kind: 'sprint_planner_activity', id: 'activity-a' },
+            { kind: 'work_unit', id: 'work-unit-1' },
+          ],
+        },
+      ],
+      workUnitLifecycle: [
+        {
+          entryId: 'lifecycle-2',
+          sprintId: 'sprint-1',
+          workUnitId: 'work-unit-1',
+          sequence: 2,
+          kind: 'review',
+          title: 'Review',
+          summary: 'Reviewed.',
+          agentSessionId: 'session-1',
+          agentRole: 'reviewer',
+          invocationId: 'invocation-2',
+          source: source(),
+        },
+        {
+          entryId: 'lifecycle-1',
+          sprintId: 'sprint-1',
+          workUnitId: 'work-unit-1',
+          sequence: 1,
+          kind: 'work',
+          title: 'Work',
+          summary: 'Worked.',
+          agentSessionId: 'session-1',
+          agentRole: 'worker',
+          invocationId: 'invocation-1',
+          source: source(),
+        },
+      ],
       narratives: { progress: { source: { status: 'unavailable', reason: 'not recorded' } } },
     },
-    agentSessionReferences: [],
+    agentSessionReferences: [
+      {
+        agentSessionRefId: 'session-ref-1',
+        agentSessionId: 'session-1',
+        title: 'Recorded session',
+        source: source(),
+        targetKind: 'work_unit_execution',
+        targetId: 'execution-1',
+        semanticRole: 'work_unit_worker',
+      },
+    ],
     continuation: {
       level: 'sprint',
       policy: { policyId: 'policy-1', automaticEnabled: true },

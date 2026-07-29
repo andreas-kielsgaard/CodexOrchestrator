@@ -68,19 +68,40 @@
 .shared-agent-session__conversation {
   position: relative;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-rows: 42px minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
 }
 
-.shared-agent-session__actions--expanded {
-  position: absolute;
-  z-index: 2;
-  top: 10px;
-  right: 12px;
+.shared-agent-session__heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 12px;
+  border-bottom: 1px solid #d9e0d9;
+  background: #fffdf8;
+  color: #5f7067;
+  font-size: 0.68rem;
+}
+
+.shared-agent-session__heading > span {
+  flex: 0 0 auto;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.shared-agent-session__heading > strong {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: #263c31;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .shared-agent-session__collapse {
+  flex: 0 0 auto;
   min-height: 28px;
   padding: 0 9px;
   border: 1px solid #c4cec4;
@@ -93,14 +114,13 @@
   cursor: pointer;
 }
 
-.shared-agent-session__actions--expanded .shared-agent-session__standalone {
+.shared-agent-session__heading .shared-agent-session__standalone {
   min-height: 28px;
   background: rgb(237 243 237 / 96%);
 }
 
 .shared-agent-session__conversation .agent-session-scroll-region {
   min-height: 0;
-  padding-top: 46px;
   padding-right: 20px;
   padding-left: 20px;
   overscroll-behavior: none;

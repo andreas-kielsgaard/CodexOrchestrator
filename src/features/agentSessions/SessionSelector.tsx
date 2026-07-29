@@ -15,10 +15,12 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent,
+  type RefObject,
 } from 'react';
 import type {
   AgentSessionNavigationModel,
   AgentSessionNavigationNode,
+  AgentSessionNavigationSection,
   AgentSessionNavigationSession,
 } from '../../application/agentSessionNavigation';
 
@@ -37,6 +39,7 @@ interface VisibleTreeItem {
   readonly node: AgentSessionNavigationNode;
   readonly level: number;
   readonly parentId: string | null;
+  readonly sectionId: string;
 }
 
 export function SessionSelector({
@@ -52,18 +55,24 @@ export function SessionSelector({
   const [treeOpen, setTreeOpen] = useState(true);
   const selectedNodeId = selectedSessionId ? `session:${selectedSessionId}` : null;
   const visible = useMemo(
-    () => flattenVisibleTree(model.roots, expandedNodeIds),
-    [expandedNodeIds, model.roots],
+    () =>
+      model.sections.flatMap((section) =>
+        flattenVisibleTree(section.children, expandedNodeIds, 1, null, section.id),
+      ),
+    [expandedNodeIds, model.sections],
   );
   const [focusedId, setFocusedId] = useState<string | null>(selectedNodeId);
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
+  const lastSelectedNodeId = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!selectedNodeId) return;
-    const ancestors = findAncestors(model.roots, selectedNodeId);
+    if (!selectedNodeId || lastSelectedNodeId.current === selectedNodeId) return;
+    if (!model.sections.some((section) => findNode(section.children, selectedNodeId))) return;
+    lastSelectedNodeId.current = selectedNodeId;
+    const ancestors = findAncestorsInSections(model.sections, selectedNodeId);
     if (ancestors.some((id) => !expandedNodeIds.has(id)))
       onExpandedNodeIdsChange(new Set([...expandedNodeIds, ...ancestors]));
-  }, [expandedNodeIds, model.roots, onExpandedNodeIdsChange, selectedNodeId]);
+  }, [expandedNodeIds, model.sections, onExpandedNodeIdsChange, selectedNodeId]);
 
   useEffect(() => {
     if (!selectedNodeId) return;
@@ -72,8 +81,17 @@ export function SessionSelector({
 
   useEffect(() => {
     if (focusedId && visible.some(({ node }) => node.id === focusedId)) return;
-    setFocusedId(selectedNodeId ?? visible[0]?.node.id ?? null);
-  }, [focusedId, selectedNodeId, visible]);
+    const selectedAncestor = selectedNodeId
+      ? findAncestorsInSections(model.sections, selectedNodeId)
+          .reverse()
+          .find((id) => visible.some(({ node }) => node.id === id))
+      : undefined;
+    setFocusedId(
+      visible.some(({ node }) => node.id === selectedNodeId)
+        ? selectedNodeId
+        : (selectedAncestor ?? visible[0]?.node.id ?? null),
+    );
+  }, [focusedId, model.sections, selectedNodeId, visible]);
 
   const focus = (id: string | undefined) => {
     if (!id) return;
@@ -84,7 +102,10 @@ export function SessionSelector({
     const next = new Set(expandedNodeIds);
     const shouldExpand = expanded ?? !next.has(id);
     if (shouldExpand) next.add(id);
-    else next.delete(id);
+    else {
+      next.delete(id);
+      if (selectedNodeId && nodeContains(model.sections, id, selectedNodeId)) focus(id);
+    }
     onExpandedNodeIdsChange(next);
   };
   const onTreeKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -140,27 +161,94 @@ export function SessionSelector({
       <button className="session-new-button" type="button" onClick={onNew}>
         New session
       </button>
+      <div id="agent-session-tree" className="session-tree">
+        {model.sections.map((section) => (
+          <SessionTreeSection
+            key={section.id}
+            section={section}
+            visible={visible.filter(({ sectionId }) => sectionId === section.id)}
+            expandedNodeIds={expandedNodeIds}
+            selectedSessionId={selectedSessionId}
+            selectedNodeId={selectedNodeId}
+            focusedId={focusedId}
+            loading={loading}
+            itemRefs={itemRefs}
+            onFocus={setFocusedId}
+            onKeyDown={onTreeKeyDown}
+            onToggle={toggle}
+            onSelect={onSelect}
+          />
+        ))}
+      </div>
+      <button
+        className="session-refresh-button"
+        type="button"
+        onClick={onReload}
+        disabled={loading}
+      >
+        <RefreshCw className={loading ? 'spin' : ''} size={15} aria-hidden="true" />
+        Refresh
+      </button>
+    </aside>
+  );
+}
+
+function SessionTreeSection({
+  section,
+  visible,
+  expandedNodeIds,
+  selectedSessionId,
+  selectedNodeId,
+  focusedId,
+  loading,
+  itemRefs,
+  onFocus,
+  onKeyDown,
+  onToggle,
+  onSelect,
+}: {
+  readonly section: AgentSessionNavigationSection;
+  readonly visible: readonly VisibleTreeItem[];
+  readonly expandedNodeIds: ReadonlySet<string>;
+  readonly selectedSessionId: string | null;
+  readonly selectedNodeId: string | null;
+  readonly focusedId: string | null;
+  readonly loading: boolean;
+  readonly itemRefs: RefObject<Map<string, HTMLButtonElement>>;
+  readonly onFocus: (id: string) => void;
+  readonly onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
+  readonly onToggle: (id: string) => void;
+  readonly onSelect: (sessionId: string) => void;
+}) {
+  const headingId = `session-section-${section.id}`;
+  return (
+    <section className="session-tree-section" aria-labelledby={headingId}>
+      <h2 id={headingId}>{section.label}</h2>
       <div
-        id="agent-session-tree"
-        className="session-tree"
         role="tree"
-        aria-label="Session hierarchy"
+        aria-label={`${section.label} session hierarchy`}
         aria-busy={loading}
-        onKeyDown={onTreeKeyDown}
+        onKeyDown={onKeyDown}
       >
         {visible.length === 0 ? (
-          <p className="session-list-empty">No saved sessions yet.</p>
+          <p className="session-list-empty">
+            {section.id === 'independent' ? 'No independent Sessions.' : 'No Epic Sessions.'}
+          </p>
         ) : (
           visible.map(({ node, level }) => {
             const folder = node.kind === 'folder';
             const selected = !folder && node.summary.id === selectedSessionId;
+            const containsSelected =
+              folder &&
+              Boolean(selectedNodeId) &&
+              nodeContains([section], node.id, selectedNodeId!);
             return (
               <button
                 ref={(element) => {
-                  if (element) itemRefs.current.set(node.id, element);
-                  else itemRefs.current.delete(node.id);
+                  if (element) itemRefs.current?.set(node.id, element);
+                  else itemRefs.current?.delete(node.id);
                 }}
-                className={`session-tree-item session-tree-item--${node.kind}${selected ? ' is-selected' : ''}`}
+                className={`session-tree-item session-tree-item--${node.kind}${selected ? ' is-selected' : ''}${containsSelected ? ' has-selected-descendant' : ''}`}
                 style={{ '--tree-level': level } as CSSProperties}
                 role="treeitem"
                 type="button"
@@ -169,9 +257,9 @@ export function SessionSelector({
                 aria-level={level}
                 aria-expanded={folder ? expandedNodeIds.has(node.id) : undefined}
                 aria-selected={folder ? undefined : selected}
-                onFocus={() => setFocusedId(node.id)}
+                onFocus={() => onFocus(node.id)}
                 onClick={() => {
-                  if (node.kind === 'folder') toggle(node.id);
+                  if (node.kind === 'folder') onToggle(node.id);
                   else onSelect(node.summary.id);
                 }}
               >
@@ -192,6 +280,11 @@ export function SessionSelector({
                     )}
                     <Folder className="session-tree-item__folder" size={15} aria-hidden="true" />
                     <span className="session-tree-item__folder-label">{node.label}</span>
+                    {containsSelected ? (
+                      <span className="session-tree-item__selected-descendant">
+                        Contains selected Session
+                      </span>
+                    ) : null}
                   </>
                 ) : (
                   <SessionTreeLabel session={node} />
@@ -201,16 +294,7 @@ export function SessionSelector({
           })
         )}
       </div>
-      <button
-        className="session-refresh-button"
-        type="button"
-        onClick={onReload}
-        disabled={loading}
-      >
-        <RefreshCw className={loading ? 'spin' : ''} size={15} aria-hidden="true" />
-        Refresh
-      </button>
-    </aside>
+    </section>
   );
 }
 
@@ -268,13 +352,51 @@ function flattenVisibleTree(
   expanded: ReadonlySet<string>,
   level = 1,
   parentId: string | null = null,
+  sectionId: string,
 ): VisibleTreeItem[] {
   return nodes.flatMap((node) => [
-    { node, level, parentId },
+    { node, level, parentId, sectionId },
     ...(node.kind === 'folder' && expanded.has(node.id)
-      ? flattenVisibleTree(node.children, expanded, level + 1, node.id)
+      ? flattenVisibleTree(node.children, expanded, level + 1, node.id, sectionId)
       : []),
   ]);
+}
+
+function findAncestorsInSections(
+  sections: readonly AgentSessionNavigationSection[],
+  targetId: string,
+) {
+  for (const section of sections) {
+    const found = findAncestors(section.children, targetId);
+    if (found.length > 0 || section.children.some(({ id }) => id === targetId)) return [...found];
+  }
+  return [] as string[];
+}
+
+function nodeContains(
+  sections: readonly AgentSessionNavigationSection[],
+  nodeId: string,
+  targetId: string,
+) {
+  for (const section of sections) {
+    const node = findNode(section.children, nodeId);
+    if (node?.kind === 'folder' && findNode(node.children, targetId)) return true;
+  }
+  return false;
+}
+
+function findNode(
+  nodes: readonly AgentSessionNavigationNode[],
+  targetId: string,
+): AgentSessionNavigationNode | undefined {
+  for (const node of nodes) {
+    if (node.id === targetId) return node;
+    if (node.kind === 'folder') {
+      const found = findNode(node.children, targetId);
+      if (found) return found;
+    }
+  }
+  return undefined;
 }
 
 function findAncestors(

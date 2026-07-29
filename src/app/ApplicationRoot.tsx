@@ -2,16 +2,20 @@ import { useEffect, useState } from 'react';
 import { createProductApplicationComposition } from '../bootstrap/productApplicationComposition';
 import { App, type AppProps } from './App';
 
-/** The optional recorded review composition is development-only and never enters product boot. */
+/** Optional recorded review compositions are development-only and never enter product boot. */
 export function ApplicationRoot() {
   const [composition, setComposition] = useState<AppProps | null>(null);
 
   useEffect(() => {
     let active = true;
-    if (
-      viteDevelopmentMode() &&
-      new URLSearchParams(window.location.search).has('recorded-plan-builder')
-    ) {
+    const parameters = new URLSearchParams(window.location.search);
+    if (viteDevelopmentMode() && parameters.has('file-diff-viewer')) {
+      void import('../dev/fileReview/recordedFileReviewClient').then(
+        ({ createRecordedFileReviewApplicationComposition }) => {
+          if (active) setComposition(createRecordedFileReviewApplicationComposition());
+        },
+      );
+    } else if (viteDevelopmentMode() && parameters.has('recorded-plan-builder')) {
       void import('../dev/orchestrationSection/recordedOrchestrationClient').then(
         ({ createRecordedDevelopmentApplicationComposition }) => {
           if (active) setComposition(createRecordedDevelopmentApplicationComposition());

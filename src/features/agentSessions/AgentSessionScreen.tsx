@@ -13,6 +13,7 @@ import type {
 import { AgentSessionWorkspace } from './AgentSessionWorkspace';
 import { SessionSelector } from './SessionSelector';
 import { useAgentSession, useAgentSessionCollection } from './useAgentSessionController';
+import { ResizableSplitSurface } from '../orchestrations/components/ResizableSplitSurface';
 import './agentSession.css';
 
 export interface AgentSessionScreenProps {
@@ -75,38 +76,51 @@ export function StandaloneAgentSessionScreen({
 
   return (
     <main className="agent-session-screen">
-      <SessionSelector
-        model={navigation}
-        selectedSessionId={collection.selectedSessionId}
-        expandedNodeIds={expansion}
-        loading={collection.loading}
-        onExpandedNodeIdsChange={updateExpansion}
-        onSelect={(id) => void collection.selectSession(id)}
-        onNew={collection.startNewSession}
-        onReload={() => void collection.reload()}
+      <ResizableSplitSurface
+        axis="horizontal"
+        primaryLabel="Agent Session navigation"
+        secondaryLabel="Selected Agent Session"
+        initialPrimaryPercent={25}
+        minimumPrimaryPixels={240}
+        minimumSecondaryPixels={480}
+        compactBreakpoint={860}
+        primary={
+          <SessionSelector
+            model={navigation}
+            selectedSessionId={collection.selectedSessionId}
+            expandedNodeIds={expansion}
+            loading={collection.loading}
+            onExpandedNodeIdsChange={updateExpansion}
+            onSelect={(id) => void collection.selectSession(id)}
+            onNew={collection.startNewSession}
+            onReload={() => void collection.reload()}
+          />
+        }
+        secondary={
+          <div className="agent-session-content">
+            {collection.error && (
+              <section className="agent-session-error" role="alert">
+                <AlertCircle size={17} aria-hidden="true" />
+                <span>{collection.error}</span>
+                <button type="button" onClick={collection.clearError} aria-label="Dismiss error">
+                  <X size={15} aria-hidden="true" />
+                </button>
+              </section>
+            )}
+            <AgentSessionWorkspace
+              controller={session}
+              headerActions={
+                selectedNavigation && onNavigateToProduct ? (
+                  <SessionProductNavigation
+                    locations={selectedNavigation.productLocations}
+                    onNavigate={onNavigateToProduct}
+                  />
+                ) : undefined
+              }
+            />
+          </div>
+        }
       />
-      <div className="agent-session-content">
-        {collection.error && (
-          <section className="agent-session-error" role="alert">
-            <AlertCircle size={17} aria-hidden="true" />
-            <span>{collection.error}</span>
-            <button type="button" onClick={collection.clearError} aria-label="Dismiss error">
-              <X size={15} aria-hidden="true" />
-            </button>
-          </section>
-        )}
-        <AgentSessionWorkspace
-          controller={session}
-          headerActions={
-            selectedNavigation && onNavigateToProduct ? (
-              <SessionProductNavigation
-                locations={selectedNavigation.productLocations}
-                onNavigate={onNavigateToProduct}
-              />
-            ) : undefined
-          }
-        />
-      </div>
     </main>
   );
 }

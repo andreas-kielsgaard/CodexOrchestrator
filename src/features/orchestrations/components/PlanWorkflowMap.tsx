@@ -22,14 +22,6 @@ export function PlanWorkflowMap({ workflow }: { readonly workflow: RecordedPlanW
 
   return (
     <section className="plan-workflow" aria-label="Plan actor and conversation workflow">
-      <header className="plan-workflow__notice">
-        <Workflow size={17} aria-hidden="true" />
-        <span>
-          <strong>Recorded/theoretical evaluation</strong>
-          <small>No live execution, thread creation, repository integration, or persistence.</small>
-        </span>
-      </header>
-
       <div className="plan-workflow__canvas">
         <WorkflowTrack label="Sprint to Planner" steps={workflow.sharedStart} actors={actors} />
 
