@@ -494,9 +494,25 @@ export const recordedProductReadCompositionInput = {
         epicId,
         currentMovement: {
           source: source(),
-          value: { kind: 'executing_work', processingCount: 0, reviewingCount: 0 },
+          value: { items: [] },
         },
-        state: { source: source(), value: 'ready_to_continue' },
+        state: { source: source(), value: 'paused' },
+        readyWork: {
+          source: source(),
+          value: [
+            {
+              actionId: 'continue-planner-work-unit-sprint',
+              label: 'Continue with Planner and Work Unit Interaction Discovery',
+              target: {
+                kind: 'sprint',
+                epicId,
+                sprintId: 'sprint-planner-work-unit',
+                revisionId: 'sprint-planner-work-unit-r1',
+              },
+            },
+          ],
+        },
+        humanInput: { source: source(), value: null },
       },
     ],
     sprints: sprintDefinitions.map(([sprintId, title, summary, details, lifecycle]) => ({

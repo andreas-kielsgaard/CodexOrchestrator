@@ -40,7 +40,7 @@
 .orchestration-list {
   width: min(100%, 1060px);
   margin: 0 auto;
-  overflow-x: auto;
+  overflow: visible;
   border: 1px solid #d5dce2;
   border-radius: 12px;
   background: #fff;
@@ -79,9 +79,19 @@
   border-bottom: 0;
 }
 
-.orchestration-list tbody tr:has(.orchestration-list__open:hover),
+.orchestration-list tbody tr.orchestration-list__row:hover,
 .orchestration-list tbody tr:has(.orchestration-list__open:focus-visible) {
   background: #f8fafb;
+}
+
+.orchestration-list__row {
+  cursor: pointer;
+}
+
+.orchestration-list__title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
 }
 
 .orchestration-list__open {
@@ -95,6 +105,46 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.epic-description-help {
+  position: relative;
+  display: inline-flex;
+}
+
+.epic-description-help__trigger {
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #60707b;
+  cursor: help;
+  place-items: center;
+}
+
+.epic-description-help__trigger:hover {
+  background: #e8eef2;
+  color: #164f7a;
+}
+
+.epic-description-help__tooltip {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 7px);
+  left: -8px;
+  width: min(330px, calc(100vw - 48px));
+  padding: 9px 11px;
+  border: 1px solid #c7d2da;
+  border-radius: 7px;
+  background: #172532;
+  box-shadow: 0 8px 22px rgb(30 48 64 / 18%);
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 550;
+  line-height: 1.45;
 }
 
 .orchestration-list__open strong {
@@ -133,6 +183,121 @@
   color: #245d82;
 }
 
+button.movement-badge {
+  font: inherit;
+}
+
+.movement-badge--interactive {
+  cursor: pointer;
+}
+
+.movement-badge--interactive:hover {
+  border-color: #78a5c2;
+  background: #e2f0f8;
+}
+
+.movement-badge--empty {
+  border-color: #d7dee3;
+  background: #f4f6f8;
+  color: #63717b;
+  font-weight: 650;
+}
+
+.movement-summary {
+  position: relative;
+  display: inline-flex;
+}
+
+.movement-popover {
+  position: absolute;
+  z-index: 3;
+  top: calc(100% + 8px);
+  left: 0;
+  width: min(360px, calc(100vw - 48px));
+  padding: 7px;
+  border: 1px solid #cbd6dd;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgb(30 48 64 / 18%);
+}
+
+.movement-popover ul {
+  display: grid;
+  gap: 3px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.movement-popover button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #253542;
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.movement-popover button:hover {
+  background: #eef4f7;
+}
+
+.movement-popover small {
+  color: #687782;
+  font-size: 0.69rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.epic-overview-actions {
+  display: grid;
+  justify-items: start;
+  gap: 7px;
+}
+
+.epic-overview-action {
+  display: grid;
+  gap: 2px;
+  max-width: 300px;
+  padding: 7px 9px;
+  border: 1px solid #a9bfd0;
+  border-radius: 7px;
+  background: #f2f7fa;
+  color: #164f7a;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 750;
+  text-align: left;
+  cursor: pointer;
+}
+
+.epic-overview-action:hover {
+  border-color: #5e91b3;
+  background: #e7f1f7;
+}
+
+.epic-overview-action small {
+  color: #8b4d10;
+  font-size: 0.66rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.epic-overview-action--human-input {
+  border-color: #d29a60;
+  background: #fff7e9;
+  color: #74400e;
+}
+
 .epic-state {
   border: 1px solid currentcolor;
 }
@@ -140,11 +305,6 @@
 .epic-state--running {
   background: #e8f3fc;
   color: #17659a;
-}
-
-.epic-state--ready_to_continue {
-  background: #fff1ca;
-  color: #8a5b00;
 }
 
 .epic-state--paused {
@@ -181,7 +341,7 @@
   border: 0;
 }
 
-@media (max-width: 720px) {
+@media (max-width: 820px) {
   .orchestration-section {
     padding: 24px 14px 34px;
   }
@@ -231,5 +391,16 @@
     font-weight: 850;
     letter-spacing: 0.04em;
     text-transform: uppercase;
+  }
+
+  .movement-popover {
+    position: static;
+    width: min(100%, 360px);
+    margin-top: 7px;
+  }
+
+  .epic-description-help__tooltip {
+    right: -8px;
+    left: auto;
   }
 }

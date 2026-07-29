@@ -101,8 +101,10 @@ export const disposableRecordedOrchestrationView = {
       id: 'epic-recorded-1',
       name: 'Recorded Epic',
       goal: 'A non-executing recorded Epic for interface development.',
-      movement: { kind: 'preparing_next_sprint' },
-      state: 'ready_to_continue',
+      movement: { kind: 'available', items: [] },
+      state: 'paused',
+      readyWork: [],
+      humanInput: null,
       plan: {
         items: [
           {

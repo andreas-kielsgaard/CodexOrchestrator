@@ -485,7 +485,14 @@ describe('App orchestration loading', () => {
       }),
     } as never);
     render(<App {...composition} epicPlanningDraftLifecycleClient={lifecycle} />);
-    fireEvent.click(await screen.findByRole('button', { name: /Restartable plan/ }));
+    const draft = await screen.findByRole('button', {
+      name: 'Open planning draft Restartable plan',
+    });
+    expect(
+      screen.getByRole('button', { name: 'Open Codex Epic Runner workspace development' }),
+    ).toBeVisible();
+    expect(screen.getByText('Pre-initiation planning draft')).toBeVisible();
+    fireEvent.click(draft);
     expect(screen.getByRole('main', { name: 'Plan an Epic' })).toBeVisible();
     expect(screen.getByRole('textbox', { name: 'Epic name' })).toHaveValue('Restartable plan');
     expect(invoke).not.toHaveBeenCalledWith(
@@ -1082,10 +1089,16 @@ function productReadModels(
         overview: {
           currentMovement: status
             ? { source: { status, reason: `${status} from product` } }
-            : { source: availableSource, value: { kind: 'planning_next_work' } },
+            : { source: availableSource, value: { items: [] } },
           state: status
             ? { source: { status, reason: `${status} from product` } }
             : { source: availableSource, value: 'running' },
+          readyWork: status
+            ? { source: { status, reason: `${status} from product` } }
+            : { source: availableSource, value: [] },
+          humanInput: status
+            ? { source: { status, reason: `${status} from product` } }
+            : { source: availableSource, value: null },
         },
         sprints: [
           {

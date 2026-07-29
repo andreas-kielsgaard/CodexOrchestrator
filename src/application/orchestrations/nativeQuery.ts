@@ -304,6 +304,18 @@ export function nativeQueryProductCompositionInputV2(
             reason: 'No Epic lifecycle state has been observed.',
           },
         },
+        readyWork: {
+          source: {
+            status: 'unavailable' as const,
+            reason: 'No application-owned ready-work projection is available.',
+          },
+        },
+        humanInput: {
+          source: {
+            status: 'unavailable' as const,
+            reason: 'No application-owned human-input action projection is available.',
+          },
+        },
       })),
       sprints: query.initiatedSprints.map((x) => ({
         sprintId: x.sprintId,
