@@ -64,6 +64,8 @@ export function composeProductOrchestrationReadModels(
       overview: {
         currentMovement: overview.currentMovement,
         state: overview.state,
+        readyWork: overview.readyWork,
+        humanInput: overview.humanInput,
       },
       sprints,
       agentSessionReferences: sessions.filter((reference) =>
@@ -675,6 +677,8 @@ function validateReferenceIndex(
     ...index.epics,
     ...index.epicOverviews.map((item) => ({ source: item.currentMovement.source })),
     ...index.epicOverviews.map((item) => ({ source: item.state.source })),
+    ...index.epicOverviews.map((item) => ({ source: item.readyWork.source })),
+    ...index.epicOverviews.map((item) => ({ source: item.humanInput.source })),
     ...index.sprints,
     ...index.sprintPlanRevisions,
     ...index.plannerActivities,
@@ -724,6 +728,42 @@ function validateReferenceIndex(
       fail('Epic overview references an unknown Epic');
     validateSourcedReadValue(overview.currentMovement, facts, 'Epic current movement');
     validateSourcedReadValue(overview.state, facts, 'Epic state');
+    validateSourcedReadValue(overview.readyWork, facts, 'Epic ready work');
+    validateSourcedReadValue(overview.humanInput, facts, 'Epic human input');
+    if (overview.currentMovement.source.status === 'available') {
+      uniqueOverviewIds(
+        overview.currentMovement.value!.items.map(({ movementItemId }) => movementItemId),
+        'movement item',
+      );
+      overview.currentMovement.value!.items.forEach((item) => {
+        if (!item.label.trim()) fail('Epic overview movement label cannot be blank');
+        if (item.state !== 'processing' && item.state !== 'reviewing')
+          fail('Epic overview movement state must be processing or reviewing');
+        validateOverviewNavigationTarget(item.target, overview.epicId, events, index);
+      });
+    }
+    if (overview.readyWork.source.status === 'available') {
+      uniqueOverviewIds(
+        overview.readyWork.value!.map(({ actionId }) => actionId),
+        'ready-work action',
+      );
+      overview.readyWork.value!.forEach((action) => {
+        if (!action.label.trim()) fail('Epic overview ready-work label cannot be blank');
+        validateOverviewNavigationTarget(action.target, overview.epicId, events, index);
+      });
+    }
+    if (overview.humanInput.source.status === 'available' && overview.humanInput.value) {
+      if (!overview.humanInput.value.actionId.trim())
+        fail('Epic overview human-input action ID cannot be blank');
+      if (!overview.humanInput.value.label.trim())
+        fail('Epic overview human-input label cannot be blank');
+      validateOverviewNavigationTarget(
+        overview.humanInput.value.target,
+        overview.epicId,
+        events,
+        index,
+      );
+    }
   });
   requireComplete(
     index.epics,
@@ -1042,6 +1082,56 @@ function belongsToSprint(
   }
   return false;
 }
+
+function uniqueOverviewIds(ids: readonly string[], label: string) {
+  if (ids.some((id) => !id.trim())) fail(`Epic overview ${label} ID cannot be blank`);
+  if (new Set(ids).size !== ids.length) fail(`Epic overview cannot repeat a ${label} ID`);
+}
+
+function validateOverviewNavigationTarget(
+  target: import('./productReadModels').ProductOverviewItemNavigationTargetV1,
+  epicId: string,
+  events: ReturnType<typeof decodeOrchestrationEventsV1>,
+  index: ProductReadReferenceIndexV1,
+) {
+  if (target.epicId !== epicId) fail('Epic overview target must stay within its owning Epic');
+  if (!events.epics.some((epic) => epic.epicId === target.epicId))
+    fail('Epic overview target references an unknown Epic');
+  const sprint = events.sprints.find(({ sprintId }) => sprintId === target.sprintId);
+  if (!sprint || sprint.epicId !== target.epicId)
+    fail('Epic overview target references a Sprint outside its Epic');
+  const revision = events.sprintPlanRevisions.find(
+    ({ sprintPlanRevisionId }) => sprintPlanRevisionId === target.revisionId,
+  );
+  const plan = revision
+    ? events.sprintPlans.find(({ sprintPlanId }) => sprintPlanId === revision.sprintPlanId)
+    : undefined;
+  if (!revision || plan?.sprintId !== target.sprintId)
+    fail('Epic overview target references a revision outside its Sprint');
+  if (target.kind === 'sprint') return;
+
+  const activity = events.sprintPlannerActivities.find(
+    ({ sprintPlannerActivityId }) => sprintPlannerActivityId === target.sprintPlannerActivityId,
+  );
+  if (!activity || activity.sprintPlanId !== revision.sprintPlanId)
+    fail('Epic overview target references a Planner activity outside its Sprint');
+  if (target.kind === 'sprint_planner_activity') return;
+
+  const scope = events.workUnitScopes.find(
+    ({ sprintPlanRevisionId, workUnitId }) =>
+      sprintPlanRevisionId === target.revisionId && workUnitId === target.workUnitId,
+  );
+  const membership = index.sprintWorkspacePresentation?.plannerActivityMembership.find(
+    (item) =>
+      item.sprintPlannerActivityId === target.sprintPlannerActivityId &&
+      item.sprintPlanRevisionId === target.revisionId &&
+      scope !== undefined &&
+      item.workUnitScopeIds.includes(scope.workUnitScopeId),
+  );
+  if (!scope || !membership)
+    fail('Epic overview Work Unit target must name its recorded Planner path');
+}
+
 function indexReferenceData(index: ProductReadReferenceIndexV1) {
   return {
     epics: new Map(index.epics.map((item) => [item.epicId, item])),

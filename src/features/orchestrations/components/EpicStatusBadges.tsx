@@ -1,13 +1,129 @@
-import { AlertOctagon, CheckCircle2, CircleDot, Clock3, Pause, Play } from 'lucide-react';
-import type { EpicPresentation, EpicState, EpicStatePresentation } from '../orchestrationModel';
+import { useId, useRef, useState } from 'react';
+import {
+  AlertOctagon,
+  CheckCircle2,
+  ChevronDown,
+  Clock3,
+  Info,
+  LoaderCircle,
+  Pause,
+  Play,
+  Search,
+} from 'lucide-react';
+import type {
+  EpicMovementPresentation,
+  EpicOverviewNavigationTarget,
+  EpicState,
+  EpicStatePresentation,
+} from '../orchestrationModel';
 import { movementLabel, sourceStatusLabel } from '../orchestrationModel';
 
-export function MovementBadge({ movement }: { readonly movement: EpicPresentation['movement'] }) {
+export function EpicDescriptionHelp({ name, description }: { name: string; description: string }) {
+  const tooltipId = useId();
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const open = hovered || focused;
   return (
-    <span className="movement-badge">
-      <Clock3 size={16} aria-hidden="true" />
-      {movementLabel(movement)}
+    <span
+      className="epic-description-help"
+      data-row-action-exempt
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <button
+        className="epic-description-help__trigger"
+        type="button"
+        aria-label={`About ${name}`}
+        aria-describedby={open ? tooltipId : undefined}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+      >
+        <Info size={15} aria-hidden="true" />
+      </button>
+      {open && (
+        <span className="epic-description-help__tooltip" id={tooltipId} role="tooltip">
+          {description}
+        </span>
+      )}
     </span>
+  );
+}
+
+export function MovementSummary({
+  movement,
+  onNavigate,
+}: {
+  readonly movement: EpicMovementPresentation;
+  readonly onNavigate: (target: EpicOverviewNavigationTarget) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const popoverId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  if (movement.kind !== 'available' || movement.items.length === 0) {
+    return (
+      <span className="movement-badge movement-badge--empty">
+        <Clock3 size={16} aria-hidden="true" />
+        {movementLabel(movement)}
+      </span>
+    );
+  }
+
+  return (
+    <div
+      className="movement-summary"
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape') return;
+        setOpen(false);
+        triggerRef.current?.focus();
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+    >
+      <button
+        className="movement-badge movement-badge--interactive"
+        type="button"
+        aria-expanded={open}
+        aria-controls={popoverId}
+        aria-haspopup="dialog"
+        onClick={() => setOpen((current) => !current)}
+        ref={triggerRef}
+      >
+        <Clock3 size={16} aria-hidden="true" />
+        {movementLabel(movement)}
+        <ChevronDown size={14} aria-hidden="true" />
+      </button>
+      {open && (
+        <div
+          className="movement-popover"
+          id={popoverId}
+          role="dialog"
+          aria-label="Current movement details"
+        >
+          <ul>
+            {movement.items.map((item) => {
+              const Icon = item.state === 'processing' ? LoaderCircle : Search;
+              return (
+                <li key={item.movementItemId}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpen(false);
+                      onNavigate(item.target);
+                    }}
+                  >
+                    <Icon size={15} aria-hidden="true" />
+                    <span>{item.label}</span>
+                    <small>{item.state === 'processing' ? 'Processing' : 'Reviewing'}</small>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -19,7 +135,6 @@ export function StateBadge({ state }: { readonly state: EpicStatePresentation })
   }
   const Icon = {
     running: Play,
-    ready_to_continue: CircleDot,
     paused: Pause,
     blocked: AlertOctagon,
     completed: CheckCircle2,
@@ -35,7 +150,6 @@ export function StateBadge({ state }: { readonly state: EpicStatePresentation })
 function stateLabel(state: EpicState): string {
   return {
     running: 'Running',
-    ready_to_continue: 'Ready to continue',
     paused: 'Paused',
     blocked: 'Blocked',
     completed: 'Completed',

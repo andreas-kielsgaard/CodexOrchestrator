@@ -44,6 +44,8 @@ export function presentProductOrchestrations(
       goal: epic.goal,
       movement: presentationMovement(epic.overview.currentMovement),
       state: presentationState(epic.overview.state),
+      readyWork: presentationReadyWork(epic.overview.readyWork),
+      humanInput: presentationHumanInput(epic.overview.humanInput),
       plan: {
         items: epic.sprints.map((sprint) => ({
           id: sprint.sprintId,
@@ -70,13 +72,29 @@ function presentationMovement(
   value: ProductReadModelsV1['epics'][number]['overview']['currentMovement'],
 ): EpicMovementPresentation {
   return value.source.status === 'available'
-    ? toPresentationMovement(value.value!)
+    ? { kind: 'available', items: value.value!.items }
     : { kind: value.source.status, reason: value.source.reason };
 }
 
 function presentationState(
   value: ProductReadModelsV1['epics'][number]['overview']['state'],
 ): EpicStatePresentation {
+  return value.source.status === 'available'
+    ? value.value!
+    : { kind: value.source.status, reason: value.source.reason };
+}
+
+function presentationReadyWork(
+  value: ProductReadModelsV1['epics'][number]['overview']['readyWork'],
+): OrchestrationSectionView['epics'][number]['readyWork'] {
+  return value.source.status === 'available'
+    ? value.value!
+    : { kind: value.source.status, reason: value.source.reason };
+}
+
+function presentationHumanInput(
+  value: ProductReadModelsV1['epics'][number]['overview']['humanInput'],
+): OrchestrationSectionView['epics'][number]['humanInput'] {
   return value.source.status === 'available'
     ? value.value!
     : { kind: value.source.status, reason: value.source.reason };
@@ -123,19 +141,4 @@ function presentationContinuation(
         : {}),
     },
   };
-}
-
-function toPresentationMovement(
-  movement: NonNullable<
-    ProductReadModelsV1['epics'][number]['overview']['currentMovement']['value']
-  >,
-): OrchestrationSectionView['epics'][number]['movement'] {
-  switch (movement.kind) {
-    case 'initiating_work_units':
-      return { kind: 'starting_work_units', count: movement.count };
-    case 'reviewing_returned_work_units':
-      return { kind: 'reviewing_returned_work', count: movement.count };
-    default:
-      return movement;
-  }
 }

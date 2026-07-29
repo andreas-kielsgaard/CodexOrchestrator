@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
+import { vi } from 'vitest';
 import { composeProductOrchestrationReadModels } from '../../application/orchestrations';
 import { presentProductOrchestrations } from '../../app/orchestrationPresentation';
 import { recordedPresentationAdjunct } from '../../dev/orchestrationSection/recordedPresentationAdjunct';
@@ -29,35 +30,195 @@ const disposableRecordedOrchestrationView = {
 };
 
 describe('OrchestrationSection', () => {
-  it('renders exactly the three semantic overview columns from structured movement and state', () => {
+  it('renders truthful empty movement and specific application-owned ready work', () => {
     render(<OrchestrationSection view={disposableRecordedOrchestrationView} />);
 
     expect(screen.getAllByRole('columnheader').map((header) => header.textContent)).toEqual([
       'Epic',
       'Current movement',
-      'State',
+      'State and next action',
     ]);
-    expect(screen.getByText(/0 processing.*0 reviewing/)).toBeVisible();
-    const ready = screen.getByText('Ready to continue');
-    expect(ready).toHaveClass('epic-state--ready_to_continue');
+    expect(screen.getByText('No work in motion')).toBeVisible();
+    expect(screen.getByText('Paused')).toBeVisible();
+    expect(
+      screen.getByRole('button', {
+        name: 'Continue with Planner and Work Unit Interaction Discovery',
+      }),
+    ).toBeVisible();
+    expect(screen.queryByText('Ready to continue')).toBeNull();
+    expect(screen.queryByText('Human input')).toBeNull();
     expect(screen.queryByRole('columnheader', { name: /attention|continuation/i })).toBeNull();
   });
 
-  it('uses the accepted movement vocabulary without display-string input', () => {
-    expect(movementLabel({ kind: 'preparing_next_sprint' })).toBe('Preparing next Sprint');
-    expect(movementLabel({ kind: 'reviewing_sprint_completion' })).toBe(
-      'Reviewing Sprint completion',
+  it('summarizes typed movement items without display-string inference', () => {
+    const target = {
+      kind: 'sprint' as const,
+      epicId: 'epic',
+      sprintId: 'sprint',
+      revisionId: 'revision',
+    };
+    expect(movementLabel({ kind: 'available', items: [] })).toBe('No work in motion');
+    expect(
+      movementLabel({
+        kind: 'available',
+        items: [
+          { movementItemId: '1', label: 'One', state: 'processing', target },
+          { movementItemId: '2', label: 'Two', state: 'processing', target },
+          { movementItemId: '3', label: 'Three', state: 'reviewing', target },
+        ],
+      }),
+    ).toBe('2 processing · 1 reviewing');
+    expect(movementLabel({ kind: 'unavailable', reason: 'No source.' })).toBe(
+      'Unavailable: No source.',
     );
-    expect(movementLabel({ kind: 'planning_next_work' })).toBe('Planning next work');
-    expect(movementLabel({ kind: 'starting_work_units', count: 2 })).toBe('Starting 2 Work Units');
-    expect(movementLabel({ kind: 'executing_work', processingCount: 2, reviewingCount: 1 })).toBe(
-      '2 processing · 1 reviewing',
+  });
+
+  it('uses one row navigation target while keeping description help separate and accessible', () => {
+    render(<OrchestrationSection view={disposableRecordedOrchestrationView} />);
+
+    const goal = canonicalRecordedView.epics[0].goal;
+    expect(screen.queryByText(goal)).toBeNull();
+    const help = screen.getByRole('button', {
+      name: 'About Codex Epic Runner workspace development',
+    });
+    fireEvent.focus(help);
+    expect(screen.getByRole('tooltip')).toHaveTextContent(goal);
+    expect(help).toHaveAttribute('aria-describedby', screen.getByRole('tooltip').id);
+    fireEvent.click(help);
+    fireEvent.click(screen.getByRole('tooltip'));
+    expect(screen.getByRole('main', { name: 'Orchestration' })).toBeVisible();
+    expect(help.closest('.orchestration-list__title')?.querySelectorAll('button')).toHaveLength(2);
+
+    fireEvent.click(screen.getByText('No work in motion'));
+    expect(screen.getByRole('main', { name: 'Epic detail' })).toBeVisible();
+  });
+
+  it('keeps planning drafts distinct from initiated Epics in the recorded overview', () => {
+    const onOpenPlanningDraft = vi.fn();
+    render(
+      <OrchestrationSection
+        view={disposableRecordedOrchestrationView}
+        planningDrafts={[
+          {
+            epicPlanningDraftId: 'draft-1',
+            agentSessionId: 'session-draft-1',
+            title: 'Codex Epic Runner workspace development',
+            status: 'active',
+            createdAt: '2026-07-29T09:00:00.000Z',
+            updatedAt: '2026-07-29T09:00:00.000Z',
+          },
+        ]}
+        onOpenPlanningDraft={onOpenPlanningDraft}
+      />,
     );
-    expect(movementLabel({ kind: 'reviewing_returned_work', count: 3 })).toBe(
-      'Reviewing 3 returned Work Units',
+
+    expect(
+      screen.getByRole('button', {
+        name: 'Open planning draft Codex Epic Runner workspace development',
+      }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole('button', { name: 'Open Codex Epic Runner workspace development' }),
+    ).toBeVisible();
+    expect(screen.getByText('Pre-initiation planning draft')).toBeVisible();
+    fireEvent.click(screen.getByText('Draft'));
+    expect(onOpenPlanningDraft).toHaveBeenCalledOnce();
+  });
+
+  it('opens movement, ready-work, and human-input targets at their exact product locations', () => {
+    const base = disposableRecordedOrchestrationView.epics[0];
+    const workUnitTarget = {
+      kind: 'work_unit' as const,
+      epicId: base.id,
+      sprintId: 'sprint-control-surface',
+      revisionId: 'ECS-R4',
+      sprintPlannerActivityId: 'planner-r4-integration',
+      workUnitId: 'WU-ECS2E',
+    };
+    const plannerTarget = {
+      kind: 'sprint_planner_activity' as const,
+      epicId: base.id,
+      sprintId: 'sprint-control-surface',
+      revisionId: 'ECS-R4',
+      sprintPlannerActivityId: 'planner-r4-integration',
+    };
+    const view: OrchestrationSectionView = {
+      epics: [
+        {
+          ...base,
+          movement: {
+            kind: 'available',
+            items: [
+              {
+                movementItemId: 'processing-plan',
+                label: 'Refine the integration plan',
+                state: 'processing',
+                target: plannerTarget,
+              },
+              {
+                movementItemId: 'review-work-unit',
+                label: 'Review WU-ECS2E',
+                state: 'reviewing',
+                target: workUnitTarget,
+              },
+            ],
+          },
+          state: 'running',
+          readyWork: [
+            {
+              actionId: 'open-plan-review',
+              label: 'Review the integration plan',
+              target: plannerTarget,
+            },
+          ],
+          humanInput: {
+            actionId: 'decide-work-unit-review',
+            label: 'Decide the WU-ECS2E review',
+            target: workUnitTarget,
+          },
+        },
+      ],
+    };
+
+    const movementRender = render(<OrchestrationSection view={view} />);
+    const movement = screen.getByRole('button', { name: '1 processing · 1 reviewing' });
+    expect(screen.getByRole('button', { name: 'Review the integration plan' })).toBeVisible();
+    expect(
+      screen.getByRole('button', { name: 'Human input required: Decide the WU-ECS2E review' }),
+    ).toBeVisible();
+    fireEvent.click(movement);
+    const popover = screen.getByRole('dialog', { name: 'Current movement details' });
+    expect(
+      within(popover).getByRole('button', { name: /Refine the integration plan Processing/ }),
+    ).toBeVisible();
+    const reviewMovement = within(popover).getByRole('button', {
+      name: /Review WU-ECS2E Reviewing/,
+    });
+    reviewMovement.focus();
+    fireEvent.keyDown(reviewMovement, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Current movement details' })).toBeNull();
+    expect(movement).toHaveFocus();
+    fireEvent.click(movement);
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Current movement details' })).getByRole('button', {
+        name: /Review WU-ECS2E Reviewing/,
+      }),
     );
-    expect(movementLabel({ kind: 'integrating_accepted_work' })).toBe('Integrating accepted work');
-    expect(movementLabel({ kind: 'reevaluating_direction' })).toBe('Reevaluating direction');
+    expect(screen.getByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
+    movementRender.unmount();
+
+    const readyRender = render(<OrchestrationSection view={view} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Review the integration plan' }));
+    expect(
+      screen.getByRole('main', { name: 'Plan detail: Integrated detail surfaces' }),
+    ).toBeVisible();
+    readyRender.unmount();
+
+    render(<OrchestrationSection view={view} />);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Human input required: Decide the WU-ECS2E review' }),
+    );
+    expect(screen.getByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
   });
 
   it('makes the ordered plan primary, opens the completed Sprint workspace, and leaves future Sprints inert', () => {

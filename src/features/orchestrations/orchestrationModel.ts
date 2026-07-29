@@ -1,36 +1,31 @@
 import type { ProjectedTranscript, TranscriptAnchorRange } from '../agentSessions';
-import type { SprintWorkspacePresentationV1 } from '../../application/orchestrations';
+import type {
+  ProductEpicMovementItemV1,
+  ProductEpicOverviewActionV1,
+  ProductEpicStateV1,
+  ProductOverviewNavigationTargetV1,
+  SprintWorkspacePresentationV1,
+} from '../../application/orchestrations';
 import type { RecordedPlanWorkflowV1 } from '../../application/orchestrations/recordedPlanWorkflow';
 import type { AutomaticContinuationPolicyUpdateIntent } from '../../application/orchestrations';
 
-/**
- * Disposable, fixture-driven presentation data for orientation discovery. These types describe
- * what the current UI needs; they are not persistence records, orchestration language, or a
- * transition engine contract.
- */
-export type EpicMovement =
-  | { readonly kind: 'preparing_next_sprint' }
-  | { readonly kind: 'reviewing_sprint_completion' }
-  | { readonly kind: 'planning_next_work' }
-  | { readonly kind: 'starting_work_units'; readonly count: number }
-  | {
-      readonly kind: 'executing_work';
-      readonly processingCount: number;
-      readonly reviewingCount: number;
-    }
-  | { readonly kind: 'reviewing_returned_work'; readonly count: number }
-  | { readonly kind: 'integrating_accepted_work' }
-  | { readonly kind: 'reevaluating_direction' };
-
+/** Feature presentation types projected from product-owned application reads. */
 export type UnavailablePresentation = {
   readonly kind: 'pending' | 'unavailable' | 'unsupported';
   readonly reason: string;
 };
 
-export type EpicState = 'running' | 'ready_to_continue' | 'paused' | 'blocked' | 'completed';
+export type EpicState = ProductEpicStateV1;
+export type EpicMovementItem = ProductEpicMovementItemV1;
+export type EpicOverviewAction = ProductEpicOverviewActionV1;
+export type EpicOverviewNavigationTarget = ProductOverviewNavigationTargetV1;
 
 export type EpicStatePresentation = EpicState | UnavailablePresentation;
-export type EpicMovementPresentation = EpicMovement | UnavailablePresentation;
+export type EpicMovementPresentation =
+  | { readonly kind: 'available'; readonly items: readonly EpicMovementItem[] }
+  | UnavailablePresentation;
+export type EpicReadyWorkPresentation = readonly EpicOverviewAction[] | UnavailablePresentation;
+export type EpicHumanInputPresentation = EpicOverviewAction | null | UnavailablePresentation;
 export type SprintPlanItemStatus =
   'completed' | 'in_progress' | 'not_started' | UnavailablePresentation;
 
@@ -84,7 +79,7 @@ export interface SprintPlanItemPresentation {
   readonly purpose: string;
   readonly status: SprintPlanItemStatus;
   readonly blocker?: EpicBlocker;
-  /** Present only after an Sprint starts. */
+  /** Present only after a Sprint starts. */
   readonly agentSession?: AgentSessionReferencePresentation;
   /** Product Sprint workspace semantics, projected at the application boundary. */
   readonly workspace?: SprintWorkspacePresentationV1;
@@ -124,6 +119,8 @@ export interface EpicPresentation {
   readonly goal: string;
   readonly movement: EpicMovementPresentation;
   readonly state: EpicStatePresentation;
+  readonly readyWork: EpicReadyWorkPresentation;
+  readonly humanInput: EpicHumanInputPresentation;
   readonly plan: EpicPlanPresentation;
   /** Supplied by the later embedded Agent Session controller when a product session is available. */
   readonly epicRunnerSession?: EpicRunnerSessionPresentation;
@@ -136,25 +133,18 @@ export interface OrchestrationSectionView {
 }
 
 export function movementLabel(movement: EpicMovementPresentation): string {
-  if ('reason' in movement) return `${sourceStatusLabel(movement.kind)}: ${movement.reason}`;
-  switch (movement.kind) {
-    case 'preparing_next_sprint':
-      return 'Preparing next Sprint';
-    case 'reviewing_sprint_completion':
-      return 'Reviewing Sprint completion';
-    case 'planning_next_work':
-      return 'Planning next work';
-    case 'starting_work_units':
-      return `Starting ${movement.count} Work Unit${movement.count === 1 ? '' : 's'}`;
-    case 'executing_work':
-      return `${movement.processingCount} processing · ${movement.reviewingCount} reviewing`;
-    case 'reviewing_returned_work':
-      return `Reviewing ${movement.count} returned Work Unit${movement.count === 1 ? '' : 's'}`;
-    case 'integrating_accepted_work':
-      return 'Integrating accepted work';
-    case 'reevaluating_direction':
-      return 'Reevaluating direction';
-  }
+  if (movement.kind !== 'available')
+    return `${sourceStatusLabel(movement.kind)}: ${movement.reason}`;
+  if (movement.items.length === 0) return 'No work in motion';
+  const processing = movement.items.filter(({ state }) => state === 'processing').length;
+  const reviewing = movement.items.length - processing;
+  return `${processing} processing \u00b7 ${reviewing} reviewing`;
+}
+
+export function isUnavailablePresentation(
+  value: EpicReadyWorkPresentation | EpicHumanInputPresentation,
+): value is UnavailablePresentation {
+  return value !== null && !Array.isArray(value) && 'kind' in value;
 }
 
 export function sourceStatusLabel(status: UnavailablePresentation['kind']): string {
