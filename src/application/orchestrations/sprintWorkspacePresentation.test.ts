@@ -70,6 +70,10 @@ describe('Sprint workspace presentation projector', () => {
     expect(presentation.narratives?.progress).toEqual({
       source: { status: 'unavailable', reason: 'not recorded' },
     });
+    expect(presentation.epicPlannerObjectives.map(({ title }) => title)).toEqual([
+      'Preserve the Sprint task.',
+      'Make the plan reviewable.',
+    ]);
     expect(presentation.problems).toEqual([
       expect.objectContaining({
         problemId: 'problem-1',
@@ -398,6 +402,20 @@ function sprintReadModel(): ProductSprintReadModelV1 {
           workUnitScopeIds: [],
         },
       ],
+      epicPlannerObjectives: [
+        {
+          objectiveId: 'objective-1',
+          sprintId: 'sprint-1',
+          title: 'Preserve the Sprint task.',
+          source: source(),
+        },
+        {
+          objectiveId: 'objective-2',
+          sprintId: 'sprint-1',
+          title: 'Make the plan reviewable.',
+          source: source(),
+        },
+      ],
       problems: [
         {
           problemId: 'problem-1',
@@ -413,6 +431,7 @@ function sprintReadModel(): ProductSprintReadModelV1 {
       workUnitLifecycle: [
         {
           entryId: 'lifecycle-2',
+          sprintId: 'sprint-1',
           workUnitId: 'work-unit-1',
           sequence: 2,
           kind: 'review',
@@ -425,6 +444,7 @@ function sprintReadModel(): ProductSprintReadModelV1 {
         },
         {
           entryId: 'lifecycle-1',
+          sprintId: 'sprint-1',
           workUnitId: 'work-unit-1',
           sequence: 1,
           kind: 'work',

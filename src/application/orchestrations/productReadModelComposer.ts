@@ -290,6 +290,13 @@ function composeWorkspacePresentation(
     documents: metadata.documents.filter((presentation) =>
       documentIds.has(presentation.documentRefId),
     ),
+    ...(metadata.epicPlannerObjectives
+      ? {
+          epicPlannerObjectives: metadata.epicPlannerObjectives.filter(
+            ({ sprintId: candidate }) => candidate === sprintId,
+          ),
+        }
+      : {}),
     ...(metadata.problems
       ? {
           problems: metadata.problems.filter(({ sprintId: candidate }) => candidate === sprintId),
@@ -297,11 +304,8 @@ function composeWorkspacePresentation(
       : {}),
     ...(metadata.workUnitLifecycle
       ? {
-          workUnitLifecycle: metadata.workUnitLifecycle.filter(({ workUnitId }) =>
-            events.workUnitScopes.some(
-              (scope) =>
-                scope.workUnitId === workUnitId && revisionIds.has(scope.sprintPlanRevisionId),
-            ),
+          workUnitLifecycle: metadata.workUnitLifecycle.filter(
+            ({ sprintId: candidate }) => candidate === sprintId,
           ),
         }
       : {}),
@@ -931,6 +935,17 @@ function validateWorkspacePresentation(
         fail('Document presentation Work Unit scope must belong to the Document Sprint');
     });
   });
+  const objectiveIds = new Set<string>();
+  (metadata.epicPlannerObjectives ?? []).forEach((objective) => {
+    if (!objective.objectiveId.trim()) fail('Epic Planner Sprint objective requires an identity');
+    if (objectiveIds.has(objective.objectiveId))
+      fail('Epic Planner Sprint objectives cannot repeat an objective identity');
+    objectiveIds.add(objective.objectiveId);
+    if (!objective.title.trim()) fail('Epic Planner Sprint objective requires a title');
+    validateAvailableSource(objective.source, facts, 'Epic Planner Sprint objective');
+    if (!events.sprints.some(({ sprintId }) => sprintId === objective.sprintId))
+      fail('Epic Planner Sprint objective references an unknown Sprint');
+  });
   const problemIds = new Set<string>();
   (metadata.problems ?? []).forEach((problem) => {
     if (problemIds.has(problem.problemId))
@@ -970,16 +985,45 @@ function validateWorkspacePresentation(
     });
   });
   const lifecycleIds = new Set<string>();
+  const lifecycleSequences = new Set<string>();
   (metadata.workUnitLifecycle ?? []).forEach((entry) => {
     if (lifecycleIds.has(entry.entryId))
       fail('Work Unit lifecycle cannot repeat an entry identity');
     lifecycleIds.add(entry.entryId);
     if (!Number.isSafeInteger(entry.sequence) || entry.sequence < 0)
       fail('Work Unit lifecycle sequence must be a non-negative integer');
+    const sequenceKey = `${entry.workUnitId}:${entry.sequence}`;
+    if (lifecycleSequences.has(sequenceKey))
+      fail('Work Unit lifecycle sequence must be unique within a Work Unit');
+    lifecycleSequences.add(sequenceKey);
+    if (!events.sprints.some(({ sprintId }) => sprintId === entry.sprintId))
+      fail('Work Unit lifecycle references an unknown Sprint');
     if (!events.workUnits.some(({ workUnitId }) => workUnitId === entry.workUnitId))
       fail('Work Unit lifecycle references an unknown Work Unit');
+    const workUnitBelongsToSprint = events.workUnitScopes.some((scope) => {
+      if (scope.workUnitId !== entry.workUnitId) return false;
+      const revision = revisionById.get(scope.sprintPlanRevisionId);
+      return revision ? planById.get(revision.sprintPlanId)?.sprintId === entry.sprintId : false;
+    });
+    if (!workUnitBelongsToSprint) fail('Work Unit lifecycle Work Unit must belong to its Sprint');
     if (!events.agentSessions.some(({ agentSessionId }) => agentSessionId === entry.agentSessionId))
       fail('Work Unit lifecycle references an unknown Agent Session');
+    const sessionAssociatedWithWorkUnit = events.agentSessionReferences.some((reference) => {
+      if (
+        reference.agentSessionId !== entry.agentSessionId ||
+        reference.targetKind !== 'work_unit_execution'
+      )
+        return false;
+      const execution = events.workUnitExecutions.find(
+        ({ workUnitExecutionId }) => workUnitExecutionId === reference.targetId,
+      );
+      if (!execution || execution.workUnitId !== entry.workUnitId) return false;
+      const scope = scopeById.get(execution.fixedWorkUnitScopeId);
+      const revision = scope && revisionById.get(scope.sprintPlanRevisionId);
+      return revision ? planById.get(revision.sprintPlanId)?.sprintId === entry.sprintId : false;
+    });
+    if (!sessionAssociatedWithWorkUnit)
+      fail('Work Unit lifecycle Agent Session must be associated with its Work Unit and Sprint');
     validateAvailableSource(entry.source, facts, 'Work Unit lifecycle');
   });
   const narratives = metadata.narratives ?? [];

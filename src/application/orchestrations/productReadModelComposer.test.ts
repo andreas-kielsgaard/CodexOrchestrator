@@ -4,6 +4,7 @@ import {
   composeProductOrchestrationReadModels,
   ORCHESTRATION_EVENTS_V1,
   type ProductReadCompositionInputV1,
+  type ProductSprintWorkspacePresentationMetadataV1,
 } from './index';
 
 describe('product read-model composer', () => {
@@ -319,9 +320,24 @@ describe('product read-model composer', () => {
         ],
       },
     ];
+    input.referenceIndex.sprintWorkspacePresentation!.epicPlannerObjectives = [
+      {
+        objectiveId: 'objective-1',
+        sprintId: 'sprint-1',
+        title: 'Preserve the planned Sprint task.',
+        source: source(),
+      },
+      {
+        objectiveId: 'objective-2',
+        sprintId: 'sprint-1',
+        title: 'Make the review relationship explicit.',
+        source: source(),
+      },
+    ];
     input.referenceIndex.sprintWorkspacePresentation!.workUnitLifecycle = [
       {
         entryId: 'lifecycle-1',
+        sprintId: 'sprint-1',
         workUnitId: 'work-unit-1',
         sequence: 0,
         kind: 'work',
@@ -349,10 +365,41 @@ describe('product read-model composer', () => {
       { kind: 'sprint_planner_activity', id: 'activity-1' },
       { kind: 'work_unit', id: 'work-unit-1' },
     ]);
+    expect(presentation.epicPlannerObjectives?.map(({ title }) => title)).toEqual([
+      'Preserve the planned Sprint task.',
+      'Make the review relationship explicit.',
+    ]);
     expect(presentation.workUnitLifecycle?.[0]).toMatchObject({
       entryId: 'lifecycle-1',
       agentSessionId: 'session-1',
     });
+  });
+
+  it('projects Epic Planner objectives only to their owning Sprint', () => {
+    const input = productInput();
+    addSecondSprint(input);
+    input.referenceIndex.sprintWorkspacePresentation!.epicPlannerObjectives = [
+      {
+        objectiveId: 'objective-1',
+        sprintId: 'sprint-1',
+        title: 'First Sprint task.',
+        source: source(),
+      },
+      {
+        objectiveId: 'objective-2',
+        sprintId: 'sprint-2',
+        title: 'Second Sprint task.',
+        source: source(),
+      },
+    ];
+
+    const sprints = compose(input).epics[0].sprints;
+    expect(
+      sprints[0].workspacePresentation.epicPlannerObjectives?.map(({ objectiveId }) => objectiveId),
+    ).toEqual(['objective-1']);
+    expect(
+      sprints[1].workspacePresentation.epicPlannerObjectives?.map(({ objectiveId }) => objectiveId),
+    ).toEqual(['objective-2']);
   });
 
   it.each([
@@ -398,6 +445,49 @@ describe('product read-model composer', () => {
       'Document Sprint',
     ],
     [
+      'Epic Planner objective without an identity',
+      (input: Mutable<ProductReadCompositionInputV1>) =>
+        (input.referenceIndex.sprintWorkspacePresentation!.epicPlannerObjectives = [
+          { objectiveId: ' ', sprintId: 'sprint-1', title: 'Task', source: source() },
+        ]),
+      'requires an identity',
+    ],
+    [
+      'Epic Planner objective owned by an unknown Sprint',
+      (input: Mutable<ProductReadCompositionInputV1>) =>
+        (input.referenceIndex.sprintWorkspacePresentation!.epicPlannerObjectives = [
+          {
+            objectiveId: 'objective-1',
+            sprintId: 'sprint-missing',
+            title: 'Task',
+            source: source(),
+          },
+        ]),
+      'unknown Sprint',
+    ],
+    [
+      'duplicate Epic Planner objective identity',
+      (input: Mutable<ProductReadCompositionInputV1>) =>
+        (input.referenceIndex.sprintWorkspacePresentation!.epicPlannerObjectives = [
+          { objectiveId: 'objective-1', sprintId: 'sprint-1', title: 'First', source: source() },
+          { objectiveId: 'objective-1', sprintId: 'sprint-1', title: 'Second', source: source() },
+        ]),
+      'cannot repeat an objective identity',
+    ],
+    [
+      'Epic Planner objective without sourced authority',
+      (input: Mutable<ProductReadCompositionInputV1>) =>
+        (input.referenceIndex.sprintWorkspacePresentation!.epicPlannerObjectives = [
+          {
+            objectiveId: 'objective-1',
+            sprintId: 'sprint-1',
+            title: 'Task',
+            source: { ...source(), sourceReferences: ['missing-provenance'] },
+          },
+        ]),
+      'source must name known facts or provenance',
+    ],
+    [
       'invented pending narrative value',
       (input: Mutable<ProductReadCompositionInputV1>) =>
         (input.referenceIndex.sprintWorkspacePresentation!.narratives = [
@@ -415,6 +505,45 @@ describe('product read-model composer', () => {
     const input = productInput();
     mutate(input);
     expect(() => compose(input)).toThrow(message);
+  });
+
+  it('rejects lifecycle entries that cross Sprint or Agent Session relationships', () => {
+    const crossSprint = productInput();
+    addSecondSprint(crossSprint);
+    crossSprint.referenceIndex.sprintWorkspacePresentation!.workUnitLifecycle = [
+      lifecycleEntry({ sprintId: 'sprint-2', workUnitId: 'work-unit-1' }),
+    ];
+    expect(() => compose(crossSprint)).toThrow('Work Unit must belong to its Sprint');
+
+    const unrelatedSession = productInput();
+    unrelatedSession.events.agentSessions.push({ agentSessionId: 'session-2' });
+    unrelatedSession.events.agentSessionReferences.push({
+      agentSessionRefId: 'session-ref-unrelated',
+      agentSessionId: 'session-2',
+      targetKind: 'sprint',
+      targetId: 'sprint-1',
+      semanticRole: 'sprint_runner',
+    });
+    unrelatedSession.referenceIndex.agentSessions.push({
+      agentSessionId: 'session-2',
+      title: 'Unrelated session',
+      source: source(),
+    });
+    unrelatedSession.referenceIndex.sprintWorkspacePresentation!.workUnitLifecycle = [
+      lifecycleEntry({ agentSessionId: 'session-2' }),
+    ];
+    expect(() => compose(unrelatedSession)).toThrow(
+      'Agent Session must be associated with its Work Unit and Sprint',
+    );
+  });
+
+  it('rejects duplicate lifecycle sequence numbers within one Work Unit', () => {
+    const input = productInput();
+    input.referenceIndex.sprintWorkspacePresentation!.workUnitLifecycle = [
+      lifecycleEntry({ entryId: 'lifecycle-1' }),
+      lifecycleEntry({ entryId: 'lifecycle-2' }),
+    ];
+    expect(() => compose(input)).toThrow('sequence must be unique within a Work Unit');
   });
 
   it.each([
@@ -444,6 +573,25 @@ function source() {
     status: 'available' as const,
     sourceKind: 'orchestration_event' as const,
     sourceReferences: ['provenance-1'],
+  };
+}
+type LifecycleEntry = Mutable<
+  NonNullable<ProductSprintWorkspacePresentationMetadataV1['workUnitLifecycle']>
+>[number];
+function lifecycleEntry(overrides: Partial<LifecycleEntry> = {}): LifecycleEntry {
+  return {
+    entryId: 'lifecycle-1',
+    sprintId: 'sprint-1',
+    workUnitId: 'work-unit-1',
+    sequence: 1,
+    kind: 'work',
+    title: 'Work',
+    summary: 'Recorded work.',
+    agentSessionId: 'session-1',
+    agentRole: 'worker',
+    invocationId: 'invocation-1',
+    source: source(),
+    ...overrides,
   };
 }
 function productInput(): Mutable<ProductReadCompositionInputV1> {

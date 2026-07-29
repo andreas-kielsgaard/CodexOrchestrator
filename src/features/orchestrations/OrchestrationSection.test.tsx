@@ -618,7 +618,12 @@ describe('OrchestrationSection', () => {
     expect(sprintDetail.querySelector('.detail-workspace__layout')?.children).toHaveLength(2);
     expect(sprintDetail.querySelector('.detail-workspace__main-column')?.children).toHaveLength(1);
     expect(screen.getByLabelText('Sprint context')).toHaveTextContent('Completed');
-    expect(screen.getByLabelText('Sprint context')).toHaveTextContent('Epic Planner objectives');
+    expect(screen.getByLabelText('Sprint context')).toHaveTextContent(
+      'No recorded Epic Planner Sprint objectives.',
+    );
+    expect(screen.getByLabelText('Sprint context')).not.toHaveTextContent(
+      'Develop Codex Epic Runner',
+    );
     expect(screen.getByLabelText('Sprint controls')).not.toHaveTextContent(
       'Codex Epic Runner workspace development',
     );
@@ -656,10 +661,23 @@ describe('OrchestrationSection', () => {
 
     const context = screen.getByLabelText('Sprint context');
     expect(context).toHaveTextContent('Processing');
+    expect(context).toHaveAttribute('data-scrollable-context', 'true');
+    expect(context).toHaveAttribute('tabindex', '0');
+    context.focus();
+    expect(context).toHaveFocus();
+    expect(
+      within(context).getByLabelText('Epic Planner objectives').querySelectorAll('li'),
+    ).toHaveLength(4);
     expect(within(context).getByLabelText('Epic Planner objectives')).toHaveTextContent(
-      'Develop Codex Epic Runner',
+      'Model explicit relationships between Sprint problems and planned work.',
     );
-    expect(within(context).getByLabelText('Sprint Planner problems')).toBeVisible();
+    expect(within(context).getByLabelText('Epic Planner objectives')).toHaveTextContent(
+      'Open complete Sprint documents with a truthful Sprint-start comparison.',
+    );
+    expect(context).not.toHaveTextContent('Develop Codex Epic Runner');
+    const problems = within(context).getByLabelText('Sprint Planner problems');
+    expect(problems).toBeVisible();
+    expect(problems.querySelectorAll('li')).toHaveLength(3);
     expect(screen.getByRole('button', { name: /WU-RD1.*Completed/ })).toBeVisible();
     expect(screen.getByRole('button', { name: /WU-RD2.*Working/ })).toBeVisible();
     expect(screen.getByRole('button', { name: /WU-RD3.*Under review/ })).toBeVisible();
@@ -671,7 +689,7 @@ describe('OrchestrationSection', () => {
     );
 
     const problem = within(context).getByRole('button', {
-      name: 'Keep Epic objectives while adding Sprint problems.',
+      name: 'Keep Epic Planner Sprint objectives while adding Sprint problems.',
     });
     const processingNode = screen.getByRole('button', { name: /WU-RD2.*Working/ });
     fireEvent.pointerEnter(processingNode);
