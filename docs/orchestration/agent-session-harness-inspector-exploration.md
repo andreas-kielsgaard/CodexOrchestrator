@@ -61,9 +61,12 @@ The prototype records these product concepts without claiming production effects
   its atomic configuration or reference a separately owned adjustable proposal. The current
   Session override and the user's global last-used preference are separate recorded records, not
   revision mutations. Invalidating a default uses a provisional valid fallback and remembers the
-  prior choice only until it becomes valid again or the user makes a manual default choice, changes
-  model, saves/commits, or leaves the edit boundary. No application capability catalog exists, so
-  the UI labels its two-model source as a recorded catalog rather than complete runtime discovery.
+  prior choice only until it becomes valid again or the user makes a manual default/model choice,
+  finishes editing, commits, navigates away, or crosses another ownership boundary. Automatic
+  recorded working-copy and proposal cache updates are not acceptance boundaries because clearing
+  on every change would prevent untouched exclusion/reinclusion restoration. No application
+  capability catalog exists, so the UI labels its two-model source as a recorded catalog rather
+  than complete runtime discovery.
 - Current sandbox and authority values are inspectable and editable in the recorded working copy.
   Expanded sandbox customization is deferred.
 - The permitted-name summary opens the Harness-specific subset. Editing changes only the recorded
@@ -171,8 +174,11 @@ Model choice resolution is also application-owned and deterministic:
    the invocation resolution.
 
 UI fallback memory is transient interaction state only. It never overwrites any of the four owned
-records. It is discarded on manual default/model choice, save or commit, navigation, or another
-ownership boundary.
+records. `save_working_copy` and `save_model_proposal` are automatic recorded cache writes, not an
+explicit save action and not a fallback-memory boundary. Fallback memory is discarded by manual
+default/model choice, **Finish editing**, commit, navigation, or another ownership boundary. The
+prototype defines **Finish editing** as its explicit end-of-edit boundary and makes no claim about
+a separate persistence-backed Save operation.
 
 ## Update delivery boundaries
 
@@ -252,14 +258,16 @@ owns enforcement. Deeper hook configuration UI remains deferred.
   Epic planning, and independent Agent Sessions, including persisted Agent names on transcript
   responses and the agent-authored proposal heading.
 - Product-source tests preserve the current read-only, untracked production boundary.
-- The aggregate passes 93 files and 631 tests with four workers. TypeScript/Vite build, ESLint,
+- The aggregate passes 93 files and 640 tests with two workers. TypeScript/Vite build, ESLint,
   touched-file Prettier, Rust formatting, and diff checks pass; the repository-wide Prettier
   baseline still contains unrelated pre-existing findings.
-- In-app browser evidence at the reviewed 760 x 900 width, 1440 x 1000, and 390 x 844 verifies the
-  Session entry, desktop and narrow management layouts, real Markdown editing and Plain mode, fuzzy
-  skill search, version defaults and cues, the name-pool and selected-skill dialogs, accessible
-  range controls, preserved Manage-then-Copy order, no entry-button overlap, and no document-level
-  horizontal overflow. The browser console has no warnings or errors.
+- In-app browser evidence exercises 1440 x 1000, 870 x 794, 791 x 794, 390 x 844, 870 x 794, and
+  1440 x 1000 in sequence after opening the Session through Agent Sessions, including application
+  tab movement. At the formerly failing 870 px viewport / 610 px content pane, the complete title
+  has equal client and scroll dimensions (233 x 19), the identity marker remains visible, and
+  Manage harness then Copy entire session remain disjoint. The Harness Management view and edit
+  toolbars pass the same resize sequence without item overlap, clipped action labels, or
+  document-level horizontal overflow. The browser console has no warnings or errors.
 
 This evidence exercises only the recorded development composition and does not establish production
 runtime behavior.

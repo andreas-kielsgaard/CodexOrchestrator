@@ -1316,7 +1316,14 @@
   }
 }
 
-@container (max-width: 520px) {
+@container (max-width: 650px) {
+  .harness-aware-agent-session-pane > .agent-session-workspace .agent-session-header {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+}
+
+@container (max-width: 600px) {
   .harness-aware-agent-session-pane > .agent-session-workspace .agent-session-header {
     flex-wrap: wrap;
   }
@@ -1326,7 +1333,9 @@
     justify-content: flex-start;
     flex-wrap: wrap;
   }
+}
 
+@container (max-width: 520px) {
   .epic-plan-builder__conversation .agent-session-utility-bar {
     min-height: 46px;
     flex-wrap: wrap;

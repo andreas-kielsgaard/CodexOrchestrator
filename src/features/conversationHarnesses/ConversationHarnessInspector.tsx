@@ -954,6 +954,10 @@ function ModelPolicy({
   const sessionPolicy = sessionOverride?.policy ?? appliedPolicy;
   const userPreference = snapshot.modelChoices.userPreference;
   const resolved = snapshot.modelChoices.resolvedForCurrentSession;
+  const harnessPolicyInteractionBoundary =
+    selectedRevision === null
+      ? `draft:${snapshot.workingCopy?.baseRevision ?? 'starting'}:${editMode ? 'editing' : 'viewing'}`
+      : `revision:${selectedRevision}:${editMode ? 'editing' : 'viewing'}`;
 
   return (
     <div className="harness-management__model-policy">
@@ -1002,7 +1006,7 @@ function ModelPolicy({
           policy={harnessPolicy}
           models={models}
           editable={harnessPolicyEditable}
-          boundaryKey={`harness:${selectedRevision ?? 'draft'}:${editMode}:${configuration.runtime.modelPolicyMode}`}
+          boundaryKey={`harness:${harnessPolicyInteractionBoundary}:${configuration.runtime.modelPolicyMode}`}
           labelPrefix="Harness"
           onChange={updateHarnessPolicy}
         />
@@ -1096,6 +1100,8 @@ function ModelPolicyControls({
     readonly model: string;
     readonly reasoning: HarnessReasoningLevel | null;
   } | null>(null);
+  // Auto-cache updates deliberately keep the same boundary. Finish editing, revision changes,
+  // ownership changes, and remounting create a new interaction and discard fallback memory.
   useEffect(() => {
     rememberedDefault.current = null;
   }, [boundaryKey]);

@@ -6,6 +6,38 @@ import {
 import { ConversationHarnessManagement } from './ConversationHarnessInspector';
 import { HarnessAwareAgentSessionPane } from './HarnessAwareAgentSessionPane';
 
+async function openHarnessManagement() {
+  fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
+  await screen.findByRole('heading', { name: 'Harness details' });
+}
+
+async function setHarnessDefault(model: string, reasoning: string) {
+  fireEvent.change(screen.getByLabelText('Harness default model'), {
+    target: { value: model },
+  });
+  await waitFor(() => expect(screen.getByLabelText('Harness default model')).toHaveValue(model));
+  fireEvent.change(screen.getByLabelText('Harness default reasoning'), {
+    target: { value: reasoning },
+  });
+  await waitFor(() =>
+    expect(screen.getByLabelText('Harness default reasoning')).toHaveValue(reasoning),
+  );
+}
+
+async function expectHarnessDefault(model: string, reasoning: string) {
+  await waitFor(() => {
+    expect(screen.getByLabelText('Harness default model')).toHaveValue(model);
+    expect(screen.getByLabelText('Harness default reasoning')).toHaveValue(reasoning);
+  });
+}
+
+function setTerraMaximum(index: number) {
+  fireEvent.change(
+    screen.getByRole('slider', { name: 'Harness GPT-5.6 Terra maximum reasoning' }),
+    { target: { value: String(index) } },
+  );
+}
+
 describe('HarnessAwareAgentSessionPane', () => {
   it('offers management only after the Session-owned source returns a harness relationship', async () => {
     const source = createRecordedHarnessManagementSource();
@@ -322,7 +354,7 @@ describe('HarnessAwareAgentSessionPane', () => {
     ).toBeGreaterThan(0);
   });
 
-  it('restores provisional model and reasoning defaults until a manual choice boundary', async () => {
+  it('restores untouched model and range defaults across recorded proposal auto-cache writes', async () => {
     render(
       <HarnessAwareAgentSessionPane
         sessionId={recordedHarnessInspectorSessionId}
@@ -331,68 +363,141 @@ describe('HarnessAwareAgentSessionPane', () => {
         <div>Conversation body</div>
       </HarnessAwareAgentSessionPane>,
     );
-    fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
-    await screen.findByRole('heading', { name: 'Harness details' });
+    await openHarnessManagement();
+    await setHarnessDefault('gpt-5.6-terra', 'high');
 
+    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await expectHarnessDefault('gpt-5.6-sol', 'medium');
+    expect(await screen.findByText('Uncommitted proposal')).toBeVisible();
+    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await expectHarnessDefault('gpt-5.6-terra', 'high');
+
+    setTerraMaximum(1);
+    await expectHarnessDefault('gpt-5.6-terra', 'medium');
+    setTerraMaximum(3);
+    await expectHarnessDefault('gpt-5.6-terra', 'high');
+
+    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await expectHarnessDefault('gpt-5.6-sol', 'medium');
     fireEvent.change(screen.getByLabelText('Harness default model'), {
-      target: { value: 'gpt-5.6-terra' },
+      target: { value: '' },
     });
-    await waitFor(() =>
-      expect(screen.getByLabelText('Harness default model')).toHaveValue('gpt-5.6-terra'),
-    );
-    fireEvent.change(screen.getByLabelText('Harness default reasoning'), {
-      target: { value: 'high' },
-    });
-    await waitFor(() =>
-      expect(screen.getByLabelText('Harness default reasoning')).toHaveValue('high'),
-    );
-
+    await expectHarnessDefault('', '');
     fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
-    await waitFor(() => {
-      expect(screen.getByLabelText('Harness default model')).toHaveValue('gpt-5.6-sol');
-      expect(screen.getByLabelText('Harness default reasoning')).toHaveValue('medium');
-    });
-    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
-    await waitFor(() => {
-      expect(screen.getByLabelText('Harness default model')).toHaveValue('gpt-5.6-terra');
-      expect(screen.getByLabelText('Harness default reasoning')).toHaveValue('high');
-    });
+    await expectHarnessDefault('', '');
 
-    fireEvent.change(
-      screen.getByRole('slider', { name: 'Harness GPT-5.6 Terra maximum reasoning' }),
-      { target: { value: '1' } },
-    );
-    await waitFor(() =>
-      expect(screen.getByLabelText('Harness default reasoning')).toHaveValue('medium'),
-    );
-    fireEvent.change(
-      screen.getByRole('slider', { name: 'Harness GPT-5.6 Terra maximum reasoning' }),
-      { target: { value: '3' } },
-    );
-    await waitFor(() =>
-      expect(screen.getByLabelText('Harness default reasoning')).toHaveValue('high'),
-    );
-
-    fireEvent.change(
-      screen.getByRole('slider', { name: 'Harness GPT-5.6 Terra maximum reasoning' }),
-      { target: { value: '1' } },
-    );
-    await waitFor(() =>
-      expect(screen.getByLabelText('Harness default reasoning')).toHaveValue('medium'),
-    );
+    await setHarnessDefault('gpt-5.6-terra', 'high');
+    setTerraMaximum(1);
+    await expectHarnessDefault('gpt-5.6-terra', 'medium');
     fireEvent.change(screen.getByLabelText('Harness default reasoning'), {
       target: { value: 'low' },
     });
+    await expectHarnessDefault('gpt-5.6-terra', 'low');
+    setTerraMaximum(3);
+    await expectHarnessDefault('gpt-5.6-terra', 'low');
+  });
+
+  it('keeps fallback memory through working-copy auto-cache and clears it at Finish editing', async () => {
+    render(
+      <HarnessAwareAgentSessionPane
+        sessionId={recordedHarnessInspectorSessionId}
+        source={createRecordedHarnessManagementSource()}
+      >
+        <div>Conversation body</div>
+      </HarnessAwareAgentSessionPane>,
+    );
+    await openHarnessManagement();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit harness' }));
+    await waitFor(() => expect(screen.getByLabelText('Harness default model')).toBeEnabled());
+    await setHarnessDefault('gpt-5.6-terra', 'high');
+
+    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await expectHarnessDefault('gpt-5.6-sol', 'medium');
+    expect(
+      await screen.findByText('Working draft · uncommitted', {
+        selector: '.harness-management__badge',
+      }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await expectHarnessDefault('gpt-5.6-terra', 'high');
+
+    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await expectHarnessDefault('gpt-5.6-sol', 'medium');
+    fireEvent.click(screen.getByRole('button', { name: 'Finish editing' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit draft' }));
     await waitFor(() =>
-      expect(screen.getByLabelText('Harness default reasoning')).toHaveValue('low'),
+      expect(screen.getByLabelText('Harness allows GPT-5.6 Terra')).toBeEnabled(),
     );
-    fireEvent.change(
-      screen.getByRole('slider', { name: 'Harness GPT-5.6 Terra maximum reasoning' }),
-      { target: { value: '3' } },
+    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await expectHarnessDefault('gpt-5.6-sol', 'medium');
+  });
+
+  it('clears range and model fallback memory when leaving and returning', async () => {
+    render(
+      <HarnessAwareAgentSessionPane
+        sessionId={recordedHarnessInspectorSessionId}
+        source={createRecordedHarnessManagementSource()}
+      >
+        <div>Conversation body</div>
+      </HarnessAwareAgentSessionPane>,
     );
+    await openHarnessManagement();
+    await setHarnessDefault('gpt-5.6-terra', 'high');
+
+    setTerraMaximum(1);
+    await expectHarnessDefault('gpt-5.6-terra', 'medium');
+    fireEvent.click(screen.getByRole('button', { name: 'Back to conversation' }));
+    await screen.findByText('Conversation body');
+    await openHarnessManagement();
+    setTerraMaximum(3);
+    await expectHarnessDefault('gpt-5.6-terra', 'medium');
+
+    await setHarnessDefault('gpt-5.6-terra', 'high');
+    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await expectHarnessDefault('gpt-5.6-sol', 'medium');
+    fireEvent.click(screen.getByRole('button', { name: 'Back to conversation' }));
+    await screen.findByText('Conversation body');
+    await openHarnessManagement();
+    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await expectHarnessDefault('gpt-5.6-sol', 'medium');
+  });
+
+  it('clears combined model and range fallback memory when the draft is committed', async () => {
+    render(
+      <HarnessAwareAgentSessionPane
+        sessionId={recordedHarnessInspectorSessionId}
+        source={createRecordedHarnessManagementSource()}
+      >
+        <div>Conversation body</div>
+      </HarnessAwareAgentSessionPane>,
+    );
+    await openHarnessManagement();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit harness' }));
+    await waitFor(() => expect(screen.getByLabelText('Harness default model')).toBeEnabled());
+    await setHarnessDefault('gpt-5.6-terra', 'high');
+
+    setTerraMaximum(1);
+    await expectHarnessDefault('gpt-5.6-terra', 'medium');
+    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await expectHarnessDefault('gpt-5.6-sol', 'medium');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+    const confirmation = screen.getByRole('alertdialog', {
+      name: 'Commit this harness version?',
+    });
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Commit version' }));
     await waitFor(() =>
-      expect(screen.getByLabelText('Harness default reasoning')).toHaveValue('low'),
+      expect(screen.getByLabelText('Viewed harness version')).toHaveValue('version:5'),
     );
+    fireEvent.click(screen.getByRole('button', { name: 'Finish editing' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit harness' }));
+    await waitFor(() =>
+      expect(screen.getByLabelText('Harness allows GPT-5.6 Terra')).toBeEnabled(),
+    );
+
+    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    setTerraMaximum(3);
+    await expectHarnessDefault('gpt-5.6-sol', 'medium');
   });
 
   it('confirmation-gates Session changes, commit, push, and bulk next-prompt queues', async () => {
