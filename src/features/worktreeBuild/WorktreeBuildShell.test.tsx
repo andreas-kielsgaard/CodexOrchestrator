@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
 import type { WorktreeBuildClient } from '../../application/worktreeBuild';
 import { WorktreeBuildShell } from './WorktreeBuildShell';
+
+const fileReviewCss = readFileSync('src/features/fileReview/fileReview.css', 'utf8');
+const worktreeBuildCss = readFileSync('src/features/worktreeBuild/worktreeBuild.css', 'utf8');
 
 describe('WorktreeBuildShell', () => {
   it('keeps provenance visible and opens typed details plus one scoped file review', async () => {
@@ -25,11 +29,45 @@ describe('WorktreeBuildShell', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Review files and changes' }));
     const review = await screen.findByRole('main', { name: 'Files and diffs' });
+    const route = review.closest('.worktree-build-route');
+    const inspector = within(review).getByRole('region', { name: /a-very-long-nested-file-name/ });
+    const toolbar = inspector.querySelector('.file-review-toolbar');
+    expect(route).not.toBeNull();
+    expect(toolbar).not.toBeNull();
+    expect(worktreeBuildCss).toMatch(/\.worktree-build-route\s*{[^}]*min-width:\s*0;/s);
+    for (const selector of [
+      'file-review-screen',
+      'file-review-workspace',
+      'file-review-inspector',
+      'file-review-toolbar',
+    ]) {
+      expect(fileReviewCss).toMatch(new RegExp(`\\.${selector}\\s*\\{[^}]*min-width:\\s*0;`, 's'));
+    }
+    expect(fileReviewCss).toMatch(
+      /\.file-review-toolbar\s*{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto;/s,
+    );
+    expect(fileReviewCss).toMatch(
+      /\.file-review-inspector\s*{[^}]*container-type:\s*inline-size;/s,
+    );
+    expect(fileReviewCss).toMatch(
+      /@container\s*\(max-width:\s*860px\)\s*{[\s\S]*?\.file-review-toolbar\s*{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/,
+    );
+    expect(fileReviewCss).toMatch(
+      /@media\s*\(max-width:\s*1300px\)\s*{[\s\S]*?\.file-review-toolbar\s*{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/,
+    );
+    expect(fileReviewCss).toMatch(/\.file-review-path strong\s*{[^}]*text-overflow:\s*ellipsis;/s);
     expect(within(review).queryByLabelText('Review source')).toBeNull();
     expect(within(review).getByText('Committed divergence + Uncommitted change')).toBeVisible();
     const modes = within(review).getByRole('group', { name: 'File inspection mode' });
     const layout = within(review).getByRole('group', { name: 'Diff layout' });
     expect(modes.compareDocumentPosition(layout) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const reservedLayoutSlot = layout.parentElement;
+    expect(reservedLayoutSlot).toHaveClass('file-review-layout-slot');
+    fireEvent.click(within(modes).getByRole('button', { name: 'File' }));
+    expect(within(review).queryByRole('group', { name: 'Diff layout' })).toBeNull();
+    expect(reservedLayoutSlot).toBeInTheDocument();
+    fireEvent.click(within(modes).getByRole('button', { name: 'Changes' }));
+    expect(within(reservedLayoutSlot!).getByRole('group', { name: 'Diff layout' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Worktree details' }));
     fireEvent.click(screen.getByRole('button', { name: 'Application' }));
     expect(screen.getByText('Orchestration surface')).toBeVisible();
@@ -93,7 +131,8 @@ function fakeClient(): WorktreeBuildClient & { markReady: ReturnType<typeof vi.f
         files: [
           {
             fileId: 'file-1',
-            displayPath: 'src/example.ts',
+            displayPath:
+              'src/features/worktreeBuild/a-very-long-nested-file-name-that-must-truncate-before-controls.ts',
             changeKind: 'modified',
             additions: 1,
             deletions: 1,

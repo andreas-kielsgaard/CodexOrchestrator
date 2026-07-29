@@ -1,8 +1,11 @@
 .file-review-screen {
+  width: 100%;
+  min-width: 0;
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
   background: #f4f3ef;
   color: #17211b;
 }
@@ -36,6 +39,7 @@
   font-weight: 800;
 }
 .file-review-workspace {
+  min-width: 0;
   min-height: 0;
   display: grid;
   grid-template-columns: 270px minmax(0, 1fr);
@@ -99,10 +103,13 @@
   min-height: 0;
   display: grid;
   grid-template-rows: auto 1fr;
+  overflow: hidden;
+  container-type: inline-size;
 }
 .file-review-toolbar {
-  display: flex;
-  justify-content: space-between;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 14px;
   align-items: center;
   padding: 11px 14px;
@@ -113,10 +120,15 @@
   display: flex;
   gap: 8px;
   align-items: center;
+  overflow: hidden;
+}
+.file-review-path > svg {
+  flex: none;
 }
 .file-review-path > div {
   min-width: 0;
   display: grid;
+  overflow: hidden;
 }
 .file-review-path strong {
   overflow: hidden;
@@ -124,12 +136,15 @@
   white-space: nowrap;
 }
 .file-review-path small {
+  overflow: hidden;
   color: #66736c;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .file-review-toolbar__modes {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 152px;
   gap: 8px;
-  flex: none;
 }
 .file-review-layout-slot {
   width: 152px;
@@ -255,12 +270,26 @@
 .file-review-change--deleted {
   color: #9d3731;
 }
+@container (max-width: 860px) {
+  .file-review-toolbar {
+    align-items: flex-start;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .file-review-toolbar__modes {
+    justify-self: start;
+  }
+}
+@media (max-width: 1300px) {
+  .file-review-toolbar {
+    align-items: flex-start;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .file-review-toolbar__modes {
+    justify-self: start;
+  }
+}
 @media (max-width: 900px) {
   .file-review-workspace {
     grid-template-columns: 210px minmax(0, 1fr);
-  }
-  .file-review-toolbar {
-    align-items: flex-start;
-    flex-direction: column;
   }
 }

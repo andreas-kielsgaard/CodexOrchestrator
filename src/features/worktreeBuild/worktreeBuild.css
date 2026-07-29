@@ -74,6 +74,7 @@
   position: relative;
   grid-column: 1;
   grid-row: 2;
+  min-width: 0;
   min-height: 0;
   z-index: 900;
   display: grid;
