@@ -24,6 +24,7 @@ export interface OrchestrationSectionProps {
   readonly onOpenPlanningDraft?: (draft: EpicPlanningDraftSummary) => void;
   readonly requestedLocation?: AgentSessionProductLocation | null;
   readonly onOpenAgentSession?: (sessionId: string) => void;
+  readonly onOpenFileReviewSource?: (sourceId: string) => void;
 }
 
 export function OrchestrationSection({
@@ -37,6 +38,7 @@ export function OrchestrationSection({
   onOpenPlanningDraft,
   requestedLocation,
   onOpenAgentSession,
+  onOpenFileReviewSource,
 }: OrchestrationSectionProps) {
   const workspace = useOrchestrationWorkspace(requestedLocation);
   const selected = view.epics.find(({ id }) => id === workspace.epicId);
@@ -58,6 +60,7 @@ export function OrchestrationSection({
         onDetailLocationChange={workspace.setDetailLocation}
         onBack={workspace.backToOverview}
         onOpenAgentSession={onOpenAgentSession}
+        onOpenFileReviewSource={onOpenFileReviewSource}
       />
     );
   }

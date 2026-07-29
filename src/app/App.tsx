@@ -29,6 +29,10 @@ import type { ManagedPlanBuilderSessionClient } from '../infrastructure/orchestr
 import { useEpicInitiationConfirmation } from './useEpicInitiationConfirmation';
 import { EpicInitiationConfirmationModal } from './EpicInitiationConfirmationModal';
 import type { AgentSessionProductLocation } from '../application/agentSessionNavigation';
+import type { FileReviewClient } from '../application/fileReview';
+import { FileReviewScreen } from '../features/fileReview';
+
+export type ApplicationSurface = 'epics' | 'agent-sessions' | 'file-review';
 
 export interface AppProps {
   readonly agentSessionClient: AgentSessionClient;
@@ -48,6 +52,8 @@ export interface AppProps {
   readonly epicPlanningDraftLifecycleClient?: EpicPlanningDraftLifecycleClient;
   readonly epicPlanProposalSourceForDraft?: (draftId: string) => EpicPlanProposalSource;
   readonly epicInitiationConfirmationClient?: EpicInitiationConfirmationClient;
+  readonly fileReviewClient?: FileReviewClient;
+  readonly initialSurface?: ApplicationSurface;
 }
 
 export function App({
@@ -70,14 +76,19 @@ export function App({
   epicPlanningDraftLifecycleClient,
   epicPlanProposalSourceForDraft,
   epicInitiationConfirmationClient,
+  fileReviewClient,
+  initialSurface = 'epics',
 }: AppProps) {
-  const [surface, setSurface] = useState<'epics' | 'agent-sessions'>('epics');
+  const [surface, setSurface] = useState<ApplicationSurface>(() =>
+    initialSurface === 'file-review' && !fileReviewClient ? 'epics' : initialSurface,
+  );
   const [selectedAgentSessionId, setSelectedAgentSessionId] = useState<string | null>(null);
   const [expandedAgentSessionNodes, setExpandedAgentSessionNodes] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const [requestedProductLocation, setRequestedProductLocation] =
     useState<AgentSessionProductLocation | null>(null);
+  const [fileReviewSourceId, setFileReviewSourceId] = useState<string | undefined>();
   const [orchestrationRoute, setOrchestrationRoute] = useState<'overview' | 'plan-builder'>(
     'overview',
   );
@@ -268,6 +279,16 @@ export function App({
         >
           Agent Sessions
         </button>
+        {fileReviewClient ? (
+          <button
+            className={surface === 'file-review' ? 'active' : undefined}
+            type="button"
+            aria-current={surface === 'file-review' ? 'page' : undefined}
+            onClick={() => setSurface('file-review')}
+          >
+            Files &amp; diffs
+          </button>
+        ) : null}
       </nav>
       {surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
         <EpicPlanBuilder
@@ -294,6 +315,14 @@ export function App({
           sprintAutomaticContinuationPolicyController={sprintAutomaticContinuationPolicyController}
           epicAutomaticContinuationPolicyController={epicAutomaticContinuationPolicyController}
           planningDrafts={planningDrafts}
+          onOpenFileReviewSource={
+            fileReviewClient
+              ? (sourceId) => {
+                  setFileReviewSourceId(sourceId);
+                  setSurface('file-review');
+                }
+              : undefined
+          }
           onOpenDraft={(draft) => {
             setSelectedDraft({
               draftId: draft.epicPlanningDraftId,
@@ -308,6 +337,12 @@ export function App({
           }}
           requestedLocation={requestedProductLocation}
           onOpenAgentSession={openStandaloneAgentSession}
+        />
+      ) : surface === 'file-review' && fileReviewClient ? (
+        <FileReviewScreen
+          client={fileReviewClient}
+          initialSourceId={fileReviewSourceId}
+          fixedSource={Boolean(fileReviewSourceId)}
         />
       ) : (
         <StandaloneAgentSessionScreen
@@ -339,6 +374,7 @@ function OrchestrationSurface({
   onOpenDraft,
   requestedLocation,
   onOpenAgentSession,
+  onOpenFileReviewSource,
 }: {
   readonly load: ReturnType<typeof useOrchestrationLoad>;
   readonly presentation: OrchestrationPresentationAdapter;
@@ -351,6 +387,7 @@ function OrchestrationSurface({
   readonly onOpenDraft: (draft: EpicPlanningDraftSummary) => void;
   readonly requestedLocation: AgentSessionProductLocation | null;
   readonly onOpenAgentSession: (sessionId: string) => void;
+  readonly onOpenFileReviewSource?: (sourceId: string) => void;
 }) {
   if (load.kind === 'ready')
     return (
@@ -365,6 +402,7 @@ function OrchestrationSurface({
         onOpenPlanningDraft={onOpenDraft}
         requestedLocation={requestedLocation}
         onOpenAgentSession={onOpenAgentSession}
+        onOpenFileReviewSource={onOpenFileReviewSource}
       />
     );
   const copy =

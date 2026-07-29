@@ -15,14 +15,16 @@ const canonicalRecordedView = presentProductOrchestrations(
   composeProductOrchestrationReadModels(recordedProductReadCompositionInput),
   recordedPresentationAdjunct,
 );
-/** Dialog-specific assertions keep non-started/empty Sprint workspace details out of this UI suite. */
+/** Completed summary-only Sprints stay dialogs; proposed Plans keep their typed workspace. */
 const disposableRecordedOrchestrationView = {
   epics: canonicalRecordedView.epics.map((epic) => ({
     ...epic,
     plan: {
       ...epic.plan,
       items: epic.plan.items.map((item) =>
-        item.id === 'sprint-control-surface' ? item : { ...item, workspace: undefined },
+        item.id === 'sprint-control-surface' || item.status === 'not_started'
+          ? item
+          : { ...item, workspace: undefined },
       ),
     },
   })),
@@ -60,7 +62,7 @@ describe('OrchestrationSection', () => {
     expect(movementLabel({ kind: 'reevaluating_direction' })).toBe('Reevaluating direction');
   });
 
-  it('makes the ordered plan primary, opens the completed Sprint workspace, and leaves future Sprints inert', () => {
+  it('makes the ordered Plan primary and opens both completed and proposed Sprint Plans', () => {
     render(<OrchestrationSection view={disposableRecordedOrchestrationView} />);
     fireEvent.click(
       screen.getByRole('button', { name: 'Open Codex Epic Runner workspace development' }),
@@ -82,9 +84,13 @@ describe('OrchestrationSection', () => {
     expect(items[2]).toHaveClass('sprint-plan-item--completed');
     expect(items[3]).toHaveClass('sprint-plan-item--in_progress');
     expect(items[4]).toHaveClass('sprint-plan-item--not_started');
-    expect(
-      screen.queryByRole('button', { name: /Planner and Work Unit Interaction Discovery/ }),
-    ).toBeNull();
+    const proposed = screen.getByRole('button', {
+      name: 'View proposed Plan: Planner and Work Unit Interaction Discovery',
+    });
+    fireEvent.click(proposed);
+    expect(screen.getByRole('main', { name: 'Sprint detail' })).toBeVisible();
+    expect(screen.getByLabelText('Sprint context')).toHaveTextContent('Planned');
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Epic' }));
 
     fireEvent.click(
       screen.getByRole('button', {
@@ -199,12 +205,12 @@ describe('OrchestrationSection', () => {
     const worker = screen.getByRole('region', { name: 'Implementation worker Agent Session' });
     expect(within(worker).getByLabelText('Implementation worker conversation')).toBeVisible();
     expect(worker).toHaveTextContent('Recorded worker conversation');
-    expect(screen.getByLabelText('Work Unit context')).toHaveTextContent(
+    expect(screen.getByLabelText('Work Unit context')).not.toHaveTextContent(
       'Recorded/theoretical fixture only',
     );
     expect(
       screen.getByRole('separator', {
-        name: 'Resize Handler conversation and Work and review conversation',
+        name: 'Resize Planning and handling conversation and Work and review conversation',
       }),
     ).toHaveAttribute('aria-orientation', 'vertical');
     expect(within(worker).queryByRole('button', { name: /Collapse/ })).toBeNull();
@@ -277,7 +283,7 @@ describe('OrchestrationSection', () => {
     expect(screen.getByLabelText('Work Unit context')).toHaveTextContent(
       'Superseded and never launched',
     );
-    expect(screen.getByLabelText('Handler / planner fork unavailable')).toBeVisible();
+    expect(screen.getByLabelText('Work Unit handler unavailable')).toBeVisible();
     expect(screen.getByLabelText('Implementation worker unavailable')).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Back to Plan' }));
@@ -298,15 +304,13 @@ describe('OrchestrationSection', () => {
     const controls = screen.getByLabelText('Sprint controls');
     const policy = within(controls).getByRole('switch', { name: /Sprint Auto-flow/ });
     expect(policy).not.toBeChecked();
-    expect(within(controls).getByText('Recorded only')).toBeVisible();
+    expect(within(controls).queryByText('Recorded only')).toBeNull();
     const descriptionId = policy.getAttribute('aria-describedby');
     expect(descriptionId).toBeTruthy();
     expect(document.getElementById(descriptionId!)).toHaveTextContent(
       'accepted child Work Units should start the next planning round',
     );
-    expect(document.getElementById(descriptionId!)).toHaveTextContent(
-      'does not evaluate eligibility or execute work',
-    );
+    expect(document.getElementById(descriptionId!)).not.toHaveTextContent('recorded');
 
     fireEvent.click(policy);
     expect(policy).not.toBeChecked();
@@ -727,7 +731,14 @@ describe('OrchestrationSection', () => {
     fireEvent.click(screen.getByRole('button', { name: /Open Work Unit WU-RD1/ }));
 
     const lifecycle = screen.getByLabelText('Work Unit lifecycle turn log');
-    expect(within(lifecycle).getAllByRole('button')).toHaveLength(8);
+    expect(within(lifecycle).getAllByRole('button')).toHaveLength(9);
+    fireEvent.click(within(lifecycle).getByRole('button', { name: /Plan Work Unit/ }));
+    expect(screen.getByRole('region', { name: 'Sprint Planner Agent Session' })).toBeVisible();
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-invocation-id="recorded-planner-rd-r2-scope"]'),
+      ).toHaveFocus(),
+    );
     fireEvent.click(within(lifecycle).getByRole('button', { name: /Reprompt/ }));
     await waitFor(() =>
       expect(
@@ -736,15 +747,16 @@ describe('OrchestrationSection', () => {
     );
 
     fireEvent.click(within(lifecycle).getAllByRole('button', { name: /^Review/ })[1]);
-    expect(screen.getByRole('region', { name: 'Reviewer Agent Session' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Work Unit handler Agent Session' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Reviewer Agent Session' })).toBeNull();
     await waitFor(() =>
       expect(
-        document.querySelector('[data-invocation-id="recorded-reviewer-WU-RD1-second-review"]'),
+        document.querySelector('[data-invocation-id="recorded-handler-WU-RD1-second-review"]'),
       ).toHaveFocus(),
     );
     expect(
       screen.getByRole('separator', {
-        name: 'Resize Handler conversation and Work and review conversation',
+        name: 'Resize Planning and handling conversation and Work and review conversation',
       }),
     ).toHaveAttribute('aria-orientation', 'vertical');
   });

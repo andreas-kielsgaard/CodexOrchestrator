@@ -16,22 +16,6 @@ describe('product read-model composer', () => {
       epicId: 'epic-1',
       title: 'Epic',
       continuation: { policy: { automaticEnabled: true }, initiationObserved: false },
-      overview: {
-        currentMovement: {
-          value: {
-            items: [
-              expect.objectContaining({
-                movementItemId: 'movement-1',
-                state: 'processing',
-              }),
-            ],
-          },
-        },
-        readyWork: {
-          value: [expect.objectContaining({ actionId: 'review-work' })],
-        },
-        humanInput: { value: null },
-      },
     });
     expect(read.agentSessionReferences).toEqual(
       expect.arrayContaining([expect.objectContaining({ semanticRole: 'epic_runner' })]),
@@ -127,68 +111,16 @@ describe('product read-model composer', () => {
       input.referenceIndex.epicOverviews[0].state = {
         source: { status, reason: `${status} from source` },
       };
-      input.referenceIndex.epicOverviews[0].readyWork = {
-        source: { status, reason: `${status} from source` },
-      };
-      input.referenceIndex.epicOverviews[0].humanInput = {
-        source: { status, reason: `${status} from source` },
-      };
 
       const overview = compose(input).epics[0].overview;
       expect(overview.currentMovement).toEqual({
         source: { status, reason: `${status} from source` },
       });
       expect(overview.state).toEqual({ source: { status, reason: `${status} from source` } });
-      expect(overview.readyWork).toEqual({
-        source: { status, reason: `${status} from source` },
-      });
-      expect(overview.humanInput).toEqual({
-        source: { status, reason: `${status} from source` },
-      });
       expect(overview.currentMovement).not.toHaveProperty('value');
       expect(overview.state).not.toHaveProperty('value');
-      expect(overview.readyWork).not.toHaveProperty('value');
-      expect(overview.humanInput).not.toHaveProperty('value');
     },
   );
-
-  it('preserves explicit overview navigation and rejects an invented Work Unit path', () => {
-    const input = productInput();
-    const movement = input.referenceIndex.epicOverviews[0].currentMovement as {
-      value: {
-        items: Array<{
-          target: Record<string, string>;
-        }>;
-      };
-    };
-    movement.value.items[0].target = {
-      kind: 'work_unit',
-      epicId: 'epic-1',
-      sprintId: 'sprint-1',
-      revisionId: 'revision-1',
-      sprintPlannerActivityId: 'activity-1',
-      workUnitId: 'work-unit-1',
-    };
-    input.referenceIndex.epicOverviews[0].humanInput = {
-      source: source(),
-      value: {
-        actionId: 'decide-review',
-        label: 'Decide the Work Unit review',
-        target: movement.value.items[0].target as never,
-      },
-    };
-
-    const overview = compose(input).epics[0].overview;
-    expect(overview.currentMovement).toMatchObject({
-      value: { items: [{ target: movement.value.items[0].target }] },
-    });
-    expect(overview.humanInput).toMatchObject({
-      value: { actionId: 'decide-review', target: movement.value.items[0].target },
-    });
-
-    movement.value.items[0].target.workUnitId = 'invented-work-unit';
-    expect(() => compose(input)).toThrow('must name its recorded Planner path');
-  });
 
   it('keeps artifacts and Documents with their explicit Sprint owner', () => {
     const input = productInput();
@@ -601,7 +533,47 @@ describe('product read-model composer', () => {
       lifecycleEntry({ agentSessionId: 'session-2' }),
     ];
     expect(() => compose(unrelatedSession)).toThrow(
-      'Agent Session must be associated with its Work Unit and Sprint',
+      'Agent Session must be associated with its Work Unit or owning planner activity and Sprint',
+    );
+  });
+
+  it('accepts a Sprint Planner lifecycle turn only through exact owning activity membership', () => {
+    const input = productInput();
+    input.events.agentSessionReferences = input.events.agentSessionReferences.filter(
+      ({ targetKind }) => targetKind !== 'work_unit_execution',
+    );
+    input.referenceIndex.sprintWorkspacePresentation!.workUnitLifecycle = [
+      lifecycleEntry({
+        kind: 'planning',
+        agentRole: 'sprint_planner',
+        invocationId: 'planner-scope-turn',
+      }),
+    ];
+
+    expect(
+      compose(input).epics[0].sprints[0].workspacePresentation.workUnitLifecycle?.[0],
+    ).toMatchObject({
+      kind: 'planning',
+      agentRole: 'sprint_planner',
+      agentSessionId: 'session-1',
+    });
+
+    input.events.sprintPlannerActivities.push({
+      sprintPlannerActivityId: 'activity-unrelated',
+      sprintPlanId: 'plan-1',
+      assessedSprintPlanRevisionIds: ['revision-1'],
+    });
+    input.referenceIndex.plannerActivities.push({
+      sprintPlannerActivityId: 'activity-unrelated',
+      title: 'Unrelated planning step',
+      purpose: 'Does not own the Work Unit.',
+      source: source(),
+    });
+    input.events.agentSessionReferences.find(
+      ({ targetKind }) => targetKind === 'sprint_planner_activity',
+    )!.targetId = 'activity-unrelated';
+    expect(() => compose(input)).toThrow(
+      'Agent Session must be associated with its Work Unit or owning planner activity and Sprint',
     );
   });
 
@@ -998,42 +970,8 @@ function productInput(): Mutable<ProductReadCompositionInputV1> {
       epicOverviews: [
         {
           epicId: 'epic-1',
-          currentMovement: {
-            source: source(),
-            value: {
-              items: [
-                {
-                  movementItemId: 'movement-1',
-                  label: 'Implement Work Unit',
-                  state: 'processing',
-                  target: {
-                    kind: 'sprint_planner_activity',
-                    epicId: 'epic-1',
-                    sprintId: 'sprint-1',
-                    revisionId: 'revision-1',
-                    sprintPlannerActivityId: 'activity-1',
-                  },
-                },
-              ],
-            },
-          },
+          currentMovement: { source: source(), value: { kind: 'planning_next_work' } },
           state: { source: source(), value: 'running' },
-          readyWork: {
-            source: source(),
-            value: [
-              {
-                actionId: 'review-work',
-                label: 'Review returned Work Unit',
-                target: {
-                  kind: 'sprint',
-                  epicId: 'epic-1',
-                  sprintId: 'sprint-1',
-                  revisionId: 'revision-1',
-                },
-              },
-            ],
-          },
-          humanInput: { source: source(), value: null },
         },
       ],
       sprints: [

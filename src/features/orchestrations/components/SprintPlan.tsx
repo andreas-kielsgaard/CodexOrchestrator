@@ -34,7 +34,7 @@ function SprintPlanItem({
   readonly position: number;
   readonly onOpen: (opener: HTMLButtonElement) => void;
 }) {
-  const started = item.status !== 'not_started';
+  const viewable = item.status !== 'not_started' || Boolean(item.workspace);
   const statusClass = typeof item.status === 'string' ? item.status : item.status.kind;
   const content = (
     <>
@@ -68,12 +68,12 @@ function SprintPlanItem({
 
   return (
     <li className={`sprint-plan-item sprint-plan-item--${statusClass}`}>
-      {started ? (
+      {viewable ? (
         <button
           type="button"
           data-sprint-id={item.id}
           onClick={(event) => onOpen(event.currentTarget)}
-          aria-label={`Open Sprint: ${item.name}`}
+          aria-label={`${item.status === 'not_started' ? 'View proposed Plan' : 'Open Sprint'}: ${item.name}`}
         >
           {content}
         </button>

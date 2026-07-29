@@ -5,61 +5,63 @@ acceptance, merge, release, or a complete production relationship source.
 
 ## Ownership map
 
-| Relationship                 | Durable authority                                                                                                                                        | Navigation use                                                                                                                                       |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Agent Session lifecycle      | Agent Session record owns its ID, title, availability, runtime binding, invocations, and events.                                                         | One Session leaf. Every view loads the same ID through the injected `AgentSessionClient`.                                                            |
-| Product containment          | Epic owns Sprints. A Sprint owns its logical Plan; revisions contain scoped Work Units and Planner Activities.                                           | Epic -> Sprint -> Planning/Execution folders.                                                                                                        |
-| Session relevance            | `AgentSessionReference` associates one provider-neutral Session with a typed target and semantic role. It is not an ownership record.                    | Places a singly related Session beside its target and labels the recorded role.                                                                      |
-| Active Epic planning draft   | The native planning-draft/session association owns the pre-initiation link.                                                                              | Independent Sessions -> Epic planning drafts. After durable initiation, the same association projects an Epic Plan Builder reference under the Epic. |
-| Runtime/provenance           | Runtime external-context IDs remain provider bindings. `actorAgentSessionRefId` is causal provenance for a fact. Neither is a Session parent/child edge. | Not used for hierarchy. No parent/child navigation is inferred.                                                                                      |
-| Other or absent relationship | `targetKind: other` is recorded relevance without a first-class destination; an unreferenced Session has no orchestration relationship.                  | Separate independent folders.                                                                                                                        |
+| Relationship                    | Durable authority                                                                                                                 | Navigation use                                                                                                                                      |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| True Session ownership          | The Agent Session record owns its ID, title, availability, runtime binding, invocations, and events.                              | One canonical Session leaf and content surface. Every route loads that same ID through the injected `AgentSessionClient`.                           |
+| Orchestration containment       | Epic contains Sprints. Sprint Plan revisions contain typed Planner Activity membership and scoped Work Units.                     | Epic, Sprint, accomplished/current planning-step, and Work Unit folders. This containment does not make the folder a Session owner.                 |
+| Typed Session relevance         | `AgentSessionReference` associates one provider-neutral Session with a typed target and semantic role.                            | Places a Session beside its one exact target and supplies product navigation. It is an association, not ownership.                                  |
+| Planning-draft binding          | The native planning-draft/session association owns the pre-initiation link.                                                       | The Session remains directly under Independent Sessions and links to the draft.                                                                     |
+| Runtime parent/child provenance | Runtime external-context IDs are provider bindings. `actorAgentSessionRefId` is causal provenance for a fact.                     | Not used for hierarchy. Neither field establishes a Session parent, child, or product owner.                                                        |
+| Merely related or absent        | Multiple typed targets are legitimate relevance. `targetKind: other` and no reference provide no first-class product containment. | One leaf at the shared typed Epic when one exists; otherwise one leaf under Independent Sessions with explicit related-view actions when available. |
 
 Titles, transcripts, current routes, Harness names, visual layout, and component state are never
 relationship authority.
 
-## Implemented projection
+## Implemented hierarchy and interaction
 
-- Epic-level Runner and Plan Builder references sit directly under their Epic.
-- Sprint-level Runner references sit directly under their Sprint.
-- Sprint Planner and Work Unit planner references sit under the exact recorded Planner Activity.
-- handler, worker, and reviewer references to a Work Unit execution sit under the Work Unit resolved
-  through that execution's fixed scope and Planner Activity membership.
-- a Session with more than one legitimate destination appears once under **Multiple related views**.
-  Its Session header exposes every typed destination in an explicit chooser.
-- an active planning draft, other recorded relevance, and unreferenced Session remain independently
-  discoverable. No Epic is inferred for them.
-- tree selection and expansion are application-owned while switching surfaces. Keyboard behavior
-  follows tree conventions: Up/Down, Left/Right, Home/End, and roving focus.
-- orchestration panels can open their exact Session in standalone Agent Sessions. The standalone
-  pane shows only the Session content and a direct typed return action, or a chooser when needed.
+- **Epics** and **Independent Sessions** are titled separators, not folders.
+- each Epic is a folder. Direct Epic Sessions appear before Sprint folders.
+- each Sprint is a folder. Direct Sprint Sessions appear before its Planner Activity folders.
+- Planner Activity folders use the recorded accomplished/current scope title. Their direct Planner
+  Sessions precede Work Unit folders; no generic Planning or Execution level is invented.
+- Work Unit handler, worker, and legitimately distinct reviewer references sit under the Work Unit
+  resolved through the execution's fixed scope and Planner Activity membership.
+- planning drafts, provider-neutral Sessions, unassociated references, and multi-Epic Sessions are
+  direct children of Independent Sessions. There is no Unassigned folder.
+- one same-Epic multi-target Session appears once at the shared Epic containment level. Its header
+  lists every typed destination instead of selecting an owner.
+- selection and expansion are application-owned while switching surfaces. A selected Session stays
+  selected when an ancestor collapses; the collapsed folder exposes that it contains the selection
+  and can recover it when reopened.
+- tree focus follows Up/Down, Left/Right, Home/End, Enter, Space, and roving-tabindex behavior across
+  both titled sections.
+- the navigation/content boundary is pointer- and keyboard-resizable. At the compact breakpoint it
+  stacks vertically while retaining the same Session selection.
+- standalone Agent Sessions renders only the Session as its content surface. A single typed product
+  destination gets a direct action, multiple destinations get an explicit chooser, and none gets no
+  action.
 
 ## Identity and status
 
-The tree accepts an optional session-keyed Agent identity, Harness role, and visual token. When no
-such application binding is supplied, it shows a neutral Agent mark plus the recorded semantic
-role; it does not manufacture an Agent name or Harness binding. Invocation summaries now carry the
-latest durable invocation status so processing, completed, failed, canceled, and interrupted states
-are not guessed from inactivity.
+The tree accepts a Session-keyed Agent identity, Harness role, and visual token. When the
+application does not supply that binding, it shows a neutral Agent mark and the recorded semantic
+role; it does not manufacture an Agent or Harness. Processing, completion, failure, cancellation,
+and interruption come from the latest durable invocation summary.
 
 ## Recorded and production limits
 
-The recorded development composition demonstrates Epic, Sprint, Planner Activity, Work Unit,
-reviewer, and independent grouping. Product native-query composition now projects the durable
-initiated Plan Builder association to its Epic. Current production records do not yet supply Runner,
-Sprint Planner, or Work Unit Session references, so those production folders remain absent until
-their typed facts exist.
+The recorded composition demonstrates Epic, Sprint, Planner Activity, Work Unit, planning-draft,
+multi-target, and independent grouping. Production records currently do not supply every Runner,
+Planner, or Work Unit Session reference, so absent folders remain absent.
 
-The separate Harness Management exploration defines a session-owned identity/binding read model,
-but it is not present on this branch. This work keeps identity input optional and session-keyed for
-later consolidation; it does not copy, select, or reconstruct a Harness. Durable Session tree
-expansion persistence across application restart, a durable canonical owner marker for genuinely
-multi-target Sessions, and any hierarchy levels beyond the recorded target kinds are deferred.
+The application has no durable canonical-owner marker for a genuinely multi-target Session.
+Shared-Epic or Independent placement is therefore explicitly containment, not inferred ownership.
+Durable expansion persistence across restart, hierarchy levels beyond the current typed target
+kinds, and a production Harness identity source remain deferred.
 
-## Consolidation boundary
+## Reconciled detail contract
 
-The active Sprint/Epic detail redesign overlaps `App`, `OrchestrationSection`, `EpicDetail`,
-`SharedAgentSessionPanel`, `SprintWorkspace`, `WorkUnitDetailWorkspace`, their tests, and shared
-panel styling. It remains untouched. The navigation projection, typed product locations, standalone
-tree, and session-keyed identity input are separable. Consolidation should re-thread the typed
-location and open-Session callbacks through the redesigned detail components without replacing its
-layout, then repeat interaction and responsive evidence.
+The Agent Sessions route and accepted Sprint/Epic detail route now share typed product-location and
+open-Session callbacks through `App`, `OrchestrationSection`, `EpicDetail`, `SprintWorkspace`, and
+the shared Session panel. The detail route retains its flow, lifecycle, Documents/file review, and
+resizer contracts; standalone navigation does not reconstruct them.

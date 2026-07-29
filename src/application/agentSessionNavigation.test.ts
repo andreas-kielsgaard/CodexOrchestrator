@@ -9,7 +9,7 @@ import {
 import type { AgentSessionSummaryDto } from './agentSessions';
 
 describe('Agent Session product navigation projection', () => {
-  it('uses recorded containment and semantic references for Epic, Sprint, planning, and execution folders', () => {
+  it('uses titled sections and typed Epic, Sprint, planning-step, and Work Unit containment', () => {
     const read = composeProductOrchestrationReadModels(recordedProductReadCompositionInput);
     const navigation = buildAgentSessionNavigation({
       orchestrations: read,
@@ -23,28 +23,41 @@ describe('Agent Session product navigation projection', () => {
       ],
     });
 
-    const epic = folder(navigation.roots, 'epic:epic-codex-runner-workspace');
-    expect(epic.children).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kind: 'session',
-          summary: expect.objectContaining({
-            id: 'recorded-epic-runner-manual-continuation-ready',
-          }),
-          relationshipRoles: ['Epic Runner'],
+    expect(navigation.sections.map(({ id, label }) => ({ id, label }))).toEqual([
+      { id: 'epics', label: 'Epics' },
+      { id: 'independent', label: 'Independent Sessions' },
+    ]);
+    const epic = folder(section(navigation, 'epics').children, 'epic:epic-codex-runner-workspace');
+    expect(epic.children[0]).toEqual(
+      expect.objectContaining({
+        kind: 'session',
+        summary: expect.objectContaining({
+          id: 'recorded-epic-runner-manual-continuation-ready',
         }),
-      ]),
+        relationshipRoles: ['Epic Runner'],
+      }),
     );
     const sprint = folder(
       epic.children,
       'epic:epic-codex-runner-workspace:sprint:sprint-control-surface',
     );
-    expect(folder(sprint.children, `${sprint.id}:planning`).children).toContainEqual(
-      expect.objectContaining({ kind: 'folder', label: 'Integrated detail surfaces' }),
+    expect(sprint.children[0]).toEqual(
+      expect.objectContaining({
+        kind: 'session',
+        summary: expect.objectContaining({ id: 'recorded-sprint-control-surface-discovery' }),
+      }),
+    );
+    const planningStep = folder(sprint.children, `${sprint.id}:activity:planner-r4-integration`);
+    expect(planningStep.label).toBe('Integrated detail surfaces');
+    expect(planningStep.children[0]).toEqual(
+      expect.objectContaining({
+        kind: 'session',
+        summary: expect.objectContaining({ id: 'recorded-session-planner-r4-integration' }),
+      }),
     );
     const workUnit = folder(
-      folder(sprint.children, `${sprint.id}:execution`).children,
-      `${sprint.id}:execution:WU-ECS2E`,
+      planningStep.children,
+      `${sprint.id}:activity:planner-r4-integration:work-unit:WU-ECS2E`,
     );
     expect(sessionIds(workUnit)).toEqual(
       expect.arrayContaining(['recorded-session-WU-ECS2E', 'recorded-session-reviewer-WU-ECS2E']),
@@ -56,39 +69,31 @@ describe('Agent Session product navigation projection', () => {
         sprintPlannerActivityId: 'planner-r4-integration',
       }),
     ]);
-    expect(
-      sessionIds(
-        folder(folder(navigation.roots, 'independent').children, 'independent:unassigned'),
-      ),
-    ).toEqual(['independent-session']);
+    expect(sessionIds(section(navigation, 'independent'))).toEqual(['independent-session']);
   });
 
-  it('places a Session with multiple legitimate targets once and preserves every explicit view', () => {
+  it('places a Session with multiple same-Epic targets once at the truthful shared Epic', () => {
     const read = structuredClone(
       composeProductOrchestrationReadModels(recordedProductReadCompositionInput),
     ) as Mutable<ProductReadModelsV1>;
     const sessionId = 'recorded-epic-runner-manual-continuation-ready';
-    const extra = {
+    read.epics[0].agentSessionReferences.push({
       agentSessionRefId: 'session-ref-cross-sprint',
       agentSessionId: sessionId,
       title: 'Orientation discovery handler',
       source: read.epics[0].source,
-      targetKind: 'sprint' as const,
+      targetKind: 'sprint',
       targetId: 'sprint-control-surface',
-      semanticRole: 'sprint_runner' as const,
-    };
-    read.epics[0].agentSessionReferences.push(extra);
+      semanticRole: 'sprint_runner',
+    });
 
     const navigation = buildAgentSessionNavigation({
       orchestrations: read,
       summaries: [summary(sessionId)],
     });
-    const related = folder(
-      folder(navigation.roots, 'epic:epic-codex-runner-workspace').children,
-      'epic:epic-codex-runner-workspace:related',
-    );
+    const epic = folder(section(navigation, 'epics').children, 'epic:epic-codex-runner-workspace');
 
-    expect(sessionIds(related)).toEqual([sessionId]);
+    expect(sessionIds(epic)).toEqual([sessionId]);
     expect(navigation.sessions.get(sessionId)?.productLocations).toEqual([
       expect.objectContaining({ kind: 'epic' }),
       expect.objectContaining({ kind: 'sprint', sprintId: 'sprint-control-surface' }),
@@ -99,9 +104,9 @@ describe('Agent Session product navigation projection', () => {
     ]);
   });
 
-  it('keeps an uninitiated durable Plan Builder Session in an independent draft folder', () => {
+  it('keeps durable drafts and provider-neutral Sessions directly in Independent Sessions', () => {
     const navigation = buildAgentSessionNavigation({
-      summaries: [summary('draft-session')],
+      summaries: [summary('draft-session'), summary('provider-neutral')],
       planningDrafts: [
         {
           epicPlanningDraftId: 'draft-1',
@@ -113,11 +118,10 @@ describe('Agent Session product navigation projection', () => {
         },
       ],
     });
-    const drafts = folder(
-      folder(navigation.roots, 'independent').children,
-      'independent:planning-drafts',
-    );
-    expect(sessionIds(drafts)).toEqual(['draft-session']);
+    const independent = section(navigation, 'independent');
+
+    expect(independent.children.every(({ kind }) => kind === 'session')).toBe(true);
+    expect(sessionIds(independent)).toEqual(['draft-session', 'provider-neutral']);
     expect(navigation.sessions.get('draft-session')?.productLocations).toEqual([
       {
         kind: 'epic_planning_draft',
@@ -125,6 +129,7 @@ describe('Agent Session product navigation projection', () => {
         label: 'Navigation redesign',
       },
     ]);
+    expect(navigation.sessions.get('provider-neutral')?.productLocations).toEqual([]);
   });
 });
 
@@ -148,6 +153,15 @@ function summary(id: string): AgentSessionSummaryDto {
   };
 }
 
+function section(
+  navigation: ReturnType<typeof buildAgentSessionNavigation>,
+  id: 'epics' | 'independent',
+) {
+  const found = navigation.sections.find((item) => item.id === id);
+  if (!found) throw new Error(`Missing section ${id}`);
+  return found;
+}
+
 function folder(nodes: readonly AgentSessionNavigationNode[], id: string) {
   const found = nodes.find(
     (node): node is AgentSessionNavigationFolder => node.kind === 'folder' && node.id === id,
@@ -156,6 +170,6 @@ function folder(nodes: readonly AgentSessionNavigationNode[], id: string) {
   return found;
 }
 
-function sessionIds(folderNode: AgentSessionNavigationFolder) {
-  return folderNode.children.flatMap((node) => (node.kind === 'session' ? [node.summary.id] : []));
+function sessionIds(node: { readonly children: readonly AgentSessionNavigationNode[] }) {
+  return node.children.flatMap((child) => (child.kind === 'session' ? [child.summary.id] : []));
 }

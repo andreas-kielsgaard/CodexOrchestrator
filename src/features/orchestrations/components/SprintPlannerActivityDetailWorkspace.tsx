@@ -4,11 +4,13 @@ import { DetailWorkspace } from './DetailWorkspace';
 import { PlanWorkflowMap } from './PlanWorkflowMap';
 import type { EmbeddedAgentSessionComposition } from '../../agentSessions';
 import type { SprintAgentSessionPresentation } from '../orchestrationModel';
+import { ResizableSplitSurface } from './ResizableSplitSurface';
 import { SharedAgentSessionPanel } from './SharedAgentSessionPanel';
 import '../styles/orchestrationSubdetail.css';
 
 export interface SprintPlannerActivityDetailWorkspaceProps {
   readonly plannerActivityGroup: SprintWorkspacePresentationV1['revisionViews'][number]['plannerActivityGroups'][number];
+  readonly currentWorkState: string;
   readonly workflow?: RecordedPlanWorkflowV1;
   readonly sessions: readonly SprintAgentSessionPresentation[];
   readonly agentSessionComposition?: EmbeddedAgentSessionComposition;
@@ -18,6 +20,7 @@ export interface SprintPlannerActivityDetailWorkspaceProps {
 
 export function SprintPlannerActivityDetailWorkspace({
   plannerActivityGroup,
+  currentWorkState,
   workflow,
   sessions,
   agentSessionComposition,
@@ -32,7 +35,12 @@ export function SprintPlannerActivityDetailWorkspace({
       backLabel="Back to Sprint"
       onBack={onBack}
       focusBackOnMount
-      control={<span className="subdetail-count">Fixed ready scope</span>}
+      control={
+        <span className="current-work-state">
+          <small>Current work</small>
+          <strong>{currentWorkState}</strong>
+        </span>
+      }
       context={
         <div className="subdetail-context">
           <p className="eyebrow">Plan</p>
@@ -52,16 +60,49 @@ export function SprintPlannerActivityDetailWorkspace({
           )}
           {sessions.length > 0 && (
             <section className="plan-agent-sessions" aria-label="Plan Agent Sessions">
-              {sessions.map((session) => (
-                <SharedAgentSessionPanel
-                  key={session.sessionId}
-                  ariaLabel={`${session.title} Agent Session`}
-                  conversationAriaLabel={`${session.title} conversation`}
-                  session={session}
-                  composition={agentSessionComposition}
-                  onOpenStandalone={onOpenAgentSession}
-                />
-              ))}
+              {sessions.length === 2 ? (
+                <div className="plan-agent-session-split">
+                  <ResizableSplitSurface
+                    axis="horizontal"
+                    primaryLabel={`${sessions[0].title} conversation`}
+                    secondaryLabel={`${sessions[1].title} conversation`}
+                    initialPrimaryPercent={50}
+                    minimumPrimaryPixels={280}
+                    minimumSecondaryPixels={280}
+                    primary={
+                      <SharedAgentSessionPanel
+                        ariaLabel={`${sessions[0].title} Agent Session`}
+                        conversationAriaLabel={`${sessions[0].title} conversation`}
+                        session={sessions[0]}
+                        composition={agentSessionComposition}
+                        displayMode="always_open"
+                        onOpenStandalone={onOpenAgentSession}
+                      />
+                    }
+                    secondary={
+                      <SharedAgentSessionPanel
+                        ariaLabel={`${sessions[1].title} Agent Session`}
+                        conversationAriaLabel={`${sessions[1].title} conversation`}
+                        session={sessions[1]}
+                        composition={agentSessionComposition}
+                        displayMode="always_open"
+                        onOpenStandalone={onOpenAgentSession}
+                      />
+                    }
+                  />
+                </div>
+              ) : (
+                sessions.map((session) => (
+                  <SharedAgentSessionPanel
+                    key={session.sessionId}
+                    ariaLabel={`${session.title} Agent Session`}
+                    conversationAriaLabel={`${session.title} conversation`}
+                    session={session}
+                    composition={agentSessionComposition}
+                    onOpenStandalone={onOpenAgentSession}
+                  />
+                ))
+              )}
             </section>
           )}
         </>

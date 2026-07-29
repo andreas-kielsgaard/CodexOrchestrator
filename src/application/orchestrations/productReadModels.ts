@@ -14,53 +14,21 @@ export type ReadSourceAuthorityV1 =
     }
   | { readonly status: 'pending' | 'unavailable' | 'unsupported'; readonly reason: string };
 
-export type ProductOverviewNavigationTargetV1 =
-  | { readonly kind: 'epic'; readonly epicId: string }
+export type ProductEpicMovementV1 =
+  | { readonly kind: 'preparing_next_sprint' }
+  | { readonly kind: 'reviewing_sprint_completion' }
+  | { readonly kind: 'planning_next_work' }
+  | { readonly kind: 'initiating_work_units'; readonly count: number }
   | {
-      readonly kind: 'sprint';
-      readonly epicId: string;
-      readonly sprintId: string;
-      readonly revisionId: string;
+      readonly kind: 'executing_work';
+      readonly processingCount: number;
+      readonly reviewingCount: number;
     }
-  | {
-      readonly kind: 'sprint_planner_activity';
-      readonly epicId: string;
-      readonly sprintId: string;
-      readonly revisionId: string;
-      readonly sprintPlannerActivityId: string;
-    }
-  | {
-      readonly kind: 'work_unit';
-      readonly epicId: string;
-      readonly sprintId: string;
-      readonly revisionId: string;
-      readonly sprintPlannerActivityId: string;
-      readonly workUnitId: string;
-    };
-
-export type ProductOverviewItemNavigationTargetV1 = Exclude<
-  ProductOverviewNavigationTargetV1,
-  { readonly kind: 'epic' }
->;
-
-export interface ProductEpicOverviewActionV1 {
-  readonly actionId: string;
-  readonly label: string;
-  readonly target: ProductOverviewItemNavigationTargetV1;
-}
-
-export interface ProductEpicMovementItemV1 {
-  readonly movementItemId: string;
-  readonly label: string;
-  readonly state: 'processing' | 'reviewing';
-  readonly target: ProductOverviewItemNavigationTargetV1;
-}
-
-export interface ProductEpicMovementV1 {
-  readonly items: readonly ProductEpicMovementItemV1[];
-}
-
-export type ProductEpicStateV1 = 'running' | 'paused' | 'blocked' | 'completed';
+  | { readonly kind: 'reviewing_returned_work_units'; readonly count: number }
+  | { readonly kind: 'integrating_accepted_work' }
+  | { readonly kind: 'reevaluating_direction' };
+export type ProductEpicStateV1 =
+  'running' | 'ready_to_continue' | 'paused' | 'blocked' | 'completed';
 export type ProductSourcedReadValueV1<T> =
   | {
       readonly source: Extract<ReadSourceAuthorityV1, { readonly status: 'available' }>;
@@ -127,11 +95,18 @@ export interface ProductSprintWorkspacePresentationMetadataV1 {
     readonly workUnitId: string;
     readonly sequence: number;
     readonly kind:
-      'launch' | 'work' | 'review' | 'reprompt' | 'renewed_work' | 'merge' | 'completion';
+      | 'planning'
+      | 'launch'
+      | 'work'
+      | 'review'
+      | 'reprompt'
+      | 'renewed_work'
+      | 'merge'
+      | 'completion';
     readonly title: string;
     readonly summary: string;
     readonly agentSessionId: string;
-    readonly agentRole: 'planner' | 'worker' | 'reviewer' | 'merger';
+    readonly agentRole: 'sprint_planner' | 'work_unit_handler' | 'worker' | 'reviewer' | 'merger';
     readonly invocationId: string;
     readonly source: ReadSourceAuthorityV1;
   }[];
@@ -154,8 +129,6 @@ export interface ProductReadReferenceIndexV1 {
     readonly epicId: string;
     readonly currentMovement: ProductSourcedReadValueV1<ProductEpicMovementV1>;
     readonly state: ProductSourcedReadValueV1<ProductEpicStateV1>;
-    readonly readyWork: ProductSourcedReadValueV1<readonly ProductEpicOverviewActionV1[]>;
-    readonly humanInput: ProductSourcedReadValueV1<ProductEpicOverviewActionV1 | null>;
   }[];
   readonly sprints: readonly {
     readonly sprintId: string;
@@ -467,8 +440,6 @@ export interface ProductEpicReadModelV1 {
   readonly overview: {
     readonly currentMovement: ProductSourcedReadValueV1<ProductEpicMovementV1>;
     readonly state: ProductSourcedReadValueV1<ProductEpicStateV1>;
-    readonly readyWork: ProductSourcedReadValueV1<readonly ProductEpicOverviewActionV1[]>;
-    readonly humanInput: ProductSourcedReadValueV1<ProductEpicOverviewActionV1 | null>;
   };
   readonly sprints: readonly ProductSprintReadModelV1[];
   readonly agentSessionReferences: readonly ProductAgentSessionReferenceReadModelV1[];

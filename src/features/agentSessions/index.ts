@@ -36,3 +36,4 @@ export {
   embeddedSessionIsWritable,
   type EmbeddedAgentSessionComposition,
 } from './embeddedAgentSession';
+export { AgentMarkdown } from './AgentMarkdown';

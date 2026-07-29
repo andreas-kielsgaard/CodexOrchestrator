@@ -1,4 +1,4 @@
-.subdetail-count,
+.current-work-state,
 .work-unit-state {
   display: inline-flex;
   align-items: center;
@@ -10,7 +10,25 @@
   color: #42545f;
   font-size: 0.7rem;
   font-weight: 800;
-  text-transform: capitalize;
+}
+
+.current-work-state,
+.work-unit-state {
+  display: grid;
+  gap: 1px;
+}
+
+.current-work-state small,
+.work-unit-state small {
+  color: #71818a;
+  font-size: 0.55rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.current-work-state strong,
+.work-unit-state strong {
+  font-size: 0.7rem;
 }
 
 .subdetail-context {
@@ -46,14 +64,6 @@
   color: #344854;
   font-size: 0.75rem;
 }
-.work-unit-fixture-notice {
-  padding: 8px;
-  border-left: 3px solid #b18a54;
-  background: #fff9ee;
-  color: #6b5637 !important;
-  font-size: 0.68rem !important;
-}
-
 .plan-feedback-detail {
   padding: 10px;
   border-left: 3px solid #8f76a9;
@@ -68,33 +78,12 @@
 
 .plan-workflow {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   background: #f5f8f9;
-}
-
-.plan-workflow__notice {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-height: 48px;
-  padding: 7px 14px;
-  border-bottom: 1px solid #d7dfe3;
-  background: #fffaf0;
-  color: #63533a;
-}
-.plan-workflow__notice > span {
-  display: grid;
-  gap: 1px;
-}
-.plan-workflow__notice strong {
-  font-size: 0.72rem;
-}
-.plan-workflow__notice small {
-  font-size: 0.64rem;
 }
 
 .plan-workflow__canvas {
@@ -307,6 +296,7 @@
   background: #fff;
 }
 
+.work-unit-primary-session,
 .work-unit-execution-session {
   position: relative;
   display: grid;
@@ -316,6 +306,7 @@
   min-height: 0;
 }
 
+.work-unit-primary-session > nav,
 .work-unit-execution-session > nav {
   position: absolute;
   z-index: 4;
@@ -325,6 +316,7 @@
   gap: 3px;
 }
 
+.work-unit-primary-session > nav button,
 .work-unit-execution-session > nav button {
   min-height: 27px;
   padding: 0 8px;
@@ -338,6 +330,7 @@
   cursor: pointer;
 }
 
+.work-unit-primary-session > nav button[aria-pressed='true'],
 .work-unit-execution-session > nav button[aria-pressed='true'] {
   border-color: #708e9d;
   background: #e9f1f5;
@@ -473,6 +466,16 @@
 .work-unit-lifecycle__identity--reviewer {
   background: #eee3f2;
   color: #6b477a;
+}
+
+.work-unit-lifecycle__identity--sprint_planner {
+  background: #e8e4f2;
+  color: #5c4a79;
+}
+
+.work-unit-lifecycle__identity--work_unit_handler {
+  background: #f1e8d9;
+  color: #6d542f;
 }
 
 .work-unit-lifecycle__identity--merger {

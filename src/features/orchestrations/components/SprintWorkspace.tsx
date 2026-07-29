@@ -1,6 +1,7 @@
 import type {
   SprintWorkspacePresentationAdjunct,
   SprintWorkspaceDetailLocation,
+  WorkUnitAgentSessionPresentation,
 } from '../orchestrationModel';
 import type {
   ArtifactAccessController,
@@ -32,6 +33,7 @@ export interface SprintWorkspaceProps {
   readonly onDetailLocationChange: (location: SprintWorkspaceDetailLocation) => void;
   readonly onBack: () => void;
   readonly onOpenAgentSession?: (sessionId: string) => void;
+  readonly onOpenFileReviewSource?: (sourceId: string) => void;
 }
 
 export function SprintWorkspace({
@@ -46,9 +48,16 @@ export function SprintWorkspace({
   onDetailLocationChange,
   onBack,
   onOpenAgentSession,
+  onOpenFileReviewSource,
 }: SprintWorkspaceProps) {
   const [selectedTab, setSelectedTab] = useState<SprintWorkspaceTab>('flow');
   const [selectedConcernId, setSelectedConcernId] = useState<string | null>(null);
+  const [highlightedProblemId, setHighlightedProblemId] = useState<string | null>(null);
+  const [hoveredGraphElement, setHoveredGraphElement] = useState<{
+    readonly kind: 'sprint_planner_activity' | 'work_unit' | 'gate';
+    readonly id: string;
+  } | null>(null);
+  const problemFocusIndexRef = useRef(new Map<string, number>());
   const sprintRestoreRef = useRef<{
     kind: 'sprint_planner_activity_group' | 'work_unit';
     id: string;
@@ -100,6 +109,9 @@ export function SprintWorkspace({
     return (
       <WorkUnitDetailWorkspace
         unit={unit}
+        lifecycleEntries={workspace.workUnitLifecycle.filter(
+          ({ workUnitId }) => workUnitId === unit.workUnitId,
+        )}
         sprintPlannerActivityGroupTitle={plannerActivityGroup.title}
         sessions={workUnitSessions(workspace, unit, adjunct)}
         agentSessionComposition={agentSessionComposition}
@@ -132,6 +144,7 @@ export function SprintWorkspace({
     return (
       <SprintPlannerActivityDetailWorkspace
         plannerActivityGroup={plannerActivityGroup}
+        currentWorkState={plannerActivityState(plannerActivityGroup, view)}
         sessions={plannerActivitySessions(
           workspace,
           plannerActivityGroup.sprintPlannerActivityId,
@@ -175,8 +188,73 @@ export function SprintWorkspace({
       }
       context={
         <div className="sprint-context">
+          <p className="eyebrow">Sprint</p>
           <h1>{workspace.sprint.title}</h1>
+          <span
+            className={`sprint-context__state sprint-context__state--${
+              workspace.sprint.lifecycle?.value ??
+              workspace.sprint.lifecycle?.source.status ??
+              'unavailable'
+            }`}
+          >
+            {sprintLifecycleLabel(workspace.sprint.lifecycle)}
+          </span>
           <p>{workspace.sprint.summary}</p>
+          <section className="sprint-context__objectives" aria-label="Epic Planner objectives">
+            <h2>Epic Planner objectives</h2>
+            {workspace.epicPlannerObjectives.length > 0 ? (
+              <ul>
+                {workspace.epicPlannerObjectives.map((objective) => (
+                  <li key={objective.objectiveId}>{objective.title}</li>
+                ))}
+              </ul>
+            ) : (
+              <p>No recorded Epic Planner Sprint objectives.</p>
+            )}
+          </section>
+          {workspace.problems.length > 0 ? (
+            <section className="sprint-context__problems" aria-label="Sprint Planner problems">
+              <h2>Sprint Planner problems</h2>
+              <ul>
+                {workspace.problems.map((problem) => {
+                  const relatedToHover = hoveredGraphElement
+                    ? problem.graphElementRefs.some(
+                        (reference) =>
+                          reference.kind === hoveredGraphElement.kind &&
+                          reference.id === hoveredGraphElement.id,
+                      )
+                    : false;
+                  return (
+                    <li key={problem.problemId}>
+                      <button
+                        type="button"
+                        className={
+                          highlightedProblemId === problem.problemId || relatedToHover
+                            ? 'is-highlighted'
+                            : undefined
+                        }
+                        aria-pressed={highlightedProblemId === problem.problemId}
+                        onPointerEnter={() => setHighlightedProblemId(problem.problemId)}
+                        onPointerLeave={() => setHighlightedProblemId(null)}
+                        onFocus={() => setHighlightedProblemId(problem.problemId)}
+                        onBlur={() => setHighlightedProblemId(null)}
+                        onClick={() => {
+                          setSelectedTab('flow');
+                          focusNextProblemGraphElement(
+                            problem,
+                            selectedView,
+                            problemFocusIndexRef.current,
+                          );
+                        }}
+                      >
+                        {problem.title}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ) : null}
         </div>
       }
       primary={
@@ -193,6 +271,9 @@ export function SprintWorkspace({
                   workspace={workspace}
                   selectedRevisionId={selectedRevisionId}
                   onSelectedRevisionChange={onSelectedRevisionChange}
+                  highlightedProblemId={highlightedProblemId}
+                  hoveredGraphElement={hoveredGraphElement}
+                  onHoveredGraphElementChange={setHoveredGraphElement}
                   onOpenSprintPlannerActivityGroup={(sprintPlannerActivityId) => {
                     sprintRestoreRef.current = {
                       kind: 'sprint_planner_activity_group',
@@ -255,6 +336,7 @@ export function SprintWorkspace({
               <SprintDocumentsPanel
                 documents={workspace.documents}
                 artifactAccess={artifactAccessController}
+                onOpenFileReviewSource={onOpenFileReviewSource}
               />
             </section>
           )}
@@ -268,11 +350,81 @@ export function SprintWorkspace({
             session={adjunct.agentSession}
             composition={agentSessionComposition}
             onOpenStandalone={onOpenAgentSession}
+            displayMode="always_open"
           />
         ) : undefined
       }
     />
   );
+}
+
+function sprintLifecycleLabel(lifecycle: SprintWorkspacePresentationV1['sprint']['lifecycle']) {
+  if (!lifecycle) return 'State unavailable';
+  if (lifecycle.source.status !== 'available') return `State ${lifecycle.source.status}`;
+  const value = lifecycle.value;
+  if (!value) return 'State unavailable';
+  return {
+    not_started: 'Planned',
+    in_progress: 'Processing',
+    completed: 'Completed',
+  }[value];
+}
+
+function focusNextProblemGraphElement(
+  problem: SprintWorkspacePresentationV1['problems'][number],
+  view: SprintWorkspacePresentationV1['revisionViews'][number],
+  focusIndexes: Map<string, number>,
+) {
+  const priority = (reference: (typeof problem.graphElementRefs)[number]) => {
+    if (reference.kind === 'work_unit') {
+      const state = view.workUnits.find(
+        ({ workUnitId }) => workUnitId === reference.id,
+      )?.presentationState;
+      if (['requested', 'launched', 'returned', 'under_review'].includes(state ?? '')) return 0;
+      if (['integrated', 'responsibility_accepted'].includes(state ?? '')) return 1;
+      return 2;
+    }
+    if (reference.kind === 'sprint_planner_activity') {
+      const group = view.plannerActivityGroups.find(
+        ({ sprintPlannerActivityId }) => sprintPlannerActivityId === reference.id,
+      );
+      const states = view.workUnits
+        .filter(({ workUnitScopeId }) => group?.workUnitScopeIds.includes(workUnitScopeId))
+        .map(({ presentationState }) => presentationState);
+      if (
+        states.some((state) =>
+          ['requested', 'launched', 'returned', 'under_review'].includes(state),
+        )
+      )
+        return 0;
+      if (
+        states.length &&
+        states.every((state) => ['integrated', 'responsibility_accepted'].includes(state))
+      )
+        return 1;
+    }
+    return 2;
+  };
+  const ordered = [...problem.graphElementRefs].sort(
+    (left, right) =>
+      priority(left) - priority(right) ||
+      `${left.kind}:${left.id}`.localeCompare(`${right.kind}:${right.id}`),
+  );
+  if (!ordered.length) return;
+  const index = focusIndexes.get(problem.problemId) ?? 0;
+  const next = ordered[index % ordered.length];
+  focusIndexes.set(problem.problemId, (index + 1) % ordered.length);
+  requestAnimationFrame(() => {
+    const element = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-flow-element-kind][data-flow-element-id]'),
+    ).find(
+      (candidate) =>
+        candidate.dataset.flowElementKind === next.kind &&
+        candidate.dataset.flowElementId === next.id,
+    );
+    element?.focus();
+    element?.scrollIntoView?.({ block: 'center', inline: 'center' });
+  });
 }
 
 function plannerActivitySessions(
@@ -297,31 +449,84 @@ function plannerActivitySessions(
     }));
 }
 
+function plannerActivityState(
+  group: SprintWorkspacePresentationV1['revisionViews'][number]['plannerActivityGroups'][number],
+  view: SprintWorkspacePresentationV1['revisionViews'][number],
+) {
+  const states = view.workUnits
+    .filter(({ workUnitScopeId }) => group.workUnitScopeIds.includes(workUnitScopeId))
+    .map(({ presentationState }) => presentationState);
+  if (states.length === 0) return 'No scoped Work Units';
+  if (states.some((state) => ['requested', 'launched', 'returned', 'under_review'].includes(state)))
+    return 'Processing';
+  if (states.every((state) => ['integrated', 'responsibility_accepted'].includes(state)))
+    return 'Completed';
+  if (states.every((state) => state === 'deferred')) return 'Deferred';
+  if (states.every((state) => ['not_started', 'waiting_for_dependencies'].includes(state)))
+    return 'Planned';
+  return 'Mixed';
+}
+
 function workUnitSessions(
   workspace: SprintWorkspacePresentationV1,
   unit: SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number],
   adjunct?: SprintWorkspacePresentationAdjunct,
-) {
+): readonly WorkUnitAgentSessionPresentation[] {
   const existing = (adjunct?.workUnitSessions ?? []).filter(
     (session) => session.workUnitId === unit.workUnitId,
   );
   const executionIds = new Set(unit.attempts.map((attempt) => attempt.workUnitExecutionId));
-  const adjunctById = new Map(existing.map((session) => [session.sessionId, session]));
-  // Reviewer references are attempt/review-oriented, so the existing Work Unit detail is their
-  // smallest coherent surface; no reviewer is inferred from workflow prose or geometry.
-  const reviewerSessions = workspace.agentSessionReferences
+  const adjunctById = new Map(
+    [...existing, ...(adjunct?.plannerActivitySessions ?? [])].map((session) => [
+      session.sessionId,
+      session,
+    ]),
+  );
+  const referenced: WorkUnitAgentSessionPresentation[] = workspace.agentSessionReferences
     .filter(
       (reference) =>
         reference.targetKind === 'work_unit_execution' &&
         executionIds.has(reference.targetId) &&
-        reference.semanticRole === 'reviewer',
+        ['work_unit_handler', 'work_unit_worker', 'reviewer'].includes(reference.semanticRole),
     )
     .map((reference) => ({
       sessionId: reference.agentSessionId,
       title: reference.title,
       workUnitId: unit.workUnitId,
-      role: 'reviewer' as const,
+      role: (
+        {
+          work_unit_handler: 'handler',
+          work_unit_worker: 'worker',
+          reviewer: 'reviewer',
+        } as const
+      )[reference.semanticRole as 'work_unit_handler' | 'work_unit_worker' | 'reviewer'],
       transcript: adjunctById.get(reference.agentSessionId)?.transcript,
     }));
-  return [...existing, ...reviewerSessions];
+  const view = workspace.revisionViews.find(
+    ({ sprintPlanRevisionId }) => sprintPlanRevisionId === unit.sprintPlanRevisionId,
+  );
+  const owner = view?.plannerActivityGroups.find(({ workUnitScopeIds }) =>
+    workUnitScopeIds.includes(unit.workUnitScopeId),
+  );
+  const planners: WorkUnitAgentSessionPresentation[] = owner
+    ? workspace.agentSessionReferences
+        .filter(
+          (reference) =>
+            reference.targetKind === 'sprint_planner_activity' &&
+            reference.targetId === owner.sprintPlannerActivityId &&
+            ['sprint_planner', 'work_unit_planner'].includes(reference.semanticRole),
+        )
+        .map((reference) => ({
+          sessionId: reference.agentSessionId,
+          title: reference.title,
+          workUnitId: unit.workUnitId,
+          role: 'sprint_planner',
+          transcript: adjunctById.get(reference.agentSessionId)?.transcript,
+        }))
+    : [];
+  return [
+    ...new Map(
+      [...planners, ...existing, ...referenced].map((session) => [session.sessionId, session]),
+    ).values(),
+  ];
 }

@@ -32,14 +32,26 @@ const reviewSprintTranscript = transcript(
   'Recorded parallel review Sprint',
   'Recorded mixed-state review composition only; no live Sprint was started.',
 );
+const rdPlannerDetails = lifecycleSession(
+  'recorded-planner-rd-r2',
+  'Recorded review Sprint Planner',
+  [
+    [
+      'recorded-planner-rd-r2-scope',
+      'Recorded the relationship-model scope and its Work Unit membership.',
+    ],
+  ],
+);
 const rd1HandlerDetails = lifecycleSession(
   'recorded-handler-WU-RD1',
   'Relationship Work Unit handler',
   [
     ['recorded-handler-WU-RD1-launch', 'Recorded the first worker launch.'],
+    ['recorded-handler-WU-RD1-first-review', 'Requested a focused correction.'],
     ['recorded-handler-WU-RD1-reprompt', 'Recorded the bounded correction request.'],
+    ['recorded-handler-WU-RD1-second-review', 'Accepted the corrected result.'],
     ['recorded-handler-WU-RD1-merge', 'Recorded integration into the review checkpoint.'],
-    ['recorded-handler-WU-RD1-completion', 'Recorded responsibility completion.'],
+    ['recorded-handler-WU-RD1-completion', 'Recorded Work Unit completion.'],
   ],
 );
 const rd1WorkerDetails = lifecycleSession(
@@ -50,15 +62,6 @@ const rd1WorkerDetails = lifecycleSession(
     ['recorded-worker-WU-RD1-renewed-work', 'Returned the corrected relationship model.'],
   ],
 );
-const rd1ReviewerDetails = lifecycleSession(
-  'recorded-reviewer-WU-RD1',
-  'Relationship review agent',
-  [
-    ['recorded-reviewer-WU-RD1-first-review', 'Recorded correction feedback for attempt one.'],
-    ['recorded-reviewer-WU-RD1-second-review', 'Recorded acceptance for attempt two.'],
-  ],
-);
-
 /** Recorded Agent Session inputs used by the embedded composition in the app-mounted demo. */
 export const recordedAgentSessionDetails: readonly AgentSessionDetailsDto[] = [
   session(
@@ -71,14 +74,9 @@ export const recordedAgentSessionDetails: readonly AgentSessionDetailsDto[] = [
     'Recorded parallel review Sprint',
     'Recorded mixed-state review composition only; no live Sprint was started.',
   ),
-  session(
-    'recorded-planner-rd-r2',
-    'Recorded review Sprint Planner',
-    'Recorded the parallel Work Unit forecast and problem relationships.',
-  ),
+  rdPlannerDetails,
   rd1HandlerDetails,
   rd1WorkerDetails,
-  rd1ReviewerDetails,
   ...(['WU-RD2', 'WU-RD3'] as const).map((workUnitId) =>
     session(
       `recorded-worker-${workUnitId}`,
@@ -223,13 +221,9 @@ export const recordedPresentationAdjunct: RecordedPresentationAdjunct = {
         },
         plannerActivitySessions: [
           {
-            sessionId: 'recorded-planner-rd-r2',
-            title: 'Recorded review Sprint Planner',
-            transcript: transcript(
-              'recorded-planner-rd-r2',
-              'Recorded review Sprint Planner',
-              'Recorded the parallel Work Unit forecast and problem relationships.',
-            ),
+            sessionId: rdPlannerDetails.session.id,
+            title: rdPlannerDetails.session.title,
+            transcript: projectAgentSessionTranscript(rdPlannerDetails),
           },
         ],
         workUnitSessions: [
@@ -246,13 +240,6 @@ export const recordedPresentationAdjunct: RecordedPresentationAdjunct = {
             workUnitId: 'WU-RD1',
             role: 'worker',
             transcript: projectAgentSessionTranscript(rd1WorkerDetails),
-          },
-          {
-            sessionId: rd1ReviewerDetails.session.id,
-            title: rd1ReviewerDetails.session.title,
-            workUnitId: 'WU-RD1',
-            role: 'reviewer',
-            transcript: projectAgentSessionTranscript(rd1ReviewerDetails),
           },
           ...(['WU-RD2', 'WU-RD3'] as const).map(
             (workUnitId): WorkUnitAgentSessionPresentation => ({
