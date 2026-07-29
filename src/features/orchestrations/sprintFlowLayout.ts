@@ -31,11 +31,11 @@ export interface SprintFlowConnectorRoute extends SprintFlowConnector {
 }
 
 const CARD_WIDTH = 178;
-const CARD_HEIGHT = 96;
+const CARD_HEIGHT = 86;
 const PLAN_Y = 72;
-const CARD_TOP = 70;
-const STAGE_GAP = 218;
-const LANE_GAP = 126;
+const CARD_TOP = 58;
+const STAGE_GAP = 196;
+const LANE_GAP = 106;
 
 /** Visible Work Unit relationships derived only from declared dependency and gate edges. */
 export function projectSprintFlowConnectors(
@@ -99,8 +99,8 @@ export function projectSprintFlowLayout(view: ProductSprintRevisionViewV1): Spri
     });
     const stages = Math.max(0, ...levelById.values()) + 1;
     const laneCount = Math.max(1, ...lanes.values());
-    const width = Math.max(220, 44 + stages * STAGE_GAP);
-    const height = Math.max(246, 100 + laneCount * 126);
+    const width = Math.max(210, 40 + stages * STAGE_GAP);
+    const height = Math.max(210, 90 + laneCount * LANE_GAP);
     sprintPlannerActivityGroupPositions.push({
       id: group.sprintPlannerActivityId,
       x: groupX,
@@ -108,7 +108,7 @@ export function projectSprintFlowLayout(view: ProductSprintRevisionViewV1): Spri
       width,
       height,
     });
-    groupX += width + 34;
+    groupX += width + 18;
     maxGroupBottom = Math.max(maxGroupBottom, PLAN_Y + height);
   }
   return {

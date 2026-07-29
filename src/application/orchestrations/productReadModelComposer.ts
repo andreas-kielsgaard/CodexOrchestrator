@@ -292,6 +292,21 @@ function composeWorkspacePresentation(
     documents: metadata.documents.filter((presentation) =>
       documentIds.has(presentation.documentRefId),
     ),
+    ...(metadata.problems
+      ? {
+          problems: metadata.problems.filter(({ sprintId: candidate }) => candidate === sprintId),
+        }
+      : {}),
+    ...(metadata.workUnitLifecycle
+      ? {
+          workUnitLifecycle: metadata.workUnitLifecycle.filter(({ workUnitId }) =>
+            events.workUnitScopes.some(
+              (scope) =>
+                scope.workUnitId === workUnitId && revisionIds.has(scope.sprintPlanRevisionId),
+            ),
+          ),
+        }
+      : {}),
     ...(metadata.narratives?.find((narratives) => narratives.sprintId === sprintId)
       ? {
           narratives: projectWorkspaceNarratives(
@@ -955,6 +970,57 @@ function validateWorkspacePresentation(
       if (planById.get(revision.sprintPlanId)?.sprintId !== ownerSprintId)
         fail('Document presentation Work Unit scope must belong to the Document Sprint');
     });
+  });
+  const problemIds = new Set<string>();
+  (metadata.problems ?? []).forEach((problem) => {
+    if (problemIds.has(problem.problemId))
+      fail('workspace problems cannot repeat a problem identity');
+    problemIds.add(problem.problemId);
+    validateAvailableSource(problem.source, facts, 'workspace problem');
+    if (!events.sprints.some(({ sprintId }) => sprintId === problem.sprintId))
+      fail('workspace problem references an unknown Sprint');
+    if (!problem.graphElementRefs.length)
+      fail('workspace problem must link to at least one graph element');
+    problem.graphElementRefs.forEach((reference) => {
+      const sprintIds =
+        reference.kind === 'work_unit'
+          ? events.workUnitScopes
+              .filter(({ workUnitId }) => workUnitId === reference.id)
+              .map(
+                ({ sprintPlanRevisionId }) =>
+                  planById.get(
+                    required(revisionById, sprintPlanRevisionId, 'revision').sprintPlanId,
+                  )?.sprintId,
+              )
+          : reference.kind === 'gate'
+            ? events.gates
+                .filter(({ gateId }) => gateId === reference.id)
+                .map(
+                  ({ sprintPlanRevisionId }) =>
+                    planById.get(
+                      required(revisionById, sprintPlanRevisionId, 'revision').sprintPlanId,
+                    )?.sprintId,
+                )
+            : events.sprintPlannerActivities
+                .filter(({ sprintPlannerActivityId }) => sprintPlannerActivityId === reference.id)
+                .map(({ sprintPlanId }) => planById.get(sprintPlanId)?.sprintId);
+      if (!sprintIds.length) fail('workspace problem references an unknown graph element');
+      if (!sprintIds.includes(problem.sprintId))
+        fail('workspace problem graph element must belong to the same Sprint');
+    });
+  });
+  const lifecycleIds = new Set<string>();
+  (metadata.workUnitLifecycle ?? []).forEach((entry) => {
+    if (lifecycleIds.has(entry.entryId))
+      fail('Work Unit lifecycle cannot repeat an entry identity');
+    lifecycleIds.add(entry.entryId);
+    if (!Number.isSafeInteger(entry.sequence) || entry.sequence < 0)
+      fail('Work Unit lifecycle sequence must be a non-negative integer');
+    if (!events.workUnits.some(({ workUnitId }) => workUnitId === entry.workUnitId))
+      fail('Work Unit lifecycle references an unknown Work Unit');
+    if (!events.agentSessions.some(({ agentSessionId }) => agentSessionId === entry.agentSessionId))
+      fail('Work Unit lifecycle references an unknown Agent Session');
+    validateAvailableSource(entry.source, facts, 'Work Unit lifecycle');
   });
   const narratives = metadata.narratives ?? [];
   if (new Set(narratives.map((narrative) => narrative.sprintId)).size !== narratives.length)

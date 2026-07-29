@@ -1,5 +1,6 @@
 import { ArrowLeft } from 'lucide-react';
 import { useEffect, useRef, type ReactNode } from 'react';
+import { ResizableSplitSurface } from './ResizableSplitSurface';
 import '../styles/detailWorkspace.css';
 
 export interface DetailWorkspaceProps {
@@ -66,8 +67,21 @@ export function DetailWorkspace({
           {context}
         </aside>
         <div className="detail-workspace__main-column">
-          <div className="detail-workspace__primary">{primary}</div>
-          {agentSession && <div className="detail-workspace__agent-session">{agentSession}</div>}
+          {agentSession ? (
+            <ResizableSplitSurface
+              axis="vertical"
+              primary={<div className="detail-workspace__primary">{primary}</div>}
+              secondary={<div className="detail-workspace__agent-session">{agentSession}</div>}
+              primaryLabel="Detail flow"
+              secondaryLabel="Agent Session"
+              initialPrimaryPercent={82}
+              minimumPrimaryPixels={220}
+              minimumSecondaryPixels={44}
+              maximizePrimaryLabel="Maximize flow"
+            />
+          ) : (
+            <div className="detail-workspace__primary">{primary}</div>
+          )}
         </div>
       </div>
     </main>

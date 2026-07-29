@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowUpRight } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import type { SprintWorkspacePresentationV1 } from '../../../application/orchestrations';
 import '../styles/sprintInformationSurfaces.css';
@@ -67,10 +67,7 @@ export function SprintConcernsPanel({
                   <code>{unit.workUnitId}</code>
                   <strong>{unit.title}</strong>
                 </span>
-                <span>
-                  {concernStateLabel(unit.presentationState)}
-                  <ArrowUpRight size={15} aria-hidden="true" />
-                </span>
+                <span>{workUnitStateLabel(unit.presentationState)}</span>
               </button>
             ))}
           </div>
@@ -81,11 +78,6 @@ export function SprintConcernsPanel({
 
   return (
     <div className="sprint-concerns-overview" aria-label="Sprint concerns overview">
-      <header>
-        <p className="eyebrow">Evaluation concerns</p>
-        <h2>What this Sprint must resolve</h2>
-        <p>States are derived from explicit decisions and linked Work Unit presentation states.</p>
-      </header>
       <div className="sprint-concerns-grid">
         {workspace.concerns.map((concern) => (
           <button
@@ -125,15 +117,33 @@ function concernStateLabel(
 ) {
   return (
     {
-      not_started: 'Not started',
-      waiting_for_dependencies: 'Waiting for dependencies',
-      requested: 'Requested',
-      launched: 'Launched',
-      returned: 'Returned',
-      under_review: 'Under review',
-      integrated: 'Integrated',
-      responsibility_accepted: 'Responsibility accepted',
+      not_started: 'Planned',
+      waiting_for_dependencies: 'Planned',
+      requested: 'Processing',
+      launched: 'Processing',
+      returned: 'Processing',
+      under_review: 'Processing',
+      integrated: 'Completed',
+      responsibility_accepted: 'Completed',
       deferred: 'Deferred',
+    } as const
+  )[state];
+}
+
+function workUnitStateLabel(
+  state: SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['presentationState'],
+) {
+  return (
+    {
+      not_started: 'Planned',
+      waiting_for_dependencies: 'Planned · waiting for dependencies',
+      requested: 'Processing · requested',
+      launched: 'Processing · working',
+      returned: 'Processing · returned',
+      under_review: 'Processing · under review',
+      integrated: 'Completed · integrated',
+      responsibility_accepted: 'Completed',
+      deferred: 'Planned · deferred',
     } as const
   )[state];
 }

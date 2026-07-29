@@ -375,6 +375,32 @@ describe('product read-model composer', () => {
         progress: { source: { status: 'pending', reason: 'awaiting review evidence' } },
       },
     ];
+    input.referenceIndex.sprintWorkspacePresentation!.problems = [
+      {
+        problemId: 'problem-1',
+        sprintId: 'sprint-1',
+        title: 'Keep the relationship explicit.',
+        source: source(),
+        graphElementRefs: [
+          { kind: 'sprint_planner_activity', id: 'activity-1' },
+          { kind: 'work_unit', id: 'work-unit-1' },
+        ],
+      },
+    ];
+    input.referenceIndex.sprintWorkspacePresentation!.workUnitLifecycle = [
+      {
+        entryId: 'lifecycle-1',
+        workUnitId: 'work-unit-1',
+        sequence: 0,
+        kind: 'work',
+        title: 'Work',
+        summary: 'Recorded work.',
+        agentSessionId: 'session-1',
+        agentRole: 'worker',
+        invocationId: 'invocation-1',
+        source: source(),
+      },
+    ];
 
     const presentation = compose(input).epics[0].sprints[0].workspacePresentation;
     expect(presentation.plannerActivityMembership).toEqual([
@@ -387,6 +413,14 @@ describe('product read-model composer', () => {
       source: { status: 'pending', reason: 'awaiting review evidence' },
     });
     expect(presentation.narratives?.progress).not.toHaveProperty('value');
+    expect(presentation.problems?.[0].graphElementRefs).toEqual([
+      { kind: 'sprint_planner_activity', id: 'activity-1' },
+      { kind: 'work_unit', id: 'work-unit-1' },
+    ]);
+    expect(presentation.workUnitLifecycle?.[0]).toMatchObject({
+      entryId: 'lifecycle-1',
+      agentSessionId: 'session-1',
+    });
   });
 
   it.each([

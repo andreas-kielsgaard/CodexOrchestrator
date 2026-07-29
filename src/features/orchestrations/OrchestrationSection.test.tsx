@@ -1,5 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
-import { vi } from 'vitest';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { composeProductOrchestrationReadModels } from '../../application/orchestrations';
 import { presentProductOrchestrations } from '../../app/orchestrationPresentation';
 import { recordedPresentationAdjunct } from '../../dev/orchestrationSection/recordedPresentationAdjunct';
@@ -30,223 +29,35 @@ const disposableRecordedOrchestrationView = {
 };
 
 describe('OrchestrationSection', () => {
-  it('renders truthful empty movement and specific application-owned ready work', () => {
+  it('renders exactly the three semantic overview columns from structured movement and state', () => {
     render(<OrchestrationSection view={disposableRecordedOrchestrationView} />);
 
     expect(screen.getAllByRole('columnheader').map((header) => header.textContent)).toEqual([
       'Epic',
       'Current movement',
-      'State and next action',
+      'State',
     ]);
-    expect(screen.getByText('No work in motion')).toBeVisible();
-    expect(screen.getByText('Paused')).toBeVisible();
-    expect(
-      screen.getByRole('button', {
-        name: 'Continue with Planner and Work Unit Interaction Discovery',
-      }),
-    ).toBeVisible();
-    expect(screen.queryByText('Ready to continue')).toBeNull();
-    expect(screen.queryByText('Human input')).toBeNull();
+    expect(screen.getByText(/0 processing.*0 reviewing/)).toBeVisible();
+    const ready = screen.getByText('Ready to continue');
+    expect(ready).toHaveClass('epic-state--ready_to_continue');
     expect(screen.queryByRole('columnheader', { name: /attention|continuation/i })).toBeNull();
   });
 
-  it('summarizes typed movement items without display-string inference', () => {
-    const target = {
-      kind: 'sprint' as const,
-      epicId: 'epic',
-      sprintId: 'sprint',
-      revisionId: 'revision',
-    };
-    expect(movementLabel({ kind: 'available', items: [] })).toBe('No work in motion');
-    expect(
-      movementLabel({
-        kind: 'available',
-        items: [
-          { movementItemId: '1', label: 'One', state: 'processing', target },
-          { movementItemId: '2', label: 'Two', state: 'processing', target },
-          { movementItemId: '3', label: 'Three', state: 'reviewing', target },
-        ],
-      }),
-    ).toBe('2 processing · 1 reviewing');
-    expect(movementLabel({ kind: 'unavailable', reason: 'No source.' })).toBe(
-      'Unavailable: No source.',
+  it('uses the accepted movement vocabulary without display-string input', () => {
+    expect(movementLabel({ kind: 'preparing_next_sprint' })).toBe('Preparing next Sprint');
+    expect(movementLabel({ kind: 'reviewing_sprint_completion' })).toBe(
+      'Reviewing Sprint completion',
     );
-  });
-
-  it('exposes the description from the Epic title on hover and keyboard focus', () => {
-    render(<OrchestrationSection view={disposableRecordedOrchestrationView} />);
-
-    const goal = canonicalRecordedView.epics[0].goal;
-    const title = screen.getByRole('button', {
-      name: 'Open Codex Epic Runner workspace development',
-    });
-    const titleArea = title.closest('.epic-title-help');
-    expect(titleArea).not.toBeNull();
-    expect(titleArea?.querySelectorAll('button')).toHaveLength(1);
-    expect(
-      screen.queryByRole('button', {
-        name: 'About Codex Epic Runner workspace development',
-      }),
-    ).toBeNull();
-    expect(screen.queryByText(goal)).toBeNull();
-
-    fireEvent.mouseEnter(title);
-    expect(screen.getByRole('tooltip')).toHaveTextContent(goal);
-    expect(title).toHaveAttribute('aria-describedby', screen.getByRole('tooltip').id);
-    expect(title.contains(screen.getByRole('tooltip'))).toBe(false);
-    fireEvent.mouseLeave(titleArea!);
-    expect(screen.queryByRole('tooltip')).toBeNull();
-
-    fireEvent.focus(title);
-    expect(screen.getByRole('tooltip')).toHaveTextContent(goal);
-    expect(title).toHaveAttribute('aria-describedby', screen.getByRole('tooltip').id);
-    fireEvent.blur(title);
-    expect(screen.queryByRole('tooltip')).toBeNull();
-  });
-
-  it('opens the Epic from both the title and row blank space', () => {
-    const first = render(<OrchestrationSection view={disposableRecordedOrchestrationView} />);
-
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: 'Open Codex Epic Runner workspace development',
-      }),
+    expect(movementLabel({ kind: 'planning_next_work' })).toBe('Planning next work');
+    expect(movementLabel({ kind: 'starting_work_units', count: 2 })).toBe('Starting 2 Work Units');
+    expect(movementLabel({ kind: 'executing_work', processingCount: 2, reviewingCount: 1 })).toBe(
+      '2 processing · 1 reviewing',
     );
-    expect(screen.getByRole('main', { name: 'Epic detail' })).toBeVisible();
-
-    first.unmount();
-    render(<OrchestrationSection view={disposableRecordedOrchestrationView} />);
-
-    fireEvent.click(screen.getByText('No work in motion'));
-    expect(screen.getByRole('main', { name: 'Epic detail' })).toBeVisible();
-  });
-
-  it('keeps planning drafts distinct from initiated Epics in the recorded overview', () => {
-    const onOpenPlanningDraft = vi.fn();
-    render(
-      <OrchestrationSection
-        view={disposableRecordedOrchestrationView}
-        planningDrafts={[
-          {
-            epicPlanningDraftId: 'draft-1',
-            agentSessionId: 'session-draft-1',
-            title: 'Codex Epic Runner workspace development',
-            status: 'active',
-            createdAt: '2026-07-29T09:00:00.000Z',
-            updatedAt: '2026-07-29T09:00:00.000Z',
-          },
-        ]}
-        onOpenPlanningDraft={onOpenPlanningDraft}
-      />,
+    expect(movementLabel({ kind: 'reviewing_returned_work', count: 3 })).toBe(
+      'Reviewing 3 returned Work Units',
     );
-
-    expect(
-      screen.getByRole('button', {
-        name: 'Open planning draft Codex Epic Runner workspace development',
-      }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole('button', { name: 'Open Codex Epic Runner workspace development' }),
-    ).toBeVisible();
-    expect(screen.getByText('Pre-initiation planning draft')).toBeVisible();
-    fireEvent.click(screen.getByText('Draft'));
-    expect(onOpenPlanningDraft).toHaveBeenCalledOnce();
-  });
-
-  it('opens movement, ready-work, and human-input targets at their exact product locations', () => {
-    const base = disposableRecordedOrchestrationView.epics[0];
-    const workUnitTarget = {
-      kind: 'work_unit' as const,
-      epicId: base.id,
-      sprintId: 'sprint-control-surface',
-      revisionId: 'ECS-R4',
-      sprintPlannerActivityId: 'planner-r4-integration',
-      workUnitId: 'WU-ECS2E',
-    };
-    const plannerTarget = {
-      kind: 'sprint_planner_activity' as const,
-      epicId: base.id,
-      sprintId: 'sprint-control-surface',
-      revisionId: 'ECS-R4',
-      sprintPlannerActivityId: 'planner-r4-integration',
-    };
-    const view: OrchestrationSectionView = {
-      epics: [
-        {
-          ...base,
-          movement: {
-            kind: 'available',
-            items: [
-              {
-                movementItemId: 'processing-plan',
-                label: 'Refine the integration plan',
-                state: 'processing',
-                target: plannerTarget,
-              },
-              {
-                movementItemId: 'review-work-unit',
-                label: 'Review WU-ECS2E',
-                state: 'reviewing',
-                target: workUnitTarget,
-              },
-            ],
-          },
-          state: 'running',
-          readyWork: [
-            {
-              actionId: 'open-plan-review',
-              label: 'Review the integration plan',
-              target: plannerTarget,
-            },
-          ],
-          humanInput: {
-            actionId: 'decide-work-unit-review',
-            label: 'Decide the WU-ECS2E review',
-            target: workUnitTarget,
-          },
-        },
-      ],
-    };
-
-    const movementRender = render(<OrchestrationSection view={view} />);
-    const movement = screen.getByRole('button', { name: '1 processing · 1 reviewing' });
-    expect(screen.getByRole('button', { name: 'Review the integration plan' })).toBeVisible();
-    expect(
-      screen.getByRole('button', { name: 'Human input required: Decide the WU-ECS2E review' }),
-    ).toBeVisible();
-    fireEvent.click(movement);
-    const popover = screen.getByRole('dialog', { name: 'Current movement details' });
-    expect(
-      within(popover).getByRole('button', { name: /Refine the integration plan Processing/ }),
-    ).toBeVisible();
-    const reviewMovement = within(popover).getByRole('button', {
-      name: /Review WU-ECS2E Reviewing/,
-    });
-    reviewMovement.focus();
-    fireEvent.keyDown(reviewMovement, { key: 'Escape' });
-    expect(screen.queryByRole('dialog', { name: 'Current movement details' })).toBeNull();
-    expect(movement).toHaveFocus();
-    fireEvent.click(movement);
-    fireEvent.click(
-      within(screen.getByRole('dialog', { name: 'Current movement details' })).getByRole('button', {
-        name: /Review WU-ECS2E Reviewing/,
-      }),
-    );
-    expect(screen.getByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
-    movementRender.unmount();
-
-    const readyRender = render(<OrchestrationSection view={view} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Review the integration plan' }));
-    expect(
-      screen.getByRole('main', { name: 'Plan detail: Integrated detail surfaces' }),
-    ).toBeVisible();
-    readyRender.unmount();
-
-    render(<OrchestrationSection view={view} />);
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Human input required: Decide the WU-ECS2E review' }),
-    );
-    expect(screen.getByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
+    expect(movementLabel({ kind: 'integrating_accepted_work' })).toBe('Integrating accepted work');
+    expect(movementLabel({ kind: 'reevaluating_direction' })).toBe('Reevaluating direction');
   });
 
   it('makes the ordered plan primary, opens the completed Sprint workspace, and leaves future Sprints inert', () => {
@@ -265,11 +76,12 @@ describe('OrchestrationSection', () => {
 
     const plan = within(screen.getByRole('region', { name: 'Epic plan' })).getByRole('list');
     const items = within(plan).getAllByRole('listitem');
-    expect(items).toHaveLength(5);
+    expect(items).toHaveLength(6);
     expect(items[0]).toHaveClass('sprint-plan-item--completed');
     expect(items[1]).toHaveClass('sprint-plan-item--completed');
     expect(items[2]).toHaveClass('sprint-plan-item--completed');
-    expect(items[3]).toHaveClass('sprint-plan-item--not_started');
+    expect(items[3]).toHaveClass('sprint-plan-item--in_progress');
+    expect(items[4]).toHaveClass('sprint-plan-item--not_started');
     expect(
       screen.queryByRole('button', { name: /Planner and Work Unit Interaction Discovery/ }),
     ).toBeNull();
@@ -321,7 +133,7 @@ describe('OrchestrationSection', () => {
     expect(screen.getByRole('main', { name: 'Orchestration' })).toBeVisible();
   }, 10_000);
 
-  it('starts the Sprint Agent Session collapsed and uses the injected recorded controller', async () => {
+  it('keeps the Sprint Agent Session in the reusable vertical split', async () => {
     render(
       <OrchestrationSection
         view={disposableRecordedOrchestrationView}
@@ -336,31 +148,21 @@ describe('OrchestrationSection', () => {
     );
 
     const session = screen.getByRole('region', { name: 'Sprint Agent Session' });
-    expect(session.querySelector('.shared-agent-session__compact')).not.toBeNull();
-    expect(session).toHaveTextContent(
-      'Agent SessionSprint control surface discoveryOpen Agent Session',
-    );
-    const open = within(session).getByRole('button', { name: 'Open Agent Session' });
-    expect(open).toHaveAttribute('aria-expanded', 'false');
-    expect(within(session).queryByLabelText('Sprint Agent Session conversation')).toBeNull();
+    expect(session.querySelector('.shared-agent-session__compact')).toBeNull();
+    expect(session).toHaveTextContent('Agent SessionSprint control surface discovery');
+    expect(within(session).getByLabelText('Sprint Agent Session conversation')).toBeVisible();
+    expect(
+      screen.getByRole('separator', { name: 'Resize Detail flow and Agent Session' }),
+    ).toHaveAttribute('aria-orientation', 'horizontal');
+    expect(screen.getByRole('button', { name: 'Maximize flow' })).toBeVisible();
     expect(screen.queryByLabelText('Epic Runner Agent Session conversation')).toBeNull();
 
-    fireEvent.click(open);
-    expect(within(session).getByLabelText('Sprint Agent Session conversation')).toBeVisible();
-    const collapse = within(session).getByRole('button', { name: 'Collapse Agent Session' });
-    expect(collapse).toHaveAttribute('aria-expanded', 'true');
     const message = await within(session).findByRole('textbox', { name: 'Message' });
     fireEvent.change(message, { target: { value: 'Record Sprint feedback' } });
     fireEvent.click(within(session).getByRole('button', { name: 'Send' }));
     expect(await within(session).findByText('Record Sprint feedback')).toBeVisible();
     expect(within(session).queryByText(/No live agent was invoked/)).toBeNull();
-
-    fireEvent.click(collapse);
-    expect(within(session).queryByLabelText('Sprint Agent Session conversation')).toBeNull();
-    expect(within(session).getByRole('button', { name: 'Open Agent Session' })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    );
+    expect(within(session).queryByRole('button', { name: /Collapse/ })).toBeNull();
   });
 
   it('navigates Plan and Work Unit details, restores focus, and coordinates dual sessions', () => {
@@ -400,15 +202,12 @@ describe('OrchestrationSection', () => {
     expect(screen.getByLabelText('Work Unit context')).toHaveTextContent(
       'Recorded/theoretical fixture only',
     );
-    fireEvent.click(within(worker).getByRole('button', { name: 'Collapse Agent Session' }));
-    expect(within(worker).getByRole('button', { name: 'Open Agent Session' })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    );
-    expect(screen.getByLabelText('Handler and worker Agent Sessions')).toHaveAttribute(
-      'data-dominant',
-      'handler',
-    );
+    expect(
+      screen.getByRole('separator', {
+        name: 'Resize Handler conversation and Work and review conversation',
+      }),
+    ).toHaveAttribute('aria-orientation', 'vertical');
+    expect(within(worker).queryByRole('button', { name: /Collapse/ })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Back to Plan' }));
     expect(
@@ -447,8 +246,8 @@ describe('OrchestrationSection', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Back to Sprint' }));
     fireEvent.click(screen.getByRole('button', { name: /Open Work Unit WU-ECS2E/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reviewer' }));
     const reviewer = screen.getByRole('region', { name: 'Reviewer Agent Session' });
-    fireEvent.click(within(reviewer).getByRole('button', { name: 'Open Agent Session' }));
     expect(await within(reviewer).findByRole('textbox', { name: 'Message' })).toBeVisible();
   });
 
@@ -563,30 +362,31 @@ describe('OrchestrationSection', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Concerns' }));
 
     const overview = screen.getByLabelText('Sprint concerns overview');
-    expect(within(overview).getAllByRole('button')).toHaveLength(1);
-    expect(within(overview).getByText('Responsibility accepted')).toBeVisible();
+    expect(within(overview).getAllByRole('button')).toHaveLength(3);
+    expect(within(overview).getAllByText('Completed')).toHaveLength(3);
+    expect(within(overview).queryByText('Responsibility accepted')).toBeNull();
     const multiUnitConcern = within(overview).getByRole('button', {
-      name: /Sprint control surface.*7 linked Work Units/,
+      name: /Flow and detail navigation.*2 linked Work Units/,
     });
     expect(multiUnitConcern).toBeVisible();
 
     const convergence = multiUnitConcern;
     convergence.focus();
     fireEvent.click(convergence);
-    expect(screen.getByLabelText('Concern detail: Sprint control surface')).toBeVisible();
+    expect(screen.getByLabelText('Concern detail: Flow and detail navigation')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Back to concerns' }));
-    expect(screen.getByRole('button', { name: /Sprint control surface/ })).toHaveFocus();
+    expect(screen.getByRole('button', { name: /Flow and detail navigation/ })).toHaveFocus();
 
-    fireEvent.click(screen.getByRole('button', { name: /Sprint control surface/ }));
-    const detail = screen.getByLabelText('Concern detail: Sprint control surface');
+    fireEvent.click(screen.getByRole('button', { name: /Flow and detail navigation/ }));
+    const detail = screen.getByLabelText('Concern detail: Flow and detail navigation');
     const unit = within(detail).getByRole('button', { name: /WU-ECS2E/ });
     fireEvent.click(unit);
     expect(screen.getByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Back to Concern' }));
-    expect(screen.getByLabelText('Concern detail: Sprint control surface')).toBeVisible();
+    expect(screen.getByLabelText('Concern detail: Flow and detail navigation')).toBeVisible();
     expect(screen.getByRole('button', { name: /WU-ECS2E/ })).toHaveFocus();
     fireEvent.click(screen.getByRole('button', { name: 'Back to concerns' }));
-    expect(screen.getByRole('button', { name: /Sprint control surface/ })).toHaveFocus();
+    expect(screen.getByRole('button', { name: /Flow and detail navigation/ })).toHaveFocus();
   });
 
   it('keeps a historical Flow selection while Concerns opens linked Work Units from the active revision', () => {
@@ -603,8 +403,8 @@ describe('OrchestrationSection', () => {
     expect(revision).toHaveValue('ECS-R1');
 
     fireEvent.click(screen.getByRole('tab', { name: 'Concerns' }));
-    fireEvent.click(screen.getByRole('button', { name: /Sprint control surface/ }));
-    const concern = screen.getByLabelText('Concern detail: Sprint control surface');
+    fireEvent.click(screen.getByRole('button', { name: /Flow and detail navigation/ }));
+    const concern = screen.getByLabelText('Concern detail: Flow and detail navigation');
     const activeUnit = within(concern).getByRole('button', { name: /WU-ECS2E/ });
     fireEvent.click(activeUnit);
 
@@ -612,7 +412,7 @@ describe('OrchestrationSection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Back to Concern' }));
     expect(screen.getByRole('button', { name: /WU-ECS2E/ })).toHaveFocus();
     fireEvent.click(screen.getByRole('button', { name: 'Back to concerns' }));
-    expect(screen.getByRole('button', { name: /Sprint control surface/ })).toHaveFocus();
+    expect(screen.getByRole('button', { name: /Flow and detail navigation/ })).toHaveFocus();
 
     fireEvent.click(screen.getByRole('tab', { name: 'Flow' }));
     expect(screen.getByRole('combobox', { name: 'Plan revision' })).toHaveValue('ECS-R1');
@@ -633,13 +433,14 @@ describe('OrchestrationSection', () => {
       .querySelector<HTMLElement>('.sprint-documents__list')!;
     const documents = within(list).getAllByRole('article');
     expect(documents.map((document) => document.textContent)).toEqual([
+      expect.stringContaining('Application-owned file review'),
       expect.stringContaining('Original ECS-R1 plan'),
       expect.stringContaining('G1 feedback and ECS-R2 replan'),
       expect.stringContaining('WU-ECS2E corrected visual review'),
     ]);
     expect(documents[0]).toHaveTextContent('Provenance: recorded-development');
-    expect(documents[2]).toHaveTextContent('Work Unit scope ECS-R4:WU-ECS2E');
-    expect(documents[1]).toHaveTextContent('Plan ECS-R2');
+    expect(documents[3]).toHaveTextContent('Work Unit scope ECS-R4:WU-ECS2E');
+    expect(documents[2]).toHaveTextContent('Plan ECS-R2');
   });
 
   it('focuses the Sprint dialog and restores its opener after Escape closes it', () => {
@@ -800,11 +601,11 @@ describe('OrchestrationSection', () => {
     const mainColumn = detail.querySelector('.detail-workspace__main-column');
     expect(layout).not.toBeNull();
     expect(layout?.children).toHaveLength(2);
-    expect(mainColumn?.children).toHaveLength(2);
+    expect(mainColumn?.children).toHaveLength(1);
     const context = screen.getByLabelText('Epic context');
     expect(context).toHaveTextContent('Codex Epic Runner workspace development');
-    expect(context).toHaveTextContent('Sprint Control Surface Discovery');
-    expect(context).toHaveTextContent('Completed');
+    expect(context).toHaveTextContent('Sprint and Epic Detail Review');
+    expect(context).toHaveTextContent('In progress');
     expect(document.querySelector('.epic-plan')).not.toBeNull();
     expect(document.querySelector('.shared-agent-session')).not.toBeNull();
 
@@ -815,15 +616,16 @@ describe('OrchestrationSection', () => {
     expect(sprintDetail).toHaveClass('detail-workspace');
     expect(sprintDetail).toHaveAttribute('data-viewport-contained', 'true');
     expect(sprintDetail.querySelector('.detail-workspace__layout')?.children).toHaveLength(2);
-    expect(sprintDetail.querySelector('.detail-workspace__main-column')?.children).toHaveLength(2);
-    expect(screen.getByLabelText('Sprint context').querySelectorAll('h1, p')).toHaveLength(2);
+    expect(sprintDetail.querySelector('.detail-workspace__main-column')?.children).toHaveLength(1);
+    expect(screen.getByLabelText('Sprint context')).toHaveTextContent('Completed');
+    expect(screen.getByLabelText('Sprint context')).toHaveTextContent('Epic Planner objectives');
     expect(screen.getByLabelText('Sprint controls')).not.toHaveTextContent(
       'Codex Epic Runner workspace development',
     );
-    expect(sprintDetail.querySelector('.shared-agent-session__compact')).not.toBeNull();
+    expect(sprintDetail.querySelector('.shared-agent-session__compact')).toBeNull();
   });
 
-  it('shows both canonical ECS2E attempts and their recorded review outcomes', () => {
+  it('keeps historical Work Units honest when no lifecycle turn links were recorded', () => {
     render(<OrchestrationSection view={disposableRecordedOrchestrationView} />);
     fireEvent.click(
       screen.getByRole('button', { name: 'Open Codex Epic Runner workspace development' }),
@@ -837,8 +639,96 @@ describe('OrchestrationSection', () => {
       }),
     );
     const detail = screen.getByRole('main', { name: 'Work Unit detail: WU-ECS2E' });
-    expect(detail).toHaveTextContent('WU-ECS2E-attempt-1Returned · needs correction');
-    expect(detail).toHaveTextContent('WU-ECS2E-attempt-2Returned · accepted');
+    expect(detail).toHaveTextContent(
+      'No recorded lifecycle turn links are available for this Work Unit',
+    );
+    expect(detail).toHaveTextContent('Completed');
+  });
+
+  it('presents the in-progress parallel review Sprint and cycles problem focus by state', async () => {
+    render(<OrchestrationSection view={canonicalRecordedView} />);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Codex Epic Runner workspace development' }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Sprint: Sprint and Epic Detail Review' }),
+    );
+
+    const context = screen.getByLabelText('Sprint context');
+    expect(context).toHaveTextContent('Processing');
+    expect(within(context).getByLabelText('Epic Planner objectives')).toHaveTextContent(
+      'Develop Codex Epic Runner',
+    );
+    expect(within(context).getByLabelText('Sprint Planner problems')).toBeVisible();
+    expect(screen.getByRole('button', { name: /WU-RD1.*Completed/ })).toBeVisible();
+    expect(screen.getByRole('button', { name: /WU-RD2.*Working/ })).toBeVisible();
+    expect(screen.getByRole('button', { name: /WU-RD3.*Under review/ })).toBeVisible();
+    expect(screen.getByRole('button', { name: /WU-RD4.*Waiting/ })).toBeVisible();
+    expect(screen.getByRole('button', { name: /WU-RD5.*Not started/ })).toBeVisible();
+    expect(screen.getByRole('button', { name: /WU-RD6.*Waiting/ })).toBeVisible();
+    expect(screen.getByRole('button', { name: /WU-RD6/ }).closest('article')).toHaveClass(
+      'sprint-work-unit--divergent',
+    );
+
+    const problem = within(context).getByRole('button', {
+      name: 'Keep Epic objectives while adding Sprint problems.',
+    });
+    const processingNode = screen.getByRole('button', { name: /WU-RD2.*Working/ });
+    fireEvent.pointerEnter(processingNode);
+    expect(problem).toHaveClass('is-highlighted');
+    fireEvent.pointerLeave(processingNode);
+    fireEvent.pointerEnter(problem);
+    expect(processingNode.closest('article')).toHaveClass('is-problem-highlighted');
+    fireEvent.pointerLeave(problem);
+
+    fireEvent.click(problem);
+    await waitFor(() => expect(processingNode).toHaveFocus());
+    fireEvent.click(problem);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /WU-RD1.*Completed/ })).toHaveFocus(),
+    );
+    fireEvent.click(problem);
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Open Plan: Relationship foundation' }),
+      ).toHaveFocus(),
+    );
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Documents' }));
+    expect(screen.getByText('Sprint detail review evidence')).toBeVisible();
+  });
+
+  it('navigates the recorded Work Unit lifecycle to Agent Session turns', async () => {
+    render(<OrchestrationSection view={canonicalRecordedView} />);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Codex Epic Runner workspace development' }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Sprint: Sprint and Epic Detail Review' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Open Work Unit WU-RD1/ }));
+
+    const lifecycle = screen.getByLabelText('Work Unit lifecycle turn log');
+    expect(within(lifecycle).getAllByRole('button')).toHaveLength(8);
+    fireEvent.click(within(lifecycle).getByRole('button', { name: /Reprompt/ }));
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-invocation-id="recorded-handler-WU-RD1-reprompt"]'),
+      ).toHaveFocus(),
+    );
+
+    fireEvent.click(within(lifecycle).getAllByRole('button', { name: /^Review/ })[1]);
+    expect(screen.getByRole('region', { name: 'Reviewer Agent Session' })).toBeVisible();
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-invocation-id="recorded-reviewer-WU-RD1-second-review"]'),
+      ).toHaveFocus(),
+    );
+    expect(
+      screen.getByRole('separator', {
+        name: 'Resize Handler conversation and Work and review conversation',
+      }),
+    ).toHaveAttribute('aria-orientation', 'vertical');
   });
 });
 

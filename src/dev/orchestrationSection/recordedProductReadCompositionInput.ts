@@ -11,6 +11,7 @@ import {
 
 const epicId = 'epic-codex-runner-workspace';
 const controlSprintId = 'sprint-control-surface';
+const reviewSprintId = 'sprint-parallel-review';
 const provenanceId = 'recorded-development';
 const ecs2eAcceptanceProvenanceId = 'recorded-ecs2e-accepted-path';
 const source = () => ({
@@ -85,6 +86,51 @@ const executionUnits = [
   'WU-ECS2D',
   'WU-ECS3',
 ];
+const reviewWorkUnitText: Readonly<Record<string, readonly [string, string, string]>> = {
+  'WU-RD1': [
+    'Model review relationships',
+    'Represent objectives, problems, and graph links.',
+    'Recorded completed relationship slice.',
+  ],
+  'WU-RD2': [
+    'Build reusable split surfaces',
+    'Create shared horizontal and vertical resizing.',
+    'Recorded processing interaction slice.',
+  ],
+  'WU-RD3': [
+    'Connect lifecycle navigation',
+    'Connect lifecycle entries to recorded Agent Session turns.',
+    'Recorded returned slice awaiting review.',
+  ],
+  'WU-RD4': [
+    'Refine responsive flow',
+    'Fit the mixed-state graph at narrow and wide sizes.',
+    'Planned after the split surface is ready.',
+  ],
+  'WU-RD5': [
+    'Normalize document review',
+    'Open complete Documents with Sprint-start comparison.',
+    'Planned after the relationship boundary.',
+  ],
+  'WU-RD6': [
+    'Converge review evidence',
+    'Bring later divergent review evidence back into the plan.',
+    'Introduced by the second recorded plan revision.',
+  ],
+};
+const reviewRevisionUnits = {
+  'RD-R1': ['WU-RD1', 'WU-RD2', 'WU-RD3', 'WU-RD4', 'WU-RD5'],
+  'RD-R2': ['WU-RD1', 'WU-RD2', 'WU-RD3', 'WU-RD4', 'WU-RD5', 'WU-RD6'],
+} as const;
+const reviewDependencies: Readonly<Record<string, readonly string[]>> = {
+  'WU-RD1': [],
+  'WU-RD2': [],
+  'WU-RD3': ['WU-RD1'],
+  'WU-RD4': ['WU-RD2', 'WU-RD3'],
+  'WU-RD5': ['WU-RD1'],
+  'WU-RD6': ['WU-RD3', 'WU-RD5'],
+};
+const reviewExecutionUnits = ['WU-RD1', 'WU-RD2', 'WU-RD3'] as const;
 
 const sprintDefinitions = [
   [
@@ -109,6 +155,13 @@ const sprintDefinitions = [
     'completed',
   ],
   [
+    reviewSprintId,
+    'Sprint and Epic Detail Review',
+    'Evaluate the redesigned Sprint context, mixed-state flow, Documents, and Work Unit lifecycle.',
+    'Recorded review composition only; it does not represent live orchestration.',
+    'in_progress',
+  ],
+  [
     'sprint-planner-work-unit',
     'Planner and Work Unit Interaction Discovery',
     'Explore planner and Work Unit interactions after the Sprint surface is understood.',
@@ -124,7 +177,9 @@ const sprintDefinitions = [
   ],
 ] as const;
 
-const simpleSprints = sprintDefinitions.filter(([id]) => id !== controlSprintId);
+const simpleSprints = sprintDefinitions.filter(
+  ([id]) => ![controlSprintId, reviewSprintId].includes(id),
+);
 const simplePlans = simpleSprints.map(([id]) => ({ sprintPlanId: `plan-${id}`, sprintId: id }));
 const simpleRevisions = simpleSprints.map(([id]) => ({
   sprintPlanRevisionId: `${id}-r1`,
@@ -141,6 +196,7 @@ export const recordedProductReadCompositionInput = {
     sprintPlans: [
       ...simplePlans,
       { sprintPlanId: 'plan-control-surface', sprintId: controlSprintId },
+      { sprintPlanId: 'plan-parallel-review', sprintId: reviewSprintId },
     ],
     sprintPlanRevisions: [
       ...simpleRevisions,
@@ -163,19 +219,45 @@ export const recordedProductReadCompositionInput = {
         revision: 4,
         supersedesSprintPlanRevisionId: 'ECS-R3',
       },
+      {
+        sprintPlanRevisionId: 'RD-R1',
+        sprintPlanId: 'plan-parallel-review',
+        revision: 1,
+      },
+      {
+        sprintPlanRevisionId: 'RD-R2',
+        sprintPlanId: 'plan-parallel-review',
+        revision: 2,
+        supersedesSprintPlanRevisionId: 'RD-R1',
+      },
     ],
-    workUnits: Object.keys(workUnitText).map((workUnitId) => ({ workUnitId })),
-    workUnitScopes: Object.entries(revisionUnits).flatMap(([revision, units]) =>
-      units.map((workUnitId) => ({
-        workUnitScopeId: scoped(revision, workUnitId),
-        sprintPlanRevisionId: revision,
-        workUnitId,
-        dependsOnWorkUnitScopeIds: (dependencyIds[workUnitId] ?? [])
-          .filter((dependency) => (units as readonly string[]).includes(dependency))
-          .map((dependency) => scoped(revision, dependency)),
-        gateIds: revision === 'ECS-R4' && workUnitId === 'WU-ECS3' ? ['G2-R4'] : [],
-      })),
+    workUnits: [...Object.keys(workUnitText), ...Object.keys(reviewWorkUnitText)].map(
+      (workUnitId) => ({ workUnitId }),
     ),
+    workUnitScopes: [
+      ...Object.entries(revisionUnits).flatMap(([revision, units]) =>
+        units.map((workUnitId) => ({
+          workUnitScopeId: scoped(revision, workUnitId),
+          sprintPlanRevisionId: revision,
+          workUnitId,
+          dependsOnWorkUnitScopeIds: (dependencyIds[workUnitId] ?? [])
+            .filter((dependency) => (units as readonly string[]).includes(dependency))
+            .map((dependency) => scoped(revision, dependency)),
+          gateIds: revision === 'ECS-R4' && workUnitId === 'WU-ECS3' ? ['G2-R4'] : [],
+        })),
+      ),
+      ...Object.entries(reviewRevisionUnits).flatMap(([revision, units]) =>
+        units.map((workUnitId) => ({
+          workUnitScopeId: scoped(revision, workUnitId),
+          sprintPlanRevisionId: revision,
+          workUnitId,
+          dependsOnWorkUnitScopeIds: (reviewDependencies[workUnitId] ?? [])
+            .filter((dependency) => (units as readonly string[]).includes(dependency))
+            .map((dependency) => scoped(revision, dependency)),
+          gateIds: [],
+        })),
+      ),
+    ],
     sprintPlannerActivities: [
       ...(['ECS-R1', 'ECS-R2', 'ECS-R3'] as const).map((revision) => ({
         sprintPlannerActivityId: `planner-${revision.toLowerCase()}`,
@@ -187,12 +269,29 @@ export const recordedProductReadCompositionInput = {
         sprintPlanId: 'plan-control-surface',
         assessedSprintPlanRevisionIds: ['ECS-R4'],
       })),
+      {
+        sprintPlannerActivityId: 'planner-rd-r1',
+        sprintPlanId: 'plan-parallel-review',
+        assessedSprintPlanRevisionIds: ['RD-R1'],
+      },
+      ...['relationships', 'interaction', 'convergence'].map((group) => ({
+        sprintPlannerActivityId: `planner-rd-r2-${group}`,
+        sprintPlanId: 'plan-parallel-review',
+        assessedSprintPlanRevisionIds: ['RD-R2'],
+      })),
     ],
-    workUnitExecutions: executionUnits.map((workUnitId) => ({
-      workUnitExecutionId: `execution-${workUnitId}`,
-      workUnitId,
-      fixedWorkUnitScopeId: scoped('ECS-R4', workUnitId),
-    })),
+    workUnitExecutions: [
+      ...executionUnits.map((workUnitId) => ({
+        workUnitExecutionId: `execution-${workUnitId}`,
+        workUnitId,
+        fixedWorkUnitScopeId: scoped('ECS-R4', workUnitId),
+      })),
+      ...reviewExecutionUnits.map((workUnitId) => ({
+        workUnitExecutionId: `execution-${workUnitId}`,
+        workUnitId,
+        fixedWorkUnitScopeId: scoped('RD-R2', workUnitId),
+      })),
+    ],
     attempts: [
       ...executionUnits
         .filter((workUnitId) => workUnitId !== 'WU-ECS2E')
@@ -211,6 +310,21 @@ export const recordedProductReadCompositionInput = {
         workUnitExecutionId: 'execution-WU-ECS2E',
         fixedWorkUnitScopeId: scoped('ECS-R4', 'WU-ECS2E'),
       },
+      {
+        attemptId: 'WU-RD1-attempt-1',
+        workUnitExecutionId: 'execution-WU-RD1',
+        fixedWorkUnitScopeId: scoped('RD-R2', 'WU-RD1'),
+      },
+      {
+        attemptId: 'WU-RD1-attempt-2',
+        workUnitExecutionId: 'execution-WU-RD1',
+        fixedWorkUnitScopeId: scoped('RD-R2', 'WU-RD1'),
+      },
+      ...(['WU-RD2', 'WU-RD3'] as const).map((workUnitId) => ({
+        attemptId: `attempt-${workUnitId}`,
+        workUnitExecutionId: `execution-${workUnitId}`,
+        fixedWorkUnitScopeId: scoped('RD-R2', workUnitId),
+      })),
     ],
     agentSessions: [
       { agentSessionId: 'recorded-epic-runner-manual-continuation-ready' },
@@ -218,6 +332,14 @@ export const recordedProductReadCompositionInput = {
       { agentSessionId: 'recorded-session-planner-r4-integration' },
       { agentSessionId: 'recorded-session-reviewer-WU-ECS2E' },
       ...executionUnits.map((workUnitId) => ({ agentSessionId: `recorded-session-${workUnitId}` })),
+      { agentSessionId: 'recorded-sprint-parallel-review' },
+      { agentSessionId: 'recorded-planner-rd-r2' },
+      { agentSessionId: 'recorded-handler-WU-RD1' },
+      { agentSessionId: 'recorded-worker-WU-RD1' },
+      { agentSessionId: 'recorded-reviewer-WU-RD1' },
+      ...(['WU-RD2', 'WU-RD3'] as const).map((workUnitId) => ({
+        agentSessionId: `recorded-worker-${workUnitId}`,
+      })),
     ],
     agentSessionReferences: [
       {
@@ -255,6 +377,48 @@ export const recordedProductReadCompositionInput = {
         targetId: `execution-${workUnitId}`,
         semanticRole: 'work_unit_worker',
       })),
+      {
+        agentSessionRefId: 'session-ref-parallel-review',
+        agentSessionId: 'recorded-sprint-parallel-review',
+        targetKind: 'sprint',
+        targetId: reviewSprintId,
+        semanticRole: 'sprint_runner',
+      },
+      {
+        agentSessionRefId: 'session-ref-planner-rd-r2',
+        agentSessionId: 'recorded-planner-rd-r2',
+        targetKind: 'sprint_planner_activity',
+        targetId: 'planner-rd-r2-relationships',
+        semanticRole: 'sprint_planner',
+      },
+      {
+        agentSessionRefId: 'session-ref-handler-WU-RD1',
+        agentSessionId: 'recorded-handler-WU-RD1',
+        targetKind: 'work_unit_execution',
+        targetId: 'execution-WU-RD1',
+        semanticRole: 'work_unit_handler',
+      },
+      {
+        agentSessionRefId: 'session-ref-worker-WU-RD1',
+        agentSessionId: 'recorded-worker-WU-RD1',
+        targetKind: 'work_unit_execution',
+        targetId: 'execution-WU-RD1',
+        semanticRole: 'work_unit_worker',
+      },
+      {
+        agentSessionRefId: 'session-ref-reviewer-WU-RD1',
+        agentSessionId: 'recorded-reviewer-WU-RD1',
+        targetKind: 'work_unit_execution',
+        targetId: 'execution-WU-RD1',
+        semanticRole: 'reviewer',
+      },
+      ...(['WU-RD2', 'WU-RD3'] as const).map((workUnitId) => ({
+        agentSessionRefId: `session-ref-worker-${workUnitId}`,
+        agentSessionId: `recorded-worker-${workUnitId}`,
+        targetKind: 'work_unit_execution' as const,
+        targetId: `execution-${workUnitId}`,
+        semanticRole: 'work_unit_worker' as const,
+      })),
     ],
     gates: ['ECS-R1', 'ECS-R2', 'ECS-R3', 'ECS-R4'].map((revision) => ({
       gateId: `G2-${revision.slice(-2)}`,
@@ -267,7 +431,7 @@ export const recordedProductReadCompositionInput = {
     })),
     feedbackRecords: [],
     policyEligibilityFacts: [],
-    executionRequests: executionUnits.map((workUnitId) => ({
+    executionRequests: [...executionUnits, ...reviewExecutionUnits].map((workUnitId) => ({
       executionRequestId: `request-${workUnitId}`,
       workUnitExecutionId: `execution-${workUnitId}`,
       provenanceId,
@@ -296,6 +460,27 @@ export const recordedProductReadCompositionInput = {
         attemptId: 'WU-ECS2E-attempt-2',
         provenanceId,
       },
+      {
+        observedLaunchId: 'launch-WU-RD1-attempt-1',
+        executionRequestId: 'request-WU-RD1',
+        workUnitExecutionId: 'execution-WU-RD1',
+        attemptId: 'WU-RD1-attempt-1',
+        provenanceId,
+      },
+      {
+        observedLaunchId: 'launch-WU-RD1-attempt-2',
+        executionRequestId: 'request-WU-RD1',
+        workUnitExecutionId: 'execution-WU-RD1',
+        attemptId: 'WU-RD1-attempt-2',
+        provenanceId,
+      },
+      ...(['WU-RD2', 'WU-RD3'] as const).map((workUnitId) => ({
+        observedLaunchId: `launch-${workUnitId}`,
+        executionRequestId: `request-${workUnitId}`,
+        workUnitExecutionId: `execution-${workUnitId}`,
+        attemptId: `attempt-${workUnitId}`,
+        provenanceId,
+      })),
     ],
     observedReturns: [
       ...executionUnits
@@ -316,6 +501,24 @@ export const recordedProductReadCompositionInput = {
         observedReturnId: 'return-WU-ECS2E-attempt-2',
         observedLaunchId: 'launch-WU-ECS2E-attempt-2',
         attemptId: 'WU-ECS2E-attempt-2',
+        provenanceId,
+      },
+      {
+        observedReturnId: 'return-WU-RD1-attempt-1',
+        observedLaunchId: 'launch-WU-RD1-attempt-1',
+        attemptId: 'WU-RD1-attempt-1',
+        provenanceId,
+      },
+      {
+        observedReturnId: 'return-WU-RD1-attempt-2',
+        observedLaunchId: 'launch-WU-RD1-attempt-2',
+        attemptId: 'WU-RD1-attempt-2',
+        provenanceId,
+      },
+      {
+        observedReturnId: 'return-WU-RD3',
+        observedLaunchId: 'launch-WU-RD3',
+        attemptId: 'attempt-WU-RD3',
         provenanceId,
       },
     ],
@@ -343,6 +546,20 @@ export const recordedProductReadCompositionInput = {
         outcome: 'accepted',
         provenanceId,
       },
+      {
+        reviewId: 'review-WU-RD1-attempt-1',
+        subjectKind: 'attempt',
+        subjectId: 'WU-RD1-attempt-1',
+        outcome: 'needs_correction',
+        provenanceId,
+      },
+      {
+        reviewId: 'review-WU-RD1-attempt-2',
+        subjectKind: 'attempt',
+        subjectId: 'WU-RD1-attempt-2',
+        outcome: 'accepted',
+        provenanceId,
+      },
     ],
     observedIntegrations: [
       ...executionUnits
@@ -356,6 +573,11 @@ export const recordedProductReadCompositionInput = {
         observedIntegrationId: 'integration-WU-ECS2E',
         workUnitExecutionId: 'execution-WU-ECS2E',
         provenanceId: ecs2eAcceptanceProvenanceId,
+      },
+      {
+        observedIntegrationId: 'integration-WU-RD1',
+        workUnitExecutionId: 'execution-WU-RD1',
+        provenanceId,
       },
     ],
     observedCompletions: [
@@ -382,6 +604,13 @@ export const recordedProductReadCompositionInput = {
         responsibilityAccepted: true,
         provenanceId,
       },
+      {
+        observedCompletionId: 'completion-WU-RD1',
+        subjectKind: 'work_unit_execution',
+        subjectId: 'execution-WU-RD1',
+        responsibilityAccepted: true,
+        provenanceId,
+      },
     ],
     continuationRequests: [],
     observedContinuations: [],
@@ -390,11 +619,15 @@ export const recordedProductReadCompositionInput = {
       { artifactId: 'artifact-ecs-r1', provenanceId },
       { artifactId: 'artifact-g1', provenanceId },
       { artifactId: 'artifact-ecs2e-review', provenanceId },
+      { artifactId: 'artifact-file-review', provenanceId },
+      { artifactId: 'artifact-rd-review', provenanceId },
     ],
     documentReferences: [
       { documentRefId: 'doc-ecs-r1', artifactIds: ['artifact-ecs-r1'], provenanceId },
       { documentRefId: 'doc-g1', artifactIds: ['artifact-g1'], provenanceId },
       { documentRefId: 'doc-ecs2e-review', artifactIds: ['artifact-ecs2e-review'], provenanceId },
+      { documentRefId: 'doc-file-review', artifactIds: ['artifact-file-review'], provenanceId },
+      { documentRefId: 'doc-rd-review', artifactIds: ['artifact-rd-review'], provenanceId },
     ],
     provenance: [
       {
@@ -446,8 +679,44 @@ export const recordedProductReadCompositionInput = {
         kind: 'review_material',
         provenanceReference: provenanceId,
       },
+      {
+        artifactId: 'artifact-file-review',
+        kind: 'changed_file_manifest',
+        provenanceReference: provenanceId,
+      },
+      {
+        artifactId: 'artifact-rd-review',
+        kind: 'review_material',
+        provenanceReference: provenanceId,
+      },
     ],
-    changedFileReferences: [],
+    changedFileReferences: [
+      {
+        changedFileReferenceId: 'document-ecs-r1',
+        displayName: 'documents/original-ecs-r1-plan.md',
+        changeKind: 'modified',
+      },
+      {
+        changedFileReferenceId: 'document-g1',
+        displayName: 'documents/g1-feedback.md',
+        changeKind: 'modified',
+      },
+      {
+        changedFileReferenceId: 'document-ecs2e-review',
+        displayName: 'documents/ecs2e-review.md',
+        changeKind: 'modified',
+      },
+      {
+        changedFileReferenceId: 'changed-file-review-doc',
+        displayName: 'docs/orchestration/file-diff-viewer-exploration.md',
+        changeKind: 'modified',
+      },
+      {
+        changedFileReferenceId: 'document-rd-review',
+        displayName: 'documents/sprint-detail-review-evidence.md',
+        changeKind: 'modified',
+      },
+    ],
     documents: [
       {
         documentRefId: 'doc-ecs-r1',
@@ -455,7 +724,7 @@ export const recordedProductReadCompositionInput = {
         title: 'Original ECS-R1 plan',
         summary: 'Recorded original plan.',
         artifactIds: ['artifact-ecs-r1'],
-        changedFileReferenceIds: [],
+        changedFileReferenceIds: ['document-ecs-r1'],
         provenanceReference: provenanceId,
       },
       {
@@ -464,7 +733,7 @@ export const recordedProductReadCompositionInput = {
         title: 'G1 feedback and ECS-R2 replan',
         summary: 'Recorded G1 feedback.',
         artifactIds: ['artifact-g1'],
-        changedFileReferenceIds: [],
+        changedFileReferenceIds: ['document-g1'],
         provenanceReference: provenanceId,
       },
       {
@@ -473,7 +742,25 @@ export const recordedProductReadCompositionInput = {
         title: 'WU-ECS2E corrected visual review',
         summary: 'Recorded accepted review.',
         artifactIds: ['artifact-ecs2e-review'],
-        changedFileReferenceIds: [],
+        changedFileReferenceIds: ['document-ecs2e-review'],
+        provenanceReference: provenanceId,
+      },
+      {
+        documentRefId: 'doc-file-review',
+        classification: 'changed_files',
+        title: 'Application-owned file review',
+        summary: 'Recorded application-owned review material',
+        artifactIds: ['artifact-file-review'],
+        changedFileReferenceIds: ['changed-file-review-doc'],
+        provenanceReference: provenanceId,
+      },
+      {
+        documentRefId: 'doc-rd-review',
+        classification: 'review_material',
+        title: 'Sprint detail review evidence',
+        summary: 'Recorded evidence for the in-progress Sprint review composition.',
+        artifactIds: ['artifact-rd-review'],
+        changedFileReferenceIds: ['document-rd-review'],
         provenanceReference: provenanceId,
       },
     ],
@@ -494,25 +781,9 @@ export const recordedProductReadCompositionInput = {
         epicId,
         currentMovement: {
           source: source(),
-          value: { items: [] },
+          value: { kind: 'executing_work', processingCount: 0, reviewingCount: 0 },
         },
-        state: { source: source(), value: 'paused' },
-        readyWork: {
-          source: source(),
-          value: [
-            {
-              actionId: 'continue-planner-work-unit-sprint',
-              label: 'Continue with Planner and Work Unit Interaction Discovery',
-              target: {
-                kind: 'sprint',
-                epicId,
-                sprintId: 'sprint-planner-work-unit',
-                revisionId: 'sprint-planner-work-unit-r1',
-              },
-            },
-          ],
-        },
-        humanInput: { source: source(), value: null },
+        state: { source: source(), value: 'ready_to_continue' },
       },
     ],
     sprints: sprintDefinitions.map(([sprintId, title, summary, details, lifecycle]) => ({
@@ -541,6 +812,16 @@ export const recordedProductReadCompositionInput = {
         )[sprintPlanRevisionId],
         source: source(),
       })),
+      {
+        sprintPlanRevisionId: 'RD-R1',
+        summary: 'Initial detail review forecast.',
+        source: source(),
+      },
+      {
+        sprintPlanRevisionId: 'RD-R2',
+        summary: 'Parallel review plan with later convergence evidence.',
+        source: source(),
+      },
     ],
     plannerActivities: [
       ...(['ECS-R1', 'ECS-R2', 'ECS-R3'] as const).map((revision) => ({
@@ -567,14 +848,40 @@ export const recordedProductReadCompositionInput = {
         purpose: 'Hold consolidation until review acceptance.',
         source: source(),
       },
+      {
+        sprintPlannerActivityId: 'planner-rd-r1',
+        title: 'Initial review forecast',
+        purpose: 'Forecast the first relationship and interaction slices.',
+        source: source(),
+      },
+      {
+        sprintPlannerActivityId: 'planner-rd-r2-relationships',
+        title: 'Relationship foundation',
+        purpose: 'Model explicit review relationships and document boundaries.',
+        source: source(),
+      },
+      {
+        sprintPlannerActivityId: 'planner-rd-r2-interaction',
+        title: 'Parallel interaction work',
+        purpose: 'Run split-surface and lifecycle interaction work in parallel.',
+        source: source(),
+      },
+      {
+        sprintPlannerActivityId: 'planner-rd-r2-convergence',
+        title: 'Later convergence',
+        purpose: 'Converge the later responsive and evidence work.',
+        source: source(),
+      },
     ],
-    workUnits: Object.entries(workUnitText).map(([workUnitId, [title, summary, details]]) => ({
-      workUnitId,
-      title,
-      summary,
-      details,
-      source: source(),
-    })),
+    workUnits: [...Object.entries(workUnitText), ...Object.entries(reviewWorkUnitText)].map(
+      ([workUnitId, [title, summary, details]]) => ({
+        workUnitId,
+        title,
+        summary,
+        details,
+        source: source(),
+      }),
+    ),
     gates: ['ECS-R1', 'ECS-R2', 'ECS-R3', 'ECS-R4'].map((revision) => ({
       gateId: `G2-${revision.slice(-2)}`,
       title: 'G2',
@@ -588,7 +895,57 @@ export const recordedProductReadCompositionInput = {
         title: 'Sprint control surface',
         summary: 'A reusable semantic view of one started Sprint.',
         details: 'Complete after the recorded required Work Units were accepted.',
-        requiredWorkUnitIds: executionUnits,
+        requiredWorkUnitIds: ['WU-ECS1', 'WU-ECS2A', 'WU-ECS2B'],
+        stateAuthority: { kind: 'derived_from_required_work_units' },
+        source: source(),
+      },
+      {
+        concernId: 'concern-sprint-flow',
+        sprintId: controlSprintId,
+        title: 'Flow and detail navigation',
+        summary: 'Plan history and Work Unit detail stay semantically connected.',
+        details: 'Recorded against the flow and detail Work Units.',
+        requiredWorkUnitIds: ['WU-ECS2C', 'WU-ECS2E'],
+        stateAuthority: { kind: 'derived_from_required_work_units' },
+        source: source(),
+      },
+      {
+        concernId: 'concern-sprint-records',
+        sprintId: controlSprintId,
+        title: 'Concern and Document records',
+        summary: 'Recorded concern and Document surfaces remain truthful.',
+        details: 'Recorded against the information and handoff Work Units.',
+        requiredWorkUnitIds: ['WU-ECS2D', 'WU-ECS3'],
+        stateAuthority: { kind: 'derived_from_required_work_units' },
+        source: source(),
+      },
+      {
+        concernId: 'concern-review-relationships',
+        sprintId: reviewSprintId,
+        title: 'Context and relationship clarity',
+        summary: 'Objectives and problems remain visible and linked.',
+        details: 'Requires the relationship model and split-surface work.',
+        requiredWorkUnitIds: ['WU-RD1', 'WU-RD2'],
+        stateAuthority: { kind: 'derived_from_required_work_units' },
+        source: source(),
+      },
+      {
+        concernId: 'concern-review-lifecycle',
+        sprintId: reviewSprintId,
+        title: 'Lifecycle and responsive interaction',
+        summary: 'Lifecycle turns and the responsive graph remain reviewable.',
+        details: 'Requires lifecycle navigation and responsive refinement.',
+        requiredWorkUnitIds: ['WU-RD3', 'WU-RD4'],
+        stateAuthority: { kind: 'derived_from_required_work_units' },
+        source: source(),
+      },
+      {
+        concernId: 'concern-review-documents',
+        sprintId: reviewSprintId,
+        title: 'Document and convergence evidence',
+        summary: 'Documents open completely and later evidence remains explicit.',
+        details: 'Requires Document normalization and convergence evidence.',
+        requiredWorkUnitIds: ['WU-RD5', 'WU-RD6'],
         stateAuthority: { kind: 'derived_from_required_work_units' },
         source: source(),
       },
@@ -619,16 +976,50 @@ export const recordedProductReadCompositionInput = {
         title: `${workUnitText[workUnitId][0]} worker`,
         source: source(),
       })),
+      {
+        agentSessionId: 'recorded-sprint-parallel-review',
+        title: 'Recorded parallel review Sprint',
+        source: source(),
+      },
+      {
+        agentSessionId: 'recorded-planner-rd-r2',
+        title: 'Recorded review Sprint Planner',
+        source: source(),
+      },
+      {
+        agentSessionId: 'recorded-handler-WU-RD1',
+        title: 'Relationship Work Unit handler',
+        source: source(),
+      },
+      {
+        agentSessionId: 'recorded-worker-WU-RD1',
+        title: 'Relationship implementation worker',
+        source: source(),
+      },
+      {
+        agentSessionId: 'recorded-reviewer-WU-RD1',
+        title: 'Relationship review agent',
+        source: source(),
+      },
+      ...(['WU-RD2', 'WU-RD3'] as const).map((workUnitId) => ({
+        agentSessionId: `recorded-worker-${workUnitId}`,
+        title: `${reviewWorkUnitText[workUnitId][0]} worker`,
+        source: source(),
+      })),
     ],
     artifactOwnership: [
       { artifactId: 'artifact-ecs-r1', sprintId: controlSprintId, source: source() },
       { artifactId: 'artifact-g1', sprintId: controlSprintId, source: source() },
       { artifactId: 'artifact-ecs2e-review', sprintId: controlSprintId, source: source() },
+      { artifactId: 'artifact-file-review', sprintId: controlSprintId, source: source() },
+      { artifactId: 'artifact-rd-review', sprintId: reviewSprintId, source: source() },
     ],
     documentOwnership: [
       { documentRefId: 'doc-ecs-r1', sprintId: controlSprintId, source: source() },
       { documentRefId: 'doc-g1', sprintId: controlSprintId, source: source() },
       { documentRefId: 'doc-ecs2e-review', sprintId: controlSprintId, source: source() },
+      { documentRefId: 'doc-file-review', sprintId: controlSprintId, source: source() },
+      { documentRefId: 'doc-rd-review', sprintId: reviewSprintId, source: source() },
     ],
     sprintWorkspacePresentation: {
       plannerActivityMembership: [
@@ -658,6 +1049,30 @@ export const recordedProductReadCompositionInput = {
           workUnitScopeIds: [scoped('ECS-R4', 'WU-ECS3')],
           source: source(),
         },
+        {
+          sprintPlannerActivityId: 'planner-rd-r1',
+          sprintPlanRevisionId: 'RD-R1',
+          workUnitScopeIds: reviewRevisionUnits['RD-R1'].map((unit) => scoped('RD-R1', unit)),
+          source: source(),
+        },
+        {
+          sprintPlannerActivityId: 'planner-rd-r2-relationships',
+          sprintPlanRevisionId: 'RD-R2',
+          workUnitScopeIds: ['WU-RD1', 'WU-RD5'].map((unit) => scoped('RD-R2', unit)),
+          source: source(),
+        },
+        {
+          sprintPlannerActivityId: 'planner-rd-r2-interaction',
+          sprintPlanRevisionId: 'RD-R2',
+          workUnitScopeIds: ['WU-RD2', 'WU-RD3', 'WU-RD4'].map((unit) => scoped('RD-R2', unit)),
+          source: source(),
+        },
+        {
+          sprintPlannerActivityId: 'planner-rd-r2-convergence',
+          sprintPlanRevisionId: 'RD-R2',
+          workUnitScopeIds: [scoped('RD-R2', 'WU-RD6')],
+          source: source(),
+        },
       ],
       gates: ['ECS-R1', 'ECS-R2', 'ECS-R3', 'ECS-R4'].map((revision) => ({
         gateId: `G2-${revision.slice(-2)}`,
@@ -666,8 +1081,26 @@ export const recordedProductReadCompositionInput = {
       })),
       documents: [
         {
-          documentRefId: 'doc-ecs-r1',
+          documentRefId: 'doc-rd-review',
           displayOrder: 0,
+          recordedAt: { source: source(), value: '2026-07-28T13:00:00.000Z' },
+          displayCategory: { source: source(), value: 'review' },
+          sprintPlanRevisionIds: ['RD-R2'],
+          sprintPlannerActivityIds: ['planner-rd-r2-convergence'],
+          workUnitScopeIds: [scoped('RD-R2', 'WU-RD6')],
+        },
+        {
+          documentRefId: 'doc-file-review',
+          displayOrder: 0,
+          recordedAt: { source: source(), value: '2026-07-17T05:00:00.000Z' },
+          displayCategory: { source: source(), value: 'changed files' },
+          sprintPlanRevisionIds: ['ECS-R4'],
+          sprintPlannerActivityIds: ['planner-r4-integration'],
+          workUnitScopeIds: [scoped('ECS-R4', 'WU-ECS2E')],
+        },
+        {
+          documentRefId: 'doc-ecs-r1',
+          displayOrder: 1,
           recordedAt: { source: source(), value: '2026-07-10T09:00:00.000Z' },
           displayCategory: { source: source(), value: 'plan' },
           sprintPlanRevisionIds: ['ECS-R1'],
@@ -676,7 +1109,7 @@ export const recordedProductReadCompositionInput = {
         },
         {
           documentRefId: 'doc-g1',
-          displayOrder: 1,
+          displayOrder: 2,
           recordedAt: { source: source(), value: '2026-07-13T09:00:00.000Z' },
           displayCategory: { source: source(), value: 'decision' },
           sprintPlanRevisionIds: ['ECS-R2'],
@@ -685,12 +1118,147 @@ export const recordedProductReadCompositionInput = {
         },
         {
           documentRefId: 'doc-ecs2e-review',
-          displayOrder: 2,
+          displayOrder: 3,
           recordedAt: { source: source(), value: '2026-07-14T19:31:00.000Z' },
           displayCategory: { source: source(), value: 'review' },
           sprintPlanRevisionIds: ['ECS-R4'],
           sprintPlannerActivityIds: ['planner-r4-integration'],
           workUnitScopeIds: [scoped('ECS-R4', 'WU-ECS2E')],
+        },
+      ],
+      problems: [
+        {
+          problemId: 'problem-review-context',
+          sprintId: reviewSprintId,
+          title: 'Keep Epic objectives while adding Sprint problems.',
+          source: source(),
+          graphElementRefs: [
+            { kind: 'sprint_planner_activity', id: 'planner-rd-r2-relationships' },
+            { kind: 'work_unit', id: 'WU-RD1' },
+            { kind: 'work_unit', id: 'WU-RD2' },
+          ],
+        },
+        {
+          problemId: 'problem-review-interaction',
+          sprintId: reviewSprintId,
+          title: 'Make the mixed-state flow and sessions directly explorable.',
+          source: source(),
+          graphElementRefs: [
+            { kind: 'sprint_planner_activity', id: 'planner-rd-r2-interaction' },
+            { kind: 'work_unit', id: 'WU-RD2' },
+            { kind: 'work_unit', id: 'WU-RD3' },
+            { kind: 'work_unit', id: 'WU-RD4' },
+          ],
+        },
+        {
+          problemId: 'problem-review-evidence',
+          sprintId: reviewSprintId,
+          title: 'Keep Documents and later divergent evidence truthful.',
+          source: source(),
+          graphElementRefs: [
+            { kind: 'sprint_planner_activity', id: 'planner-rd-r2-convergence' },
+            { kind: 'work_unit', id: 'WU-RD3' },
+            { kind: 'work_unit', id: 'WU-RD5' },
+            { kind: 'work_unit', id: 'WU-RD6' },
+          ],
+        },
+      ],
+      workUnitLifecycle: [
+        {
+          entryId: 'rd1-launch',
+          workUnitId: 'WU-RD1',
+          sequence: 0,
+          kind: 'launch',
+          title: 'Launch',
+          summary: 'The handler recorded the first worker launch.',
+          agentSessionId: 'recorded-handler-WU-RD1',
+          agentRole: 'planner',
+          invocationId: 'recorded-handler-WU-RD1-launch',
+          source: source(),
+        },
+        {
+          entryId: 'rd1-work',
+          workUnitId: 'WU-RD1',
+          sequence: 1,
+          kind: 'work',
+          title: 'First work',
+          summary: 'The worker returned the initial relationship model.',
+          agentSessionId: 'recorded-worker-WU-RD1',
+          agentRole: 'worker',
+          invocationId: 'recorded-worker-WU-RD1-first-work',
+          source: source(),
+        },
+        {
+          entryId: 'rd1-review-1',
+          workUnitId: 'WU-RD1',
+          sequence: 2,
+          kind: 'review',
+          title: 'Review',
+          summary: 'The reviewer recorded that correction was needed.',
+          agentSessionId: 'recorded-reviewer-WU-RD1',
+          agentRole: 'reviewer',
+          invocationId: 'recorded-reviewer-WU-RD1-first-review',
+          source: source(),
+        },
+        {
+          entryId: 'rd1-reprompt',
+          workUnitId: 'WU-RD1',
+          sequence: 3,
+          kind: 'reprompt',
+          title: 'Reprompt',
+          summary: 'The handler recorded the bounded correction request.',
+          agentSessionId: 'recorded-handler-WU-RD1',
+          agentRole: 'planner',
+          invocationId: 'recorded-handler-WU-RD1-reprompt',
+          source: source(),
+        },
+        {
+          entryId: 'rd1-renewed-work',
+          workUnitId: 'WU-RD1',
+          sequence: 4,
+          kind: 'renewed_work',
+          title: 'Renewed work',
+          summary: 'The worker returned the corrected relationship model.',
+          agentSessionId: 'recorded-worker-WU-RD1',
+          agentRole: 'worker',
+          invocationId: 'recorded-worker-WU-RD1-renewed-work',
+          source: source(),
+        },
+        {
+          entryId: 'rd1-review-2',
+          workUnitId: 'WU-RD1',
+          sequence: 5,
+          kind: 'review',
+          title: 'Review',
+          summary: 'The reviewer recorded acceptance of attempt two.',
+          agentSessionId: 'recorded-reviewer-WU-RD1',
+          agentRole: 'reviewer',
+          invocationId: 'recorded-reviewer-WU-RD1-second-review',
+          source: source(),
+        },
+        {
+          entryId: 'rd1-merge',
+          workUnitId: 'WU-RD1',
+          sequence: 6,
+          kind: 'merge',
+          title: 'Merge',
+          summary: 'The handler recorded integration into the review checkpoint.',
+          agentSessionId: 'recorded-handler-WU-RD1',
+          agentRole: 'merger',
+          invocationId: 'recorded-handler-WU-RD1-merge',
+          source: source(),
+        },
+        {
+          entryId: 'rd1-completion',
+          workUnitId: 'WU-RD1',
+          sequence: 7,
+          kind: 'completion',
+          title: 'Completion',
+          summary: 'Responsibility completion was recorded for this Work Unit.',
+          agentSessionId: 'recorded-handler-WU-RD1',
+          agentRole: 'planner',
+          invocationId: 'recorded-handler-WU-RD1-completion',
+          source: source(),
         },
       ],
       narratives: [
@@ -704,6 +1272,17 @@ export const recordedProductReadCompositionInput = {
             source: source(),
             value:
               'Acceptance and integration are recorded independently from requests and observations.',
+          },
+        },
+        {
+          sprintId: reviewSprintId,
+          direction: {
+            source: source(),
+            value: 'Recorded mixed-state review composition; no live runner is attached.',
+          },
+          progress: {
+            source: source(),
+            value: 'One Work Unit is completed, two are processing, and later work is planned.',
           },
         },
       ],
