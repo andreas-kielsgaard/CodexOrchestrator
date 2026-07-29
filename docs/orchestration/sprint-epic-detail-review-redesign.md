@@ -4,67 +4,63 @@ Status: recorded product-review correction; no live orchestration support added.
 
 ## Decisions
 
-- `ProductSprintWorkspacePresentationMetadataV1.problems` owns explicit many-to-many links from
-  Sprint Planner problems to Planner Activities, Work Units, and gates. The product does not infer
-  these links from transcript prose or layout.
-- `epicPlannerObjectives` is an explicit sourced per-Sprint list authored by the Epic Planner. The
-  composer validates each objective identity, source, and Sprint owner; the global Epic goal is not
-  relabeled or projected as a Sprint objective.
-- `workUnitLifecycle` is recorded navigation metadata. It identifies the responsible Agent Session
-  and invocation for each chronological entry. The composer requires a same-Sprint Work Unit scope,
-  a Work Unit execution relationship for the Agent Session, and unique sequence numbers per Work
-  Unit. Invocation identifiers remain recorded-only because no authoritative invocation registry
-  exists; this is not a runtime lifecycle or persistence seam.
-- `ResizableSplitSurface` is the shared two-pane boundary for vertical Flow/Session and horizontal
-  Agent Session layouts. Pointer and keyboard resizing keep both panes mounted. The separator owns
-  dynamic range/value semantics and stable pane controls; the maximize action remains a separate
-  accessible control.
-- The focusable Sprint context rail scrolls independently on desktop and compact layouts, so long
-  objective/problem lists remain reachable without document-level overflow.
-- Sprint Documents open the accepted normalized `FileReviewSource` boundary. Application-owned
-  sources default to complete Document content and expose a Sprint-start comparison. The product
-  detail surface does not select repositories, worktrees, paths, or source adapters.
-- Historical plan revisions without a recorded workflow continue to show an unavailable state.
+- `problems` owns explicit many-to-many links from Sprint Planner problems to Planner Activities,
+  Work Units, and gates. No link is inferred from transcript prose or layout.
+- `epicPlannerObjectives` is a sourced per-Sprint list. The global Epic goal is not relabeled as a
+  Sprint objective.
+- `workUnitLifecycle` identifies the exact Agent Session and invocation for each chronological
+  entry. A lifecycle Session must have either the exact Work Unit execution reference or the exact
+  owning Planner Activity reference whose typed membership contains that Work Unit scope.
+- the recorded WU-RD1 lifecycle includes its Sprint Planner action, worker turns, and Work Unit
+  handler actions. The same handler performs review, reprompt, merge, and completion, so no separate
+  Reviewer Session is recorded.
+- recorded WU-ECS2E retains both attempt outcomes, but its one Work Unit handler Session owns its
+  return, review, reprompt, renewed-work, and acceptance turns. Its Sprint Planner remains a separate
+  Session and lifecycle actor; no WU-ECS2E Reviewer Session or reference exists.
+- lifecycle invocation identifiers remain recorded-only because no authoritative invocation
+  registry exists. This metadata is not a runtime lifecycle or persistence seam.
+- `ResizableSplitSurface` is the shared pointer- and keyboard-draggable boundary for vertical
+  Flow/Session and horizontal Agent Session layouts. Its separator owns dynamic value semantics;
+  maximize remains a separate control.
+- the focusable Sprint context rail scrolls independently on desktop and compact layouts.
+- Sprint Documents open the normalized `FileReviewSource` boundary. Product detail does not select
+  repositories, worktrees, paths, or source adapters.
+- not-started Sprints expose their typed proposed Plan. Historical revisions without a recorded
+  workflow show an unavailable state.
+- current Plan and Work Unit state is a distinct sourced presentation element. Product-facing copy
+  omits fixture notices, Direction, raw attempt labels, Responsibility Accepted, and fixed-scope
+  implementation language.
 
 ## Recorded review composition
 
-`Sprint and Epic Detail Review` is an in-progress development fixture with two plan revisions,
+`Sprint and Epic Detail Review` is an in-progress development example with two Plan revisions,
 parallel groups, cross-group dependencies, mixed Work Unit states, and later divergent work. Its
 concerns intentionally distribute Work Units rather than assigning every Work Unit to every
 concern.
 
-The fixture and Agent Session turns are recorded-only. They do not prove durable planning,
+The example and Agent Session turns are recorded-only. They do not prove durable planning,
 execution, review, merge, continuation, or restart behavior.
 
 ## Review evidence
 
-Run `npm run dev -- --host 127.0.0.1 --port 4179 --strictPort`, then open
-`http://127.0.0.1:4179/?file-diff-viewer`. The recorded review route was exercised at 1440 x 900
-and 640 x 900:
+Automated coverage exercises:
 
-- the Sprint context retained four Epic Planner Sprint objectives beside three separate Sprint
-  Planner problems;
-- at 640 x 900 the 159 px context viewport exposed 380 px of independently scrollable content,
-  reached the final problem, and kept document width equal to the 640 px viewport;
-- the mixed-state RD-R2 graph showed parallel dependencies and WU-RD6 as later divergence;
-- repeated problem activation focused processing, completed, then planned graph elements;
-- WU-RD1 showed eight lifecycle entries and focused the recorded reprompt invocation;
-- the Flow/Session separator updated its value for Home, Arrow, End, and maximize while its
-  maximize button remained outside the separator role and controlled the Flow pane;
-- the horizontal Agent Session split stacked vertically with a horizontal separator at the
-  compact breakpoint, updated its value bounds after the axis change, and avoided document-level
-  horizontal overflow;
-- the review Sprint Document opened as complete Markdown and compared against its recorded
-  Sprint-start state without a source selector.
+- Epic Planner objectives, Sprint Planner problems, mixed-state horizontal flow, highlighting, and
+  repeated focus order;
+- proposed not-started Plans, historical revisions, concerns, Documents, and normalized file review;
+- nine WU-RD1 lifecycle entries, including exact Sprint Planner and same-handler review turn focus;
+- the WU-ECS2E Agent Sessions -> Work Unit -> Agent Sessions round trip, with one handler identity,
+  separate Sprint Planner/handler conversations, and no Reviewer surface;
+- pointer/keyboard resizers, compact axis changes, independent context scrolling, and route focus
+  recovery;
+- Agent Sessions -> Work Unit -> Agent Sessions identity round trips.
 
-The fresh correction run recorded no browser console warnings or errors.
-
-This is responsive development-browser evidence for the recorded composition, not live runtime
-evidence.
+Desktop and narrow browser evidence is refreshed with each review checkpoint. It is responsive
+development-browser evidence for the recorded composition, not live runtime evidence.
 
 ## Deferred seams
 
-- Runtime producers may later supply problem links and lifecycle entries through a durable
-  application read boundary.
-- Agent-generation prompt quality, including concern-to-Work-Unit distribution, remains a later
-  test-platform evaluation. This correction changes only misleading recorded fixtures.
+- runtime producers may later supply problem links and lifecycle entries through a durable
+  application read boundary;
+- a durable invocation registry could replace recorded invocation navigation metadata;
+- Agent-generation quality and concern-to-Work-Unit distribution remain later test-platform work.

@@ -202,18 +202,27 @@ describe('OrchestrationSection', () => {
     const workUnitOpener = screen.getByRole('button', { name: /Open Work Unit WU-ECS2E/ });
     fireEvent.click(workUnitOpener);
     expect(screen.getByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
-    const worker = screen.getByRole('region', { name: 'Implementation worker Agent Session' });
-    expect(within(worker).getByLabelText('Implementation worker conversation')).toBeVisible();
-    expect(worker).toHaveTextContent('Recorded worker conversation');
+    const planner = screen.getByRole('region', { name: 'Sprint Planner Agent Session' });
+    const handler = screen.getByRole('region', { name: 'Work Unit handler Agent Session' });
+    expect(within(planner).getByLabelText('Sprint Planner conversation')).toBeVisible();
+    expect(within(handler).getByLabelText('Work Unit handler conversation')).toBeVisible();
+    expect(handler).toHaveTextContent('Reviewed the first return');
+    expect(
+      screen.getByRole('button', { name: /Plan Work Unit.*Recorded planner R4 integration/ }),
+    ).toBeVisible();
+    expect(screen.getByRole('button', { name: /Acceptance.*Work Unit handler/ })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Reviewer' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Reviewer' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Reviewer Agent Session' })).toBeNull();
     expect(screen.getByLabelText('Work Unit context')).not.toHaveTextContent(
       'Recorded/theoretical fixture only',
     );
     expect(
       screen.getByRole('separator', {
-        name: 'Resize Planning and handling conversation and Work and review conversation',
+        name: 'Resize Sprint Planner conversation and Work Unit handler conversation',
       }),
     ).toHaveAttribute('aria-orientation', 'vertical');
-    expect(within(worker).queryByRole('button', { name: /Collapse/ })).toBeNull();
+    expect(within(handler).queryByRole('button', { name: /Collapse/ })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Back to Plan' }));
     expect(
@@ -226,7 +235,7 @@ describe('OrchestrationSection', () => {
     expect(screen.queryByRole('main', { name: /Plan detail/ })).toBeNull();
   });
 
-  it('resolves planner and reviewer references through the injected embedded controller path', async () => {
+  it('resolves the WU-ECS2E planner and handler without a Reviewer Session', async () => {
     render(
       <OrchestrationSection
         view={canonicalRecordedView}
@@ -252,9 +261,12 @@ describe('OrchestrationSection', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Back to Sprint' }));
     fireEvent.click(screen.getByRole('button', { name: /Open Work Unit WU-ECS2E/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Reviewer' }));
-    const reviewer = screen.getByRole('region', { name: 'Reviewer Agent Session' });
-    expect(await within(reviewer).findByRole('textbox', { name: 'Message' })).toBeVisible();
+    const handler = screen.getByRole('region', { name: 'Work Unit handler Agent Session' });
+    expect(await within(handler).findByRole('textbox', { name: 'Message' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Sprint Planner Agent Session' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Reviewer' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Reviewer' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Reviewer Agent Session' })).toBeNull();
   });
 
   it('keeps historical revision context while opening Plan and Work Unit details', () => {
@@ -634,7 +646,7 @@ describe('OrchestrationSection', () => {
     expect(sprintDetail.querySelector('.shared-agent-session__compact')).toBeNull();
   });
 
-  it('keeps historical Work Units honest when no lifecycle turn links were recorded', () => {
+  it('keeps the WU-ECS2E lifecycle on its Sprint Planner and one handler', () => {
     render(<OrchestrationSection view={disposableRecordedOrchestrationView} />);
     fireEvent.click(
       screen.getByRole('button', { name: 'Open Codex Epic Runner workspace development' }),
@@ -648,9 +660,12 @@ describe('OrchestrationSection', () => {
       }),
     );
     const detail = screen.getByRole('main', { name: 'Work Unit detail: WU-ECS2E' });
-    expect(detail).toHaveTextContent(
-      'No recorded lifecycle turn links are available for this Work Unit',
-    );
+    expect(detail).toHaveTextContent('Plan Work Unit');
+    expect(detail).toHaveTextContent('Recorded planner R4 integration');
+    expect(detail).toHaveTextContent('Review');
+    expect(detail).toHaveTextContent('Acceptance');
+    expect(detail).toHaveTextContent('Recorded WU-ECS2E Work Unit handler');
+    expect(detail).not.toHaveTextContent('Reviewer');
     expect(detail).toHaveTextContent('Completed');
   });
 

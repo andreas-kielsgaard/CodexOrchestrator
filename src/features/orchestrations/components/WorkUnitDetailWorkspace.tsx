@@ -47,6 +47,7 @@ export function WorkUnitDetailWorkspace({
   const reviewer = sessions.find(
     (session) => session.workUnitId === workUnitId && session.role === 'reviewer',
   );
+  const plannerAndHandlerOnly = Boolean(sprintPlanner && handler && !worker && !reviewer);
   const [primarySessionId, setPrimarySessionId] = useState(
     handler?.sessionId ?? sprintPlanner?.sessionId ?? '',
   );
@@ -58,6 +59,8 @@ export function WorkUnitDetailWorkspace({
     sessions.find(({ sessionId }) => sessionId === primarySessionId) ?? handler ?? sprintPlanner;
   const secondarySession =
     sessions.find(({ sessionId }) => sessionId === secondarySessionId) ?? worker ?? reviewer;
+  const splitPrimarySession = plannerAndHandlerOnly ? sprintPlanner : primarySession;
+  const splitSecondarySession = plannerAndHandlerOnly ? handler : secondarySession;
 
   const navigateToLifecycleTurn = (
     entry: SprintWorkspacePresentationV1['workUnitLifecycle'][number],
@@ -137,7 +140,7 @@ export function WorkUnitDetailWorkspace({
             axis="horizontal"
             primary={
               <div className="work-unit-primary-session">
-                {sprintPlanner && handler ? (
+                {sprintPlanner && handler && !plannerAndHandlerOnly ? (
                   <nav aria-label="Planning and handling Agent Session">
                     {[sprintPlanner, handler].map((session) => (
                       <button
@@ -153,11 +156,11 @@ export function WorkUnitDetailWorkspace({
                 ) : null}
                 <SessionSlot
                   label={
-                    primarySession?.role === 'sprint_planner'
+                    splitPrimarySession?.role === 'sprint_planner'
                       ? 'Sprint Planner'
                       : 'Work Unit handler'
                   }
-                  session={primarySession}
+                  session={splitPrimarySession}
                   agentSessionComposition={agentSessionComposition}
                   focusTarget={focusTarget}
                   onOpenAgentSession={onOpenAgentSession}
@@ -182,17 +185,29 @@ export function WorkUnitDetailWorkspace({
                 ) : null}
                 <SessionSlot
                   label={
-                    secondarySession?.role === 'reviewer' ? 'Reviewer' : 'Implementation worker'
+                    splitSecondarySession?.role === 'handler'
+                      ? 'Work Unit handler'
+                      : splitSecondarySession?.role === 'reviewer'
+                        ? 'Reviewer'
+                        : 'Implementation worker'
                   }
-                  session={secondarySession}
+                  session={splitSecondarySession}
                   agentSessionComposition={agentSessionComposition}
                   focusTarget={focusTarget}
                   onOpenAgentSession={onOpenAgentSession}
                 />
               </div>
             }
-            primaryLabel="Planning and handling conversation"
-            secondaryLabel="Work and review conversation"
+            primaryLabel={
+              plannerAndHandlerOnly
+                ? 'Sprint Planner conversation'
+                : 'Planning and handling conversation'
+            }
+            secondaryLabel={
+              plannerAndHandlerOnly
+                ? 'Work Unit handler conversation'
+                : 'Work and review conversation'
+            }
             initialPrimaryPercent={50}
             minimumPrimaryPixels={220}
             minimumSecondaryPixels={220}
