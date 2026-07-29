@@ -216,6 +216,25 @@ export function nativeQueryProductCompositionInputV2(
   transitionQuery?: import('./epicBootstrapTransition').EpicBootstrapTransitionQueryV2,
 ): ProductReadCompositionInputV1 {
   const initiated = query.initiatedEpics;
+  const initiatedPlanBuilders = initiated.map((epic) => {
+    const association = query.agentSessionAssociations.find(
+      (item) => item.epicPlanningDraftId === epic.epicPlanningDraftId,
+    );
+    const draft = query.planningDrafts.find(
+      (item) => item.epicPlanningDraftId === epic.epicPlanningDraftId,
+    );
+    if (!association || !draft)
+      throw new Error(
+        'Invalid orchestration native query: initiated Epic planning binding is missing',
+      );
+    return { epic, association, draft };
+  });
+  const uniquePlanBuilderSessions = initiatedPlanBuilders.filter(
+    (item, index, items) =>
+      items.findIndex(
+        ({ association }) => association.agentSessionId === item.association.agentSessionId,
+      ) === index,
+  );
   const source = (id: string) => ({
     status: 'available' as const,
     sourceKind: 'application_interpretation' as const,
@@ -239,8 +258,16 @@ export function nativeQueryProductCompositionInputV2(
     sprintPlannerActivities: [],
     workUnitExecutions: [],
     attempts: [],
-    agentSessions: [],
-    agentSessionReferences: [],
+    agentSessions: uniquePlanBuilderSessions.map(({ association }) => ({
+      agentSessionId: association.agentSessionId,
+    })),
+    agentSessionReferences: initiatedPlanBuilders.map(({ epic, association }) => ({
+      agentSessionRefId: `epic-plan-builder:${association.agentSessionAssociationId}`,
+      agentSessionId: association.agentSessionId,
+      targetKind: 'epic' as const,
+      targetId: epic.epicId,
+      semanticRole: 'epic_plan_builder' as const,
+    })),
     gates: [],
     gateCriteriaRevisions: [],
     feedbackRecords: [],
@@ -325,7 +352,11 @@ export function nativeQueryProductCompositionInputV2(
       workUnits: [],
       gates: [],
       concerns: [],
-      agentSessions: [],
+      agentSessions: uniquePlanBuilderSessions.map(({ epic, association, draft }) => ({
+        agentSessionId: association.agentSessionId,
+        title: draft.title ?? 'Epic Plan Builder',
+        source: source(epic.provenanceId),
+      })),
       artifactOwnership: [],
       documentOwnership: [],
     },

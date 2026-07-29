@@ -48,6 +48,11 @@ export const recordedAgentSessionDetails: readonly AgentSessionDetailsDto[] = [
     'Recorded reviewer WU-ECS2E',
     'Recorded reviewer session; no review command was sent.',
   ),
+  session(
+    'recorded-independent-research',
+    'Independent product research',
+    'Recorded independent Agent Session with no Epic association.',
+  ),
   ...['WU-ECS2B', 'WU-ECS2C', 'WU-ECS2E', 'WU-ECS2D', 'WU-ECS3'].map((workUnitId) =>
     session(
       `recorded-session-${workUnitId}`,

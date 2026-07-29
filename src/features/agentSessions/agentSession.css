@@ -1,8 +1,19 @@
 .agent-session-screen {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: 300px minmax(0, 1fr);
   height: calc(100vh - 48px);
   background: #f6f7f4;
+}
+
+.agent-session-content {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.agent-session-content > .agent-session-workspace:first-child {
+  grid-row: 1 / -1;
 }
 
 .agent-session-selector {
@@ -29,7 +40,8 @@
 
 .session-new-button,
 .session-refresh-button,
-.session-list-item {
+.session-tree-toggle,
+.session-tree-item {
   border: 0;
   border-radius: 7px;
   color: #17211b;
@@ -46,45 +58,136 @@
   font-weight: 750;
 }
 
-.agent-session-selector nav {
-  display: grid;
-  align-content: start;
-  gap: 3px;
+.session-tree-toggle {
+  display: none;
+}
+
+.session-tree {
   min-height: 0;
   flex: 1;
   overflow: auto;
 }
 
-.session-list-item {
-  display: grid;
-  gap: 2px;
+.session-tree-item {
+  --tree-level: 1;
+  display: flex;
   width: 100%;
-  padding: 9px 10px;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 5px calc(7px + (var(--tree-level) - 1) * 15px);
   background: transparent;
   text-align: left;
 }
 
-.session-list-item:hover,
-.session-list-item.active {
+.session-tree-item:hover,
+.session-tree-item:focus-visible,
+.session-tree-item.is-selected {
   background: #e9ede7;
 }
 
-.session-list-item span {
+.session-tree-item:focus-visible {
+  outline: 2px solid #34755b;
+  outline-offset: -2px;
+}
+
+.session-tree-item__chevron {
+  flex: 0 0 auto;
+  color: #738078;
+}
+
+.session-tree-item__folder {
+  flex: 0 0 auto;
+  color: #52705f;
+}
+
+.session-tree-item__folder-label {
   overflow: hidden;
-  font-size: 0.84rem;
-  font-weight: 720;
+  font-size: 0.78rem;
+  font-weight: 760;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.session-list-item small,
+.session-tree-item__identity {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--identity-accent, #4f7561) 42%, white);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--identity-accent, #4f7561) 12%, white);
+  color: var(--identity-accent, #355744);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.session-tree-item__copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 1px;
+}
+
+.session-tree-item__copy strong,
+.session-tree-item__copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-tree-item__copy strong {
+  font-size: 0.78rem;
+  font-weight: 740;
+}
+
+.session-tree-item__copy small,
 .session-list-empty {
   color: #718077;
-  font-size: 0.73rem;
+  font-size: 0.67rem;
 }
 
 .session-list-empty {
   padding: 12px 10px;
+}
+
+.session-tree-item__status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  color: #6f7b74;
+  font-size: 0.62rem;
+  font-weight: 720;
+}
+
+.session-tree-item__status > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #9aa39d;
+}
+
+.session-tree-item__status--active {
+  color: #27664c;
+}
+
+.session-tree-item__status--active > span {
+  background: #2d9667;
+  box-shadow: 0 0 0 3px rgb(45 150 103 / 12%);
+}
+
+.session-tree-item__status--completed > span {
+  background: #5e7768;
+}
+
+.session-tree-item__status--attention {
+  color: #9b452f;
+}
+
+.session-tree-item__status--attention > span {
+  background: #bd5c43;
 }
 
 .session-refresh-button {
@@ -140,6 +243,83 @@
 
 .agent-session-header__actions {
   gap: 10px;
+}
+
+.agent-session-product-link,
+.agent-session-product-menu summary,
+.agent-session-product-menu button {
+  font: inherit;
+}
+
+.agent-session-product-link,
+.agent-session-product-menu summary {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid #9eb5a7;
+  border-radius: 7px;
+  background: #eef5ef;
+  color: #274c3a;
+  font-size: 0.74rem;
+  font-weight: 780;
+  cursor: pointer;
+}
+
+.agent-session-product-menu {
+  position: relative;
+}
+
+.agent-session-product-menu summary {
+  list-style: none;
+}
+
+.agent-session-product-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-session-product-menu > div {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 5px);
+  right: 0;
+  display: grid;
+  width: min(270px, 70vw);
+  gap: 3px;
+  padding: 5px;
+  border: 1px solid #cbd4cb;
+  border-radius: 9px;
+  background: #fffdf8;
+  box-shadow: 0 12px 30px rgb(28 44 34 / 16%);
+}
+
+.agent-session-product-menu button {
+  display: grid;
+  gap: 2px;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #263c30;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-session-product-menu button:hover,
+.agent-session-product-menu button:focus-visible {
+  background: #edf1eb;
+}
+
+.agent-session-product-menu button span {
+  color: #6f7b74;
+  font-size: 0.65rem;
+  font-weight: 720;
+  text-transform: uppercase;
+}
+
+.agent-session-product-menu button strong {
+  font-size: 0.75rem;
 }
 
 .agent-session-utility-bar {
@@ -684,7 +864,7 @@
   .agent-session-selector {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-rows: auto;
+    grid-template-rows: auto auto;
     gap: 8px;
     padding: 10px 12px;
     border-right: 0;
@@ -705,20 +885,45 @@
     display: none;
   }
 
-  .agent-session-selector nav {
-    display: flex;
+  .session-tree-toggle {
+    display: inline-flex;
     grid-column: 1;
     grid-row: 1;
-    grid-auto-flow: unset;
-    overflow-x: auto;
+    min-height: 34px;
+    align-items: center;
+    justify-self: start;
+    gap: 6px;
+    padding: 0 10px;
+    background: #edf1eb;
+    color: #34483d;
+    font-size: 0.76rem;
+    font-weight: 760;
   }
 
-  .session-list-item {
-    min-width: 150px;
+  .session-tree {
+    display: none;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    max-height: min(34vh, 260px);
+    padding-top: 4px;
+  }
+
+  .agent-session-selector.is-open .session-tree {
+    display: block;
+  }
+
+  .agent-session-content {
+    min-height: 0;
   }
 
   .agent-session-header {
+    flex-wrap: wrap;
     padding: 13px 16px;
+  }
+
+  .agent-session-header__actions {
+    width: 100%;
+    flex-wrap: wrap;
   }
 
   .agent-session-scroll-region,

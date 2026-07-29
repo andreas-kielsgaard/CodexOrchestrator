@@ -1,5 +1,5 @@
 import { Check, ClipboardCopy } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { ConversationViewport } from './ConversationViewport';
 import {
   browserAgentSessionClipboard,
@@ -25,12 +25,14 @@ export interface AgentSessionWorkspaceProps {
   controller: AgentSessionWorkspaceController;
   readonly presentation?: AgentSessionPresentation;
   readonly clipboard?: AgentSessionClipboard;
+  readonly headerActions?: ReactNode;
 }
 
 export function AgentSessionWorkspace({
   controller,
   presentation = {},
   clipboard = browserAgentSessionClipboard,
+  headerActions,
 }: AgentSessionWorkspaceProps) {
   const active = Boolean(controller.transcript?.activeInvocationId);
   const title = controller.details?.session.title ?? 'New Agent Session';
@@ -98,6 +100,7 @@ export function AgentSessionWorkspace({
               )}
           </div>
           <div className="agent-session-header__actions">
+            {headerActions}
             {copyAction}
             {active && (
               <span className="working-status" role="status">

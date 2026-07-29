@@ -13,6 +13,7 @@ export interface SprintPlannerActivityDetailWorkspaceProps {
   readonly sessions: readonly SprintAgentSessionPresentation[];
   readonly agentSessionComposition?: EmbeddedAgentSessionComposition;
   readonly onBack: () => void;
+  readonly onOpenAgentSession?: (sessionId: string) => void;
 }
 
 export function SprintPlannerActivityDetailWorkspace({
@@ -21,6 +22,7 @@ export function SprintPlannerActivityDetailWorkspace({
   sessions,
   agentSessionComposition,
   onBack,
+  onOpenAgentSession,
 }: SprintPlannerActivityDetailWorkspaceProps) {
   return (
     <DetailWorkspace
@@ -57,6 +59,7 @@ export function SprintPlannerActivityDetailWorkspace({
                   conversationAriaLabel={`${session.title} conversation`}
                   session={session}
                   composition={agentSessionComposition}
+                  onOpenStandalone={onOpenAgentSession}
                 />
               ))}
             </section>

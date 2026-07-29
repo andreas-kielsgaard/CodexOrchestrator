@@ -31,6 +31,7 @@ export interface SprintWorkspaceProps {
   readonly detailLocation: SprintWorkspaceDetailLocation;
   readonly onDetailLocationChange: (location: SprintWorkspaceDetailLocation) => void;
   readonly onBack: () => void;
+  readonly onOpenAgentSession?: (sessionId: string) => void;
 }
 
 export function SprintWorkspace({
@@ -44,6 +45,7 @@ export function SprintWorkspace({
   detailLocation,
   onDetailLocationChange,
   onBack,
+  onOpenAgentSession,
 }: SprintWorkspaceProps) {
   const [selectedTab, setSelectedTab] = useState<SprintWorkspaceTab>('flow');
   const [selectedConcernId, setSelectedConcernId] = useState<string | null>(null);
@@ -114,6 +116,7 @@ export function SprintWorkspace({
             sprintPlannerActivityId: detailLocation.sprintPlannerActivityId,
           });
         }}
+        onOpenAgentSession={onOpenAgentSession}
       />
     );
   }
@@ -140,6 +143,7 @@ export function SprintWorkspace({
             sprintPlannerActivityId === plannerActivityGroup.sprintPlannerActivityId,
         )}
         onBack={() => onDetailLocationChange({ kind: 'sprint' })}
+        onOpenAgentSession={onOpenAgentSession}
       />
     );
   }
@@ -263,6 +267,7 @@ export function SprintWorkspace({
             conversationAriaLabel="Sprint Agent Session conversation"
             session={adjunct.agentSession}
             composition={agentSessionComposition}
+            onOpenStandalone={onOpenAgentSession}
           />
         ) : undefined
       }

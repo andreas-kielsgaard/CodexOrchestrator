@@ -133,9 +133,9 @@ describe('orchestration native query v1', () => {
     (value.planningDrafts as Array<Record<string, unknown>>)[0].status = 'initiated';
 
     const query = decodeOrchestrationNativeQueryV2(value);
-    expect(
-      createEpicInitiationCapability(query, 'epic-planning-draft-fixture'),
-    ).toMatchObject({ status: 'already_initiated' });
+    expect(createEpicInitiationCapability(query, 'epic-planning-draft-fixture')).toMatchObject({
+      status: 'already_initiated',
+    });
     const input = nativeQueryProductCompositionInputV2(query);
     const read = composeProductOrchestrationReadModels(input);
     expect(read.epics).toHaveLength(1);
@@ -143,6 +143,20 @@ describe('orchestration native query v1', () => {
     expect(input.events.workUnits).toEqual([]);
     expect(input.events.sprintPlanRevisions).toHaveLength(1);
     expect(input.events.reviews).toEqual([]);
+    expect(input.events.agentSessionReferences).toEqual([
+      expect.objectContaining({
+        agentSessionId: 'agent-session-fixture',
+        targetKind: 'epic',
+        targetId: 'epic',
+        semanticRole: 'epic_plan_builder',
+      }),
+    ]);
+    expect(read.epics[0]?.agentSessionReferences).toEqual([
+      expect.objectContaining({
+        agentSessionId: 'agent-session-fixture',
+        semanticRole: 'epic_plan_builder',
+      }),
+    ]);
   });
 
   it('reports blocked and ready initiation from the selected durable draft without caller-owned retry keys', () => {
@@ -155,9 +169,9 @@ describe('orchestration native query v1', () => {
         idempotencyKey: 'initiate:epic-planning-draft-fixture:proposal-revision-fixture',
       }),
     });
-    expect(
-      createEpicInitiationCapability(proposalOnly, 'missing-draft'),
-    ).toMatchObject({ status: 'blocked' });
+    expect(createEpicInitiationCapability(proposalOnly, 'missing-draft')).toMatchObject({
+      status: 'blocked',
+    });
   });
 
   it('keeps a canceled draft distinct from an empty or missing proposal', () => {
@@ -167,9 +181,7 @@ describe('orchestration native query v1', () => {
     proposalOnly.planningDrafts[0].status = 'canceled';
     proposalOnly.planningDrafts[0].canceledAt = '2026-07-15T13:00:00.000Z';
     const query = decodeOrchestrationNativeQueryV2(proposalOnly);
-    expect(
-      createEpicInitiationCapability(query, 'epic-planning-draft-fixture'),
-    ).toEqual({
+    expect(createEpicInitiationCapability(query, 'epic-planning-draft-fixture')).toEqual({
       status: 'blocked',
       reason: 'This Epic Planning Draft was canceled and cannot be initiated.',
     });

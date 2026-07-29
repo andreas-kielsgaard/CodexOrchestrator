@@ -311,6 +311,7 @@ function summary(
     hasActiveInvocation: invocations.some(({ invocation }) =>
       ['pending', 'running'].includes(invocation.status),
     ),
+    latestInvocationStatus: invocations.at(-1)?.invocation.status ?? null,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
   };

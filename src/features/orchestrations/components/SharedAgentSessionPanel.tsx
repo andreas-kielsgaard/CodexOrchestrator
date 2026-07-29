@@ -24,6 +24,7 @@ export interface SharedAgentSessionPanelProps {
   readonly defaultExpanded?: boolean;
   readonly expanded?: boolean;
   readonly onExpandedChange?: (expanded: boolean) => void;
+  readonly onOpenStandalone?: (sessionId: string) => void;
 }
 
 /** Shared embedded Agent Session presentation with an injected application boundary. */
@@ -35,6 +36,7 @@ export function SharedAgentSessionPanel({
   defaultExpanded = false,
   expanded: controlledExpanded,
   onExpandedChange,
+  onOpenStandalone,
 }: SharedAgentSessionPanelProps) {
   const conversationId = useId();
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
@@ -53,27 +55,49 @@ export function SharedAgentSessionPanel({
         <div className="shared-agent-session__compact">
           <span>Agent Session</span>
           <strong>{session.title}</strong>
-          <button
-            className="shared-agent-session__open"
-            type="button"
-            aria-expanded="false"
-            aria-controls={conversationId}
-            onClick={() => setExpanded(true)}
-          >
-            Open Agent Session
-          </button>
+          <div className="shared-agent-session__actions">
+            <button
+              className="shared-agent-session__open"
+              type="button"
+              aria-expanded="false"
+              aria-controls={conversationId}
+              onClick={() => setExpanded(true)}
+            >
+              Open Agent Session
+            </button>
+            {onOpenStandalone && (
+              <button
+                className="shared-agent-session__standalone"
+                type="button"
+                onClick={() => onOpenStandalone(session.sessionId)}
+              >
+                Open in Agent Sessions
+              </button>
+            )}
+          </div>
         </div>
       ) : (
         <div id={conversationId} className="shared-agent-session__conversation">
-          <button
-            className="shared-agent-session__collapse"
-            type="button"
-            aria-expanded="true"
-            aria-controls={conversationId}
-            onClick={() => setExpanded(false)}
-          >
-            Collapse Agent Session
-          </button>
+          <div className="shared-agent-session__actions shared-agent-session__actions--expanded">
+            <button
+              className="shared-agent-session__collapse"
+              type="button"
+              aria-expanded="true"
+              aria-controls={conversationId}
+              onClick={() => setExpanded(false)}
+            >
+              Collapse Agent Session
+            </button>
+            {onOpenStandalone && (
+              <button
+                className="shared-agent-session__standalone"
+                type="button"
+                onClick={() => onOpenStandalone(session.sessionId)}
+              >
+                Open in Agent Sessions
+              </button>
+            )}
+          </div>
           {composition ? (
             <ConnectedAgentSessionConversation
               session={session}

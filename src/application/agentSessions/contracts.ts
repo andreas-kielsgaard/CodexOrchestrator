@@ -120,6 +120,7 @@ export interface AgentSessionSummaryDto {
   title: string;
   availability: AgentSessionAvailabilityDto;
   hasActiveInvocation: boolean;
+  latestInvocationStatus: AgentInvocationStatusDto | null;
   createdAt: IsoDateTimeDto;
   updatedAt: IsoDateTimeDto;
 }

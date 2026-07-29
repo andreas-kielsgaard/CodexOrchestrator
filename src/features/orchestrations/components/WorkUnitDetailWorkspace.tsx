@@ -13,6 +13,7 @@ export interface WorkUnitDetailWorkspaceProps {
   readonly agentSessionComposition?: EmbeddedAgentSessionComposition;
   readonly backLabel?: string;
   readonly onBack: () => void;
+  readonly onOpenAgentSession?: (sessionId: string) => void;
 }
 
 export function WorkUnitDetailWorkspace({
@@ -22,6 +23,7 @@ export function WorkUnitDetailWorkspace({
   agentSessionComposition,
   backLabel = 'Back to Plan',
   onBack,
+  onOpenAgentSession,
 }: WorkUnitDetailWorkspaceProps) {
   const workUnitId = unit.workUnitId;
   const handler = sessions.find(
@@ -95,6 +97,7 @@ export function WorkUnitDetailWorkspace({
             agentSessionComposition={agentSessionComposition}
             expanded={dominant !== 'worker'}
             onExpandedChange={(expanded) => setDominant(expanded ? 'handler' : 'worker')}
+            onOpenAgentSession={onOpenAgentSession}
           />
           <SessionSlot
             label="Implementation worker"
@@ -102,6 +105,7 @@ export function WorkUnitDetailWorkspace({
             agentSessionComposition={agentSessionComposition}
             expanded={dominant !== 'handler'}
             onExpandedChange={(expanded) => setDominant(expanded ? 'worker' : 'handler')}
+            onOpenAgentSession={onOpenAgentSession}
           />
           {reviewer && (
             <SessionSlot
@@ -110,6 +114,7 @@ export function WorkUnitDetailWorkspace({
               agentSessionComposition={agentSessionComposition}
               expanded={reviewerExpanded}
               onExpandedChange={setReviewerExpanded}
+              onOpenAgentSession={onOpenAgentSession}
             />
           )}
         </section>
@@ -124,12 +129,14 @@ function SessionSlot({
   agentSessionComposition,
   expanded,
   onExpandedChange,
+  onOpenAgentSession,
 }: {
   readonly label: string;
   readonly session?: WorkUnitAgentSessionPresentation;
   readonly agentSessionComposition?: EmbeddedAgentSessionComposition;
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
+  readonly onOpenAgentSession?: (sessionId: string) => void;
 }) {
   return (
     <div className="work-unit-session-slot" data-expanded={expanded}>
@@ -142,6 +149,7 @@ function SessionSlot({
           composition={agentSessionComposition}
           expanded={expanded}
           onExpandedChange={onExpandedChange}
+          onOpenStandalone={onOpenAgentSession}
         />
       ) : (
         <section className="work-unit-session-empty" aria-label={`${label} unavailable`}>
