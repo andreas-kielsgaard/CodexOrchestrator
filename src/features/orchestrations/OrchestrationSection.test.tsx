@@ -73,21 +73,49 @@ describe('OrchestrationSection', () => {
     );
   });
 
-  it('uses one row navigation target while keeping description help separate and accessible', () => {
+  it('exposes the description from the Epic title on hover and keyboard focus', () => {
     render(<OrchestrationSection view={disposableRecordedOrchestrationView} />);
 
     const goal = canonicalRecordedView.epics[0].goal;
-    expect(screen.queryByText(goal)).toBeNull();
-    const help = screen.getByRole('button', {
-      name: 'About Codex Epic Runner workspace development',
+    const title = screen.getByRole('button', {
+      name: 'Open Codex Epic Runner workspace development',
     });
-    fireEvent.focus(help);
+    const titleArea = title.closest('.epic-title-help');
+    expect(titleArea).not.toBeNull();
+    expect(titleArea?.querySelectorAll('button')).toHaveLength(1);
+    expect(
+      screen.queryByRole('button', {
+        name: 'About Codex Epic Runner workspace development',
+      }),
+    ).toBeNull();
+    expect(screen.queryByText(goal)).toBeNull();
+
+    fireEvent.mouseEnter(title);
     expect(screen.getByRole('tooltip')).toHaveTextContent(goal);
-    expect(help).toHaveAttribute('aria-describedby', screen.getByRole('tooltip').id);
-    fireEvent.click(help);
-    fireEvent.click(screen.getByRole('tooltip'));
-    expect(screen.getByRole('main', { name: 'Orchestration' })).toBeVisible();
-    expect(help.closest('.orchestration-list__title')?.querySelectorAll('button')).toHaveLength(2);
+    expect(title).toHaveAttribute('aria-describedby', screen.getByRole('tooltip').id);
+    expect(title.contains(screen.getByRole('tooltip'))).toBe(false);
+    fireEvent.mouseLeave(titleArea!);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.focus(title);
+    expect(screen.getByRole('tooltip')).toHaveTextContent(goal);
+    expect(title).toHaveAttribute('aria-describedby', screen.getByRole('tooltip').id);
+    fireEvent.blur(title);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('opens the Epic from both the title and row blank space', () => {
+    const first = render(<OrchestrationSection view={disposableRecordedOrchestrationView} />);
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Open Codex Epic Runner workspace development',
+      }),
+    );
+    expect(screen.getByRole('main', { name: 'Epic detail' })).toBeVisible();
+
+    first.unmount();
+    render(<OrchestrationSection view={disposableRecordedOrchestrationView} />);
 
     fireEvent.click(screen.getByText('No work in motion'));
     expect(screen.getByRole('main', { name: 'Epic detail' })).toBeVisible();

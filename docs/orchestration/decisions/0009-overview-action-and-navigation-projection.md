@@ -22,9 +22,10 @@ Epic root. Composition validates the full ownership path before the feature rece
 never derives readiness or a destination from transcript prose, titles, routes, or mounted view
 state.
 
-The whole Epic row opens the Epic through one button plus row click delegation. Tooltip, movement,
-ready-work, and human-input controls are sibling controls, so no interactive element is nested in
-another.
+The whole Epic row opens the Epic through the title button plus row click delegation. The title
+button owns the accessible description tooltip, which is rendered as sibling content. Movement,
+ready-work, and human-input controls remain separate siblings, so no interactive element is nested
+in another.
 
 ## Boundary and deferrals
 
@@ -45,22 +46,22 @@ movement, ready work, and a waiting human-input action; it is not production run
 
 The development composition was inspected in the in-app browser on `2026-07-29`:
 
-- At `1280 x 800`, document width equaled viewport width and the focused description tooltip was
-  visible outside the table row without an internal scrollbar.
-- At `390 x 844`, document width remained `390`, the table/card stayed within `361` pixels, and the
-  tooltip bounds were `37.6` to `367.6` pixels.
-- Activating the recorded ready-work control opened the exact
-  `Planner and Work Unit Interaction Discovery` Sprint detail and selected revision
-  `sprint-planner-work-unit-r1`.
+- At `1280 x 800`, keyboard focus on the visible Epic title set its `aria-describedby` to the
+  visible description tooltip. The document width equaled the viewport width. Activating that title
+  opened Epic detail, and activating blank row content did the same.
+- At `390 x 844`, title focus again exposed the tooltip through `aria-describedby`; document width
+  remained `390`, the card stayed within `362.4` pixels, and tooltip bounds were `37.6` to `367.6`
+  pixels. Activating the title opened Epic detail.
 
-Screenshots were reviewed in-session and are not committed artifacts. The recorded fixture has zero
-movement, so movement-popover behavior is covered by focused component tests rather than claimed as
-browser/runtime proof.
+The browser controller's coordinate move did not emit pointer-hover state in this run. Title
+mouse-enter behavior is therefore proven by the focused interaction test, not claimed as live-browser
+evidence. The recorded fixture has zero movement, so movement-popover behavior is likewise covered by
+focused component tests rather than claimed as browser/runtime proof.
 
 ## Validation
 
-- Focused overview/application suites: 5 files, 84 tests passed.
-- Full frontend suite: 88 files, 607 tests passed.
+- Focused title/row regression suite: 1 file, 23 tests passed.
+- Focused overview/application suites: 5 files, 85 tests passed.
 - `npm run build`, `npm run lint`, changed-file Prettier check, and `git diff --check` passed.
 - Repository-wide `npm run format:check` remains red on 27 unchanged baseline files under `.agents`,
   `offline-review`, and existing Rust fixture paths.
