@@ -28,19 +28,24 @@ export interface AgentSessionWorkspaceProps {
   readonly clipboard?: AgentSessionClipboard;
 }
 
-const AgentSessionHeaderActionsContext = createContext<ReactNode>(null);
+const AgentSessionChromeContext = createContext<{
+  readonly actions: ReactNode;
+  readonly settings?: ReactNode;
+}>({ actions: null });
 
 export function AgentSessionHeaderActionsProvider({
   actions,
+  settings,
   children,
 }: {
   readonly actions: ReactNode;
+  readonly settings?: ReactNode;
   readonly children: ReactNode;
 }) {
   return (
-    <AgentSessionHeaderActionsContext.Provider value={actions}>
+    <AgentSessionChromeContext.Provider value={{ actions, settings }}>
       {children}
-    </AgentSessionHeaderActionsContext.Provider>
+    </AgentSessionChromeContext.Provider>
   );
 }
 
@@ -49,7 +54,7 @@ export function AgentSessionWorkspace({
   presentation = {},
   clipboard = browserAgentSessionClipboard,
 }: AgentSessionWorkspaceProps) {
-  const contextualHeaderActions = useContext(AgentSessionHeaderActionsContext);
+  const contextualChrome = useContext(AgentSessionChromeContext);
   const active = Boolean(controller.transcript?.activeInvocationId);
   const identity = controller.details?.session.agentIdentity ?? null;
   const title = identity
@@ -100,7 +105,7 @@ export function AgentSessionWorkspace({
   );
   return (
     <section
-      className={`agent-session-workspace${showHeader ? '' : ' agent-session-workspace--header-hidden'}`}
+      className={`agent-session-workspace${showHeader ? '' : ' agent-session-workspace--header-hidden'}${contextualChrome.settings ? ' agent-session-workspace--with-settings' : ''}`}
       aria-label={presentation.ariaLabel ?? title}
     >
       {showHeader && (
@@ -121,7 +126,7 @@ export function AgentSessionWorkspace({
               )}
           </div>
           <div className="agent-session-header__actions">
-            {contextualHeaderActions}
+            {contextualChrome.actions}
             {copyAction}
             {active && (
               <span className="working-status" role="status">
@@ -133,9 +138,12 @@ export function AgentSessionWorkspace({
       )}
       {!showHeader && (
         <div className="agent-session-utility-bar">
-          {contextualHeaderActions}
+          {contextualChrome.actions}
           {copyAction}
         </div>
+      )}
+      {contextualChrome.settings && (
+        <div className="agent-session-settings">{contextualChrome.settings}</div>
       )}
       <ConversationViewport
         agentIdentity={identity}

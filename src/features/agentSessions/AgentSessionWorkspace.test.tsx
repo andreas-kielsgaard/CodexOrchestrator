@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { vi } from 'vitest';
-import { AgentSessionWorkspace } from './AgentSessionWorkspace';
+import { AgentSessionHeaderActionsProvider, AgentSessionWorkspace } from './AgentSessionWorkspace';
 import { projectAgentSessionTranscript } from './transcriptProjector';
 import type { AgentSessionWorkspaceController } from './useAgentSessionController';
 import { sessionDetails } from './testFixtures';
@@ -104,6 +104,25 @@ describe('AgentSessionWorkspace', () => {
     expect(workspace).toHaveClass('agent-session-workspace--header-hidden');
     expect(conversation).not.toBeNull();
     expect(conversation?.lastElementChild).toHaveClass('agent-session-composer');
+  });
+
+  it('places application-owned Session settings between the header and conversation', () => {
+    const details = sessionDetails('completed');
+    render(
+      <AgentSessionHeaderActionsProvider
+        actions={<button type="button">Manage</button>}
+        settings={<div aria-label="Session settings">Model and effort</div>}
+      >
+        <AgentSessionWorkspace controller={workspaceController(details)} />
+      </AgentSessionHeaderActionsProvider>,
+    );
+
+    const workspace = screen.getByLabelText('Durable session');
+    expect(workspace).toHaveClass('agent-session-workspace--with-settings');
+    expect(screen.getByLabelText('Session settings').parentElement).toHaveClass(
+      'agent-session-settings',
+    );
+    expect(screen.getByRole('button', { name: 'Manage' })).toBeVisible();
   });
 
   it('copies a complete sanitized plain-text session from normal and embedded views', async () => {

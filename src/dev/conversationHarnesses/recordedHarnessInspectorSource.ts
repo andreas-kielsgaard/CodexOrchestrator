@@ -60,6 +60,7 @@ const skillDocuments = import.meta.glob('../../../.agents/skills/*/SKILL.md', {
 }) as Record<string, string>;
 const catalog = catalogJson as RecordedCatalog;
 export const recordedHarnessInspectorSessionId = 'recorded-harness-inspector-plan-builder';
+export const recordedHarnessInspectorPeerSessionId = 'recorded-harness-inspector-plan-builder-peer';
 const profileKey = 'epic_plan_builder';
 const recordedAt = '2026-07-17T09:00:00.000Z';
 const recordedProfile = catalog.harnesses.find((profile) => profile.key === profileKey);
@@ -82,13 +83,31 @@ export const recordedHarnessInspectorSessionDetails: AgentSessionDetailsDto =
 export function createRecordedHarnessManagementSource(options?: {
   onSessionIdentityChange?(identity: AgentIdentityDto): void;
 }): ConversationHarnessManagementSource {
-  let snapshot: ConversationHarnessManagementSnapshot | null = null;
+  const supportedSessions = new Set([
+    recordedHarnessInspectorSessionId,
+    recordedHarnessInspectorPeerSessionId,
+  ]);
+  const snapshots = new Map<string, ConversationHarnessManagementSnapshot>();
+  let delegatedPolicies:
+    ConversationHarnessManagementSnapshot['modelChoices']['delegatedPolicies'] | null = null;
+  const loadSnapshot = (sessionId: string) => {
+    let snapshot = snapshots.get(sessionId);
+    if (!snapshot) {
+      snapshot = buildSnapshot(sessionId);
+      if (delegatedPolicies)
+        snapshot = withResolvedModelChoice({
+          ...snapshot,
+          modelChoices: { ...snapshot.modelChoices, delegatedPolicies },
+        });
+      snapshots.set(sessionId, snapshot);
+    }
+    return snapshot;
+  };
   return {
     async load({ sessionId }) {
-      if (sessionId !== recordedHarnessInspectorSessionId) return unboundRead();
+      if (!supportedSessions.has(sessionId)) return unboundRead();
       try {
-        snapshot ??= buildSnapshot(sessionId);
-        return availableRead(snapshot);
+        return availableRead(loadSnapshot(sessionId));
       } catch {
         return {
           kind: 'unavailable',
@@ -97,13 +116,23 @@ export function createRecordedHarnessManagementSource(options?: {
       }
     },
     async dispatch({ sessionId, command }) {
-      if (sessionId !== recordedHarnessInspectorSessionId) return unboundRead();
+      if (!supportedSessions.has(sessionId)) return unboundRead();
       try {
-        snapshot ??= buildSnapshot(sessionId);
-        snapshot = reduceRecordedCommand(snapshot, command);
-        if (command.kind === 'update_session_identity' && snapshot.agentIdentity)
-          options?.onSessionIdentityChange?.(snapshot.agentIdentity);
-        return availableRead(snapshot);
+        const next = reduceRecordedCommand(loadSnapshot(sessionId), command);
+        delegatedPolicies = next.modelChoices.delegatedPolicies;
+        snapshots.set(sessionId, next);
+        for (const [candidateSessionId, candidate] of snapshots)
+          if (candidateSessionId !== sessionId)
+            snapshots.set(
+              candidateSessionId,
+              withResolvedModelChoice({
+                ...candidate,
+                modelChoices: { ...candidate.modelChoices, delegatedPolicies },
+              }),
+            );
+        if (command.kind === 'update_session_identity' && next.agentIdentity)
+          options?.onSessionIdentityChange?.(next.agentIdentity);
+        return availableRead(next);
       } catch (error) {
         return {
           kind: 'unavailable',
@@ -147,6 +176,13 @@ function buildSnapshot(sessionId: string): ConversationHarnessManagementSnapshot
   const catalogs = buildCatalogs();
   const currentConfiguration = buildConfiguration(profile, sandbox, catalogs);
   validateConfiguration(currentConfiguration, catalogs);
+  const newestConfiguration: HarnessEffectiveConfiguration = {
+    ...currentConfiguration,
+    runtime: {
+      ...currentConfiguration.runtime,
+      modelPolicyMode: 'revision_owned',
+    },
+  };
   const snapshot: ConversationHarnessManagementSnapshot = {
     sessionId,
     harnessKey: profile.key,
@@ -170,7 +206,7 @@ function buildSnapshot(sessionId: string): ConversationHarnessManagementSnapshot
           revision: profile.version,
           label: 'Next-prompt update policy',
           status: 'pushed',
-          configuration: currentConfiguration,
+          configuration: newestConfiguration,
           activeSessionCount: 0,
           queuedSessionCount: 0,
           committedAt: recordedAt,
@@ -187,15 +223,9 @@ function buildSnapshot(sessionId: string): ConversationHarnessManagementSnapshot
       reason: 'This Session is still using the previous pushed version.',
     },
     modelChoices: {
-      revisionProposals: [
+      delegatedPolicies: [
         {
           revision: recordedSessionAppliedRevision,
-          policy: policyFromConfiguration(currentConfiguration),
-          dirty: false,
-          updatedAt: recordedAt,
-        },
-        {
-          revision: profile.version,
           policy: policyFromConfiguration(currentConfiguration),
           dirty: false,
           updatedAt: recordedAt,
@@ -335,7 +365,7 @@ function buildConfiguration(
         'Applicability labels describe exposure timing only. Tool schemas remain runtime-owned and are not ingested as skill text.',
     },
     runtime: {
-      modelPolicyMode: 'adjustable_proposal',
+      modelPolicyMode: 'delegated_shared',
       models: catalogs.models.items.map((model) => ({
         modelId: model.id,
         allowed: profile.runtime.model === null || profile.runtime.model === model.id,
@@ -423,10 +453,10 @@ function reduceRecordedCommand(
       },
       modelChoices: {
         ...snapshot.modelChoices,
-        revisionProposals:
-          workingCopy.configuration.runtime.modelPolicyMode === 'adjustable_proposal'
+        delegatedPolicies:
+          workingCopy.configuration.runtime.modelPolicyMode === 'delegated_shared'
             ? [
-                ...snapshot.modelChoices.revisionProposals,
+                ...snapshot.modelChoices.delegatedPolicies,
                 {
                   revision,
                   policy: policyFromConfiguration(workingCopy.configuration),
@@ -434,7 +464,7 @@ function reduceRecordedCommand(
                   updatedAt: new Date().toISOString(),
                 },
               ]
-            : snapshot.modelChoices.revisionProposals,
+            : snapshot.modelChoices.delegatedPolicies,
       },
     };
   }
@@ -465,18 +495,18 @@ function reduceRecordedCommand(
       },
     };
   }
-  if (command.kind === 'save_model_proposal') {
+  if (command.kind === 'save_delegated_model_policy') {
     const version = findVersion(snapshot, command.revision);
-    if (version.configuration.runtime.modelPolicyMode !== 'adjustable_proposal')
+    if (version.configuration.runtime.modelPolicyMode !== 'delegated_shared')
       throw new Error('This Harness revision fixes its model policy.');
     validateModelPolicy(command.policy, snapshot.catalogs);
     return withResolvedModelChoice({
       ...snapshot,
       modelChoices: {
         ...snapshot.modelChoices,
-        revisionProposals: [
-          ...snapshot.modelChoices.revisionProposals.filter(
-            (proposal) => proposal.revision !== command.revision,
+        delegatedPolicies: [
+          ...snapshot.modelChoices.delegatedPolicies.filter(
+            (policy) => policy.revision !== command.revision,
           ),
           {
             revision: command.revision,
@@ -489,14 +519,16 @@ function reduceRecordedCommand(
     });
   }
   if (command.kind === 'set_session_model_override') {
-    if (command.override?.enabled) {
-      validateModelPolicy(command.override.policy, snapshot.catalogs);
-      validatePolicyNarrowing(
-        command.override.policy,
+    if (
+      command.override &&
+      !isAllowedChoice(
+        command.override.model,
+        command.override.reasoning,
         policyForAppliedRevision(snapshot),
         snapshot.catalogs,
-      );
-    }
+      )
+    )
+      throw new Error('The Session choice must fit its applied Harness policy.');
     return withResolvedModelChoice({
       ...snapshot,
       modelChoices: {
@@ -636,36 +668,15 @@ function validateModelPolicy(
   }
 }
 
-function validatePolicyNarrowing(
-  candidate: HarnessModelPolicy,
-  base: HarnessModelPolicy,
-  catalogs: HarnessConfigurationCatalogs,
-): void {
-  for (const candidateModel of candidate.models) {
-    if (!candidateModel.allowed) continue;
-    const baseModel = base.models.find((model) => model.modelId === candidateModel.modelId);
-    if (!baseModel?.allowed)
-      throw new Error('A Session override cannot enable a model outside its Harness policy.');
-    const levels =
-      catalogs.models.items.find((model) => model.id === candidateModel.modelId)?.reasoningLevels ??
-      [];
-    if (
-      levels.indexOf(candidateModel.minReasoning) < levels.indexOf(baseModel.minReasoning) ||
-      levels.indexOf(candidateModel.maxReasoning) > levels.indexOf(baseModel.maxReasoning)
-    )
-      throw new Error('A Session override cannot widen its Harness reasoning range.');
-  }
-}
-
 function policyForAppliedRevision(
   snapshot: ConversationHarnessManagementSnapshot,
 ): HarnessModelPolicy {
   const applied = findVersion(snapshot, snapshot.sessionBinding.appliedRevision ?? -1);
-  const proposal = snapshot.modelChoices.revisionProposals.find(
+  const delegated = snapshot.modelChoices.delegatedPolicies.find(
     (candidate) => candidate.revision === applied.revision,
   );
-  return applied.configuration.runtime.modelPolicyMode === 'adjustable_proposal' && proposal
-    ? proposal.policy
+  return applied.configuration.runtime.modelPolicyMode === 'delegated_shared' && delegated
+    ? delegated.policy
     : policyFromConfiguration(applied.configuration);
 }
 
@@ -695,22 +706,21 @@ function withResolvedModelChoice(
         },
       },
     };
-  const proposal = snapshot.modelChoices.revisionProposals.find(
+  const delegated = snapshot.modelChoices.delegatedPolicies.find(
     (candidate) => candidate.revision === applied.revision,
   );
   const revisionPolicy =
-    applied.configuration.runtime.modelPolicyMode === 'adjustable_proposal' && proposal
-      ? proposal.policy
+    applied.configuration.runtime.modelPolicyMode === 'delegated_shared' && delegated
+      ? delegated.policy
       : policyFromConfiguration(applied.configuration);
-  const sessionPolicy = snapshot.modelChoices.sessionOverride?.enabled
-    ? snapshot.modelChoices.sessionOverride.policy
-    : null;
-  const constraints = sessionPolicy ?? revisionPolicy;
-  const explicitModel = sessionPolicy?.defaultModel ?? revisionPolicy.defaultModel;
-  const explicitReasoning = sessionPolicy?.defaultReasoning ?? revisionPolicy.defaultReasoning;
+  const sessionChoice = snapshot.modelChoices.sessionOverride;
+  const explicitModel = sessionChoice ? sessionChoice.model : revisionPolicy.defaultModel;
+  const explicitReasoning = sessionChoice
+    ? sessionChoice.reasoning
+    : revisionPolicy.defaultReasoning;
   if (
     explicitModel &&
-    isAllowedChoice(explicitModel, explicitReasoning, constraints, snapshot.catalogs)
+    isAllowedChoice(explicitModel, explicitReasoning, revisionPolicy, snapshot.catalogs)
   )
     return {
       ...snapshot,
@@ -719,10 +729,10 @@ function withResolvedModelChoice(
         resolvedForCurrentSession: {
           model: explicitModel,
           reasoning: explicitReasoning,
-          source: sessionPolicy
+          source: sessionChoice
             ? 'session_override'
-            : applied.configuration.runtime.modelPolicyMode === 'adjustable_proposal'
-              ? 'revision_proposal'
+            : applied.configuration.runtime.modelPolicyMode === 'delegated_shared'
+              ? 'delegated_shared_policy'
               : 'harness_revision',
         },
       },
@@ -733,7 +743,7 @@ function withResolvedModelChoice(
     isAllowedChoice(
       preference.lastUsedModel,
       preference.lastUsedReasoning,
-      constraints,
+      revisionPolicy,
       snapshot.catalogs,
     )
   )
@@ -748,7 +758,7 @@ function withResolvedModelChoice(
         },
       },
     };
-  const fallbackModel = constraints.models.find((model) => model.allowed);
+  const fallbackModel = revisionPolicy.models.find((model) => model.allowed);
   return {
     ...snapshot,
     modelChoices: {

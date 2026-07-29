@@ -24,8 +24,8 @@ import type {
   HarnessToolPolicy,
 } from '../../application/conversationHarnesses';
 import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
-import { MarkdownContent } from '../../components/MarkdownContent';
 import { MarkdownEditor } from '../../components/MarkdownEditor';
+import { AgentMarkdown } from '../agentSessions/AgentMarkdown';
 
 export interface ConversationHarnessManagementProps {
   readonly read: ConversationHarnessManagementRead | null;
@@ -476,9 +476,9 @@ function AvailableHarnessManagement({
                 }
               />
             ) : (
-              <MarkdownContent className="harness-management__markdown-view">
+              <AgentMarkdown className="harness-management__markdown-view">
                 {configuration.promptPrefix.content}
-              </MarkdownContent>
+              </AgentMarkdown>
             )}
           </ManagementCard>
 
@@ -926,18 +926,18 @@ function ModelPolicy({
 }) {
   const models = snapshot.catalogs.models.items;
   const configuredPolicy = policyFromConfiguration(configuration);
-  const revisionProposal = snapshot.modelChoices.revisionProposals.find(
-    (proposal) => proposal.revision === selectedRevision,
+  const delegatedPolicy = snapshot.modelChoices.delegatedPolicies.find(
+    (policy) => policy.revision === selectedRevision,
   );
   const harnessPolicy =
-    configuration.runtime.modelPolicyMode === 'adjustable_proposal' && revisionProposal
-      ? revisionProposal.policy
+    configuration.runtime.modelPolicyMode === 'delegated_shared' && delegatedPolicy
+      ? delegatedPolicy.policy
       : configuredPolicy;
   const harnessPolicyEditable = Boolean(
     editable ||
     (!editMode &&
       selectedRevision !== null &&
-      configuration.runtime.modelPolicyMode === 'adjustable_proposal' &&
+      configuration.runtime.modelPolicyMode === 'delegated_shared' &&
       onCommand),
   );
   const updateHarnessPolicy = (policy: HarnessModelPolicy) => {
@@ -946,14 +946,8 @@ function ModelPolicy({
       return;
     }
     if (selectedRevision !== null)
-      onCommand?.({ kind: 'save_model_proposal', revision: selectedRevision, policy });
+      onCommand?.({ kind: 'save_delegated_model_policy', revision: selectedRevision, policy });
   };
-  const appliedPolicy =
-    policyForRevision(snapshot, snapshot.sessionBinding.appliedRevision) ?? harnessPolicy;
-  const sessionOverride = snapshot.modelChoices.sessionOverride;
-  const sessionPolicy = sessionOverride?.policy ?? appliedPolicy;
-  const userPreference = snapshot.modelChoices.userPreference;
-  const resolved = snapshot.modelChoices.resolvedForCurrentSession;
   const harnessPolicyInteractionBoundary =
     selectedRevision === null
       ? `draft:${snapshot.workingCopy?.baseRevision ?? 'starting'}:${editMode ? 'editing' : 'viewing'}`
@@ -966,21 +960,19 @@ function ModelPolicy({
           <span>
             <strong>Version specific</strong>
             <small>
-              Fix these choices in this Harness revision. Off keeps a separate adjustable proposal.
+              On fixes these choices in the revision. Off delegates them to its shared policy.
             </small>
           </span>
           <input
             type="checkbox"
-            checked={configuration.runtime.modelPolicyMode === 'version_specific'}
+            checked={configuration.runtime.modelPolicyMode === 'revision_owned'}
             disabled={!editable}
             onChange={(event) =>
               onChange({
                 ...configuration,
                 runtime: {
                   ...configuration.runtime,
-                  modelPolicyMode: event.target.checked
-                    ? 'version_specific'
-                    : 'adjustable_proposal',
+                  modelPolicyMode: event.target.checked ? 'revision_owned' : 'delegated_shared',
                 },
               })
             }
@@ -995,12 +987,14 @@ function ModelPolicy({
           <span>
             <strong>Harness revision policy</strong>
             <small>
-              {configuration.runtime.modelPolicyMode === 'version_specific'
-                ? 'Fixed by this revision'
-                : 'Adjustable proposal outside commit history'}
+              {configuration.runtime.modelPolicyMode === 'revision_owned'
+                ? 'Fixed by this revision; edit the Harness to change it.'
+                : `Shared by recorded Sessions using v${selectedRevision ?? snapshot.workingCopy?.baseRevision ?? ''}.`}
             </small>
           </span>
-          {revisionProposal?.dirty && <StateBadge tone="caution">Uncommitted proposal</StateBadge>}
+          {delegatedPolicy?.dirty && (
+            <StateBadge tone="caution">Recorded shared adjustment</StateBadge>
+          )}
         </header>
         <ModelPolicyControls
           policy={harnessPolicy}
@@ -1011,71 +1005,8 @@ function ModelPolicy({
           onChange={updateHarnessPolicy}
         />
       </section>
-      {!editMode && (
-        <section
-          className="harness-management__model-owner"
-          aria-label="Current Session model override"
-        >
-          <header>
-            <span>
-              <strong>Current Session override</strong>
-              <small>Separate from the Harness revision and user default.</small>
-            </span>
-            <label className="harness-management__compact-toggle">
-              <input
-                type="checkbox"
-                aria-label="Enable current Session model override"
-                checked={Boolean(sessionOverride?.enabled)}
-                disabled={!onCommand}
-                onChange={(event) =>
-                  onCommand?.({
-                    kind: 'set_session_model_override',
-                    override: {
-                      enabled: event.target.checked,
-                      policy: sessionPolicy,
-                    },
-                  })
-                }
-              />
-              <span>{sessionOverride?.enabled ? 'On' : 'Off'}</span>
-            </label>
-          </header>
-          {sessionOverride?.enabled && (
-            <ModelPolicyControls
-              policy={sessionPolicy}
-              models={models}
-              editable={Boolean(onCommand)}
-              boundaryKey={`session:${snapshot.sessionId}:${sessionOverride.enabled}`}
-              labelPrefix="Session override"
-              onChange={(policy) =>
-                onCommand?.({
-                  kind: 'set_session_model_override',
-                  override: { enabled: true, policy },
-                })
-              }
-            />
-          )}
-        </section>
-      )}
-      <div className="harness-management__model-resolution">
-        <span>
-          <small>User default</small>
-          <strong>
-            {modelLabel(models, userPreference.lastUsedModel)} ·{' '}
-            {userPreference.lastUsedReasoning ?? 'Caller choice'}
-          </strong>
-        </span>
-        <span>
-          <small>Current Session resolves to</small>
-          <strong>
-            {modelLabel(models, resolved.model)} · {resolved.reasoning ?? 'Caller choice'}
-          </strong>
-          <em>{humanize(resolved.source)}</em>
-        </span>
-      </div>
       <p className="harness-management__catalog-boundary">
-        <strong>Recorded model catalog.</strong> {snapshot.catalogs.models.reason}{' '}
-        {userPreference.reason}
+        <strong>Recorded model catalog.</strong> {snapshot.catalogs.models.reason}
       </p>
     </div>
   );
@@ -1149,8 +1080,12 @@ function ModelPolicyControls({
                 <strong>{catalogModel.label}</strong>
               </label>
               <div className="harness-management__reasoning-range">
-                <output>
-                  {model.minReasoning} – {model.maxReasoning}
+                <output
+                  aria-label={`${catalogModel.label} selected reasoning range: ${model.minReasoning} through ${model.maxReasoning}`}
+                >
+                  <span>{model.minReasoning}</span>
+                  <i aria-hidden="true">–</i>
+                  <span>{model.maxReasoning}</span>
                 </output>
                 <div className="harness-management__dual-range">
                   <input
@@ -1197,11 +1132,6 @@ function ModelPolicyControls({
                       );
                     }}
                   />
-                </div>
-                <div className="harness-management__range-labels" aria-hidden="true">
-                  {catalogModel.reasoningLevels.map((level) => (
-                    <span key={level}>{level}</span>
-                  ))}
                 </div>
               </div>
             </div>
@@ -1353,31 +1283,6 @@ function configurationWithPolicy(
       defaultReasoning: policy.defaultReasoning,
     },
   };
-}
-
-function policyForRevision(
-  snapshot: ConversationHarnessManagementSnapshot,
-  revision: number | null,
-): HarnessModelPolicy | null {
-  if (revision === null) return null;
-  const version = snapshot.versionControl.versions.find(
-    (candidate) => candidate.revision === revision,
-  );
-  if (!version) return null;
-  if (version.configuration.runtime.modelPolicyMode === 'adjustable_proposal')
-    return (
-      snapshot.modelChoices.revisionProposals.find((proposal) => proposal.revision === revision)
-        ?.policy ?? policyFromConfiguration(version.configuration)
-    );
-  return policyFromConfiguration(version.configuration);
-}
-
-function modelLabel(
-  models: ConversationHarnessManagementSnapshot['catalogs']['models']['items'],
-  modelId: string | null,
-): string {
-  if (!modelId) return 'Caller choice';
-  return models.find((model) => model.id === modelId)?.label ?? modelId;
 }
 
 function VersionHistory({
@@ -1578,15 +1483,17 @@ function SessionIdentityDialog({
               onChange={(event) => setName(event.target.value)}
             />
           </ManagementField>
-          <label className="harness-management__catalog-search">
-            <Search size={15} aria-hidden="true" />
-            <input
-              aria-label="Search available Agent names"
-              placeholder="Search available names"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </label>
+          <ManagementField label="Available names">
+            <div className="harness-management__catalog-search">
+              <Search size={15} aria-hidden="true" />
+              <input
+                aria-label="Search available Agent names"
+                placeholder="Search available names"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </div>
+          </ManagementField>
         </div>
         <div className="harness-management__modal-scroll">
           <div

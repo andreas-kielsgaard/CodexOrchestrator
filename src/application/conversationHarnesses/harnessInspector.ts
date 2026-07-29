@@ -47,7 +47,7 @@ export interface HarnessEffectiveConfiguration {
     readonly schemaBoundary: string;
   };
   readonly runtime: {
-    readonly modelPolicyMode: 'version_specific' | 'adjustable_proposal';
+    readonly modelPolicyMode: 'revision_owned' | 'delegated_shared';
     readonly models: HarnessModelPolicy['models'];
     readonly defaultModel: HarnessModelPolicy['defaultModel'];
     readonly defaultReasoning: HarnessModelPolicy['defaultReasoning'];
@@ -155,15 +155,15 @@ export interface ConversationHarnessManagementSnapshot {
     readonly reason: string;
   };
   readonly modelChoices: {
-    readonly revisionProposals: readonly {
+    readonly delegatedPolicies: readonly {
       readonly revision: number;
       readonly policy: HarnessModelPolicy;
       readonly dirty: boolean;
       readonly updatedAt: string;
     }[];
     readonly sessionOverride: {
-      readonly enabled: boolean;
-      readonly policy: HarnessModelPolicy;
+      readonly model: string;
+      readonly reasoning: HarnessReasoningLevel | null;
     } | null;
     readonly userPreference: {
       readonly support: 'recorded_preference_register' | 'not_connected';
@@ -176,7 +176,7 @@ export interface ConversationHarnessManagementSnapshot {
       readonly reasoning: HarnessReasoningLevel | null;
       readonly source:
         | 'harness_revision'
-        | 'revision_proposal'
+        | 'delegated_shared_policy'
         | 'session_override'
         | 'user_preference'
         | 'provisional_fallback'
@@ -231,15 +231,15 @@ export type ConversationHarnessManagementCommand =
       readonly visualIdentity: AgentVisualIdentityDto;
     }
   | {
-      readonly kind: 'save_model_proposal';
+      readonly kind: 'save_delegated_model_policy';
       readonly revision: number;
       readonly policy: HarnessModelPolicy;
     }
   | {
       readonly kind: 'set_session_model_override';
       readonly override: {
-        readonly enabled: boolean;
-        readonly policy: HarnessModelPolicy;
+        readonly model: string;
+        readonly reasoning: HarnessReasoningLevel | null;
       } | null;
     };
 

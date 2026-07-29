@@ -1,5 +1,6 @@
 import {
   createRecordedHarnessManagementSource,
+  recordedHarnessInspectorPeerSessionId,
   recordedHarnessInspectorSessionId,
 } from './recordedHarnessInspectorSource';
 
@@ -31,6 +32,14 @@ describe('recorded Harness Management source', () => {
     expect(read.snapshot.versionControl.versions.map((version) => version.status)).toEqual([
       'pushed',
       'pushed',
+    ]);
+    expect(
+      read.snapshot.versionControl.versions.map(
+        (version) => version.configuration.runtime.modelPolicyMode,
+      ),
+    ).toEqual(['delegated_shared', 'revision_owned']);
+    expect(read.snapshot.modelChoices.delegatedPolicies.map(({ revision }) => revision)).toEqual([
+      3,
     ]);
     expect(read.snapshot.agentIdentity).toMatchObject({
       harnessRole: 'Epic Plan Builder',
@@ -263,15 +272,18 @@ describe('recorded Harness Management source', () => {
     });
   });
 
-  it('keeps Harness revision proposals, Session overrides, and user preference separately owned', async () => {
+  it('keeps delegated shared policies, Session overrides, and user preference separately owned', async () => {
     const source = createRecordedHarnessManagementSource();
     const initial = await source.load({ sessionId: recordedHarnessInspectorSessionId });
+    const peerInitial = await source.load({ sessionId: recordedHarnessInspectorPeerSessionId });
     expect(initial.kind).toBe('available');
-    if (initial.kind !== 'available' || !source.dispatch) return;
+    expect(peerInitial.kind).toBe('available');
+    if (initial.kind !== 'available' || peerInitial.kind !== 'available' || !source.dispatch)
+      return;
     const version = initial.snapshot.versionControl.versions.find(({ revision }) => revision === 3);
     expect(version).toBeDefined();
     if (!version) return;
-    const proposal = {
+    const sharedPolicy = {
       models: version.configuration.runtime.models,
       defaultModel: 'gpt-5.6-sol',
       defaultReasoning: 'high' as const,
@@ -279,7 +291,7 @@ describe('recorded Harness Management source', () => {
 
     const proposed = await source.dispatch({
       sessionId: recordedHarnessInspectorSessionId,
-      command: { kind: 'save_model_proposal', revision: 3, policy: proposal },
+      command: { kind: 'save_delegated_model_policy', revision: 3, policy: sharedPolicy },
     });
     expect(proposed.kind).toBe('available');
     if (proposed.kind !== 'available') return;
@@ -287,8 +299,8 @@ describe('recorded Harness Management source', () => {
       proposed.snapshot.versionControl.versions.find(({ revision }) => revision === 3)
         ?.configuration.runtime.defaultModel,
     ).toBeNull();
-    expect(proposed.snapshot.modelChoices.revisionProposals).toContainEqual(
-      expect.objectContaining({ revision: 3, policy: proposal, dirty: true }),
+    expect(proposed.snapshot.modelChoices.delegatedPolicies).toContainEqual(
+      expect.objectContaining({ revision: 3, policy: sharedPolicy, dirty: true }),
     );
     expect(proposed.snapshot.modelChoices.userPreference).toMatchObject({
       lastUsedModel: 'gpt-5.6-terra',
@@ -298,26 +310,50 @@ describe('recorded Harness Management source', () => {
     expect(proposed.snapshot.modelChoices.resolvedForCurrentSession).toMatchObject({
       model: 'gpt-5.6-sol',
       reasoning: 'high',
-      source: 'revision_proposal',
+      source: 'delegated_shared_policy',
+    });
+    const peerAfterSharedChange = await source.load({
+      sessionId: recordedHarnessInspectorPeerSessionId,
+    });
+    expect(peerAfterSharedChange).toMatchObject({
+      kind: 'available',
+      snapshot: {
+        modelChoices: {
+          delegatedPolicies: [expect.objectContaining({ revision: 3, policy: sharedPolicy })],
+          sessionOverride: null,
+          resolvedForCurrentSession: {
+            model: 'gpt-5.6-sol',
+            reasoning: 'high',
+            source: 'delegated_shared_policy',
+          },
+        },
+      },
     });
 
-    const overridePolicy = {
-      ...proposal,
-      defaultModel: 'gpt-5.6-terra',
-      defaultReasoning: 'xhigh' as const,
-    };
+    const outsideConstraints = await source.dispatch({
+      sessionId: recordedHarnessInspectorSessionId,
+      command: {
+        kind: 'set_session_model_override',
+        override: { model: 'gpt-5.6-sol', reasoning: 'low' },
+      },
+    });
+    expect(outsideConstraints).toEqual({
+      kind: 'unavailable',
+      reason: 'The Session choice must fit its applied Harness policy.',
+    });
+
     const overridden = await source.dispatch({
       sessionId: recordedHarnessInspectorSessionId,
       command: {
         kind: 'set_session_model_override',
-        override: { enabled: true, policy: overridePolicy },
+        override: { model: 'gpt-5.6-terra', reasoning: 'xhigh' },
       },
     });
     expect(overridden.kind).toBe('available');
     if (overridden.kind !== 'available') return;
     expect(overridden.snapshot.modelChoices.sessionOverride).toEqual({
-      enabled: true,
-      policy: overridePolicy,
+      model: 'gpt-5.6-terra',
+      reasoning: 'xhigh',
     });
     expect(overridden.snapshot.modelChoices.resolvedForCurrentSession).toMatchObject({
       model: 'gpt-5.6-terra',
@@ -325,9 +361,9 @@ describe('recorded Harness Management source', () => {
       source: 'session_override',
     });
     expect(
-      overridden.snapshot.modelChoices.revisionProposals.find(({ revision }) => revision === 3)
+      overridden.snapshot.modelChoices.delegatedPolicies.find(({ revision }) => revision === 3)
         ?.policy,
-    ).toEqual(proposal);
+    ).toEqual(sharedPolicy);
 
     const restored = await source.dispatch({
       sessionId: recordedHarnessInspectorSessionId,
@@ -339,7 +375,7 @@ describe('recorded Harness Management source', () => {
     expect(restored.snapshot.modelChoices.resolvedForCurrentSession).toMatchObject({
       model: 'gpt-5.6-sol',
       reasoning: 'high',
-      source: 'revision_proposal',
+      source: 'delegated_shared_policy',
     });
   });
 

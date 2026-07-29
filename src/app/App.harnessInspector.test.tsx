@@ -19,10 +19,13 @@ describe('App Harness Management preview', () => {
     expect(screen.getByRole('main', { name: 'Harness Management preview' })).toBeVisible();
     expect(await screen.findByRole('heading', { name: /: Epic Plan Builder$/ })).toBeVisible();
     expect(screen.queryByText('Agent Session Harness Inspector')).toBeNull();
+    expect(screen.getByLabelText('Session model')).toBeVisible();
+    expect(screen.getByLabelText('Session effort')).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Manage harness' }));
     await screen.findByRole('heading', { name: 'Harness details' });
     expect(screen.getByRole('region', { name: 'Harness Management' })).toBeVisible();
+    expect(screen.queryByLabelText('Session model')).toBeNull();
   });
 
   it('resolves the same recorded identity when the Session is reopened from Agent Sessions', async () => {
@@ -51,6 +54,8 @@ describe('App Harness Management preview', () => {
 
     expect(await screen.findByRole('heading', { name: displayTitle ?? '' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Manage harness' })).toBeVisible();
+    expect(screen.getByLabelText('Session model')).toBeVisible();
+    expect(screen.getByLabelText('Session effort')).toBeVisible();
     const reopenedResponse = screen
       .getByText(/planning context is ready for review/i)
       .closest('article');

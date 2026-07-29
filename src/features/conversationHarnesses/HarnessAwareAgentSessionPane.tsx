@@ -10,6 +10,7 @@ import {
   AgentSessionWorkspace,
 } from '../agentSessions/AgentSessionWorkspace';
 import { ConversationHarnessManagement } from './ConversationHarnessInspector';
+import { AgentSessionModelControls } from './AgentSessionModelControls';
 import './harnessInspector.css';
 
 export interface HarnessAwareAgentSessionPaneProps {
@@ -96,6 +97,16 @@ export function HarnessAwareAgentSessionPane({
     }
   };
 
+  const sessionModelControls =
+    boundRead?.kind === 'available' ? (
+      <AgentSessionModelControls
+        snapshot={boundRead.snapshot}
+        disabled={commandPending}
+        error={commandError}
+        onCommand={source?.dispatch ? (command) => void runCommand(command) : undefined}
+      />
+    ) : null;
+
   return (
     <div className="harness-aware-agent-session-pane">
       {mode === 'conversation' ? (
@@ -112,6 +123,7 @@ export function HarnessAwareAgentSessionPane({
               </button>
             ) : null
           }
+          settings={sessionModelControls}
         >
           {!childOwnsHeaderActions && boundRead?.kind === 'available' && (
             <div className="agent-session-utility-bar">
@@ -124,6 +136,9 @@ export function HarnessAwareAgentSessionPane({
                 Manage harness
               </button>
             </div>
+          )}
+          {!childOwnsHeaderActions && sessionModelControls && (
+            <div className="agent-session-settings">{sessionModelControls}</div>
           )}
           {children}
         </AgentSessionHeaderActionsProvider>

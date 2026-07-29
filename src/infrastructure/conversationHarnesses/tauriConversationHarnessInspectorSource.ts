@@ -125,7 +125,7 @@ function buildSnapshot(
       reason: 'This session association does not yet record an applied or desired harness version.',
     },
     modelChoices: {
-      revisionProposals: [],
+      delegatedPolicies: [],
       sessionOverride: null,
       userPreference: {
         support: 'not_connected',
@@ -223,7 +223,7 @@ function buildConfiguration(
         'Applicability labels describe exposure timing only. Tool schemas remain runtime-owned and are not ingested as skill text.',
     },
     runtime: {
-      modelPolicyMode: 'version_specific',
+      modelPolicyMode: 'revision_owned',
       models: catalogs.models.items.map((model) => ({
         modelId: model.id,
         allowed: true,

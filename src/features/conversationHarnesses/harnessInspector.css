@@ -48,6 +48,58 @@
   background: #eef1eb;
 }
 
+.agent-session-model-controls {
+  display: flex;
+  min-width: 0;
+  min-height: 38px;
+  align-items: center;
+  gap: 10px;
+  padding: 4px clamp(16px, 3vw, 38px);
+}
+
+.agent-session-model-controls label {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: #59675f;
+  font-size: 0.65rem;
+  font-weight: 800;
+}
+
+.agent-session-model-controls select {
+  width: 150px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 26px 0 8px;
+  border: 1px solid #c4cec4;
+  border-radius: 6px;
+  background: #fffdf8;
+  color: #2e4036;
+  font: inherit;
+  font-size: 0.68rem;
+}
+
+.agent-session-model-controls label:nth-child(2) select {
+  width: 112px;
+  text-transform: capitalize;
+}
+
+.agent-session-model-controls > small {
+  margin-left: auto;
+  overflow: hidden;
+  color: #718077;
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-session-model-controls > [role='alert'] {
+  color: #8c3928;
+  font-size: 0.64rem;
+  font-weight: 750;
+}
+
 .harness-management {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -626,8 +678,7 @@
 }
 
 .harness-management__model-mode,
-.harness-management__model-owner > header,
-.harness-management__model-resolution {
+.harness-management__model-owner > header {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -644,46 +695,32 @@
 }
 
 .harness-management__model-mode > span,
-.harness-management__model-owner > header > span,
-.harness-management__model-resolution > span {
+.harness-management__model-owner > header > span {
   display: grid;
   min-width: 0;
   gap: 2px;
 }
 
 .harness-management__model-mode strong,
-.harness-management__model-owner > header strong,
-.harness-management__model-resolution strong {
+.harness-management__model-owner > header strong {
   color: #2e4036;
   font-size: 0.72rem;
 }
 
 .harness-management__model-mode small,
-.harness-management__model-owner > header small,
-.harness-management__model-resolution small,
-.harness-management__model-resolution em {
+.harness-management__model-owner > header small {
   color: #718077;
   font-size: 0.62rem;
   font-style: normal;
   line-height: 1.35;
 }
 
-.harness-management__model-mode > input,
-.harness-management__compact-toggle input {
+.harness-management__model-mode > input {
   width: 14px;
   height: 14px;
   flex: 0 0 auto;
   margin: 0;
   accent-color: #39745a;
-}
-
-.harness-management__compact-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: #526058;
-  font-size: 0.64rem;
-  font-weight: 800;
 }
 
 .harness-management__model-list {
@@ -728,22 +765,40 @@
 
 .harness-management__reasoning-range {
   display: grid;
-  min-width: 0;
-  grid-template-columns: auto minmax(130px, 1fr);
+  width: 267px;
+  grid-template-columns: 112px 148px;
   align-items: center;
   gap: 7px;
+  justify-self: end;
 }
 
 .harness-management__reasoning-range output {
+  display: grid;
+  width: 112px;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 3px;
   color: #35463c;
   font-size: 0.62rem;
   font-weight: 800;
+  text-align: center;
   text-transform: capitalize;
   white-space: nowrap;
 }
 
+.harness-management__reasoning-range output span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.harness-management__reasoning-range output i {
+  color: #87928b;
+  font-style: normal;
+}
+
 .harness-management__dual-range {
   position: relative;
+  width: 148px;
   height: 22px;
 }
 
@@ -794,25 +849,10 @@
   pointer-events: auto;
 }
 
-.harness-management__range-labels {
-  grid-column: 2;
-  display: flex;
-  justify-content: space-between;
-  color: #7a867f;
-  font-size: 0.58rem;
-  text-transform: capitalize;
-}
-
 .harness-management__defaults {
   margin-top: 7px;
   padding-top: 7px;
   border-top: 1px solid #e1e5df;
-}
-
-.harness-management__model-resolution {
-  padding: 7px 10px;
-  border-radius: 7px;
-  background: #eef2ed;
 }
 
 .harness-management__hook-list {
@@ -989,7 +1029,7 @@
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 7px;
-  min-height: 39px;
+  min-height: 37px;
   padding: 0 10px;
   border: 1px solid #cbd2ca;
   border-radius: 8px;
@@ -999,8 +1039,11 @@
 
 .harness-management__catalog-search input {
   min-width: 0;
-  height: 36px;
+  min-height: 0;
+  height: 35px;
+  padding: 0;
   border: 0;
+  border-radius: 0;
   outline: 0;
   color: #283a30;
   font-size: 0.74rem;
@@ -1321,6 +1364,11 @@
     padding-right: 16px;
     padding-left: 16px;
   }
+
+  .agent-session-model-controls {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
 }
 
 @container (max-width: 600px) {
@@ -1346,6 +1394,28 @@
   .harness-management__toolbar-actions {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .agent-session-model-controls {
+    flex-wrap: wrap;
+    gap: 5px 9px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  .agent-session-model-controls label {
+    flex: 1 1 150px;
+  }
+
+  .agent-session-model-controls select,
+  .agent-session-model-controls label:nth-child(2) select {
+    flex: 1;
+    width: auto;
+  }
+
+  .agent-session-model-controls > small {
+    width: 100%;
+    margin-left: 0;
   }
 
   .harness-management__toolbar-actions button {
@@ -1393,19 +1463,6 @@
   .harness-management__identity-dialog-fields,
   .harness-management__identity-name-results {
     grid-template-columns: 1fr;
-  }
-
-  .harness-management__reasoning-range {
-    grid-template-columns: 1fr;
-  }
-
-  .harness-management__range-labels {
-    grid-column: 1;
-  }
-
-  .harness-management__model-resolution {
-    align-items: start;
-    flex-direction: column;
   }
 }
 

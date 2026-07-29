@@ -46,7 +46,9 @@ The prototype records these product concepts without claiming production effects
   remain mounted, and external Plain changes use the editor's supported `setMarkdown` method rather
   than replacing the component after each rich-editor keystroke. The prefix is intended for the
   first Session prompt and future Harness-aware context compression; that compression routine is
-  deferred.
+  deferred. View mode uses the same shared `AgentMarkdown` -> `MarkdownContent` normalization path
+  as the accepted File Review rendered-Markdown surface: GFM is enabled, raw HTML is skipped, and
+  links open with safe external-link attributes. It does not introduce a second parser or value.
 - Skills are summarized as **Always applicable**, **Initial ingestion only**, and **Available**.
   The first two are selected whitelists. Only Available discovery can use whitelist or blacklist
   policy. A fuzzy-search dialog reads the complete checked-in product skill catalog and owns
@@ -57,13 +59,17 @@ The prototype records these product concepts without claiming production effects
   labels do not turn schemas into prompt text: provider-owned schemas remain runtime-owned and
   runtime reconfiguration remains unimplemented.
 - Each recorded model has an allowed flag and an accessible minimum/maximum reasoning range, with
-  optional defaults constrained to an allowed model and range. A revision can fix that policy in
-  its atomic configuration or reference a separately owned adjustable proposal. The current
-  Session override and the user's global last-used preference are separate recorded records, not
-  revision mutations. Invalidating a default uses a provisional valid fallback and remembers the
-  prior choice only until it becomes valid again or the user makes a manual default/model choice,
-  finishes editing, commits, navigates away, or crosses another ownership boundary. Automatic
-  recorded working-copy and proposal cache updates are not acceptance boundaries because clearing
+  optional defaults constrained to an allowed model and range. The fixed-width discrete controls
+  show only their selected endpoints. A revision either owns that policy atomically or explicitly
+  delegates to one shared per-revision policy. Revision-owned controls are editable only in Harness
+  edit mode; a delegated shared policy can be adjusted in view mode and is shared by recorded
+  Sessions using that revision. The current Session model/effort choice is a separate record shown
+  only in the Agent Session view, where its options stay within the applied revision/shared-policy
+  constraints. The user's global last-used preference remains a separate recorded record.
+  Invalidating a Harness default uses a provisional valid fallback and remembers the prior choice
+  only until it becomes valid again or the user makes a manual default/model choice, finishes
+  editing, commits, navigates away, or crosses another ownership boundary. Automatic recorded
+  working-copy and delegated-policy cache updates are not acceptance boundaries because clearing
   on every change would prevent untouched exclusion/reinclusion restoration. No application
   capability catalog exists, so the UI labels its two-model source as a recorded catalog rather
   than complete runtime discovery.
@@ -82,7 +88,7 @@ The prototype records these product concepts without claiming production effects
 
 The recorded prototype adds MIT-licensed `@mdxeditor/editor` 4.1.1 and its Lexical 0.48.0
 foundation. The editor is dynamically imported only after Harness edit mode opens. The validated
-production build measures the initial Agent Session JavaScript chunk at 429.40 kB (129.86 kB gzip);
+production build measures the initial Agent Session JavaScript chunk at 430.29 kB (130.08 kB gzip);
 the deferred editor contributes a separate 612.00 kB (201.73 kB gzip) JavaScript chunk and 47.75 kB
 (8.01 kB gzip) stylesheet. Vite therefore retains its greater-than-500 kB warning for the deferred
 editor chunk. `npm audit --omit=dev` reports no production vulnerabilities. The full development
@@ -131,14 +137,15 @@ The proposed product-owned schema is intentionally revision-oriented:
 - `harness_revisions`: revision id, Harness key, Git commit object id, canonical configuration
   digest, complete configuration, creator, and commit time.
 - `harness_active_refs`: one local active revision and optimistic revision per Harness key.
-- `harness_revision_model_proposals`: optional adjustable model/range proposal keyed by Harness
-  revision, with proposal revision, dirty state, editor, and update time. This record exists only
-  when the immutable Harness revision does not fix the policy.
+- `harness_revision_delegated_model_policies`: optional shared model/range policy keyed by Harness
+  revision, with policy revision, local adjustment state, editor, and update time. This record
+  exists only when the immutable Harness revision delegates instead of fixing the policy.
 - `agent_session_harness_bindings`: one row per session with Harness key, applied revision, optional
   desired revision, update strategy and state, stable agent name, applied visual token and accent,
   name-pool provenance, assignment revision/time, and optimistic binding revision.
-- `agent_session_model_overrides`: an optional enabled override per Session, stored independently
-  from both the Harness revision and its adjustable proposal.
+- `agent_session_model_overrides`: an optional model/effort choice per Session, stored independently
+  from both the Harness revision and its delegated shared policy. Agent Session controls may select
+  any model/effort within the effective allowed constraints but cannot widen them.
 - `user_model_preferences`: the application-owned durable register of each user's globally
   last-used model/reasoning choice and update time. A human-created Session's **Caller choice**
   consults this register; the recorded adapter demonstrates the shape but does not implement
@@ -163,22 +170,23 @@ session, and record the resolution before launch.
 Model choice resolution is also application-owned and deterministic:
 
 1. The applied Harness revision supplies immutable constraints when **Version specific** is on;
-   otherwise its separately stored current proposal supplies the constraints.
-2. An enabled current-Session override may narrow those applicable constraints and supply a
-   Session default. It cannot widen a version-specific Harness policy.
+   otherwise its separately stored delegated shared policy supplies the constraints for every
+   Session using that revision.
+2. An explicit current-Session model/effort choice may select within those applicable constraints.
+   It cannot enable a model or effort outside the effective Harness policy.
 3. An explicit valid Session default wins, followed by an explicit valid Harness
-   revision/proposal default.
+   revision/delegated-policy default.
 4. **Caller choice** uses the durable user last-used preference when it is within the effective
    allowed model/range.
 5. Otherwise the application chooses a provisional valid fallback and records the owning source in
    the invocation resolution.
 
 UI fallback memory is transient interaction state only. It never overwrites any of the four owned
-records. `save_working_copy` and `save_model_proposal` are automatic recorded cache writes, not an
-explicit save action and not a fallback-memory boundary. Fallback memory is discarded by manual
-default/model choice, **Finish editing**, commit, navigation, or another ownership boundary. The
-prototype defines **Finish editing** as its explicit end-of-edit boundary and makes no claim about
-a separate persistence-backed Save operation.
+records. `save_working_copy` and `save_delegated_model_policy` are automatic recorded cache writes,
+not an explicit save action and not a fallback-memory boundary. Fallback memory is discarded by
+manual default/model choice, **Finish editing**, commit, navigation, or another ownership boundary.
+The prototype defines **Finish editing** as its explicit end-of-edit boundary and makes no claim
+about a separate persistence-backed Save operation.
 
 ## Update delivery boundaries
 
@@ -243,31 +251,38 @@ owns enforcement. Deeper hook configuration UI remains deferred.
 - Recorded-source tests cover committed version history, the complete checked-in skill catalog,
   recorded tool/model catalogs, full atomic configuration, stable identity across draft pool
   changes, historical-push status, local draft/commit/Push transitions, next-prompt queues,
-  default-range validation, separately owned revision proposals/Session overrides/user preference,
-  Session-only identity changes, and ensure free-form completion criteria remain proposed rather
-  than connected or exposed.
+  default-range validation, separately owned delegated shared policies/Session overrides/user
+  preference, Session-only identity changes, and ensure free-form completion criteria remain
+  proposed rather than connected or exposed.
 - Pane tests cover Session-version entry, state cues, cached edits and dirty state across remount,
   Markdown/Plain editing, permitted-name inspection/editing without Session renaming, full
   selected-skill details and applicability changes, fuzzy catalog search/add/change/remove,
-  consistent skill/tool labels, policy counts and collapse state, accessible range controls,
-  provisional default restore/discard behavior, confirmation-gated commit/Push/single/bulk
-  next-prompt changes, and truthful proposed hook presentation.
+  consistent skill/tool labels, policy counts and collapse state, compact accessible range
+  controls, revision-owned versus delegated view/edit boundaries, Agent Session-only model/effort
+  controls, shared rendered-Markdown normalization, provisional default restore/discard behavior,
+  confirmation-gated commit/Push/single/bulk next-prompt changes, and truthful proposed hook
+  presentation.
 - Product-source tests ensure completion criteria remain not connected without a typed hook
   registry result.
 - App and planning tests cover the same source and identity presentation across Harness Management,
   Epic planning, and independent Agent Sessions, including persisted Agent names on transcript
   responses and the agent-authored proposal heading.
 - Product-source tests preserve the current read-only, untracked production boundary.
-- The aggregate passes 93 files and 640 tests with two workers. TypeScript/Vite build, ESLint,
+- The aggregate passes 93 files and 643 tests with two workers. TypeScript/Vite build, ESLint,
   touched-file Prettier, Rust formatting, and diff checks pass; the repository-wide Prettier
   baseline still contains unrelated pre-existing findings.
-- In-app browser evidence exercises 1440 x 1000, 870 x 794, 791 x 794, 390 x 844, 870 x 794, and
-  1440 x 1000 in sequence after opening the Session through Agent Sessions, including application
-  tab movement. At the formerly failing 870 px viewport / 610 px content pane, the complete title
-  has equal client and scroll dimensions (233 x 19), the identity marker remains visible, and
-  Manage harness then Copy entire session remain disjoint. The Harness Management view and edit
-  toolbars pass the same resize sequence without item overlap, clipped action labels, or
-  document-level horizontal overflow. The browser console has no warnings or errors.
+- In-app browser evidence exercises 1440 x 1000, 1014 x 794, 870 x 794, 791 x 794, 390 x 844,
+  1014 x 794, and 1440 x 1000 in sequence after opening the Session through Agent Sessions,
+  including application tab movement. At every stop the complete title has equal client and scroll
+  dimensions (233 x 19), the identity marker remains visible, and Manage harness then Copy entire
+  session remain disjoint. The Harness Management view and edit toolbars pass the same resize
+  sequence without item overlap, clipped action labels, or document-level horizontal overflow. At
+  1014 x 794 the Agent-name input and Available-names search have matching 37 px visible control
+  bounds. Every reasoning control retains a 267 px width with a fixed 112 px endpoint readout,
+  delegated v3 controls are enabled in view mode, and revision-owned v4 controls are disabled until
+  edit mode. Session model/effort controls appear only in the Agent Session view, and the Prompt
+  prefix view has the shared `agent-markdown` renderer class. The browser console has no warnings
+  or errors.
 
 This evidence exercises only the recorded development composition and does not establish production
 runtime behavior.
