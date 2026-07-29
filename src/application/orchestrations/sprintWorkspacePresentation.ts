@@ -36,6 +36,9 @@ export interface SprintWorkspacePresentationV1 {
   readonly selectedSprintPlanRevisionId: string;
   readonly revisionViews: readonly ProductSprintRevisionViewV1[];
   readonly concerns: readonly Concern[];
+  readonly epicPlannerObjectives: NonNullable<
+    ProductSprintReadModelV1['workspacePresentation']['epicPlannerObjectives']
+  >;
   readonly problems: NonNullable<ProductSprintReadModelV1['workspacePresentation']['problems']>;
   readonly workUnitLifecycle: NonNullable<
     ProductSprintReadModelV1['workspacePresentation']['workUnitLifecycle']
@@ -96,6 +99,9 @@ export function projectSprintWorkspacePresentation(
       reviews: view.reviews.map((review) => ({ ...review })),
     })),
     concerns: sprint.concerns.map((concern) => ({ ...concern })),
+    epicPlannerObjectives: (sprint.workspacePresentation.epicPlannerObjectives ?? []).map(
+      (objective) => ({ ...objective }),
+    ),
     problems: (sprint.workspacePresentation.problems ?? []).map((problem) => ({
       ...problem,
       graphElementRefs: problem.graphElementRefs.map((reference) => ({ ...reference })),

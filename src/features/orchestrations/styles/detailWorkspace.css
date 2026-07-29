@@ -83,10 +83,18 @@
   min-width: 0;
   min-height: 0;
   padding: 24px 20px;
-  overflow: clip;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: none;
+  scrollbar-gutter: stable;
   overflow-wrap: anywhere;
   border-right: 1px solid #d5dce2;
   background: #eef2f4;
+}
+
+.detail-workspace__context-rail:focus-visible {
+  outline: 3px solid #cf7b32;
+  outline-offset: -3px;
 }
 
 .detail-workspace__context-rail h1 {

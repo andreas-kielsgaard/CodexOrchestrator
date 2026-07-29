@@ -1126,11 +1126,37 @@ export const recordedProductReadCompositionInput = {
           workUnitScopeIds: [scoped('ECS-R4', 'WU-ECS2E')],
         },
       ],
+      epicPlannerObjectives: [
+        {
+          objectiveId: 'objective-review-relationships',
+          sprintId: reviewSprintId,
+          title: 'Model explicit relationships between Sprint problems and planned work.',
+          source: source(),
+        },
+        {
+          objectiveId: 'objective-review-flow',
+          sprintId: reviewSprintId,
+          title: 'Make the parallel mixed-state workflow directly reviewable.',
+          source: source(),
+        },
+        {
+          objectiveId: 'objective-review-lifecycle',
+          sprintId: reviewSprintId,
+          title: 'Keep Work Unit correction history connected to recorded Agent Session turns.',
+          source: source(),
+        },
+        {
+          objectiveId: 'objective-review-documents',
+          sprintId: reviewSprintId,
+          title: 'Open complete Sprint documents with a truthful Sprint-start comparison.',
+          source: source(),
+        },
+      ],
       problems: [
         {
           problemId: 'problem-review-context',
           sprintId: reviewSprintId,
-          title: 'Keep Epic objectives while adding Sprint problems.',
+          title: 'Keep Epic Planner Sprint objectives while adding Sprint problems.',
           source: source(),
           graphElementRefs: [
             { kind: 'sprint_planner_activity', id: 'planner-rd-r2-relationships' },
@@ -1166,6 +1192,7 @@ export const recordedProductReadCompositionInput = {
       workUnitLifecycle: [
         {
           entryId: 'rd1-launch',
+          sprintId: reviewSprintId,
           workUnitId: 'WU-RD1',
           sequence: 0,
           kind: 'launch',
@@ -1178,6 +1205,7 @@ export const recordedProductReadCompositionInput = {
         },
         {
           entryId: 'rd1-work',
+          sprintId: reviewSprintId,
           workUnitId: 'WU-RD1',
           sequence: 1,
           kind: 'work',
@@ -1190,6 +1218,7 @@ export const recordedProductReadCompositionInput = {
         },
         {
           entryId: 'rd1-review-1',
+          sprintId: reviewSprintId,
           workUnitId: 'WU-RD1',
           sequence: 2,
           kind: 'review',
@@ -1202,6 +1231,7 @@ export const recordedProductReadCompositionInput = {
         },
         {
           entryId: 'rd1-reprompt',
+          sprintId: reviewSprintId,
           workUnitId: 'WU-RD1',
           sequence: 3,
           kind: 'reprompt',
@@ -1214,6 +1244,7 @@ export const recordedProductReadCompositionInput = {
         },
         {
           entryId: 'rd1-renewed-work',
+          sprintId: reviewSprintId,
           workUnitId: 'WU-RD1',
           sequence: 4,
           kind: 'renewed_work',
@@ -1226,6 +1257,7 @@ export const recordedProductReadCompositionInput = {
         },
         {
           entryId: 'rd1-review-2',
+          sprintId: reviewSprintId,
           workUnitId: 'WU-RD1',
           sequence: 5,
           kind: 'review',
@@ -1238,6 +1270,7 @@ export const recordedProductReadCompositionInput = {
         },
         {
           entryId: 'rd1-merge',
+          sprintId: reviewSprintId,
           workUnitId: 'WU-RD1',
           sequence: 6,
           kind: 'merge',
@@ -1250,6 +1283,7 @@ export const recordedProductReadCompositionInput = {
         },
         {
           entryId: 'rd1-completion',
+          sprintId: reviewSprintId,
           workUnitId: 'WU-RD1',
           sequence: 7,
           kind: 'completion',

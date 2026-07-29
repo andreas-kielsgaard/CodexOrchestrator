@@ -63,7 +63,12 @@ export function DetailWorkspace({
       </div>
 
       <div className="detail-workspace__layout">
-        <aside className="detail-workspace__context-rail" aria-label={contextLabel}>
+        <aside
+          className="detail-workspace__context-rail"
+          aria-label={contextLabel}
+          data-scrollable-context="true"
+          tabIndex={0}
+        >
           {context}
         </aside>
         <div className="detail-workspace__main-column">

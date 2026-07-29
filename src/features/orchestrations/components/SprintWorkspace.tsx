@@ -22,7 +22,6 @@ import type { EmbeddedAgentSessionComposition } from '../../agentSessions';
 
 export interface SprintWorkspaceProps {
   readonly workspace: SprintWorkspacePresentationV1;
-  readonly epicObjective: string;
   readonly adjunct?: SprintWorkspacePresentationAdjunct;
   readonly artifactAccessController: ArtifactAccessController;
   readonly agentSessionComposition?: EmbeddedAgentSessionComposition;
@@ -36,7 +35,6 @@ export interface SprintWorkspaceProps {
 
 export function SprintWorkspace({
   workspace,
-  epicObjective,
   adjunct,
   artifactAccessController,
   agentSessionComposition,
@@ -196,9 +194,15 @@ export function SprintWorkspace({
           <p>{workspace.sprint.summary}</p>
           <section className="sprint-context__objectives" aria-label="Epic Planner objectives">
             <h2>Epic Planner objectives</h2>
-            <ul>
-              <li>{epicObjective}</li>
-            </ul>
+            {workspace.epicPlannerObjectives.length > 0 ? (
+              <ul>
+                {workspace.epicPlannerObjectives.map((objective) => (
+                  <li key={objective.objectiveId}>{objective.title}</li>
+                ))}
+              </ul>
+            ) : (
+              <p>No recorded Epic Planner Sprint objectives.</p>
+            )}
           </section>
           {workspace.problems.length > 0 ? (
             <section className="sprint-context__problems" aria-label="Sprint Planner problems">

@@ -25,17 +25,25 @@
   background: #fff;
 }
 
-.resizable-split__separator {
+.resizable-split__separator-shell {
   position: relative;
   z-index: 5;
+  min-width: 0;
+  min-height: 0;
+  background: #d7dfe3;
+}
+
+.resizable-split__separator {
   display: grid;
+  width: 100%;
+  height: 100%;
   place-items: center;
   background: #d7dfe3;
   cursor: col-resize;
   touch-action: none;
 }
 
-.resizable-split--vertical > .resizable-split__separator {
+.resizable-split--vertical > .resizable-split__separator-shell .resizable-split__separator {
   cursor: row-resize;
 }
 
@@ -46,14 +54,16 @@
   background: #83949d;
 }
 
-.resizable-split--vertical > .resizable-split__separator > span {
+.resizable-split--vertical > .resizable-split__separator-shell .resizable-split__separator > span {
   width: 34px;
   height: 3px;
 }
 
-.resizable-split__separator > button {
+.resizable-split__maximize {
   position: absolute;
+  top: 50%;
   right: 12px;
+  transform: translateY(-50%);
   min-height: 26px;
   padding: 0 8px;
   border: 1px solid #aebdc5;
@@ -67,7 +77,7 @@
 }
 
 .resizable-split__separator:focus-visible,
-.resizable-split__separator > button:focus-visible {
+.resizable-split__maximize:focus-visible {
   outline: 3px solid #cf7b32;
   outline-offset: -1px;
 }
@@ -79,11 +89,14 @@
     overflow-y: auto;
   }
 
-  .resizable-split--horizontal > .resizable-split__separator {
+  .resizable-split--horizontal > .resizable-split__separator-shell .resizable-split__separator {
     cursor: row-resize;
   }
 
-  .resizable-split--horizontal > .resizable-split__separator > span {
+  .resizable-split--horizontal
+    > .resizable-split__separator-shell
+    .resizable-split__separator
+    > span {
     width: 34px;
     height: 3px;
   }
