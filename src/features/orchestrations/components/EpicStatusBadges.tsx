@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock3,
-  Info,
   LoaderCircle,
   Pause,
   Play,
@@ -18,30 +17,39 @@ import type {
 } from '../orchestrationModel';
 import { movementLabel, sourceStatusLabel } from '../orchestrationModel';
 
-export function EpicDescriptionHelp({ name, description }: { name: string; description: string }) {
+export function EpicTitleWithDescription({
+  name,
+  description,
+  onOpen,
+}: {
+  readonly name: string;
+  readonly description: string;
+  readonly onOpen: () => void;
+}) {
   const tooltipId = useId();
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const open = hovered || focused;
   return (
     <span
-      className="epic-description-help"
+      className="epic-title-help"
       data-row-action-exempt
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
       <button
-        className="epic-description-help__trigger"
+        className="orchestration-list__open"
         type="button"
-        aria-label={`About ${name}`}
+        aria-label={`Open ${name}`}
         aria-describedby={open ? tooltipId : undefined}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
+        onClick={onOpen}
       >
-        <Info size={15} aria-hidden="true" />
+        <strong>{name}</strong>
       </button>
       {open && (
-        <span className="epic-description-help__tooltip" id={tooltipId} role="tooltip">
+        <span className="epic-title-help__tooltip" id={tooltipId} role="tooltip">
           {description}
         </span>
       )}

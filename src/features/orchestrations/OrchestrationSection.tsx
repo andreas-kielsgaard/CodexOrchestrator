@@ -1,6 +1,10 @@
 import { useState, type MouseEvent } from 'react';
 import { EpicDetail } from './components/EpicDetail';
-import { EpicDescriptionHelp, MovementSummary, StateBadge } from './components/EpicStatusBadges';
+import {
+  EpicTitleWithDescription,
+  MovementSummary,
+  StateBadge,
+} from './components/EpicStatusBadges';
 import {
   isUnavailablePresentation,
   type EpicOverviewAction,
@@ -149,17 +153,7 @@ function EpicOverviewRow({
   return (
     <tr className="orchestration-list__row" onClick={(event) => openFromRow(event, openEpic)}>
       <td data-label="Epic">
-        <div className="orchestration-list__title">
-          <button
-            className="orchestration-list__open"
-            type="button"
-            aria-label={`Open ${epic.name}`}
-            onClick={openEpic}
-          >
-            <strong>{epic.name}</strong>
-          </button>
-          <EpicDescriptionHelp name={epic.name} description={epic.goal} />
-        </div>
+        <EpicTitleWithDescription name={epic.name} description={epic.goal} onOpen={openEpic} />
         {epic.bootstrapTransition && (
           <small
             className={`orchestration-transition orchestration-transition--${epic.bootstrapTransition.kind}`}

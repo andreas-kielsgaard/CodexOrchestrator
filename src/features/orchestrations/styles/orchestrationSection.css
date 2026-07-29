@@ -88,12 +88,6 @@
   cursor: pointer;
 }
 
-.orchestration-list__title {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
 .orchestration-list__open {
   display: grid;
   gap: 4px;
@@ -107,30 +101,13 @@
   cursor: pointer;
 }
 
-.epic-description-help {
+.epic-title-help {
   position: relative;
   display: inline-flex;
+  max-width: 100%;
 }
 
-.epic-description-help__trigger {
-  display: inline-grid;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: #60707b;
-  cursor: help;
-  place-items: center;
-}
-
-.epic-description-help__trigger:hover {
-  background: #e8eef2;
-  color: #164f7a;
-}
-
-.epic-description-help__tooltip {
+.epic-title-help__tooltip {
   position: absolute;
   z-index: 4;
   top: calc(100% + 7px);
@@ -399,7 +376,7 @@ button.movement-badge {
     margin-top: 7px;
   }
 
-  .epic-description-help__tooltip {
+  .epic-title-help__tooltip {
     right: -8px;
     left: auto;
   }
