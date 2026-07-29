@@ -1,13 +1,83 @@
 .sprint-context {
   display: grid;
-  gap: 12px;
+  gap: 9px;
   min-width: 0;
 }
 
-.sprint-context > p:last-child {
+.sprint-context > p {
   color: #42545f;
   font-size: 0.84rem;
   line-height: 1.5;
+}
+
+.sprint-context__state {
+  justify-self: start;
+  padding: 4px 8px;
+  border: 1px solid #aebbc3;
+  border-radius: 999px;
+  background: #f7f9fa;
+  color: #405864;
+  font-size: 0.65rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.sprint-context__state--in_progress {
+  border-color: #7eb2cf;
+  background: #eaf5fc;
+  color: #176c9d;
+}
+
+.sprint-context__state--completed {
+  border-color: #89b99a;
+  background: #edf7f0;
+  color: #287044;
+}
+
+.sprint-context__objectives,
+.sprint-context__problems {
+  display: grid;
+  gap: 6px;
+  padding-top: 9px;
+  border-top: 1px solid #d4dde1;
+}
+
+.sprint-context h2 {
+  color: #52656f;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sprint-context ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 18px;
+  color: #344854;
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.sprint-context__problems button {
+  width: 100%;
+  padding: 5px 6px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sprint-context__problems button:hover,
+.sprint-context__problems button.is-highlighted,
+.sprint-context__problems button:focus-visible {
+  border-color: #b38bc4;
+  background: #f7f0fa;
+  outline: none;
 }
 
 .sprint-surface-host {

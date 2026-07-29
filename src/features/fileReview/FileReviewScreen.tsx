@@ -22,12 +22,17 @@ import './fileReview.css';
 export interface FileReviewScreenProps {
   readonly client: FileReviewClient;
   readonly initialSourceId?: string;
+  readonly fixedSource?: boolean;
 }
 
 type ContentMode = 'changes' | 'file';
 type DiffLayout = 'unified' | 'split';
 
-export function FileReviewScreen({ client, initialSourceId }: FileReviewScreenProps) {
+export function FileReviewScreen({
+  client,
+  initialSourceId,
+  fixedSource = false,
+}: FileReviewScreenProps) {
   const [sources, setSources] = useState<Awaited<ReturnType<FileReviewClient['listSources']>>>([]);
   const [sourcesLoaded, setSourcesLoaded] = useState(false);
   const [selectedSourceId, setSelectedSourceId] = useState('');
@@ -75,7 +80,7 @@ export function FileReviewScreen({ client, initialSourceId }: FileReviewScreenPr
         if (!active) return;
         setSnapshot(nextSnapshot);
         setSelectedFileId(nextSnapshot.files[0]?.fileId ?? '');
-        setContentMode('changes');
+        setContentMode(nextSnapshot.source.kind === 'application_owned' ? 'file' : 'changes');
         setExpandedContext(new Set());
       },
       () => {
@@ -122,20 +127,26 @@ export function FileReviewScreen({ client, initialSourceId }: FileReviewScreenPr
           <p>Inspect supplied material without editing or direct filesystem access.</p>
         </div>
         <div className="file-review-header__controls">
-          <label>
-            <span>Review source</span>
-            <select
-              aria-label="Review source"
-              value={selectedSourceId}
-              onChange={(event) => setSelectedSourceId(event.target.value)}
-            >
-              {sources.map((source) => (
-                <option key={source.sourceId} value={source.sourceId}>
-                  {source.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {fixedSource ? (
+            <span className="file-review-fixed-source">
+              {sources.find(({ sourceId }) => sourceId === selectedSourceId)?.label}
+            </span>
+          ) : (
+            <label>
+              <span>Review source</span>
+              <select
+                aria-label="Review source"
+                value={selectedSourceId}
+                onChange={(event) => setSelectedSourceId(event.target.value)}
+              >
+                {sources.map((source) => (
+                  <option key={source.sourceId} value={source.sourceId}>
+                    {source.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <span className="file-review-read-only">
             <ShieldCheck size={15} aria-hidden="true" />
             Read only
@@ -217,7 +228,7 @@ export function FileReviewScreen({ client, initialSourceId }: FileReviewScreenPr
                       aria-pressed={contentMode === 'changes'}
                       onClick={() => setContentMode('changes')}
                     >
-                      Changes
+                      {snapshot.source.comparisonLabel ?? 'Changes'}
                     </button>
                     <button
                       type="button"

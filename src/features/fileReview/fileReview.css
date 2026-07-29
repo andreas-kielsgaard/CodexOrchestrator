@@ -46,6 +46,19 @@
   gap: 10px;
 }
 
+.file-review-fixed-source {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid #c5cfd4;
+  border-radius: 6px;
+  background: #f7f9fa;
+  color: #40545f;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
 .file-review-header__controls label {
   display: grid;
   gap: 4px;

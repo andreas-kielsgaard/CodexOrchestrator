@@ -12,6 +12,8 @@ const time = '2026-07-15T09:00:00.000Z';
 const epicRunnerSessionId = 'recorded-epic-runner-manual-continuation-ready';
 const sprintId = 'sprint-control-surface';
 const sprintSessionId = 'recorded-sprint-control-surface-discovery';
+const reviewSprintId = 'sprint-parallel-review';
+const reviewSprintSessionId = 'recorded-sprint-parallel-review';
 
 const transcript = (id: string, title: string, response: string) =>
   projectAgentSessionTranscript(session(id, title, response));
@@ -25,6 +27,37 @@ const sprintTranscript = transcript(
   'Sprint control surface discovery',
   'Recorded development facts are displayed through the canonical product composition.',
 );
+const reviewSprintTranscript = transcript(
+  reviewSprintSessionId,
+  'Recorded parallel review Sprint',
+  'Recorded mixed-state review composition only; no live Sprint was started.',
+);
+const rd1HandlerDetails = lifecycleSession(
+  'recorded-handler-WU-RD1',
+  'Relationship Work Unit handler',
+  [
+    ['recorded-handler-WU-RD1-launch', 'Recorded the first worker launch.'],
+    ['recorded-handler-WU-RD1-reprompt', 'Recorded the bounded correction request.'],
+    ['recorded-handler-WU-RD1-merge', 'Recorded integration into the review checkpoint.'],
+    ['recorded-handler-WU-RD1-completion', 'Recorded responsibility completion.'],
+  ],
+);
+const rd1WorkerDetails = lifecycleSession(
+  'recorded-worker-WU-RD1',
+  'Relationship implementation worker',
+  [
+    ['recorded-worker-WU-RD1-first-work', 'Returned the initial relationship model.'],
+    ['recorded-worker-WU-RD1-renewed-work', 'Returned the corrected relationship model.'],
+  ],
+);
+const rd1ReviewerDetails = lifecycleSession(
+  'recorded-reviewer-WU-RD1',
+  'Relationship review agent',
+  [
+    ['recorded-reviewer-WU-RD1-first-review', 'Recorded correction feedback for attempt one.'],
+    ['recorded-reviewer-WU-RD1-second-review', 'Recorded acceptance for attempt two.'],
+  ],
+);
 
 /** Recorded Agent Session inputs used by the embedded composition in the app-mounted demo. */
 export const recordedAgentSessionDetails: readonly AgentSessionDetailsDto[] = [
@@ -32,6 +65,26 @@ export const recordedAgentSessionDetails: readonly AgentSessionDetailsDto[] = [
     epicRunnerSessionId,
     'Orientation discovery handler',
     'Recorded development presentation only; no runtime continuation was initiated.',
+  ),
+  session(
+    reviewSprintSessionId,
+    'Recorded parallel review Sprint',
+    'Recorded mixed-state review composition only; no live Sprint was started.',
+  ),
+  session(
+    'recorded-planner-rd-r2',
+    'Recorded review Sprint Planner',
+    'Recorded the parallel Work Unit forecast and problem relationships.',
+  ),
+  rd1HandlerDetails,
+  rd1WorkerDetails,
+  rd1ReviewerDetails,
+  ...(['WU-RD2', 'WU-RD3'] as const).map((workUnitId) =>
+    session(
+      `recorded-worker-${workUnitId}`,
+      `Recorded ${workUnitId} worker`,
+      'Recorded mixed-state worker conversation; no live task was started.',
+    ),
   ),
   session(
     sprintSessionId,
@@ -152,6 +205,67 @@ export const recordedPresentationAdjunct: RecordedPresentationAdjunct = {
         plannerActivityWorkflows: [recordedPlanWorkflowAdjunct],
       },
     },
+    [reviewSprintId]: {
+      agentSession: {
+        sessionId: reviewSprintSessionId,
+        title: 'Recorded parallel review Sprint',
+      },
+      workspaceAdjunct: {
+        agentSession: {
+          sessionId: reviewSprintSessionId,
+          title: 'Recorded parallel review Sprint',
+          transcript: reviewSprintTranscript,
+        },
+        plannerActivitySessions: [
+          {
+            sessionId: 'recorded-planner-rd-r2',
+            title: 'Recorded review Sprint Planner',
+            transcript: transcript(
+              'recorded-planner-rd-r2',
+              'Recorded review Sprint Planner',
+              'Recorded the parallel Work Unit forecast and problem relationships.',
+            ),
+          },
+        ],
+        workUnitSessions: [
+          {
+            sessionId: rd1HandlerDetails.session.id,
+            title: rd1HandlerDetails.session.title,
+            workUnitId: 'WU-RD1',
+            role: 'handler',
+            transcript: projectAgentSessionTranscript(rd1HandlerDetails),
+          },
+          {
+            sessionId: rd1WorkerDetails.session.id,
+            title: rd1WorkerDetails.session.title,
+            workUnitId: 'WU-RD1',
+            role: 'worker',
+            transcript: projectAgentSessionTranscript(rd1WorkerDetails),
+          },
+          {
+            sessionId: rd1ReviewerDetails.session.id,
+            title: rd1ReviewerDetails.session.title,
+            workUnitId: 'WU-RD1',
+            role: 'reviewer',
+            transcript: projectAgentSessionTranscript(rd1ReviewerDetails),
+          },
+          ...(['WU-RD2', 'WU-RD3'] as const).map(
+            (workUnitId): WorkUnitAgentSessionPresentation => ({
+              sessionId: `recorded-worker-${workUnitId}`,
+              title: `Recorded ${workUnitId} worker`,
+              workUnitId,
+              role: 'worker',
+              transcript: transcript(
+                `recorded-worker-${workUnitId}`,
+                `Recorded ${workUnitId} worker`,
+                'Recorded mixed-state worker conversation; no live task was started.',
+              ),
+            }),
+          ),
+        ],
+        plannerActivityWorkflows: [],
+      },
+    },
   },
 };
 
@@ -225,5 +339,37 @@ function session(id: string, title: string, response: string): AgentSessionDetai
         events: [event],
       },
     ],
+  };
+}
+
+function lifecycleSession(
+  id: string,
+  title: string,
+  turns: readonly (readonly [string, string])[],
+): AgentSessionDetailsDto {
+  const details = session(id, title, turns[0]?.[1] ?? 'Recorded lifecycle turn.');
+  return {
+    ...details,
+    invocations: turns.map(([invocationId, response], index) => ({
+      invocation: {
+        ...details.invocations[0].invocation,
+        id: invocationId,
+        submittedText: `Recorded lifecycle step ${index + 1}`,
+        createdAt: new Date(Date.parse(time) + index * 1_000).toISOString(),
+        updatedAt: new Date(Date.parse(time) + index * 1_000).toISOString(),
+      },
+      events: [
+        {
+          ...details.invocations[0].events[0],
+          id: `${invocationId}-response`,
+          invocationId,
+          normalized: {
+            ...details.invocations[0].events[0].normalized!,
+            text: response,
+          },
+          recordedAt: new Date(Date.parse(time) + index * 1_000).toISOString(),
+        },
+      ],
+    })),
   };
 }

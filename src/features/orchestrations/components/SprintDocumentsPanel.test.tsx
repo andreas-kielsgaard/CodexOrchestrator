@@ -50,15 +50,15 @@ describe('SprintDocumentsPanel', () => {
     expect(await screen.findByText('Resolved only.')).toHaveAttribute('role', 'status');
 
     fireEvent.click(control);
-    expect(openWithSystemDefault).toHaveBeenCalledWith(document);
-    expect(await screen.findByText('Open is unsupported.')).toHaveAttribute('role', 'status');
+    expect(onOpenFileReviewSource).toHaveBeenCalledWith(document.documentRefId);
+    expect(openWithSystemDefault).not.toHaveBeenCalled();
     expect(screen.queryByText('C:/copied/only-here.md')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy path' }));
     expect(copyPath).toHaveBeenCalledWith(document);
     expect(await screen.findByText('C:/copied/only-here.md')).toBeVisible();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Review files' }));
-    expect(onOpenFileReviewSource).toHaveBeenCalledWith(document.documentRefId);
+    fireEvent.click(screen.getByRole('button', { name: 'View document' }));
+    expect(onOpenFileReviewSource).toHaveBeenCalledTimes(2);
   });
 });

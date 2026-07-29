@@ -320,69 +320,49 @@ const recordedFileReviewDocumentPort: FileReviewDocumentPort = {
   },
 };
 
-const storedFileReviewArtifact = {
-  documentRefId: 'doc-file-review',
-  artifactId: 'artifact-file-review',
-  bytes: new TextEncoder().encode(
-    JSON.stringify({
-      contractVersion: STORED_FILE_REVIEW_ARTIFACT_V1,
-      documentRefId: 'doc-file-review',
-      artifactId: 'artifact-file-review',
-      files: [
-        {
-          changedFileReferenceId: 'changed-file-review-doc',
-          content: {
-            encoding: 'utf-8',
-            bytesBase64: base64(
-              new TextEncoder().encode(
-                '# In-app file and diff viewer exploration\n\nThis recorded review material is supplied by the stored-artifact read port.\n',
-              ),
-            ),
-          },
-          hunks: [
-            {
-              header: '@@ -51,4 +51,5 @@ Exact next product slice',
-              lines: [
-                {
-                  kind: 'context',
-                  oldLineNumber: 51,
-                  newLineNumber: 51,
-                  text: '## Exact next product slice',
-                },
-                {
-                  kind: 'deletion',
-                  oldLineNumber: 52,
-                  text: 'Use a recorded application-owned source.',
-                },
-                {
-                  kind: 'addition',
-                  newLineNumber: 52,
-                  text: 'Resolve an authorized changed-files Document.',
-                },
-                {
-                  kind: 'addition',
-                  newLineNumber: 53,
-                  text: 'Load its stored diff artifact through a read-only port.',
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    }),
+const storedFileReviewArtifacts = [
+  storedDocument(
+    'doc-ecs-r1',
+    'artifact-ecs-r1',
+    'document-ecs-r1',
+    '# Original ECS-R1 plan\n\nThe first recorded plan established the Sprint surface direction.\n',
   ),
-} as const;
+  storedDocument(
+    'doc-g1',
+    'artifact-g1',
+    'document-g1',
+    '# G1 feedback and ECS-R2 replan\n\nThe recorded feedback split the original refinement into bounded Work Units.\n',
+  ),
+  storedDocument(
+    'doc-ecs2e-review',
+    'artifact-ecs2e-review',
+    'document-ecs2e-review',
+    '# WU-ECS2E corrected visual review\n\nThe second recorded attempt was accepted after the bounded correction.\n',
+  ),
+  storedDocument(
+    'doc-file-review',
+    'artifact-file-review',
+    'changed-file-review-doc',
+    '# In-app file and diff viewer exploration\n\nThis recorded review material is supplied by the stored-artifact read port.\n',
+  ),
+  storedDocument(
+    'doc-rd-review',
+    'artifact-rd-review',
+    'document-rd-review',
+    '# Sprint detail review evidence\n\nThis recorded Document captures the mixed-state Sprint review composition.\n',
+  ),
+] as const;
+const storedFileReviewArtifactsByDocument = new Map(
+  storedFileReviewArtifacts.map((artifact) => [artifact.documentRefId, artifact]),
+);
 
 const recordedStoredFileReviewArtifactPort: StoredFileReviewArtifactPort = {
   async loadArtifact(request) {
-    if (
-      request.documentRefId !== storedFileReviewArtifact.documentRefId ||
-      request.artifactId !== storedFileReviewArtifact.artifactId
-    )
-      return null;
+    const artifact = storedFileReviewArtifactsByDocument.get(request.documentRefId);
+    if (!artifact || request.artifactId !== artifact.artifactId) return null;
     return {
-      ...storedFileReviewArtifact,
-      bytes: storedFileReviewArtifact.bytes.slice(),
+      ...artifact,
+      bytes: artifact.bytes.slice(),
     };
   },
 };
@@ -425,6 +405,54 @@ function toApplicationFileReviewDocument(
 
 function base64(bytes: Uint8Array) {
   return btoa(String.fromCharCode(...bytes));
+}
+
+function storedDocument(
+  documentRefId: string,
+  artifactId: string,
+  changedFileReferenceId: string,
+  content: string,
+) {
+  return {
+    documentRefId,
+    artifactId,
+    bytes: new TextEncoder().encode(
+      JSON.stringify({
+        contractVersion: STORED_FILE_REVIEW_ARTIFACT_V1,
+        documentRefId,
+        artifactId,
+        files: [
+          {
+            changedFileReferenceId,
+            content: {
+              encoding: 'utf-8',
+              bytesBase64: base64(new TextEncoder().encode(content)),
+            },
+            hunks: [
+              {
+                header: '@@ Sprint start to recorded Document @@',
+                lines: [
+                  {
+                    kind: 'deletion',
+                    oldLineNumber: 1,
+                    text: 'Document state before this Sprint began.',
+                  },
+                  ...content
+                    .trimEnd()
+                    .split('\n')
+                    .map((text, index) => ({
+                      kind: 'addition',
+                      newLineNumber: index + 1,
+                      text,
+                    })),
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    ),
+  };
 }
 
 function source(

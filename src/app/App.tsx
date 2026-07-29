@@ -305,7 +305,11 @@ export function App({
           }}
         />
       ) : surface === 'file-review' && fileReviewClient ? (
-        <FileReviewScreen client={fileReviewClient} initialSourceId={fileReviewSourceId} />
+        <FileReviewScreen
+          client={fileReviewClient}
+          initialSourceId={fileReviewSourceId}
+          fixedSource={Boolean(fileReviewSourceId)}
+        />
       ) : (
         <StandaloneAgentSessionScreen client={agentSessionClient} />
       )}

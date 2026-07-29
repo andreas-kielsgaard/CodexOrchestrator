@@ -75,6 +75,7 @@ export function EpicDetail({
     return (
       <SprintWorkspace
         workspace={selectedSprint.workspace}
+        epicObjective={epic.goal}
         adjunct={selectedSprint.workspaceAdjunct}
         artifactAccessController={artifactAccessController}
         agentSessionComposition={agentSessionComposition}

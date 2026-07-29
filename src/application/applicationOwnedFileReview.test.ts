@@ -30,6 +30,7 @@ describe('application-owned file review', () => {
         kind: 'application_owned',
         label: 'Accepted changed files',
         detail: 'Stored review material.',
+        comparisonLabel: 'Compare with Sprint start',
       },
     ]);
     const snapshot = await client.loadSource('document-review');

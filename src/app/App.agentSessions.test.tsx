@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import type { AgentSessionClient } from '../application/agentSessions';
 import { sessionDetails } from '../features/agentSessions/testFixtures';
 import type { OrchestrationApplicationClient } from '../application/orchestrations';
@@ -56,14 +56,22 @@ describe('App application surfaces', () => {
       screen.getByRole('button', { name: 'Open Sprint: Sprint Control Surface Discovery' }),
     );
     fireEvent.click(screen.getByRole('tab', { name: 'Documents' }));
-    expect(screen.getByText('Application-owned file review')).toBeVisible();
+    const documentTitle = screen.getByText('Application-owned file review');
+    expect(documentTitle).toBeVisible();
+    const documentCard = documentTitle.closest('article');
+    expect(documentCard).not.toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Review files' }));
+    fireEvent.click(
+      within(documentCard as HTMLElement).getByRole('button', { name: 'View document' }),
+    );
 
     expect(await screen.findByRole('main', { name: 'Files and diffs' })).toBeVisible();
-    expect(screen.getByRole('combobox', { name: 'Review source' })).toHaveValue('doc-file-review');
+    expect(screen.queryByRole('combobox', { name: 'Review source' })).toBeNull();
+    expect(screen.getByText('Application-owned file review')).toBeVisible();
     expect(await screen.findByText('1 changed files')).toBeVisible();
     expect(screen.getByText('Recorded application-owned review material')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'File' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Compare with Sprint start' })).toBeVisible();
   });
 });
 

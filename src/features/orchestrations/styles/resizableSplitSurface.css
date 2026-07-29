@@ -1,0 +1,90 @@
+.resizable-split {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #cfd8dd;
+}
+
+.resizable-split--vertical {
+  grid-template-rows: minmax(0, var(--split-primary-size)) 9px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.resizable-split--horizontal {
+  grid-template-columns: minmax(0, var(--split-primary-size)) 9px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.resizable-split__pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
+.resizable-split__separator {
+  position: relative;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  background: #d7dfe3;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.resizable-split--vertical > .resizable-split__separator {
+  cursor: row-resize;
+}
+
+.resizable-split__separator > span {
+  width: 3px;
+  height: 34px;
+  border-radius: 999px;
+  background: #83949d;
+}
+
+.resizable-split--vertical > .resizable-split__separator > span {
+  width: 34px;
+  height: 3px;
+}
+
+.resizable-split__separator > button {
+  position: absolute;
+  right: 12px;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid #aebdc5;
+  border-radius: 5px;
+  background: #fff;
+  color: #3f5662;
+  font: inherit;
+  font-size: 0.66rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.resizable-split__separator:focus-visible,
+.resizable-split__separator > button:focus-visible {
+  outline: 3px solid #cf7b32;
+  outline-offset: -1px;
+}
+
+@media (max-width: 720px) {
+  .resizable-split--horizontal {
+    grid-template-rows: minmax(220px, var(--split-primary-size)) 9px minmax(220px, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+    overflow-y: auto;
+  }
+
+  .resizable-split--horizontal > .resizable-split__separator {
+    cursor: row-resize;
+  }
+
+  .resizable-split--horizontal > .resizable-split__separator > span {
+    width: 34px;
+    height: 3px;
+  }
+}

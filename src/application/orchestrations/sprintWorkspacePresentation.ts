@@ -36,6 +36,10 @@ export interface SprintWorkspacePresentationV1 {
   readonly selectedSprintPlanRevisionId: string;
   readonly revisionViews: readonly ProductSprintRevisionViewV1[];
   readonly concerns: readonly Concern[];
+  readonly problems: NonNullable<ProductSprintReadModelV1['workspacePresentation']['problems']>;
+  readonly workUnitLifecycle: NonNullable<
+    ProductSprintReadModelV1['workspacePresentation']['workUnitLifecycle']
+  >;
   /** Documents and internal Artifacts remain separate ownership surfaces. */
   readonly documents: readonly (Document &
     Readonly<{
@@ -92,6 +96,16 @@ export function projectSprintWorkspacePresentation(
       reviews: view.reviews.map((review) => ({ ...review })),
     })),
     concerns: sprint.concerns.map((concern) => ({ ...concern })),
+    problems: (sprint.workspacePresentation.problems ?? []).map((problem) => ({
+      ...problem,
+      graphElementRefs: problem.graphElementRefs.map((reference) => ({ ...reference })),
+    })),
+    workUnitLifecycle: [...(sprint.workspacePresentation.workUnitLifecycle ?? [])]
+      .map((entry) => ({ ...entry }))
+      .sort(
+        (left, right) =>
+          left.sequence - right.sequence || left.entryId.localeCompare(right.entryId),
+      ),
     documents: sprint.documents
       .map((document) => {
         const presentation = documentPresentationById.get(document.documentRefId);
