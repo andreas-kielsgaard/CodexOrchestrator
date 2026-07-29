@@ -31,6 +31,7 @@ export interface SprintWorkspaceProps {
   readonly detailLocation: SprintWorkspaceDetailLocation;
   readonly onDetailLocationChange: (location: SprintWorkspaceDetailLocation) => void;
   readonly onBack: () => void;
+  readonly onOpenAgentSession?: (sessionId: string) => void;
 }
 
 export function SprintWorkspace({
@@ -44,15 +45,10 @@ export function SprintWorkspace({
   detailLocation,
   onDetailLocationChange,
   onBack,
+  onOpenAgentSession,
 }: SprintWorkspaceProps) {
   const [selectedTab, setSelectedTab] = useState<SprintWorkspaceTab>('flow');
   const [selectedConcernId, setSelectedConcernId] = useState<string | null>(null);
-  const [highlightedProblemId, setHighlightedProblemId] = useState<string | null>(null);
-  const [hoveredGraphElement, setHoveredGraphElement] = useState<{
-    readonly kind: 'sprint_planner_activity' | 'work_unit' | 'gate';
-    readonly id: string;
-  } | null>(null);
-  const problemFocusIndexRef = useRef(new Map<string, number>());
   const sprintRestoreRef = useRef<{
     kind: 'sprint_planner_activity_group' | 'work_unit';
     id: string;
@@ -104,9 +100,6 @@ export function SprintWorkspace({
     return (
       <WorkUnitDetailWorkspace
         unit={unit}
-        lifecycleEntries={workspace.workUnitLifecycle.filter(
-          ({ workUnitId }) => workUnitId === unit.workUnitId,
-        )}
         sprintPlannerActivityGroupTitle={plannerActivityGroup.title}
         sessions={workUnitSessions(workspace, unit, adjunct)}
         agentSessionComposition={agentSessionComposition}
@@ -123,6 +116,7 @@ export function SprintWorkspace({
             sprintPlannerActivityId: detailLocation.sprintPlannerActivityId,
           });
         }}
+        onOpenAgentSession={onOpenAgentSession}
       />
     );
   }
@@ -149,6 +143,7 @@ export function SprintWorkspace({
             sprintPlannerActivityId === plannerActivityGroup.sprintPlannerActivityId,
         )}
         onBack={() => onDetailLocationChange({ kind: 'sprint' })}
+        onOpenAgentSession={onOpenAgentSession}
       />
     );
   }
@@ -180,73 +175,8 @@ export function SprintWorkspace({
       }
       context={
         <div className="sprint-context">
-          <p className="eyebrow">Sprint</p>
           <h1>{workspace.sprint.title}</h1>
-          <span
-            className={`sprint-context__state sprint-context__state--${
-              workspace.sprint.lifecycle?.value ??
-              workspace.sprint.lifecycle?.source.status ??
-              'unavailable'
-            }`}
-          >
-            {sprintLifecycleLabel(workspace.sprint.lifecycle)}
-          </span>
           <p>{workspace.sprint.summary}</p>
-          <section className="sprint-context__objectives" aria-label="Epic Planner objectives">
-            <h2>Epic Planner objectives</h2>
-            {workspace.epicPlannerObjectives.length > 0 ? (
-              <ul>
-                {workspace.epicPlannerObjectives.map((objective) => (
-                  <li key={objective.objectiveId}>{objective.title}</li>
-                ))}
-              </ul>
-            ) : (
-              <p>No recorded Epic Planner Sprint objectives.</p>
-            )}
-          </section>
-          {workspace.problems.length > 0 ? (
-            <section className="sprint-context__problems" aria-label="Sprint Planner problems">
-              <h2>Sprint Planner problems</h2>
-              <ul>
-                {workspace.problems.map((problem) => {
-                  const relatedToHover = hoveredGraphElement
-                    ? problem.graphElementRefs.some(
-                        (reference) =>
-                          reference.kind === hoveredGraphElement.kind &&
-                          reference.id === hoveredGraphElement.id,
-                      )
-                    : false;
-                  return (
-                    <li key={problem.problemId}>
-                      <button
-                        type="button"
-                        className={
-                          highlightedProblemId === problem.problemId || relatedToHover
-                            ? 'is-highlighted'
-                            : undefined
-                        }
-                        aria-pressed={highlightedProblemId === problem.problemId}
-                        onPointerEnter={() => setHighlightedProblemId(problem.problemId)}
-                        onPointerLeave={() => setHighlightedProblemId(null)}
-                        onFocus={() => setHighlightedProblemId(problem.problemId)}
-                        onBlur={() => setHighlightedProblemId(null)}
-                        onClick={() => {
-                          setSelectedTab('flow');
-                          focusNextProblemGraphElement(
-                            problem,
-                            selectedView,
-                            problemFocusIndexRef.current,
-                          );
-                        }}
-                      >
-                        {problem.title}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-          ) : null}
         </div>
       }
       primary={
@@ -263,9 +193,6 @@ export function SprintWorkspace({
                   workspace={workspace}
                   selectedRevisionId={selectedRevisionId}
                   onSelectedRevisionChange={onSelectedRevisionChange}
-                  highlightedProblemId={highlightedProblemId}
-                  hoveredGraphElement={hoveredGraphElement}
-                  onHoveredGraphElementChange={setHoveredGraphElement}
                   onOpenSprintPlannerActivityGroup={(sprintPlannerActivityId) => {
                     sprintRestoreRef.current = {
                       kind: 'sprint_planner_activity_group',
@@ -340,81 +267,12 @@ export function SprintWorkspace({
             conversationAriaLabel="Sprint Agent Session conversation"
             session={adjunct.agentSession}
             composition={agentSessionComposition}
-            displayMode="always_open"
+            onOpenStandalone={onOpenAgentSession}
           />
         ) : undefined
       }
     />
   );
-}
-
-function sprintLifecycleLabel(lifecycle: SprintWorkspacePresentationV1['sprint']['lifecycle']) {
-  if (!lifecycle) return 'State unavailable';
-  if (lifecycle.source.status !== 'available') return `State ${lifecycle.source.status}`;
-  const value = lifecycle.value;
-  if (!value) return 'State unavailable';
-  return {
-    not_started: 'Planned',
-    in_progress: 'Processing',
-    completed: 'Completed',
-  }[value];
-}
-
-function focusNextProblemGraphElement(
-  problem: SprintWorkspacePresentationV1['problems'][number],
-  view: SprintWorkspacePresentationV1['revisionViews'][number],
-  focusIndexes: Map<string, number>,
-) {
-  const priority = (reference: (typeof problem.graphElementRefs)[number]) => {
-    if (reference.kind === 'work_unit') {
-      const state = view.workUnits.find(
-        ({ workUnitId }) => workUnitId === reference.id,
-      )?.presentationState;
-      if (['requested', 'launched', 'returned', 'under_review'].includes(state ?? '')) return 0;
-      if (['integrated', 'responsibility_accepted'].includes(state ?? '')) return 1;
-      return 2;
-    }
-    if (reference.kind === 'sprint_planner_activity') {
-      const group = view.plannerActivityGroups.find(
-        ({ sprintPlannerActivityId }) => sprintPlannerActivityId === reference.id,
-      );
-      const states = view.workUnits
-        .filter(({ workUnitScopeId }) => group?.workUnitScopeIds.includes(workUnitScopeId))
-        .map(({ presentationState }) => presentationState);
-      if (
-        states.some((state) =>
-          ['requested', 'launched', 'returned', 'under_review'].includes(state),
-        )
-      )
-        return 0;
-      if (
-        states.length &&
-        states.every((state) => ['integrated', 'responsibility_accepted'].includes(state))
-      )
-        return 1;
-    }
-    return 2;
-  };
-  const ordered = [...problem.graphElementRefs].sort(
-    (left, right) =>
-      priority(left) - priority(right) ||
-      `${left.kind}:${left.id}`.localeCompare(`${right.kind}:${right.id}`),
-  );
-  if (!ordered.length) return;
-  const index = focusIndexes.get(problem.problemId) ?? 0;
-  const next = ordered[index % ordered.length];
-  focusIndexes.set(problem.problemId, (index + 1) % ordered.length);
-  requestAnimationFrame(() => {
-    const element = Array.from(
-      document.querySelectorAll<HTMLElement>('[data-flow-element-kind][data-flow-element-id]'),
-    ).find(
-      (candidate) =>
-        candidate.dataset.flowElementKind === next.kind &&
-        candidate.dataset.flowElementId === next.id,
-    );
-    element?.focus();
-    element?.scrollIntoView?.({ block: 'center', inline: 'center' });
-  });
 }
 
 function plannerActivitySessions(
@@ -449,29 +307,21 @@ function workUnitSessions(
   );
   const executionIds = new Set(unit.attempts.map((attempt) => attempt.workUnitExecutionId));
   const adjunctById = new Map(existing.map((session) => [session.sessionId, session]));
-  const referenced = workspace.agentSessionReferences
+  // Reviewer references are attempt/review-oriented, so the existing Work Unit detail is their
+  // smallest coherent surface; no reviewer is inferred from workflow prose or geometry.
+  const reviewerSessions = workspace.agentSessionReferences
     .filter(
       (reference) =>
         reference.targetKind === 'work_unit_execution' &&
         executionIds.has(reference.targetId) &&
-        ['work_unit_handler', 'work_unit_worker', 'reviewer'].includes(reference.semanticRole),
+        reference.semanticRole === 'reviewer',
     )
     .map((reference) => ({
       sessionId: reference.agentSessionId,
       title: reference.title,
       workUnitId: unit.workUnitId,
-      role: (
-        {
-          work_unit_handler: 'handler',
-          work_unit_worker: 'worker',
-          reviewer: 'reviewer',
-        } as const
-      )[reference.semanticRole as 'work_unit_handler' | 'work_unit_worker' | 'reviewer'],
+      role: 'reviewer' as const,
       transcript: adjunctById.get(reference.agentSessionId)?.transcript,
     }));
-  return [
-    ...new Map(
-      [...existing, ...referenced].map((session) => [session.sessionId, session]),
-    ).values(),
-  ];
+  return [...existing, ...reviewerSessions];
 }

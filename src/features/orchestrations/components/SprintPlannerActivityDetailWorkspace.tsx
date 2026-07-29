@@ -4,7 +4,6 @@ import { DetailWorkspace } from './DetailWorkspace';
 import { PlanWorkflowMap } from './PlanWorkflowMap';
 import type { EmbeddedAgentSessionComposition } from '../../agentSessions';
 import type { SprintAgentSessionPresentation } from '../orchestrationModel';
-import { ResizableSplitSurface } from './ResizableSplitSurface';
 import { SharedAgentSessionPanel } from './SharedAgentSessionPanel';
 import '../styles/orchestrationSubdetail.css';
 
@@ -14,6 +13,7 @@ export interface SprintPlannerActivityDetailWorkspaceProps {
   readonly sessions: readonly SprintAgentSessionPresentation[];
   readonly agentSessionComposition?: EmbeddedAgentSessionComposition;
   readonly onBack: () => void;
+  readonly onOpenAgentSession?: (sessionId: string) => void;
 }
 
 export function SprintPlannerActivityDetailWorkspace({
@@ -22,6 +22,7 @@ export function SprintPlannerActivityDetailWorkspace({
   sessions,
   agentSessionComposition,
   onBack,
+  onOpenAgentSession,
 }: SprintPlannerActivityDetailWorkspaceProps) {
   return (
     <DetailWorkspace
@@ -51,46 +52,16 @@ export function SprintPlannerActivityDetailWorkspace({
           )}
           {sessions.length > 0 && (
             <section className="plan-agent-sessions" aria-label="Plan Agent Sessions">
-              {sessions.length === 2 ? (
-                <div className="plan-agent-session-split">
-                  <ResizableSplitSurface
-                    axis="horizontal"
-                    primaryLabel={`${sessions[0].title} conversation`}
-                    secondaryLabel={`${sessions[1].title} conversation`}
-                    initialPrimaryPercent={50}
-                    minimumPrimaryPixels={280}
-                    minimumSecondaryPixels={280}
-                    primary={
-                      <SharedAgentSessionPanel
-                        ariaLabel={`${sessions[0].title} Agent Session`}
-                        conversationAriaLabel={`${sessions[0].title} conversation`}
-                        session={sessions[0]}
-                        composition={agentSessionComposition}
-                        displayMode="always_open"
-                      />
-                    }
-                    secondary={
-                      <SharedAgentSessionPanel
-                        ariaLabel={`${sessions[1].title} Agent Session`}
-                        conversationAriaLabel={`${sessions[1].title} conversation`}
-                        session={sessions[1]}
-                        composition={agentSessionComposition}
-                        displayMode="always_open"
-                      />
-                    }
-                  />
-                </div>
-              ) : (
-                sessions.map((session) => (
-                  <SharedAgentSessionPanel
-                    key={session.sessionId}
-                    ariaLabel={`${session.title} Agent Session`}
-                    conversationAriaLabel={`${session.title} conversation`}
-                    session={session}
-                    composition={agentSessionComposition}
-                  />
-                ))
-              )}
+              {sessions.map((session) => (
+                <SharedAgentSessionPanel
+                  key={session.sessionId}
+                  ariaLabel={`${session.title} Agent Session`}
+                  conversationAriaLabel={`${session.title} conversation`}
+                  session={session}
+                  composition={agentSessionComposition}
+                  onOpenStandalone={onOpenAgentSession}
+                />
+              ))}
             </section>
           )}
         </>

@@ -145,6 +145,8 @@ pub(crate) struct AgentSessionSummaryDto {
     pub(crate) title: String,
     pub(crate) availability: AgentSessionAvailability,
     pub(crate) has_active_invocation: bool,
+    pub(crate) latest_invocation_status:
+        Option<crate::agent_sessions::domain::AgentInvocationStatus>,
     pub(crate) created_at: chrono::DateTime<chrono::Utc>,
     pub(crate) updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -158,6 +160,7 @@ impl From<AgentSessionSummary> for AgentSessionSummaryDto {
             has_active_invocation: value
                 .latest_invocation_status
                 .is_some_and(|status| status.is_active()),
+            latest_invocation_status: value.latest_invocation_status,
             created_at: value.session.created_at,
             updated_at: value.session.updated_at,
         }

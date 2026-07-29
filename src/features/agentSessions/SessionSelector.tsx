@@ -1,28 +1,119 @@
-import { MessageSquarePlus, RefreshCw } from 'lucide-react';
-import type { AgentIdentity, AgentSessionSummaryDto } from '../../application/agentSessions';
-import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
+import {
+  Bot,
+  ChevronDown,
+  ChevronRight,
+  Folder,
+  MessageSquarePlus,
+  PanelLeftClose,
+  PanelLeftOpen,
+  RefreshCw,
+} from 'lucide-react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+} from 'react';
+import type {
+  AgentSessionNavigationModel,
+  AgentSessionNavigationNode,
+  AgentSessionNavigationSession,
+} from '../../application/agentSessionNavigation';
 
 interface SessionSelectorProps {
-  summaries: AgentSessionSummaryDto[];
+  model: AgentSessionNavigationModel;
   selectedSessionId: string | null;
+  expandedNodeIds: ReadonlySet<string>;
   loading: boolean;
+  onExpandedNodeIdsChange(ids: ReadonlySet<string>): void;
   onSelect(sessionId: string): void;
   onNew(): void;
   onReload(): void;
-  agentIdentityForSession?: (sessionId: string) => AgentIdentity | undefined;
+}
+
+interface VisibleTreeItem {
+  readonly node: AgentSessionNavigationNode;
+  readonly level: number;
+  readonly parentId: string | null;
 }
 
 export function SessionSelector({
-  summaries,
+  model,
   selectedSessionId,
+  expandedNodeIds,
   loading,
+  onExpandedNodeIdsChange,
   onSelect,
   onNew,
   onReload,
-  agentIdentityForSession,
 }: SessionSelectorProps) {
+  const [treeOpen, setTreeOpen] = useState(true);
+  const selectedNodeId = selectedSessionId ? `session:${selectedSessionId}` : null;
+  const visible = useMemo(
+    () => flattenVisibleTree(model.roots, expandedNodeIds),
+    [expandedNodeIds, model.roots],
+  );
+  const [focusedId, setFocusedId] = useState<string | null>(selectedNodeId);
+  const itemRefs = useRef(new Map<string, HTMLButtonElement>());
+
+  useEffect(() => {
+    if (!selectedNodeId) return;
+    const ancestors = findAncestors(model.roots, selectedNodeId);
+    if (ancestors.some((id) => !expandedNodeIds.has(id)))
+      onExpandedNodeIdsChange(new Set([...expandedNodeIds, ...ancestors]));
+  }, [expandedNodeIds, model.roots, onExpandedNodeIdsChange, selectedNodeId]);
+
+  useEffect(() => {
+    if (!selectedNodeId) return;
+    setFocusedId(selectedNodeId);
+  }, [selectedNodeId]);
+
+  useEffect(() => {
+    if (focusedId && visible.some(({ node }) => node.id === focusedId)) return;
+    setFocusedId(selectedNodeId ?? visible[0]?.node.id ?? null);
+  }, [focusedId, selectedNodeId, visible]);
+
+  const focus = (id: string | undefined) => {
+    if (!id) return;
+    setFocusedId(id);
+    itemRefs.current.get(id)?.focus();
+  };
+  const toggle = (id: string, expanded?: boolean) => {
+    const next = new Set(expandedNodeIds);
+    const shouldExpand = expanded ?? !next.has(id);
+    if (shouldExpand) next.add(id);
+    else next.delete(id);
+    onExpandedNodeIdsChange(next);
+  };
+  const onTreeKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const index = visible.findIndex(({ node }) => node.id === focusedId);
+    if (index < 0) return;
+    const current = visible[index];
+    if (event.key === 'ArrowDown') focus(visible[index + 1]?.node.id);
+    else if (event.key === 'ArrowUp') focus(visible[index - 1]?.node.id);
+    else if (event.key === 'Home') focus(visible[0]?.node.id);
+    else if (event.key === 'End') focus(visible.at(-1)?.node.id);
+    else if (event.key === 'ArrowRight' && current.node.kind === 'folder') {
+      if (!expandedNodeIds.has(current.node.id)) toggle(current.node.id, true);
+      else if (visible[index + 1]?.level === current.level + 1) focus(visible[index + 1].node.id);
+    } else if (event.key === 'ArrowLeft') {
+      if (current.node.kind === 'folder' && expandedNodeIds.has(current.node.id))
+        toggle(current.node.id, false);
+      else focus(current.parentId ?? undefined);
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      if (current.node.kind === 'folder') toggle(current.node.id);
+      else onSelect(current.node.summary.id);
+    } else return;
+    event.preventDefault();
+  };
+
   return (
-    <aside className="agent-session-selector" aria-label="Agent Sessions">
+    <aside
+      className={`agent-session-selector${treeOpen ? ' is-open' : ''}`}
+      aria-label="Agent Sessions"
+    >
       <header>
         <div>
           <p className="eyebrow">Workspace</p>
@@ -32,37 +123,84 @@ export function SessionSelector({
           <MessageSquarePlus size={17} aria-hidden="true" />
         </button>
       </header>
+      <button
+        className="session-tree-toggle"
+        type="button"
+        aria-expanded={treeOpen}
+        aria-controls="agent-session-tree"
+        onClick={() => setTreeOpen((current) => !current)}
+      >
+        {treeOpen ? (
+          <PanelLeftClose size={16} aria-hidden="true" />
+        ) : (
+          <PanelLeftOpen size={16} aria-hidden="true" />
+        )}
+        {treeOpen ? 'Hide sessions' : 'Browse sessions'}
+      </button>
       <button className="session-new-button" type="button" onClick={onNew}>
         New session
       </button>
-      <nav aria-label="Session list">
-        {summaries.length === 0 ? (
+      <div
+        id="agent-session-tree"
+        className="session-tree"
+        role="tree"
+        aria-label="Session hierarchy"
+        aria-busy={loading}
+        onKeyDown={onTreeKeyDown}
+      >
+        {visible.length === 0 ? (
           <p className="session-list-empty">No saved sessions yet.</p>
         ) : (
-          summaries.map((summary) => {
-            const identity = agentIdentityForSession?.(summary.id);
+          visible.map(({ node, level }) => {
+            const folder = node.kind === 'folder';
+            const selected = !folder && node.summary.id === selectedSessionId;
             return (
               <button
-                className={`session-list-item${summary.id === selectedSessionId ? ' active' : ''}`}
+                ref={(element) => {
+                  if (element) itemRefs.current.set(node.id, element);
+                  else itemRefs.current.delete(node.id);
+                }}
+                className={`session-tree-item session-tree-item--${node.kind}${selected ? ' is-selected' : ''}`}
+                style={{ '--tree-level': level } as CSSProperties}
+                role="treeitem"
                 type="button"
-                key={summary.id}
-                onClick={() => onSelect(summary.id)}
-                aria-current={summary.id === selectedSessionId ? 'page' : undefined}
+                key={node.id}
+                tabIndex={focusedId === node.id ? 0 : -1}
+                aria-level={level}
+                aria-expanded={folder ? expandedNodeIds.has(node.id) : undefined}
+                aria-selected={folder ? undefined : selected}
+                onFocus={() => setFocusedId(node.id)}
+                onClick={() => {
+                  if (node.kind === 'folder') toggle(node.id);
+                  else onSelect(node.summary.id);
+                }}
               >
-                <span className="session-list-item__identity">
-                  {identity && <AgentIdentityBadge identity={identity} compact />}
-                  <span className="session-list-item__title">
-                    {identity ? `${identity.name}: ${identityRoleLabel(identity)}` : summary.title}
-                  </span>
-                </span>
-                <small>
-                  {summary.hasActiveInvocation ? 'Working' : formatDate(summary.updatedAt)}
-                </small>
+                {node.kind === 'folder' ? (
+                  <>
+                    {expandedNodeIds.has(node.id) ? (
+                      <ChevronDown
+                        className="session-tree-item__chevron"
+                        size={14}
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <ChevronRight
+                        className="session-tree-item__chevron"
+                        size={14}
+                        aria-hidden="true"
+                      />
+                    )}
+                    <Folder className="session-tree-item__folder" size={15} aria-hidden="true" />
+                    <span className="session-tree-item__folder-label">{node.label}</span>
+                  </>
+                ) : (
+                  <SessionTreeLabel session={node} />
+                )}
               </button>
             );
           })
         )}
-      </nav>
+      </div>
       <button
         className="session-refresh-button"
         type="button"
@@ -76,16 +214,86 @@ export function SessionSelector({
   );
 }
 
+function SessionTreeLabel({ session }: { readonly session: AgentSessionNavigationSession }) {
+  const status = sessionStatus(session);
+  const role = session.identity?.harnessRole ?? session.relationshipRoles.join(' · ');
+  return (
+    <>
+      <span
+        className="session-tree-item__identity"
+        style={
+          session.identity?.visualIdentity
+            ? ({
+                '--identity-accent': session.identity.visualIdentity.accentColor,
+              } as CSSProperties)
+            : undefined
+        }
+      >
+        {session.identity ? (
+          session.identity.agentName.slice(0, 1).toUpperCase()
+        ) : (
+          <Bot size={14} aria-hidden="true" />
+        )}
+      </span>
+      <span className="session-tree-item__copy">
+        <strong>{session.summary.title}</strong>
+        <small>
+          {session.identity
+            ? `${session.identity.agentName}: ${session.identity.harnessRole}`
+            : role || 'Independent Agent Session'}
+        </small>
+      </span>
+      <span className={`session-tree-item__status session-tree-item__status--${status.kind}`}>
+        <span aria-hidden="true" />
+        {status.label}
+      </span>
+    </>
+  );
+}
+
+function sessionStatus(session: AgentSessionNavigationSession) {
+  const status = session.summary.latestInvocationStatus;
+  if (status === 'pending') return { kind: 'active', label: 'Starting' };
+  if (status === 'running' || session.summary.hasActiveInvocation)
+    return { kind: 'active', label: 'Processing' };
+  if (status === 'completed') return { kind: 'completed', label: 'Completed' };
+  if (status === 'failed') return { kind: 'attention', label: 'Failed' };
+  if (status === 'canceled') return { kind: 'quiet', label: 'Canceled' };
+  if (status === 'interrupted') return { kind: 'attention', label: 'Interrupted' };
+  return { kind: 'quiet', label: formatDate(session.summary.updatedAt) };
+}
+
+function flattenVisibleTree(
+  nodes: readonly AgentSessionNavigationNode[],
+  expanded: ReadonlySet<string>,
+  level = 1,
+  parentId: string | null = null,
+): VisibleTreeItem[] {
+  return nodes.flatMap((node) => [
+    { node, level, parentId },
+    ...(node.kind === 'folder' && expanded.has(node.id)
+      ? flattenVisibleTree(node.children, expanded, level + 1, node.id)
+      : []),
+  ]);
+}
+
+function findAncestors(
+  nodes: readonly AgentSessionNavigationNode[],
+  targetId: string,
+  ancestors: readonly string[] = [],
+): readonly string[] {
+  for (const node of nodes) {
+    if (node.id === targetId) return ancestors;
+    if (node.kind === 'folder') {
+      const found = findAncestors(node.children, targetId, [...ancestors, node.id]);
+      if (found.length > 0) return found;
+    }
+  }
+  return [];
+}
+
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(
     new Date(value),
   );
-}
-
-function identityRoleLabel(identity: AgentIdentity): string {
-  return identity.harnessRole
-    .split('_')
-    .filter(Boolean)
-    .map((part) => `${part.charAt(0).toLocaleUpperCase()}${part.slice(1)}`)
-    .join(' ');
 }

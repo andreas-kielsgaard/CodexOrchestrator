@@ -1,18 +1,7 @@
-import { useState, type MouseEvent } from 'react';
+import { useEffect, useState } from 'react';
 import { EpicDetail } from './components/EpicDetail';
-import {
-  EpicTitleWithDescription,
-  MovementSummary,
-  StateBadge,
-} from './components/EpicStatusBadges';
-import {
-  isUnavailablePresentation,
-  type EpicOverviewAction,
-  type EpicOverviewNavigationTarget,
-  type EpicPresentation,
-  type SprintWorkspaceDetailLocation,
-  type OrchestrationSectionView,
-} from './orchestrationModel';
+import { MovementBadge, StateBadge } from './components/EpicStatusBadges';
+import type { SprintWorkspaceDetailLocation, OrchestrationSectionView } from './orchestrationModel';
 import type { EmbeddedAgentSessionComposition } from '../agentSessions';
 import {
   unsupportedArtifactAccessController,
@@ -22,6 +11,7 @@ import {
 } from '../../application/orchestrations';
 import './styles/orchestrationSection.css';
 import type { EpicPlanningDraftSummary } from '../../application/orchestrations';
+import type { AgentSessionProductLocation } from '../../application/agentSessionNavigation';
 
 export interface OrchestrationSectionProps {
   readonly view: OrchestrationSectionView;
@@ -32,6 +22,8 @@ export interface OrchestrationSectionProps {
   readonly onPlanEpic?: () => void;
   readonly planningDrafts?: readonly EpicPlanningDraftSummary[];
   readonly onOpenPlanningDraft?: (draft: EpicPlanningDraftSummary) => void;
+  readonly requestedLocation?: AgentSessionProductLocation | null;
+  readonly onOpenAgentSession?: (sessionId: string) => void;
 }
 
 export function OrchestrationSection({
@@ -43,8 +35,10 @@ export function OrchestrationSection({
   onPlanEpic,
   planningDrafts = [],
   onOpenPlanningDraft,
+  requestedLocation,
+  onOpenAgentSession,
 }: OrchestrationSectionProps) {
-  const workspace = useOrchestrationWorkspace();
+  const workspace = useOrchestrationWorkspace(requestedLocation);
   const selected = view.epics.find(({ id }) => id === workspace.epicId);
 
   if (selected) {
@@ -63,6 +57,7 @@ export function OrchestrationSection({
         onSelectedRevisionChange={workspace.selectRevision}
         onDetailLocationChange={workspace.setDetailLocation}
         onBack={workspace.backToOverview}
+        onOpenAgentSession={onOpenAgentSession}
       />
     );
   }
@@ -86,19 +81,56 @@ export function OrchestrationSection({
             <tr>
               <th scope="col">Epic</th>
               <th scope="col">Current movement</th>
-              <th scope="col">State and next action</th>
+              <th scope="col">State</th>
             </tr>
           </thead>
           <tbody>
             {planningDrafts.map((draft) => (
-              <PlanningDraftRow
-                draft={draft}
-                key={draft.epicPlanningDraftId}
-                onOpen={() => onOpenPlanningDraft?.(draft)}
-              />
+              <tr key={draft.epicPlanningDraftId}>
+                <td data-label="Epic">
+                  <button
+                    className="orchestration-list__open"
+                    type="button"
+                    onClick={() => onOpenPlanningDraft?.(draft)}
+                  >
+                    <strong>{draft.title ?? 'Untitled Epic draft'}</strong>
+                    <small>Pre-initiation planning draft</small>
+                  </button>
+                </td>
+                <td data-label="Current movement">Planning</td>
+                <td data-label="State">Draft</td>
+              </tr>
             ))}
             {view.epics.map((epic) => (
-              <EpicOverviewRow epic={epic} key={epic.id} onNavigate={workspace.openTarget} />
+              <tr key={epic.id}>
+                <td data-label="Epic">
+                  <button
+                    className="orchestration-list__open"
+                    type="button"
+                    aria-label={`Open ${epic.name}`}
+                    onClick={() => workspace.openEpic(epic.id)}
+                  >
+                    <strong>{epic.name}</strong>
+                    <small>{epic.goal}</small>
+                    {epic.bootstrapTransition && (
+                      <small
+                        className={`orchestration-transition orchestration-transition--${epic.bootstrapTransition.kind}`}
+                      >
+                        {epic.bootstrapTransition.label}
+                        {epic.bootstrapTransition.kind === 'blocked'
+                          ? `: ${epic.bootstrapTransition.reason}`
+                          : ''}
+                      </small>
+                    )}
+                  </button>
+                </td>
+                <td data-label="Current movement">
+                  <MovementBadge movement={epic.movement} />
+                </td>
+                <td data-label="State">
+                  <StateBadge state={epic.state} />
+                </td>
+              </tr>
             ))}
           </tbody>
         </table>
@@ -107,160 +139,56 @@ export function OrchestrationSection({
   );
 }
 
-function PlanningDraftRow({
-  draft,
-  onOpen,
-}: {
-  readonly draft: EpicPlanningDraftSummary;
-  readonly onOpen: () => void;
-}) {
-  const title = draft.title ?? 'Untitled Epic draft';
-  return (
-    <tr className="orchestration-list__row" onClick={(event) => openFromRow(event, onOpen)}>
-      <td data-label="Epic">
-        <button
-          className="orchestration-list__open"
-          type="button"
-          aria-label={`Open planning draft ${title}`}
-          onClick={onOpen}
-        >
-          <strong>{title}</strong>
-          <small>Pre-initiation planning draft</small>
-        </button>
-      </td>
-      <td data-label="Current movement">
-        <span className="movement-badge movement-badge--empty">Planning draft</span>
-      </td>
-      <td data-label="State and next action">
-        <span className="epic-state">Draft</span>
-      </td>
-    </tr>
-  );
-}
-
-function EpicOverviewRow({
-  epic,
-  onNavigate,
-}: {
-  readonly epic: EpicPresentation;
-  readonly onNavigate: (target: EpicOverviewNavigationTarget) => void;
-}) {
-  const epicTarget: EpicOverviewNavigationTarget = { kind: 'epic', epicId: epic.id };
-  const openEpic = () => onNavigate(epicTarget);
-  const readyWork = Array.isArray(epic.readyWork) ? epic.readyWork : [];
-  const humanInput =
-    epic.humanInput && !isUnavailablePresentation(epic.humanInput) ? epic.humanInput : null;
-  return (
-    <tr className="orchestration-list__row" onClick={(event) => openFromRow(event, openEpic)}>
-      <td data-label="Epic">
-        <EpicTitleWithDescription name={epic.name} description={epic.goal} onOpen={openEpic} />
-        {epic.bootstrapTransition && (
-          <small
-            className={`orchestration-transition orchestration-transition--${epic.bootstrapTransition.kind}`}
-          >
-            {epic.bootstrapTransition.label}
-            {epic.bootstrapTransition.kind === 'blocked'
-              ? `: ${epic.bootstrapTransition.reason}`
-              : ''}
-          </small>
-        )}
-      </td>
-      <td data-label="Current movement">
-        <MovementSummary movement={epic.movement} onNavigate={onNavigate} />
-      </td>
-      <td data-label="State and next action">
-        <div className="epic-overview-actions">
-          <StateBadge state={epic.state} />
-          {readyWork.map((action) => (
-            <OverviewAction action={action} key={action.actionId} onNavigate={onNavigate} />
-          ))}
-          {humanInput && (
-            <OverviewAction
-              action={humanInput}
-              humanInput
-              key={humanInput.actionId}
-              onNavigate={onNavigate}
-            />
-          )}
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-function OverviewAction({
-  action,
-  humanInput = false,
-  onNavigate,
-}: {
-  readonly action: EpicOverviewAction;
-  readonly humanInput?: boolean;
-  readonly onNavigate: (target: EpicOverviewNavigationTarget) => void;
-}) {
-  return (
-    <button
-      className={`epic-overview-action${humanInput ? ' epic-overview-action--human-input' : ''}`}
-      type="button"
-      aria-label={humanInput ? `Human input required: ${action.label}` : action.label}
-      onClick={() => onNavigate(action.target)}
-    >
-      {humanInput && <small>Human input</small>}
-      <span>{action.label}</span>
-    </button>
-  );
-}
-
-function openFromRow(event: MouseEvent<HTMLTableRowElement>, open: () => void) {
-  if (!(event.target instanceof Element)) return;
-  if (
-    event.target.closest(
-      'button, a, input, select, textarea, summary, [role="button"], [role="link"], [data-row-action-exempt]',
-    )
-  )
-    return;
-  open();
-}
-
 /** The feature tree has one owner for Orchestration, Sprint, and revision selection. */
-function useOrchestrationWorkspace() {
+function useOrchestrationWorkspace(requestedLocation?: AgentSessionProductLocation | null) {
   const [epicId, setEpicId] = useState<string | null>(null);
   const [sprintId, setSprintId] = useState<string | null>(null);
   const [selectedRevisionId, setSelectedRevisionId] = useState<string | null>(null);
   const [detailLocation, setDetailLocation] = useState<SprintWorkspaceDetailLocation>({
     kind: 'sprint',
   });
+  useEffect(() => {
+    if (!requestedLocation || requestedLocation.kind === 'epic_planning_draft') return;
+    setEpicId(requestedLocation.epicId);
+    if (requestedLocation.kind === 'epic') {
+      setSprintId(null);
+      setSelectedRevisionId(null);
+      setDetailLocation({ kind: 'sprint' });
+      return;
+    }
+    setSprintId(requestedLocation.sprintId);
+    if (requestedLocation.kind === 'sprint') {
+      setSelectedRevisionId(null);
+      setDetailLocation({ kind: 'sprint' });
+      return;
+    }
+    setSelectedRevisionId(requestedLocation.revisionId);
+    if (requestedLocation.kind === 'sprint_planner_activity') {
+      setDetailLocation({
+        kind: 'sprint_planner_activity_group',
+        revisionId: requestedLocation.revisionId,
+        sprintPlannerActivityId: requestedLocation.sprintPlannerActivityId,
+      });
+      return;
+    }
+    setDetailLocation({
+      kind: 'work_unit',
+      revisionId: requestedLocation.revisionId,
+      sprintPlannerActivityId: requestedLocation.sprintPlannerActivityId,
+      workUnitId: requestedLocation.workUnitId,
+      origin: 'sprint_planner_activity_group',
+    });
+  }, [requestedLocation]);
   return {
     epicId,
     sprintId,
     selectedRevisionId,
     detailLocation,
-    openTarget(target: EpicOverviewNavigationTarget) {
-      setEpicId(target.epicId);
-      if (target.kind === 'epic') {
-        setSprintId(null);
-        setSelectedRevisionId(null);
-        setDetailLocation({ kind: 'sprint' });
-        return;
-      }
-      setSprintId(target.sprintId);
-      setSelectedRevisionId(target.revisionId);
-      setDetailLocation(
-        target.kind === 'sprint'
-          ? { kind: 'sprint' }
-          : target.kind === 'sprint_planner_activity'
-            ? {
-                kind: 'sprint_planner_activity_group',
-                revisionId: target.revisionId,
-                sprintPlannerActivityId: target.sprintPlannerActivityId,
-              }
-            : {
-                kind: 'work_unit',
-                revisionId: target.revisionId,
-                sprintPlannerActivityId: target.sprintPlannerActivityId,
-                workUnitId: target.workUnitId,
-                origin: 'sprint_planner_activity_group',
-              },
-      );
+    openEpic(id: string) {
+      setEpicId(id);
+      setSprintId(null);
+      setSelectedRevisionId(null);
+      setDetailLocation({ kind: 'sprint' });
     },
     openSprint(id: string, revisionId: string) {
       setSprintId(id);

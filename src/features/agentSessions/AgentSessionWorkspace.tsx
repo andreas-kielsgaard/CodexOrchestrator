@@ -1,7 +1,5 @@
 import { Check, ClipboardCopy } from 'lucide-react';
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import type { AgentIdentity } from '../../application/agentSessions';
-import { AgentIdentityMarker } from './AgentIdentityMarker';
+import { useEffect, useState, type ReactNode } from 'react';
 import { ConversationViewport } from './ConversationViewport';
 import {
   browserAgentSessionClipboard,
@@ -13,10 +11,6 @@ import type { AgentSessionWorkspaceController } from './useAgentSessionControlle
 export interface AgentSessionPresentation {
   readonly showHeader?: boolean;
   readonly ariaLabel?: string;
-  readonly identityHeader?: Readonly<{
-    readonly agentIdentity?: AgentIdentity;
-    readonly title: string;
-  }>;
   readonly emptyState?: Readonly<{ heading: string; guidance: string }>;
   readonly composer?: Readonly<{
     readonly messageLabel?: string;
@@ -31,39 +25,18 @@ export interface AgentSessionWorkspaceProps {
   controller: AgentSessionWorkspaceController;
   readonly presentation?: AgentSessionPresentation;
   readonly clipboard?: AgentSessionClipboard;
-}
-
-const AgentSessionChromeContext = createContext<{
-  readonly actions: ReactNode;
-  readonly settings?: ReactNode;
-}>({ actions: null });
-
-export function AgentSessionHeaderActionsProvider({
-  actions,
-  settings,
-  children,
-}: {
-  readonly actions: ReactNode;
-  readonly settings?: ReactNode;
-  readonly children: ReactNode;
-}) {
-  return (
-    <AgentSessionChromeContext.Provider value={{ actions, settings }}>
-      {children}
-    </AgentSessionChromeContext.Provider>
-  );
+  readonly headerActions?: ReactNode;
 }
 
 export function AgentSessionWorkspace({
   controller,
   presentation = {},
   clipboard = browserAgentSessionClipboard,
+  headerActions,
 }: AgentSessionWorkspaceProps) {
-  const contextualChrome = useContext(AgentSessionChromeContext);
   const active = Boolean(controller.transcript?.activeInvocationId);
   const title = controller.details?.session.title ?? 'New Agent Session';
   const showHeader = presentation.showHeader ?? true;
-  const identityHeader = presentation.identityHeader;
   const [copyState, setCopyState] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle');
   useEffect(() => {
     if (copyState !== 'copied') return;
@@ -108,34 +81,10 @@ export function AgentSessionWorkspace({
   );
   return (
     <section
-      className={`agent-session-workspace${
-        showHeader || identityHeader ? '' : ' agent-session-workspace--header-hidden'
-      }${contextualChrome.settings ? ' agent-session-workspace--with-settings' : ''}`}
+      className={`agent-session-workspace${showHeader ? '' : ' agent-session-workspace--header-hidden'}`}
       aria-label={presentation.ariaLabel ?? title}
     >
-      {identityHeader ? (
-        <header className="agent-session-identity-header">
-          <div className="agent-session-identity-header__title">
-            {identityHeader.agentIdentity && (
-              <AgentIdentityMarker identity={identityHeader.agentIdentity} />
-            )}
-            <h2>
-              {identityHeader.agentIdentity
-                ? `${identityHeader.agentIdentity.name}: ${identityHeader.title}`
-                : identityHeader.title}
-            </h2>
-          </div>
-          <div className="agent-session-identity-header__actions">
-            {contextualChrome.actions}
-            {copyAction}
-            {active && (
-              <span className="working-status" role="status">
-                Working
-              </span>
-            )}
-          </div>
-        </header>
-      ) : showHeader ? (
+      {showHeader && (
         <header className="agent-session-header">
           <div>
             <p className="eyebrow">Agent Session</p>
@@ -151,7 +100,7 @@ export function AgentSessionWorkspace({
               )}
           </div>
           <div className="agent-session-header__actions">
-            {contextualChrome.actions}
+            {headerActions}
             {copyAction}
             {active && (
               <span className="working-status" role="status">
@@ -160,17 +109,9 @@ export function AgentSessionWorkspace({
             )}
           </div>
         </header>
-      ) : (
-        <div className="agent-session-utility-bar">
-          {contextualChrome.actions}
-          {copyAction}
-        </div>
       )}
-      {contextualChrome.settings && (
-        <div className="agent-session-settings">{contextualChrome.settings}</div>
-      )}
+      {!showHeader && <div className="agent-session-utility-bar">{copyAction}</div>}
       <ConversationViewport
-        agentIdentity={identityHeader?.agentIdentity}
         segments={
           controller.transcript
             ? [{ id: controller.transcript.sessionId, transcript: controller.transcript }]

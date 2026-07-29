@@ -1,12 +1,10 @@
-import type { AgentIdentity, AgentSessionClient } from '../application/agentSessions';
-import type { ConversationHarnessManagementSource } from '../application/conversationHarnesses';
+import type { AgentSessionClient } from '../application/agentSessions';
 import { StandaloneAgentSessionScreen } from '../features/agentSessions/AgentSessionScreen';
 import type {
   ArtifactAccessController,
   SprintAutomaticContinuationPolicyController,
   EpicAutomaticContinuationPolicyController,
   EpicInitiationCapability,
-  EpicPlanProposalSnapshot,
   EpicPlanProposalSource,
   EpicPlanningDraftBinding,
   EpicPlanningDraftLifecycleClient,
@@ -21,15 +19,7 @@ import {
 } from '../application/orchestrations';
 import { EpicPlanBuilder, OrchestrationSection } from '../features/orchestrations';
 import type { EmbeddedAgentSessionComposition } from '../features/agentSessions';
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   productOrchestrationPresentationAdapter,
   type OrchestrationPresentationAdapter,
@@ -38,15 +28,12 @@ import { useOrchestrationLoad } from './useOrchestrationLoad';
 import type { ManagedPlanBuilderSessionClient } from '../infrastructure/orchestrations/tauriManagedPlanBuilderSessionClient';
 import { useEpicInitiationConfirmation } from './useEpicInitiationConfirmation';
 import { EpicInitiationConfirmationModal } from './EpicInitiationConfirmationModal';
-
-export type ApplicationSurface = 'epics' | 'agent-sessions' | 'harness-inspector';
+import type { AgentSessionProductLocation } from '../application/agentSessionNavigation';
 
 export interface AppProps {
   readonly agentSessionClient: AgentSessionClient;
   /** Plan Builder alone may use a managed send boundary; ordinary screens keep the generic client. */
   readonly managedPlanBuilderSessionClient?: ManagedPlanBuilderSessionClient;
-  /** Session-owned identity read; assignment and durability remain outside this view. */
-  readonly managedPlanBuilderAgentIdentity?: AgentIdentity;
   readonly orchestrationClient: OrchestrationApplicationClient;
   readonly orchestrationPresentation?: OrchestrationPresentationAdapter;
   readonly orchestrationAgentSessionComposition?: EmbeddedAgentSessionComposition;
@@ -61,11 +48,6 @@ export interface AppProps {
   readonly epicPlanningDraftLifecycleClient?: EpicPlanningDraftLifecycleClient;
   readonly epicPlanProposalSourceForDraft?: (draftId: string) => EpicPlanProposalSource;
   readonly epicInitiationConfirmationClient?: EpicInitiationConfirmationClient;
-  readonly agentSessionHarnessManagementSource?: ConversationHarnessManagementSource;
-  readonly agentIdentityForSession?: (sessionId: string) => AgentIdentity | undefined;
-  /** Present only in an injected development composition; production boot does not expose it. */
-  readonly harnessManagementPreviewSurface?: ReactNode;
-  readonly initialSurface?: ApplicationSurface;
 }
 
 export function App({
@@ -76,7 +58,6 @@ export function App({
       throw new Error('Plan Builder action is unavailable.');
     },
   },
-  managedPlanBuilderAgentIdentity,
   orchestrationClient,
   orchestrationPresentation = productOrchestrationPresentationAdapter,
   orchestrationAgentSessionComposition,
@@ -89,16 +70,14 @@ export function App({
   epicPlanningDraftLifecycleClient,
   epicPlanProposalSourceForDraft,
   epicInitiationConfirmationClient,
-  agentSessionHarnessManagementSource,
-  agentIdentityForSession,
-  harnessManagementPreviewSurface,
-  initialSurface = 'epics',
 }: AppProps) {
-  const [surface, setSurface] = useState<ApplicationSurface>(() =>
-    initialSurface === 'harness-inspector' && !harnessManagementPreviewSurface
-      ? 'epics'
-      : initialSurface,
+  const [surface, setSurface] = useState<'epics' | 'agent-sessions'>('epics');
+  const [selectedAgentSessionId, setSelectedAgentSessionId] = useState<string | null>(null);
+  const [expandedAgentSessionNodes, setExpandedAgentSessionNodes] = useState<ReadonlySet<string>>(
+    () => new Set(),
   );
+  const [requestedProductLocation, setRequestedProductLocation] =
+    useState<AgentSessionProductLocation | null>(null);
   const [orchestrationRoute, setOrchestrationRoute] = useState<'overview' | 'plan-builder'>(
     'overview',
   );
@@ -143,87 +122,33 @@ export function App({
         : epicInitiationCapability,
     [epicInitiationCapability, epicInitiationCapabilityForDraft],
   );
-  const planProposalSnapshot = useSyncExternalStore(
-    planProposalSource.subscribe,
-    planProposalSource.getSnapshot,
-    planProposalSource.getSnapshot,
-  );
-  const initiationCapabilityLoadSequence = useRef(0);
-  const initiationCapabilityLoadTarget = useRef<{
-    readonly draftId: string;
-    readonly proposalSource: EpicPlanProposalSource;
-    readonly proposalSnapshot: EpicPlanProposalSnapshot;
-    readonly promise: Promise<'loaded' | 'failed' | 'superseded'>;
-  } | null>(null);
-  const reconcileInitiationCapability = useCallback(
-    (
-      draftId: string,
-      proposalSource: EpicPlanProposalSource,
-      proposalSnapshot: EpicPlanProposalSnapshot,
-      options: {
-        readonly force?: boolean;
-        readonly loadingReason?: string;
-        readonly failureReason?: string;
-      } = {},
-    ) => {
-      const current = initiationCapabilityLoadTarget.current;
-      if (
-        !options.force &&
-        current?.draftId === draftId &&
-        current.proposalSource === proposalSource &&
-        current.proposalSnapshot === proposalSnapshot
-      )
-        return current.promise;
-
-      const sequence = ++initiationCapabilityLoadSequence.current;
-      setInitiationCapability({
-        status: 'blocked',
-        reason: options.loadingReason ?? 'Loading the current durable Epic Plan Proposal.',
-      });
-      const promise = loadInitiationCapability(draftId).then(
-        (capability) => {
-          if (initiationCapabilityLoadSequence.current !== sequence) return 'superseded' as const;
-          setInitiationCapability(capability);
-          return 'loaded' as const;
-        },
-        () => {
-          if (initiationCapabilityLoadSequence.current !== sequence) return 'superseded' as const;
-          setInitiationCapability({
-            status: 'blocked',
-            reason:
-              options.failureReason ??
-              'The current durable Epic Plan Proposal could not be loaded.',
-          });
-          return 'failed' as const;
-        },
-      );
-      initiationCapabilityLoadTarget.current = {
-        draftId,
-        proposalSource,
-        proposalSnapshot,
-        promise,
-      };
-      return promise;
-    },
-    [loadInitiationCapability],
-  );
   useEffect(() => {
+    let active = true;
     if (!selectedDraft) {
-      initiationCapabilityLoadSequence.current += 1;
-      initiationCapabilityLoadTarget.current = null;
       setInitiationCapability(unavailableEpicInitiationCapability);
-      return;
+      return () => {
+        active = false;
+      };
     }
-    void reconcileInitiationCapability(
-      selectedDraft.draftId,
-      planProposalSource,
-      planProposalSnapshot,
+    setInitiationCapability({
+      status: 'blocked',
+      reason: 'Loading the current durable Epic Plan Proposal.',
+    });
+    void loadInitiationCapability(selectedDraft.draftId).then(
+      (capability) => active && setInitiationCapability(capability),
+      () =>
+        active &&
+        setInitiationCapability({
+          status: 'blocked',
+          reason: 'The current durable Epic Plan Proposal could not be loaded.',
+        }),
     );
-  }, [planProposalSnapshot, planProposalSource, reconcileInitiationCapability, selectedDraft]);
+    return () => {
+      active = false;
+    };
+  }, [loadInitiationCapability, selectedDraft]);
   const confirmInitiation = useCallback(async () => {
     if (selectedDraft) {
-      initiationCapabilityLoadSequence.current += 1;
-      initiationCapabilityLoadTarget.current = null;
       setInitiationCapability({
         status: 'blocked',
         reason: 'Refreshing the confirmed durable Epic initiation.',
@@ -235,38 +160,23 @@ export function App({
     ]);
     let refreshAvailable = orchestrationAvailable && draftsAvailable;
     if (selectedDraft) {
-      const proposalBeforeRefresh = planProposalSource.getSnapshot();
       try {
-        await planProposalSource.refresh();
+        setInitiationCapability(await loadInitiationCapability(selectedDraft.draftId));
       } catch {
         refreshAvailable = false;
+        setInitiationCapability({
+          status: 'blocked',
+          reason: 'Current initiation state is unavailable after durable confirmation.',
+        });
       }
-      const proposalAfterRefresh = planProposalSource.getSnapshot();
-      const capabilityResult = await reconcileInitiationCapability(
-        selectedDraft.draftId,
-        planProposalSource,
-        proposalAfterRefresh,
-        {
-          force: proposalBeforeRefresh === proposalAfterRefresh,
-          loadingReason: 'Refreshing the confirmed durable Epic initiation.',
-          failureReason: 'Current initiation state is unavailable after durable confirmation.',
-        },
-      );
-      if (capabilityResult !== 'loaded') {
-        refreshAvailable = false;
-        if (capabilityResult === 'failed')
-          setInitiationCapability({
-            status: 'blocked',
-            reason: 'Current initiation state is unavailable after durable confirmation.',
-          });
-      }
-      if (proposalAfterRefresh.kind === 'unavailable') refreshAvailable = false;
+      await planProposalSource.refresh();
+      if (planProposalSource.getSnapshot().kind === 'unavailable') refreshAvailable = false;
     }
     if (!refreshAvailable) throw new Error('post-confirmation application refresh unavailable');
   }, [
+    loadInitiationCapability,
     orchestrationLoad,
     planProposalSource,
-    reconcileInitiationCapability,
     refreshDrafts,
     selectedDraft,
   ]);
@@ -276,13 +186,9 @@ export function App({
   );
   const refreshInitiationFailure = useCallback(async () => {
     if (!selectedDraft) return;
-    await reconcileInitiationCapability(
-      selectedDraft.draftId,
-      planProposalSource,
-      planProposalSource.getSnapshot(),
-      { force: true },
-    );
-  }, [planProposalSource, reconcileInitiationCapability, selectedDraft]);
+    const refreshedCapability = await loadInitiationCapability(selectedDraft.draftId);
+    setInitiationCapability(refreshedCapability);
+  }, [loadInitiationCapability, selectedDraft]);
   const bindCreatedPlanBuilderSession = useCallback(
     async (sessionId: string, title: string) => {
       if (!epicPlanningDraftLifecycleClient) return;
@@ -311,6 +217,31 @@ export function App({
     },
     [epicPlanningDraftLifecycleClient, refreshDrafts],
   );
+  const openStandaloneAgentSession = useCallback((sessionId: string) => {
+    setSelectedAgentSessionId(sessionId);
+    setSurface('agent-sessions');
+  }, []);
+  const navigateToProductLocation = useCallback(
+    (location: AgentSessionProductLocation) => {
+      if (location.kind === 'epic_planning_draft') {
+        const draft = planningDrafts.find(
+          ({ epicPlanningDraftId }) => epicPlanningDraftId === location.epicPlanningDraftId,
+        );
+        if (!draft) return;
+        setSelectedDraft({
+          draftId: draft.epicPlanningDraftId,
+          sessionId: draft.agentSessionId,
+          ...(draft.title ? { title: draft.title } : {}),
+        });
+        setOrchestrationRoute('plan-builder');
+      } else {
+        setRequestedProductLocation(location);
+        setOrchestrationRoute('overview');
+      }
+      setSurface('epics');
+    },
+    [planningDrafts],
+  );
 
   return (
     <div className="primary-app-shell">
@@ -337,28 +268,16 @@ export function App({
         >
           Agent Sessions
         </button>
-        {harnessManagementPreviewSurface && (
-          <button
-            className={surface === 'harness-inspector' ? 'active' : undefined}
-            type="button"
-            aria-current={surface === 'harness-inspector' ? 'page' : undefined}
-            onClick={() => setSurface('harness-inspector')}
-          >
-            Harness Management
-          </button>
-        )}
       </nav>
       {surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
         <EpicPlanBuilder
           agentSessionClient={managedPlanBuilderSessionClient}
-          agentIdentity={managedPlanBuilderAgentIdentity}
           proposalSource={planProposalSource}
           initiationCapability={initiationCapability}
           onRequestInitiation={confirmation.requestButton}
           onInitiationFailure={refreshInitiationFailure}
           draft={selectedDraft ?? undefined}
           lifecycleClient={epicPlanningDraftLifecycleClient}
-          harnessManagementSource={agentSessionHarnessManagementSource}
           onSessionCreated={bindCreatedPlanBuilderSession}
           onBack={() => {
             setSelectedDraft(null);
@@ -387,15 +306,22 @@ export function App({
             setSelectedDraft(null);
             setOrchestrationRoute('plan-builder');
           }}
-        />
-      ) : surface === 'agent-sessions' ? (
-        <StandaloneAgentSessionScreen
-          client={agentSessionClient}
-          harnessManagementSource={agentSessionHarnessManagementSource}
-          agentIdentityForSession={agentIdentityForSession}
+          requestedLocation={requestedProductLocation}
+          onOpenAgentSession={openStandaloneAgentSession}
         />
       ) : (
-        harnessManagementPreviewSurface
+        <StandaloneAgentSessionScreen
+          client={agentSessionClient}
+          orchestrations={
+            orchestrationLoad.kind === 'ready' ? orchestrationLoad.readModels : undefined
+          }
+          planningDrafts={planningDrafts}
+          selectedSessionId={selectedAgentSessionId}
+          onSelectedSessionChange={setSelectedAgentSessionId}
+          expandedNodeIds={expandedAgentSessionNodes}
+          onExpandedNodeIdsChange={setExpandedAgentSessionNodes}
+          onNavigateToProduct={navigateToProductLocation}
+        />
       )}
     </div>
   );
@@ -411,6 +337,8 @@ function OrchestrationSurface({
   onPlanEpic,
   planningDrafts,
   onOpenDraft,
+  requestedLocation,
+  onOpenAgentSession,
 }: {
   readonly load: ReturnType<typeof useOrchestrationLoad>;
   readonly presentation: OrchestrationPresentationAdapter;
@@ -421,6 +349,8 @@ function OrchestrationSurface({
   readonly onPlanEpic: () => void;
   readonly planningDrafts: readonly EpicPlanningDraftSummary[];
   readonly onOpenDraft: (draft: EpicPlanningDraftSummary) => void;
+  readonly requestedLocation: AgentSessionProductLocation | null;
+  readonly onOpenAgentSession: (sessionId: string) => void;
 }) {
   if (load.kind === 'ready')
     return (
@@ -433,6 +363,8 @@ function OrchestrationSurface({
         onPlanEpic={onPlanEpic}
         planningDrafts={planningDrafts}
         onOpenPlanningDraft={onOpenDraft}
+        requestedLocation={requestedLocation}
+        onOpenAgentSession={onOpenAgentSession}
       />
     );
   const copy =
