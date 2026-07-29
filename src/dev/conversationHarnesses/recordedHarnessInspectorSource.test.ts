@@ -263,6 +263,125 @@ describe('recorded Harness Management source', () => {
     });
   });
 
+  it('keeps Harness revision proposals, Session overrides, and user preference separately owned', async () => {
+    const source = createRecordedHarnessManagementSource();
+    const initial = await source.load({ sessionId: recordedHarnessInspectorSessionId });
+    expect(initial.kind).toBe('available');
+    if (initial.kind !== 'available' || !source.dispatch) return;
+    const version = initial.snapshot.versionControl.versions.find(({ revision }) => revision === 3);
+    expect(version).toBeDefined();
+    if (!version) return;
+    const proposal = {
+      models: version.configuration.runtime.models,
+      defaultModel: 'gpt-5.6-sol',
+      defaultReasoning: 'high' as const,
+    };
+
+    const proposed = await source.dispatch({
+      sessionId: recordedHarnessInspectorSessionId,
+      command: { kind: 'save_model_proposal', revision: 3, policy: proposal },
+    });
+    expect(proposed.kind).toBe('available');
+    if (proposed.kind !== 'available') return;
+    expect(
+      proposed.snapshot.versionControl.versions.find(({ revision }) => revision === 3)
+        ?.configuration.runtime.defaultModel,
+    ).toBeNull();
+    expect(proposed.snapshot.modelChoices.revisionProposals).toContainEqual(
+      expect.objectContaining({ revision: 3, policy: proposal, dirty: true }),
+    );
+    expect(proposed.snapshot.modelChoices.userPreference).toMatchObject({
+      lastUsedModel: 'gpt-5.6-terra',
+      lastUsedReasoning: 'high',
+      support: 'recorded_preference_register',
+    });
+    expect(proposed.snapshot.modelChoices.resolvedForCurrentSession).toMatchObject({
+      model: 'gpt-5.6-sol',
+      reasoning: 'high',
+      source: 'revision_proposal',
+    });
+
+    const overridePolicy = {
+      ...proposal,
+      defaultModel: 'gpt-5.6-terra',
+      defaultReasoning: 'xhigh' as const,
+    };
+    const overridden = await source.dispatch({
+      sessionId: recordedHarnessInspectorSessionId,
+      command: {
+        kind: 'set_session_model_override',
+        override: { enabled: true, policy: overridePolicy },
+      },
+    });
+    expect(overridden.kind).toBe('available');
+    if (overridden.kind !== 'available') return;
+    expect(overridden.snapshot.modelChoices.sessionOverride).toEqual({
+      enabled: true,
+      policy: overridePolicy,
+    });
+    expect(overridden.snapshot.modelChoices.resolvedForCurrentSession).toMatchObject({
+      model: 'gpt-5.6-terra',
+      reasoning: 'xhigh',
+      source: 'session_override',
+    });
+    expect(
+      overridden.snapshot.modelChoices.revisionProposals.find(({ revision }) => revision === 3)
+        ?.policy,
+    ).toEqual(proposal);
+
+    const restored = await source.dispatch({
+      sessionId: recordedHarnessInspectorSessionId,
+      command: { kind: 'set_session_model_override', override: null },
+    });
+    expect(restored.kind).toBe('available');
+    if (restored.kind !== 'available') return;
+    expect(restored.snapshot.modelChoices.sessionOverride).toBeNull();
+    expect(restored.snapshot.modelChoices.resolvedForCurrentSession).toMatchObject({
+      model: 'gpt-5.6-sol',
+      reasoning: 'high',
+      source: 'revision_proposal',
+    });
+  });
+
+  it('records a Session identity change without mutating the Harness name pool', async () => {
+    const changes: string[] = [];
+    const source = createRecordedHarnessManagementSource({
+      onSessionIdentityChange(identity) {
+        changes.push(`${identity.name}:${identity.visualIdentity.token}`);
+      },
+    });
+    const initial = await source.load({ sessionId: recordedHarnessInspectorSessionId });
+    expect(initial.kind).toBe('available');
+    if (initial.kind !== 'available' || !source.dispatch) return;
+    const permittedNames =
+      initial.snapshot.versionControl.versions[0].configuration.identity.permittedAgentNames;
+    const runner = initial.snapshot.catalogs.agentVisualIdentities.items.find(
+      ({ identity }) => identity.token === 'runner_route',
+    );
+    expect(runner).toBeDefined();
+    if (!runner) return;
+
+    const changed = await source.dispatch({
+      sessionId: recordedHarnessInspectorSessionId,
+      command: {
+        kind: 'update_session_identity',
+        name: 'Mildred Plot Twist',
+        visualIdentity: runner.identity,
+      },
+    });
+    expect(changed.kind).toBe('available');
+    if (changed.kind !== 'available') return;
+    expect(changed.snapshot.agentIdentity).toMatchObject({
+      name: 'Mildred Plot Twist',
+      visualIdentity: runner.identity,
+      assignment: { kind: 'recorded_preview' },
+    });
+    expect(
+      changed.snapshot.versionControl.versions[0].configuration.identity.permittedAgentNames,
+    ).toEqual(permittedNames);
+    expect(changes).toEqual(['Mildred Plot Twist:runner_route']);
+  });
+
   it('does not invent a relationship for an unbound Session', async () => {
     const source = createRecordedHarnessManagementSource();
     await expect(source.load({ sessionId: 'not-bound' })).resolves.toEqual({

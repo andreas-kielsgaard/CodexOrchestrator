@@ -120,16 +120,20 @@
 
 .agent-session-header {
   display: flex;
-  align-items: start;
+  align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 19px clamp(18px, 4vw, 52px) 15px;
+  gap: 12px;
+  padding: 11px clamp(16px, 3vw, 38px);
   border-bottom: 1px solid #e0e4dd;
   background: rgb(255 253 248 / 82%);
 }
 
 .agent-session-header h2 {
-  font-size: 1.15rem;
+  overflow: hidden;
+  font-size: 0.98rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-list-item__identity {
@@ -141,8 +145,8 @@
 
 .agent-session-header__identity {
   display: grid;
+  flex: 1 1 auto;
   min-width: 0;
-  gap: 3px;
 }
 
 .agent-session-header__title-row {
@@ -168,6 +172,7 @@
 }
 
 .agent-session-header__actions {
+  flex: 0 0 auto;
   gap: 10px;
 }
 
@@ -754,7 +759,7 @@
   }
 
   .agent-session-header {
-    padding: 13px 16px;
+    padding: 10px 16px;
   }
 
   .agent-session-scroll-region,

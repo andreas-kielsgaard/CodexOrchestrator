@@ -1,10 +1,14 @@
 import { SlidersHorizontal } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { isValidElement, useEffect, useState, type ReactNode } from 'react';
 import type {
   ConversationHarnessManagementCommand,
   ConversationHarnessManagementRead,
   ConversationHarnessManagementSource,
 } from '../../application/conversationHarnesses';
+import {
+  AgentSessionHeaderActionsProvider,
+  AgentSessionWorkspace,
+} from '../agentSessions/AgentSessionWorkspace';
 import { ConversationHarnessManagement } from './ConversationHarnessInspector';
 import './harnessInspector.css';
 
@@ -25,6 +29,8 @@ export function HarnessAwareAgentSessionPane({
   const [read, setRead] = useState<ConversationHarnessManagementRead | null>(null);
   const [commandPending, setCommandPending] = useState(false);
   const [commandError, setCommandError] = useState<string | null>(null);
+  const childOwnsHeaderActions =
+    isValidElement(children) && children.type === AgentSessionWorkspace;
 
   useEffect(() => {
     setMode('conversation');
@@ -93,19 +99,34 @@ export function HarnessAwareAgentSessionPane({
   return (
     <div className="harness-aware-agent-session-pane">
       {mode === 'conversation' ? (
-        <>
-          {boundRead?.kind === 'available' && (
-            <button
-              className="harness-aware-agent-session-pane__inspect"
-              type="button"
-              onClick={openInspector}
-            >
-              <SlidersHorizontal size={15} aria-hidden="true" />
-              Manage harness
-            </button>
+        <AgentSessionHeaderActionsProvider
+          actions={
+            boundRead?.kind === 'available' ? (
+              <button
+                className="harness-aware-agent-session-pane__inspect"
+                type="button"
+                onClick={openInspector}
+              >
+                <SlidersHorizontal size={15} aria-hidden="true" />
+                Manage harness
+              </button>
+            ) : null
+          }
+        >
+          {!childOwnsHeaderActions && boundRead?.kind === 'available' && (
+            <div className="agent-session-utility-bar">
+              <button
+                className="harness-aware-agent-session-pane__inspect"
+                type="button"
+                onClick={openInspector}
+              >
+                <SlidersHorizontal size={15} aria-hidden="true" />
+                Manage harness
+              </button>
+            </div>
           )}
           {children}
-        </>
+        </AgentSessionHeaderActionsProvider>
       ) : (
         <ConversationHarnessManagement
           read={read}

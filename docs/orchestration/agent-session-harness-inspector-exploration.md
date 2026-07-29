@@ -40,11 +40,13 @@ The prototype records these product concepts without claiming production effects
 - **Edit harness** creates a cached draft from the viewed committed revision; **Edit draft** reopens
   it. Commit and Push appear only in edit mode. Commit, Push, single-Session changes, and bulk
   changes require plain-language confirmation.
-- **Prompt prefix** has two editable views over one stored value. Markdown is a formatted
-  content-editable surface with a formatting toolbar; Plain is raw Markdown without a toolbar. The
-  rich surface is not reconstructed after its own keystrokes, preserving its caret. The prefix is
-  intended for the first Session prompt and future Harness-aware context compression; that
-  compression routine is deferred.
+- **Prompt prefix** has two editable views over one stored value. Markdown uses MDXEditor 4.1.1,
+  backed by Lexical 0.48, for a formatted WYSIWYG surface and maintained block/inline commands;
+  Plain is raw Markdown without a toolbar. MDXEditor reads and emits Markdown directly. Both modes
+  remain mounted, and external Plain changes use the editor's supported `setMarkdown` method rather
+  than replacing the component after each rich-editor keystroke. The prefix is intended for the
+  first Session prompt and future Harness-aware context compression; that compression routine is
+  deferred.
 - Skills are summarized as **Always applicable**, **Initial ingestion only**, and **Available**.
   The first two are selected whitelists. Only Available discovery can use whitelist or blacklist
   policy. A fuzzy-search dialog reads the complete checked-in product skill catalog and owns
@@ -55,9 +57,13 @@ The prototype records these product concepts without claiming production effects
   labels do not turn schemas into prompt text: provider-owned schemas remain runtime-owned and
   runtime reconfiguration remains unimplemented.
 - Each recorded model has an allowed flag and an accessible minimum/maximum reasoning range, with
-  optional defaults constrained to an allowed model and range. No application capability catalog
-  exists, so the UI labels its two-model source as a recorded catalog rather than complete runtime
-  discovery.
+  optional defaults constrained to an allowed model and range. A revision can fix that policy in
+  its atomic configuration or reference a separately owned adjustable proposal. The current
+  Session override and the user's global last-used preference are separate recorded records, not
+  revision mutations. Invalidating a default uses a provisional valid fallback and remembers the
+  prior choice only until it becomes valid again or the user makes a manual default choice, changes
+  model, saves/commits, or leaves the edit boundary. No application capability catalog exists, so
+  the UI labels its two-model source as a recorded catalog rather than complete runtime discovery.
 - Current sandbox and authority values are inspectable and editable in the recorded working copy.
   Expanded sandbox customization is deferred.
 - The permitted-name summary opens the Harness-specific subset. Editing changes only the recorded
@@ -68,6 +74,17 @@ The prototype records these product concepts without claiming production effects
   next-prompt actions. Push moves the recorded local active revision and queues relevant recorded
   Sessions only for their next prompt. The separate Harness Management update panel and all
   interrupt controls are removed.
+
+### Editor dependency and bundle impact
+
+The recorded prototype adds MIT-licensed `@mdxeditor/editor` 4.1.1 and its Lexical 0.48.0
+foundation. The editor is dynamically imported only after Harness edit mode opens. The validated
+production build measures the initial Agent Session JavaScript chunk at 429.40 kB (129.86 kB gzip);
+the deferred editor contributes a separate 612.00 kB (201.73 kB gzip) JavaScript chunk and 47.75 kB
+(8.01 kB gzip) stylesheet. Vite therefore retains its greater-than-500 kB warning for the deferred
+editor chunk. `npm audit --omit=dev` reports no production vulnerabilities. The full development
+graph reports five high-severity advisories in the ESLint/minimatch/brace-expansion toolchain; the
+suggested automated fix would require a breaking ESLint upgrade and was not applied.
 
 The product-backed source remains read-only. It adapts the existing managed Plan Builder query to
 the same view contract, reports the session binding as untracked, supplies no agent identity, and
@@ -111,9 +128,18 @@ The proposed product-owned schema is intentionally revision-oriented:
 - `harness_revisions`: revision id, Harness key, Git commit object id, canonical configuration
   digest, complete configuration, creator, and commit time.
 - `harness_active_refs`: one local active revision and optimistic revision per Harness key.
+- `harness_revision_model_proposals`: optional adjustable model/range proposal keyed by Harness
+  revision, with proposal revision, dirty state, editor, and update time. This record exists only
+  when the immutable Harness revision does not fix the policy.
 - `agent_session_harness_bindings`: one row per session with Harness key, applied revision, optional
   desired revision, update strategy and state, stable agent name, applied visual token and accent,
   name-pool provenance, assignment revision/time, and optimistic binding revision.
+- `agent_session_model_overrides`: an optional enabled override per Session, stored independently
+  from both the Harness revision and its adjustable proposal.
+- `user_model_preferences`: the application-owned durable register of each user's globally
+  last-used model/reasoning choice and update time. A human-created Session's **Caller choice**
+  consults this register; the recorded adapter demonstrates the shape but does not implement
+  production durability.
 - `agent_invocation_harness_resolutions`: invocation id, session id, Harness key, applied revision,
   configuration digest, agent identity, resolution time, launch outcome, and update-consumption
   facts.
@@ -130,6 +156,23 @@ identity, applied revision, desired revision, update state, and assignment prove
 planning and independent Agent Sessions query this result. Every invocation path must resolve the
 same binding immediately before preparation, regardless of which view created or reopened the
 session, and record the resolution before launch.
+
+Model choice resolution is also application-owned and deterministic:
+
+1. The applied Harness revision supplies immutable constraints when **Version specific** is on;
+   otherwise its separately stored current proposal supplies the constraints.
+2. An enabled current-Session override may narrow those applicable constraints and supply a
+   Session default. It cannot widen a version-specific Harness policy.
+3. An explicit valid Session default wins, followed by an explicit valid Harness
+   revision/proposal default.
+4. **Caller choice** uses the durable user last-used preference when it is within the effective
+   allowed model/range.
+5. Otherwise the application chooses a provisional valid fallback and records the owning source in
+   the invocation resolution.
+
+UI fallback memory is transient interaction state only. It never overwrites any of the four owned
+records. It is discarded on manual default/model choice, save or commit, navigation, or another
+ownership boundary.
 
 ## Update delivery boundaries
 
@@ -194,14 +237,15 @@ owns enforcement. Deeper hook configuration UI remains deferred.
 - Recorded-source tests cover committed version history, the complete checked-in skill catalog,
   recorded tool/model catalogs, full atomic configuration, stable identity across draft pool
   changes, historical-push status, local draft/commit/Push transitions, next-prompt queues,
-  default-range validation, and ensure free-form completion criteria remain proposed rather than
-  connected or exposed.
+  default-range validation, separately owned revision proposals/Session overrides/user preference,
+  Session-only identity changes, and ensure free-form completion criteria remain proposed rather
+  than connected or exposed.
 - Pane tests cover Session-version entry, state cues, cached edits and dirty state across remount,
   Markdown/Plain editing, permitted-name inspection/editing without Session renaming, full
   selected-skill details and applicability changes, fuzzy catalog search/add/change/remove,
   consistent skill/tool labels, policy counts and collapse state, accessible range controls,
-  confirmation-gated commit/Push/single/bulk next-prompt changes, and truthful proposed hook
-  presentation.
+  provisional default restore/discard behavior, confirmation-gated commit/Push/single/bulk
+  next-prompt changes, and truthful proposed hook presentation.
 - Product-source tests ensure completion criteria remain not connected without a typed hook
   registry result.
 - App and planning tests cover the same source and identity presentation across Harness Management,

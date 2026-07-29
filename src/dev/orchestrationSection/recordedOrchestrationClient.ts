@@ -17,6 +17,7 @@ import type { AppProps } from '../../app/App';
 import {
   createRecordedAgentSessionClient,
   createRecordedAgentSessionStore,
+  updateRecordedAgentSessionIdentity,
 } from '../agentSessions';
 import { recordedLocalEpicPlanProposalSource } from './recordedEpicPlanProposalSource';
 import {
@@ -57,7 +58,15 @@ export const recordedDevelopmentOrchestrationPresentation: OrchestrationPresenta
 export function createRecordedDevelopmentApplicationComposition(options?: {
   readonly initialSurface?: AppProps['initialSurface'];
 }): AppProps {
-  const harnessManagementSource = createRecordedHarnessManagementSource();
+  const harnessManagementSource = createRecordedHarnessManagementSource({
+    onSessionIdentityChange(identity) {
+      updateRecordedAgentSessionIdentity(
+        recordedDevelopmentAgentSessionClient.store,
+        recordedHarnessInspectorSessionId,
+        identity,
+      );
+    },
+  });
   return {
     agentSessionClient: recordedDevelopmentAgentSessionClient,
     orchestrationClient: recordedDevelopmentOrchestrationClient,

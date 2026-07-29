@@ -1,5 +1,5 @@
 import { Check, ClipboardCopy } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { ConversationViewport } from './ConversationViewport';
 import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
 import {
@@ -28,11 +28,28 @@ export interface AgentSessionWorkspaceProps {
   readonly clipboard?: AgentSessionClipboard;
 }
 
+const AgentSessionHeaderActionsContext = createContext<ReactNode>(null);
+
+export function AgentSessionHeaderActionsProvider({
+  actions,
+  children,
+}: {
+  readonly actions: ReactNode;
+  readonly children: ReactNode;
+}) {
+  return (
+    <AgentSessionHeaderActionsContext.Provider value={actions}>
+      {children}
+    </AgentSessionHeaderActionsContext.Provider>
+  );
+}
+
 export function AgentSessionWorkspace({
   controller,
   presentation = {},
   clipboard = browserAgentSessionClipboard,
 }: AgentSessionWorkspaceProps) {
+  const contextualHeaderActions = useContext(AgentSessionHeaderActionsContext);
   const active = Boolean(controller.transcript?.activeInvocationId);
   const identity = controller.details?.session.agentIdentity ?? null;
   const title = identity
@@ -89,7 +106,6 @@ export function AgentSessionWorkspace({
       {showHeader && (
         <header className="agent-session-header">
           <div className="agent-session-header__identity">
-            <p className="eyebrow">Agent Session</p>
             <div className="agent-session-header__title-row">
               {identity && <AgentIdentityBadge identity={identity} compact />}
               <h2>{title}</h2>
@@ -105,6 +121,7 @@ export function AgentSessionWorkspace({
               )}
           </div>
           <div className="agent-session-header__actions">
+            {contextualHeaderActions}
             {copyAction}
             {active && (
               <span className="working-status" role="status">
@@ -114,7 +131,12 @@ export function AgentSessionWorkspace({
           </div>
         </header>
       )}
-      {!showHeader && <div className="agent-session-utility-bar">{copyAction}</div>}
+      {!showHeader && (
+        <div className="agent-session-utility-bar">
+          {contextualHeaderActions}
+          {copyAction}
+        </div>
+      )}
       <ConversationViewport
         agentIdentity={identity}
         segments={

@@ -106,9 +106,11 @@ function buildSnapshot(
       versions: [
         {
           revision: profile.version,
+          label: 'Compiled Harness profile',
           status: 'inspected',
           configuration,
           activeSessionCount: 0,
+          queuedSessionCount: 0,
           committedAt: '',
         },
       ],
@@ -122,6 +124,21 @@ function buildSnapshot(
       executingPreviousInvocation: false,
       reason: 'This session association does not yet record an applied or desired harness version.',
     },
+    modelChoices: {
+      revisionProposals: [],
+      sessionOverride: null,
+      userPreference: {
+        support: 'not_connected',
+        lastUsedModel: null,
+        lastUsedReasoning: null,
+        reason: 'The product user model-preference register is not connected to this query.',
+      },
+      resolvedForCurrentSession: {
+        model: null,
+        reasoning: null,
+        source: 'not_connected',
+      },
+    },
   };
 }
 
@@ -131,6 +148,11 @@ function buildCatalogs(profile: ProductProfile): HarnessConfigurationCatalogs {
       source: 'not_connected',
       items: [],
       reason: 'The product Agent name pool is not connected to this query.',
+    },
+    agentVisualIdentities: {
+      source: 'not_connected',
+      items: [],
+      reason: 'The product Agent visual identity catalog is not connected to this query.',
     },
     skills: {
       source: 'not_connected',
@@ -201,6 +223,7 @@ function buildConfiguration(
         'Applicability labels describe exposure timing only. Tool schemas remain runtime-owned and are not ingested as skill text.',
     },
     runtime: {
+      modelPolicyMode: 'version_specific',
       models: catalogs.models.items.map((model) => ({
         modelId: model.id,
         allowed: true,

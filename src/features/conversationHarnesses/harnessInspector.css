@@ -27,11 +27,8 @@
 }
 
 .harness-aware-agent-session-pane__inspect {
-  position: absolute;
-  z-index: 4;
-  top: 18px;
-  right: calc(clamp(18px, 4vw, 52px) + 172px);
   display: inline-flex;
+  flex: 0 0 auto;
   min-height: 30px;
   align-items: center;
   gap: 6px;
@@ -51,11 +48,6 @@
   background: #eef1eb;
 }
 
-.epic-plan-builder__conversation .harness-aware-agent-session-pane__inspect {
-  top: 4px;
-  right: 173px;
-}
-
 .harness-management {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -65,9 +57,11 @@
 }
 
 .harness-management__toolbar {
-  display: flex;
+  display: grid;
   min-width: 0;
   min-height: 54px;
+  grid-template-columns: auto minmax(110px, 1fr) minmax(210px, 300px) auto;
+  grid-template-areas: 'back context version actions';
   align-items: center;
   gap: 9px;
   padding: 7px 12px;
@@ -75,10 +69,13 @@
   background: #fffdf8;
 }
 
-.harness-management button,
 .harness-management select,
 .harness-management input {
   font: inherit;
+}
+
+.harness-management button {
+  font-family: inherit;
 }
 
 .harness-management__back,
@@ -103,7 +100,12 @@
 }
 
 .harness-management__back {
+  grid-area: back;
+  min-height: 28px;
+  padding-right: 6px;
+  padding-left: 6px;
   border-color: transparent;
+  font-size: 0.74rem;
   white-space: nowrap;
 }
 
@@ -117,18 +119,12 @@
 }
 
 .harness-management__toolbar-context {
+  grid-area: context;
   display: flex;
-  min-width: 120px;
-  flex: 1;
+  min-width: 0;
   align-items: center;
   gap: 6px;
   overflow: hidden;
-}
-
-.harness-management__toolbar-context > span:not(.agent-identity-badge, .harness-management__badge) {
-  color: #718077;
-  font-size: 0.68rem;
-  font-weight: 750;
 }
 
 .harness-management__toolbar-context > strong {
@@ -140,7 +136,9 @@
 }
 
 .harness-management__version-select {
-  display: inline-flex;
+  grid-area: version;
+  display: flex;
+  min-width: 0;
   align-items: center;
   gap: 6px;
   color: #647169;
@@ -149,7 +147,8 @@
 }
 
 .harness-management__version-select select {
-  min-width: 154px;
+  width: 100%;
+  min-width: 0;
   min-height: 34px;
   padding: 0 28px 0 8px;
   border: 1px solid #c4cec4;
@@ -162,8 +161,12 @@
 
 .harness-management__toolbar-actions {
   display: flex;
+  min-width: 0;
   flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
+  grid-area: actions;
 }
 
 .harness-management__toolbar-actions button.is-primary,
@@ -213,11 +216,14 @@
 
 .harness-management__version-cues {
   display: flex;
-  min-height: 30px;
   flex-wrap: wrap;
   align-items: center;
   gap: 7px;
   margin-bottom: 11px;
+}
+
+.harness-management__version-cues:empty {
+  display: none;
 }
 
 .harness-management__version-cues button {
@@ -277,13 +283,70 @@
   align-items: start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 9px;
+}
+
+.harness-management__card-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .harness-management__card > header h2 {
   color: #283a30;
   font-size: 0.88rem;
   font-weight: 820;
+}
+
+.harness-management__help {
+  position: relative;
+  display: inline-flex;
+}
+
+.harness-management__help > button {
+  display: grid;
+  width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #718077;
+  cursor: help;
+  place-items: center;
+}
+
+.harness-management__help > button:hover,
+.harness-management__help > button:focus-visible {
+  background: #edf1ee;
+  color: #245f48;
+}
+
+.harness-management__help > span[role='tooltip'] {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: -8px;
+  z-index: 8;
+  width: min(320px, 70vw);
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: #17211b;
+  color: #fffdf8;
+  font-size: 0.68rem;
+  font-weight: 650;
+  line-height: 1.4;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.harness-management__help:focus-within > span[role='tooltip'],
+.harness-management__help:hover > span[role='tooltip'] {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .harness-management__card > header p {
@@ -351,7 +414,10 @@
   align-content: center;
   gap: 2px;
   min-width: 0;
+  min-height: 92px;
   padding: 8px 10px;
+  border-radius: 7px;
+  background: #fafaf6;
 }
 
 .harness-management__identity-policy-button {
@@ -370,7 +436,7 @@
 }
 
 .harness-management__identity-policy > div > span,
-.harness-management__identity-policy-button > span {
+.harness-management__identity-policy-button > span:not(.agent-identity-badge) {
   color: #718077;
   font-size: 0.62rem;
   font-weight: 800;
@@ -381,6 +447,18 @@
 .harness-management__identity-policy-button > strong {
   color: #2e4036;
   font-size: 0.74rem;
+}
+
+.harness-management__identity-policy-button.is-agent > .agent-identity-badge {
+  min-width: 0;
+  color: inherit;
+  text-transform: none;
+}
+
+.harness-management__identity-policy-button.is-agent
+  > .agent-identity-badge
+  .agent-identity-badge__text {
+  min-width: 0;
 }
 
 .harness-management__identity-policy > div > small,
@@ -485,14 +563,14 @@
 .harness-management__policy-group ul {
   display: grid;
   gap: 1px;
-  padding: 0 9px 8px 31px;
+  padding: 0 7px 5px 25px;
   list-style: none;
 }
 
 .harness-management__policy-group li {
   display: grid;
   gap: 2px;
-  padding: 7px 8px;
+  padding: 5px 7px;
   border-top: 1px solid #e7eae5;
 }
 
@@ -542,68 +620,126 @@
   line-height: 1.4;
 }
 
-.harness-management__model-list {
+.harness-management__model-policy {
   display: grid;
-  gap: 8px;
+  gap: 9px;
 }
 
-.harness-management__model {
-  display: grid;
-  grid-template-columns: minmax(180px, 0.65fr) minmax(290px, 1.35fr);
+.harness-management__model-mode,
+.harness-management__model-owner > header,
+.harness-management__model-resolution {
+  display: flex;
+  min-width: 0;
   align-items: center;
-  gap: 20px;
-  padding: 11px;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.harness-management__model-mode,
+.harness-management__model-owner {
+  padding: 9px 10px;
   border: 1px solid #e0e4dd;
   border-radius: 8px;
   background: #fafaf6;
 }
 
-.harness-management__model-allow {
-  display: flex;
-  align-items: center;
-  gap: 9px;
+.harness-management__model-mode > span,
+.harness-management__model-owner > header > span,
+.harness-management__model-resolution > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
 }
 
-.harness-management__model-allow input {
-  width: 16px;
-  height: 16px;
+.harness-management__model-mode strong,
+.harness-management__model-owner > header strong,
+.harness-management__model-resolution strong {
+  color: #2e4036;
+  font-size: 0.72rem;
+}
+
+.harness-management__model-mode small,
+.harness-management__model-owner > header small,
+.harness-management__model-resolution small,
+.harness-management__model-resolution em {
+  color: #718077;
+  font-size: 0.62rem;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.harness-management__model-mode > input,
+.harness-management__compact-toggle input {
+  width: 14px;
+  height: 14px;
   flex: 0 0 auto;
   margin: 0;
   accent-color: #39745a;
 }
 
-.harness-management__model-allow span {
+.harness-management__compact-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #526058;
+  font-size: 0.64rem;
+  font-weight: 800;
+}
+
+.harness-management__model-list {
   display: grid;
-  gap: 2px;
-  min-width: 0;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.harness-management__model {
+  display: grid;
+  grid-template-columns: minmax(145px, 0.55fr) minmax(240px, 1.45fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 6px 8px;
+  border: 1px solid #e0e4dd;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.harness-management__model-allow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.harness-management__model-allow input {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: #39745a;
 }
 
 .harness-management__model-allow strong {
+  overflow: hidden;
   color: #2e4036;
-  font-size: 0.76rem;
-}
-
-.harness-management__model-allow small {
-  color: #718077;
-  font-size: 0.64rem;
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .harness-management__reasoning-range {
   display: grid;
-  gap: 4px;
+  min-width: 0;
+  grid-template-columns: auto minmax(130px, 1fr);
+  align-items: center;
+  gap: 7px;
 }
 
-.harness-management__reasoning-range > div:first-child {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  color: #647169;
-  font-size: 0.66rem;
-}
-
-.harness-management__reasoning-range > div:first-child strong {
+.harness-management__reasoning-range output {
   color: #35463c;
+  font-size: 0.62rem;
+  font-weight: 800;
   text-transform: capitalize;
+  white-space: nowrap;
 }
 
 .harness-management__dual-range {
@@ -659,6 +795,7 @@
 }
 
 .harness-management__range-labels {
+  grid-column: 2;
   display: flex;
   justify-content: space-between;
   color: #7a867f;
@@ -667,9 +804,15 @@
 }
 
 .harness-management__defaults {
-  margin-top: 10px;
-  padding-top: 10px;
+  margin-top: 7px;
+  padding-top: 7px;
   border-top: 1px solid #e1e5df;
+}
+
+.harness-management__model-resolution {
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: #eef2ed;
 }
 
 .harness-management__hook-list {
@@ -728,6 +871,15 @@
 .harness-management__history td {
   padding: 9px;
   border-bottom: 1px solid #e7eae5;
+}
+
+.harness-management__history tbody tr {
+  cursor: pointer;
+}
+
+.harness-management__history tbody tr:focus-visible {
+  outline: 2px solid #39745a;
+  outline-offset: -2px;
 }
 
 .harness-management__history tr.is-selected td {
@@ -1044,11 +1196,98 @@
   font-size: 0.74rem;
 }
 
+.harness-management__modal.is-identity {
+  display: grid;
+  width: min(760px, 100%);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+.harness-management__identity-dialog-fields {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(240px, 1.2fr);
+  gap: 9px;
+  margin-bottom: 9px;
+}
+
+.harness-management__identity-name-results {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.harness-management__identity-name-results button {
+  min-width: 0;
+  min-height: 30px;
+  justify-content: flex-start;
+  overflow: hidden;
+  font-size: 0.67rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harness-management__identity-name-results button[aria-pressed='true'] {
+  border-color: #39745a;
+  background: #e9f1e9;
+  color: #245f48;
+}
+
+.harness-management__visual-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid #e0e4dd;
+  border-radius: 7px;
+}
+
+.harness-management__visual-choices legend {
+  padding: 0 4px;
+  color: #526058;
+  font-size: 0.67rem;
+  font-weight: 800;
+}
+
+.harness-management__visual-choices label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  color: #405148;
+  font-size: 0.67rem;
+}
+
+.harness-management__visual-choices input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
+.harness-management__visual-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
 .harness-management__modal-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 18px;
+}
+
+@container (max-width: 900px) {
+  .harness-management__toolbar.is-editing {
+    grid-template-columns: auto minmax(0, 1fr) minmax(210px, 290px);
+    grid-template-areas:
+      'back context version'
+      'actions actions actions';
+  }
+
+  .harness-management__toolbar.is-editing .harness-management__toolbar-actions {
+    width: 100%;
+  }
 }
 
 @container (max-width: 760px) {
@@ -1063,52 +1302,41 @@
     grid-template-columns: 1fr;
   }
 
-  .harness-management__toolbar {
-    flex-wrap: wrap;
+  .harness-management__toolbar,
+  .harness-management__toolbar.is-editing {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      'back context'
+      'version version'
+      'actions actions';
   }
 
-  .harness-management__toolbar-context {
-    order: 3;
-    min-width: 0;
-    flex-basis: 100%;
-  }
-
-  .harness-management__version-select {
-    margin-left: auto;
+  .harness-management__toolbar-actions {
+    width: 100%;
   }
 }
 
 @container (max-width: 520px) {
-  .harness-aware-agent-session-pane__inspect {
-    top: 72px;
-    right: auto;
-    left: 16px;
-  }
-
   .harness-aware-agent-session-pane > .agent-session-workspace .agent-session-header {
-    min-height: 118px;
     flex-wrap: wrap;
   }
 
   .harness-aware-agent-session-pane > .agent-session-workspace .agent-session-header__actions {
-    margin-left: auto;
+    width: 100%;
+    justify-content: flex-start;
     flex-wrap: wrap;
   }
 
-  .epic-plan-builder__conversation .harness-aware-agent-session-pane__inspect {
-    top: 43px;
-    right: 9px;
-  }
-
   .epic-plan-builder__conversation .agent-session-utility-bar {
-    min-height: 80px;
-    align-items: start;
+    min-height: 46px;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 8px;
   }
 
   .harness-management__toolbar-actions {
-    display: grid;
     width: 100%;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    justify-content: flex-start;
   }
 
   .harness-management__toolbar-actions button {
@@ -1118,7 +1346,6 @@
 
   .harness-management__version-select {
     width: 100%;
-    margin-left: 0;
   }
 
   .harness-management__version-select select {
@@ -1153,9 +1380,32 @@
   .harness-management__name-grid {
     grid-template-columns: 1fr;
   }
+
+  .harness-management__identity-dialog-fields,
+  .harness-management__identity-name-results {
+    grid-template-columns: 1fr;
+  }
+
+  .harness-management__reasoning-range {
+    grid-template-columns: 1fr;
+  }
+
+  .harness-management__range-labels {
+    grid-column: 1;
+  }
+
+  .harness-management__model-resolution {
+    align-items: start;
+    flex-direction: column;
+  }
 }
 
 @media (max-width: 620px) {
+  .harness-management__help > span[role='tooltip'] {
+    left: -100px;
+    width: min(280px, calc(100vw - 56px));
+  }
+
   .harness-inspector-development {
     padding: 0;
   }

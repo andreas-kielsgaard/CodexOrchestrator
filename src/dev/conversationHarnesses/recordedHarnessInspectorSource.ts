@@ -1,4 +1,8 @@
-import type { AgentRuntimeEventDto, AgentSessionDetailsDto } from '../../application/agentSessions';
+import type {
+  AgentIdentityDto,
+  AgentRuntimeEventDto,
+  AgentSessionDetailsDto,
+} from '../../application/agentSessions';
 import {
   assignAgentIdentity,
   harnessAgentNamePools,
@@ -13,6 +17,7 @@ import type {
   ConversationHarnessManagementSource,
   HarnessConfigurationCatalogs,
   HarnessEffectiveConfiguration,
+  HarnessModelPolicy,
   HarnessReasoningLevel,
 } from '../../application/conversationHarnesses';
 import catalogJson from '../../../src-tauri/src/orchestration/conversation_harness_catalog.json';
@@ -74,7 +79,9 @@ const recordedAgentIdentity = assignAgentIdentity({
 export const recordedHarnessInspectorSessionDetails: AgentSessionDetailsDto =
   createRecordedHarnessInspectorSession();
 
-export function createRecordedHarnessManagementSource(): ConversationHarnessManagementSource {
+export function createRecordedHarnessManagementSource(options?: {
+  onSessionIdentityChange?(identity: AgentIdentityDto): void;
+}): ConversationHarnessManagementSource {
   let snapshot: ConversationHarnessManagementSnapshot | null = null;
   return {
     async load({ sessionId }) {
@@ -94,6 +101,8 @@ export function createRecordedHarnessManagementSource(): ConversationHarnessMana
       try {
         snapshot ??= buildSnapshot(sessionId);
         snapshot = reduceRecordedCommand(snapshot, command);
+        if (command.kind === 'update_session_identity' && snapshot.agentIdentity)
+          options?.onSessionIdentityChange?.(snapshot.agentIdentity);
         return availableRead(snapshot);
       } catch (error) {
         return {
@@ -138,7 +147,7 @@ function buildSnapshot(sessionId: string): ConversationHarnessManagementSnapshot
   const catalogs = buildCatalogs();
   const currentConfiguration = buildConfiguration(profile, sandbox, catalogs);
   validateConfiguration(currentConfiguration, catalogs);
-  return {
+  const snapshot: ConversationHarnessManagementSnapshot = {
     sessionId,
     harnessKey: profile.key,
     agentIdentity: recordedAgentIdentity,
@@ -150,16 +159,20 @@ function buildSnapshot(sessionId: string): ConversationHarnessManagementSnapshot
       versions: [
         {
           revision: recordedSessionAppliedRevision,
+          label: 'Session binding baseline',
           status: 'pushed',
           configuration: currentConfiguration,
           activeSessionCount: 1,
+          queuedSessionCount: 0,
           committedAt: '2026-07-11T14:30:00.000Z',
         },
         {
           revision: profile.version,
+          label: 'Next-prompt update policy',
           status: 'pushed',
           configuration: currentConfiguration,
           activeSessionCount: 0,
+          queuedSessionCount: 0,
           committedAt: recordedAt,
         },
       ],
@@ -173,7 +186,37 @@ function buildSnapshot(sessionId: string): ConversationHarnessManagementSnapshot
       executingPreviousInvocation: false,
       reason: 'This Session is still using the previous pushed version.',
     },
+    modelChoices: {
+      revisionProposals: [
+        {
+          revision: recordedSessionAppliedRevision,
+          policy: policyFromConfiguration(currentConfiguration),
+          dirty: false,
+          updatedAt: recordedAt,
+        },
+        {
+          revision: profile.version,
+          policy: policyFromConfiguration(currentConfiguration),
+          dirty: false,
+          updatedAt: recordedAt,
+        },
+      ],
+      sessionOverride: null,
+      userPreference: {
+        support: 'recorded_preference_register',
+        lastUsedModel: 'gpt-5.6-terra',
+        lastUsedReasoning: 'high',
+        reason:
+          'Recorded user preference only; production user-preference persistence is not connected.',
+      },
+      resolvedForCurrentSession: {
+        model: null,
+        reasoning: null,
+        source: 'provisional_fallback',
+      },
+    },
   };
+  return withResolvedModelChoice(snapshot);
 }
 
 function buildCatalogs(): HarnessConfigurationCatalogs {
@@ -197,6 +240,24 @@ function buildCatalogs(): HarnessConfigurationCatalogs {
       source: 'product_default_pool',
       items: productDefaultAgentNames,
       reason: 'Harness subsets are selected from the 100-name product pool.',
+    },
+    agentVisualIdentities: {
+      source: 'product_visual_catalog',
+      items: [
+        {
+          identity: harnessVisualIdentities.epic_plan_builder,
+          label: 'Drafting compass',
+        },
+        {
+          identity: harnessVisualIdentities.epic_bootstrap_generator,
+          label: 'Bootstrap package',
+        },
+        {
+          identity: harnessVisualIdentities.epic_runner,
+          label: 'Runner route',
+        },
+      ],
+      reason: 'Recorded product visual identities for Harness-backed Agent Sessions.',
     },
     skills: {
       source: 'checked_in_product_catalog',
@@ -274,6 +335,7 @@ function buildConfiguration(
         'Applicability labels describe exposure timing only. Tool schemas remain runtime-owned and are not ingested as skill text.',
     },
     runtime: {
+      modelPolicyMode: 'adjustable_proposal',
       models: catalogs.models.items.map((model) => ({
         modelId: model.id,
         allowed: profile.runtime.model === null || profile.runtime.model === model.id,
@@ -350,52 +412,165 @@ function reduceRecordedCommand(
           ...snapshot.versionControl.versions,
           {
             revision,
+            label: 'Harness settings update',
             status: 'committed',
             configuration: workingCopy.configuration,
             activeSessionCount: 0,
+            queuedSessionCount: 0,
             committedAt: new Date().toISOString(),
           },
         ],
       },
+      modelChoices: {
+        ...snapshot.modelChoices,
+        revisionProposals:
+          workingCopy.configuration.runtime.modelPolicyMode === 'adjustable_proposal'
+            ? [
+                ...snapshot.modelChoices.revisionProposals,
+                {
+                  revision,
+                  policy: policyFromConfiguration(workingCopy.configuration),
+                  dirty: false,
+                  updatedAt: new Date().toISOString(),
+                },
+              ]
+            : snapshot.modelChoices.revisionProposals,
+      },
     };
+  }
+  if (command.kind === 'update_session_identity') {
+    const name = command.name.trim();
+    if (!name) throw new Error('Agent name must not be blank.');
+    const visualCatalog = snapshot.catalogs.agentVisualIdentities.items;
+    if (
+      !visualCatalog.some(
+        (entry) =>
+          entry.identity.token === command.visualIdentity.token &&
+          entry.identity.accent === command.visualIdentity.accent,
+      )
+    )
+      throw new Error('Agent visual identity is outside the recorded product catalog.');
+    if (!snapshot.agentIdentity) throw new Error('This Session has no Agent identity to update.');
+    return {
+      ...snapshot,
+      agentIdentity: {
+        ...snapshot.agentIdentity,
+        name,
+        visualIdentity: command.visualIdentity,
+        assignment: {
+          ...snapshot.agentIdentity.assignment,
+          kind: 'recorded_preview',
+          assignedAt: new Date().toISOString(),
+        },
+      },
+    };
+  }
+  if (command.kind === 'save_model_proposal') {
+    const version = findVersion(snapshot, command.revision);
+    if (version.configuration.runtime.modelPolicyMode !== 'adjustable_proposal')
+      throw new Error('This Harness revision fixes its model policy.');
+    validateModelPolicy(command.policy, snapshot.catalogs);
+    return withResolvedModelChoice({
+      ...snapshot,
+      modelChoices: {
+        ...snapshot.modelChoices,
+        revisionProposals: [
+          ...snapshot.modelChoices.revisionProposals.filter(
+            (proposal) => proposal.revision !== command.revision,
+          ),
+          {
+            revision: command.revision,
+            policy: command.policy,
+            dirty: true,
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    });
+  }
+  if (command.kind === 'set_session_model_override') {
+    if (command.override?.enabled) {
+      validateModelPolicy(command.override.policy, snapshot.catalogs);
+      validatePolicyNarrowing(
+        command.override.policy,
+        policyForAppliedRevision(snapshot),
+        snapshot.catalogs,
+      );
+    }
+    return withResolvedModelChoice({
+      ...snapshot,
+      modelChoices: {
+        ...snapshot.modelChoices,
+        sessionOverride: command.override,
+      },
+    });
   }
   if (command.kind === 'push') {
     findVersion(snapshot, command.revision);
-    return {
-      ...snapshot,
-      versionControl: {
-        ...snapshot.versionControl,
-        pushedRevision: command.revision,
-        versions: snapshot.versionControl.versions.map((version) =>
-          version.revision === command.revision ? { ...version, status: 'pushed' } : version,
-        ),
+    return queueRecordedVersion(
+      {
+        ...snapshot,
+        versionControl: {
+          ...snapshot.versionControl,
+          pushedRevision: command.revision,
+          versions: snapshot.versionControl.versions.map((version) =>
+            version.revision === command.revision ? { ...version, status: 'pushed' } : version,
+          ),
+        },
       },
-      sessionBinding: {
-        ...snapshot.sessionBinding,
-        state: snapshot.sessionBinding.appliedRevision === command.revision ? 'current' : 'queued',
-        desiredRevision:
-          snapshot.sessionBinding.appliedRevision === command.revision ? null : command.revision,
-        reason:
-          snapshot.sessionBinding.appliedRevision === command.revision
-            ? 'This Session already uses the pushed version.'
-            : 'The pushed version is queued for this Session at its next prompt.',
-      },
-    };
+      command.revision,
+      'all_relevant_sessions',
+      'The pushed version is queued for every relevant Session at its next prompt.',
+    );
   }
-  findVersion(snapshot, command.revision);
+  return queueRecordedVersion(
+    snapshot,
+    command.revision,
+    command.scope,
+    command.scope === 'current_session'
+      ? 'The selected version is queued for this Session at its next prompt.'
+      : 'The selected version is queued for every relevant Session at its next prompt.',
+  );
+}
+
+function queueRecordedVersion(
+  snapshot: ConversationHarnessManagementSnapshot,
+  revision: number,
+  scope: 'current_session' | 'all_relevant_sessions',
+  queuedReason: string,
+): ConversationHarnessManagementSnapshot {
+  findVersion(snapshot, revision);
+  const alreadyApplied = snapshot.sessionBinding.appliedRevision === revision;
+  const relevant = snapshot.sessionBinding.relevantSessionCount ?? 0;
+  const currentDesiredRevision = snapshot.sessionBinding.desiredRevision;
+  const versions = snapshot.versionControl.versions.map((version) => {
+    let queuedSessionCount = version.queuedSessionCount;
+    if (
+      currentDesiredRevision !== null &&
+      version.revision === currentDesiredRevision &&
+      currentDesiredRevision !== revision
+    )
+      queuedSessionCount = Math.max(0, queuedSessionCount - 1);
+    if (version.revision === revision) {
+      queuedSessionCount = alreadyApplied
+        ? 0
+        : scope === 'all_relevant_sessions'
+          ? Math.max(0, relevant - version.activeSessionCount)
+          : Math.max(1, queuedSessionCount);
+    }
+    return { ...version, queuedSessionCount };
+  });
   return {
     ...snapshot,
+    versionControl: {
+      ...snapshot.versionControl,
+      versions,
+    },
     sessionBinding: {
       ...snapshot.sessionBinding,
-      state: snapshot.sessionBinding.appliedRevision === command.revision ? 'current' : 'queued',
-      desiredRevision:
-        snapshot.sessionBinding.appliedRevision === command.revision ? null : command.revision,
-      reason:
-        snapshot.sessionBinding.appliedRevision === command.revision
-          ? 'This Session already uses the selected version.'
-          : command.scope === 'current_session'
-            ? 'The selected version is queued for this Session at its next prompt.'
-            : 'The selected version is queued for every relevant Session at its next prompt.',
+      state: alreadyApplied ? 'current' : 'queued',
+      desiredRevision: alreadyApplied ? null : revision,
+      reason: alreadyApplied ? 'This Session already uses the selected version.' : queuedReason,
     },
   };
 }
@@ -426,10 +601,15 @@ function validateConfiguration(
     toolNames,
     'tool',
   );
-  const modelConfigurations = new Map(
-    configuration.runtime.models.map((model) => [model.modelId, model]),
-  );
-  if (modelConfigurations.size !== configuration.runtime.models.length)
+  validateModelPolicy(policyFromConfiguration(configuration), catalogs);
+}
+
+function validateModelPolicy(
+  policy: HarnessModelPolicy,
+  catalogs: HarnessConfigurationCatalogs,
+): void {
+  const modelConfigurations = new Map(policy.models.map((model) => [model.modelId, model]));
+  if (modelConfigurations.size !== policy.models.length)
     throw new Error('Model options must be unique.');
   for (const model of catalogs.models.items) {
     const configurationModel = modelConfigurations.get(model.id);
@@ -439,23 +619,164 @@ function validateConfiguration(
     if (minimum < 0 || maximum < minimum)
       throw new Error(`Reasoning range is invalid for ${model.label}.`);
   }
-  if (configuration.runtime.defaultModel) {
-    const defaultModel = modelConfigurations.get(configuration.runtime.defaultModel);
+  if (policy.defaultModel) {
+    const defaultModel = modelConfigurations.get(policy.defaultModel);
     if (!defaultModel?.allowed) throw new Error('Default model must be allowed.');
-    if (configuration.runtime.defaultReasoning) {
-      const catalogModel = catalogs.models.items.find(
-        (model) => model.id === configuration.runtime.defaultModel,
-      );
+    if (policy.defaultReasoning) {
+      const catalogModel = catalogs.models.items.find((model) => model.id === policy.defaultModel);
       if (!catalogModel) throw new Error('Default model is outside the recorded catalog.');
-      const selected = catalogModel.reasoningLevels.indexOf(configuration.runtime.defaultReasoning);
+      const selected = catalogModel.reasoningLevels.indexOf(policy.defaultReasoning);
       const minimum = catalogModel.reasoningLevels.indexOf(defaultModel.minReasoning);
       const maximum = catalogModel.reasoningLevels.indexOf(defaultModel.maxReasoning);
       if (selected < minimum || selected > maximum)
         throw new Error('Default reasoning must fit the default model range.');
     }
-  } else if (configuration.runtime.defaultReasoning) {
+  } else if (policy.defaultReasoning) {
     throw new Error('Choose a default model before choosing default reasoning.');
   }
+}
+
+function validatePolicyNarrowing(
+  candidate: HarnessModelPolicy,
+  base: HarnessModelPolicy,
+  catalogs: HarnessConfigurationCatalogs,
+): void {
+  for (const candidateModel of candidate.models) {
+    if (!candidateModel.allowed) continue;
+    const baseModel = base.models.find((model) => model.modelId === candidateModel.modelId);
+    if (!baseModel?.allowed)
+      throw new Error('A Session override cannot enable a model outside its Harness policy.');
+    const levels =
+      catalogs.models.items.find((model) => model.id === candidateModel.modelId)?.reasoningLevels ??
+      [];
+    if (
+      levels.indexOf(candidateModel.minReasoning) < levels.indexOf(baseModel.minReasoning) ||
+      levels.indexOf(candidateModel.maxReasoning) > levels.indexOf(baseModel.maxReasoning)
+    )
+      throw new Error('A Session override cannot widen its Harness reasoning range.');
+  }
+}
+
+function policyForAppliedRevision(
+  snapshot: ConversationHarnessManagementSnapshot,
+): HarnessModelPolicy {
+  const applied = findVersion(snapshot, snapshot.sessionBinding.appliedRevision ?? -1);
+  const proposal = snapshot.modelChoices.revisionProposals.find(
+    (candidate) => candidate.revision === applied.revision,
+  );
+  return applied.configuration.runtime.modelPolicyMode === 'adjustable_proposal' && proposal
+    ? proposal.policy
+    : policyFromConfiguration(applied.configuration);
+}
+
+function policyFromConfiguration(configuration: HarnessEffectiveConfiguration): HarnessModelPolicy {
+  return {
+    models: configuration.runtime.models,
+    defaultModel: configuration.runtime.defaultModel,
+    defaultReasoning: configuration.runtime.defaultReasoning,
+  };
+}
+
+function withResolvedModelChoice(
+  snapshot: ConversationHarnessManagementSnapshot,
+): ConversationHarnessManagementSnapshot {
+  const applied = snapshot.versionControl.versions.find(
+    (version) => version.revision === snapshot.sessionBinding.appliedRevision,
+  );
+  if (!applied)
+    return {
+      ...snapshot,
+      modelChoices: {
+        ...snapshot.modelChoices,
+        resolvedForCurrentSession: {
+          model: null,
+          reasoning: null,
+          source: 'not_connected',
+        },
+      },
+    };
+  const proposal = snapshot.modelChoices.revisionProposals.find(
+    (candidate) => candidate.revision === applied.revision,
+  );
+  const revisionPolicy =
+    applied.configuration.runtime.modelPolicyMode === 'adjustable_proposal' && proposal
+      ? proposal.policy
+      : policyFromConfiguration(applied.configuration);
+  const sessionPolicy = snapshot.modelChoices.sessionOverride?.enabled
+    ? snapshot.modelChoices.sessionOverride.policy
+    : null;
+  const constraints = sessionPolicy ?? revisionPolicy;
+  const explicitModel = sessionPolicy?.defaultModel ?? revisionPolicy.defaultModel;
+  const explicitReasoning = sessionPolicy?.defaultReasoning ?? revisionPolicy.defaultReasoning;
+  if (
+    explicitModel &&
+    isAllowedChoice(explicitModel, explicitReasoning, constraints, snapshot.catalogs)
+  )
+    return {
+      ...snapshot,
+      modelChoices: {
+        ...snapshot.modelChoices,
+        resolvedForCurrentSession: {
+          model: explicitModel,
+          reasoning: explicitReasoning,
+          source: sessionPolicy
+            ? 'session_override'
+            : applied.configuration.runtime.modelPolicyMode === 'adjustable_proposal'
+              ? 'revision_proposal'
+              : 'harness_revision',
+        },
+      },
+    };
+  const preference = snapshot.modelChoices.userPreference;
+  if (
+    preference.lastUsedModel &&
+    isAllowedChoice(
+      preference.lastUsedModel,
+      preference.lastUsedReasoning,
+      constraints,
+      snapshot.catalogs,
+    )
+  )
+    return {
+      ...snapshot,
+      modelChoices: {
+        ...snapshot.modelChoices,
+        resolvedForCurrentSession: {
+          model: preference.lastUsedModel,
+          reasoning: preference.lastUsedReasoning,
+          source: 'user_preference',
+        },
+      },
+    };
+  const fallbackModel = constraints.models.find((model) => model.allowed);
+  return {
+    ...snapshot,
+    modelChoices: {
+      ...snapshot.modelChoices,
+      resolvedForCurrentSession: {
+        model: fallbackModel?.modelId ?? null,
+        reasoning: fallbackModel?.minReasoning ?? null,
+        source: 'provisional_fallback',
+      },
+    },
+  };
+}
+
+function isAllowedChoice(
+  modelId: string,
+  reasoning: HarnessReasoningLevel | null,
+  policy: HarnessModelPolicy,
+  catalogs: HarnessConfigurationCatalogs,
+): boolean {
+  const model = policy.models.find((candidate) => candidate.modelId === modelId);
+  if (!model?.allowed) return false;
+  if (reasoning === null) return true;
+  const catalog = catalogs.models.items.find((candidate) => candidate.id === modelId);
+  if (!catalog) return false;
+  const selected = catalog.reasoningLevels.indexOf(reasoning);
+  const minimum = catalog.reasoningLevels.indexOf(model.minReasoning);
+  const maximum = catalog.reasoningLevels.indexOf(model.maxReasoning);
+  return selected >= minimum && selected <= maximum;
 }
 
 function assertUniqueCatalogItems(

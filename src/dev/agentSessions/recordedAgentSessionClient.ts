@@ -1,4 +1,5 @@
 import type {
+  AgentIdentityDto,
   AgentInvocationDto,
   AgentInvocationStatusDto,
   AgentRuntimeEventDto,
@@ -35,6 +36,28 @@ export function createRecordedAgentSessionStore(
       ]),
     ),
   };
+}
+
+export function updateRecordedAgentSessionIdentity(
+  store: RecordedAgentSessionStore,
+  sessionId: string,
+  identity: AgentIdentityDto,
+): void {
+  const details = store.sessions.get(sessionId);
+  if (!details) return;
+  const session = {
+    ...details.session,
+    agentIdentity: clone(identity),
+    updatedAt: identity.assignment.assignedAt,
+  };
+  store.sessions.set(sessionId, { ...details, session });
+  const existingSummary = store.summaries.get(sessionId);
+  if (existingSummary)
+    store.summaries.set(sessionId, {
+      ...existingSummary,
+      agentIdentity: clone(identity),
+      updatedAt: session.updatedAt,
+    });
 }
 
 export interface RecordedAgentSessionClientOptions {

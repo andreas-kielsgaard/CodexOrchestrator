@@ -5,6 +5,17 @@ export type HarnessToolPolicy = 'every_invocation' | 'initial_invocation' | 'ava
 export type HarnessDiscoveryPolicy = 'whitelist' | 'blacklist';
 export type HarnessReasoningLevel = 'low' | 'medium' | 'high' | 'xhigh';
 
+export interface HarnessModelPolicy {
+  readonly models: readonly {
+    readonly modelId: string;
+    readonly allowed: boolean;
+    readonly minReasoning: HarnessReasoningLevel;
+    readonly maxReasoning: HarnessReasoningLevel;
+  }[];
+  readonly defaultModel: string | null;
+  readonly defaultReasoning: HarnessReasoningLevel | null;
+}
+
 export interface HarnessEffectiveConfiguration {
   readonly identity: {
     readonly name: string;
@@ -36,14 +47,10 @@ export interface HarnessEffectiveConfiguration {
     readonly schemaBoundary: string;
   };
   readonly runtime: {
-    readonly models: readonly {
-      readonly modelId: string;
-      readonly allowed: boolean;
-      readonly minReasoning: HarnessReasoningLevel;
-      readonly maxReasoning: HarnessReasoningLevel;
-    }[];
-    readonly defaultModel: string | null;
-    readonly defaultReasoning: HarnessReasoningLevel | null;
+    readonly modelPolicyMode: 'version_specific' | 'adjustable_proposal';
+    readonly models: HarnessModelPolicy['models'];
+    readonly defaultModel: HarnessModelPolicy['defaultModel'];
+    readonly defaultReasoning: HarnessModelPolicy['defaultReasoning'];
     readonly sandbox: 'read_only' | 'workspace_write' | 'danger_full_access';
     readonly sandboxOptions: readonly ('read_only' | 'workspace_write' | 'danger_full_access')[];
     readonly approvalPolicy: 'never';
@@ -73,6 +80,14 @@ export interface HarnessConfigurationCatalogs {
   readonly agentNames: {
     readonly source: 'product_default_pool' | 'not_connected';
     readonly items: readonly string[];
+    readonly reason: string;
+  };
+  readonly agentVisualIdentities: {
+    readonly source: 'product_visual_catalog' | 'not_connected';
+    readonly items: readonly {
+      readonly identity: AgentVisualIdentityDto;
+      readonly label: string;
+    }[];
     readonly reason: string;
   };
   readonly skills: {
@@ -106,9 +121,11 @@ export interface HarnessConfigurationCatalogs {
 
 export interface ConversationHarnessVersion {
   readonly revision: number;
+  readonly label: string;
   readonly status: 'pushed' | 'committed' | 'inspected';
   readonly configuration: HarnessEffectiveConfiguration;
   readonly activeSessionCount: number;
+  readonly queuedSessionCount: number;
   readonly committedAt: string;
 }
 
@@ -136,6 +153,35 @@ export interface ConversationHarnessManagementSnapshot {
     readonly relevantSessionCount: number | null;
     readonly executingPreviousInvocation: boolean;
     readonly reason: string;
+  };
+  readonly modelChoices: {
+    readonly revisionProposals: readonly {
+      readonly revision: number;
+      readonly policy: HarnessModelPolicy;
+      readonly dirty: boolean;
+      readonly updatedAt: string;
+    }[];
+    readonly sessionOverride: {
+      readonly enabled: boolean;
+      readonly policy: HarnessModelPolicy;
+    } | null;
+    readonly userPreference: {
+      readonly support: 'recorded_preference_register' | 'not_connected';
+      readonly lastUsedModel: string | null;
+      readonly lastUsedReasoning: HarnessReasoningLevel | null;
+      readonly reason: string;
+    };
+    readonly resolvedForCurrentSession: {
+      readonly model: string | null;
+      readonly reasoning: HarnessReasoningLevel | null;
+      readonly source:
+        | 'harness_revision'
+        | 'revision_proposal'
+        | 'session_override'
+        | 'user_preference'
+        | 'provisional_fallback'
+        | 'not_connected';
+    };
   };
 }
 
@@ -178,6 +224,23 @@ export type ConversationHarnessManagementCommand =
       readonly kind: 'queue_version';
       readonly revision: number;
       readonly scope: 'current_session' | 'all_relevant_sessions';
+    }
+  | {
+      readonly kind: 'update_session_identity';
+      readonly name: string;
+      readonly visualIdentity: AgentVisualIdentityDto;
+    }
+  | {
+      readonly kind: 'save_model_proposal';
+      readonly revision: number;
+      readonly policy: HarnessModelPolicy;
+    }
+  | {
+      readonly kind: 'set_session_model_override';
+      readonly override: {
+        readonly enabled: boolean;
+        readonly policy: HarnessModelPolicy;
+      } | null;
     };
 
 /** Every view uses this session-keyed boundary; components never select a harness or revision. */

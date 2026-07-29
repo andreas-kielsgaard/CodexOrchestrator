@@ -4,18 +4,21 @@ import {
   ChevronDown,
   ChevronRight,
   GitCommitHorizontal,
+  HelpCircle,
   Pencil,
   Search,
   Upload,
   Users,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { AgentVisualIdentityDto } from '../../application/agentSessions';
 import type {
   ConversationHarnessManagementCommand,
   ConversationHarnessManagementRead,
   ConversationHarnessManagementSnapshot,
   HarnessEffectiveConfiguration,
+  HarnessModelPolicy,
   HarnessReasoningLevel,
   HarnessSkillPolicy,
   HarnessToolPolicy,
@@ -100,16 +103,32 @@ function AvailableHarnessManagement({
   const [selected, setSelected] = useState<VersionSelection>(`version:${initialRevision}`);
   const [editMode, setEditMode] = useState(false);
   const [catalogDialog, setCatalogDialog] = useState<CatalogDialog>(null);
+  const [identityDialogOpen, setIdentityDialogOpen] = useState(false);
   const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const initialSectionConfiguration =
+    snapshot.versionControl.versions.find((version) => version.revision === initialRevision)
+      ?.configuration ?? snapshot.versionControl.versions.at(-1)?.configuration;
   const [skillSections, setSkillSections] = useState({
-    always_applicable: true,
-    initial_ingestion: true,
+    always_applicable: Boolean(
+      initialSectionConfiguration?.skills.items.some(
+        (skill) => skill.policy === 'always_applicable',
+      ),
+    ),
+    initial_ingestion: Boolean(
+      initialSectionConfiguration?.skills.items.some(
+        (skill) => skill.policy === 'initial_ingestion',
+      ),
+    ),
     available: false,
   });
   const [toolSections, setToolSections] = useState({
-    every_invocation: true,
-    initial_invocation: true,
+    every_invocation: Boolean(
+      initialSectionConfiguration?.tools.items.some((tool) => tool.policy === 'every_invocation'),
+    ),
+    initial_invocation: Boolean(
+      initialSectionConfiguration?.tools.items.some((tool) => tool.policy === 'initial_invocation'),
+    ),
     available: false,
   });
   const highestRevision = Math.max(
@@ -148,6 +167,39 @@ function AvailableHarnessManagement({
     selected === 'draft' && snapshot.workingCopy
       ? snapshot.workingCopy.configuration
       : (selectedVersion?.configuration ?? fallbackVersion?.configuration);
+  const skillAlwaysCount =
+    configuration?.skills.items.filter((item) => item.policy === 'always_applicable').length ?? 0;
+  const skillInitialCount =
+    configuration?.skills.items.filter((item) => item.policy === 'initial_ingestion').length ?? 0;
+  const toolAlwaysCount =
+    configuration?.tools.items.filter((item) => item.policy === 'every_invocation').length ?? 0;
+  const toolInitialCount =
+    configuration?.tools.items.filter((item) => item.policy === 'initial_invocation').length ?? 0;
+  const priorityCounts = {
+    skillAlways: skillAlwaysCount,
+    skillInitial: skillInitialCount,
+    toolAlways: toolAlwaysCount,
+    toolInitial: toolInitialCount,
+  };
+  const previousPriorityCounts = useRef(priorityCounts);
+
+  useEffect(() => {
+    const previous = previousPriorityCounts.current;
+    if (previous.skillAlways === 0 && skillAlwaysCount > 0)
+      setSkillSections((current) => ({ ...current, always_applicable: true }));
+    if (previous.skillInitial === 0 && skillInitialCount > 0)
+      setSkillSections((current) => ({ ...current, initial_ingestion: true }));
+    if (previous.toolAlways === 0 && toolAlwaysCount > 0)
+      setToolSections((current) => ({ ...current, every_invocation: true }));
+    if (previous.toolInitial === 0 && toolInitialCount > 0)
+      setToolSections((current) => ({ ...current, initial_invocation: true }));
+    previousPriorityCounts.current = {
+      skillAlways: skillAlwaysCount,
+      skillInitial: skillInitialCount,
+      toolAlways: toolAlwaysCount,
+      toolInitial: toolInitialCount,
+    };
+  }, [skillAlwaysCount, skillInitialCount, toolAlwaysCount, toolInitialCount]);
 
   if (!configuration)
     return (
@@ -178,28 +230,32 @@ function AvailableHarnessManagement({
 
   const selectedIsCurrentPushed =
     selectedRevision !== null && selectedRevision === snapshot.versionControl.pushedRevision;
+  const pushedVersion = snapshot.versionControl.versions.find(
+    (version) => version.revision === snapshot.versionControl.pushedRevision,
+  );
   const selectedDiffersFromSession =
-    selected === 'draft' || selectedRevision !== snapshot.sessionBinding.appliedRevision;
+    selectedRevision !== null && selectedRevision !== snapshot.sessionBinding.appliedRevision;
+  const selectedAlreadyQueued =
+    selectedRevision !== null && selectedRevision === snapshot.sessionBinding.desiredRevision;
 
   return (
     <section className="harness-management" aria-label="Harness Management">
-      <header className="harness-management__toolbar" aria-label="Harness Management controls">
+      <header
+        className={`harness-management__toolbar${editMode ? ' is-editing' : ''}`}
+        aria-label="Harness Management controls"
+      >
         <button className="harness-management__back" type="button" onClick={onBack}>
-          <ArrowLeft size={16} aria-hidden="true" />
+          <ArrowLeft size={14} aria-hidden="true" />
           Back to conversation
         </button>
         <div className="harness-management__toolbar-context">
           {snapshot.agentIdentity && (
             <AgentIdentityBadge identity={snapshot.agentIdentity} compact />
           )}
-          <span>Harness</span>
           <strong>{configuration.identity.name}</strong>
-          {snapshot.versionControl.support === 'recorded_preview' && (
-            <StateBadge tone="neutral">Recorded prototype</StateBadge>
-          )}
         </div>
         <label className="harness-management__version-select">
-          <span>Version</span>
+          <span className="visually-hidden">Viewed harness version</span>
           <select
             aria-label="Viewed harness version"
             value={selected}
@@ -210,7 +266,8 @@ function AvailableHarnessManagement({
           >
             {snapshot.workingCopy && (
               <option value="draft">
-                Working draft{snapshot.workingCopy.dirty ? ' · uncommitted' : ''}
+                Working draft
+                {snapshot.workingCopy.dirty ? ' · uncommitted' : ''}
               </option>
             )}
             {!snapshot.workingCopy && selected === 'draft' && (
@@ -220,22 +277,36 @@ function AvailableHarnessManagement({
               .sort((left, right) => right.revision - left.revision)
               .map((version) => (
                 <option value={`version:${version.revision}`} key={version.revision}>
-                  v{version.revision}
-                  {version.revision === snapshot.versionControl.pushedRevision
-                    ? ' · current pushed'
-                    : version.status === 'pushed'
-                      ? ' · previously pushed'
-                      : version.status === 'committed'
-                        ? ' · committed'
-                        : ' · inspected'}
-                  {version.revision === snapshot.sessionBinding.appliedRevision
-                    ? ' · this Session'
-                    : ''}
+                  v{version.revision} · {version.label}
                 </option>
               ))}
           </select>
         </label>
         <div className="harness-management__toolbar-actions">
+          {onCommand && !editMode && selectedDiffersFromSession && (
+            <button
+              className="is-primary"
+              type="button"
+              disabled={selectedAlreadyQueued || commandPending}
+              onClick={() => {
+                if (selectedRevision === null) return;
+                openConfirmation({
+                  title: `Change this Session to v${selectedRevision}?`,
+                  body: `This queues v${selectedRevision} (${selectedVersion?.label ?? 'selected version'}) for this Session. Its applied version changes only when the recorded next-prompt update is consumed.`,
+                  confirmLabel: `Queue v${selectedRevision}`,
+                  command: {
+                    kind: 'queue_version',
+                    revision: selectedRevision,
+                    scope: 'current_session',
+                  },
+                });
+              }}
+            >
+              {selectedAlreadyQueued
+                ? `v${selectedRevision} queued`
+                : `Use v${selectedRevision} for this Session`}
+            </button>
+          )}
           {onCommand && !editMode && (
             <button type="button" onClick={() => beginEdit()}>
               <Pencil size={15} aria-hidden="true" />
@@ -308,60 +379,17 @@ function AvailableHarnessManagement({
                 : 'Working draft has uncommitted changes'}
             </StateBadge>
           )}
-          {snapshot.sessionBinding.appliedRevision !== null && (
-            <StateBadge tone="caution">
-              Session version · v{snapshot.sessionBinding.appliedRevision}
-            </StateBadge>
+          {pushedVersion && pushedVersion.revision !== selectedRevision && (
+            <button type="button" onClick={() => setSelected(`version:${pushedVersion.revision}`)}>
+              Newest pushed: v{pushedVersion.revision} · {pushedVersion.label}
+            </button>
           )}
-          {snapshot.versionControl.pushedRevision !== null && (
-            <StateBadge tone="positive">
-              Current pushed · v{snapshot.versionControl.pushedRevision}
-            </StateBadge>
-          )}
-          {selectedVersion && (
-            <StateBadge tone="neutral">
-              Viewed v{selectedVersion.revision} ·{' '}
-              {selectedVersion.revision === snapshot.versionControl.pushedRevision
-                ? 'current pushed'
-                : selectedVersion.status === 'pushed'
-                  ? 'previously pushed'
-                  : selectedVersion.status === 'committed'
-                    ? 'committed, not pushed'
-                    : 'push history not connected'}
-            </StateBadge>
-          )}
-          {selectedDiffersFromSession && (
-            <StateBadge tone="neutral">
-              Viewing differs from Session v{snapshot.sessionBinding.appliedRevision ?? '—'}
-            </StateBadge>
-          )}
-          {selectedRevision !== null &&
-            selectedRevision !== snapshot.sessionBinding.appliedRevision &&
-            onCommand && (
-              <button
-                type="button"
-                onClick={() =>
-                  openConfirmation({
-                    title: `Change this Session to v${selectedRevision}?`,
-                    body: `This queues v${selectedRevision} for this Session. The Session keeps its current version until its next prompt.`,
-                    confirmLabel: `Queue v${selectedRevision}`,
-                    command: {
-                      kind: 'queue_version',
-                      revision: selectedRevision,
-                      scope: 'current_session',
-                    },
-                  })
-                }
-              >
-                Change this Session to v{selectedRevision}
-              </button>
-            )}
         </div>
 
         <div className="harness-management__grid">
           <ManagementCard
             title="Harness details"
-            description="Administrative identity and the stable Agent identity used by this Session."
+            help="Administrative identity and the stable Agent identity used by this Session."
             wide
           >
             <div className="harness-management__field-row">
@@ -392,7 +420,16 @@ function AvailableHarnessManagement({
             </div>
             <div className="harness-management__identity-policy">
               {snapshot.agentIdentity ? (
-                <AgentIdentityBadge identity={snapshot.agentIdentity} />
+                <button
+                  className="harness-management__identity-policy-button is-agent"
+                  type="button"
+                  aria-label={`Edit Agent identity for ${snapshot.agentIdentity.name}`}
+                  onClick={() => setIdentityDialogOpen(true)}
+                >
+                  <span>Current Agent</span>
+                  <AgentIdentityBadge identity={snapshot.agentIdentity} />
+                  <small>Change this Session only.</small>
+                </button>
               ) : (
                 <p>This Session does not yet have a stored Agent identity.</p>
               )}
@@ -423,7 +460,7 @@ function AvailableHarnessManagement({
 
           <ManagementCard
             title="Prompt prefix"
-            description="Prepended to the first prompt in a new Session and intended to be included again after context compression. Harness-aware compression is deferred."
+            help="Prepended to the first prompt in a new Session and intended to be included again after context compression. Harness-aware compression is deferred."
             wide
           >
             {editable ? (
@@ -550,7 +587,10 @@ function AvailableHarnessManagement({
               configuration={configuration}
               snapshot={snapshot}
               editable={editable}
+              editMode={editMode}
+              selectedRevision={selectedRevision}
               onChange={saveConfiguration}
+              onCommand={onCommand}
             />
           </ManagementCard>
 
@@ -625,6 +665,20 @@ function AvailableHarnessManagement({
         </div>
       </div>
 
+      {identityDialogOpen && snapshot.agentIdentity && (
+        <SessionIdentityDialog
+          snapshot={snapshot}
+          onApply={(name, visualIdentity) => {
+            onCommand?.({
+              kind: 'update_session_identity',
+              name,
+              visualIdentity,
+            });
+            setIdentityDialogOpen(false);
+          }}
+          onClose={() => setIdentityDialogOpen(false)}
+        />
+      )}
       {catalogDialog === 'names' && (
         <NamePoolDialog
           snapshot={snapshot}
@@ -686,7 +740,7 @@ function ManagementShell({ onBack, children }: { onBack(): void; readonly childr
     <section className="harness-management" aria-label="Harness Management">
       <header className="harness-management__toolbar">
         <button className="harness-management__back" type="button" onClick={onBack}>
-          <ArrowLeft size={16} aria-hidden="true" />
+          <ArrowLeft size={14} aria-hidden="true" />
           Back to conversation
         </button>
       </header>
@@ -698,22 +752,37 @@ function ManagementShell({ onBack, children }: { onBack(): void; readonly childr
 function ManagementCard({
   title,
   description,
+  help,
   wide = false,
   action,
   children,
 }: {
   readonly title: string;
-  readonly description: string;
+  readonly description?: string;
+  readonly help?: string;
   readonly wide?: boolean;
   readonly action?: ReactNode;
   readonly children: ReactNode;
 }) {
+  const helpId = useId();
   return (
     <section className={`harness-management__card${wide ? ' is-wide' : ''}`}>
       <header>
         <div>
-          <h2>{title}</h2>
-          <p>{description}</p>
+          <div className="harness-management__card-title">
+            <h2>{title}</h2>
+            {help && (
+              <span className="harness-management__help">
+                <button type="button" aria-label={`About ${title}`} aria-describedby={helpId}>
+                  <HelpCircle size={14} aria-hidden="true" />
+                </button>
+                <span id={helpId} role="tooltip">
+                  {help}
+                </span>
+              </span>
+            )}
+          </div>
+          {description && <p>{description}</p>}
         </div>
         {action}
       </header>
@@ -842,43 +911,201 @@ function ModelPolicy({
   configuration,
   snapshot,
   editable,
+  editMode,
+  selectedRevision,
   onChange,
+  onCommand,
 }: {
   readonly configuration: HarnessEffectiveConfiguration;
   readonly snapshot: ConversationHarnessManagementSnapshot;
   readonly editable: boolean;
+  readonly editMode: boolean;
+  readonly selectedRevision: number | null;
   onChange(configuration: HarnessEffectiveConfiguration): void;
+  onCommand?(command: ConversationHarnessManagementCommand): void;
 }) {
   const models = snapshot.catalogs.models.items;
-  const updateModel = (
-    modelId: string,
-    next: Partial<HarnessEffectiveConfiguration['runtime']['models'][number]>,
-  ) => {
-    const updatedModels = configuration.runtime.models.map((model) =>
-      model.modelId === modelId ? { ...model, ...next } : model,
-    );
-    let defaultModel = configuration.runtime.defaultModel;
-    let defaultReasoning = configuration.runtime.defaultReasoning;
-    if (next.allowed === false && defaultModel === modelId) {
-      defaultModel = null;
-      defaultReasoning = null;
+  const configuredPolicy = policyFromConfiguration(configuration);
+  const revisionProposal = snapshot.modelChoices.revisionProposals.find(
+    (proposal) => proposal.revision === selectedRevision,
+  );
+  const harnessPolicy =
+    configuration.runtime.modelPolicyMode === 'adjustable_proposal' && revisionProposal
+      ? revisionProposal.policy
+      : configuredPolicy;
+  const harnessPolicyEditable = Boolean(
+    editable ||
+    (!editMode &&
+      selectedRevision !== null &&
+      configuration.runtime.modelPolicyMode === 'adjustable_proposal' &&
+      onCommand),
+  );
+  const updateHarnessPolicy = (policy: HarnessModelPolicy) => {
+    if (editable) {
+      onChange(configurationWithPolicy(configuration, policy));
+      return;
     }
-    onChange({
-      ...configuration,
-      runtime: {
-        ...configuration.runtime,
-        models: updatedModels,
-        defaultModel,
-        defaultReasoning,
-      },
-    });
+    if (selectedRevision !== null)
+      onCommand?.({ kind: 'save_model_proposal', revision: selectedRevision, policy });
   };
-  const defaultModelConfiguration = configuration.runtime.models.find(
-    (model) => model.modelId === configuration.runtime.defaultModel,
+  const appliedPolicy =
+    policyForRevision(snapshot, snapshot.sessionBinding.appliedRevision) ?? harnessPolicy;
+  const sessionOverride = snapshot.modelChoices.sessionOverride;
+  const sessionPolicy = sessionOverride?.policy ?? appliedPolicy;
+  const userPreference = snapshot.modelChoices.userPreference;
+  const resolved = snapshot.modelChoices.resolvedForCurrentSession;
+
+  return (
+    <div className="harness-management__model-policy">
+      {editMode && (
+        <label className="harness-management__model-mode">
+          <span>
+            <strong>Version specific</strong>
+            <small>
+              Fix these choices in this Harness revision. Off keeps a separate adjustable proposal.
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            checked={configuration.runtime.modelPolicyMode === 'version_specific'}
+            disabled={!editable}
+            onChange={(event) =>
+              onChange({
+                ...configuration,
+                runtime: {
+                  ...configuration.runtime,
+                  modelPolicyMode: event.target.checked
+                    ? 'version_specific'
+                    : 'adjustable_proposal',
+                },
+              })
+            }
+          />
+        </label>
+      )}
+      <section
+        className="harness-management__model-owner"
+        aria-label="Harness revision model policy"
+      >
+        <header>
+          <span>
+            <strong>Harness revision policy</strong>
+            <small>
+              {configuration.runtime.modelPolicyMode === 'version_specific'
+                ? 'Fixed by this revision'
+                : 'Adjustable proposal outside commit history'}
+            </small>
+          </span>
+          {revisionProposal?.dirty && <StateBadge tone="caution">Uncommitted proposal</StateBadge>}
+        </header>
+        <ModelPolicyControls
+          policy={harnessPolicy}
+          models={models}
+          editable={harnessPolicyEditable}
+          boundaryKey={`harness:${selectedRevision ?? 'draft'}:${editMode}:${configuration.runtime.modelPolicyMode}`}
+          labelPrefix="Harness"
+          onChange={updateHarnessPolicy}
+        />
+      </section>
+      {!editMode && (
+        <section
+          className="harness-management__model-owner"
+          aria-label="Current Session model override"
+        >
+          <header>
+            <span>
+              <strong>Current Session override</strong>
+              <small>Separate from the Harness revision and user default.</small>
+            </span>
+            <label className="harness-management__compact-toggle">
+              <input
+                type="checkbox"
+                aria-label="Enable current Session model override"
+                checked={Boolean(sessionOverride?.enabled)}
+                disabled={!onCommand}
+                onChange={(event) =>
+                  onCommand?.({
+                    kind: 'set_session_model_override',
+                    override: {
+                      enabled: event.target.checked,
+                      policy: sessionPolicy,
+                    },
+                  })
+                }
+              />
+              <span>{sessionOverride?.enabled ? 'On' : 'Off'}</span>
+            </label>
+          </header>
+          {sessionOverride?.enabled && (
+            <ModelPolicyControls
+              policy={sessionPolicy}
+              models={models}
+              editable={Boolean(onCommand)}
+              boundaryKey={`session:${snapshot.sessionId}:${sessionOverride.enabled}`}
+              labelPrefix="Session override"
+              onChange={(policy) =>
+                onCommand?.({
+                  kind: 'set_session_model_override',
+                  override: { enabled: true, policy },
+                })
+              }
+            />
+          )}
+        </section>
+      )}
+      <div className="harness-management__model-resolution">
+        <span>
+          <small>User default</small>
+          <strong>
+            {modelLabel(models, userPreference.lastUsedModel)} ·{' '}
+            {userPreference.lastUsedReasoning ?? 'Caller choice'}
+          </strong>
+        </span>
+        <span>
+          <small>Current Session resolves to</small>
+          <strong>
+            {modelLabel(models, resolved.model)} · {resolved.reasoning ?? 'Caller choice'}
+          </strong>
+          <em>{humanize(resolved.source)}</em>
+        </span>
+      </div>
+      <p className="harness-management__catalog-boundary">
+        <strong>Recorded model catalog.</strong> {snapshot.catalogs.models.reason}{' '}
+        {userPreference.reason}
+      </p>
+    </div>
   );
-  const defaultModelCatalog = models.find(
-    (model) => model.id === configuration.runtime.defaultModel,
+}
+
+function ModelPolicyControls({
+  policy,
+  models,
+  editable,
+  boundaryKey,
+  labelPrefix,
+  onChange,
+}: {
+  readonly policy: HarnessModelPolicy;
+  readonly models: ConversationHarnessManagementSnapshot['catalogs']['models']['items'];
+  readonly editable: boolean;
+  readonly boundaryKey: string;
+  readonly labelPrefix: string;
+  onChange(policy: HarnessModelPolicy): void;
+}) {
+  const rememberedDefault = useRef<{
+    readonly model: string;
+    readonly reasoning: HarnessReasoningLevel | null;
+  } | null>(null);
+  useEffect(() => {
+    rememberedDefault.current = null;
+  }, [boundaryKey]);
+
+  const updateModels = (nextModels: HarnessModelPolicy['models']) =>
+    onChange(reconcileProvisionalDefault(policy, nextModels, models, rememberedDefault));
+  const defaultModelConfiguration = policy.models.find(
+    (model) => model.modelId === policy.defaultModel,
   );
+  const defaultModelCatalog = models.find((model) => model.id === policy.defaultModel);
   const defaultReasoningOptions =
     defaultModelCatalog && defaultModelConfiguration
       ? defaultModelCatalog.reasoningLevels.slice(
@@ -891,9 +1118,7 @@ function ModelPolicy({
     <>
       <div className="harness-management__model-list">
         {models.map((catalogModel) => {
-          const model = configuration.runtime.models.find(
-            (candidate) => candidate.modelId === catalogModel.id,
-          );
+          const model = policy.models.find((candidate) => candidate.modelId === catalogModel.id);
           if (!model) return null;
           const minIndex = catalogModel.reasoningLevels.indexOf(model.minReasoning);
           const maxIndex = catalogModel.reasoningLevels.indexOf(model.maxReasoning);
@@ -904,26 +1129,27 @@ function ModelPolicy({
                   type="checkbox"
                   checked={model.allowed}
                   disabled={!editable}
+                  aria-label={`${labelPrefix} allows ${catalogModel.label}`}
                   onChange={(event) =>
-                    updateModel(model.modelId, { allowed: event.target.checked })
+                    updateModels(
+                      policy.models.map((candidate) =>
+                        candidate.modelId === model.modelId
+                          ? { ...candidate, allowed: event.target.checked }
+                          : candidate,
+                      ),
+                    )
                   }
                 />
-                <span>
-                  <strong>{catalogModel.label}</strong>
-                  <small>{catalogModel.id}</small>
-                </span>
+                <strong>{catalogModel.label}</strong>
               </label>
               <div className="harness-management__reasoning-range">
-                <div>
-                  <span>Allowed reasoning</span>
-                  <strong>
-                    {model.minReasoning} – {model.maxReasoning}
-                  </strong>
-                </div>
+                <output>
+                  {model.minReasoning} – {model.maxReasoning}
+                </output>
                 <div className="harness-management__dual-range">
                   <input
                     type="range"
-                    aria-label={`${catalogModel.label} minimum reasoning`}
+                    aria-label={`${labelPrefix} ${catalogModel.label} minimum reasoning`}
                     min={0}
                     max={catalogModel.reasoningLevels.length - 1}
                     step={1}
@@ -931,14 +1157,21 @@ function ModelPolicy({
                     disabled={!editable || !model.allowed}
                     onChange={(event) => {
                       const nextIndex = Math.min(Number(event.target.value), maxIndex);
-                      updateModel(model.modelId, {
-                        minReasoning: catalogModel.reasoningLevels[nextIndex],
-                      });
+                      updateModels(
+                        policy.models.map((candidate) =>
+                          candidate.modelId === model.modelId
+                            ? {
+                                ...candidate,
+                                minReasoning: catalogModel.reasoningLevels[nextIndex],
+                              }
+                            : candidate,
+                        ),
+                      );
                     }}
                   />
                   <input
                     type="range"
-                    aria-label={`${catalogModel.label} maximum reasoning`}
+                    aria-label={`${labelPrefix} ${catalogModel.label} maximum reasoning`}
                     min={0}
                     max={catalogModel.reasoningLevels.length - 1}
                     step={1}
@@ -946,9 +1179,16 @@ function ModelPolicy({
                     disabled={!editable || !model.allowed}
                     onChange={(event) => {
                       const nextIndex = Math.max(Number(event.target.value), minIndex);
-                      updateModel(model.modelId, {
-                        maxReasoning: catalogModel.reasoningLevels[nextIndex],
-                      });
+                      updateModels(
+                        policy.models.map((candidate) =>
+                          candidate.modelId === model.modelId
+                            ? {
+                                ...candidate,
+                                maxReasoning: catalogModel.reasoningLevels[nextIndex],
+                              }
+                            : candidate,
+                        ),
+                      );
                     }}
                   />
                 </div>
@@ -965,25 +1205,23 @@ function ModelPolicy({
       <div className="harness-management__defaults">
         <ManagementField label="Default model">
           <select
-            value={configuration.runtime.defaultModel ?? ''}
+            aria-label={`${labelPrefix} default model`}
+            value={policy.defaultModel ?? ''}
             disabled={!editable}
-            onChange={(event) =>
+            onChange={(event) => {
+              rememberedDefault.current = null;
+              const defaultModel = event.target.value || null;
               onChange({
-                ...configuration,
-                runtime: {
-                  ...configuration.runtime,
-                  defaultModel: event.target.value || null,
-                  defaultReasoning: null,
-                },
-              })
-            }
+                ...policy,
+                defaultModel,
+                defaultReasoning: null,
+              });
+            }}
           >
             <option value="">Caller choice</option>
             {models
               .filter((catalogModel) =>
-                configuration.runtime.models.some(
-                  (model) => model.modelId === catalogModel.id && model.allowed,
-                ),
+                policy.models.some((model) => model.modelId === catalogModel.id && model.allowed),
               )
               .map((model) => (
                 <option value={model.id} key={model.id}>
@@ -994,17 +1232,16 @@ function ModelPolicy({
         </ManagementField>
         <ManagementField label="Default reasoning">
           <select
-            value={configuration.runtime.defaultReasoning ?? ''}
-            disabled={!editable || !configuration.runtime.defaultModel}
-            onChange={(event) =>
+            aria-label={`${labelPrefix} default reasoning`}
+            value={policy.defaultReasoning ?? ''}
+            disabled={!editable || !policy.defaultModel}
+            onChange={(event) => {
+              rememberedDefault.current = null;
               onChange({
-                ...configuration,
-                runtime: {
-                  ...configuration.runtime,
-                  defaultReasoning: (event.target.value as HarnessReasoningLevel | '') || null,
-                },
-              })
-            }
+                ...policy,
+                defaultReasoning: (event.target.value as HarnessReasoningLevel | '') || null,
+              });
+            }}
           >
             <option value="">Caller choice</option>
             {defaultReasoningOptions.map((level) => (
@@ -1015,11 +1252,126 @@ function ModelPolicy({
           </select>
         </ManagementField>
       </div>
-      <p className="harness-management__catalog-boundary">
-        <strong>Recorded model catalog.</strong> {snapshot.catalogs.models.reason}
-      </p>
     </>
   );
+}
+
+function reconcileProvisionalDefault(
+  policy: HarnessModelPolicy,
+  models: HarnessModelPolicy['models'],
+  catalog: ConversationHarnessManagementSnapshot['catalogs']['models']['items'],
+  remembered: {
+    current: {
+      readonly model: string;
+      readonly reasoning: HarnessReasoningLevel | null;
+    } | null;
+  },
+): HarnessModelPolicy {
+  let next: HarnessModelPolicy = { ...policy, models };
+  if (
+    remembered.current &&
+    isValidPolicyChoice(remembered.current.model, remembered.current.reasoning, next, catalog)
+  ) {
+    next = {
+      ...next,
+      defaultModel: remembered.current.model,
+      defaultReasoning: remembered.current.reasoning,
+    };
+    remembered.current = null;
+    return next;
+  }
+  if (
+    !policy.defaultModel ||
+    isValidPolicyChoice(policy.defaultModel, policy.defaultReasoning, next, catalog)
+  )
+    return next;
+  remembered.current ??= {
+    model: policy.defaultModel,
+    reasoning: policy.defaultReasoning,
+  };
+  const sameModel = models.find((model) => model.modelId === policy.defaultModel && model.allowed);
+  if (sameModel) {
+    const levels = catalog.find((model) => model.id === sameModel.modelId)?.reasoningLevels ?? [];
+    const selectedIndex = levels.indexOf(policy.defaultReasoning ?? sameModel.minReasoning);
+    const minIndex = levels.indexOf(sameModel.minReasoning);
+    const maxIndex = levels.indexOf(sameModel.maxReasoning);
+    const fallbackIndex = Math.max(minIndex, Math.min(selectedIndex, maxIndex));
+    return {
+      ...next,
+      defaultModel: sameModel.modelId,
+      defaultReasoning: levels[fallbackIndex] ?? sameModel.minReasoning,
+    };
+  }
+  const fallback = models.find((model) => model.allowed);
+  return {
+    ...next,
+    defaultModel: fallback?.modelId ?? null,
+    defaultReasoning: fallback?.minReasoning ?? null,
+  };
+}
+
+function isValidPolicyChoice(
+  modelId: string,
+  reasoning: HarnessReasoningLevel | null,
+  policy: HarnessModelPolicy,
+  catalog: ConversationHarnessManagementSnapshot['catalogs']['models']['items'],
+): boolean {
+  const model = policy.models.find((candidate) => candidate.modelId === modelId);
+  if (!model?.allowed) return false;
+  if (reasoning === null) return true;
+  const levels = catalog.find((candidate) => candidate.id === modelId)?.reasoningLevels ?? [];
+  const selected = levels.indexOf(reasoning);
+  return (
+    selected >= levels.indexOf(model.minReasoning) && selected <= levels.indexOf(model.maxReasoning)
+  );
+}
+
+function policyFromConfiguration(configuration: HarnessEffectiveConfiguration): HarnessModelPolicy {
+  return {
+    models: configuration.runtime.models,
+    defaultModel: configuration.runtime.defaultModel,
+    defaultReasoning: configuration.runtime.defaultReasoning,
+  };
+}
+
+function configurationWithPolicy(
+  configuration: HarnessEffectiveConfiguration,
+  policy: HarnessModelPolicy,
+): HarnessEffectiveConfiguration {
+  return {
+    ...configuration,
+    runtime: {
+      ...configuration.runtime,
+      models: policy.models,
+      defaultModel: policy.defaultModel,
+      defaultReasoning: policy.defaultReasoning,
+    },
+  };
+}
+
+function policyForRevision(
+  snapshot: ConversationHarnessManagementSnapshot,
+  revision: number | null,
+): HarnessModelPolicy | null {
+  if (revision === null) return null;
+  const version = snapshot.versionControl.versions.find(
+    (candidate) => candidate.revision === revision,
+  );
+  if (!version) return null;
+  if (version.configuration.runtime.modelPolicyMode === 'adjustable_proposal')
+    return (
+      snapshot.modelChoices.revisionProposals.find((proposal) => proposal.revision === revision)
+        ?.policy ?? policyFromConfiguration(version.configuration)
+    );
+  return policyFromConfiguration(version.configuration);
+}
+
+function modelLabel(
+  models: ConversationHarnessManagementSnapshot['catalogs']['models']['items'],
+  modelId: string | null,
+): string {
+  if (!modelId) return 'Caller choice';
+  return models.find((model) => model.id === modelId)?.label ?? modelId;
 }
 
 function VersionHistory({
@@ -1057,7 +1409,15 @@ function VersionHistory({
           </thead>
           <tbody>
             {snapshot.workingCopy && (
-              <tr className={selected === 'draft' ? 'is-selected' : ''}>
+              <tr
+                className={selected === 'draft' ? 'is-selected' : ''}
+                tabIndex={0}
+                aria-label="View working draft"
+                onClick={() => onSelect('draft')}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') onSelect('draft');
+                }}
+              >
                 <td>
                   <button type="button" onClick={() => onSelect('draft')}>
                     Working draft
@@ -1077,14 +1437,25 @@ function VersionHistory({
                 const isSessionVersion =
                   version.revision === snapshot.sessionBinding.appliedRevision;
                 const isDesired = version.revision === snapshot.sessionBinding.desiredRevision;
+                const allRelevantResolved =
+                  snapshot.sessionBinding.relevantSessionCount !== null &&
+                  version.activeSessionCount + version.queuedSessionCount >=
+                    snapshot.sessionBinding.relevantSessionCount;
                 return (
                   <tr
                     className={selected === `version:${version.revision}` ? 'is-selected' : ''}
                     key={version.revision}
+                    tabIndex={0}
+                    aria-label={`View v${version.revision} ${version.label}`}
+                    onClick={() => onSelect(`version:${version.revision}`)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ')
+                        onSelect(`version:${version.revision}`);
+                    }}
                   >
                     <td>
                       <button type="button" onClick={() => onSelect(`version:${version.revision}`)}>
-                        v{version.revision}
+                        v{version.revision} · {version.label}
                       </button>
                       <StateBadge
                         tone={
@@ -1102,7 +1473,12 @@ function VersionHistory({
                               : 'Inspected'}
                       </StateBadge>
                     </td>
-                    <td>{version.activeSessionCount}</td>
+                    <td>
+                      {version.activeSessionCount} active
+                      {version.queuedSessionCount > 0
+                        ? ` · ${version.queuedSessionCount} queued`
+                        : ''}
+                    </td>
                     <td>
                       {isSessionVersion ? (
                         <span className="harness-management__session-indicator">
@@ -1116,22 +1492,23 @@ function VersionHistory({
                       )}
                     </td>
                     <td>
-                      {canCommand && (
+                      {canCommand && !allRelevantResolved && (
                         <button
                           type="button"
                           disabled={commandPending}
-                          onClick={() =>
+                          onClick={(event) => {
+                            event.stopPropagation();
                             onConfirm({
                               title: `Change all relevant Sessions to v${version.revision}?`,
-                              body: `This queues v${version.revision} for every relevant Session. Each Session keeps its current version until its next prompt.`,
+                              body: `This queues v${version.revision} (${version.label}) for every relevant Session not already using it. Applied versions change only when each recorded next-prompt update is consumed.`,
                               confirmLabel: `Queue v${version.revision} for all`,
                               command: {
                                 kind: 'queue_version',
                                 revision: version.revision,
                                 scope: 'all_relevant_sessions',
                               },
-                            })
-                          }
+                            });
+                          }}
                         >
                           <Users size={14} aria-hidden="true" />
                           Change all to v{version.revision}
@@ -1146,6 +1523,121 @@ function VersionHistory({
       </div>
       <p className="harness-management__card-footer">{snapshot.versionControl.reason}</p>
     </ManagementCard>
+  );
+}
+
+function SessionIdentityDialog({
+  snapshot,
+  onApply,
+  onClose,
+}: {
+  readonly snapshot: ConversationHarnessManagementSnapshot;
+  onApply(name: string, visualIdentity: AgentVisualIdentityDto): void;
+  onClose(): void;
+}) {
+  const identity = snapshot.agentIdentity;
+  const [search, setSearch] = useState('');
+  const [name, setName] = useState(identity?.name ?? '');
+  const [visualIdentity, setVisualIdentity] = useState<AgentVisualIdentityDto | null>(
+    identity?.visualIdentity ?? snapshot.catalogs.agentVisualIdentities.items[0]?.identity ?? null,
+  );
+  const names = snapshot.catalogs.agentNames.items.filter((candidate) =>
+    fuzzyMatch(candidate, '', search),
+  );
+  return (
+    <div className="harness-management__modal-backdrop">
+      <section
+        className="harness-management__modal is-identity"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="harness-session-identity-title"
+      >
+        <header>
+          <div>
+            <h2 id="harness-session-identity-title">Current Agent identity</h2>
+            <p>
+              This changes only this Agent Session after confirmation. Harness name pools are
+              unchanged.
+            </p>
+          </div>
+          <button type="button" aria-label="Close current Agent identity" onClick={onClose}>
+            <X size={18} aria-hidden="true" />
+          </button>
+        </header>
+        <div className="harness-management__identity-dialog-fields">
+          <ManagementField label="Agent name">
+            <input
+              aria-label="Agent name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </ManagementField>
+          <label className="harness-management__catalog-search">
+            <Search size={15} aria-hidden="true" />
+            <input
+              aria-label="Search available Agent names"
+              placeholder="Search available names"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </label>
+        </div>
+        <div className="harness-management__modal-scroll">
+          <div
+            className="harness-management__identity-name-results"
+            aria-label="Available Agent names"
+          >
+            {names.map((candidate) => (
+              <button
+                type="button"
+                aria-pressed={candidate === name}
+                key={candidate}
+                onClick={() => setName(candidate)}
+              >
+                {candidate}
+              </button>
+            ))}
+            {names.length === 0 && <p>No product names match this search.</p>}
+          </div>
+          <fieldset className="harness-management__visual-choices">
+            <legend>Visual identity</legend>
+            {snapshot.catalogs.agentVisualIdentities.items.map((entry) => (
+              <label key={entry.identity.token}>
+                <input
+                  type="radio"
+                  name="session-visual-identity"
+                  value={entry.identity.token}
+                  checked={
+                    visualIdentity?.token === entry.identity.token &&
+                    visualIdentity.accent === entry.identity.accent
+                  }
+                  onChange={() => setVisualIdentity(entry.identity)}
+                />
+                <span
+                  className="harness-management__visual-swatch"
+                  style={{ background: entry.identity.accent }}
+                  aria-hidden="true"
+                />
+                {entry.label}
+              </label>
+            ))}
+          </fieldset>
+        </div>
+        <div className="harness-management__modal-actions">
+          <button type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="is-primary"
+            type="button"
+            disabled={!name.trim() || !visualIdentity}
+            onClick={() => visualIdentity && onApply(name.trim(), visualIdentity)}
+          >
+            Apply to this Session
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
