@@ -16,6 +16,7 @@ import {
   createRecordedDevelopmentApplicationComposition,
   recordedDevelopmentOrchestrationClient,
   recordedDevelopmentOrchestrationPresentation,
+  recordedPlanBuilderAgentIdentity,
 } from '../dev/orchestrationSection/recordedOrchestrationClient';
 import { sessionDetails } from '../features/agentSessions/testFixtures';
 import { createTauriEpicPlanningDraftLifecycleClient } from '../infrastructure/orchestrations/tauriEpicPlanningDraftLifecycle';
@@ -504,6 +505,7 @@ describe('App orchestration loading', () => {
         orchestrationClient={{
           load: async () => ({ kind: 'unavailable', reason: 'No product read.' }),
         }}
+        managedPlanBuilderAgentIdentity={recordedPlanBuilderAgentIdentity}
         epicPlanProposalSource={proposalSource}
       />,
     );
@@ -511,11 +513,29 @@ describe('App orchestration loading', () => {
     await screen.findByRole('alert');
     fireEvent.click(screen.getByRole('button', { name: 'Plan an Epic' }));
     expect(screen.getByRole('main', { name: 'Plan an Epic' })).toBeVisible();
-    expect(screen.getByLabelText('Epic Plan Builder conversation')).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Proposed Epic plan' })).toBeVisible();
+    expect(screen.getByRole('heading', { level: 1, name: 'Suggested Epic' })).toBeVisible();
+    expect(screen.getByText('Epic planning')).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Plan an Epic' })).toBeNull();
+    const viewHeader = screen
+      .getByRole('heading', { level: 1, name: 'Suggested Epic' })
+      .closest('.product-view-header');
+    expect(viewHeader).not.toBeNull();
     expect(
-      screen.getByRole('heading', { name: 'Proposed Epic plan' }).closest('header'),
+      within(viewHeader as HTMLElement).getByRole('group', {
+        name: 'Epic planning view actions',
+      }),
+    ).toContainElement(screen.getByRole('button', { name: 'Back to orchestration overview' }));
+    expect(
+      screen.getByRole('region', { name: 'Planning conversation and plan preview' }),
+    ).toBeVisible();
+    expect(screen.getByLabelText('Epic Plan Builder conversation')).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Avery: Epic Plan Builder' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: "Avery's Proposed Plan:" })).toBeVisible();
+    expect(
+      screen.getByRole('heading', { name: "Avery's Proposed Plan:" }).closest('header'),
     ).toHaveClass('epic-plan-builder__proposal-header');
+    const identityMarkers = document.querySelectorAll('[data-visual-identity-token="sunflower"]');
+    expect(identityMarkers).toHaveLength(2);
     expect(screen.getByRole('textbox', { name: 'Epic name' })).toHaveValue('Suggested Epic');
     expect(screen.getByText('Epic name')).toBeVisible();
     expect(screen.queryByText('Agent Session')).toBeNull();
@@ -823,16 +843,28 @@ describe('App orchestration loading', () => {
       /\.epic-plan-builder__body\s*\{[\s\S]*display: flex;[\s\S]*flex-direction: column;[\s\S]*overflow: hidden;/,
     );
     expect(planStyles).toMatch(
-      /\.epic-plan-builder__layout\s*\{[\s\S]*min-height: 0;[\s\S]*flex: 1 1 auto;[\s\S]*grid-template-columns: minmax\(200px, 230px\) minmax\(400px, 1fr\) minmax\(320px, 420px\);[\s\S]*overflow: hidden;/,
+      /\.epic-plan-builder__layout\s*\{[\s\S]*min-height: 0;[\s\S]*flex: 1 1 auto;[\s\S]*grid-template-columns: minmax\(200px, 230px\) minmax\(0, 1fr\);[\s\S]*overflow: hidden;/,
     );
     expect(planStyles).toMatch(
-      /@media \(max-width: 1100px\)\s*\{[\s\S]*\.epic-plan-builder__layout\s*\{[\s\S]*grid-template-columns: minmax\(180px, 210px\) minmax\(300px, 1fr\) minmax\(280px, 340px\);/,
+      /\.epic-plan-builder__workspace\s*\{[\s\S]*grid-template-columns: minmax\(400px, 1fr\) minmax\(320px, 420px\);[\s\S]*overflow: hidden;/,
+    );
+    expect(planStyles).toMatch(
+      /\.epic-plan-builder__proposal-header\s*\{[\s\S]*height: var\(--epic-plan-builder-workspace-header-height\);[\s\S]*min-height: var\(--epic-plan-builder-workspace-header-height\);/,
+    );
+    expect(planStyles).toMatch(
+      /\.epic-plan-builder__conversation \.agent-session-identity-header\s*\{[\s\S]*height: var\(--epic-plan-builder-workspace-header-height\);[\s\S]*min-height: var\(--epic-plan-builder-workspace-header-height\);/,
+    );
+    expect(planStyles).toMatch(
+      /@media \(max-width: 1100px\)\s*\{[\s\S]*\.epic-plan-builder__layout\s*\{[\s\S]*grid-template-columns: minmax\(180px, 210px\) minmax\(0, 1fr\);[\s\S]*\.epic-plan-builder__workspace\s*\{[\s\S]*grid-template-columns: minmax\(300px, 1fr\) minmax\(280px, 340px\);/,
     );
     expect(planStyles).toMatch(
       /@media \(max-width: 900px\)\s*\{[\s\S]*\.epic-plan-builder__body\s*\{[\s\S]*overflow-x: hidden;[\s\S]*overflow-y: auto;/,
     );
     expect(planStyles).toMatch(
       /@media \(max-width: 900px\)\s*\{[\s\S]*\.epic-plan-builder__layout\s*\{[\s\S]*grid-template-columns: minmax\(0, 1fr\);[\s\S]*overflow: visible;/,
+    );
+    expect(planStyles).toMatch(
+      /@media \(max-width: 900px\)\s*\{[\s\S]*\.epic-plan-builder__workspace\s*\{[\s\S]*grid-template-columns: minmax\(0, 1fr\);[\s\S]*overflow: visible;/,
     );
     expect(agentStyles).toMatch(
       /\.agent-session-scroll-region\s*\{[\s\S]*overflow-y: auto;[\s\S]*overscroll-behavior: none;/,

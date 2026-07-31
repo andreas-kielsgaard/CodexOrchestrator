@@ -1,4 +1,4 @@
-import type { AgentSessionClient } from '../application/agentSessions';
+import type { AgentIdentity, AgentSessionClient } from '../application/agentSessions';
 import { StandaloneAgentSessionScreen } from '../features/agentSessions/AgentSessionScreen';
 import type {
   ArtifactAccessController,
@@ -33,6 +33,8 @@ export interface AppProps {
   readonly agentSessionClient: AgentSessionClient;
   /** Plan Builder alone may use a managed send boundary; ordinary screens keep the generic client. */
   readonly managedPlanBuilderSessionClient?: ManagedPlanBuilderSessionClient;
+  /** Session-owned identity read; assignment and durability remain outside this view. */
+  readonly managedPlanBuilderAgentIdentity?: AgentIdentity;
   readonly orchestrationClient: OrchestrationApplicationClient;
   readonly orchestrationPresentation?: OrchestrationPresentationAdapter;
   readonly orchestrationAgentSessionComposition?: EmbeddedAgentSessionComposition;
@@ -57,6 +59,7 @@ export function App({
       throw new Error('Plan Builder action is unavailable.');
     },
   },
+  managedPlanBuilderAgentIdentity,
   orchestrationClient,
   orchestrationPresentation = productOrchestrationPresentationAdapter,
   orchestrationAgentSessionComposition,
@@ -240,6 +243,7 @@ export function App({
       {surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
         <EpicPlanBuilder
           agentSessionClient={managedPlanBuilderSessionClient}
+          agentIdentity={managedPlanBuilderAgentIdentity}
           proposalSource={planProposalSource}
           initiationCapability={initiationCapability}
           onRequestInitiation={confirmation.requestButton}

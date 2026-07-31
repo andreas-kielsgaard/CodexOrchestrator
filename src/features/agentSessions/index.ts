@@ -4,6 +4,7 @@ export {
   type AgentSessionScreenProps,
 } from './AgentSessionScreen';
 export { AgentSessionWorkspace, type AgentSessionWorkspaceProps } from './AgentSessionWorkspace';
+export { AgentIdentityMarker, type AgentIdentityMarkerProps } from './AgentIdentityMarker';
 export {
   browserAgentSessionClipboard,
   formatAgentSessionContext,

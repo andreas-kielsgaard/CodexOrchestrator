@@ -1,6 +1,7 @@
 import { ArrowLeft, Play, Sparkles, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type {
+  AgentIdentity,
   AgentSessionClient,
   SendAgentSessionMessageCommandDto,
 } from '../../application/agentSessions';
@@ -15,7 +16,8 @@ import {
   epicInitiationErrorMessage,
   managedPlanBuilderSessionConfiguration,
 } from '../../application/orchestrations';
-import { AgentSessionWorkspace, useAgentSession } from '../agentSessions';
+import { AgentIdentityMarker, AgentSessionWorkspace, useAgentSession } from '../agentSessions';
+import { ProductViewHeader } from '../shared/ProductViewHeader';
 import './styles/epicPlanBuilder.css';
 
 export const BUILD_EPIC_PLAN_PROMPT = 'Build the epic plan based on what we have discussed';
@@ -26,6 +28,7 @@ export interface EpicPlanBuilderProps {
       command: Omit<SendAgentSessionMessageCommandDto, 'submittedText'>,
     ): Promise<unknown>;
   };
+  readonly agentIdentity?: AgentIdentity;
   readonly proposalSource: EpicPlanProposalSource;
   readonly initiationCapability?: EpicInitiationCapability;
   /** App-owned shared confirmation request; opening the popup is not confirmation. */
@@ -44,6 +47,7 @@ export interface EpicPlanBuilderProps {
 /** One normal-app workspace: the shared conversation is primary; the proposal is source-owned. */
 export function EpicPlanBuilder({
   agentSessionClient,
+  agentIdentity,
   proposalSource,
   initiationCapability = {
     status: 'blocked',
@@ -75,9 +79,10 @@ export function EpicPlanBuilder({
   const [initiatingEpic, setInitiatingEpic] = useState(false);
   const alreadyInitiated = initiationCapability.status === 'already_initiated';
   const suggestedName = proposal.kind === 'available' ? proposal.suggestedEpicName : undefined;
+  const displayedEpicName = epicName.trim() || 'Untitled Epic';
   useEffect(() => {
-    if (!hasUserEnteredName && suggestedName) setEpicName(suggestedName);
-  }, [hasUserEnteredName, suggestedName]);
+    if (!hasUserEnteredName && !draft?.title && suggestedName) setEpicName(suggestedName);
+  }, [draft?.title, hasUserEnteredName, suggestedName]);
   const session = useAgentSession(agentSessionClient, {
     selectedSessionId: draft?.sessionId ?? null,
     sessionTitle: managedPlanBuilderSessionConfiguration.titleForEpicName(epicName),
@@ -187,26 +192,37 @@ export function EpicPlanBuilder({
 
   return (
     <main className="epic-plan-builder" aria-label="Plan an Epic">
-      <div className="epic-plan-builder__toolbar" aria-label="Epic planning draft actions">
-        <button className="epic-plan-builder__back" type="button" onClick={onBack}>
-          <ArrowLeft size={16} aria-hidden="true" />
-          Back to orchestration overview
-        </button>
-        <span className="epic-plan-builder__toolbar-context">
-          {alreadyInitiated ? 'Epic initiation confirmed' : 'Pre-initiation Epic planning draft'}
-        </span>
-        {draft && lifecycleClient && !alreadyInitiated && (
-          <button
-            className="epic-plan-builder__cancel-draft"
-            type="button"
-            disabled={cancelingDraft}
-            onClick={() => setCancelConfirmationOpen(true)}
-          >
-            <Trash2 size={15} aria-hidden="true" />
-            {cancelingDraft ? 'Canceling draft…' : 'Cancel draft'}
-          </button>
-        )}
-      </div>
+      <ProductViewHeader
+        context="Epic planning"
+        title={displayedEpicName}
+        actionsLabel="Epic planning view actions"
+        actions={
+          <>
+            <button className="epic-plan-builder__back" type="button" onClick={onBack}>
+              <ArrowLeft size={16} aria-hidden="true" />
+              <span className="epic-plan-builder__view-action-label">
+                Back to orchestration overview
+              </span>
+            </button>
+            {alreadyInitiated && (
+              <span className="epic-plan-builder__status">Epic initiation confirmed</span>
+            )}
+            {draft && lifecycleClient && !alreadyInitiated && (
+              <button
+                className="epic-plan-builder__cancel-draft"
+                type="button"
+                disabled={cancelingDraft}
+                onClick={() => setCancelConfirmationOpen(true)}
+              >
+                <Trash2 size={15} aria-hidden="true" />
+                <span className="epic-plan-builder__view-action-label">
+                  {cancelingDraft ? 'Canceling draft…' : 'Cancel draft'}
+                </span>
+              </button>
+            )}
+          </>
+        }
+      />
       {cancelConfirmationOpen && (
         <div className="epic-initiation-confirmation" role="presentation">
           <section
@@ -244,8 +260,6 @@ export function EpicPlanBuilder({
         <div className="epic-plan-builder__layout">
           <aside className="epic-plan-builder__controls" aria-label="Epic planning controls">
             <div className="epic-plan-builder__controls-primary">
-              <p className="eyebrow">Epic planning draft</p>
-              <h1>Plan an Epic</h1>
               <label htmlFor="epic-plan-builder-name">Epic name</label>
               <input
                 id="epic-plan-builder-name"
@@ -298,47 +312,59 @@ export function EpicPlanBuilder({
               {initiationError && <p role="alert">{initiationError}</p>}
             </div>
           </aside>
-          <div className="epic-plan-builder__conversation">
-            <AgentSessionWorkspace
-              controller={session}
-              presentation={{
-                showHeader: false,
-                ariaLabel: 'Epic Plan Builder conversation',
-                emptyState: {
-                  heading: 'Let’s build a plan',
-                  guidance:
-                    'Paste a prepared Epic description or begin discussing what you want to build.',
-                },
-                composer: {
-                  messageLabel: 'Describe what we are working on',
-                  messagePlaceholder: 'Describe what we are working on',
-                  keyboardHint: 'tooltip',
-                },
-              }}
-            />
-          </div>
-          <aside
-            className="epic-plan-builder__proposal"
-            aria-labelledby="proposed-epic-plan-heading"
+          <section
+            className="epic-plan-builder__workspace"
+            aria-label="Planning conversation and plan preview"
           >
-            <header className="epic-plan-builder__proposal-header">
-              <h2 id="proposed-epic-plan-heading">Proposed Epic plan</h2>
-            </header>
-            <div className="epic-plan-builder__proposal-body">
-              {proposal.kind === 'available' ? (
-                <ol>
-                  {proposal.sprints.map((sprint, index) => (
-                    <ProposedSprintCard key={sprint.title} sprint={sprint} number={index + 1} />
-                  ))}
-                </ol>
-              ) : (
-                <p className="epic-plan-builder__empty" role="status">
-                  The Epic Plan Builder will organize the emerging plan into proposed Sprints with
-                  bounded objectives and concerns.
-                </p>
-              )}
+            <div className="epic-plan-builder__conversation">
+              <AgentSessionWorkspace
+                controller={session}
+                presentation={{
+                  showHeader: false,
+                  ariaLabel: 'Epic Plan Builder conversation',
+                  identityHeader: {
+                    ...(agentIdentity ? { agentIdentity } : {}),
+                    title: 'Epic Plan Builder',
+                  },
+                  emptyState: {
+                    heading: 'Let’s build a plan',
+                    guidance:
+                      'Paste a prepared Epic description or begin discussing what you want to build.',
+                  },
+                  composer: {
+                    messageLabel: 'Describe what we are working on',
+                    messagePlaceholder: 'Describe what we are working on',
+                    keyboardHint: 'tooltip',
+                  },
+                }}
+              />
             </div>
-          </aside>
+            <aside
+              className="epic-plan-builder__proposal"
+              aria-labelledby="proposed-epic-plan-heading"
+            >
+              <header className="epic-plan-builder__proposal-header">
+                {agentIdentity && <AgentIdentityMarker identity={agentIdentity} />}
+                <h2 id="proposed-epic-plan-heading">
+                  {agentIdentity ? `${agentIdentity.name}'s Proposed Plan:` : 'Proposed Plan:'}
+                </h2>
+              </header>
+              <div className="epic-plan-builder__proposal-body">
+                {proposal.kind === 'available' ? (
+                  <ol>
+                    {proposal.sprints.map((sprint, index) => (
+                      <ProposedSprintCard key={sprint.title} sprint={sprint} number={index + 1} />
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="epic-plan-builder__empty" role="status">
+                    The Epic Plan Builder will organize the emerging plan into proposed Sprints with
+                    bounded objectives and concerns.
+                  </p>
+                )}
+              </div>
+            </aside>
+          </section>
         </div>
       </div>
     </main>
