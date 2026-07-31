@@ -28,7 +28,7 @@ import { useOrchestrationLoad } from './useOrchestrationLoad';
 import type { ManagedPlanBuilderSessionClient } from '../infrastructure/orchestrations/tauriManagedPlanBuilderSessionClient';
 import { useEpicInitiationConfirmation } from './useEpicInitiationConfirmation';
 import { EpicInitiationConfirmationModal } from './EpicInitiationConfirmationModal';
-import type { FileReviewClient } from '../application/fileReview';
+import type { FileReviewSource } from '../application/fileReview';
 import { FileReviewScreen } from '../features/fileReview';
 
 export type ApplicationSurface = 'epics' | 'agent-sessions' | 'file-review';
@@ -51,7 +51,7 @@ export interface AppProps {
   readonly epicPlanningDraftLifecycleClient?: EpicPlanningDraftLifecycleClient;
   readonly epicPlanProposalSourceForDraft?: (draftId: string) => EpicPlanProposalSource;
   readonly epicInitiationConfirmationClient?: EpicInitiationConfirmationClient;
-  readonly fileReviewClient?: FileReviewClient;
+  readonly fileReviewSource?: FileReviewSource;
   readonly initialSurface?: ApplicationSurface;
 }
 
@@ -75,13 +75,12 @@ export function App({
   epicPlanningDraftLifecycleClient,
   epicPlanProposalSourceForDraft,
   epicInitiationConfirmationClient,
-  fileReviewClient,
+  fileReviewSource,
   initialSurface = 'epics',
 }: AppProps) {
   const [surface, setSurface] = useState<ApplicationSurface>(() =>
-    initialSurface === 'file-review' && !fileReviewClient ? 'epics' : initialSurface,
+    initialSurface === 'file-review' && !fileReviewSource ? 'epics' : initialSurface,
   );
-  const [fileReviewSourceId, setFileReviewSourceId] = useState<string | undefined>();
   const [orchestrationRoute, setOrchestrationRoute] = useState<'overview' | 'plan-builder'>(
     'overview',
   );
@@ -247,7 +246,7 @@ export function App({
         >
           Agent Sessions
         </button>
-        {fileReviewClient ? (
+        {fileReviewSource ? (
           <button
             className={surface === 'file-review' ? 'active' : undefined}
             type="button"
@@ -283,14 +282,6 @@ export function App({
           sprintAutomaticContinuationPolicyController={sprintAutomaticContinuationPolicyController}
           epicAutomaticContinuationPolicyController={epicAutomaticContinuationPolicyController}
           planningDrafts={planningDrafts}
-          onOpenFileReviewSource={
-            fileReviewClient
-              ? (sourceId) => {
-                  setFileReviewSourceId(sourceId);
-                  setSurface('file-review');
-                }
-              : undefined
-          }
           onOpenDraft={(draft) => {
             setSelectedDraft({
               draftId: draft.epicPlanningDraftId,
@@ -304,8 +295,8 @@ export function App({
             setOrchestrationRoute('plan-builder');
           }}
         />
-      ) : surface === 'file-review' && fileReviewClient ? (
-        <FileReviewScreen client={fileReviewClient} initialSourceId={fileReviewSourceId} />
+      ) : surface === 'file-review' && fileReviewSource ? (
+        <FileReviewScreen source={fileReviewSource} />
       ) : (
         <StandaloneAgentSessionScreen client={agentSessionClient} />
       )}
@@ -323,7 +314,6 @@ function OrchestrationSurface({
   onPlanEpic,
   planningDrafts,
   onOpenDraft,
-  onOpenFileReviewSource,
 }: {
   readonly load: ReturnType<typeof useOrchestrationLoad>;
   readonly presentation: OrchestrationPresentationAdapter;
@@ -334,7 +324,6 @@ function OrchestrationSurface({
   readonly onPlanEpic: () => void;
   readonly planningDrafts: readonly EpicPlanningDraftSummary[];
   readonly onOpenDraft: (draft: EpicPlanningDraftSummary) => void;
-  readonly onOpenFileReviewSource?: (sourceId: string) => void;
 }) {
   if (load.kind === 'ready')
     return (
@@ -347,7 +336,6 @@ function OrchestrationSurface({
         onPlanEpic={onPlanEpic}
         planningDrafts={planningDrafts}
         onOpenPlanningDraft={onOpenDraft}
-        onOpenFileReviewSource={onOpenFileReviewSource}
       />
     );
   const copy =

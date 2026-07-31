@@ -29,7 +29,6 @@ describe('SprintDocumentsPanel', () => {
         rawPath: 'C:/copied/only-here.md',
       }),
     );
-    const onOpenFileReviewSource = vi.fn();
     const document = presentProductOrchestrations(
       composeProductOrchestrationReadModels(recordedProductReadCompositionInput),
       recordedPresentationAdjunct,
@@ -38,7 +37,6 @@ describe('SprintDocumentsPanel', () => {
       <SprintDocumentsPanel
         documents={[document]}
         artifactAccess={{ resolveForOpen, openWithSystemDefault, copyPath }}
-        onOpenFileReviewSource={onOpenFileReviewSource}
       />,
     );
 
@@ -58,7 +56,6 @@ describe('SprintDocumentsPanel', () => {
     expect(copyPath).toHaveBeenCalledWith(document);
     expect(await screen.findByText('C:/copied/only-here.md')).toBeVisible();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Review files' }));
-    expect(onOpenFileReviewSource).toHaveBeenCalledWith(document.documentRefId);
+    expect(screen.queryByRole('button', { name: 'Review files' })).toBeNull();
   });
 });

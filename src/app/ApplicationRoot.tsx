@@ -2,26 +2,28 @@ import { useEffect, useState } from 'react';
 import { createProductApplicationComposition } from '../bootstrap/productApplicationComposition';
 import { App, type AppProps } from './App';
 
-/** The optional recorded review composition is development-only and never enters product boot. */
+/** Optional recorded review compositions are development-only and never enter product boot. */
 export function ApplicationRoot() {
   const [composition, setComposition] = useState<AppProps | null>(null);
 
   useEffect(() => {
     let active = true;
-    const developmentRoute = new URLSearchParams(window.location.search);
-    const harnessInspectorRequested = developmentRoute.has('harness-inspector');
-    if (
-      viteDevelopmentMode() &&
-      (developmentRoute.has('recorded-plan-builder') || harnessInspectorRequested)
-    ) {
-      void import('../dev/orchestrationSection/recordedOrchestrationClient').then(
-        ({ createRecordedDevelopmentApplicationComposition }) => {
+    const parameters = new URLSearchParams(window.location.search);
+    if (viteDevelopmentMode() && parameters.has('file-diff-viewer')) {
+      void import('../dev/fileReview/recordedFileReviewClient').then(
+        ({ createRecordedFileReviewApplicationComposition }) => {
           if (active)
             setComposition(
-              createRecordedDevelopmentApplicationComposition({
-                initialSurface: harnessInspectorRequested ? 'harness-inspector' : 'epics',
-              }),
+              createRecordedFileReviewApplicationComposition(
+                recordedFileReviewFixture(parameters.get('file-review-fixture')),
+              ),
             );
+        },
+      );
+    } else if (viteDevelopmentMode() && parameters.has('recorded-plan-builder')) {
+      void import('../dev/orchestrationSection/recordedOrchestrationClient').then(
+        ({ createRecordedDevelopmentApplicationComposition }) => {
+          if (active) setComposition(createRecordedDevelopmentApplicationComposition());
         },
       );
     } else {
@@ -38,4 +40,15 @@ export function ApplicationRoot() {
 function viteDevelopmentMode(): boolean {
   const env = (import.meta as unknown as { env?: { DEV?: boolean } }).env;
   return env?.DEV === true;
+}
+
+function recordedFileReviewFixture(value: string | null) {
+  if (
+    value === 'staged' ||
+    value === 'commit-range' ||
+    value === 'generated' ||
+    value === 'application-owned'
+  )
+    return value;
+  return 'working-tree' as const;
 }

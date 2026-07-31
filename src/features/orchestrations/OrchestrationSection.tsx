@@ -21,7 +21,6 @@ export interface OrchestrationSectionProps {
   readonly onPlanEpic?: () => void;
   readonly planningDrafts?: readonly EpicPlanningDraftSummary[];
   readonly onOpenPlanningDraft?: (draft: EpicPlanningDraftSummary) => void;
-  readonly onOpenFileReviewSource?: (sourceId: string) => void;
 }
 
 export function OrchestrationSection({
@@ -33,7 +32,6 @@ export function OrchestrationSection({
   onPlanEpic,
   planningDrafts = [],
   onOpenPlanningDraft,
-  onOpenFileReviewSource,
 }: OrchestrationSectionProps) {
   const workspace = useOrchestrationWorkspace();
   const selected = view.epics.find(({ id }) => id === workspace.epicId);
@@ -54,7 +52,6 @@ export function OrchestrationSection({
         onSelectedRevisionChange={workspace.selectRevision}
         onDetailLocationChange={workspace.setDetailLocation}
         onBack={workspace.backToOverview}
-        onOpenFileReviewSource={onOpenFileReviewSource}
       />
     );
   }
