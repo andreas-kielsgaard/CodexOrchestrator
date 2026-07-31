@@ -1,12 +1,6 @@
-import { lazy, Suspense, useLayoutEffect, useRef, useState } from 'react';
-import { MarkdownContent } from './MarkdownContent';
+import { useLayoutEffect, useRef, useState } from 'react';
+import { AgentMarkdown } from '../features/agentSessions/AgentMarkdown';
 import './markdownEditor.css';
-
-const MdxMarkdownEditingSurface = lazy(() =>
-  import('./MdxMarkdownEditingSurface').then((module) => ({
-    default: module.MdxMarkdownEditingSurface,
-  })),
-);
 
 export interface MarkdownEditorProps {
   readonly label: string;
@@ -15,10 +9,10 @@ export interface MarkdownEditorProps {
   onChange(value: string): void;
 }
 
-type EditorMode = 'markdown' | 'plain';
+type EditorMode = 'rendered' | 'plain';
 
 export function MarkdownEditor({ label, value, editable, onChange }: MarkdownEditorProps) {
-  const [mode, setMode] = useState<EditorMode>('markdown');
+  const [mode, setMode] = useState<EditorMode>('rendered');
   const plainEditor = useRef<HTMLTextAreaElement>(null);
   const plainSelection = useRef({ start: 0, end: 0 });
 
@@ -29,8 +23,7 @@ export function MarkdownEditor({ label, value, editable, onChange }: MarkdownEdi
     field.setSelectionRange(Math.min(start, value.length), Math.min(end, value.length));
   }, [editable, mode, value]);
 
-  if (!editable)
-    return <MarkdownContent className="markdown-editor__preview">{value}</MarkdownContent>;
+  if (!editable) return <AgentMarkdown className="markdown-editor__preview">{value}</AgentMarkdown>;
 
   const switchMode = (next: EditorMode) => {
     if (next === mode) return;
@@ -41,15 +34,14 @@ export function MarkdownEditor({ label, value, editable, onChange }: MarkdownEdi
       };
     setMode(next);
     window.requestAnimationFrame(() => {
-      if (next === 'plain') {
-        const field = plainEditor.current;
-        if (!field) return;
-        field.focus();
-        field.setSelectionRange(
-          Math.min(plainSelection.current.start, field.value.length),
-          Math.min(plainSelection.current.end, field.value.length),
-        );
-      }
+      if (next !== 'plain') return;
+      const field = plainEditor.current;
+      if (!field) return;
+      field.focus();
+      field.setSelectionRange(
+        Math.min(plainSelection.current.start, field.value.length),
+        Math.min(plainSelection.current.end, field.value.length),
+      );
     });
   };
 
@@ -58,24 +50,22 @@ export function MarkdownEditor({ label, value, editable, onChange }: MarkdownEdi
       <div className="markdown-editor__mode" role="group" aria-label={`${label} mode`}>
         <button
           type="button"
-          aria-pressed={mode === 'markdown'}
-          onClick={() => switchMode('markdown')}
+          aria-pressed={mode === 'rendered'}
+          onClick={() => switchMode('rendered')}
         >
-          Markdown
+          Rendered
         </button>
         <button type="button" aria-pressed={mode === 'plain'} onClick={() => switchMode('plain')}>
           Plain
         </button>
       </div>
-      <div className="markdown-editor__rich-host" hidden={mode !== 'markdown'}>
-        <Suspense fallback={<p className="markdown-editor__loading">Loading editor…</p>}>
-          <MdxMarkdownEditingSurface
-            label={label}
-            value={value}
-            active={mode === 'markdown'}
-            onChange={onChange}
-          />
-        </Suspense>
+      <div
+        className="markdown-editor__rendered"
+        role="region"
+        aria-label={`${label} rendered Markdown`}
+        hidden={mode !== 'rendered'}
+      >
+        <AgentMarkdown className="markdown-editor__preview">{value}</AgentMarkdown>
       </div>
       <textarea
         ref={plainEditor}

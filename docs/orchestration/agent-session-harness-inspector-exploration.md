@@ -40,15 +40,13 @@ The prototype records these product concepts without claiming production effects
 - **Edit harness** creates a cached draft from the viewed committed revision; **Edit draft** reopens
   it. Commit and Push appear only in edit mode. Commit, Push, single-Session changes, and bulk
   changes require plain-language confirmation.
-- **Prompt prefix** has two editable views over one stored value. Markdown uses MDXEditor 4.1.1,
-  backed by Lexical 0.48, for a formatted WYSIWYG surface and maintained block/inline commands;
-  Plain is raw Markdown without a toolbar. MDXEditor reads and emits Markdown directly. Both modes
-  remain mounted, and external Plain changes use the editor's supported `setMarkdown` method rather
-  than replacing the component after each rich-editor keystroke. The prefix is intended for the
-  first Session prompt and future Harness-aware context compression; that compression routine is
-  deferred. View mode uses the same shared `AgentMarkdown` -> `MarkdownContent` normalization path
-  as the accepted File Review rendered-Markdown surface: GFM is enabled, raw HTML is skipped, and
-  links open with safe external-link attributes. It does not introduce a second parser or value.
+- **Prompt prefix** has two modes over one stored value. Rendered mode uses the accepted File Review
+  `AgentMarkdown` -> `MarkdownContent` path and does not edit. Plain mode is a normal raw-Markdown
+  textarea and is the only editing surface. Switching modes does not parse, serialize, or normalize
+  the source value; the textarea retains its selection when returning from Rendered mode. GFM is
+  enabled, raw HTML is skipped, and links open with safe external-link attributes. The prefix is
+  intended for the first Session prompt and future Harness-aware context compression; that
+  compression routine is deferred.
 - Skills are summarized as **Always applicable**, **Initial ingestion only**, and **Available**.
   The first two are selected whitelists. Only Available discovery can use whitelist or blacklist
   policy. A fuzzy-search dialog reads the complete checked-in product skill catalog and owns
@@ -84,16 +82,19 @@ The prototype records these product concepts without claiming production effects
   Sessions only for their next prompt. The separate Harness Management update panel and all
   interrupt controls are removed.
 
-### Editor dependency and bundle impact
+### Markdown implementation and bundle impact
 
-The recorded prototype adds MIT-licensed `@mdxeditor/editor` 4.1.1 and its Lexical 0.48.0
-foundation. The editor is dynamically imported only after Harness edit mode opens. The validated
-production build measures the initial Agent Session JavaScript chunk at 430.29 kB (130.08 kB gzip);
-the deferred editor contributes a separate 612.00 kB (201.73 kB gzip) JavaScript chunk and 47.75 kB
-(8.01 kB gzip) stylesheet. Vite therefore retains its greater-than-500 kB warning for the deferred
-editor chunk. `npm audit --omit=dev` reports no production vulnerabilities. The full development
-graph reports five high-severity advisories in the ESLint/minimatch/brace-expansion toolchain; the
-suggested automated fix would require a breaking ESLint upgrade and was not applied.
+The accepted File Review renderer is the shared implementation: `AgentMarkdown` delegates to the
+product-level `MarkdownContent` wrapper around `react-markdown` and `remark-gfm`. Harness Management
+does not keep a second parser or a rich-editor command layer. The previous `@mdxeditor/editor` and
+Lexical dependency tree, deferred JavaScript chunk, and editor stylesheet are removed. The
+remaining Markdown dependencies already serve Agent Session transcripts and the File Review
+surface. The validated build emits the Agent Session JavaScript chunk at 427.88 kB (129.01 kB gzip)
+and its stylesheet at 37.48 kB (6.97 kB gzip); it no longer emits a separate editor chunk or Vite's
+greater-than-500 kB chunk warning. `npm audit --omit=dev` reports no production vulnerabilities.
+The full development graph reports five high-severity advisories in the
+ESLint/minimatch/brace-expansion toolchain; the suggested automated fix would require a breaking
+ESLint upgrade and was not applied.
 
 The product-backed source remains read-only. It adapts the existing managed Plan Builder query to
 the same view contract, reports the session binding as untracked, supplies no agent identity, and
@@ -255,7 +256,7 @@ owns enforcement. Deeper hook configuration UI remains deferred.
   preference, Session-only identity changes, and ensure free-form completion criteria remain
   proposed rather than connected or exposed.
 - Pane tests cover Session-version entry, state cues, cached edits and dirty state across remount,
-  Markdown/Plain editing, permitted-name inspection/editing without Session renaming, full
+  rendered/Plain source round trips, permitted-name inspection/editing without Session renaming, full
   selected-skill details and applicability changes, fuzzy catalog search/add/change/remove,
   consistent skill/tool labels, policy counts and collapse state, compact accessible range
   controls, revision-owned versus delegated view/edit boundaries, Agent Session-only model/effort
@@ -281,8 +282,12 @@ owns enforcement. Deeper hook configuration UI remains deferred.
   bounds. Every reasoning control retains a 267 px width with a fixed 112 px endpoint readout,
   delegated v3 controls are enabled in view mode, and revision-owned v4 controls are disabled until
   edit mode. Session model/effort controls appear only in the Agent Session view, and the Prompt
-  prefix view has the shared `agent-markdown` renderer class. The browser console has no warnings
-  or errors.
+  prefix view has the shared `agent-markdown` renderer class. A focused Prompt-prefix pass at the
+  same responsive widths verifies both Rendered and Plain modes without horizontal overflow,
+  toolbar or `contenteditable` remnants. A GFM task item and safe external link render through
+  `AgentMarkdown`, raw HTML is skipped, the exact 113-character source and end caret survive the
+  Rendered/Plain round trip, the dirty draft survives conversation navigation, and Commit remains
+  confirmation-gated. The browser console has no warnings or errors.
 
 This evidence exercises only the recorded development composition and does not establish production
 runtime behavior.

@@ -16,134 +16,119 @@ function ControlledEditor({
   );
 }
 
-async function selectBlockType(name: string) {
-  const user = userEvent.setup();
-  await user.click(screen.getByRole('combobox', { name: 'Block type' }));
-  await user.click(await screen.findByRole('option', { name }));
-}
-
 describe('MarkdownEditor', () => {
-  it('offers formatted Markdown and raw Plain modes over one working value', async () => {
-    render(<ControlledEditor />);
+  it('reuses the File Review AgentMarkdown renderer for GFM and safe HTML boundaries', () => {
+    const { container } = render(
+      <ControlledEditor
+        initial={`# Prompt prefix
 
-    expect(screen.getByRole('button', { name: 'Markdown' })).toHaveAttribute(
+- [x] GFM task
+
+| Name | State |
+| --- | --- |
+| Session | ready |
+
+[Source](https://example.com)
+
+<script>alert("unsafe")</script><strong>raw</strong>`}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Rendered' })).toHaveAttribute(
       'aria-pressed',
       'true',
     );
-    expect(
-      await screen.findByRole('toolbar', { name: 'Markdown formatting' }, { timeout: 5_000 }),
-    ).toBeVisible();
-    const rich = await screen.findByRole('textbox', { name: 'Harness prompt' });
-    expect(rich.querySelector('h1')).toHaveTextContent('Prompt prefix');
-    expect(rich.querySelector('strong')).toHaveTextContent('careful');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Plain' }));
-    const plain = screen.getByRole('textbox', {
-      name: 'Harness prompt plain Markdown',
-    }) as HTMLTextAreaElement;
-    expect(plain).toHaveValue('# Prompt prefix\n\nUse **careful** guidance.');
-    expect(screen.queryByRole('toolbar', { name: 'Markdown formatting' })).toBeNull();
-    plain.focus();
-    plain.setSelectionRange(2, 8);
-    fireEvent.change(plain, {
-      target: {
-        value: '# Revised prefix\n\nUse **careful** guidance.',
-        selectionStart: 9,
-        selectionEnd: 9,
-      },
+    const rendered = screen.getByRole('region', {
+      name: 'Harness prompt rendered Markdown',
     });
-    expect(plain.selectionStart).toBe(9);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Markdown' }));
-    expect(await screen.findByRole('heading', { name: 'Revised prefix' })).toBeVisible();
-    expect(screen.getByText('careful')).toHaveProperty('tagName', 'STRONG');
-  }, 10_000);
-
-  it('applies and removes a heading on only the selected block', async () => {
-    render(<ControlledEditor initial={'First block\n\nSecond # literal block'} />);
-    const rich = await screen.findByRole('textbox', { name: 'Harness prompt' });
-    const paragraphs = rich.querySelectorAll('p');
-    expect(paragraphs).toHaveLength(2);
-
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(paragraphs[0]);
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-    rich.focus();
-
-    await selectBlockType('Heading 1');
-    await waitFor(() => {
-      expect(rich.querySelector('h1')).toHaveTextContent('First block');
-      expect(rich.querySelectorAll('p')).toHaveLength(1);
-    });
-    expect(rich.querySelector('p')).toHaveTextContent('Second # literal block');
-
-    const heading = rich.querySelector('h1');
-    expect(heading).not.toBeNull();
-    if (!heading) return;
-    const headingRange = document.createRange();
-    headingRange.selectNodeContents(heading);
-    selection?.removeAllRanges();
-    selection?.addRange(headingRange);
-    rich.focus();
-    await selectBlockType('Paragraph');
-    await waitFor(() => {
-      expect(rich.querySelector('h1')).toBeNull();
-      expect(rich.querySelectorAll('p')).toHaveLength(2);
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Plain' }));
-    expect(screen.getByLabelText('Harness prompt plain Markdown')).toHaveValue(
-      'First block\n\nSecond # literal block',
+    expect(rendered.querySelector('.agent-markdown.markdown-editor__preview')).not.toBeNull();
+    expect(within(rendered).getByRole('heading', { name: 'Prompt prefix' })).toBeVisible();
+    expect(within(rendered).getByRole('checkbox')).toBeChecked();
+    expect(within(rendered).getByRole('table')).toBeVisible();
+    expect(within(rendered).getByRole('link', { name: 'Source' })).toHaveAttribute(
+      'target',
+      '_blank',
     );
+    expect(within(rendered).getByRole('link', { name: 'Source' })).toHaveAttribute(
+      'rel',
+      'noreferrer',
+    );
+    expect(container.querySelector('script')).toBeNull();
+    expect(container.querySelector('strong')).toBeNull();
+    expect(container.querySelector('[contenteditable=true]')).toBeNull();
+    expect(screen.queryByRole('toolbar')).toBeNull();
   });
 
-  it('keeps the rich surface, caret, and literal hashes stable through mode round trips', async () => {
-    render(<ControlledEditor initial="Literal # stays literal" />);
-    const rich = await screen.findByRole('textbox', { name: 'Harness prompt' });
-    const paragraph = rich.querySelector('p');
-    expect(paragraph).not.toBeNull();
-    if (!paragraph) return;
-    const originalSurface = rich;
-    const originalParagraph = paragraph;
+  it('round-trips exact source and preserves its selection across rendered mode', async () => {
+    const initial = '## Exact source\n\nLiteral # hash  \n\n- [x] keep\n';
+    render(<ControlledEditor initial={initial} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Plain' }));
     const plain = screen.getByLabelText('Harness prompt plain Markdown') as HTMLTextAreaElement;
+    expect(plain).toHaveValue(initial);
     plain.focus();
-    plain.setSelectionRange(23, 23);
+    plain.setSelectionRange(3, 15);
+    fireEvent.select(plain);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rendered' }));
+    expect(screen.getByRole('heading', { name: 'Exact source' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Plain' }));
+
+    await waitFor(() => {
+      expect(plain).toHaveValue(initial);
+      expect(plain.selectionStart).toBe(3);
+      expect(plain.selectionEnd).toBe(15);
+    });
+  });
+
+  it('updates only from Plain source and keeps text and caret stable after changes', async () => {
+    render(<ControlledEditor initial="Literal # stays literal" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Plain' }));
+    const plain = screen.getByLabelText('Harness prompt plain Markdown') as HTMLTextAreaElement;
+    const revised = '# Revised prefix\n\nLiteral # stays literal#\n';
+
     fireEvent.change(plain, {
       target: {
-        value: 'Literal # stays literal#',
-        selectionStart: 24,
-        selectionEnd: 24,
+        value: revised,
+        selectionStart: 18,
+        selectionEnd: 18,
       },
     });
+    expect(plain).toHaveValue(revised);
+    expect(plain.selectionStart).toBe(18);
 
-    expect(plain.selectionStart).toBe(24);
-    fireEvent.click(screen.getByRole('button', { name: 'Markdown' }));
-    await waitFor(() =>
-      expect(rich.querySelector('p')).toHaveTextContent('Literal # stays literal#'),
-    );
-    expect(screen.getByRole('textbox', { name: 'Harness prompt' })).toBe(originalSurface);
-    expect(rich.querySelector('p')).not.toBe(originalParagraph);
-
+    fireEvent.click(screen.getByRole('button', { name: 'Rendered' }));
+    expect(screen.getByRole('heading', { name: 'Revised prefix' })).toBeVisible();
+    expect(screen.getByText('Literal # stays literal#')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Plain' }));
-    expect(screen.getByLabelText('Harness prompt plain Markdown')).toHaveValue(
-      'Literal # stays literal#',
-    );
+
+    await waitFor(() => {
+      expect(plain).toHaveValue(revised);
+      expect(plain.selectionStart).toBe(18);
+      expect(plain.selectionEnd).toBe(18);
+    });
   });
 
-  it('keeps the standard formatting controls accessible', async () => {
+  it('keeps the two standard mode controls and Plain source keyboard accessible', async () => {
+    const user = userEvent.setup();
     render(<ControlledEditor />);
-    const toolbar = await screen.findByRole('toolbar', { name: 'Markdown formatting' });
-    expect(within(toolbar).getByRole('combobox', { name: 'Block type' })).toBeVisible();
-    expect(within(toolbar).getByRole('radio', { name: 'Bold' })).toBeVisible();
-    expect(within(toolbar).getByRole('radio', { name: 'Italic' })).toBeVisible();
+    const modes = screen.getByRole('group', { name: 'Harness prompt mode' });
+    const rendered = within(modes).getByRole('button', { name: 'Rendered' });
+    const plainMode = within(modes).getByRole('button', { name: 'Plain' });
+
+    expect(rendered).toHaveAttribute('type', 'button');
+    expect(plainMode).toHaveAttribute('type', 'button');
+    await user.click(plainMode);
+    const plain = screen.getByRole('textbox', { name: 'Harness prompt plain Markdown' });
+    await waitFor(() => expect(plain).toHaveFocus());
+    expect(screen.queryByRole('toolbar')).toBeNull();
   });
 
-  it('renders a formatted read-only view when editing is unavailable', () => {
-    render(<ControlledEditor editable={false} />);
+  it('renders the canonical formatted view when editing is unavailable', () => {
+    const { container } = render(<ControlledEditor editable={false} />);
     expect(screen.getByRole('heading', { name: 'Prompt prefix' })).toBeVisible();
+    expect(container.querySelector('.agent-markdown.markdown-editor__preview')).not.toBeNull();
     expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.queryByRole('textbox')).toBeNull();
   });
 });

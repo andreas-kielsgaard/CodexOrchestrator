@@ -19,7 +19,6 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@mdxeditor/editor": "^4.1.1",
     "@tauri-apps/api": "^2.8.0",
     "@vitejs/plugin-react": "^4.6.0",
     "lucide-react": "^0.525.0",

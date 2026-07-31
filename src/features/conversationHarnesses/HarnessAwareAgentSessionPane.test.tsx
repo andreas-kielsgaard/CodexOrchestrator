@@ -229,7 +229,7 @@ describe('HarnessAwareAgentSessionPane', () => {
     expect(screen.getByRole('button', { name: 'Edit skills' })).toBeVisible();
   });
 
-  it('keeps one prompt value and caret-safe Markdown/Plain edits across navigation and remount', async () => {
+  it('keeps one prompt value and caret-safe rendered/Plain source across navigation and remount', async () => {
     const source = createRecordedHarnessManagementSource();
     const first = render(
       <HarnessAwareAgentSessionPane sessionId={recordedHarnessInspectorSessionId} source={source}>
@@ -239,11 +239,14 @@ describe('HarnessAwareAgentSessionPane', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Edit harness' }));
     await waitFor(() => expect(screen.getByLabelText('Harness name')).toBeEnabled());
+    expect(screen.getByRole('region', { name: 'Prompt prefix rendered Markdown' })).toBeVisible();
+    expect(screen.queryByRole('toolbar')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Plain' }));
     const plain = screen.getByLabelText('Prompt prefix plain Markdown') as HTMLTextAreaElement;
+    const revisedPrefix = '# Revised prefix\n\nKeep this durable working copy.';
     fireEvent.change(plain, {
       target: {
-        value: '# Revised prefix\n\nKeep this durable working copy.',
+        value: revisedPrefix,
       },
     });
     expect(
@@ -251,6 +254,10 @@ describe('HarnessAwareAgentSessionPane', () => {
         selector: '.harness-management__badge',
       }),
     ).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Rendered' }));
+    expect(screen.getByRole('heading', { name: 'Revised prefix' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Plain' }));
+    expect(screen.getByLabelText('Prompt prefix plain Markdown')).toHaveValue(revisedPrefix);
     fireEvent.click(screen.getByRole('button', { name: 'Back to conversation' }));
     await screen.findByLabelText('Planning view conversation');
     first.unmount();

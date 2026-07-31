@@ -13,10 +13,10 @@
   background: #f4f6f2;
 }
 
-.markdown-editor__mode button,
-.markdown-editor__toolbar button {
+.markdown-editor__mode button {
   display: inline-grid;
   min-height: 30px;
+  padding: 0 10px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -28,39 +28,18 @@
   place-items: center;
 }
 
-.markdown-editor__mode button {
-  padding: 0 10px;
-}
-
 .markdown-editor__mode button[aria-pressed='true'] {
   background: #fff;
   color: #245f48;
   box-shadow: 0 1px 3px rgb(23 33 27 / 12%);
 }
 
-.markdown-editor__toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px;
-  min-height: 40px;
-  padding: 5px 7px;
-  border-bottom: 1px solid #e0e4dd;
-  background: #fff;
+.markdown-editor__rendered[hidden],
+.markdown-editor__plain[hidden] {
+  display: none;
 }
 
-.markdown-editor__toolbar button {
-  min-width: 30px;
-  padding: 0 6px;
-}
-
-.markdown-editor__toolbar button:hover {
-  background: #edf2ed;
-  color: #245f48;
-}
-
-.markdown-editor__plain,
-.markdown-editor__rich {
+.markdown-editor__plain {
   display: block;
   width: 100%;
   min-height: 250px;
@@ -69,23 +48,15 @@
   outline: 0;
   background: #fff;
   color: #283a30;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 0.78rem;
   line-height: 1.6;
-}
-
-.markdown-editor__rich-host[hidden],
-.markdown-editor__plain[hidden] {
-  display: none;
-}
-
-.markdown-editor__mdx {
-  background: #fff;
-  color: #283a30;
-}
-
-.markdown-editor__plain {
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   resize: vertical;
+}
+
+.markdown-editor__plain:focus {
+  outline: 2px solid #39745a;
+  outline-offset: -2px;
 }
 
 .markdown-editor__preview {
@@ -96,93 +67,6 @@
   line-height: 1.65;
 }
 
-.markdown-editor__rich {
+.markdown-editor__rendered .markdown-editor__preview {
   min-height: 250px;
-  padding: 14px 16px;
-  color: #283a30;
-  font-size: 0.84rem;
-  line-height: 1.65;
-}
-
-.markdown-editor__rich > :first-child,
-.markdown-editor__preview > :first-child {
-  margin-top: 0;
-}
-
-.markdown-editor__rich > :last-child,
-.markdown-editor__preview > :last-child {
-  margin-bottom: 0;
-}
-
-.markdown-editor__rich h1,
-.markdown-editor__rich h2,
-.markdown-editor__rich h3,
-.markdown-editor__rich p,
-.markdown-editor__rich ul,
-.markdown-editor__rich ol,
-.markdown-editor__rich blockquote,
-.markdown-editor__rich pre,
-.markdown-editor__preview h1,
-.markdown-editor__preview h2,
-.markdown-editor__preview h3,
-.markdown-editor__preview p,
-.markdown-editor__preview ul,
-.markdown-editor__preview ol,
-.markdown-editor__preview blockquote,
-.markdown-editor__preview pre {
-  margin: 0.8em 0;
-}
-
-.markdown-editor__rich h1,
-.markdown-editor__preview h1 {
-  font-size: 1.3em;
-}
-
-.markdown-editor__rich h2,
-.markdown-editor__preview h2 {
-  font-size: 1.16em;
-}
-
-.markdown-editor__rich h3,
-.markdown-editor__preview h3 {
-  font-size: 1.05em;
-}
-
-.markdown-editor__rich ul,
-.markdown-editor__rich ol,
-.markdown-editor__preview ul,
-.markdown-editor__preview ol {
-  padding-left: 1.5em;
-}
-
-.markdown-editor__rich code,
-.markdown-editor__preview code {
-  padding: 0.1em 0.3em;
-  border-radius: 4px;
-  background: #e9ede7;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-}
-
-.markdown-editor__rich pre,
-.markdown-editor__preview pre {
-  overflow: auto;
-  padding: 12px;
-  border-radius: 7px;
-  background: #eef1eb;
-}
-
-.markdown-editor__rich pre code,
-.markdown-editor__preview pre code {
-  padding: 0;
-  background: transparent;
-}
-
-.markdown-editor__rich a,
-.markdown-editor__preview a {
-  color: #245f48;
-}
-
-.markdown-editor__rich:focus {
-  outline: 2px solid #39745a;
-  outline-offset: -2px;
 }
