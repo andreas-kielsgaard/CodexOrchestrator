@@ -6,6 +6,8 @@ import {
 import { AgentMarkdown } from './AgentMarkdown';
 import { ProcessingDisclosure } from './ProcessingDisclosure';
 import { TechnicalDiagnosticDisclosure } from './TechnicalDiagnosticDisclosure';
+import type { AgentIdentity } from '../../application/agentSessions';
+import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
 
 interface AgentSessionTranscriptProps {
   transcript: ProjectedTranscript | null;
@@ -14,6 +16,7 @@ interface AgentSessionTranscriptProps {
   expandedProcessing: ReadonlySet<string>;
   onToggleProcessing(invocationId: string): void;
   emptyState?: Readonly<{ heading: string; guidance: string }>;
+  agentIdentity?: AgentIdentity;
 }
 
 export function AgentSessionTranscript({
@@ -23,6 +26,7 @@ export function AgentSessionTranscript({
   expandedProcessing,
   onToggleProcessing,
   emptyState,
+  agentIdentity,
 }: AgentSessionTranscriptProps) {
   if (loading && !transcript) {
     return (
@@ -76,7 +80,10 @@ export function AgentSessionTranscript({
             {invocation.finalResponse && (
               <article className="transcript-message agent-final-message">
                 <header>
-                  <span>Agent</span>
+                  <span className="transcript-message__agent">
+                    {agentIdentity && <AgentIdentityBadge identity={agentIdentity} compact />}
+                    <span>{agentIdentity?.name ?? 'Agent'}</span>
+                  </span>
                   <span className="outcome-label">{invocation.outcome.label}</span>
                 </header>
                 <AgentMarkdown>{invocation.finalResponse.text}</AgentMarkdown>

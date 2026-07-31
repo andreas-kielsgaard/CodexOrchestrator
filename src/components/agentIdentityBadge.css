@@ -1,0 +1,32 @@
+.agent-identity-badge {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-identity-badge.is-compact {
+  flex: 0 0 auto;
+}
+
+.agent-identity-badge__text {
+  display: grid;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+.agent-identity-badge__text strong,
+.agent-identity-badge__text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-identity-badge__text strong {
+  font-size: 0.82rem;
+}
+
+.agent-identity-badge__text small {
+  color: #718077;
+  font-size: 0.68rem;
+}

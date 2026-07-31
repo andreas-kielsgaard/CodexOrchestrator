@@ -1,4 +1,5 @@
 import type { AgentIdentity, AgentSessionClient } from '../application/agentSessions';
+import type { ConversationHarnessManagementSource } from '../application/conversationHarnesses';
 import { StandaloneAgentSessionScreen } from '../features/agentSessions/AgentSessionScreen';
 import type {
   ArtifactAccessController,
@@ -20,7 +21,15 @@ import {
 } from '../application/orchestrations';
 import { EpicPlanBuilder, OrchestrationSection } from '../features/orchestrations';
 import type { EmbeddedAgentSessionComposition } from '../features/agentSessions';
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 import {
   productOrchestrationPresentationAdapter,
   type OrchestrationPresentationAdapter,
@@ -29,6 +38,8 @@ import { useOrchestrationLoad } from './useOrchestrationLoad';
 import type { ManagedPlanBuilderSessionClient } from '../infrastructure/orchestrations/tauriManagedPlanBuilderSessionClient';
 import { useEpicInitiationConfirmation } from './useEpicInitiationConfirmation';
 import { EpicInitiationConfirmationModal } from './EpicInitiationConfirmationModal';
+
+export type ApplicationSurface = 'epics' | 'agent-sessions' | 'harness-inspector';
 
 export interface AppProps {
   readonly agentSessionClient: AgentSessionClient;
@@ -50,6 +61,11 @@ export interface AppProps {
   readonly epicPlanningDraftLifecycleClient?: EpicPlanningDraftLifecycleClient;
   readonly epicPlanProposalSourceForDraft?: (draftId: string) => EpicPlanProposalSource;
   readonly epicInitiationConfirmationClient?: EpicInitiationConfirmationClient;
+  readonly agentSessionHarnessManagementSource?: ConversationHarnessManagementSource;
+  readonly agentIdentityForSession?: (sessionId: string) => AgentIdentity | undefined;
+  /** Present only in an injected development composition; production boot does not expose it. */
+  readonly harnessManagementPreviewSurface?: ReactNode;
+  readonly initialSurface?: ApplicationSurface;
 }
 
 export function App({
@@ -73,8 +89,16 @@ export function App({
   epicPlanningDraftLifecycleClient,
   epicPlanProposalSourceForDraft,
   epicInitiationConfirmationClient,
+  agentSessionHarnessManagementSource,
+  agentIdentityForSession,
+  harnessManagementPreviewSurface,
+  initialSurface = 'epics',
 }: AppProps) {
-  const [surface, setSurface] = useState<'epics' | 'agent-sessions'>('epics');
+  const [surface, setSurface] = useState<ApplicationSurface>(() =>
+    initialSurface === 'harness-inspector' && !harnessManagementPreviewSurface
+      ? 'epics'
+      : initialSurface,
+  );
   const [orchestrationRoute, setOrchestrationRoute] = useState<'overview' | 'plan-builder'>(
     'overview',
   );
@@ -313,6 +337,16 @@ export function App({
         >
           Agent Sessions
         </button>
+        {harnessManagementPreviewSurface && (
+          <button
+            className={surface === 'harness-inspector' ? 'active' : undefined}
+            type="button"
+            aria-current={surface === 'harness-inspector' ? 'page' : undefined}
+            onClick={() => setSurface('harness-inspector')}
+          >
+            Harness Management
+          </button>
+        )}
       </nav>
       {surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
         <EpicPlanBuilder
@@ -324,6 +358,7 @@ export function App({
           onInitiationFailure={refreshInitiationFailure}
           draft={selectedDraft ?? undefined}
           lifecycleClient={epicPlanningDraftLifecycleClient}
+          harnessManagementSource={agentSessionHarnessManagementSource}
           onSessionCreated={bindCreatedPlanBuilderSession}
           onBack={() => {
             setSelectedDraft(null);
@@ -353,8 +388,14 @@ export function App({
             setOrchestrationRoute('plan-builder');
           }}
         />
+      ) : surface === 'agent-sessions' ? (
+        <StandaloneAgentSessionScreen
+          client={agentSessionClient}
+          harnessManagementSource={agentSessionHarnessManagementSource}
+          agentIdentityForSession={agentIdentityForSession}
+        />
       ) : (
-        <StandaloneAgentSessionScreen client={agentSessionClient} />
+        harnessManagementPreviewSurface
       )}
     </div>
   );

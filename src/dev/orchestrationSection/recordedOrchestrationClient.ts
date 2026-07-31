@@ -20,6 +20,14 @@ import {
   createRecordedAgentSessionStore,
 } from '../agentSessions';
 import { recordedLocalEpicPlanProposalSource } from './recordedEpicPlanProposalSource';
+import {
+  createRecordedHarnessManagementSource,
+  recordedHarnessInspectorAgentIdentity,
+  recordedHarnessInspectorSessionDetails,
+  recordedHarnessInspectorSessionId,
+} from '../conversationHarnesses/recordedHarnessInspectorSource';
+import { HarnessInspectorDevelopmentSurface } from '../../features/conversationHarnesses';
+import { createElement } from 'react';
 
 /** Recorded development data enters through canonical composition; it is not a product connector. */
 export const recordedDevelopmentOrchestrationClient = recordedOrchestrationClient(
@@ -28,7 +36,10 @@ export const recordedDevelopmentOrchestrationClient = recordedOrchestrationClien
 
 /** Deterministic Agent Session client for the same embedded component tree in recorded mode. */
 export const recordedDevelopmentAgentSessionClient = createRecordedAgentSessionClient({
-  store: createRecordedAgentSessionStore(recordedAgentSessionDetails),
+  store: createRecordedAgentSessionStore([
+    ...recordedAgentSessionDetails,
+    recordedHarnessInspectorSessionDetails,
+  ]),
 });
 
 /** Stable development identity for visual review; it is not a durable product assignment. */
@@ -52,7 +63,15 @@ export const recordedDevelopmentOrchestrationPresentation: OrchestrationPresenta
 };
 
 /** Development-only adapter: recorded reads use the product tree, while effects remain unsupported. */
-export function createRecordedDevelopmentApplicationComposition(): AppProps {
+export function createRecordedDevelopmentApplicationComposition(options?: {
+  readonly initialSurface?: AppProps['initialSurface'];
+}): AppProps {
+  let harnessIdentity = recordedHarnessInspectorAgentIdentity;
+  const harnessManagementSource = createRecordedHarnessManagementSource({
+    onSessionIdentityChange(identity) {
+      harnessIdentity = identity;
+    },
+  });
   return {
     agentSessionClient: recordedDevelopmentAgentSessionClient,
     managedPlanBuilderAgentIdentity: recordedPlanBuilderAgentIdentity,
@@ -65,5 +84,17 @@ export function createRecordedDevelopmentApplicationComposition(): AppProps {
     epicAutomaticContinuationPolicyController:
       unsupportedProductEpicAutomaticContinuationPolicyController,
     epicPlanProposalSource: recordedLocalEpicPlanProposalSource,
+    agentSessionHarnessManagementSource: harnessManagementSource,
+    agentIdentityForSession: (sessionId) =>
+      sessionId === recordedHarnessInspectorSessionId ? harnessIdentity : undefined,
+    harnessManagementPreviewSurface: createElement(HarnessInspectorDevelopmentSurface, {
+      composition: {
+        client: recordedDevelopmentAgentSessionClient,
+        sessionId: recordedHarnessInspectorSessionId,
+        source: harnessManagementSource,
+        agentIdentity: harnessIdentity,
+      },
+    }),
+    initialSurface: options?.initialSurface,
   };
 }

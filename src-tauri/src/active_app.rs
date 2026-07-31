@@ -186,6 +186,7 @@ pub(crate) fn run() {
             crate::orchestration::transport::send_managed_plan_builder_message,
             crate::orchestration::transport::request_managed_plan_builder_action,
             crate::orchestration::transport::reconcile_managed_plan_builder_session,
+            crate::orchestration::transport::load_managed_plan_builder_harness_inspection,
             crate::orchestration::transport::update_epic_planning_draft_title,
             crate::orchestration::transport::cancel_epic_planning_draft,
             crate::orchestration::transport::request_epic_initiation_confirmation,

@@ -1,5 +1,6 @@
 import { MessageSquarePlus, RefreshCw } from 'lucide-react';
-import type { AgentSessionSummaryDto } from '../../application/agentSessions';
+import type { AgentIdentity, AgentSessionSummaryDto } from '../../application/agentSessions';
+import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
 
 interface SessionSelectorProps {
   summaries: AgentSessionSummaryDto[];
@@ -8,6 +9,7 @@ interface SessionSelectorProps {
   onSelect(sessionId: string): void;
   onNew(): void;
   onReload(): void;
+  agentIdentityForSession?: (sessionId: string) => AgentIdentity | undefined;
 }
 
 export function SessionSelector({
@@ -17,6 +19,7 @@ export function SessionSelector({
   onSelect,
   onNew,
   onReload,
+  agentIdentityForSession,
 }: SessionSelectorProps) {
   return (
     <aside className="agent-session-selector" aria-label="Agent Sessions">
@@ -36,20 +39,28 @@ export function SessionSelector({
         {summaries.length === 0 ? (
           <p className="session-list-empty">No saved sessions yet.</p>
         ) : (
-          summaries.map((summary) => (
-            <button
-              className={`session-list-item${summary.id === selectedSessionId ? ' active' : ''}`}
-              type="button"
-              key={summary.id}
-              onClick={() => onSelect(summary.id)}
-              aria-current={summary.id === selectedSessionId ? 'page' : undefined}
-            >
-              <span>{summary.title}</span>
-              <small>
-                {summary.hasActiveInvocation ? 'Working' : formatDate(summary.updatedAt)}
-              </small>
-            </button>
-          ))
+          summaries.map((summary) => {
+            const identity = agentIdentityForSession?.(summary.id);
+            return (
+              <button
+                className={`session-list-item${summary.id === selectedSessionId ? ' active' : ''}`}
+                type="button"
+                key={summary.id}
+                onClick={() => onSelect(summary.id)}
+                aria-current={summary.id === selectedSessionId ? 'page' : undefined}
+              >
+                <span className="session-list-item__identity">
+                  {identity && <AgentIdentityBadge identity={identity} compact />}
+                  <span className="session-list-item__title">
+                    {identity ? `${identity.name}: ${identityRoleLabel(identity)}` : summary.title}
+                  </span>
+                </span>
+                <small>
+                  {summary.hasActiveInvocation ? 'Working' : formatDate(summary.updatedAt)}
+                </small>
+              </button>
+            );
+          })
         )}
       </nav>
       <button
@@ -69,4 +80,12 @@ function formatDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(
     new Date(value),
   );
+}
+
+function identityRoleLabel(identity: AgentIdentity): string {
+  return identity.harnessRole
+    .split('_')
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toLocaleUpperCase()}${part.slice(1)}`)
+    .join(' ');
 }

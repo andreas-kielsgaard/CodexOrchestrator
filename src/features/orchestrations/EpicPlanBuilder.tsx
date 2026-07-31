@@ -5,6 +5,7 @@ import type {
   AgentSessionClient,
   SendAgentSessionMessageCommandDto,
 } from '../../application/agentSessions';
+import type { ConversationHarnessManagementSource } from '../../application/conversationHarnesses';
 import type {
   EpicPlanningDraftBinding,
   EpicPlanningDraftLifecycleClient,
@@ -18,6 +19,7 @@ import {
 } from '../../application/orchestrations';
 import { AgentIdentityMarker, AgentSessionWorkspace, useAgentSession } from '../agentSessions';
 import { ProductViewHeader } from '../shared/ProductViewHeader';
+import { HarnessAwareAgentSessionPane } from '../conversationHarnesses/HarnessAwareAgentSessionPane';
 import './styles/epicPlanBuilder.css';
 
 export const BUILD_EPIC_PLAN_PROMPT = 'Build the epic plan based on what we have discussed';
@@ -29,6 +31,7 @@ export interface EpicPlanBuilderProps {
     ): Promise<unknown>;
   };
   readonly agentIdentity?: AgentIdentity;
+  readonly harnessManagementSource?: ConversationHarnessManagementSource;
   readonly proposalSource: EpicPlanProposalSource;
   readonly initiationCapability?: EpicInitiationCapability;
   /** App-owned shared confirmation request; opening the popup is not confirmation. */
@@ -48,6 +51,7 @@ export interface EpicPlanBuilderProps {
 export function EpicPlanBuilder({
   agentSessionClient,
   agentIdentity,
+  harnessManagementSource,
   proposalSource,
   initiationCapability = {
     status: 'blocked',
@@ -317,27 +321,56 @@ export function EpicPlanBuilder({
             aria-label="Planning conversation and plan preview"
           >
             <div className="epic-plan-builder__conversation">
-              <AgentSessionWorkspace
-                controller={session}
-                presentation={{
-                  showHeader: false,
-                  ariaLabel: 'Epic Plan Builder conversation',
-                  identityHeader: {
-                    ...(agentIdentity ? { agentIdentity } : {}),
-                    title: 'Epic Plan Builder',
-                  },
-                  emptyState: {
-                    heading: 'Let’s build a plan',
-                    guidance:
-                      'Paste a prepared Epic description or begin discussing what you want to build.',
-                  },
-                  composer: {
-                    messageLabel: 'Describe what we are working on',
-                    messagePlaceholder: 'Describe what we are working on',
-                    keyboardHint: 'tooltip',
-                  },
-                }}
-              />
+              {harnessManagementSource && (draft?.sessionId ?? session.selectedSessionId) ? (
+                <HarnessAwareAgentSessionPane
+                  sessionId={(draft?.sessionId ?? session.selectedSessionId)!}
+                  source={harnessManagementSource}
+                >
+                  <AgentSessionWorkspace
+                    controller={session}
+                    presentation={{
+                      showHeader: false,
+                      ariaLabel: 'Epic Plan Builder conversation',
+                      identityHeader: {
+                        ...(agentIdentity ? { agentIdentity } : {}),
+                        title: 'Epic Plan Builder',
+                      },
+                      emptyState: {
+                        heading: 'Let’s build a plan',
+                        guidance:
+                          'Paste a prepared Epic description or begin discussing what you want to build.',
+                      },
+                      composer: {
+                        messageLabel: 'Describe what we are working on',
+                        messagePlaceholder: 'Describe what we are working on',
+                        keyboardHint: 'tooltip',
+                      },
+                    }}
+                  />
+                </HarnessAwareAgentSessionPane>
+              ) : (
+                <AgentSessionWorkspace
+                  controller={session}
+                  presentation={{
+                    showHeader: false,
+                    ariaLabel: 'Epic Plan Builder conversation',
+                    identityHeader: {
+                      ...(agentIdentity ? { agentIdentity } : {}),
+                      title: 'Epic Plan Builder',
+                    },
+                    emptyState: {
+                      heading: 'Let’s build a plan',
+                      guidance:
+                        'Paste a prepared Epic description or begin discussing what you want to build.',
+                    },
+                    composer: {
+                      messageLabel: 'Describe what we are working on',
+                      messagePlaceholder: 'Describe what we are working on',
+                      keyboardHint: 'tooltip',
+                    },
+                  }}
+                />
+              )}
             </div>
             <aside
               className="epic-plan-builder__proposal"

@@ -8,13 +8,20 @@ export function ApplicationRoot() {
 
   useEffect(() => {
     let active = true;
+    const developmentRoute = new URLSearchParams(window.location.search);
+    const harnessInspectorRequested = developmentRoute.has('harness-inspector');
     if (
       viteDevelopmentMode() &&
-      new URLSearchParams(window.location.search).has('recorded-plan-builder')
+      (developmentRoute.has('recorded-plan-builder') || harnessInspectorRequested)
     ) {
       void import('../dev/orchestrationSection/recordedOrchestrationClient').then(
         ({ createRecordedDevelopmentApplicationComposition }) => {
-          if (active) setComposition(createRecordedDevelopmentApplicationComposition());
+          if (active)
+            setComposition(
+              createRecordedDevelopmentApplicationComposition({
+                initialSurface: harnessInspectorRequested ? 'harness-inspector' : 'epics',
+              }),
+            );
         },
       );
     } else {

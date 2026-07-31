@@ -69,12 +69,24 @@
   background: #e9ede7;
 }
 
-.session-list-item span {
+.session-list-item > span,
+.session-list-item__title {
   overflow: hidden;
   font-size: 0.84rem;
   font-weight: 720;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-list-item__identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.session-list-item__identity > span {
+  min-width: 0;
 }
 
 .session-list-item small,
@@ -109,6 +121,11 @@
 
 .agent-session-workspace--header-hidden {
   grid-template-rows: auto minmax(0, 1fr);
+}
+
+.agent-session-workspace--with-settings,
+.agent-session-workspace--header-hidden.agent-session-workspace--with-settings {
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .agent-session-conversation {
@@ -200,6 +217,12 @@
   padding: 4px 9px;
   border-bottom: 1px solid #e0e4dd;
   background: #fffdf8;
+}
+
+.agent-session-settings {
+  min-width: 0;
+  border-bottom: 1px solid #e0e4dd;
+  background: #f8faf6;
 }
 
 .agent-session-copy-action {
@@ -376,6 +399,13 @@
   color: #526058;
   font-size: 0.75rem;
   font-weight: 800;
+}
+
+.transcript-message__agent {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
 }
 
 .transcript-message time,

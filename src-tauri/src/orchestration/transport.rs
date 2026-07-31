@@ -113,6 +113,21 @@ pub(crate) fn reconcile_managed_plan_builder_session(
     let session_id = AgentSessionId::new(input.session_id).map_err(|error| error.to_string())?;
     state.service.reconcile_session(session_id, input.title)
 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LoadManagedPlanBuilderHarnessInspectionInput {
+    session_id: String,
+}
+
+#[tauri::command]
+pub(crate) fn load_managed_plan_builder_harness_inspection(
+    state: State<'_, ManagedPlanBuilderTauriState>,
+    input: LoadManagedPlanBuilderHarnessInspectionInput,
+) -> Result<super::application::ManagedPlanBuilderHarnessInspection, String> {
+    let session_id = AgentSessionId::new(input.session_id).map_err(|error| error.to_string())?;
+    state.service.inspect_conversation_harness(session_id)
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MutatePlanningDraftInput {

@@ -1,5 +1,7 @@
 import { AlertCircle, X } from 'lucide-react';
-import type { AgentSessionClient } from '../../application/agentSessions';
+import type { AgentIdentity, AgentSessionClient } from '../../application/agentSessions';
+import type { ConversationHarnessManagementSource } from '../../application/conversationHarnesses';
+import { HarnessAwareAgentSessionPane } from '../conversationHarnesses/HarnessAwareAgentSessionPane';
 import { AgentSessionWorkspace } from './AgentSessionWorkspace';
 import { SessionSelector } from './SessionSelector';
 import { useAgentSession, useAgentSessionCollection } from './useAgentSessionController';
@@ -7,13 +9,22 @@ import './agentSession.css';
 
 export interface AgentSessionScreenProps {
   client: AgentSessionClient;
+  readonly harnessManagementSource?: ConversationHarnessManagementSource;
+  readonly agentIdentityForSession?: (sessionId: string) => AgentIdentity | undefined;
 }
-export function StandaloneAgentSessionScreen({ client }: AgentSessionScreenProps) {
+export function StandaloneAgentSessionScreen({
+  client,
+  harnessManagementSource,
+  agentIdentityForSession,
+}: AgentSessionScreenProps) {
   const collection = useAgentSessionCollection(client);
   const session = useAgentSession(client, {
     selectedSessionId: collection.selectedSessionId,
     onSessionCreated: (id) => void collection.selectSession(id).then(() => collection.reload()),
   });
+  const selectedIdentity = collection.selectedSessionId
+    ? agentIdentityForSession?.(collection.selectedSessionId)
+    : undefined;
   return (
     <main className="agent-session-screen">
       <SessionSelector
@@ -23,6 +34,7 @@ export function StandaloneAgentSessionScreen({ client }: AgentSessionScreenProps
         onSelect={(id) => void collection.selectSession(id)}
         onNew={collection.startNewSession}
         onReload={() => void collection.reload()}
+        agentIdentityForSession={agentIdentityForSession}
       />
       {collection.error && (
         <section className="agent-session-error" role="alert">
@@ -33,7 +45,32 @@ export function StandaloneAgentSessionScreen({ client }: AgentSessionScreenProps
           </button>
         </section>
       )}
-      <AgentSessionWorkspace controller={session} />
+      {collection.selectedSessionId && harnessManagementSource ? (
+        <HarnessAwareAgentSessionPane
+          sessionId={collection.selectedSessionId}
+          source={harnessManagementSource}
+        >
+          <AgentSessionWorkspace
+            controller={session}
+            presentation={
+              selectedIdentity
+                ? {
+                    identityHeader: {
+                      agentIdentity: selectedIdentity,
+                      title: selectedIdentity.harnessRole
+                        .split('_')
+                        .filter(Boolean)
+                        .map((part) => `${part.charAt(0).toLocaleUpperCase()}${part.slice(1)}`)
+                        .join(' '),
+                    },
+                  }
+                : undefined
+            }
+          />
+        </HarnessAwareAgentSessionPane>
+      ) : (
+        <AgentSessionWorkspace controller={session} />
+      )}
     </main>
   );
 }

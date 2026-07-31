@@ -8,6 +8,7 @@ import {
   type TranscriptAnchorRange,
 } from './transcriptProjector';
 import { useTranscriptFollow } from './useTranscriptFollow';
+import type { AgentIdentity } from '../../application/agentSessions';
 
 export interface ConversationViewportSegment {
   /** Caller-assigned causal position. Segments are rendered in this exact array order. */
@@ -53,6 +54,7 @@ export interface ConversationViewportProps {
   ariaLabel?: string;
   emptyState?: ConversationEmptyStatePresentation;
   composerPresentation?: ConversationComposerPresentation;
+  agentIdentity?: AgentIdentity;
 }
 
 export function ConversationViewport({
@@ -66,6 +68,7 @@ export function ConversationViewport({
   ariaLabel = 'Conversation',
   emptyState,
   composerPresentation,
+  agentIdentity,
 }: ConversationViewportProps) {
   const revision = segments
     .map(
@@ -107,6 +110,7 @@ export function ConversationViewport({
             expandedProcessing={expandedProcessing}
             onToggleProcessing={onToggleProcessing}
             emptyState={emptyState}
+            agentIdentity={agentIdentity}
           />
         ))}
         {!segments.length && (
@@ -116,6 +120,7 @@ export function ConversationViewport({
             emptyState={emptyState}
             expandedProcessing={expandedProcessing}
             onToggleProcessing={onToggleProcessing}
+            agentIdentity={agentIdentity}
           />
         )}
       </div>
