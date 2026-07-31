@@ -10,7 +10,7 @@ import '../styles/orchestrationSubdetail.css';
 export interface WorkUnitDetailWorkspaceProps {
   readonly unit: SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number];
   readonly lifecycleEntries: SprintWorkspacePresentationV1['workUnitLifecycle'];
-  readonly sprintPlannerActivityGroupTitle: string;
+  readonly workSlicePlanningPointGroupTitle: string;
   readonly sessions: readonly WorkUnitAgentSessionPresentation[];
   readonly agentSessionComposition?: EmbeddedAgentSessionComposition;
   readonly backLabel?: string;
@@ -27,7 +27,7 @@ interface SessionFocusTarget {
 export function WorkUnitDetailWorkspace({
   unit,
   lifecycleEntries,
-  sprintPlannerActivityGroupTitle,
+  workSlicePlanningPointGroupTitle,
   sessions,
   agentSessionComposition,
   backLabel = 'Back to Plan',
@@ -35,39 +35,27 @@ export function WorkUnitDetailWorkspace({
   onOpenAgentSession,
 }: WorkUnitDetailWorkspaceProps) {
   const workUnitId = unit.workUnitId;
-  const sprintPlanner = sessions.find(
-    (session) => session.workUnitId === workUnitId && session.role === 'sprint_planner',
+  const workSlicePlanner = sessions.find(
+    (session) => session.workUnitId === workUnitId && session.role === 'work_slice_planner',
   );
   const handler = sessions.find(
     (session) => session.workUnitId === workUnitId && session.role === 'handler',
   );
-  const worker = sessions.find(
-    (session) => session.workUnitId === workUnitId && session.role === 'worker',
+  const implementer = sessions.find(
+    (session) => session.workUnitId === workUnitId && session.role === 'implementer',
   );
-  const reviewer = sessions.find(
-    (session) => session.workUnitId === workUnitId && session.role === 'reviewer',
-  );
-  const plannerAndHandlerOnly = Boolean(sprintPlanner && handler && !worker && !reviewer);
   const [primarySessionId, setPrimarySessionId] = useState(
-    handler?.sessionId ?? sprintPlanner?.sessionId ?? '',
-  );
-  const [secondarySessionId, setSecondarySessionId] = useState(
-    worker?.sessionId ?? reviewer?.sessionId ?? '',
+    handler?.sessionId ?? workSlicePlanner?.sessionId ?? '',
   );
   const [focusTarget, setFocusTarget] = useState<SessionFocusTarget | null>(null);
   const primarySession =
-    sessions.find(({ sessionId }) => sessionId === primarySessionId) ?? handler ?? sprintPlanner;
-  const secondarySession =
-    sessions.find(({ sessionId }) => sessionId === secondarySessionId) ?? worker ?? reviewer;
-  const splitPrimarySession = plannerAndHandlerOnly ? sprintPlanner : primarySession;
-  const splitSecondarySession = plannerAndHandlerOnly ? handler : secondarySession;
+    sessions.find(({ sessionId }) => sessionId === primarySessionId) ?? handler ?? workSlicePlanner;
 
   const navigateToLifecycleTurn = (
     entry: SprintWorkspacePresentationV1['workUnitLifecycle'][number],
   ) => {
-    if ([handler?.sessionId, sprintPlanner?.sessionId].includes(entry.agentSessionId))
+    if ([handler?.sessionId, workSlicePlanner?.sessionId].includes(entry.agentSessionId))
       setPrimarySessionId(entry.agentSessionId);
-    else setSecondarySessionId(entry.agentSessionId);
     setFocusTarget((current) => ({
       sessionId: entry.agentSessionId,
       invocationId: entry.invocationId,
@@ -83,7 +71,7 @@ export function WorkUnitDetailWorkspace({
       backLabel={backLabel}
       onBack={onBack}
       focusBackOnMount
-      hotbarContext={sprintPlannerActivityGroupTitle}
+      hotbarContext={workSlicePlanningPointGroupTitle}
       control={
         <span className={`work-unit-state work-unit-state--${unit.presentationState}`}>
           <small>Current work</small>
@@ -140,27 +128,29 @@ export function WorkUnitDetailWorkspace({
             axis="horizontal"
             primary={
               <div className="work-unit-primary-session">
-                {sprintPlanner && handler && !plannerAndHandlerOnly ? (
+                {workSlicePlanner && handler ? (
                   <nav aria-label="Planning and handling Agent Session">
-                    {[sprintPlanner, handler].map((session) => (
+                    {[workSlicePlanner, handler].map((session) => (
                       <button
                         key={session.sessionId}
                         type="button"
                         aria-pressed={primarySession?.sessionId === session.sessionId}
                         onClick={() => setPrimarySessionId(session.sessionId)}
                       >
-                        {session.role === 'sprint_planner' ? 'Sprint Planner' : 'Work Unit handler'}
+                        {session.role === 'work_slice_planner'
+                          ? 'Work Slice Planner'
+                          : 'Work Unit Handler'}
                       </button>
                     ))}
                   </nav>
                 ) : null}
                 <SessionSlot
                   label={
-                    splitPrimarySession?.role === 'sprint_planner'
-                      ? 'Sprint Planner'
-                      : 'Work Unit handler'
+                    primarySession?.role === 'work_slice_planner'
+                      ? 'Work Slice Planner'
+                      : 'Work Unit Handler'
                   }
-                  session={splitPrimarySession}
+                  session={primarySession}
                   agentSessionComposition={agentSessionComposition}
                   focusTarget={focusTarget}
                   onOpenAgentSession={onOpenAgentSession}
@@ -169,45 +159,17 @@ export function WorkUnitDetailWorkspace({
             }
             secondary={
               <div className="work-unit-execution-session">
-                {worker && reviewer ? (
-                  <nav aria-label="Execution Agent Session">
-                    {[worker, reviewer].map((session) => (
-                      <button
-                        key={session.sessionId}
-                        type="button"
-                        aria-pressed={secondarySession?.sessionId === session.sessionId}
-                        onClick={() => setSecondarySessionId(session.sessionId)}
-                      >
-                        {session.role === 'worker' ? 'Worker' : 'Reviewer'}
-                      </button>
-                    ))}
-                  </nav>
-                ) : null}
                 <SessionSlot
-                  label={
-                    splitSecondarySession?.role === 'handler'
-                      ? 'Work Unit handler'
-                      : splitSecondarySession?.role === 'reviewer'
-                        ? 'Reviewer'
-                        : 'Implementation worker'
-                  }
-                  session={splitSecondarySession}
+                  label="Work Unit Implementer"
+                  session={implementer}
                   agentSessionComposition={agentSessionComposition}
                   focusTarget={focusTarget}
                   onOpenAgentSession={onOpenAgentSession}
                 />
               </div>
             }
-            primaryLabel={
-              plannerAndHandlerOnly
-                ? 'Sprint Planner conversation'
-                : 'Planning and handling conversation'
-            }
-            secondaryLabel={
-              plannerAndHandlerOnly
-                ? 'Work Unit handler conversation'
-                : 'Work and review conversation'
-            }
+            primaryLabel="Planning and handling conversation"
+            secondaryLabel="Work Unit Implementer conversation"
             initialPrimaryPercent={50}
             minimumPrimaryPixels={220}
             minimumSecondaryPixels={220}
@@ -261,11 +223,11 @@ function agentInitial(
   role: SprintWorkspacePresentationV1['workUnitLifecycle'][number]['agentRole'],
 ) {
   return {
-    sprint_planner: 'SP',
+    epic_runner: 'ER',
+    sprint_runner: 'SR',
+    work_slice_planner: 'SP',
     work_unit_handler: 'H',
-    worker: 'W',
-    reviewer: 'R',
-    merger: 'M',
+    work_unit_implementer: 'I',
   }[role];
 }
 

@@ -1,6 +1,7 @@
 import type {
   SprintWorkspacePresentationAdjunct,
   SprintWorkspaceDetailLocation,
+  SprintAgentSessionPresentation,
   WorkUnitAgentSessionPresentation,
 } from '../orchestrationModel';
 import type {
@@ -16,7 +17,7 @@ import { SprintDocumentsPanel } from './SprintDocumentsPanel';
 import { SprintFlowMap } from './SprintFlowMap';
 import { SprintWorkspaceTabs, type SprintWorkspaceTab } from './SprintWorkspaceTabs';
 import { SharedAgentSessionPanel } from './SharedAgentSessionPanel';
-import { SprintPlannerActivityDetailWorkspace } from './SprintPlannerActivityDetailWorkspace';
+import { WorkSlicePlanningPointDetailWorkspace } from './WorkSlicePlanningPointDetailWorkspace';
 import { WorkUnitDetailWorkspace } from './WorkUnitDetailWorkspace';
 import '../styles/sprintWorkspace.css';
 import type { EmbeddedAgentSessionComposition } from '../../agentSessions';
@@ -52,17 +53,29 @@ export function SprintWorkspace({
 }: SprintWorkspaceProps) {
   const [selectedTab, setSelectedTab] = useState<SprintWorkspaceTab>('flow');
   const [selectedConcernId, setSelectedConcernId] = useState<string | null>(null);
-  const [highlightedProblemId, setHighlightedProblemId] = useState<string | null>(null);
+  const [highlightedSprintRunnerConcernId, setHighlightedSprintRunnerConcernId] = useState<
+    string | null
+  >(null);
   const [hoveredGraphElement, setHoveredGraphElement] = useState<{
-    readonly kind: 'sprint_planner_activity' | 'work_unit' | 'gate';
+    readonly kind: 'work_slice_planning_point' | 'work_unit' | 'gate';
     readonly id: string;
   } | null>(null);
-  const problemFocusIndexRef = useRef(new Map<string, number>());
+  const sprintRunnerConcernFocusIndexRef = useRef(new Map<string, number>());
   const sprintRestoreRef = useRef<{
-    kind: 'sprint_planner_activity_group' | 'work_unit';
+    kind: 'work_slice_planning_point' | 'work_unit';
     id: string;
   } | null>(null);
   const concernRestoreWorkUnitRef = useRef<string | null>(null);
+  const planningValue =
+    workspace.sprint.planningState.source.status === 'available'
+      ? workspace.sprint.planningState.value
+      : undefined;
+  const hasStartedPlan = planningValue?.kind === 'started_plan';
+  const hasPreStartForecast = planningValue?.kind === 'pre_start_forecast';
+  const planningUnavailableReason =
+    workspace.sprint.planningState.source.status === 'available'
+      ? 'The planning state is not available.'
+      : workspace.sprint.planningState.source.reason;
 
   useEffect(() => {
     if (detailLocation.kind !== 'sprint' || !sprintRestoreRef.current) return;
@@ -70,8 +83,8 @@ export function SprintWorkspace({
     sprintRestoreRef.current = null;
     document
       .querySelector<HTMLButtonElement>(
-        restore.kind === 'sprint_planner_activity_group'
-          ? `[data-sprint-planner-activity-id="${restore.id}"]`
+        restore.kind === 'work_slice_planning_point'
+          ? `[data-work-slice-planning-point-id="${restore.id}"]`
           : `[data-work-unit-id="${restore.id}"]`,
       )
       ?.focus();
@@ -91,19 +104,19 @@ export function SprintWorkspace({
     ({ sprintPlanRevisionId }) => sprintPlanRevisionId === workspace.activeSprintPlanRevisionId,
   )!;
   const ownerOf = (workUnitId: string, view: (typeof workspace.revisionViews)[number]) =>
-    view.plannerActivityGroups.find(({ workUnitScopeIds }) =>
+    view.workSlicePlanningPointGroups.find(({ workUnitScopeIds }) =>
       workUnitScopeIds.includes(
         view.workUnits.find((unit) => unit.workUnitId === workUnitId)?.workUnitScopeId ?? '',
       ),
     );
 
-  if (detailLocation.kind === 'work_unit') {
+  if (hasStartedPlan && detailLocation.kind === 'work_unit') {
     const view = workspace.revisionViews.find(
       ({ sprintPlanRevisionId }) => sprintPlanRevisionId === detailLocation.revisionId,
     )!;
-    const plannerActivityGroup = view.plannerActivityGroups.find(
-      ({ sprintPlannerActivityId }) =>
-        sprintPlannerActivityId === detailLocation.sprintPlannerActivityId,
+    const workSlicePlanningPointGroup = view.workSlicePlanningPointGroups.find(
+      ({ workSlicePlanningPointId }) =>
+        workSlicePlanningPointId === detailLocation.workSlicePlanningPointId,
     )!;
     const unit = view.workUnits.find(({ workUnitId }) => workUnitId === detailLocation.workUnitId)!;
     return (
@@ -112,7 +125,7 @@ export function SprintWorkspace({
         lifecycleEntries={workspace.workUnitLifecycle.filter(
           ({ workUnitId }) => workUnitId === unit.workUnitId,
         )}
-        sprintPlannerActivityGroupTitle={plannerActivityGroup.title}
+        workSlicePlanningPointGroupTitle={workSlicePlanningPointGroup.title}
         sessions={workUnitSessions(workspace, unit, adjunct)}
         agentSessionComposition={agentSessionComposition}
         backLabel={detailLocation.origin === 'concern' ? 'Back to Concern' : undefined}
@@ -123,9 +136,9 @@ export function SprintWorkspace({
             return;
           }
           onDetailLocationChange({
-            kind: 'sprint_planner_activity_group',
+            kind: 'work_slice_planning_point',
             revisionId: detailLocation.revisionId,
-            sprintPlannerActivityId: detailLocation.sprintPlannerActivityId,
+            workSlicePlanningPointId: detailLocation.workSlicePlanningPointId,
           });
         }}
         onOpenAgentSession={onOpenAgentSession}
@@ -133,27 +146,27 @@ export function SprintWorkspace({
     );
   }
 
-  if (detailLocation.kind === 'sprint_planner_activity_group') {
+  if (hasStartedPlan && detailLocation.kind === 'work_slice_planning_point') {
     const view = workspace.revisionViews.find(
       ({ sprintPlanRevisionId }) => sprintPlanRevisionId === detailLocation.revisionId,
     )!;
-    const plannerActivityGroup = view.plannerActivityGroups.find(
-      ({ sprintPlannerActivityId }) =>
-        sprintPlannerActivityId === detailLocation.sprintPlannerActivityId,
+    const workSlicePlanningPointGroup = view.workSlicePlanningPointGroups.find(
+      ({ workSlicePlanningPointId }) =>
+        workSlicePlanningPointId === detailLocation.workSlicePlanningPointId,
     )!;
     return (
-      <SprintPlannerActivityDetailWorkspace
-        plannerActivityGroup={plannerActivityGroup}
-        currentWorkState={plannerActivityState(plannerActivityGroup, view)}
-        sessions={plannerActivitySessions(
+      <WorkSlicePlanningPointDetailWorkspace
+        workSlicePlanningPointGroup={workSlicePlanningPointGroup}
+        currentWorkState={workSlicePlanningPointState(workSlicePlanningPointGroup, view)}
+        session={workSlicePlanningPointSession(
           workspace,
-          plannerActivityGroup.sprintPlannerActivityId,
+          workSlicePlanningPointGroup.workSlicePlanningPointId,
           adjunct,
         )}
         agentSessionComposition={agentSessionComposition}
-        workflow={adjunct?.plannerActivityWorkflows.find(
-          ({ sprintPlannerActivityId }) =>
-            sprintPlannerActivityId === plannerActivityGroup.sprintPlannerActivityId,
+        workflow={adjunct?.workSlicePlanningPointWorkflows.find(
+          ({ workSlicePlanningPointId }) =>
+            workSlicePlanningPointId === workSlicePlanningPointGroup.workSlicePlanningPointId,
         )}
         onBack={() => onDetailLocationChange({ kind: 'sprint' })}
         onOpenAgentSession={onOpenAgentSession}
@@ -169,7 +182,11 @@ export function SprintWorkspace({
       backLabel="Back to Epic"
       onBack={onBack}
       focusBackOnMount
-      hotbarNavigation={<SprintWorkspaceTabs selected={selectedTab} onSelect={setSelectedTab} />}
+      hotbarNavigation={
+        hasStartedPlan ? (
+          <SprintWorkspaceTabs selected={selectedTab} onSelect={setSelectedTab} />
+        ) : undefined
+      }
       control={
         <SprintContinuationControl
           automaticEnabled={workspace.continuation.policy?.automaticEnabled ?? false}
@@ -200,54 +217,69 @@ export function SprintWorkspace({
             {sprintLifecycleLabel(workspace.sprint.lifecycle)}
           </span>
           <p>{workspace.sprint.summary}</p>
-          <section className="sprint-context__objectives" aria-label="Epic Planner objectives">
-            <h2>Epic Planner objectives</h2>
-            {workspace.epicPlannerObjectives.length > 0 ? (
+          <section className="sprint-context__objectives" aria-label="Epic Runner objectives">
+            <h2>Epic Runner objectives</h2>
+            {workspace.epicRunnerObjectives.length > 0 ? (
               <ul>
-                {workspace.epicPlannerObjectives.map((objective) => (
+                {workspace.epicRunnerObjectives.map((objective) => (
                   <li key={objective.objectiveId}>{objective.title}</li>
                 ))}
               </ul>
             ) : (
-              <p>No recorded Epic Planner Sprint objectives.</p>
+              <p>No recorded Epic Runner Sprint objectives.</p>
             )}
           </section>
-          {workspace.problems.length > 0 ? (
-            <section className="sprint-context__problems" aria-label="Sprint Planner problems">
-              <h2>Sprint Planner problems</h2>
+          {hasStartedPlan && workspace.sprintRunnerConcerns.length > 0 ? (
+            <section
+              className="sprint-context__runner-concerns"
+              aria-label="Sprint Runner concerns"
+            >
+              <h2>Sprint Runner concerns</h2>
               <ul>
-                {workspace.problems.map((problem) => {
+                {workspace.sprintRunnerConcerns.map((sprintRunnerConcern) => {
                   const relatedToHover = hoveredGraphElement
-                    ? problem.graphElementRefs.some(
+                    ? sprintRunnerConcern.graphElementRefs.some(
                         (reference) =>
                           reference.kind === hoveredGraphElement.kind &&
                           reference.id === hoveredGraphElement.id,
                       )
                     : false;
                   return (
-                    <li key={problem.problemId}>
+                    <li key={sprintRunnerConcern.sprintRunnerConcernId}>
                       <button
                         type="button"
                         className={
-                          highlightedProblemId === problem.problemId || relatedToHover
+                          highlightedSprintRunnerConcernId ===
+                            sprintRunnerConcern.sprintRunnerConcernId || relatedToHover
                             ? 'is-highlighted'
                             : undefined
                         }
-                        aria-pressed={highlightedProblemId === problem.problemId}
-                        onPointerEnter={() => setHighlightedProblemId(problem.problemId)}
-                        onPointerLeave={() => setHighlightedProblemId(null)}
-                        onFocus={() => setHighlightedProblemId(problem.problemId)}
-                        onBlur={() => setHighlightedProblemId(null)}
+                        aria-pressed={
+                          highlightedSprintRunnerConcernId ===
+                          sprintRunnerConcern.sprintRunnerConcernId
+                        }
+                        onPointerEnter={() =>
+                          setHighlightedSprintRunnerConcernId(
+                            sprintRunnerConcern.sprintRunnerConcernId,
+                          )
+                        }
+                        onPointerLeave={() => setHighlightedSprintRunnerConcernId(null)}
+                        onFocus={() =>
+                          setHighlightedSprintRunnerConcernId(
+                            sprintRunnerConcern.sprintRunnerConcernId,
+                          )
+                        }
+                        onBlur={() => setHighlightedSprintRunnerConcernId(null)}
                         onClick={() => {
                           setSelectedTab('flow');
-                          focusNextProblemGraphElement(
-                            problem,
+                          focusNextSprintRunnerConcernGraphElement(
+                            sprintRunnerConcern,
                             selectedView,
-                            problemFocusIndexRef.current,
+                            sprintRunnerConcernFocusIndexRef.current,
                           );
                         }}
                       >
-                        {problem.title}
+                        {sprintRunnerConcern.title}
                       </button>
                     </li>
                   );
@@ -259,30 +291,65 @@ export function SprintWorkspace({
       }
       primary={
         <>
-          {selectedTab === 'flow' && (
+          {hasPreStartForecast ? (
+            <section className="sprint-forecast" aria-label="Sprint Runner pre-start forecast">
+              <p className="eyebrow">Sprint Runner forecast</p>
+              <h2>Concerns before Sprint start</h2>
+              <p>
+                This forecast stays intentionally low resolution until the Sprint starts and the
+                current branch and repository state can be reevaluated.
+              </p>
+              {workspace.concerns.length > 0 ? (
+                <ul>
+                  {workspace.concerns.map((concern) => (
+                    <li key={concern.concernId}>
+                      <strong>{concern.title}</strong>
+                      <span>{concern.summary}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>No sourced pre-start concerns are available.</p>
+              )}
+            </section>
+          ) : !hasStartedPlan ? (
+            <section className="sprint-forecast" aria-label="Sprint planning unavailable">
+              <p className="eyebrow">Sprint Runner plan</p>
+              <h2>Planning state unavailable</h2>
+              <p>{planningUnavailableReason}</p>
+            </section>
+          ) : null}
+          {hasStartedPlan && selectedTab === 'flow' && (
             <section
               className="sprint-tab-panel"
               id="sprint-flow-panel"
               role="tabpanel"
               aria-labelledby="sprint-flow-tab"
             >
-              <section className="sprint-surface-host" aria-label="Sprint planning workspace">
+              <section className="sprint-surface-host" aria-label="Sprint Runner plan">
+                <header className="sprint-start-assessment">
+                  <span>Started plan</span>
+                  <strong>{planningValue.repositoryAssessmentSummary}</strong>
+                  <time dateTime={planningValue.reevaluatedAt}>
+                    Reevaluated {new Date(planningValue.reevaluatedAt).toLocaleString()}
+                  </time>
+                </header>
                 <SprintFlowMap
                   workspace={workspace}
                   selectedRevisionId={selectedRevisionId}
                   onSelectedRevisionChange={onSelectedRevisionChange}
-                  highlightedProblemId={highlightedProblemId}
+                  highlightedSprintRunnerConcernId={highlightedSprintRunnerConcernId}
                   hoveredGraphElement={hoveredGraphElement}
                   onHoveredGraphElementChange={setHoveredGraphElement}
-                  onOpenSprintPlannerActivityGroup={(sprintPlannerActivityId) => {
+                  onOpenWorkSlicePlanningPointGroup={(workSlicePlanningPointId) => {
                     sprintRestoreRef.current = {
-                      kind: 'sprint_planner_activity_group',
-                      id: sprintPlannerActivityId,
+                      kind: 'work_slice_planning_point',
+                      id: workSlicePlanningPointId,
                     };
                     onDetailLocationChange({
-                      kind: 'sprint_planner_activity_group',
+                      kind: 'work_slice_planning_point',
                       revisionId: selectedRevisionId,
-                      sprintPlannerActivityId,
+                      workSlicePlanningPointId,
                     });
                   }}
                   onOpenWorkUnit={(workUnitId) => {
@@ -292,16 +359,16 @@ export function SprintWorkspace({
                     onDetailLocationChange({
                       kind: 'work_unit',
                       revisionId: selectedRevisionId,
-                      sprintPlannerActivityId: owner.sprintPlannerActivityId,
+                      workSlicePlanningPointId: owner.workSlicePlanningPointId,
                       workUnitId,
-                      origin: 'sprint_planner_activity_group',
+                      origin: 'work_slice_planning_point',
                     });
                   }}
                 />
               </section>
             </section>
           )}
-          {selectedTab === 'concerns' && (
+          {hasStartedPlan && selectedTab === 'concerns' && (
             <section
               className="sprint-tab-panel"
               id="sprint-concerns-panel"
@@ -318,7 +385,7 @@ export function SprintWorkspace({
                   onDetailLocationChange({
                     kind: 'work_unit',
                     revisionId: activeView.sprintPlanRevisionId,
-                    sprintPlannerActivityId: owner.sprintPlannerActivityId,
+                    workSlicePlanningPointId: owner.workSlicePlanningPointId,
                     workUnitId,
                     origin: 'concern',
                   });
@@ -326,7 +393,7 @@ export function SprintWorkspace({
               />
             </section>
           )}
-          {selectedTab === 'documents' && (
+          {hasStartedPlan && selectedTab === 'documents' && (
             <section
               className="sprint-tab-panel"
               id="sprint-documents-panel"
@@ -370,12 +437,12 @@ function sprintLifecycleLabel(lifecycle: SprintWorkspacePresentationV1['sprint']
   }[value];
 }
 
-function focusNextProblemGraphElement(
-  problem: SprintWorkspacePresentationV1['problems'][number],
+function focusNextSprintRunnerConcernGraphElement(
+  sprintRunnerConcern: SprintWorkspacePresentationV1['sprintRunnerConcerns'][number],
   view: SprintWorkspacePresentationV1['revisionViews'][number],
   focusIndexes: Map<string, number>,
 ) {
-  const priority = (reference: (typeof problem.graphElementRefs)[number]) => {
+  const priority = (reference: (typeof sprintRunnerConcern.graphElementRefs)[number]) => {
     if (reference.kind === 'work_unit') {
       const state = view.workUnits.find(
         ({ workUnitId }) => workUnitId === reference.id,
@@ -384,9 +451,9 @@ function focusNextProblemGraphElement(
       if (['integrated', 'responsibility_accepted'].includes(state ?? '')) return 1;
       return 2;
     }
-    if (reference.kind === 'sprint_planner_activity') {
-      const group = view.plannerActivityGroups.find(
-        ({ sprintPlannerActivityId }) => sprintPlannerActivityId === reference.id,
+    if (reference.kind === 'work_slice_planning_point') {
+      const group = view.workSlicePlanningPointGroups.find(
+        ({ workSlicePlanningPointId }) => workSlicePlanningPointId === reference.id,
       );
       const states = view.workUnits
         .filter(({ workUnitScopeId }) => group?.workUnitScopeIds.includes(workUnitScopeId))
@@ -405,15 +472,15 @@ function focusNextProblemGraphElement(
     }
     return 2;
   };
-  const ordered = [...problem.graphElementRefs].sort(
+  const ordered = [...sprintRunnerConcern.graphElementRefs].sort(
     (left, right) =>
       priority(left) - priority(right) ||
       `${left.kind}:${left.id}`.localeCompare(`${right.kind}:${right.id}`),
   );
   if (!ordered.length) return;
-  const index = focusIndexes.get(problem.problemId) ?? 0;
+  const index = focusIndexes.get(sprintRunnerConcern.sprintRunnerConcernId) ?? 0;
   const next = ordered[index % ordered.length];
-  focusIndexes.set(problem.problemId, (index + 1) % ordered.length);
+  focusIndexes.set(sprintRunnerConcern.sprintRunnerConcernId, (index + 1) % ordered.length);
   requestAnimationFrame(() => {
     const element = Array.from(
       document.querySelectorAll<HTMLElement>('[data-flow-element-kind][data-flow-element-id]'),
@@ -427,30 +494,31 @@ function focusNextProblemGraphElement(
   });
 }
 
-function plannerActivitySessions(
+function workSlicePlanningPointSession(
   workspace: SprintWorkspacePresentationV1,
-  plannerActivityId: string,
+  workSlicePlanningPointId: string,
   adjunct?: SprintWorkspacePresentationAdjunct,
-) {
+): SprintAgentSessionPresentation | undefined {
   const adjunctById = new Map(
-    (adjunct?.plannerActivitySessions ?? []).map((session) => [session.sessionId, session]),
+    (adjunct?.workSlicePlanningPointSessions ?? []).map((session) => [session.sessionId, session]),
   );
-  return workspace.agentSessionReferences
+  const sessions = workspace.agentSessionReferences
     .filter(
       (reference) =>
-        reference.targetKind === 'sprint_planner_activity' &&
-        reference.targetId === plannerActivityId &&
-        ['sprint_planner', 'work_unit_planner'].includes(reference.semanticRole),
+        reference.targetKind === 'work_slice_planning_point' &&
+        reference.targetId === workSlicePlanningPointId &&
+        reference.semanticRole === 'work_slice_planner',
     )
     .map((reference) => ({
       sessionId: reference.agentSessionId,
       title: reference.title,
       transcript: adjunctById.get(reference.agentSessionId)?.transcript,
     }));
+  return sessions.length === 1 ? sessions[0] : undefined;
 }
 
-function plannerActivityState(
-  group: SprintWorkspacePresentationV1['revisionViews'][number]['plannerActivityGroups'][number],
+function workSlicePlanningPointState(
+  group: SprintWorkspacePresentationV1['revisionViews'][number]['workSlicePlanningPointGroups'][number],
   view: SprintWorkspacePresentationV1['revisionViews'][number],
 ) {
   const states = view.workUnits
@@ -477,7 +545,7 @@ function workUnitSessions(
   );
   const executionIds = new Set(unit.attempts.map((attempt) => attempt.workUnitExecutionId));
   const adjunctById = new Map(
-    [...existing, ...(adjunct?.plannerActivitySessions ?? [])].map((session) => [
+    [...existing, ...(adjunct?.workSlicePlanningPointSessions ?? [])].map((session) => [
       session.sessionId,
       session,
     ]),
@@ -487,7 +555,7 @@ function workUnitSessions(
       (reference) =>
         reference.targetKind === 'work_unit_execution' &&
         executionIds.has(reference.targetId) &&
-        ['work_unit_handler', 'work_unit_worker', 'reviewer'].includes(reference.semanticRole),
+        ['work_unit_handler', 'work_unit_implementer'].includes(reference.semanticRole),
     )
     .map((reference) => ({
       sessionId: reference.agentSessionId,
@@ -496,31 +564,30 @@ function workUnitSessions(
       role: (
         {
           work_unit_handler: 'handler',
-          work_unit_worker: 'worker',
-          reviewer: 'reviewer',
+          work_unit_implementer: 'implementer',
         } as const
-      )[reference.semanticRole as 'work_unit_handler' | 'work_unit_worker' | 'reviewer'],
+      )[reference.semanticRole as 'work_unit_handler' | 'work_unit_implementer'],
       transcript: adjunctById.get(reference.agentSessionId)?.transcript,
     }));
   const view = workspace.revisionViews.find(
     ({ sprintPlanRevisionId }) => sprintPlanRevisionId === unit.sprintPlanRevisionId,
   );
-  const owner = view?.plannerActivityGroups.find(({ workUnitScopeIds }) =>
+  const owner = view?.workSlicePlanningPointGroups.find(({ workUnitScopeIds }) =>
     workUnitScopeIds.includes(unit.workUnitScopeId),
   );
   const planners: WorkUnitAgentSessionPresentation[] = owner
     ? workspace.agentSessionReferences
         .filter(
           (reference) =>
-            reference.targetKind === 'sprint_planner_activity' &&
-            reference.targetId === owner.sprintPlannerActivityId &&
-            ['sprint_planner', 'work_unit_planner'].includes(reference.semanticRole),
+            reference.targetKind === 'work_slice_planning_point' &&
+            reference.targetId === owner.workSlicePlanningPointId &&
+            reference.semanticRole === 'work_slice_planner',
         )
         .map((reference) => ({
           sessionId: reference.agentSessionId,
           title: reference.title,
           workUnitId: unit.workUnitId,
-          role: 'sprint_planner',
+          role: 'work_slice_planner',
           transcript: adjunctById.get(reference.agentSessionId)?.transcript,
         }))
     : [];

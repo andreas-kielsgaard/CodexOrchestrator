@@ -81,8 +81,8 @@ export function SprintDocumentsPanel({
                 {document.sprintPlanRevisionIds.map((id) => (
                   <span key={id}>Plan {id}</span>
                 ))}
-                {document.sprintPlannerActivityIds.map((id) => (
-                  <span key={id}>Planner Activity {id}</span>
+                {document.workSlicePlanningPointIds.map((id) => (
+                  <span key={id}>Work Slice planning point {id}</span>
                 ))}
                 {document.workUnitScopeIds.map((id) => (
                   <span key={id}>Work Unit scope {id}</span>

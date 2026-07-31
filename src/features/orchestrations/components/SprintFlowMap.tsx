@@ -20,19 +20,19 @@ export interface SprintFlowMapProps {
   readonly workspace: SprintWorkspacePresentationV1;
   readonly selectedRevisionId: string;
   readonly onSelectedRevisionChange: (revisionId: string) => void;
-  readonly onOpenSprintPlannerActivityGroup?: (
-    sprintPlannerActivityId: string,
+  readonly onOpenWorkSlicePlanningPointGroup?: (
+    workSlicePlanningPointId: string,
     opener: HTMLButtonElement,
   ) => void;
   readonly onOpenWorkUnit?: (workUnitId: string, opener: HTMLButtonElement) => void;
-  readonly highlightedProblemId?: string | null;
+  readonly highlightedSprintRunnerConcernId?: string | null;
   readonly hoveredGraphElement?: {
-    readonly kind: 'sprint_planner_activity' | 'work_unit' | 'gate';
+    readonly kind: 'work_slice_planning_point' | 'work_unit' | 'gate';
     readonly id: string;
   } | null;
   readonly onHoveredGraphElementChange?: (
     element: {
-      readonly kind: 'sprint_planner_activity' | 'work_unit' | 'gate';
+      readonly kind: 'work_slice_planning_point' | 'work_unit' | 'gate';
       readonly id: string;
     } | null,
   ) => void;
@@ -42,9 +42,9 @@ export function SprintFlowMap({
   workspace,
   selectedRevisionId,
   onSelectedRevisionChange,
-  onOpenSprintPlannerActivityGroup,
+  onOpenWorkSlicePlanningPointGroup,
   onOpenWorkUnit,
-  highlightedProblemId,
+  highlightedSprintRunnerConcernId,
   hoveredGraphElement,
   onHoveredGraphElementChange,
 }: SprintFlowMapProps) {
@@ -58,15 +58,17 @@ export function SprintFlowMap({
     [selectedView, layout],
   );
   const positions = new Map(layout.positions.map((position) => [position.id, position]));
-  const sprintPlannerActivityGroupPositions = new Map(
-    layout.sprintPlannerActivityGroupPositions.map((position) => [position.id, position]),
+  const workSlicePlanningPointGroupPositions = new Map(
+    layout.workSlicePlanningPointGroupPositions.map((position) => [position.id, position]),
   );
   const userReviews = selectedView.gates.filter(
     ({ presentationRole }) => presentationRole.kind === 'accepted_review_marker',
   );
   const highlightedRefs = new Set(
-    workspace.problems
-      .find(({ problemId }) => problemId === highlightedProblemId)
+    workspace.sprintRunnerConcerns
+      .find(
+        ({ sprintRunnerConcernId }) => sprintRunnerConcernId === highlightedSprintRunnerConcernId,
+      )
       ?.graphElementRefs.map(({ kind, id }) => `${kind}:${id}`) ?? [],
   );
   const priorRevision = workspace.revisionViews
@@ -106,7 +108,7 @@ export function SprintFlowMap({
         >
           <svg aria-hidden="true" width={layout.width} height={layout.height}>
             {connectorRoutes
-              .filter(({ scopeSprintPlannerActivityId }) => !scopeSprintPlannerActivityId)
+              .filter(({ scopeWorkSlicePlanningPointId }) => !scopeWorkSlicePlanningPointId)
               .map((connector) => {
                 return (
                   <path
@@ -120,19 +122,19 @@ export function SprintFlowMap({
               })}
           </svg>
 
-          {selectedView.plannerActivityGroups.map((group) => {
-            const box = sprintPlannerActivityGroupPositions.get(group.sprintPlannerActivityId);
+          {selectedView.workSlicePlanningPointGroups.map((group) => {
+            const box = workSlicePlanningPointGroupPositions.get(group.workSlicePlanningPointId);
             if (!box) return null;
             return (
               <section
-                key={group.sprintPlannerActivityId}
+                key={group.workSlicePlanningPointId}
                 className={`sprint-plan-region${
-                  highlightedRefs.has(`sprint_planner_activity:${group.sprintPlannerActivityId}`)
-                    ? ' is-problem-highlighted'
+                  highlightedRefs.has(`work_slice_planning_point:${group.workSlicePlanningPointId}`)
+                    ? ' is-runner-concern-highlighted'
                     : ''
                 }${
-                  hoveredGraphElement?.kind === 'sprint_planner_activity' &&
-                  hoveredGraphElement.id === group.sprintPlannerActivityId
+                  hoveredGraphElement?.kind === 'work_slice_planning_point' &&
+                  hoveredGraphElement.id === group.workSlicePlanningPointId
                     ? ' is-hovered'
                     : ''
                 }`}
@@ -140,8 +142,8 @@ export function SprintFlowMap({
                 style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
                 onPointerEnter={() =>
                   onHoveredGraphElementChange?.({
-                    kind: 'sprint_planner_activity',
-                    id: group.sprintPlannerActivityId,
+                    kind: 'work_slice_planning_point',
+                    id: group.workSlicePlanningPointId,
                   })
                 }
                 onPointerLeave={() => onHoveredGraphElementChange?.(null)}
@@ -155,15 +157,15 @@ export function SprintFlowMap({
                 >
                   {connectorRoutes
                     .filter(
-                      ({ scopeSprintPlannerActivityId }) =>
-                        scopeSprintPlannerActivityId === group.sprintPlannerActivityId,
+                      ({ scopeWorkSlicePlanningPointId }) =>
+                        scopeWorkSlicePlanningPointId === group.workSlicePlanningPointId,
                     )
                     .map((connector) => (
                       <path
                         key={`${connector.from}-${connector.to}`}
                         className={`sprint-flow__connector sprint-flow__connector--${connector.kind}`}
                         data-connector={`${connector.from}->${connector.to}`}
-                        data-connector-scope={group.sprintPlannerActivityId}
+                        data-connector-scope={group.workSlicePlanningPointId}
                         d={connector.path}
                       />
                     ))}
@@ -171,13 +173,13 @@ export function SprintFlowMap({
                 <button
                   type="button"
                   className="sprint-plan-region__open"
-                  data-sprint-planner-activity-id={group.sprintPlannerActivityId}
-                  data-flow-element-kind="sprint_planner_activity"
-                  data-flow-element-id={group.sprintPlannerActivityId}
+                  data-work-slice-planning-point-id={group.workSlicePlanningPointId}
+                  data-flow-element-kind="work_slice_planning_point"
+                  data-flow-element-id={group.workSlicePlanningPointId}
                   aria-label={`Open Plan: ${group.title}`}
                   onClick={(event) =>
-                    onOpenSprintPlannerActivityGroup?.(
-                      group.sprintPlannerActivityId,
+                    onOpenWorkSlicePlanningPointGroup?.(
+                      group.workSlicePlanningPointId,
                       event.currentTarget,
                     )
                   }
@@ -219,7 +221,7 @@ export function SprintFlowMap({
                             : ''
                         }${
                           highlightedRefs.has(`work_unit:${unit.workUnitId}`)
-                            ? ' is-problem-highlighted'
+                            ? ' is-runner-concern-highlighted'
                             : ''
                         }${
                           hoveredGraphElement?.kind === 'work_unit' &&

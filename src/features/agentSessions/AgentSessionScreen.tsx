@@ -164,7 +164,7 @@ function SessionProductNavigation({
 
 function directActionLabel(location: AgentSessionProductLocation) {
   if (location.kind === 'epic_planning_draft') return 'Go to Epic planning draft';
-  if (location.kind === 'sprint_planner_activity') return 'Go to planning view';
+  if (location.kind === 'work_slice_planning_point') return 'Go to planning view';
   if (location.kind === 'work_unit') return 'Go to Work Unit';
   return `Go to ${location.kind === 'epic' ? 'Epic' : 'Sprint'}`;
 }
@@ -173,7 +173,7 @@ function locationKindLabel(location: AgentSessionProductLocation) {
   return {
     epic: 'Epic',
     sprint: 'Sprint',
-    sprint_planner_activity: 'Planning',
+    work_slice_planning_point: 'Planning',
     work_unit: 'Work Unit',
     epic_planning_draft: 'Epic planning draft',
   }[location.kind];

@@ -39,27 +39,33 @@ const controlPlannerDetails = lifecycleSession(
 );
 const ecs2eHandlerDetails = lifecycleSession(
   'recorded-session-WU-ECS2E',
-  'Recorded WU-ECS2E Work Unit handler',
+  'Recorded WU-ECS2E Work Unit Handler',
   [
-    [
-      'recorded-handler-WU-ECS2E-first-return',
-      'Returned the first recorded detail-surface implementation.',
-    ],
     [
       'recorded-handler-WU-ECS2E-first-review',
       'Reviewed the first return and requested a focused correction.',
     ],
     ['recorded-handler-WU-ECS2E-reprompt', 'Recorded the bounded correction request.'],
+    ['recorded-handler-WU-ECS2E-acceptance', 'Accepted the corrected result.'],
+  ],
+);
+const ecs2eImplementerDetails = lifecycleSession(
+  'recorded-implementer-WU-ECS2E',
+  'Recorded WU-ECS2E Work Unit Implementer',
+  [
     [
-      'recorded-handler-WU-ECS2E-second-return',
+      'recorded-implementer-WU-ECS2E-first-return',
+      'Returned the first recorded detail-surface implementation.',
+    ],
+    [
+      'recorded-implementer-WU-ECS2E-second-return',
       'Returned the corrected detail-surface implementation.',
     ],
-    ['recorded-handler-WU-ECS2E-acceptance', 'Accepted the corrected result.'],
   ],
 );
 const rdPlannerDetails = lifecycleSession(
   'recorded-planner-rd-r2',
-  'Recorded review Sprint Planner',
+  'Recorded review Work Slice Planner',
   [
     [
       'recorded-planner-rd-r2-scope',
@@ -69,9 +75,9 @@ const rdPlannerDetails = lifecycleSession(
 );
 const rd1HandlerDetails = lifecycleSession(
   'recorded-handler-WU-RD1',
-  'Relationship Work Unit handler',
+  'Relationship Work Unit Handler',
   [
-    ['recorded-handler-WU-RD1-launch', 'Recorded the first worker launch.'],
+    ['recorded-handler-WU-RD1-launch', 'Recorded the Work Unit Implementer launch.'],
     ['recorded-handler-WU-RD1-first-review', 'Requested a focused correction.'],
     ['recorded-handler-WU-RD1-reprompt', 'Recorded the bounded correction request.'],
     ['recorded-handler-WU-RD1-second-review', 'Accepted the corrected result.'],
@@ -79,12 +85,12 @@ const rd1HandlerDetails = lifecycleSession(
     ['recorded-handler-WU-RD1-completion', 'Recorded Work Unit completion.'],
   ],
 );
-const rd1WorkerDetails = lifecycleSession(
-  'recorded-worker-WU-RD1',
-  'Relationship implementation worker',
+const rd1ImplementerDetails = lifecycleSession(
+  'recorded-implementer-WU-RD1',
+  'Relationship Work Unit Implementer',
   [
-    ['recorded-worker-WU-RD1-first-work', 'Returned the initial relationship model.'],
-    ['recorded-worker-WU-RD1-renewed-work', 'Returned the corrected relationship model.'],
+    ['recorded-implementer-WU-RD1-first-work', 'Returned the initial relationship model.'],
+    ['recorded-implementer-WU-RD1-renewed-work', 'Returned the corrected relationship model.'],
   ],
 );
 /** Recorded Agent Session inputs used by the embedded composition in the app-mounted demo. */
@@ -101,12 +107,12 @@ export const recordedAgentSessionDetails: readonly AgentSessionDetailsDto[] = [
   ),
   rdPlannerDetails,
   rd1HandlerDetails,
-  rd1WorkerDetails,
+  rd1ImplementerDetails,
   ...(['WU-RD2', 'WU-RD3'] as const).map((workUnitId) =>
     session(
-      `recorded-worker-${workUnitId}`,
-      `Recorded ${workUnitId} worker`,
-      'Recorded mixed-state worker conversation; no live task was started.',
+      `recorded-implementer-${workUnitId}`,
+      `Recorded ${workUnitId} Work Unit Implementer`,
+      'Recorded mixed-state implementer conversation; no live task was started.',
     ),
   ),
   session(
@@ -116,6 +122,7 @@ export const recordedAgentSessionDetails: readonly AgentSessionDetailsDto[] = [
   ),
   controlPlannerDetails,
   ecs2eHandlerDetails,
+  ecs2eImplementerDetails,
   session(
     'recorded-independent-research',
     'Independent product research',
@@ -124,42 +131,72 @@ export const recordedAgentSessionDetails: readonly AgentSessionDetailsDto[] = [
   ...['WU-ECS2B', 'WU-ECS2C', 'WU-ECS2D', 'WU-ECS3'].map((workUnitId) =>
     session(
       `recorded-session-${workUnitId}`,
-      `Recorded ${workUnitId} worker`,
-      'Recorded worker conversation; no live task was started.',
+      `Recorded ${workUnitId} Work Unit Implementer`,
+      'Recorded implementer conversation; no live task was started.',
     ),
   ),
 ];
 
 export const recordedPlanWorkflowAdjunct: RecordedPlanWorkflowV1 = {
   version: 'plan-workflow/v1',
-  sprintPlannerActivityId: 'planner-r4-integration',
+  workSlicePlanningPointId: 'planner-r4-integration',
   scopeSummary: 'Recorded theoretical workflow display. No actual launch is represented.',
   fixtureKind: 'recorded_theoretical',
   actors: [
-    { id: 'sprint', kind: 'sprint', label: 'Sprint' },
-    { id: 'planner', kind: 'planner', label: 'Planner' },
-    { id: 'handler', kind: 'worker', label: 'Work Unit handler', workUnitId: 'WU-ECS2E' },
+    { id: 'sprint-runner', kind: 'sprint_runner', label: 'Sprint Runner' },
+    { id: 'repository', kind: 'repository', label: 'Repository' },
+    { id: 'planner', kind: 'work_slice_planner', label: 'Work Slice Planner' },
+    {
+      id: 'handler',
+      kind: 'work_unit_handler',
+      label: 'Work Unit Handler',
+      workUnitId: 'WU-ECS2E',
+    },
+    {
+      id: 'implementer',
+      kind: 'work_unit_implementer',
+      label: 'Work Unit Implementer',
+      workUnitId: 'WU-ECS2E',
+    },
   ],
-  sharedStart: [step('ready', 'sprint', 'ready_scope', 'ready', 'Recorded ready scope')],
+  sharedStart: [
+    step('started', 'sprint-runner', 'sprint_started', 'sprint_start', 'Sprint started'),
+    step(
+      'repository-assessment',
+      'repository',
+      'repository_reevaluated',
+      'repository_assessment',
+      'Repository reevaluated',
+    ),
+    step('ready', 'planner', 'ready_work_determined', 'scope', 'Ready work planned'),
+  ],
   workUnitLanes: [
     {
       id: 'recorded-lane',
       workUnitId: 'WU-ECS2E',
       title: 'Recorded review lane',
-      initiatorActorId: 'planner',
-      workerActorId: 'handler',
+      handlerActorId: 'handler',
+      implementerActorId: 'implementer',
       steps: [
+        step('handler-created', 'planner', 'handler_created', 'work_unit_start', 'Handler created'),
         step(
-          'handler-return',
+          'implementer-created',
           'handler',
-          'worker_return',
+          'implementer_created',
+          'implementer_start',
+          'Implementer created',
+        ),
+        step(
+          'implementer-return',
+          'implementer',
+          'implementer_return',
           'first_return',
-          'Recorded handler return',
+          'Recorded implementer return',
         ),
         step(
           'handler-review',
           'handler',
-          'initiator_review',
+          'handler_review',
           'first_review',
           'Recorded handler review',
         ),
@@ -167,13 +204,26 @@ export const recordedPlanWorkflowAdjunct: RecordedPlanWorkflowV1 = {
     },
   ],
   sharedCompletion: [
-    step('outcome', 'sprint', 'sprint_outcome', 'sprint_return', 'Recorded Sprint outcome'),
+    step(
+      'planning-complete',
+      'planner',
+      'work_slice_planner_completed',
+      'planning_complete',
+      'Planning point completed',
+    ),
+    step(
+      'outcome',
+      'sprint-runner',
+      'sprint_runner_outcome',
+      'sprint_return',
+      'Recorded Sprint outcome',
+    ),
   ],
   interactions: [
     {
       id: 'recorded-return',
       kind: 'return',
-      fromStepId: 'handler-return',
+      fromStepId: 'implementer-return',
       toStepId: 'handler-review',
     },
   ],
@@ -198,7 +248,7 @@ export const recordedPresentationAdjunct: RecordedPresentationAdjunct = {
           title: 'Sprint control surface discovery',
           transcript: sprintTranscript,
         },
-        plannerActivitySessions: [
+        workSlicePlanningPointSessions: [
           {
             sessionId: controlPlannerDetails.session.id,
             title: controlPlannerDetails.session.title,
@@ -206,6 +256,13 @@ export const recordedPresentationAdjunct: RecordedPresentationAdjunct = {
           },
         ],
         workUnitSessions: [
+          {
+            sessionId: ecs2eImplementerDetails.session.id,
+            title: ecs2eImplementerDetails.session.title,
+            workUnitId: 'WU-ECS2E',
+            role: 'implementer',
+            transcript: projectAgentSessionTranscript(ecs2eImplementerDetails),
+          },
           {
             sessionId: ecs2eHandlerDetails.session.id,
             title: ecs2eHandlerDetails.session.title,
@@ -216,18 +273,18 @@ export const recordedPresentationAdjunct: RecordedPresentationAdjunct = {
           ...['WU-ECS2B', 'WU-ECS2C', 'WU-ECS2D', 'WU-ECS3'].map(
             (workUnitId): WorkUnitAgentSessionPresentation => ({
               sessionId: `recorded-session-${workUnitId}`,
-              title: `Recorded ${workUnitId} worker`,
+              title: `Recorded ${workUnitId} Work Unit Implementer`,
               workUnitId,
-              role: 'worker' as const,
+              role: 'implementer' as const,
               transcript: transcript(
                 `recorded-session-${workUnitId}`,
-                `Recorded ${workUnitId} worker`,
-                'Recorded worker conversation; no live task was started.',
+                `Recorded ${workUnitId} Work Unit Implementer`,
+                'Recorded implementer conversation; no live task was started.',
               ),
             }),
           ),
         ],
-        plannerActivityWorkflows: [recordedPlanWorkflowAdjunct],
+        workSlicePlanningPointWorkflows: [recordedPlanWorkflowAdjunct],
       },
     },
     [reviewSprintId]: {
@@ -241,7 +298,7 @@ export const recordedPresentationAdjunct: RecordedPresentationAdjunct = {
           title: 'Recorded parallel review Sprint',
           transcript: reviewSprintTranscript,
         },
-        plannerActivitySessions: [
+        workSlicePlanningPointSessions: [
           {
             sessionId: rdPlannerDetails.session.id,
             title: rdPlannerDetails.session.title,
@@ -257,27 +314,27 @@ export const recordedPresentationAdjunct: RecordedPresentationAdjunct = {
             transcript: projectAgentSessionTranscript(rd1HandlerDetails),
           },
           {
-            sessionId: rd1WorkerDetails.session.id,
-            title: rd1WorkerDetails.session.title,
+            sessionId: rd1ImplementerDetails.session.id,
+            title: rd1ImplementerDetails.session.title,
             workUnitId: 'WU-RD1',
-            role: 'worker',
-            transcript: projectAgentSessionTranscript(rd1WorkerDetails),
+            role: 'implementer',
+            transcript: projectAgentSessionTranscript(rd1ImplementerDetails),
           },
           ...(['WU-RD2', 'WU-RD3'] as const).map(
             (workUnitId): WorkUnitAgentSessionPresentation => ({
-              sessionId: `recorded-worker-${workUnitId}`,
-              title: `Recorded ${workUnitId} worker`,
+              sessionId: `recorded-implementer-${workUnitId}`,
+              title: `Recorded ${workUnitId} Work Unit Implementer`,
               workUnitId,
-              role: 'worker',
+              role: 'implementer',
               transcript: transcript(
-                `recorded-worker-${workUnitId}`,
-                `Recorded ${workUnitId} worker`,
-                'Recorded mixed-state worker conversation; no live task was started.',
+                `recorded-implementer-${workUnitId}`,
+                `Recorded ${workUnitId} Work Unit Implementer`,
+                'Recorded mixed-state implementer conversation; no live task was started.',
               ),
             }),
           ),
         ],
-        plannerActivityWorkflows: [],
+        workSlicePlanningPointWorkflows: [],
       },
     },
   },

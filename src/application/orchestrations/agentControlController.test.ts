@@ -10,9 +10,9 @@ import { recordedProductReadCompositionInput } from '../../dev/orchestrationSect
 
 const command = {
   agentControlCommandId: 'command-1',
-  commandKind: 'request_next_ready_work_unit_planner' as const,
+  commandKind: 'request_next_work_slice_planner' as const,
   recipientAgentSessionRefId: 'session-ref-1',
-  target: { kind: 'next_ready_work_unit_planner' as const, sprintId: 'sprint-control-surface' },
+  target: { kind: 'next_work_slice_planner' as const, sprintId: 'sprint-control-surface' },
   idempotency: { key: 'key-1', scopeKind: 'sprint' as const, scopeId: 'sprint-control-surface' },
   initiatedBy: { sourceKind: 'user_authored' as const, sourceReference: 'prompt-1' },
   promptProvenanceId: 'prompt-1',

@@ -255,19 +255,15 @@ export function nativeQueryProductCompositionInputV2(
     })),
     workUnits: [],
     workUnitScopes: [],
-    sprintPlannerActivities: [],
+    workSlicePlanningPoints: [],
     workUnitExecutions: [],
     attempts: [],
     agentSessions: uniquePlanBuilderSessions.map(({ association }) => ({
       agentSessionId: association.agentSessionId,
     })),
-    agentSessionReferences: initiatedPlanBuilders.map(({ epic, association }) => ({
-      agentSessionRefId: `epic-plan-builder:${association.agentSessionAssociationId}`,
-      agentSessionId: association.agentSessionId,
-      targetKind: 'epic' as const,
-      targetId: epic.epicId,
-      semanticRole: 'epic_plan_builder' as const,
-    })),
+    // Plan Builder Sessions remain associated with their durable planning drafts. Initiation does
+    // not relabel them as one of the five orchestration runtime roles.
+    agentSessionReferences: [],
     gates: [],
     gateCriteriaRevisions: [],
     feedbackRecords: [],
@@ -342,13 +338,17 @@ export function nativeQueryProductCompositionInputV2(
           source: source(initiated.find((e) => e.epicId === x.epicId)!.provenanceId),
           value: 'not_started' as const,
         },
+        planningState: {
+          source: source(initiated.find((e) => e.epicId === x.epicId)!.provenanceId),
+          value: { kind: 'pre_start_forecast' as const },
+        },
       })),
       sprintPlanRevisions: query.initiatedSprints.map((x) => ({
         sprintPlanRevisionId: x.sprintPlanRevisionId,
         summary: 'Preparatory initial Sprint Plan revision.',
         source: source(initiated.find((e) => e.epicId === x.epicId)!.provenanceId),
       })),
-      plannerActivities: [],
+      workSlicePlanningPoints: [],
       workUnits: [],
       gates: [],
       concerns: [],

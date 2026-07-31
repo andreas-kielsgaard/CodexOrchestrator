@@ -48,8 +48,8 @@ describe('Agent Control contracts', () => {
   });
 
   it.each([
-    ['request_next_ready_work_unit_planner', 0, 'epic'],
-    ['request_next_sprint_planner', 1, 'agent_session'],
+    ['request_next_work_slice_planner', 0, 'epic'],
+    ['request_next_sprint_runner', 1, 'agent_session'],
     ['request_agent_session_prompt', 2, 'sprint'],
   ] as const)(
     'rejects a wrong idempotency scope kind for %s',
@@ -64,8 +64,8 @@ describe('Agent Control contracts', () => {
   );
 
   it.each([
-    ['request_next_ready_work_unit_planner', 0, 'sprint-other'],
-    ['request_next_sprint_planner', 1, 'epic-other'],
+    ['request_next_work_slice_planner', 0, 'sprint-other'],
+    ['request_next_sprint_runner', 1, 'epic-other'],
     ['request_agent_session_prompt', 2, 'agent-session-reference-other'],
   ] as const)(
     'rejects a wrong idempotency scope id for %s',
@@ -169,7 +169,7 @@ describe('Agent Control contracts', () => {
 
     const wrongTarget = contracts();
     wrongTarget.continuationEligibilityEvaluations[0].target = {
-      kind: 'next_sprint_planner',
+      kind: 'next_sprint_runner',
       epicId: 'epic-1',
     } as never;
     expect(() => decodeAgentControlContractsV1(wrongTarget)).toThrow(
@@ -266,7 +266,7 @@ function contracts(): Mutable<AgentControlContractsV1> {
         continuationEligibilityEvaluationId: 'evaluation-sprint',
         continuationPolicyId: 'policy-sprint',
         level: 'sprint',
-        target: { kind: 'next_ready_work_unit_planner', sprintId: 'sprint-1' },
+        target: { kind: 'next_work_slice_planner', sprintId: 'sprint-1' },
         requiredConditionsSatisfied: true,
         designedForFeedback: false,
         allPendingDevelopmentTechnicallyBlocked: false,
@@ -277,7 +277,7 @@ function contracts(): Mutable<AgentControlContractsV1> {
         continuationEligibilityEvaluationId: 'evaluation-epic',
         continuationPolicyId: 'policy-epic',
         level: 'epic',
-        target: { kind: 'next_sprint_planner', epicId: 'epic-1' },
+        target: { kind: 'next_sprint_runner', epicId: 'epic-1' },
         requiredConditionsSatisfied: true,
         designedForFeedback: false,
         allPendingDevelopmentTechnicallyBlocked: false,
@@ -288,9 +288,9 @@ function contracts(): Mutable<AgentControlContractsV1> {
     commands: [
       {
         agentControlCommandId: 'request-sprint',
-        commandKind: 'request_next_ready_work_unit_planner',
+        commandKind: 'request_next_work_slice_planner',
         recipientAgentSessionRefId: 'agent-session-reference-sprint-runner',
-        target: { kind: 'next_ready_work_unit_planner', sprintId: 'sprint-1' },
+        target: { kind: 'next_work_slice_planner', sprintId: 'sprint-1' },
         idempotency: { key: 'continue', scopeKind: 'sprint', scopeId: 'sprint-1' },
         initiatedBy: { sourceKind: 'application_produced', sourceReference: 'sprint-policy-loop' },
         promptProvenanceId: 'prompt-user',
@@ -300,9 +300,9 @@ function contracts(): Mutable<AgentControlContractsV1> {
       },
       {
         agentControlCommandId: 'request-epic',
-        commandKind: 'request_next_sprint_planner',
+        commandKind: 'request_next_sprint_runner',
         recipientAgentSessionRefId: 'agent-session-reference-epic-runner',
-        target: { kind: 'next_sprint_planner', epicId: 'epic-1' },
+        target: { kind: 'next_sprint_runner', epicId: 'epic-1' },
         idempotency: {
           key: 'continue',
           scopeKind: 'epic',

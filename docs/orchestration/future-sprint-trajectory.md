@@ -56,8 +56,8 @@ the safety boundary.
   remains the intended authority path. Agent prose is not authoritative state.
 - Requested, eligible, observed, integrated, reviewed, and responsibility-accepted facts remain
   distinct.
-- Epic-level continuation targets the next Sprint Planner. Sprint-level continuation targets the
-  next ready Work Unit planner.
+- Epic-level continuation targets the next Sprint Runner. Sprint-level continuation targets the
+  next Work Slice Planner.
 - New work does not import legacy task/run contracts or add behavior to the quarantined Rust root.
 - Presentation contracts do not become persistence or transition contracts by convenience.
 

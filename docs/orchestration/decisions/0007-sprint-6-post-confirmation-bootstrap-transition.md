@@ -48,5 +48,5 @@ write. This is deterministic link hardening, not a claim of race-proof filesyste
 
 The service never infers effects from transcripts, session idleness, or manual handoff text. This
 unit stops after the Epic Runner launch is durably acknowledged; it does not create or start a
-product Sprint, Sprint Planner, Sprint Runner, Work Unit, execution, review, or adaptive-planning
+product Sprint, Work Slice Planner, Sprint Runner, Work Unit, execution, review, or adaptive-planning
 action.

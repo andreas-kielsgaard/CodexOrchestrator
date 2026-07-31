@@ -230,13 +230,13 @@
   font-style: normal;
   font-weight: 800;
 }
-.plan-workflow-node--worker_reprompted,
+.plan-workflow-node--implementer_reprompted,
 .plan-workflow-node--correction_required {
   border-color: #bd8c4f;
   background: #fff8ec;
 }
 .plan-workflow-node--work_unit_settled,
-.plan-workflow-node--planner_completed {
+.plan-workflow-node--work_slice_planner_completed {
   border-color: #82ae91;
   background: #eef8f1;
 }
@@ -463,12 +463,7 @@
   font-weight: 900;
 }
 
-.work-unit-lifecycle__identity--reviewer {
-  background: #eee3f2;
-  color: #6b477a;
-}
-
-.work-unit-lifecycle__identity--sprint_planner {
+.work-unit-lifecycle__identity--work_slice_planner {
   background: #e8e4f2;
   color: #5c4a79;
 }
@@ -478,9 +473,9 @@
   color: #6d542f;
 }
 
-.work-unit-lifecycle__identity--merger {
-  background: #e3efe5;
-  color: #356746;
+.work-unit-lifecycle__identity--work_unit_implementer {
+  background: #e2edf4;
+  color: #315f78;
 }
 
 @media (max-width: 720px) {

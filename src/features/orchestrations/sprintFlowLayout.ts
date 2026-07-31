@@ -10,7 +10,7 @@ export interface SprintFlowLayout {
   readonly width: number;
   readonly height: number;
   readonly positions: readonly SprintFlowPosition[];
-  readonly sprintPlannerActivityGroupPositions: readonly {
+  readonly workSlicePlanningPointGroupPositions: readonly {
     readonly id: string;
     readonly x: number;
     readonly y: number;
@@ -27,15 +27,16 @@ export interface SprintFlowConnector {
 
 export interface SprintFlowConnectorRoute extends SprintFlowConnector {
   readonly path: string;
-  readonly scopeSprintPlannerActivityId?: string;
+  readonly scopeWorkSlicePlanningPointId?: string;
 }
 
-const CARD_WIDTH = 178;
-const CARD_HEIGHT = 86;
-const PLAN_Y = 72;
-const CARD_TOP = 58;
-const STAGE_GAP = 196;
-const LANE_GAP = 106;
+const CARD_WIDTH = 158;
+const CARD_HEIGHT = 76;
+const PLAN_Y = 58;
+const CARD_TOP = 48;
+const STAGE_GAP = 168;
+const LANE_GAP = 86;
+const GROUP_INSET = 14;
 
 /** Visible Work Unit relationships derived only from declared dependency and gate edges. */
 export function projectSprintFlowConnectors(
@@ -60,12 +61,12 @@ export function projectSprintFlowConnectors(
 /** Replaceable Work Unit grouping layout; semantic contracts never retain coordinates. */
 export function projectSprintFlowLayout(view: ProductSprintRevisionViewV1): SprintFlowLayout {
   const positions: SprintFlowPosition[] = [];
-  const sprintPlannerActivityGroupPositions: SprintFlowLayout['sprintPlannerActivityGroupPositions'][number][] =
+  const workSlicePlanningPointGroupPositions: SprintFlowLayout['workSlicePlanningPointGroupPositions'][number][] =
     [];
-  let groupX = 24;
-  let maxGroupBottom = 320;
+  let groupX = 14;
+  let maxGroupBottom = 260;
   const connectors = projectSprintFlowConnectors(view);
-  for (const group of view.plannerActivityGroups) {
+  for (const group of view.workSlicePlanningPointGroups) {
     const owned = view.workUnits.filter((unit) =>
       group.workUnitScopeIds.includes(unit.workUnitScopeId),
     );
@@ -93,29 +94,29 @@ export function projectSprintFlowLayout(view: ProductSprintRevisionViewV1): Spri
       lanes.set(level, lane + 1);
       positions.push({
         id: unit.workUnitId,
-        x: groupX + 22 + level * STAGE_GAP,
+        x: groupX + GROUP_INSET + level * STAGE_GAP,
         y: PLAN_Y + CARD_TOP + lane * LANE_GAP,
       });
     });
     const stages = Math.max(0, ...levelById.values()) + 1;
     const laneCount = Math.max(1, ...lanes.values());
-    const width = Math.max(210, 40 + stages * STAGE_GAP);
-    const height = Math.max(210, 90 + laneCount * LANE_GAP);
-    sprintPlannerActivityGroupPositions.push({
-      id: group.sprintPlannerActivityId,
+    const width = Math.max(182, 28 + stages * STAGE_GAP);
+    const height = Math.max(170, 72 + laneCount * LANE_GAP);
+    workSlicePlanningPointGroupPositions.push({
+      id: group.workSlicePlanningPointId,
       x: groupX,
       y: PLAN_Y,
       width,
       height,
     });
-    groupX += width + 18;
+    groupX += width + 10;
     maxGroupBottom = Math.max(maxGroupBottom, PLAN_Y + height);
   }
   return {
-    width: Math.max(760, groupX + 12),
-    height: maxGroupBottom + 72,
+    width: Math.max(680, groupX + 8),
+    height: maxGroupBottom + 48,
     positions,
-    sprintPlannerActivityGroupPositions,
+    workSlicePlanningPointGroupPositions,
   };
 }
 
@@ -126,23 +127,27 @@ export function projectSprintConnectorRoutes(
 ): readonly SprintFlowConnectorRoute[] {
   const positions = new Map(layout.positions.map((position) => [position.id, position]));
   const groups = new Map(
-    layout.sprintPlannerActivityGroupPositions.map((group) => [group.id, group]),
+    layout.workSlicePlanningPointGroupPositions.map((group) => [group.id, group]),
   );
   const ownerByUnit = new Map(
-    view.plannerActivityGroups.flatMap((group) =>
+    view.workSlicePlanningPointGroups.flatMap((group) =>
       group.workUnitScopeIds
         .map((scopeId) => {
           const unit = view.workUnits.find(({ workUnitScopeId }) => workUnitScopeId === scopeId);
-          return unit ? ([unit.workUnitId, group.sprintPlannerActivityId] as const) : undefined;
+          return unit ? ([unit.workUnitId, group.workSlicePlanningPointId] as const) : undefined;
         })
         .filter((entry) => entry !== undefined),
     ),
   );
   const groupOrder = new Map(
-    view.plannerActivityGroups.map((group, index) => [group.sprintPlannerActivityId, index]),
+    view.workSlicePlanningPointGroups.map((group, index) => [
+      group.workSlicePlanningPointId,
+      index,
+    ]),
   );
   const bottomGutterY =
-    Math.max(...layout.sprintPlannerActivityGroupPositions.map(({ y, height }) => y + height)) + 24;
+    Math.max(...layout.workSlicePlanningPointGroupPositions.map(({ y, height }) => y + height)) +
+    24;
 
   return projectSprintFlowConnectors(view).flatMap((connector) => {
     const from = positions.get(connector.from);
@@ -165,15 +170,15 @@ export function projectSprintConnectorRoutes(
         localStartY === localEndY
           ? `M ${localStartX} ${localStartY} H ${localEndX}`
           : `M ${localStartX} ${localStartY} H ${(localStartX + localEndX) / 2} V ${localEndY} H ${localEndX}`;
-      return [{ ...connector, path, scopeSprintPlannerActivityId: fromGroupId }];
+      return [{ ...connector, path, scopeWorkSlicePlanningPointId: fromGroupId }];
     }
 
     const fromGroup = groups.get(fromGroupId)!;
     const toGroup = groups.get(toGroupId)!;
     const adjacent =
       Math.abs((groupOrder.get(fromGroupId) ?? 0) - (groupOrder.get(toGroupId) ?? 0)) === 1;
-    const sourceAtGroupExit = Math.abs(startX - (fromGroup.x + fromGroup.width - 22)) < 1;
-    const targetAtGroupEntry = Math.abs(endX - (toGroup.x + 22)) < 1;
+    const sourceAtGroupExit = Math.abs(startX - (fromGroup.x + fromGroup.width - GROUP_INSET)) < 1;
+    const targetAtGroupEntry = Math.abs(endX - (toGroup.x + GROUP_INSET)) < 1;
     if (adjacent && sourceAtGroupExit && targetAtGroupEntry && startY === endY)
       return [{ ...connector, path: `M ${startX} ${startY} H ${endX}` }];
 

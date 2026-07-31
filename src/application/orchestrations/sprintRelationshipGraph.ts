@@ -1,28 +1,28 @@
 import type {
   SprintControlSurfaceProjection,
-  SprintPlannerOutputV1,
+  SprintRunnerPlanV1,
 } from './sprintControlSurfaceCompatibility';
 import type { DependencyKind, SprintRelationshipGraph } from './sprintReadModels';
 
 export function projectSprintRelationshipGraph(
-  planner: SprintPlannerOutputV1,
+  planner: SprintRunnerPlanV1,
   revisionId: string,
   workUnits: SprintControlSurfaceProjection['workUnits'],
-  sprintPlannerActivities: SprintPlannerOutputV1['sprintPlannerActivities'],
-  gates: SprintPlannerOutputV1['gates'],
+  workSlicePlanningPoints: SprintRunnerPlanV1['workSlicePlanningPoints'],
+  gates: SprintRunnerPlanV1['gates'],
 ): SprintRelationshipGraph {
   const nodes: SprintRelationshipGraph['nodes'] = [
     node('sprint_plan', planner.sprintPlan.id),
     node('plan_revision', revisionId),
-    ...sprintPlannerActivities.map(({ id }) => node('sprint_planner_activity', id)),
+    ...workSlicePlanningPoints.map(({ id }) => node('work_slice_planning_point', id)),
     ...workUnits.map(({ id, parallelGroupId }) => node('work_unit', id, parallelGroupId)),
     ...gates.map(({ id }) => node('gate', id)),
   ];
   const included = new Set(nodes.map(({ id }) => id));
   const edges: SprintRelationshipGraph['edges'] = [
     edge(`sprint_plan:${planner.sprintPlan.id}`, `plan_revision:${revisionId}`, 'revision'),
-    ...sprintPlannerActivities.map(({ id, planRevisionId }) =>
-      edge(`sprint_planner_activity:${id}`, `plan_revision:${planRevisionId}`, 'assessment'),
+    ...workSlicePlanningPoints.map(({ id, planRevisionId }) =>
+      edge(`work_slice_planning_point:${id}`, `plan_revision:${planRevisionId}`, 'assessment'),
     ),
     ...workUnits.map(({ id }) => edge(`plan_revision:${revisionId}`, `work_unit:${id}`, 'plan')),
     ...gates.flatMap((gate) =>

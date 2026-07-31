@@ -116,35 +116,45 @@ describe('App application surfaces', () => {
     await expandTreeItem(tree, 'Integrated detail surfaces');
     await expandTreeItem(tree, 'Plan and Work Unit detail surfaces');
     const handlerTreeItem = within(tree).getByRole('treeitem', {
-      name: /Recorded WU-ECS2E Work Unit handler/,
+      name: /Recorded WU-ECS2E Work Unit Handler/,
     });
-    expect(handlerTreeItem).toHaveTextContent('Work Unit handler');
+    expect(handlerTreeItem).toHaveTextContent('Work Unit Handler');
+    expect(
+      within(tree).getByRole('treeitem', {
+        name: /Recorded WU-ECS2E Work Unit Implementer/,
+      }),
+    ).toHaveTextContent('Work Unit Implementer');
     expect(within(tree).queryByRole('treeitem', { name: /Reviewer/ })).toBeNull();
     fireEvent.click(handlerTreeItem);
 
     expect(await screen.findByRole('button', { name: 'Go to Work Unit' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Go to Work Unit' }));
     expect(await screen.findByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
-    const handler = screen.getByRole('region', { name: 'Work Unit handler Agent Session' });
-    expect(screen.getByRole('region', { name: 'Sprint Planner Agent Session' })).toBeVisible();
+    const handler = screen.getByRole('region', { name: 'Work Unit Handler Agent Session' });
+    expect(
+      screen.getByRole('region', { name: 'Work Unit Implementer Agent Session' }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Work Slice Planner' }));
+    expect(screen.getByRole('region', { name: 'Work Slice Planner Agent Session' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Work Unit Handler' }));
     expect(screen.queryByRole('button', { name: 'Reviewer' })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Reviewer' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'Reviewer Agent Session' })).toBeNull();
     expect(
       screen.getByRole('separator', {
-        name: 'Resize Sprint Planner conversation and Work Unit handler conversation',
+        name: 'Resize Planning and handling conversation and Work Unit Implementer conversation',
       }),
     ).toHaveAttribute('aria-orientation', 'vertical');
 
     fireEvent.click(within(handler).getByRole('button', { name: 'Open in Agent Sessions' }));
     expect(
-      await screen.findByRole('heading', { name: 'Recorded WU-ECS2E Work Unit handler' }),
+      await screen.findByRole('heading', { name: 'Recorded WU-ECS2E Work Unit Handler' }),
     ).toBeVisible();
     expect(
-      screen.getByRole('treeitem', { name: /Recorded WU-ECS2E Work Unit handler/ }),
+      screen.getByRole('treeitem', { name: /Recorded WU-ECS2E Work Unit Handler/ }),
     ).toHaveAttribute('aria-selected', 'true');
     expect(new Set(loadedSessionIds.filter((sessionId) => sessionId.includes('WU-ECS2E')))).toEqual(
-      new Set(['recorded-session-WU-ECS2E']),
+      new Set(['recorded-session-WU-ECS2E', 'recorded-implementer-WU-ECS2E']),
     );
     expect(loadedSessionIds).not.toContain('recorded-session-reviewer-WU-ECS2E');
   });

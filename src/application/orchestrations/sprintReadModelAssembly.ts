@@ -1,14 +1,14 @@
 import type {
   SprintControlSurfaceProjection,
   SprintExecutionSnapshotV1,
-  SprintPlannerOutputV1,
+  SprintRunnerPlanV1,
 } from './sprintControlSurfaceCompatibility';
 import { deriveConcernState, deriveWorkUnitPresentation } from './sprintDerivedState';
 import type { SprintReadModel } from './sprintReadModels';
 import { projectSprintRelationshipGraph } from './sprintRelationshipGraph';
 
 export function assembleSprintControlSurface(
-  planner: SprintPlannerOutputV1,
+  planner: SprintRunnerPlanV1,
   snapshot: SprintExecutionSnapshotV1,
   selectedPlanRevisionId: string,
 ): SprintControlSurfaceProjection {
@@ -52,8 +52,8 @@ export function assembleSprintControlSurface(
     concerns,
     documents,
     mapLayout: selectedView.mapLayout,
-    sprintPlannerActivities: selectedView.sprintPlannerActivities,
-    sprintPlannerActivityGroups: selectedView.sprintPlannerActivityGroups,
+    workSlicePlanningPoints: selectedView.workSlicePlanningPoints,
+    workSlicePlanningPointGroups: selectedView.workSlicePlanningPointGroups,
     gates: selectedView.gates,
     parallelGroups: selectedView.parallelGroups,
     planChanges: selectedView.planChanges,
@@ -64,7 +64,7 @@ export function assembleSprintControlSurface(
 }
 
 function projectRevisionView(
-  planner: SprintPlannerOutputV1,
+  planner: SprintRunnerPlanV1,
   snapshot: SprintExecutionSnapshotV1,
   planRevisionId: string,
 ): SprintControlSurfaceProjection['revisionViews'][number] {
@@ -108,8 +108,9 @@ function projectRevisionView(
           attemptDetails: execution?.attempts ?? [],
           events: snapshot.events.filter(({ workUnitId }) => workUnitId === unit.id),
           attempts: execution?.attempts.length ?? 0,
-          hasWorkerFeedback:
-            execution?.attempts.some(({ workerFeedback }) => Boolean(workerFeedback)) ?? false,
+          hasImplementerFeedback:
+            execution?.attempts.some(({ implementerFeedback }) => Boolean(implementerFeedback)) ??
+            false,
           accepted: executionState === 'accepted',
           launched: execution?.actualLaunch !== undefined,
         },
@@ -117,15 +118,15 @@ function projectRevisionView(
         parallelGroupId: unit.parallelGroupId,
       };
     });
-  const activities = planner.sprintPlannerActivities.filter(
+  const activities = planner.workSlicePlanningPoints.filter(
     ({ planRevisionId }) => planRevisionId === revision.id,
   );
   const gates = selectGates(planner, revision.id, workUnits);
   return {
     planRevisionId: revision.id,
     workUnits,
-    sprintPlannerActivities: activities,
-    sprintPlannerActivityGroups: activities,
+    workSlicePlanningPoints: activities,
+    workSlicePlanningPointGroups: activities,
     gates: gates.map((gate) => ({
       id: gate.id,
       kind: gate.kind,
@@ -142,7 +143,7 @@ function projectRevisionView(
 }
 
 function assembleSprintReadModel(
-  planner: SprintPlannerOutputV1,
+  planner: SprintRunnerPlanV1,
   snapshot: SprintExecutionSnapshotV1,
   selectedId: string,
   units: SprintControlSurfaceProjection['workUnits'],
@@ -169,8 +170,8 @@ function assembleSprintReadModel(
       isActive: revision.id === snapshot.activePlanRevisionId,
       isSelected: revision.id === selectedId,
     })),
-    sprintPlannerActivities: planner.sprintPlannerActivities.map((activity) => ({
-      sprintPlannerActivityId: activity.id,
+    workSlicePlanningPoints: planner.workSlicePlanningPoints.map((activity) => ({
+      workSlicePlanningPointId: activity.id,
       sprintPlanRevisionId: activity.planRevisionId,
       title: activity.title,
       purpose: activity.purpose,
@@ -205,10 +206,10 @@ function assembleSprintReadModel(
 }
 
 function selectGates(
-  planner: SprintPlannerOutputV1,
+  planner: SprintRunnerPlanV1,
   revisionId: string,
   workUnits: SprintControlSurfaceProjection['workUnits'],
-): SprintPlannerOutputV1['gates'] {
+): SprintRunnerPlanV1['gates'] {
   const ids = new Set(
     planner.gates
       .filter((gate) => gate.specRevisions.some((spec) => spec.planRevisionId === revisionId))
