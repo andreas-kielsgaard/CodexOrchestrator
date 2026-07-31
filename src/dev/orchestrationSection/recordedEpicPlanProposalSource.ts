@@ -30,6 +30,7 @@ export function createMutableRecordedEpicPlanProposalSource(
 /** Recorded/local evaluation input only. It is not derived from Agent Session prose or product reads. */
 export const recordedLocalEpicPlanProposalSource = createMutableRecordedEpicPlanProposalSource({
   kind: 'available',
+  suggestedEpicName: 'Minimal Epic Plan Test',
   sprints: [
     {
       title: 'Plan Builder foundation',

@@ -7,6 +7,13 @@ export type IsoDateTimeDto = string;
 export type AgentSessionAvailabilityDto = 'available' | 'archived';
 export type RuntimeSandboxModeDto = 'read_only' | 'workspace_write' | 'danger_full_access';
 
+/** Session-owned presentation identity. Assignment and persistence belong outside the view. */
+export interface AgentIdentity {
+  readonly name: string;
+  readonly harnessRole: string;
+  readonly visualIdentityToken: string;
+}
+
 export interface AgentRuntimeOptionsDto {
   model: string | null;
   sandbox: RuntimeSandboxModeDto | null;

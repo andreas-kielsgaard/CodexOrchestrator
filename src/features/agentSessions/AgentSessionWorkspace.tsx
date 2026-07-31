@@ -1,5 +1,7 @@
 import { Check, ClipboardCopy } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import type { AgentIdentity } from '../../application/agentSessions';
+import { AgentIdentityMarker } from './AgentIdentityMarker';
 import { ConversationViewport } from './ConversationViewport';
 import {
   browserAgentSessionClipboard,
@@ -11,6 +13,10 @@ import type { AgentSessionWorkspaceController } from './useAgentSessionControlle
 export interface AgentSessionPresentation {
   readonly showHeader?: boolean;
   readonly ariaLabel?: string;
+  readonly identityHeader?: Readonly<{
+    readonly agentIdentity?: AgentIdentity;
+    readonly title: string;
+  }>;
   readonly emptyState?: Readonly<{ heading: string; guidance: string }>;
   readonly composer?: Readonly<{
     readonly messageLabel?: string;
@@ -35,6 +41,7 @@ export function AgentSessionWorkspace({
   const active = Boolean(controller.transcript?.activeInvocationId);
   const title = controller.details?.session.title ?? 'New Agent Session';
   const showHeader = presentation.showHeader ?? true;
+  const identityHeader = presentation.identityHeader;
   const [copyState, setCopyState] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle');
   useEffect(() => {
     if (copyState !== 'copied') return;
@@ -79,10 +86,33 @@ export function AgentSessionWorkspace({
   );
   return (
     <section
-      className={`agent-session-workspace${showHeader ? '' : ' agent-session-workspace--header-hidden'}`}
+      className={`agent-session-workspace${
+        showHeader || identityHeader ? '' : ' agent-session-workspace--header-hidden'
+      }`}
       aria-label={presentation.ariaLabel ?? title}
     >
-      {showHeader && (
+      {identityHeader ? (
+        <header className="agent-session-identity-header">
+          <div className="agent-session-identity-header__title">
+            {identityHeader.agentIdentity && (
+              <AgentIdentityMarker identity={identityHeader.agentIdentity} />
+            )}
+            <h2>
+              {identityHeader.agentIdentity
+                ? `${identityHeader.agentIdentity.name}: ${identityHeader.title}`
+                : identityHeader.title}
+            </h2>
+          </div>
+          <div className="agent-session-identity-header__actions">
+            {copyAction}
+            {active && (
+              <span className="working-status" role="status">
+                Working
+              </span>
+            )}
+          </div>
+        </header>
+      ) : showHeader ? (
         <header className="agent-session-header">
           <div>
             <p className="eyebrow">Agent Session</p>
@@ -106,8 +136,9 @@ export function AgentSessionWorkspace({
             )}
           </div>
         </header>
+      ) : (
+        <div className="agent-session-utility-bar">{copyAction}</div>
       )}
-      {!showHeader && <div className="agent-session-utility-bar">{copyAction}</div>}
       <ConversationViewport
         segments={
           controller.transcript

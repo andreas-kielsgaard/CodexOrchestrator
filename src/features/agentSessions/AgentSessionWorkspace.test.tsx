@@ -106,6 +106,46 @@ describe('AgentSessionWorkspace', () => {
     expect(conversation?.lastElementChild).toHaveClass('agent-session-composer');
   });
 
+  it('renders a compact session-owned identity header without inventing an unavailable name', () => {
+    const details = sessionDetails('completed');
+    const controller = workspaceController(details);
+    const { rerender } = render(
+      <AgentSessionWorkspace
+        controller={controller}
+        presentation={{
+          showHeader: false,
+          identityHeader: {
+            agentIdentity: {
+              name: 'Avery',
+              harnessRole: 'epic_plan_builder',
+              visualIdentityToken: 'sunflower',
+            },
+            title: 'Epic Plan Builder',
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Avery: Epic Plan Builder' })).toBeVisible();
+    expect(document.querySelector('[data-visual-identity-token="sunflower"]')).toHaveTextContent(
+      'A',
+    );
+    expect(screen.getByRole('button', { name: 'Copy entire session' })).toBeVisible();
+
+    rerender(
+      <AgentSessionWorkspace
+        controller={controller}
+        presentation={{
+          showHeader: false,
+          identityHeader: { title: 'Epic Plan Builder' },
+        }}
+      />,
+    );
+    expect(screen.getByRole('heading', { name: 'Epic Plan Builder' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Avery: Epic Plan Builder' })).toBeNull();
+    expect(document.querySelector('[data-visual-identity-token]')).toBeNull();
+  });
+
   it('copies a complete sanitized plain-text session from normal and embedded views', async () => {
     const details = sessionDetails('completed');
     details.invocations[0].invocation.submittedText = 'Use password=hunter2';

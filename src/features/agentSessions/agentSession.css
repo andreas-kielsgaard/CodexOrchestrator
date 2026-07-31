@@ -132,6 +132,9 @@
 }
 
 .agent-session-header__actions,
+.agent-session-identity-header,
+.agent-session-identity-header__title,
+.agent-session-identity-header__actions,
 .agent-session-utility-bar,
 .agent-session-copy-action {
   display: flex;
@@ -140,6 +143,55 @@
 
 .agent-session-header__actions {
   gap: 10px;
+}
+
+.agent-session-identity-header {
+  min-width: 0;
+  min-height: 48px;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
+  border-bottom: 1px solid #e0e4dd;
+  background: #fffdf8;
+}
+
+.agent-session-identity-header__title {
+  min-width: 0;
+  gap: 8px;
+}
+
+.agent-session-identity-header__title h2 {
+  margin: 0;
+  overflow: hidden;
+  font-size: 0.88rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-session-identity-header__actions {
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.agent-identity-marker {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border: 1px solid #9eaaa2;
+  border-radius: 999px;
+  background: #e7ebe4;
+  color: #263a2f;
+  font-size: 0.68rem;
+  font-weight: 850;
+  place-items: center;
+}
+
+.agent-identity-marker[data-visual-identity-token='sunflower'] {
+  border-color: #b08a22;
+  background: #f2ca52;
+  color: #32270b;
 }
 
 .agent-session-utility-bar {

@@ -10,18 +10,6 @@
   background: #f4f6f8;
 }
 
-.epic-plan-builder__toolbar {
-  display: flex;
-  min-width: 0;
-  min-height: 48px;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 12px;
-  border-bottom: 1px solid #d5dce2;
-  background: #fffdf8;
-}
-
 .epic-plan-builder__back,
 .epic-plan-builder__cancel-draft {
   display: inline-flex;
@@ -47,14 +35,16 @@
   background: #edf1f4;
 }
 
-.epic-plan-builder__toolbar-context {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
+.epic-plan-builder__status {
   color: #657680;
-  font-size: 0.76rem;
+  font-size: 0.66rem;
   font-weight: 700;
-  text-overflow: ellipsis;
+  letter-spacing: 0.035em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.epic-plan-builder__status {
   white-space: nowrap;
 }
 
@@ -95,7 +85,7 @@
   min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
-  grid-template-columns: minmax(200px, 230px) minmax(400px, 1fr) minmax(320px, 420px);
+  grid-template-columns: minmax(200px, 230px) minmax(0, 1fr);
   gap: 10px;
   overflow: hidden;
 }
@@ -124,13 +114,6 @@
 .epic-plan-builder__controls-primary {
   display: grid;
   gap: 8px;
-}
-
-.epic-plan-builder__controls h1 {
-  margin: 0 0 14px;
-  font-size: clamp(1.5rem, 2vw, 2rem);
-  letter-spacing: -0.035em;
-  line-height: 1.05;
 }
 
 .epic-plan-builder__controls label {
@@ -188,22 +171,52 @@
   min-height: 0;
 }
 
+.epic-plan-builder__workspace {
+  --epic-plan-builder-workspace-header-height: 48px;
+
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: minmax(400px, 1fr) minmax(320px, 420px);
+  overflow: hidden;
+}
+
+.epic-plan-builder__conversation {
+  border-radius: 8px 0 0 8px;
+}
+
 .epic-plan-builder__proposal {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  border-left: 0;
+  border-radius: 0 8px 8px 0;
 }
 
 .epic-plan-builder__proposal-header {
+  display: flex;
   position: relative;
   z-index: 1;
-  padding: 14px 16px;
+  height: var(--epic-plan-builder-workspace-header-height);
+  min-height: var(--epic-plan-builder-workspace-header-height);
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
   border-bottom: 1px solid #e0e4dd;
   background: #fffdf8;
 }
 
+.epic-plan-builder__conversation .agent-session-identity-header {
+  height: var(--epic-plan-builder-workspace-header-height);
+  min-height: var(--epic-plan-builder-workspace-header-height);
+}
+
 .epic-plan-builder__proposal h2 {
   margin: 0;
-  font-size: 1.08rem;
+  overflow: hidden;
+  font-size: 0.88rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .epic-plan-builder__proposal-body {
@@ -297,7 +310,11 @@
 
 @media (max-width: 1100px) {
   .epic-plan-builder__layout {
-    grid-template-columns: minmax(180px, 210px) minmax(300px, 1fr) minmax(280px, 340px);
+    grid-template-columns: minmax(180px, 210px) minmax(0, 1fr);
+  }
+
+  .epic-plan-builder__workspace {
+    grid-template-columns: minmax(300px, 1fr) minmax(280px, 340px);
   }
 }
 
@@ -311,9 +328,26 @@
   .epic-plan-builder__layout {
     min-height: 980px;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(520px, 1fr) minmax(320px, 0.7fr);
+    grid-template-rows: auto minmax(840px, 1fr);
     overflow: visible;
     overscroll-behavior: none;
+  }
+
+  .epic-plan-builder__workspace {
+    min-height: 840px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(520px, 1fr) minmax(320px, 0.7fr);
+    overflow: visible;
+  }
+
+  .epic-plan-builder__conversation {
+    border-radius: 8px 8px 0 0;
+  }
+
+  .epic-plan-builder__proposal {
+    border-top: 0;
+    border-left: 1px solid #d5dce2;
+    border-radius: 0 0 8px 8px;
   }
 
   .epic-plan-builder__controls {
@@ -326,29 +360,25 @@
   .epic-plan-builder__controls-actions {
     flex: 1;
   }
-
-  .epic-plan-builder__toolbar-context {
-    display: none;
-  }
 }
 
 @media (max-width: 560px) {
-  .epic-plan-builder__toolbar {
-    gap: 4px;
-    padding: 6px 8px;
-  }
-
   .epic-plan-builder__back,
   .epic-plan-builder__cancel-draft {
-    padding: 0 6px;
-    font-size: 0.7rem;
+    width: 32px;
+    padding: 0;
+    justify-content: center;
   }
 
-  .epic-plan-builder__back {
-    min-width: 0;
-    flex: 1;
+  .epic-plan-builder__view-action-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
     overflow: hidden;
-    text-overflow: ellipsis;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .epic-plan-builder__controls {

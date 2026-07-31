@@ -14,6 +14,7 @@ import {
   unsupportedProductEpicAutomaticContinuationPolicyController,
 } from '../../application/orchestrations';
 import type { AppProps } from '../../app/App';
+import type { AgentIdentity } from '../../application/agentSessions';
 import {
   createRecordedAgentSessionClient,
   createRecordedAgentSessionStore,
@@ -29,6 +30,13 @@ export const recordedDevelopmentOrchestrationClient = recordedOrchestrationClien
 export const recordedDevelopmentAgentSessionClient = createRecordedAgentSessionClient({
   store: createRecordedAgentSessionStore(recordedAgentSessionDetails),
 });
+
+/** Stable development identity for visual review; it is not a durable product assignment. */
+export const recordedPlanBuilderAgentIdentity: AgentIdentity = {
+  name: 'Avery',
+  harnessRole: 'epic_plan_builder',
+  visualIdentityToken: 'sunflower',
+};
 
 /** Compatibility-only transcripts and workflow geometry are adjuncts, never product read facts. */
 export const recordedDevelopmentOrchestrationPresentation: OrchestrationPresentationAdapter = {
@@ -47,6 +55,7 @@ export const recordedDevelopmentOrchestrationPresentation: OrchestrationPresenta
 export function createRecordedDevelopmentApplicationComposition(): AppProps {
   return {
     agentSessionClient: recordedDevelopmentAgentSessionClient,
+    managedPlanBuilderAgentIdentity: recordedPlanBuilderAgentIdentity,
     orchestrationClient: recordedDevelopmentOrchestrationClient,
     orchestrationPresentation: recordedDevelopmentOrchestrationPresentation,
     orchestrationAgentSessionComposition: { client: recordedDevelopmentAgentSessionClient },
