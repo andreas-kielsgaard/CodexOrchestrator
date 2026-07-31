@@ -635,6 +635,10 @@ fn isolated_environment(
             value(&projection.paths.app_data.join("review-window-ready")),
         ),
         (
+            "CODEX_ORCHESTRATOR_REVIEW_INSTANCE_ROOT",
+            value(&projection.paths.instance_root),
+        ),
+        (
             "CODEX_ORCHESTRATOR_REVIEW_NAVIGATION_PATH",
             value(
                 &projection

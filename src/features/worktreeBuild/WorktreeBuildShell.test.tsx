@@ -5,6 +5,7 @@ import { WorktreeBuildShell } from './WorktreeBuildShell';
 
 const fileReviewCss = readFileSync('src/features/fileReview/fileReview.css', 'utf8');
 const worktreeBuildCss = readFileSync('src/features/worktreeBuild/worktreeBuild.css', 'utf8');
+const widgetCss = readFileSync('src/features/applicationWidget/applicationWidget.css', 'utf8');
 
 describe('WorktreeBuildShell', () => {
   it('keeps provenance visible and opens typed details plus one scoped file review', async () => {
@@ -16,16 +17,20 @@ describe('WorktreeBuildShell', () => {
     );
 
     const indicator = await screen.findByRole('button', {
-      name: 'Open Worktree details for Alpha',
+      name: 'Open Worktree build details for Alpha',
     });
     expect(indicator).toHaveTextContent('codex/alpha');
     expect(indicator).toHaveTextContent('Dirty');
     fireEvent.click(indicator);
-    expect(screen.getByRole('main', { name: 'Worktree details' })).toHaveTextContent('abc1234');
-    expect(screen.getByRole('main', { name: 'Worktree details' })).toHaveTextContent(
+    const details = await screen.findByRole('main', { name: 'Worktree build details' });
+    expect(details).toHaveTextContent('abc1234');
+    expect(screen.getByRole('main', { name: 'Worktree build details' })).toHaveTextContent(
       '1 ahead, 2 behind',
     );
-    expect(screen.getByRole('button', { name: 'Open Worktree details for Alpha' })).toBeVisible();
+    expect(screen.getByText(/safe output line 24/)).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Open Worktree build details for Alpha' }),
+    ).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Review files and changes' }));
     const review = await screen.findByRole('main', { name: 'Files and diffs' });
@@ -68,9 +73,16 @@ describe('WorktreeBuildShell', () => {
     expect(reservedLayoutSlot).toBeInTheDocument();
     fireEvent.click(within(modes).getByRole('button', { name: 'Changes' }));
     expect(within(reservedLayoutSlot!).getByRole('group', { name: 'Diff layout' })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Worktree details' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Application' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Build details' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(screen.getByText('Orchestration surface')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize Worktree build widget' }));
+    expect(screen.getByRole('button', { name: 'Restore Worktree build widget' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Restore Worktree build widget' }));
+    expect(widgetCss).toMatch(/\.application-widget-dock\s*{[^}]*justify-content:\s*flex-end;/s);
+    expect(worktreeBuildCss).toMatch(
+      /\.worktree-build-shell\s*{[^}]*grid-template-rows:\s*minmax\(0, 1fr\) auto;/s,
+    );
     expect(client.markReady).toHaveBeenCalledOnce();
   });
 
@@ -86,45 +98,106 @@ describe('WorktreeBuildShell', () => {
       </WorktreeBuildShell>,
     );
 
-    expect(await screen.findByRole('main', { name: 'Worktree details' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Open Worktree details for Alpha' })).toBeVisible();
+    expect(await screen.findByRole('main', { name: 'Worktree build details' })).toBeVisible();
+    expect(
+      screen.getByRole('button', { name: 'Open Worktree build details for Alpha' }),
+    ).toBeVisible();
   });
 });
 
 function fakeClient(): WorktreeBuildClient & { markReady: ReturnType<typeof vi.fn> } {
+  const context = {
+    name: 'Alpha',
+    branch: 'codex/alpha',
+    detached: false,
+    head: {
+      id: 'abc123456789',
+      abbreviatedId: 'abc1234',
+      message: 'Feature',
+      committedAt: '2026-07-29T10:00:00Z',
+    },
+    dirty: { dirty: true, staged: 1, unstaged: 1, untracked: 1 },
+    main: {
+      branch: 'main',
+      detached: false,
+      head: {
+        id: 'def123456789',
+        abbreviatedId: 'def1234',
+        message: 'Main',
+        committedAt: '2026-07-28T10:00:00Z',
+      },
+      dirty: { dirty: false, staged: 0, unstaged: 0, untracked: 0 },
+    },
+    relationship: {
+      ahead: 1,
+      behind: 2,
+      mergeBase: 'fff123456789',
+      summary: '1 ahead, 2 behind machine main HEAD',
+    },
+    relatedBranches: [
+      {
+        name: 'codex/parent',
+        ahead: 1,
+        behind: 0,
+        mergeBase: 'fff123456789',
+        summary: '1 ahead, 0 behind this local branch',
+      },
+    ],
+    history: [],
+    comparisonBasis: 'Machine main HEAD compared with complete selected state.',
+  };
   return {
     markReady: vi.fn(async () => undefined),
     proofNavigation: vi.fn(async () => null),
-    context: async () => ({
+    context: async () => context,
+    detail: async () => ({
+      instanceRef: 'opaque-instance',
       name: 'Alpha',
-      branch: 'codex/alpha',
-      detached: false,
-      head: {
-        id: 'abc123456789',
-        abbreviatedId: 'abc1234',
-        message: 'Feature',
-        committedAt: '2026-07-29T10:00:00Z',
+      sourceLabel: 'codex/alpha',
+      purpose: 'Human review of one selected worktree.',
+      phase: 'running',
+      health: 'healthy',
+      stale: false,
+      build: 'passed',
+      compatibility: 'compatible',
+      compatibilityMessage: 'Compatible.',
+      orientation: 'One retained source identity and its owned review lifecycle.',
+      prepareProduced: 'Prepare reserved isolated state.',
+      buildProduced: 'Build produced private artifacts.',
+      openProduced: 'Open established the exact usable review window.',
+      currentCondition: 'Ready for human review.',
+      actionRequired: false,
+      actionSummary: 'No action is required.',
+      reusableSummary: 'Exact private build remains reusable.',
+      retention: {
+        policy: 'Retained until deliberate cleanup',
+        cleanup: 'Stop is process-only; cleanup is manual.',
+        automatic: false,
+        actionRequired: false,
       },
-      dirty: { dirty: true, staged: 1, unstaged: 1, untracked: 1 },
-      main: {
-        branch: 'main',
-        detached: false,
-        head: {
-          id: 'def123456789',
-          abbreviatedId: 'def1234',
-          message: 'Main',
-          committedAt: '2026-07-28T10:00:00Z',
+      artifacts: [
+        {
+          label: 'Private application executable',
+          state: 'available',
+          summary: 'Private to this instance.',
         },
-        dirty: { dirty: false, staged: 0, unstaged: 0, untracked: 0 },
-      },
-      relationship: {
-        ahead: 1,
-        behind: 2,
-        mergeBase: 'fff123456789',
-        summary: '1 ahead, 2 behind machine main HEAD',
-      },
-      history: [],
-      comparisonBasis: 'Machine main HEAD compared with complete selected state.',
+      ],
+      lifecycleHistory: [
+        { occurredAtMs: 1_750_000_000_000, kind: 'Opened', summary: 'Window ready.' },
+      ],
+      operations: [
+        {
+          operationRef: 'fixture-operation',
+          operation: 'build',
+          state: 'succeeded',
+          stageLabel: 'Finished',
+          startedAtMs: 1_750_000_000_000,
+          updatedAtMs: 1_750_000_001_000,
+          output: Array.from({ length: 24 }, (_, index) => `safe output line ${index + 1}`),
+          outputComplete: true,
+        },
+      ],
+      context,
     }),
     comparison: {
       load: async () => ({

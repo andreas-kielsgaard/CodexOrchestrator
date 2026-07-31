@@ -211,6 +211,27 @@ impl WorktreeRuntimeApplication {
         })
     }
 
+    fn review_window_is_ready(
+        &self,
+        record: &InstanceRecord,
+        route: &OwnerRoute,
+    ) -> Result<bool, RuntimeApplicationError> {
+        let expected = review_window_expectation(record);
+        let window = self
+            .owner
+            .observe_review_window(route, &expected)
+            .map_err(owner_error)?;
+        Ok(window
+            .as_ref()
+            .is_some_and(|window| window.usable(&expected))
+            && record
+                .projection
+                .paths
+                .app_data
+                .join("review-window-ready")
+                .is_file())
+    }
+
     fn wait_for_started(
         &self,
         record: &InstanceRecord,
@@ -591,20 +612,7 @@ impl WorktreeRuntimeControl for WorktreeRuntimeApplication {
             return Ok(false);
         };
         validate_owner_route(&record.identity.instance_id, route)?;
-        let expected = review_window_expectation(&record);
-        let window = self
-            .owner
-            .observe_review_window(route, &expected)
-            .map_err(owner_error)?;
-        Ok(window
-            .as_ref()
-            .is_some_and(|window| window.usable(&expected))
-            && record
-                .projection
-                .paths
-                .app_data
-                .join("review-window-ready")
-                .is_file())
+        self.review_window_is_ready(&record, route)
     }
 
     fn focus(
@@ -735,10 +743,16 @@ impl WorktreeRuntimeControl for WorktreeRuntimeApplication {
             )
             .map_err(registry_error)?;
         if record.state.has_projected_owner() {
-            if observation.owner.is_active() && observation.health.healthy() {
+            let running_window_ready = if record.state == InstanceState::Running {
+                self.review_window_is_ready(&record, required_owner_route(&record)?)?
+            } else {
+                true
+            };
+            if observation.owner.is_active() && observation.health.healthy() && running_window_ready
+            {
                 return Err(RuntimeApplicationError::new(
                     RuntimeApplicationErrorKind::NotStale,
-                    "the exact owner and both projected endpoints are healthy",
+                    "the exact owner, projected endpoints, and usable review window are healthy",
                 ));
             }
             if !observation.owner.is_active() && !observation.health.all_closed() {

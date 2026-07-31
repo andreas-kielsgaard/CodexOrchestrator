@@ -1,6 +1,11 @@
 use super::{
+    comparison::WorktreeComparisonView,
+    detail::ReviewInstanceDetailView,
     progress::ReviewOperationProgressView,
-    service::{HumanReviewLauncherService, ReviewInstanceView, ReviewSourceView},
+    service::{
+        HumanReviewLauncherService, LauncherDetailNavigationView, ReviewInstanceView,
+        ReviewSourceView,
+    },
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -82,10 +87,33 @@ pub(crate) fn list_human_review_operation_progress(
 }
 
 #[tauri::command]
+pub(crate) fn human_review_instance_detail(
+    state: State<'_, HumanReviewLauncherTauriState>,
+    input: ReviewInstanceInput,
+) -> Result<ReviewInstanceDetailView, String> {
+    state.0.detail(input.instance_ref)
+}
+
+#[tauri::command]
+pub(crate) fn human_review_instance_comparison(
+    state: State<'_, HumanReviewLauncherTauriState>,
+    input: ReviewInstanceInput,
+) -> Result<WorktreeComparisonView, String> {
+    state.0.comparison(input.instance_ref)
+}
+
+#[tauri::command]
 pub(crate) fn human_review_launcher_proof_navigation(
     state: State<'_, HumanReviewLauncherTauriState>,
 ) -> Result<Option<String>, String> {
     state.0.launcher_proof_navigation()
+}
+
+#[tauri::command]
+pub(crate) fn human_review_launcher_detail_navigation(
+    state: State<'_, HumanReviewLauncherTauriState>,
+) -> Result<Option<LauncherDetailNavigationView>, String> {
+    state.0.launcher_detail_navigation()
 }
 
 #[tauri::command]

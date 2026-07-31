@@ -1,6 +1,7 @@
 use super::{
     catalog::{ReviewWorktreeCatalog, ReviewWorktreeOption},
     comparison::WorktreeComparisonView,
+    detail::{assemble, now_ms, DetailInput, ReviewInstanceDetailView, ReviewLifecycleEventView},
     progress::{ProgressHandle, ProgressRegistry, ReviewOperationProgressView},
     worktree_build::WorktreeBuildContextView,
 };
@@ -25,6 +26,8 @@ pub(crate) struct ReviewSourceView {
     pub(crate) source_ref: String,
     pub(crate) label: String,
     pub(crate) revision: String,
+    pub(crate) compatibility: String,
+    pub(crate) compatibility_message: String,
 }
 
 impl From<&ReviewWorktreeOption> for ReviewSourceView {
@@ -33,6 +36,8 @@ impl From<&ReviewWorktreeOption> for ReviewSourceView {
             source_ref: value.source_ref.clone(),
             label: value.label.clone(),
             revision: value.revision.clone(),
+            compatibility: value.compatibility.clone(),
+            compatibility_message: value.compatibility_message.clone(),
         }
     }
 }
@@ -48,6 +53,13 @@ pub(crate) struct ReviewInstanceView {
     pub(crate) stale: bool,
     pub(crate) build: String,
     pub(crate) can_focus: bool,
+    pub(crate) purpose: String,
+    pub(crate) current_use: String,
+    pub(crate) retention: String,
+    pub(crate) cleanup: String,
+    pub(crate) action_required: bool,
+    pub(crate) action_summary: String,
+    pub(crate) compatibility: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -62,6 +74,13 @@ pub(crate) struct ReviewOperationStatusView {
     pub(crate) progress: ReviewOperationProgressView,
     pub(crate) result: Option<ReviewInstanceView>,
     pub(crate) error: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LauncherDetailNavigationView {
+    pub(crate) instance_ref: String,
+    pub(crate) sequence: String,
 }
 
 #[derive(Clone)]
@@ -87,6 +106,7 @@ pub(crate) struct HumanReviewLauncherService {
     progress: Arc<ProgressRegistry>,
     operation_results: Mutex<HashMap<String, ReviewOperationResult>>,
     launcher_proof_navigation: Mutex<Option<String>>,
+    launcher_detail_navigation: Mutex<Option<LauncherDetailNavigationView>>,
     instances_root: PathBuf,
 }
 
@@ -107,7 +127,16 @@ impl HumanReviewLauncherService {
                 source_ref TEXT NOT NULL DEFAULT '',
                 source_label TEXT NOT NULL,
                 built INTEGER NOT NULL CHECK (built IN (0, 1))
-            );",
+            );
+            CREATE TABLE IF NOT EXISTS review_history (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                instance_ref TEXT NOT NULL,
+                occurred_at_ms INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                summary TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_review_history_instance
+                ON review_history(instance_ref, event_id);",
             )
             .map_err(|error| format!("initialize review launcher state: {error}"))?;
         let has_source_ref = {
@@ -141,6 +170,7 @@ impl HumanReviewLauncherService {
             progress: Arc::new(ProgressRegistry::system()),
             operation_results: Mutex::new(HashMap::new()),
             launcher_proof_navigation: Mutex::new(None),
+            launcher_detail_navigation: Mutex::new(None),
             instances_root,
         })
     }
@@ -225,8 +255,16 @@ impl HumanReviewLauncherService {
                 source_label,
                 requested.status,
                 "not-built",
+                &self.catalog.compatibility(&source_ref).0,
             ))
         })();
+        if let Ok(value) = &result {
+            self.record_event(
+                &value.instance_ref,
+                "Prepared",
+                "Reserved isolated mutable roots, ports, logs, application data, and lifecycle ownership.",
+            )?;
+        }
         finish_progress(&progress, result)
     }
 
@@ -252,6 +290,14 @@ impl HumanReviewLauncherService {
     ) -> Result<ReviewInstanceView, String> {
         let result = (|| {
             let (handle, metadata) = self.resolve(&instance_ref)?;
+            if let Err(error) = self.catalog.ensure_compatible(&metadata.source_ref) {
+                progress.fail_with(
+                    "compatibility",
+                    "Selected worktree is not review-compatible",
+                    Some(&error),
+                );
+                return Err(error);
+            }
             let result = self
                 .runtime
                 .build_with_progress(&handle, &progress)
@@ -279,8 +325,16 @@ impl HumanReviewLauncherService {
                 metadata.source_label,
                 result.status,
                 build,
+                &self.catalog.compatibility(&metadata.source_ref).0,
             ))
         })();
+        if let Ok(value) = &result {
+            self.record_event(
+                &value.instance_ref,
+                "Built",
+                "Verified the private executable and frontend output. Compilation is skipped only when the exact identity and artifact hashes already match.",
+            )?;
+        }
         finish_progress(&progress, result)
     }
 
@@ -314,6 +368,15 @@ impl HumanReviewLauncherService {
             progress.fail();
             return Err("Build this review instance successfully before opening it.".into());
         }
+        let (_, metadata) = self.resolve(&instance_ref)?;
+        if let Err(error) = self.catalog.ensure_compatible(&metadata.source_ref) {
+            progress.fail_with(
+                "compatibility",
+                "Selected worktree is not review-compatible",
+                Some(&error),
+            );
+            return Err(error);
+        }
         let result = self.lifecycle(instance_ref, |runtime, handle| {
             runtime.start_with_progress(handle, &progress)
         });
@@ -324,6 +387,13 @@ impl HumanReviewLauncherService {
                 Ok(view)
             }
         });
+        if let Ok(value) = &result {
+            self.record_event(
+                &value.instance_ref,
+                "Opened",
+                "Established the exact owned, titled, visible worktree-build window and rendered application readiness marker.",
+            )?;
+        }
         finish_progress(&progress, result)
     }
 
@@ -434,11 +504,23 @@ impl HumanReviewLauncherService {
     }
 
     pub(crate) fn stop(&self, instance_ref: String) -> Result<ReviewInstanceView, String> {
-        self.lifecycle(instance_ref, |runtime, handle| runtime.stop(handle))
+        let result = self.lifecycle(instance_ref, |runtime, handle| runtime.stop(handle))?;
+        self.record_event(
+            &result.instance_ref,
+            "Stopped",
+            "Stopped only the exact owned child process tree; retained build outputs and isolated data remain.",
+        )?;
+        Ok(result)
     }
 
     pub(crate) fn recover(&self, instance_ref: String) -> Result<ReviewInstanceView, String> {
-        self.lifecycle(instance_ref, |runtime, handle| runtime.recover(handle))
+        let result = self.lifecycle(instance_ref, |runtime, handle| runtime.recover(handle))?;
+        self.record_event(
+            &result.instance_ref,
+            "Recovered",
+            "Reconciled stale lifecycle ownership without deleting retained build or application state.",
+        )?;
+        Ok(result)
     }
 
     pub(crate) fn operation_progress(
@@ -491,6 +573,32 @@ impl HumanReviewLauncherService {
         super::comparison::comparison(&self.catalog.scope(&metadata.source_ref, metadata.name)?)
     }
 
+    pub(crate) fn detail(&self, instance_ref: String) -> Result<ReviewInstanceDetailView, String> {
+        let (_, metadata) = self.resolve(&instance_ref)?;
+        let status = self.status(instance_ref.clone())?;
+        let context = self
+            .catalog
+            .scope(&metadata.source_ref, metadata.name.clone())?
+            .context()?;
+        let (compatibility, compatibility_message) =
+            self.catalog.compatibility(&metadata.source_ref);
+        Ok(assemble(DetailInput {
+            instance_ref: instance_ref.clone(),
+            name: metadata.name,
+            source_label: metadata.source_label,
+            phase: status.phase,
+            health: status.health,
+            stale: status.stale,
+            build: status.build,
+            compatibility,
+            compatibility_message,
+            context,
+            instance_root: self.instances_root.join(&instance_ref),
+            lifecycle_history: self.history(&instance_ref)?,
+            operations: self.progress.history_for_instance(&instance_ref),
+        }))
+    }
+
     pub(crate) fn proof_navigate(&self, instance_ref: String, route: &str) -> Result<(), String> {
         self.resolve(&instance_ref)?;
         if !matches!(route, "application" | "worktree-details" | "file-review") {
@@ -536,6 +644,32 @@ impl HumanReviewLauncherService {
             .map_err(|_| "Launcher proof navigation is unavailable.".to_string())
     }
 
+    pub(crate) fn proof_navigate_launcher_detail(
+        &self,
+        instance_ref: String,
+    ) -> Result<(), String> {
+        self.resolve(&instance_ref)?;
+        self.proof_navigate_launcher()?;
+        *self
+            .launcher_detail_navigation
+            .lock()
+            .map_err(|_| "Launcher detail proof navigation is unavailable.".to_string())? =
+            Some(LauncherDetailNavigationView {
+                instance_ref,
+                sequence: Uuid::new_v4().simple().to_string(),
+            });
+        Ok(())
+    }
+
+    pub(crate) fn launcher_detail_navigation(
+        &self,
+    ) -> Result<Option<LauncherDetailNavigationView>, String> {
+        self.launcher_detail_navigation
+            .lock()
+            .map(|route| route.clone())
+            .map_err(|_| "Launcher detail proof navigation is unavailable.".to_string())
+    }
+
     fn lifecycle(
         &self,
         instance_ref: String,
@@ -546,15 +680,19 @@ impl HumanReviewLauncherService {
     ) -> Result<ReviewInstanceView, String> {
         let (handle, metadata) = self.resolve(&instance_ref)?;
         let status = operation(self.runtime.as_ref(), &handle).map_err(safe_error)?;
-        let build = if self
+        let built = self
             .built
             .lock()
             .map_err(|_| "Review build state is unavailable.".to_string())?
-            .contains(&instance_ref)
-        {
-            "passed"
-        } else {
+            .contains(&instance_ref);
+        let build = if !built {
             "not-built"
+        } else if !status.source_current {
+            "superseded"
+        } else if !status.build_reusable {
+            "rebuild-required"
+        } else {
+            "passed"
         };
         Ok(view(
             instance_ref,
@@ -562,6 +700,7 @@ impl HumanReviewLauncherService {
             metadata.source_label,
             status,
             build,
+            &self.catalog.compatibility(&metadata.source_ref).0,
         ))
     }
 
@@ -615,6 +754,43 @@ impl HumanReviewLauncherService {
             .map_err(|_| "Review launcher state could not be saved.".to_string())?;
         Ok(())
     }
+
+    fn record_event(&self, instance_ref: &str, kind: &str, summary: &str) -> Result<(), String> {
+        self.store
+            .lock()
+            .map_err(|_| "Review launcher history is unavailable.".to_string())?
+            .execute(
+                "INSERT INTO review_history (instance_ref, occurred_at_ms, kind, summary)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![instance_ref, now_ms() as i64, kind, summary],
+            )
+            .map_err(|_| "Review launcher history could not be saved.".to_string())?;
+        Ok(())
+    }
+
+    fn history(&self, instance_ref: &str) -> Result<Vec<ReviewLifecycleEventView>, String> {
+        let store = self
+            .store
+            .lock()
+            .map_err(|_| "Review launcher history is unavailable.".to_string())?;
+        let mut statement = store
+            .prepare(
+                "SELECT occurred_at_ms, kind, summary FROM review_history
+                 WHERE instance_ref = ?1 ORDER BY event_id",
+            )
+            .map_err(|_| "Review launcher history is unavailable.".to_string())?;
+        let rows = statement
+            .query_map([instance_ref], |row| {
+                Ok(ReviewLifecycleEventView {
+                    occurred_at_ms: row.get::<_, i64>(0)?.max(0) as u64,
+                    kind: row.get(1)?,
+                    summary: row.get(2)?,
+                })
+            })
+            .map_err(|_| "Review launcher history is unavailable.".to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|_| "Review launcher history is unavailable.".to_string())
+    }
 }
 
 fn finish_progress(
@@ -624,7 +800,11 @@ fn finish_progress(
     if result.is_ok() {
         progress.succeed();
     } else {
-        progress.fail();
+        progress.fail_with(
+            "failed",
+            "The operation ended before all required evidence was established",
+            result.as_ref().err().map(String::as_str),
+        );
     }
     result
 }
@@ -671,7 +851,10 @@ fn view(
     source_label: String,
     status: TestInstanceStatus,
     build: &str,
+    compatibility: &str,
 ) -> ReviewInstanceView {
+    let (current_use, action_required, action_summary) =
+        instance_guidance(&status, build, compatibility);
     ReviewInstanceView {
         instance_ref,
         name,
@@ -683,7 +866,68 @@ fn view(
         can_focus: status.phase == TestInstancePhase::Running
             && status.health == crate::worktree_runtime::HealthState::Healthy
             && !status.stale,
+        purpose: "A retained isolated build for human review of one selected worktree.".into(),
+        current_use,
+        retention: "Retained".into(),
+        cleanup: "Stop closes only its owned process tree. Outputs and isolated data remain until deliberate developer cleanup; automatic pruning is not implemented.".into(),
+        action_required,
+        action_summary,
+        compatibility: compatibility.into(),
     }
+}
+
+fn instance_guidance(
+    status: &TestInstanceStatus,
+    build: &str,
+    compatibility: &str,
+) -> (String, bool, String) {
+    if compatibility == "incompatible" {
+        return (
+            "Source incompatible".into(),
+            true,
+            "Choose or update to a worktree with the required review child contract.".into(),
+        );
+    }
+    if build == "superseded" {
+        return (
+            "Source changed since this build".into(),
+            true,
+            "Prepare a fresh instance for the selected worktree; this retained build remains inspectable but cannot be opened as current source.".into(),
+        );
+    }
+    if build == "rebuild-required" {
+        return (
+            "Build verification expired".into(),
+            true,
+            "Run Build again to verify the exact private executable and frontend output before Open.".into(),
+        );
+    }
+    if status.stale || status.health == crate::worktree_runtime::HealthState::Unhealthy {
+        return (
+            "Needs recovery".into(),
+            true,
+            "Recover this instance before attempting another Open.".into(),
+        );
+    }
+    if status.phase == TestInstancePhase::Running {
+        return (
+            "Human review window open".into(),
+            false,
+            "Review or Focus the child; Stop closes only this instance.".into(),
+        );
+    }
+    if build == "passed" {
+        return (
+            "Verified build retained".into(),
+            false,
+            "Open the verified build, or Build to verify exact reuse.".into(),
+        );
+    }
+    (
+        "Prepared, not running".into(),
+        false,
+        "Build the selected source before Open becomes available.".into(),
+    )
 }
 
 fn phase(value: TestInstancePhase) -> &'static str {
@@ -699,6 +943,14 @@ fn phase(value: TestInstancePhase) -> &'static str {
 }
 
 fn safe_error(error: TestInstanceError) -> String {
+    let readiness_failure = error.kind == TestInstanceErrorKind::Unavailable && {
+        let message = error.message.to_ascii_lowercase();
+        message.contains("window") || message.contains("readiness")
+    };
+    if readiness_failure {
+        return "The owned process or supporting services did not establish the exact titled, visible, useful-size worktree-build window and rendered application marker. The verified build remains reusable; Stop or Recover the owned tree, then retry Open."
+            .into();
+    }
     match error.kind {
         TestInstanceErrorKind::InvalidRequest => "The review request is invalid.".into(),
         TestInstanceErrorKind::NotFound => "The review instance is no longer available.".into(),
@@ -714,9 +966,53 @@ fn safe_error(error: TestInstanceError) -> String {
         TestInstanceErrorKind::Conflict => {
             "The selected source or review instance changed; prepare a fresh instance.".into()
         }
+        TestInstanceErrorKind::BuildRequired => {
+            "This retained build is no longer an exact verified artifact. Run Build again; its isolated data and prior output remain available.".into()
+        }
         TestInstanceErrorKind::Unavailable => {
             "The isolated review runtime could not complete this action. Check its private logs."
                 .into()
         }
+    }
+}
+
+#[cfg(test)]
+mod guidance_tests {
+    use super::*;
+
+    #[test]
+    fn window_readiness_failure_explains_missing_evidence_reuse_and_recovery() {
+        let message = safe_error(TestInstanceError::new(
+            TestInstanceErrorKind::Unavailable,
+            "owned processes were observed, but a usable application-ready worktree-build window did not appear before the readiness limit",
+        ));
+
+        assert!(message.contains("exact titled, visible, useful-size"));
+        assert!(message.contains("rendered application marker"));
+        assert!(message.contains("verified build remains reusable"));
+        assert!(message.contains("Stop or Recover"));
+        assert!(!message.contains("private logs"));
+    }
+
+    #[test]
+    fn retained_invalidated_builds_name_the_safe_next_action() {
+        let status = TestInstanceStatus {
+            phase: TestInstancePhase::Stopped,
+            health: crate::worktree_runtime::HealthState::Closed,
+            stale: false,
+            source_current: false,
+            build_reusable: false,
+        };
+        let (use_summary, action_required, action) =
+            instance_guidance(&status, "superseded", "compatible");
+        assert_eq!(use_summary, "Source changed since this build");
+        assert!(action_required);
+        assert!(action.contains("Prepare a fresh instance"));
+
+        let (use_summary, action_required, action) =
+            instance_guidance(&status, "rebuild-required", "compatible");
+        assert_eq!(use_summary, "Build verification expired");
+        assert!(action_required);
+        assert!(action.contains("Run Build again"));
     }
 }

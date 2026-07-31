@@ -16,9 +16,9 @@ use super::{
         NoopActionProgressObserver, SystemActionExecutor,
     },
     facade::{
-        IsolatedTestRequest, TestActionOutcome, TestInstanceError, TestInstanceErrorKind,
-        TestInstancePhase, TestSourceRef, TestSourceResolver, WorktreeTestInstanceFacade,
-        WorktreeTestInstances,
+        HealthState, IsolatedTestRequest, TestActionOutcome, TestInstanceError,
+        TestInstanceErrorKind, TestInstancePhase, TestSourceRef, TestSourceResolver,
+        WorktreeTestInstanceFacade, WorktreeTestInstances,
     },
     health::HealthProbe,
     ownership::{
@@ -167,6 +167,61 @@ fn semantic_facade_projects_and_controls_two_isolated_instances() {
             Path::new(&tauri.environment["VITE_RUNTIME_DIST"])
         );
     }
+}
+
+#[test]
+fn exact_same_instance_build_reuses_verified_private_artifacts_and_tampering_rebuilds() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let source = fixture_worktree(directory.path(), "alpha");
+    let runtime = Arc::new(FakeRuntime::default());
+    let executor = Arc::new(RecordingExecutor::default());
+    let facade = facade(
+        directory.path(),
+        runtime.clone(),
+        Arc::new(MapSources(HashMap::from([(
+            "repository/alpha".into(),
+            source,
+        )]))),
+        Arc::new(FixedInspector),
+        executor.clone(),
+        directory.path().join("shared-cache"),
+    );
+    let instance = facade
+        .request(
+            IsolatedTestRequest::new(
+                TestSourceRef::new("repository/alpha").expect("source"),
+                "cache proof",
+            )
+            .expect("request"),
+        )
+        .expect("instance");
+    let cold = facade.build(&instance.handle).expect("cold build");
+    assert!(!cold.reused);
+    assert!(cold.status.source_current);
+    assert!(cold.status.build_reusable);
+    assert_eq!(executor.plans.lock().expect("plans").len(), 1);
+
+    let warm = facade.build(&instance.handle).expect("warm build");
+    assert!(warm.reused);
+    assert_eq!(executor.plans.lock().expect("plans").len(), 1);
+
+    let projection = runtime.prepared.lock().expect("prepared")[0]
+        .projection
+        .clone();
+    fs::write(
+        projection
+            .paths
+            .cargo_target
+            .join("debug/codex-orchestrator.exe"),
+        "tampered",
+    )
+    .expect("tamper");
+    let invalidated = facade.status(&instance.handle).expect("tampered status");
+    assert!(invalidated.source_current);
+    assert!(!invalidated.build_reusable);
+    let rebuilt = facade.build(&instance.handle).expect("rebuild");
+    assert!(!rebuilt.reused);
+    assert_eq!(executor.plans.lock().expect("plans").len(), 2);
 }
 
 #[test]
@@ -377,7 +432,7 @@ enum ReadinessCase {
 
 struct ReadinessOwner {
     active: Arc<AtomicBool>,
-    case: ReadinessCase,
+    case: Arc<Mutex<ReadinessCase>>,
 }
 
 impl ProcessOwner for ReadinessOwner {
@@ -387,7 +442,10 @@ impl ProcessOwner for ReadinessOwner {
         launches: &[OwnedProcessLaunch],
     ) -> Result<OwnerObservation, OwnershipError> {
         self.active.store(true, Ordering::SeqCst);
-        if !matches!(self.case, ReadinessCase::MissingMarker) {
+        if !matches!(
+            *self.case.lock().expect("readiness case"),
+            ReadinessCase::MissingMarker
+        ) {
             write_ready_marker(launches);
         }
         Ok(OwnerObservation::Owned {
@@ -410,16 +468,17 @@ impl ProcessOwner for ReadinessOwner {
         _route: &OwnerRoute,
         expected: &ReviewWindowExpectation,
     ) -> Result<Option<ReviewWindowObservation>, OwnershipError> {
+        let case = *self.case.lock().expect("readiness case");
         if !self.active.load(Ordering::SeqCst)
             || matches!(
-                self.case,
+                case,
                 ReadinessCase::NoWindow | ReadinessCase::UnownedSimilar
             )
         {
             return Ok(None);
         }
         let mut window = usable_window(expected);
-        match self.case {
+        match case {
             ReadinessCase::Titleless => window.title.clear(),
             ReadinessCase::Tiny => {
                 window.width = 18;
@@ -464,6 +523,15 @@ fn readiness_facade(
     case: ReadinessCase,
     active: Arc<AtomicBool>,
 ) -> WorktreeTestInstanceFacade {
+    readiness_facade_with_case(root, registry_path, Arc::new(Mutex::new(case)), active)
+}
+
+fn readiness_facade_with_case(
+    root: &Path,
+    registry_path: &Path,
+    case: Arc<Mutex<ReadinessCase>>,
+    active: Arc<AtomicBool>,
+) -> WorktreeTestInstanceFacade {
     let source = fixture_worktree(root, "readiness");
     let application = Arc::new(WorktreeRuntimeApplication::new(
         Arc::new(SqliteInstanceRegistry::open(registry_path).expect("registry")),
@@ -502,6 +570,81 @@ fn readiness_facade(
         AuthoritySecret::new("readiness-facade-authority-secret").expect("authority"),
     )
     .expect("facade")
+}
+
+#[test]
+fn running_status_requires_current_usable_window_evidence() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let registry_path = directory.path().join("registry.sqlite");
+    let active = Arc::new(AtomicBool::new(false));
+    let case = Arc::new(Mutex::new(ReadinessCase::Usable));
+    let facade = readiness_facade_with_case(directory.path(), &registry_path, case.clone(), active);
+    let requested = request_readiness_instance(&facade);
+    assert_eq!(
+        facade.start(&requested.handle).expect("start").phase,
+        TestInstancePhase::Running
+    );
+    assert_eq!(
+        facade
+            .status(&requested.handle)
+            .expect("ready status")
+            .health,
+        HealthState::Healthy
+    );
+
+    *case.lock().expect("readiness case") = ReadinessCase::Cloaked;
+    let unavailable = facade.status(&requested.handle).expect("cloaked status");
+    assert_eq!(unavailable.phase, TestInstancePhase::Running);
+    assert_eq!(unavailable.health, HealthState::Unhealthy);
+
+    *case.lock().expect("readiness case") = ReadinessCase::Usable;
+    assert_eq!(
+        facade
+            .status(&requested.handle)
+            .expect("restored status")
+            .health,
+        HealthState::Healthy
+    );
+}
+
+#[test]
+fn recover_reconciles_a_running_instance_after_usable_window_evidence_is_lost() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let registry_path = directory.path().join("registry.sqlite");
+    let active = Arc::new(AtomicBool::new(false));
+    let case = Arc::new(Mutex::new(ReadinessCase::Usable));
+    let facade = readiness_facade_with_case(
+        directory.path(),
+        &registry_path,
+        case.clone(),
+        active.clone(),
+    );
+    let requested = request_readiness_instance(&facade);
+    assert_eq!(
+        facade.start(&requested.handle).expect("start").phase,
+        TestInstancePhase::Running
+    );
+
+    *case.lock().expect("readiness case") = ReadinessCase::NoWindow;
+    let unavailable = facade
+        .status(&requested.handle)
+        .expect("missing window status");
+    assert_eq!(unavailable.phase, TestInstancePhase::Running);
+    assert_eq!(unavailable.health, HealthState::Unhealthy);
+
+    let recovered = facade
+        .recover(&requested.handle)
+        .expect("recover missing review window");
+    assert_eq!(recovered.phase, TestInstancePhase::Recovered);
+    assert_eq!(recovered.health, HealthState::Closed);
+    assert!(!active.load(Ordering::SeqCst));
+
+    let raw = Connection::open(&registry_path).expect("inspect real registry");
+    assert_eq!(command_count(&raw, "status='pending'"), 0);
+    assert_eq!(
+        command_count(&raw, "operation='recover' AND status='succeeded'"),
+        1
+    );
 }
 
 fn request_readiness_instance(
@@ -1079,6 +1222,9 @@ fn facade_refuses_build_test_and_start_after_source_identity_changes() {
         .expect("request instance");
 
     inspector.0.store(true, Ordering::SeqCst);
+    let invalidated = facade.status(&instance.handle).expect("invalidated status");
+    assert!(!invalidated.source_current);
+    assert!(!invalidated.build_reusable);
     for error in [
         facade
             .build(&instance.handle)
@@ -1371,6 +1517,21 @@ impl ActionExecutor for RecordingExecutor {
             fs::write(executable, "verified fixture build").map_err(|error| ExecutionError {
                 message: error.to_string(),
             })?;
+            let dist = plan
+                .commands
+                .last()
+                .and_then(|command| command.environment.get("VITE_RUNTIME_DIST"))
+                .ok_or_else(|| ExecutionError {
+                    message: "missing isolated frontend output in build plan".into(),
+                })?;
+            fs::create_dir_all(dist).map_err(|error| ExecutionError {
+                message: error.to_string(),
+            })?;
+            fs::write(PathBuf::from(dist).join("index.html"), "verified frontend").map_err(
+                |error| ExecutionError {
+                    message: error.to_string(),
+                },
+            )?;
         }
         Ok(ActionExecution {
             succeeded: true,

@@ -14,6 +14,7 @@ pub(crate) struct WorktreeBuildContextView {
     pub(crate) dirty: DirtyView,
     pub(crate) main: MainCheckoutView,
     pub(crate) relationship: RelationshipView,
+    pub(crate) related_branches: Vec<BranchRelationshipView>,
     pub(crate) history: Vec<CommitView>,
     pub(crate) comparison_basis: String,
 }
@@ -48,6 +49,16 @@ pub(crate) struct MainCheckoutView {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RelationshipView {
+    pub(crate) ahead: usize,
+    pub(crate) behind: usize,
+    pub(crate) merge_base: Option<String>,
+    pub(crate) summary: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BranchRelationshipView {
+    pub(crate) name: String,
     pub(crate) ahead: usize,
     pub(crate) behind: usize,
     pub(crate) merge_base: Option<String>,
@@ -138,6 +149,12 @@ impl WorktreeScope {
         .lines()
         .filter_map(parse_commit_line)
         .collect();
+        let related_branches = related_branches(
+            &self.selected,
+            selected_branch.as_deref(),
+            main_branch.as_deref(),
+            &head.id,
+        )?;
         Ok(WorktreeBuildContextView {
             name: self.name.clone(),
             branch: selected_branch.clone(),
@@ -156,10 +173,46 @@ impl WorktreeScope {
                 merge_base,
                 summary: format!("{ahead} ahead, {behind} behind machine main HEAD"),
             },
+            related_branches,
             history,
             comparison_basis: "The file review compares machine main HEAD with the selected worktree's complete current state. It includes committed divergence plus selected staged, unstaged, and untracked changes. Machine-main uncommitted changes are reported here but are not used as the comparison base.".into(),
         })
     }
+}
+
+fn related_branches(
+    path: &Path,
+    selected: Option<&str>,
+    main: Option<&str>,
+    head: &str,
+) -> Result<Vec<BranchRelationshipView>, String> {
+    let mut relationships = git_text(
+        path,
+        ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    )?
+    .lines()
+    .filter(|branch| Some(*branch) != selected && Some(*branch) != main)
+    .filter_map(|branch| {
+        let range = format!("{branch}...{head}");
+        let counts = git_text(path, ["rev-list", "--left-right", "--count", &range]).ok()?;
+        let mut counts = counts.split_whitespace();
+        let behind = counts.next()?.parse().ok()?;
+        let ahead = counts.next()?.parse().ok()?;
+        let merge_base = git_text(path, ["merge-base", branch, head])
+            .ok()
+            .filter(|value| !value.is_empty());
+        Some(BranchRelationshipView {
+            name: branch.into(),
+            ahead,
+            behind,
+            merge_base,
+            summary: format!("{ahead} ahead, {behind} behind this local branch"),
+        })
+    })
+    .collect::<Vec<_>>();
+    relationships.sort_by_key(|relationship| relationship.ahead + relationship.behind);
+    relationships.truncate(8);
+    Ok(relationships)
 }
 
 pub(super) fn branch(path: &Path) -> Result<Option<String>, String> {
@@ -273,6 +326,7 @@ mod tests {
         std::fs::write(main.join("shared.txt"), "base\n").expect("base");
         run(&main, ["add", "."]);
         run(&main, ["commit", "-m", "base"]);
+        run(&main, ["branch", "codex/parent", "HEAD"]);
         run(
             &main,
             [
@@ -320,6 +374,10 @@ mod tests {
         );
         assert_eq!(context.history.len(), 1);
         assert_eq!(context.history[0].message, "feature commit");
+        assert!(context
+            .related_branches
+            .iter()
+            .any(|relationship| relationship.name == "codex/parent"));
         assert!(context.comparison_basis.contains("machine main HEAD"));
         assert!(context.comparison_basis.contains("untracked"));
 

@@ -157,7 +157,9 @@ changing ordinary development or packaging composition.
   most 12 sanitized output lines of 180 characters. Source inspection, TypeScript, frontend build,
   Tauri compile/link, finalization, reservation, supporting services, native start, window wait, and
   ready are distinct stages. Twenty seconds without new evidence is labelled quiet and still pending,
-  never stalled.
+  never stalled. Consecutive identical observations are not treated as new evidence and do not reset
+  the quiet interval. Build details separately expose the retained sanitized history, bounded to
+  10,000 lines per private log and labelled when the oldest output was trimmed.
 - Output removes credentials, local endpoints, ports, process identities, long identifiers, absolute
   paths, and relative private paths. Older operation references cannot update a newer operation in the
   same scope.
@@ -177,6 +179,51 @@ changing ordinary development or packaging composition.
   Unified/Split controls.
 - The launcher now defaults its own worktree first and keeps Prepare controls usable at the standard
   1280-pixel review width.
+
+### Build-oriented human review conclusion (2026-07-31)
+
+The concluding correction keeps the same application-owned lifecycle and adds one reusable
+`ApplicationWidget` foundation. A worktree child places its truthful Worktree-build instance widget
+in a dedicated bottom-right dock row, so the ordinary application receives less usable height rather
+than an overlay across primary controls. The widget can be minimized and restored, and remains
+available on the application, build details, and scoped File Review surfaces.
+
+The widget and every retained launcher card open the same typed `WorktreeBuildDetail` projection.
+That surface orients the human before showing ledgers: why the build exists; what Prepare, Build, and
+Open produced; current health and required action; exact-reuse limits; manual retention/cleanup;
+generated material; lifecycle events; complete bounded sanitized operation output; source branch or
+detached state; HEAD; dirty counts; machine-main identity; merge-base ahead/behind; nearest local
+branch relationships; commit history; and the existing normalized complete-state File Review. Raw
+runtime roots, ports, Job identifiers, process identities, commands, and secrets remain outside the
+ordinary frontend contract.
+
+Retained launcher cards now explain purpose, current use, lifecycle/build state, manual retention,
+cleanup behavior, and the next safe action. Automatic pruning is still absent and is stated as such.
+If the selected source changes, a historical card becomes **superseded** and requires a fresh
+Prepare; if the source is current but receipt or artifact verification fails, it becomes
+**rebuild-required**. Neither state can Open as a verified current build.
+Legacy worktrees without `src-tauri/worktree-review-contract.json` are labelled incompatible before
+Build or Open with an actionable update requirement; the launcher does not wait five minutes for a
+readiness/provenance marker that the selected source cannot produce.
+
+Build reuse is deliberately narrower than a shared target. A private receipt keys the exact source
+fingerprint, Git commit, Node and Rust cache keys, Tauri identifier, build-plan version, and hashes of
+the instance-private executable and frontend tree. Only the same instance with an exact receipt can
+skip compilation. A source, toolchain, launch identity, receipt, executable, or frontend-content
+change requires Build again. Another instance never reuses its mutable `dist`, Cargo target,
+application data, logs, or process ownership. The pre-checkpoint isolated measurement used a fresh
+private target: the cold Build completed in 385,976 ms; exact same-instance verification completed in
+6,668 ms without TypeScript, Vite, Cargo, or Tauri compilation. This is verification reuse, not a
+cross-worktree compiler cache, and no unsafe main-binary-plus-diff overlay was introduced.
+
+The responsive launcher progress ledger uses shrink-safe tracks and switches to two columns at the
+standard 1280-wide review client, then one at narrow widths. The selected file path and long guidance
+wrap or truncate before controls or content are displaced.
+
+A proposed troubleshooting Agent Session and dedicated Harness remain deferred. If later authorized,
+they should consume the same application-owned instance detail, typed progress, lifecycle history,
+sanitized output, compatibility, Git context, and scoped comparison contracts. This checkpoint adds
+no chat, agent self-testing, arbitrary application control, provider credentials, or capture API.
 
 ### Debug controller boundary
 
@@ -478,8 +525,8 @@ and evidence-file access are future application ports, not fields for this lifec
 Keep the accepted development-only human review composition narrow. A later explicitly authorized
 product slice should:
 
-1. persist source-bound build evidence instead of the in-memory marker and prove restart-safe
-   invalidation;
+1. promote the private build receipt, history, and manual retention facts into a product-owned
+   cleanup policy with restart-safe pruning and explicit human confirmation;
 2. prove two simultaneous real review children and independent lifecycle teardown;
 3. bind status/Vite endpoint identity to the exact owned Job and own dependency restoration;
 4. run the remaining human Focus review and decide whether this debug-only composition should enter a

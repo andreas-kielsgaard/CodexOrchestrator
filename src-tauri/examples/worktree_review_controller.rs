@@ -82,6 +82,10 @@ fn command(action: &str, arguments: Vec<String>) -> Result<Value, String> {
         "sources" => Ok(json!({"kind": "list_sources"})),
         "instances" => Ok(json!({"kind": "list_instances"})),
         "launcher" => Ok(json!({"kind": "navigate_launcher"})),
+        "launcher-detail" => Ok(json!({
+            "kind": "navigate_launcher_detail",
+            "instanceRef": value(0)?,
+        })),
         "prepare" => Ok(json!({
             "kind": "begin_prepare",
             "sourceRef": value(0)?,
@@ -102,6 +106,7 @@ fn command(action: &str, arguments: Vec<String>) -> Result<Value, String> {
         })),
         "context" => Ok(json!({"kind": "worktree_context", "instanceRef": value(0)?})),
         "files" => Ok(json!({"kind": "file_review", "instanceRef": value(0)?})),
+        "detail" => Ok(json!({"kind": "build_detail", "instanceRef": value(0)?})),
         _ => Err(usage()),
     }
 }
@@ -283,5 +288,5 @@ fn foreground() -> Foreground {
 }
 
 fn usage() -> String {
-    "Usage: cargo run --example worktree_review_controller -- <isolated-runtime-root> <sources|instances|prepare|build|open|operation|watch|status|stop|recover|navigate|context|files> [opaque arguments]".into()
+    "Usage: cargo run --example worktree_review_controller -- <isolated-runtime-root> <sources|instances|launcher|launcher-detail|prepare|build|open|operation|watch|status|stop|recover|navigate|context|files|detail> [opaque arguments]".into()
 }

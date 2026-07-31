@@ -10,6 +10,7 @@ use std::{
 };
 
 const MAX_OUTPUT_LINES: usize = 12;
+const MAX_HISTORY_LINES: usize = 4_000;
 const MAX_OUTPUT_LINE_CHARS: usize = 180;
 const QUIET_AFTER_MS: u64 = 20_000;
 
@@ -42,11 +43,31 @@ pub(crate) struct ReviewOperationProgressView {
     pub(crate) elapsed_ms: u64,
     pub(crate) evidence_age_ms: u64,
     pub(crate) recent_output: Vec<String>,
+    pub(crate) condition: String,
+    pub(crate) expected_wait: String,
+    pub(crate) action_required: bool,
+    pub(crate) action_guidance: String,
+    pub(crate) reusable_summary: String,
+    pub(crate) missing_readiness_fact: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReviewOperationHistoryView {
+    pub(crate) operation_ref: String,
+    pub(crate) operation: String,
+    pub(crate) state: String,
+    pub(crate) stage_label: String,
+    pub(crate) started_at_ms: u64,
+    pub(crate) updated_at_ms: u64,
+    pub(crate) output: Vec<String>,
+    pub(crate) output_complete: bool,
 }
 
 #[derive(Clone)]
 struct ProgressRecord {
     operation_ref: String,
+    scope: String,
     operation: String,
     state: OperationState,
     stage: String,
@@ -54,6 +75,8 @@ struct ProgressRecord {
     started_at_ms: u64,
     updated_at_ms: u64,
     recent_output: VecDeque<String>,
+    full_output: VecDeque<String>,
+    output_complete: bool,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -110,6 +133,7 @@ impl ProgressRegistry {
             operation_ref.to_owned(),
             ProgressRecord {
                 operation_ref: operation_ref.to_owned(),
+                scope: scope.clone(),
                 operation: operation.to_owned(),
                 state: OperationState::Pending,
                 stage: stage.to_owned(),
@@ -117,6 +141,8 @@ impl ProgressRegistry {
                 started_at_ms: now,
                 updated_at_ms: now,
                 recent_output: VecDeque::new(),
+                full_output: VecDeque::new(),
+                output_complete: true,
             },
         );
         Ok(ProgressHandle {
@@ -153,6 +179,35 @@ impl ProgressRegistry {
             .collect()
     }
 
+    pub(crate) fn history_for_instance(
+        &self,
+        instance_ref: &str,
+    ) -> Vec<ReviewOperationHistoryView> {
+        let suffix = format!(":{instance_ref}");
+        let Ok(inner) = self.inner.lock() else {
+            return Vec::new();
+        };
+        let mut records = inner
+            .records
+            .values()
+            .filter(|record| record.scope.ends_with(&suffix))
+            .collect::<Vec<_>>();
+        records.sort_by_key(|record| record.started_at_ms);
+        records
+            .into_iter()
+            .map(|record| ReviewOperationHistoryView {
+                operation_ref: record.operation_ref.clone(),
+                operation: record.operation.clone(),
+                state: state_name(record.state).into(),
+                stage_label: record.stage_label.clone(),
+                started_at_ms: record.started_at_ms,
+                updated_at_ms: record.updated_at_ms,
+                output: record.full_output.iter().cloned().collect(),
+                output_complete: record.output_complete,
+            })
+            .collect()
+    }
+
     pub(crate) fn fail_operation(&self, operation_ref: &str) {
         let now = self.clock.now_ms();
         let Ok(mut inner) = self.inner.lock() else {
@@ -179,6 +234,7 @@ fn progress_view(record: &ProgressRecord, now: u64) -> ReviewOperationProgressVi
         OperationState::Pending => "working",
         OperationState::Succeeded | OperationState::Failed => "finished",
     };
+    let guidance = guidance(record);
     ReviewOperationProgressView {
         operation_ref: record.operation_ref.clone(),
         operation: record.operation.clone(),
@@ -194,6 +250,135 @@ fn progress_view(record: &ProgressRecord, now: u64) -> ReviewOperationProgressVi
         elapsed_ms: now.saturating_sub(record.started_at_ms),
         evidence_age_ms,
         recent_output: record.recent_output.iter().cloned().collect(),
+        condition: guidance.condition,
+        expected_wait: guidance.expected_wait,
+        action_required: guidance.action_required,
+        action_guidance: guidance.action_guidance,
+        reusable_summary: guidance.reusable_summary,
+        missing_readiness_fact: guidance.missing_readiness_fact,
+    }
+}
+
+fn state_name(state: OperationState) -> &'static str {
+    match state {
+        OperationState::Pending => "pending",
+        OperationState::Succeeded => "succeeded",
+        OperationState::Failed => "failed",
+    }
+}
+
+struct ProgressGuidance {
+    condition: String,
+    expected_wait: String,
+    action_required: bool,
+    action_guidance: String,
+    reusable_summary: String,
+    missing_readiness_fact: Option<String>,
+}
+
+fn guidance(record: &ProgressRecord) -> ProgressGuidance {
+    let failed = record.state == OperationState::Failed;
+    let completed = record.state == OperationState::Succeeded;
+    let (condition, expected_wait, reusable, missing) = match record.stage.as_str() {
+        "preparation" => (
+            "Resolving the selected source and reserving isolated mutable resources.",
+            "Usually under a minute.",
+            "No build artifact exists yet; a successful Prepare remains reusable.",
+            None,
+        ),
+        "compatibility" => (
+            "The selected worktree does not declare the required Worktree Review child contract.",
+            "No waiting will make this source compatible.",
+            "Its retained isolated instance can be inspected, but it cannot be built or opened here.",
+            Some("A versioned readiness and provenance contract in the selected source."),
+        ),
+        "typecheck" => (
+            "The selected source is being checked before frontend and native compilation.",
+            "Usually seconds; cold machines may take longer.",
+            "The isolated reservation remains reusable if this step fails.",
+            None,
+        ),
+        "frontend-build" => (
+            "The application interface is being built into this instance's private output.",
+            "Usually seconds to a minute.",
+            "Typecheck has completed; a failed frontend build does not remove the prepared instance.",
+            None,
+        ),
+        "tauri-compile-link" => (
+            "Rust crates are compiling and linking the private Tauri executable.",
+            "A cold native build can take several minutes; ongoing output is normal evidence.",
+            "Completed TypeScript and frontend output remain in the isolated instance.",
+            None,
+        ),
+        "build-reuse" => (
+            "The exact previously verified private build is being reused.",
+            "Usually a few seconds for identity and artifact verification.",
+            "No mutable target or application data is shared with another instance.",
+            None,
+        ),
+        "finalization" => (
+            "The build result and verified artifact identity are being finalized.",
+            "Usually under a minute after native linking completes.",
+            "Successful private outputs remain retained for Open and later exact reuse.",
+            None,
+        ),
+        "reservation" => (
+            "The runtime is reserving lifecycle ownership before any child is resumed.",
+            "Usually a few seconds.",
+            "The verified private build remains reusable if Open cannot continue.",
+            None,
+        ),
+        "supporting-services" => (
+            "Private frontend and status services are starting inside the owned process tree.",
+            "Usually several seconds.",
+            "The verified private executable remains reusable.",
+            Some("Both isolated supporting services must report ready."),
+        ),
+        "native-start" => (
+            "The verified private executable is starting under exact process ownership.",
+            "Usually several seconds; no second Rust build is expected.",
+            "The verified private executable remains reusable.",
+            Some("The owned native process must create the expected review window."),
+        ),
+        "waiting-for-window" => (
+            "Supporting services and the native process exist; the application is waiting for the human-review surface, not merely a process or port.",
+            "Normally under a minute after native start.",
+            "The private build and prepared isolation remain reusable if window readiness fails.",
+            Some("An exact owned, titled, visible, useful-size window plus the rendered application readiness marker."),
+        ),
+        "ready" | "complete" => (
+            "The operation completed with its required evidence.",
+            "No further waiting is required.",
+            "The retained private build and isolated state remain available for the next safe action.",
+            None,
+        ),
+        "failed" => (
+            "The operation ended before all required evidence was established.",
+            "No further progress is expected from this operation.",
+            "Open Build details to see which prepared or built material remains reusable.",
+            None,
+        ),
+        _ => (
+            "The owned operation is reconciling its current stage.",
+            "Continue waiting while evidence updates.",
+            "Previously completed isolated material is retained.",
+            None,
+        ),
+    };
+    ProgressGuidance {
+        condition: condition.into(),
+        expected_wait: expected_wait.into(),
+        action_required: failed,
+        action_guidance: if failed {
+            "Open Build details, keep reusable material, and follow the displayed recovery or compatibility guidance."
+        } else if completed {
+            "No action is required unless you want to continue to the next lifecycle step."
+        } else {
+            "No action is required while owned evidence continues or the quiet interval remains bounded."
+        }
+        .into(),
+        reusable_summary: reusable.into(),
+        missing_readiness_fact: missing.map(str::to_owned),
     }
 }
 
@@ -220,15 +405,26 @@ impl ProgressHandle {
         if record.state != OperationState::Pending {
             return;
         }
+        let mut meaningful = record.stage != stage || record.stage_label != stage_label;
         record.stage = stage.to_owned();
         record.stage_label = stage_label.to_owned();
         if let Some(output) = output {
-            record.recent_output.push_back(output);
-            while record.recent_output.len() > MAX_OUTPUT_LINES {
-                record.recent_output.pop_front();
+            if record.recent_output.back() != Some(&output) {
+                meaningful = true;
+                record.recent_output.push_back(output.clone());
+                while record.recent_output.len() > MAX_OUTPUT_LINES {
+                    record.recent_output.pop_front();
+                }
+                record.full_output.push_back(output);
+                while record.full_output.len() > MAX_HISTORY_LINES {
+                    record.full_output.pop_front();
+                    record.output_complete = false;
+                }
             }
         }
-        record.updated_at_ms = now;
+        if meaningful {
+            record.updated_at_ms = now;
+        }
     }
 
     pub(crate) fn succeed(&self) {
@@ -239,6 +435,11 @@ impl ProgressHandle {
         self.finish(OperationState::Failed, "failed", "Stopped with an error");
     }
 
+    pub(crate) fn fail_with(&self, stage: &str, label: &str, output: Option<&str>) {
+        self.update(stage, label, output);
+        self.finish(OperationState::Failed, stage, label);
+    }
+
     fn finish(&self, state: OperationState, stage: &str, label: &str) {
         let now = self.registry.clock.now_ms();
         let Ok(mut inner) = self.registry.inner.lock() else {
@@ -246,10 +447,12 @@ impl ProgressHandle {
         };
         let active = inner.active_by_scope.get(&self.scope) == Some(&self.operation_ref);
         if let Some(record) = inner.records.get_mut(&self.operation_ref) {
-            record.state = state;
-            record.stage = stage.into();
-            record.stage_label = label.into();
-            record.updated_at_ms = now;
+            if record.state == OperationState::Pending {
+                record.state = state;
+                record.stage = stage.into();
+                record.stage_label = label.into();
+                record.updated_at_ms = now;
+            }
         }
         if active {
             inner.active_by_scope.remove(&self.scope);
@@ -271,6 +474,7 @@ impl TestActionProgressSink for ProgressHandle {
                 "tauri-compile-link",
                 "Compiling and linking the Tauri application",
             ),
+            TestActionStage::BuildReuse => ("build-reuse", "Reusing the verified private build"),
             TestActionStage::Finalizing => ("finalization", "Finalizing the isolated build"),
         };
         self.update(stage, label, progress.output);
@@ -307,7 +511,7 @@ fn validate_operation_ref(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn sanitize_output(input: &str) -> Option<String> {
+pub(super) fn sanitize_output(input: &str) -> Option<String> {
     let mut text = strip_ansi(input).trim().to_owned();
     if text.is_empty() {
         return None;
@@ -503,7 +707,7 @@ mod tests {
                 "tauri-compile-link",
                 "Compiling and linking the Tauri application",
                 Some(&format!(
-                    "TOKEN=secret-{index} \"C:\\private runtime\\target\" http://127.0.0.1:18200 PORT=18201 {}",
+                    "TOKEN=secret-{index} \"C:\\private runtime\\target\" http://127.0.0.1:18200 PORT=18201 safe-line-{index} {}",
                     "a".repeat(64)
                 )),
             );
@@ -524,6 +728,10 @@ mod tests {
         assert!(joined.contains("[private path]"));
         assert!(joined.contains("[private local endpoint]"));
         assert!(joined.contains("[identifier]"));
+        let history = registry.history_for_instance("instance");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].output.len(), 20);
+        assert!(history[0].output_complete);
     }
 
     #[test]
@@ -567,6 +775,72 @@ mod tests {
         let quiet = registry.get("operation-quiet-1").unwrap();
         assert_eq!(quiet.activity, "quiet");
         assert_eq!(quiet.state, "pending");
+        assert!(!quiet.action_required);
+        assert!(quiet.action_guidance.contains("No action is required"));
+    }
+
+    #[test]
+    fn repeated_identical_observation_is_not_new_meaningful_evidence() {
+        let clock = Arc::new(FakeClock(AtomicU64::new(1_000)));
+        let registry = Arc::new(ProgressRegistry::new(clock.clone()));
+        let handle = registry
+            .begin(
+                "operation-repeat-1",
+                "start:instance".into(),
+                "start",
+                "waiting-for-window",
+                "Waiting for a usable worktree-build window",
+            )
+            .unwrap();
+        handle.update(
+            "waiting-for-window",
+            "Waiting for a usable worktree-build window",
+            Some("The owned window exists but is not yet usable at review size."),
+        );
+        clock.0.store(1_000 + QUIET_AFTER_MS, Ordering::SeqCst);
+        handle.update(
+            "waiting-for-window",
+            "Waiting for a usable worktree-build window",
+            Some("The owned window exists but is not yet usable at review size."),
+        );
+
+        let view = registry.get("operation-repeat-1").unwrap();
+        assert_eq!(view.recent_output.len(), 1);
+        assert_eq!(view.activity, "quiet");
+        assert_eq!(view.evidence_age_ms, QUIET_AFTER_MS);
+    }
+
+    #[test]
+    fn waiting_window_and_failure_expose_exact_missing_fact_and_recovery_guidance() {
+        let clock = Arc::new(FakeClock(AtomicU64::new(1_000)));
+        let registry = Arc::new(ProgressRegistry::new(clock));
+        let handle = registry
+            .begin(
+                "operation-window-1",
+                "start:instance".into(),
+                "start",
+                "waiting-for-window",
+                "Waiting for a usable worktree-build window",
+            )
+            .unwrap();
+        let waiting = registry.get("operation-window-1").unwrap();
+        assert!(waiting.condition.contains("human-review surface"));
+        assert!(waiting
+            .missing_readiness_fact
+            .as_deref()
+            .is_some_and(|fact| fact.contains("readiness marker")));
+        handle.fail_with(
+            "failed",
+            "Owned window readiness was not established",
+            Some("The exact titled rendered window did not appear."),
+        );
+        let failed = registry.get("operation-window-1").unwrap();
+        assert!(failed.action_required);
+        assert!(failed.action_guidance.contains("Build details"));
+        assert_eq!(
+            failed.stage_label,
+            "Owned window readiness was not established"
+        );
     }
 
     #[test]

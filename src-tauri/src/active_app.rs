@@ -196,6 +196,12 @@ pub(crate) fn run() {
                         review.clone(),
                     ),
                 );
+                if std::env::var_os("CODEX_ORCHESTRATOR_REVIEW_RUNTIME_DIR").is_some() {
+                    app.get_webview_window("main")
+                        .ok_or("Unable to identify the isolated review launcher window")?
+                        .set_title("Codex Orchestrator - Worktree Review Launcher")
+                        .map_err(|_| "Unable to identify the isolated review launcher window")?;
+                }
             }
             Ok(())
         })
@@ -235,13 +241,21 @@ pub(crate) fn run() {
             #[cfg(debug_assertions)]
             crate::worktree_review::transport::list_human_review_operation_progress,
             #[cfg(debug_assertions)]
+            crate::worktree_review::transport::human_review_instance_detail,
+            #[cfg(debug_assertions)]
+            crate::worktree_review::transport::human_review_instance_comparison,
+            #[cfg(debug_assertions)]
             crate::worktree_review::transport::human_review_launcher_proof_navigation,
+            #[cfg(debug_assertions)]
+            crate::worktree_review::transport::human_review_launcher_detail_navigation,
             #[cfg(debug_assertions)]
             crate::worktree_review::transport::mark_worktree_build_ready,
             #[cfg(debug_assertions)]
             crate::worktree_review::debug_controller::worktree_review_proof_navigation,
             #[cfg(debug_assertions)]
             crate::worktree_review::worktree_build::worktree_build_context,
+            #[cfg(debug_assertions)]
+            crate::worktree_review::detail::worktree_build_detail,
             #[cfg(debug_assertions)]
             crate::worktree_review::comparison::worktree_build_comparison,
             #[cfg(debug_assertions)]

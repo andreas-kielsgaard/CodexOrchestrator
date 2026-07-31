@@ -3,6 +3,7 @@ pub(crate) mod comparison;
 mod composition;
 #[cfg(debug_assertions)]
 pub(crate) mod debug_controller;
+pub(crate) mod detail;
 mod progress;
 mod service;
 pub(crate) mod transport;

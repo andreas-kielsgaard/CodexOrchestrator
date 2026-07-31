@@ -4,6 +4,7 @@ use super::{
         RuntimeApplicationError, RuntimeApplicationErrorKind, RuntimeStartProgressSink,
         RuntimeStartStage, StartInstanceCommand, StopInstanceCommand, WorktreeRuntimeControl,
     },
+    build_cache::{record_build, reusable_build},
     domain::{AuthoritySecret, InstanceId, InstanceSnapshot, InstanceState, RequestId},
     execution::{ActionExecutor, ActionProgressEvent, ActionProgressObserver, ExecutionError},
     planning::{
@@ -106,6 +107,8 @@ pub(crate) struct TestInstanceStatus {
     pub(crate) phase: TestInstancePhase,
     pub(crate) health: HealthState,
     pub(crate) stale: bool,
+    pub(crate) source_current: bool,
+    pub(crate) build_reusable: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -125,6 +128,7 @@ pub(crate) struct TestActionResult {
     pub(crate) outcome: TestActionOutcome,
     pub(crate) failed_step: Option<String>,
     pub(crate) status: TestInstanceStatus,
+    pub(crate) reused: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -133,6 +137,7 @@ pub(crate) enum TestActionStage {
     Typecheck,
     FrontendBuild,
     TauriCompileLink,
+    BuildReuse,
     Finalizing,
 }
 
@@ -302,6 +307,27 @@ impl WorktreeTestInstanceFacade {
             &self.programs,
         )
         .map_err(planning_error)?;
+        let tauri_identifier = tauri_identifier(&snapshot.projected.identity.instance_id);
+        if kind == ActionKind::Build
+            && reusable_build(
+                &snapshot.projected.identity,
+                &snapshot.projected.projection,
+                &tauri_identifier,
+            )
+        {
+            progress.progress(TestActionProgress {
+                stage: TestActionStage::BuildReuse,
+                output: Some(
+                    "Verified the exact source, toolchain, launch identity, frontend output, and private executable; no compilation is required.",
+                ),
+            });
+            return Ok(TestActionResult {
+                outcome: TestActionOutcome::Passed,
+                failed_step: None,
+                status: semantic_status(&snapshot),
+                reused: true,
+            });
+        }
         let observer = FacadeActionProgress { progress };
         let execution = self
             .executor
@@ -311,6 +337,16 @@ impl WorktreeTestInstanceFacade {
             stage: TestActionStage::Finalizing,
             output: Some("Recording the isolated build result."),
         });
+        if kind == ActionKind::Build && execution.succeeded {
+            record_build(
+                &snapshot.projected.identity,
+                &snapshot.projected.projection,
+                &tauri_identifier,
+            )
+            .map_err(|message| {
+                TestInstanceError::new(TestInstanceErrorKind::Unavailable, message)
+            })?;
+        }
         Ok(TestActionResult {
             outcome: if execution.succeeded {
                 TestActionOutcome::Passed
@@ -319,6 +355,7 @@ impl WorktreeTestInstanceFacade {
             },
             failed_step: execution.failed_step,
             status: semantic_status(&snapshot),
+            reused: false,
         })
     }
 }
@@ -411,10 +448,21 @@ impl WorktreeTestInstances for WorktreeTestInstanceFacade {
     ) -> Result<TestInstanceStatus, TestInstanceError> {
         let snapshot = self.snapshot(handle)?;
         self.require_current_source(&snapshot)?;
+        let identifier = tauri_identifier(&snapshot.projected.identity.instance_id);
+        if !reusable_build(
+            &snapshot.projected.identity,
+            &snapshot.projected.projection,
+            &identifier,
+        ) {
+            return Err(TestInstanceError::new(
+                TestInstanceErrorKind::BuildRequired,
+                "the private build receipt or artifact hashes no longer match; build this instance again",
+            ));
+        }
         let launches = launch_plan(
             &snapshot.projected.identity,
             &snapshot.projected.projection,
-            &tauri_identifier(&snapshot.projected.identity.instance_id),
+            &identifier,
             &self.programs,
         )
         .map_err(planning_error)?;
@@ -435,6 +483,14 @@ impl WorktreeTestInstances for WorktreeTestInstanceFacade {
     fn status(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError> {
         let snapshot = self.snapshot(handle)?;
         let mut status = semantic_status(&snapshot);
+        match self.require_current_source(&snapshot) {
+            Ok(()) => {}
+            Err(error) if error.kind == TestInstanceErrorKind::Conflict => {
+                status.source_current = false;
+                status.build_reusable = false;
+            }
+            Err(error) => return Err(error),
+        }
         if status.phase == TestInstancePhase::Running
             && !self
                 .runtime
@@ -550,6 +606,12 @@ fn semantic_status(snapshot: &InstanceSnapshot) -> TestInstanceStatus {
         phase,
         health,
         stale: snapshot.stale,
+        source_current: true,
+        build_reusable: reusable_build(
+            &snapshot.projected.identity,
+            &snapshot.projected.projection,
+            &tauri_identifier(&snapshot.projected.identity.instance_id),
+        ),
     }
 }
 
@@ -613,6 +675,7 @@ pub(crate) enum TestInstanceErrorKind {
     InvalidState,
     OperationInProgress,
     Conflict,
+    BuildRequired,
     Unavailable,
 }
 

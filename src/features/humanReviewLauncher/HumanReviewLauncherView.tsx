@@ -1,3 +1,4 @@
+import { ArrowLeft } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import type {
   HumanReviewInstance,
@@ -5,6 +6,9 @@ import type {
   HumanReviewOperationProgress,
   HumanReviewSource,
 } from '../../application/humanReviewLauncher';
+import type { WorktreeBuildDetail } from '../../application/worktreeBuild';
+import { FileReviewScreen } from '../fileReview';
+import { WorktreeBuildDetailScreen } from '../worktreeBuild';
 import './humanReviewLauncher.css';
 
 export function HumanReviewLauncherView({
@@ -20,6 +24,8 @@ export function HumanReviewLauncherView({
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<Record<string, HumanReviewOperationProgress>>({});
   const [ownedProgress, setOwnedProgress] = useState<HumanReviewOperationProgress | null>(null);
+  const [detail, setDetail] = useState<WorktreeBuildDetail | null>(null);
+  const [surface, setSurface] = useState<'overview' | 'details' | 'files'>('overview');
 
   const load = useCallback(async () => {
     setBusy('load');
@@ -65,12 +71,59 @@ export function HumanReviewLauncherView({
     };
   }, [client]);
 
+  useEffect(() => {
+    if (!client.proofDetailNavigation) return;
+    let active = true;
+    let lastSequence = '';
+    const read = () =>
+      void client.proofDetailNavigation!().then(
+        (navigation) => {
+          if (!active || !navigation || navigation.sequence === lastSequence) return;
+          lastSequence = navigation.sequence;
+          setBusy(`detail:${navigation.instanceRef}`);
+          void client.detail(navigation.instanceRef).then(
+            (value) => {
+              if (!active) return;
+              setDetail(value);
+              setSurface('details');
+              setBusy(null);
+            },
+            (cause) => {
+              if (!active) return;
+              setError(message(cause));
+              setBusy(null);
+            },
+          );
+        },
+        () => undefined,
+      );
+    read();
+    const timer = window.setInterval(read, 300);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [client]);
+
   const update = useCallback((instance: HumanReviewInstance) => {
     setInstances((current) => [
       instance,
       ...current.filter((item) => item.instanceRef !== instance.instanceRef),
     ]);
   }, []);
+
+  async function openDetail(instanceRef: string) {
+    setBusy(`detail:${instanceRef}`);
+    setError(null);
+    try {
+      setDetail(await client.detail(instanceRef));
+      setSurface('details');
+    } catch (cause) {
+      setError(message(cause));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function prepare() {
     setBusy('prepare');
@@ -98,11 +151,10 @@ export function HumanReviewLauncherView({
     setBusy(`${label}:${instance.instanceRef}`);
     setError(null);
     const operationRef = operationId(label);
-    const key = instance.instanceRef;
     const polling =
       label === 'build' || label === 'start'
         ? pollProgress(client, operationRef, (value) =>
-            setProgress((current) => ({ ...current, [key]: value })),
+            setProgress((current) => ({ ...current, [instance.instanceRef]: value })),
           )
         : null;
     try {
@@ -116,6 +168,31 @@ export function HumanReviewLauncherView({
     }
   }
 
+  if (surface === 'details' && detail) {
+    return (
+      <WorktreeBuildDetailScreen
+        detail={detail}
+        onBack={() => setSurface('overview')}
+        onCompare={() => setSurface('files')}
+      />
+    );
+  }
+  if (surface === 'files' && detail) {
+    return (
+      <section className="human-review__file-route">
+        <header>
+          <button type="button" onClick={() => setSurface('details')}>
+            <ArrowLeft size={16} />
+            Build details
+          </button>
+          <span>{detail.name} · machine main HEAD → complete selected worktree</span>
+        </header>
+        <FileReviewScreen source={client.comparison(detail.instanceRef)} />
+      </section>
+    );
+  }
+
+  const selectedSource = sources.find((source) => source.sourceRef === sourceRef);
   return (
     <main className="human-review" aria-label="Worktree review launcher" aria-busy={busy !== null}>
       <header className="human-review__header">
@@ -141,8 +218,8 @@ export function HumanReviewLauncherView({
         <div>
           <h2 id="prepare-review-title">New review window</h2>
           <p>
-            The application keeps its build, data, browser profile, ports, logs, and processes
-            separate.
+            Prepare creates a retained, isolated build workspace. Nothing is opened until Build and
+            Open succeed.
           </p>
         </div>
         <label>
@@ -155,6 +232,7 @@ export function HumanReviewLauncherView({
             {sources.map((source) => (
               <option key={source.sourceRef} value={source.sourceRef}>
                 {source.label} ({source.revision})
+                {source.compatibility === 'incompatible' ? ' · incompatible' : ''}
               </option>
             ))}
           </select>
@@ -170,6 +248,11 @@ export function HumanReviewLauncherView({
         >
           Prepare
         </button>
+        {selectedSource?.compatibility === 'incompatible' && (
+          <p className="human-review__compatibility" role="status">
+            {selectedSource.compatibilityMessage}
+          </p>
+        )}
         {progress.prepare && <OperationProgress progress={progress.prepare} />}
       </section>
 
@@ -178,21 +261,42 @@ export function HumanReviewLauncherView({
           {error}
         </p>
       )}
-      <section className="human-review__instances" aria-label="Review windows">
-        {instances.length === 0 && busy === null && <p>No review windows prepared yet.</p>}
+      <section className="human-review__instances" aria-label="Retained review builds">
+        <header>
+          <h2>Retained review builds</h2>
+          <p>
+            Each item is one isolated build and application-data set. Stopping closes its process
+            tree; generated material remains until deliberate cleanup.
+          </p>
+        </header>
+        {instances.length === 0 && busy === null && <p>No review builds prepared yet.</p>}
         {instances.map((instance) => {
           const running = instance.phase === 'running';
           const pending = busy?.endsWith(instance.instanceRef) ?? false;
           return (
             <article className="human-review__card" key={instance.instanceRef}>
-              <div>
-                <p className="eyebrow">{instance.sourceLabel}</p>
-                <h2>{instance.name}</h2>
+              <div className="human-review__card-title">
+                <div>
+                  <p className="eyebrow">{instance.sourceLabel}</p>
+                  <h2>{instance.name}</h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void openDetail(instance.instanceRef)}
+                  disabled={pending}
+                >
+                  Build details
+                </button>
               </div>
+              <p className="human-review__purpose">{instance.purpose}</p>
               <dl>
                 <div>
                   <dt>Lifecycle</dt>
                   <dd>{instance.phase}</dd>
+                </div>
+                <div>
+                  <dt>Current use</dt>
+                  <dd>{instance.currentUse}</dd>
                 </div>
                 <div>
                   <dt>Health</dt>
@@ -202,22 +306,30 @@ export function HumanReviewLauncherView({
                   <dt>Build</dt>
                   <dd>{instance.build}</dd>
                 </div>
+                <div>
+                  <dt>Retention</dt>
+                  <dd>{instance.retention}</dd>
+                </div>
               </dl>
+              <p className={instance.actionRequired ? 'human-review__action-needed' : undefined}>
+                <strong>
+                  {instance.actionRequired ? 'Human action needed: ' : 'Next safe action: '}
+                </strong>
+                {instance.actionSummary}
+              </p>
+              <p className="human-review__cleanup">{instance.cleanup}</p>
               {progress[instance.instanceRef] && (
-                <>
-                  <OperationProgress progress={progress[instance.instanceRef]} />
-                  {progress[instance.instanceRef].operation === 'start' && (
-                    <p className="human-review__expected-window">
-                      Expected result: a separate window titled “Codex Orchestrator [Worktree build:{' '}
-                      {instance.name}]”.
-                    </p>
-                  )}
-                </>
+                <OperationProgress progress={progress[instance.instanceRef]} />
               )}
               <div className="human-review__actions">
                 <button
                   type="button"
-                  disabled={pending || running}
+                  disabled={
+                    pending ||
+                    running ||
+                    instance.compatibility === 'incompatible' ||
+                    instance.build === 'superseded'
+                  }
                   onClick={() =>
                     void act(instance, 'build', (operationRef) =>
                       client.build(operationRef, instance.instanceRef),
@@ -228,7 +340,12 @@ export function HumanReviewLauncherView({
                 </button>
                 <button
                   type="button"
-                  disabled={pending || running || instance.build !== 'passed'}
+                  disabled={
+                    pending ||
+                    running ||
+                    instance.build !== 'passed' ||
+                    instance.compatibility === 'incompatible'
+                  }
                   onClick={() =>
                     void act(instance, 'start', (operationRef) =>
                       client.start(operationRef, instance.instanceRef),
@@ -283,8 +400,9 @@ export function HumanReviewLauncherView({
       <aside className="human-review__boundary">
         <strong>Review boundary</strong>
         <span>
-          This opens a human-operated application window. It does not run assertions, capture the
-          screen, or give an agent control of the reviewed app.
+          This opens a human-operated application window. A future troubleshooting Agent Session and
+          dedicated Harness may consume the application-owned detail, progress, history, and
+          sanitized output shown here; neither is implemented by this launcher.
         </span>
       </aside>
     </main>
@@ -298,15 +416,35 @@ function OperationProgress({ progress }: { readonly progress: HumanReviewOperati
         <strong>{progress.stageLabel}</strong>
         <span>{duration(progress.elapsedMs)} elapsed</span>
       </div>
-      <p>
-        {progress.activity === 'quiet'
-          ? `No new evidence for ${duration(progress.evidenceAgeMs)}. The owned operation is still pending.`
-          : progress.state === 'pending'
-            ? `Working normally · updated ${duration(progress.evidenceAgeMs)} ago`
-            : progress.state === 'succeeded'
-              ? 'Finished successfully.'
-              : 'Stopped with an error.'}
-      </p>
+      <p>{progress.condition}</p>
+      <dl>
+        <div>
+          <dt>Expected wait</dt>
+          <dd>{progress.expectedWait}</dd>
+        </div>
+        <div>
+          <dt>Evidence</dt>
+          <dd>
+            {progress.activity === 'quiet'
+              ? `No new evidence for ${duration(progress.evidenceAgeMs)}; quiet evidence alone does not establish a failure.`
+              : `Updated ${duration(progress.evidenceAgeMs)} ago.`}
+          </dd>
+        </div>
+        {progress.missingReadinessFact && (
+          <div>
+            <dt>Still required</dt>
+            <dd>{progress.missingReadinessFact}</dd>
+          </div>
+        )}
+        <div>
+          <dt>{progress.actionRequired ? 'Action required' : 'Human action'}</dt>
+          <dd>{progress.actionGuidance}</dd>
+        </div>
+        <div>
+          <dt>Reusable work</dt>
+          <dd>{progress.reusableSummary}</dd>
+        </div>
+      </dl>
       {progress.recentOutput.length > 0 && (
         <details open={progress.state === 'pending'}>
           <summary>Recent safe output</summary>

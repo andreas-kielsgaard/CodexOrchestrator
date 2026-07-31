@@ -4,6 +4,7 @@
 //! pause/resume semantics. Projected configuration and observed runtime facts remain distinct.
 
 mod application;
+mod build_cache;
 mod domain;
 mod execution;
 mod facade;

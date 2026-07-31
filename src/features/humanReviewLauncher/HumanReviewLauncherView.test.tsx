@@ -1,12 +1,32 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
 import type {
   HumanReviewInstance,
   HumanReviewLauncherClient,
   HumanReviewOperationProgress,
 } from '../../application/humanReviewLauncher';
+import type { WorktreeBuildDetail } from '../../application/worktreeBuild';
 import { HumanReviewLauncherView } from './HumanReviewLauncherView';
 
+const launcherCss = readFileSync(
+  'src/features/humanReviewLauncher/humanReviewLauncher.css',
+  'utf8',
+);
+
 describe('HumanReviewLauncherView', () => {
+  it('keeps the typed progress ledger shrink-safe at the standard review width', () => {
+    expect(launcherCss).toMatch(/\.human-review\s*{[^}]*max-width:\s*100vw;/s);
+    expect(launcherCss).toMatch(/\.human-review\s*{[^}]*overflow-x:\s*hidden;/s);
+    expect(launcherCss).toMatch(/\.human-review\s*>\s*\*\s*{[^}]*max-width:\s*100%;/s);
+    expect(launcherCss).toMatch(/\.human-review\s*>\s*\*\s*{[^}]*min-width:\s*0;/s);
+    expect(launcherCss).toMatch(/\.human-review__progress\s*{[^}]*min-width:\s*0;/s);
+    expect(launcherCss).toMatch(/\.human-review__progress\s*{[^}]*overflow:\s*hidden;/s);
+    expect(launcherCss).toMatch(
+      /@media\s*\(max-width:\s*1400px\)[\s\S]*?\.human-review__progress dl\s*{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/,
+    );
+    expect(launcherCss).toMatch(/\.human-review__progress dd\s*{[^}]*overflow-wrap:\s*anywhere;/s);
+  });
+
   it('prepares and opens a named instance through semantic controls without infrastructure details', async () => {
     const client = new FakeClient();
     render(<HumanReviewLauncherView client={client} />);
@@ -77,6 +97,12 @@ describe('HumanReviewLauncherView', () => {
         elapsedMs: 12_000,
         evidenceAgeMs: 200,
         recentOutput: ['Owned services are ready; waiting for the review window.'],
+        condition: 'Waiting for the exact owned application surface.',
+        expectedWait: 'Normally under a minute.',
+        actionRequired: false,
+        actionGuidance: 'No action is required.',
+        reusableSummary: 'The verified build remains reusable.',
+        missingReadinessFact: 'A rendered application readiness marker.',
       },
     ];
     render(<HumanReviewLauncherView client={client} />);
@@ -87,6 +113,44 @@ describe('HumanReviewLauncherView', () => {
     expect(within(operation).getByText('Waiting for a usable worktree-build window')).toBeVisible();
     expect(within(operation).getByText(/Owned services are ready/)).toBeVisible();
   });
+
+  it('explains multiple retained instances and opens the shared build detail with full output', async () => {
+    const client = new FakeClient();
+    const alpha = instance('Alpha build', 'stopped', 'passed');
+    const beta = { ...instance('Beta build', 'prepared', 'not-built'), instanceRef: 'beta' };
+    const historical = {
+      ...instance('Historical build', 'stopped', 'superseded'),
+      instanceRef: 'historical',
+      currentUse: 'Source changed since this build',
+      actionRequired: true,
+      actionSummary: 'Prepare a fresh instance for the selected worktree.',
+    };
+    client.listInstances = async () => [alpha, beta, historical];
+    client.detail = async (instanceRef) => detail(instanceRef === 'beta' ? beta : alpha);
+    render(<HumanReviewLauncherView client={client} />);
+
+    expect(await screen.findByRole('heading', { name: 'Alpha build' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Beta build' })).toBeVisible();
+    expect(screen.getAllByText(/Stop closes the owned process tree/)).toHaveLength(3);
+    const historicalCard = screen
+      .getByRole('heading', { name: 'Historical build' })
+      .closest('article')!;
+    expect(within(historicalCard).getByText('Source changed since this build')).toBeVisible();
+    expect(within(historicalCard).getByRole('button', { name: 'Build' })).toBeDisabled();
+    expect(within(historicalCard).getByRole('button', { name: 'Open' })).toBeDisabled();
+    const alphaCard = screen.getByRole('heading', { name: 'Alpha build' }).closest('article')!;
+    fireEvent.click(within(alphaCard).getByRole('button', { name: 'Build details' }));
+    const buildDetail = await screen.findByRole('main', { name: 'Worktree build details' });
+    expect(buildDetail).toHaveTextContent('Why it exists');
+    expect(buildDetail).toHaveTextContent('safe output 24');
+    expect(buildDetail).toHaveTextContent('Retained until deliberate cleanup');
+    fireEvent.click(within(buildDetail).getByRole('button', { name: 'Review files and changes' }));
+    expect(await screen.findByRole('main', { name: 'Files and diffs' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Build details' }));
+    expect(await screen.findByRole('main', { name: 'Worktree build details' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(await screen.findByRole('heading', { name: 'Retained review builds' })).toBeVisible();
+  });
 });
 
 class LongBuildClient implements HumanReviewLauncherClient {
@@ -94,7 +158,13 @@ class LongBuildClient implements HumanReviewLauncherClient {
   private resolveBuild!: (value: HumanReviewInstance) => void;
   private instance = instance('Long build', 'prepared', 'not-built');
   listSources = async () => [
-    { sourceRef: 'opaque', label: 'codex/long', revision: 'abcdef012345' },
+    {
+      sourceRef: 'opaque',
+      label: 'codex/long',
+      revision: 'abcdef012345',
+      compatibility: 'compatible' as const,
+      compatibilityMessage: 'Compatible.',
+    },
   ];
   listInstances = async () => [this.instance];
   prepare = async () => this.instance;
@@ -120,8 +190,15 @@ class LongBuildClient implements HumanReviewLauncherClient {
       elapsedMs: first ? 3_000 : 25_000,
       evidenceAgeMs: first ? 100 : 21_000,
       recentOutput: first ? ['Type checking application'] : ['Compiling application crate'],
+      condition: first ? 'Checking source.' : 'Compiling source.',
+      expectedWait: first ? 'Usually seconds.' : 'Cold builds take several minutes.',
+      actionRequired: false,
+      actionGuidance: 'No action is required.',
+      reusableSummary: 'Prepared isolation remains reusable.',
     };
   };
+  detail = async () => detail(this.instance);
+  comparison = () => comparison;
   finish() {
     this.instance = instance('Long build', 'prepared', 'passed');
     this.resolveBuild(this.instance);
@@ -131,7 +208,13 @@ class LongBuildClient implements HumanReviewLauncherClient {
 class FakeClient implements HumanReviewLauncherClient {
   private instance: HumanReviewInstance | undefined;
   listSources = async () => [
-    { sourceRef: 'opaque', label: 'codex/feature - review', revision: 'abcdef012345' },
+    {
+      sourceRef: 'opaque',
+      label: 'codex/feature - review',
+      revision: 'abcdef012345',
+      compatibility: 'compatible' as const,
+      compatibilityMessage: 'Compatible.',
+    },
   ];
   listInstances = async () => (this.instance ? [this.instance] : []);
   prepare = async (_operationRef: string, _sourceRef: string, name: string) =>
@@ -152,12 +235,19 @@ class FakeClient implements HumanReviewLauncherClient {
     elapsedMs: 1_000,
     evidenceAgeMs: 0,
     recentOutput: ['Safe progress'],
+    condition: 'The operation completed.',
+    expectedWait: 'No waiting required.',
+    actionRequired: false,
+    actionGuidance: 'Continue when ready.',
+    reusableSummary: 'Private outputs remain reusable.',
   });
   status = async () => this.instance!;
   focus = async () => this.instance!;
   stop = async () => this.set(this.instance!.name, 'stopped', 'passed');
   recover = async () => this.set(this.instance!.name, 'recovered', 'passed');
   listProgress = async (): Promise<readonly HumanReviewOperationProgress[]> => [];
+  detail = async (instanceRef: string) => detail({ ...this.instance!, instanceRef });
+  comparison = () => comparison;
 
   interrupt() {
     this.instance = { ...this.instance!, health: 'closed', canFocus: false };
@@ -183,5 +273,102 @@ function instance(
     stale: false,
     build,
     canFocus: phase === 'running',
+    purpose: 'A retained isolated build for human review.',
+    currentUse: phase === 'running' ? 'Human review window open' : 'Prepared, not running',
+    retention: 'Retained',
+    cleanup: 'Stop closes the owned process tree; cleanup is manual.',
+    actionRequired: false,
+    actionSummary: build === 'passed' ? 'Open the verified build.' : 'Build before Open.',
+    compatibility: 'compatible',
+  };
+}
+
+const comparison = {
+  load: async () => ({ files: [] }),
+};
+
+function detail(value: HumanReviewInstance): WorktreeBuildDetail {
+  return {
+    instanceRef: value.instanceRef,
+    name: value.name,
+    sourceLabel: value.sourceLabel,
+    purpose: value.purpose,
+    phase: value.phase,
+    health: value.health,
+    stale: value.stale,
+    build: value.build,
+    compatibility: value.compatibility,
+    compatibilityMessage: 'Compatible.',
+    orientation: 'One retained source identity and its owned lifecycle.',
+    prepareProduced: 'Prepare reserved isolated state.',
+    buildProduced: 'Build produced private artifacts.',
+    openProduced: 'Open creates an exact owned window.',
+    currentCondition: value.currentUse,
+    actionRequired: value.actionRequired,
+    actionSummary: value.actionSummary,
+    reusableSummary: 'Private outputs remain reusable only for the exact identity.',
+    retention: {
+      policy: 'Retained until deliberate cleanup',
+      cleanup: 'Stop is process-only; cleanup is manual.',
+      automatic: false,
+      actionRequired: false,
+    },
+    artifacts: [
+      {
+        label: 'Private application executable',
+        state: value.build === 'passed' ? 'available' : 'not-produced',
+        summary: 'Private to this instance.',
+      },
+    ],
+    lifecycleHistory: [
+      { occurredAtMs: 1_750_000_000_000, kind: 'Prepared', summary: 'Reserved isolation.' },
+    ],
+    operations: [
+      {
+        operationRef: 'operation-build-fixture',
+        operation: 'build',
+        state: 'succeeded',
+        stageLabel: 'Finished',
+        startedAtMs: 1_750_000_000_000,
+        updatedAtMs: 1_750_000_001_000,
+        output: Array.from({ length: 24 }, (_, index) => `safe output ${index + 1}`),
+        outputComplete: true,
+      },
+    ],
+    context: {
+      name: value.name,
+      branch: 'codex/feature',
+      detached: false,
+      head: {
+        id: 'abcdef0123456789',
+        abbreviatedId: 'abcdef0',
+        message: 'Feature',
+        committedAt: '2026-07-30T10:00:00Z',
+      },
+      dirty: { dirty: true, staged: 1, unstaged: 1, untracked: 1 },
+      main: {
+        branch: 'main',
+        detached: false,
+        head: {
+          id: '1234567890abcdef',
+          abbreviatedId: '1234567',
+          message: 'Main',
+          committedAt: '2026-07-29T10:00:00Z',
+        },
+        dirty: { dirty: false, staged: 0, unstaged: 0, untracked: 0 },
+      },
+      relationship: { ahead: 2, behind: 1, mergeBase: '1111111', summary: '2 ahead, 1 behind' },
+      relatedBranches: [
+        {
+          name: 'codex/parent',
+          ahead: 1,
+          behind: 0,
+          mergeBase: '2222222',
+          summary: '1 ahead, 0 behind this local branch',
+        },
+      ],
+      history: [],
+      comparisonBasis: 'Machine main HEAD to complete selected state.',
+    },
   };
 }

@@ -1,5 +1,6 @@
 use super::{
     comparison::WorktreeComparisonView,
+    detail::ReviewInstanceDetailView,
     service::{
         AcceptedReviewOperationView, HumanReviewLauncherService, ReviewInstanceView,
         ReviewOperationStatusView, ReviewSourceView,
@@ -333,6 +334,9 @@ enum ControllerCommand {
         instance_ref: String,
     },
     NavigateLauncher,
+    NavigateLauncherDetail {
+        instance_ref: String,
+    },
     Navigate {
         instance_ref: String,
         route: ProofRoute,
@@ -341,6 +345,9 @@ enum ControllerCommand {
         instance_ref: String,
     },
     FileReview {
+        instance_ref: String,
+    },
+    BuildDetail {
         instance_ref: String,
     },
 }
@@ -361,8 +368,15 @@ fn parse_envelope(value: serde_json::Value) -> Result<CommandEnvelope, DispatchE
     let allowed = match kind {
         "list_sources" | "list_instances" | "navigate_launcher" => &["kind"][..],
         "begin_prepare" => &["kind", "sourceRef", "name"],
-        "begin_build" | "operation" | "status" | "stop" | "recover" | "worktree_context"
-        | "file_review" => {
+        "begin_build"
+        | "operation"
+        | "status"
+        | "stop"
+        | "recover"
+        | "worktree_context"
+        | "file_review"
+        | "build_detail"
+        | "navigate_launcher_detail" => {
             if kind == "operation" {
                 &["kind", "operationRef"][..]
             } else {
@@ -429,6 +443,7 @@ enum ControllerOutput {
     Navigated { route: String },
     WorktreeContext(WorktreeBuildContextView),
     FileReview(WorktreeComparisonView),
+    BuildDetail(ReviewInstanceDetailView),
 }
 
 #[derive(Clone)]
@@ -535,6 +550,12 @@ impl ControllerState {
                         route: "worktree-review".into(),
                     })
             }
+            ControllerCommand::NavigateLauncherDetail { instance_ref } => self
+                .backend
+                .navigate_launcher_detail(instance_ref)
+                .map(|()| ControllerOutput::Navigated {
+                    route: "worktree-review-detail".into(),
+                }),
             ControllerCommand::Navigate {
                 instance_ref,
                 route,
@@ -552,6 +573,10 @@ impl ControllerState {
                 .backend
                 .file_review(instance_ref)
                 .map(ControllerOutput::FileReview),
+            ControllerCommand::BuildDetail { instance_ref } => self
+                .backend
+                .detail(instance_ref)
+                .map(ControllerOutput::BuildDetail),
         };
         result.map_err(DispatchError::safe)
     }
@@ -591,9 +616,11 @@ trait ControllerBackend: Send + Sync {
     fn stop(&self, instance_ref: String) -> Result<ReviewInstanceView, String>;
     fn recover(&self, instance_ref: String) -> Result<ReviewInstanceView, String>;
     fn navigate_launcher(&self) -> Result<(), String>;
+    fn navigate_launcher_detail(&self, instance_ref: String) -> Result<(), String>;
     fn navigate(&self, instance_ref: String, route: ProofRoute) -> Result<(), String>;
     fn context(&self, instance_ref: String) -> Result<WorktreeBuildContextView, String>;
     fn file_review(&self, instance_ref: String) -> Result<WorktreeComparisonView, String>;
+    fn detail(&self, instance_ref: String) -> Result<ReviewInstanceDetailView, String>;
 }
 
 struct ServiceBackend {
@@ -645,6 +672,10 @@ impl ControllerBackend for ServiceBackend {
         self.service.proof_navigate_launcher()
     }
 
+    fn navigate_launcher_detail(&self, instance_ref: String) -> Result<(), String> {
+        self.service.proof_navigate_launcher_detail(instance_ref)
+    }
+
     fn navigate(&self, instance_ref: String, route: ProofRoute) -> Result<(), String> {
         self.service.proof_navigate(instance_ref, route.as_str())
     }
@@ -655,6 +686,10 @@ impl ControllerBackend for ServiceBackend {
 
     fn file_review(&self, instance_ref: String) -> Result<WorktreeComparisonView, String> {
         self.service.comparison(instance_ref)
+    }
+
+    fn detail(&self, instance_ref: String) -> Result<ReviewInstanceDetailView, String> {
+        self.service.detail(instance_ref)
     }
 }
 
@@ -748,6 +783,9 @@ mod tests {
             self.calls.lock().unwrap().push("navigate-launcher".into());
             Ok(())
         }
+        fn navigate_launcher_detail(&self, _instance_ref: String) -> Result<(), String> {
+            unreachable!()
+        }
         fn navigate(&self, _instance_ref: String, _route: ProofRoute) -> Result<(), String> {
             unreachable!()
         }
@@ -755,6 +793,9 @@ mod tests {
             unreachable!()
         }
         fn file_review(&self, _instance_ref: String) -> Result<WorktreeComparisonView, String> {
+            unreachable!()
+        }
+        fn detail(&self, _instance_ref: String) -> Result<ReviewInstanceDetailView, String> {
             unreachable!()
         }
     }
