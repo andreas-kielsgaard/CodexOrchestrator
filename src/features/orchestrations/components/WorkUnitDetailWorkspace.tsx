@@ -30,7 +30,7 @@ export function WorkUnitDetailWorkspace({
   workSlicePlanningPointGroupTitle,
   sessions,
   agentSessionComposition,
-  backLabel = 'Back to Plan',
+  backLabel = 'Back to Work Slice planning point',
   onBack,
   onOpenAgentSession,
 }: WorkUnitDetailWorkspaceProps) {

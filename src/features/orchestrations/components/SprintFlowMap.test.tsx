@@ -46,13 +46,17 @@ describe('SprintFlowMap', () => {
       />,
     );
 
-    const plan = screen.getByRole('region', { name: 'Plan: Integrated detail surfaces' });
+    const plan = screen.getByRole('region', {
+      name: 'Work Slice planning point: Integrated detail surfaces',
+    });
     expect(
-      within(plan).getByRole('button', { name: 'Open Plan: Integrated detail surfaces' }),
+      within(plan).getByRole('button', {
+        name: 'Open Work Slice planning point: Integrated detail surfaces',
+      }),
     ).toBeVisible();
     const workUnit = screen.getByRole('button', { name: /Open Work Unit WU-ECS2E/ });
     const planButton = within(plan).getByRole('button', {
-      name: 'Open Plan: Integrated detail surfaces',
+      name: 'Open Work Slice planning point: Integrated detail surfaces',
     });
     expect(planButton).toHaveClass('sprint-plan-region__open');
     fireEvent.click(planButton);
@@ -107,7 +111,9 @@ describe('SprintFlowMap', () => {
 
   it('supports keyboard activation through native Plan, Work Unit, revision, and plan-change controls', () => {
     render(<StatefulSprintFlowMap />);
-    const plan = screen.getByRole('button', { name: 'Open Plan: Integrated detail surfaces' });
+    const plan = screen.getByRole('button', {
+      name: 'Open Work Slice planning point: Integrated detail surfaces',
+    });
     const workUnit = screen.getByRole('button', { name: /Open Work Unit WU-ECS2E/ });
     for (const control of [plan, workUnit, screen.getByRole('combobox')]) {
       control.focus();

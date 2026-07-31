@@ -17,7 +17,10 @@ import { SprintDocumentsPanel } from './SprintDocumentsPanel';
 import { SprintFlowMap } from './SprintFlowMap';
 import { SprintWorkspaceTabs, type SprintWorkspaceTab } from './SprintWorkspaceTabs';
 import { SharedAgentSessionPanel } from './SharedAgentSessionPanel';
-import { WorkSlicePlanningPointDetailWorkspace } from './WorkSlicePlanningPointDetailWorkspace';
+import {
+  type PlanningPointWorkUnitRelationship,
+  WorkSlicePlanningPointDetailWorkspace,
+} from './WorkSlicePlanningPointDetailWorkspace';
 import { WorkUnitDetailWorkspace } from './WorkUnitDetailWorkspace';
 import '../styles/sprintWorkspace.css';
 import type { EmbeddedAgentSessionComposition } from '../../agentSessions';
@@ -128,7 +131,11 @@ export function SprintWorkspace({
         workSlicePlanningPointGroupTitle={workSlicePlanningPointGroup.title}
         sessions={workUnitSessions(workspace, unit, adjunct)}
         agentSessionComposition={agentSessionComposition}
-        backLabel={detailLocation.origin === 'concern' ? 'Back to Concern' : undefined}
+        backLabel={
+          detailLocation.origin === 'concern'
+            ? 'Back to Concern'
+            : 'Back to Work Slice planning point'
+        }
         onBack={() => {
           if (detailLocation.origin === 'concern') {
             concernRestoreWorkUnitRef.current = detailLocation.workUnitId;
@@ -158,7 +165,13 @@ export function SprintWorkspace({
       <WorkSlicePlanningPointDetailWorkspace
         workSlicePlanningPointGroup={workSlicePlanningPointGroup}
         currentWorkState={workSlicePlanningPointState(workSlicePlanningPointGroup, view)}
-        session={workSlicePlanningPointSession(
+        workUnitRelationships={planningPointWorkUnitRelationships(
+          workspace,
+          view,
+          workSlicePlanningPointGroup,
+          adjunct,
+        )}
+        plannerSession={workSlicePlanningPointSession(
           workspace,
           workSlicePlanningPointGroup.workSlicePlanningPointId,
           adjunct,
@@ -169,6 +182,15 @@ export function SprintWorkspace({
             workSlicePlanningPointId === workSlicePlanningPointGroup.workSlicePlanningPointId,
         )}
         onBack={() => onDetailLocationChange({ kind: 'sprint' })}
+        onOpenWorkUnit={(workUnitId) => {
+          onDetailLocationChange({
+            kind: 'work_unit',
+            revisionId: view.sprintPlanRevisionId,
+            workSlicePlanningPointId: workSlicePlanningPointGroup.workSlicePlanningPointId,
+            workUnitId,
+            origin: 'work_slice_planning_point',
+          });
+        }}
         onOpenAgentSession={onOpenAgentSession}
       />
     );
@@ -535,17 +557,40 @@ function workSlicePlanningPointState(
   return 'Mixed';
 }
 
+function planningPointWorkUnitRelationships(
+  workspace: SprintWorkspacePresentationV1,
+  view: SprintWorkspacePresentationV1['revisionViews'][number],
+  group: SprintWorkspacePresentationV1['revisionViews'][number]['workSlicePlanningPointGroups'][number],
+  adjunct?: SprintWorkspacePresentationAdjunct,
+): readonly PlanningPointWorkUnitRelationship[] {
+  return group.workUnitScopeIds.map((workUnitScopeId) => {
+    const workUnit = view.workUnits.find(
+      (candidate) => candidate.workUnitScopeId === workUnitScopeId,
+    );
+    if (!workUnit)
+      throw new Error(
+        `Work Slice planning point ${group.workSlicePlanningPointId} references missing scope ${workUnitScopeId}`,
+      );
+    const sessions = workUnitSessions(workspace, workUnit, adjunct);
+    return {
+      workUnit,
+      handlers: sessions.filter(({ role }) => role === 'handler'),
+      implementers: sessions.filter(({ role }) => role === 'implementer'),
+    };
+  });
+}
+
 function workUnitSessions(
   workspace: SprintWorkspacePresentationV1,
   unit: SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number],
   adjunct?: SprintWorkspacePresentationAdjunct,
 ): readonly WorkUnitAgentSessionPresentation[] {
-  const existing = (adjunct?.workUnitSessions ?? []).filter(
+  const adjunctSessions = (adjunct?.workUnitSessions ?? []).filter(
     (session) => session.workUnitId === unit.workUnitId,
   );
   const executionIds = new Set(unit.attempts.map((attempt) => attempt.workUnitExecutionId));
   const adjunctById = new Map(
-    [...existing, ...(adjunct?.workSlicePlanningPointSessions ?? [])].map((session) => [
+    [...adjunctSessions, ...(adjunct?.workSlicePlanningPointSessions ?? [])].map((session) => [
       session.sessionId,
       session,
     ]),
@@ -593,7 +638,7 @@ function workUnitSessions(
     : [];
   return [
     ...new Map(
-      [...planners, ...existing, ...referenced].map((session) => [session.sessionId, session]),
+      [...planners, ...referenced].map((session) => [session.sessionId, session]),
     ).values(),
   ];
 }
