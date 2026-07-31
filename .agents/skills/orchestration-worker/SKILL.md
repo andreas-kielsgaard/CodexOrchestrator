@@ -9,9 +9,9 @@ description: Execute a delegated work slice as an independent orchestration work
 
 Act as an independent worker root. Use only the launch prompt and explicitly referenced materials as context. Do not assume access to root orchestrator, planner, or delegation history beyond what the prompt supplies.
 
-Own the work slice until it is complete, blocked, or returned for correction.
+Own active implementation until it is complete, blocked, or ready for review.
 
-For shared work-route, context-routing, notification, and relationship-metadata concepts, read `../_orchestration-common/concepts.md` when the launch prompt is unclear.
+For shared lifecycle and reporting concepts, read `../_shared-skill-concepts/lifecycle-states.md`, `../_shared-skill-concepts/owner-liveness.md`, and `../_shared-skill-concepts/reporting-flow.md` when the launch prompt is unclear.
 
 ## Startup
 
@@ -31,6 +31,8 @@ When checks conflict, rerun one unambiguous check from the explicit repo path be
 
 ## Execution Rules
 
+Load and follow `$agent-interface-first` when implementation or validation could involve visible UI control.
+
 - Stay inside the delegated scope.
 - Edit only the change-target repo/path named in the delegation prompt.
 - Treat read-only context repos as inspection-only even if filesystem permissions would allow edits.
@@ -46,7 +48,7 @@ When checks conflict, rerun one unambiguous check from the explicit repo path be
 
 When complete, prepare a review payload addressed to the `work-slice-delegation` thread that staged this slice. The delegation thread should continue with `review-before-merge` using that payload; the worker should not start a separate review thread.
 
-If review returns corrections, continue in this worker root and handle the re-prompt.
+After the review payload and required owner notification are delivered, end the current turn. The reviewer owns the active next step. If a correction or other actionable message arrives in a later turn, handle it then. Do not poll, wait on, or repeatedly inspect the reviewer after reporting.
 
 When blocked, complete, or needing clarification, notify the nearest owner before ending the turn when a delegation, planner, or root thread id was supplied. Use the shared reporting flow and keep the notification compact: status, evidence, changed files or worktree state, next requested action, and whether review should start.
 

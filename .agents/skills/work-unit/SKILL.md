@@ -11,6 +11,7 @@ Own one assigned outcome until it is complete or concretely blocked.
 - Implement the full assigned scope and deliverables while preserving unrelated work.
 - Make ordinary local implementation choices within delegated authority.
 - Choose proportionate validation for the result.
+- Load and follow `$agent-interface-first` when implementation or validation could involve visible UI control.
 - Continue through in-scope work rather than finalizing after partial progress.
 
 A later integration or convergence check does not defer this Work Unit's implementation, deliverables, or acceptance criteria. Do not absorb adjacent Work Units or redesign the Sprint plan.

@@ -1,4 +1,4 @@
 interface:
   display_name: "Sprint Runner"
-  short_description: "Plan and coordinate a bounded Sprint"
-  default_prompt: "Use $sprint-runner to plan and coordinate this Sprint while front-loading consequential decisions."
+  short_description: "Manage one Sprint from forecast to handback"
+  default_prompt: "Use $sprint-runner to start from current Sprint reality and manage its execution flow."

@@ -30,6 +30,8 @@ If available, update the delegation thread's compact relationship metadata to sh
 
 ## Review Focus
 
+Load and follow `$agent-interface-first` before choosing visible UI control as review evidence.
+
 Prioritize:
 
 - correctness against acceptance criteria

@@ -1,4 +1,4 @@
 interface:
-  display_name: 'Epic Runner'
-  short_description: 'Advance an initiated Epic through Sprints'
-  default_prompt: 'Use $epic-runner to assess this Epic and request its next appropriate Sprint.'
+  display_name: "Epic Runner"
+  short_description: "Manage an Epic across Sprint boundaries"
+  default_prompt: "Use $epic-runner to advance this Epic through its next Sprint-level transition."

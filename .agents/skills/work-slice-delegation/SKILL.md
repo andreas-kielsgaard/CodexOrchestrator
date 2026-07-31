@@ -14,7 +14,7 @@ Run as the planner-owned delegation path after `orchestration-next-work-planner`
 - root acceptance capsule, only when this is an older root-mediated flow
 - planner final output or exact planner delegation handoff payload
 
-Stage exactly one independent worker-root for one work slice, then remain the slice coordinator through review, merge/reconciliation, reporting, and planner notification.
+Stage exactly one independent worker-root for one work slice, then own coordination across callbacks through review, merge/reconciliation, reporting, and planner notification.
 
 For shared ownership, owner-liveness, work-route, context-routing, and notification concepts, read `../_orchestration-common/concepts.md` when the prompt is unclear.
 
@@ -22,7 +22,7 @@ Do not stage a worker from a root acceptance capsule alone. If the planner hando
 
 Do not implement the slice. Start the worker as an independent `root-orchestration-worker` thread when thread tools are available; otherwise return the complete worker launch prompt, notify the planner route when possible, and clearly mark the delegation as waiting for worker-root startup.
 
-This delegation is not complete when the worker prompt is produced or the worker root starts. It remains the slice coordinator until the slice is reviewed, merged or signed off, reported, and the source planner route is notified, or until the slice is blocked/escalated.
+Treat worker startup as an intermediate stage. Complete this delegation only after the slice is reviewed, merged or signed off, reported, and the source planner route is notified, or after the slice is blocked or escalated.
 
 When starting a worker root, apply the shared reasoning-routing and thread-naming concepts. Omit model overrides unless the human explicitly requested a model.
 
@@ -104,6 +104,8 @@ Apply the shared work-route/content-dependency concept. Give the worker a clean 
 The worker should start as an independent `root-orchestration-worker` thread using the prompt you produce. Give the worker thread a role/slice title when thread tooling supports it.
 
 Request `thinking: medium` for the worker root by default. Request `thinking: high` when the slice involves subtle architecture, migration logic, cross-repo interpretation, ambiguous validation, or a boundary that could easily be overrun.
+
+Whenever progress depends on another actor, tool, or human and the required request has been delivered, record the exact waiting stage and end the current turn. Resume when a callback or new message supplies actionable input. Coordination ownership persists across turns without active waiting or repeated status messages.
 
 When the worker completes, continue this same delegation actor with `review-before-merge` using the review payload defined by `orchestration-worker`. Do not start a separate review thread for normal flow.
 

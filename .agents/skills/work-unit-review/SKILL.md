@@ -26,6 +26,8 @@ If prompt provenance is missing or ambiguous and could change the verdict, repor
 
 ## 2. Review the result
 
+Load and follow `$agent-interface-first` before choosing visible UI control as review evidence.
+
 Determine whether:
 
 - the objective and acceptance criteria were achieved;
