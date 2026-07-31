@@ -43,27 +43,13 @@ describe('App application surfaces', () => {
     expect(await screen.findByText('5 changed files')).toBeVisible();
   });
 
-  it('opens the authorized application-owned source from its Sprint Document', async () => {
-    render(<App {...createRecordedFileReviewApplicationComposition()} />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Orchestration' }));
-    fireEvent.click(
-      await screen.findByRole('button', {
-        name: 'Open Codex Epic Runner workspace development',
-      }),
-    );
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Open Sprint: Sprint Control Surface Discovery' }),
-    );
-    fireEvent.click(screen.getByRole('tab', { name: 'Documents' }));
-    expect(screen.getByText('Application-owned file review')).toBeVisible();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Review files' }));
+  it('binds a development fixture before the scoped File Review view renders', async () => {
+    render(<App {...createRecordedFileReviewApplicationComposition('application-owned')} />);
 
     expect(await screen.findByRole('main', { name: 'Files and diffs' })).toBeVisible();
-    expect(screen.getByRole('combobox', { name: 'Review source' })).toHaveValue('doc-file-review');
     expect(await screen.findByText('1 changed files')).toBeVisible();
-    expect(screen.getByText('Recorded application-owned review material')).toBeVisible();
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(screen.queryByText('Recorded application-owned review material')).toBeNull();
   });
 });
 

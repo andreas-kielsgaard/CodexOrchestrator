@@ -1,6 +1,6 @@
 import {
   STORED_FILE_REVIEW_ARTIFACT_V1,
-  createApplicationOwnedFileReviewClient,
+  createApplicationOwnedFileReviewSource,
   type ApplicationFileReviewDocument,
   type FileReviewDocumentPort,
   type FileReviewSourceError,
@@ -11,36 +11,18 @@ import {
 describe('application-owned file review', () => {
   it('resolves one currently authorized changed-files Document and stored artifact', async () => {
     const document = changedFilesDocument();
-    const artifact = storedArtifact(
-      artifactPayload({
-        files: [
-          storedFile({
-            content: content('utf-8', utf8('# Review\n\nApplication-owned content.\n')),
-          }),
-        ],
-      }),
-    );
+    const artifact = storedArtifact(artifactPayload());
     const documents = documentPort(document);
     const artifacts = artifactPort(artifact);
-    const client = createApplicationOwnedFileReviewClient(documents, artifacts);
+    const source = createApplicationOwnedFileReviewSource(documents, artifacts);
+    const snapshot = await source.load();
 
-    await expect(client.listSources()).resolves.toEqual([
-      {
-        sourceId: 'document-review',
-        kind: 'application_owned',
-        label: 'Accepted changed files',
-        detail: 'Stored review material.',
-      },
-    ]);
-    const snapshot = await client.loadSource('document-review');
-
-    expect(documents.loadDocument).toHaveBeenCalledWith('document-review');
+    expect(documents.loadDocument).toHaveBeenCalledWith();
     expect(artifacts.loadArtifact).toHaveBeenCalledWith({
       documentRefId: 'document-review',
       artifactId: 'artifact-review',
     });
     expect(snapshot).toMatchObject({
-      source: { sourceId: 'document-review', kind: 'application_owned' },
       files: [
         {
           fileId: 'changed-review',
@@ -50,7 +32,7 @@ describe('application-owned file review', () => {
           deletions: 1,
           content: {
             kind: 'markdown',
-            text: '# Review\n\nApplication-owned content.\n',
+            text: 'Current content.\n',
           },
         },
       ],
@@ -59,15 +41,14 @@ describe('application-owned file review', () => {
 
   it('reauthorizes source identity before resolving the artifact', async () => {
     const artifacts = artifactPort(storedArtifact(artifactPayload()));
-    const client = createApplicationOwnedFileReviewClient(
+    const source = createApplicationOwnedFileReviewSource(
       {
-        listDocuments: vi.fn(async () => [changedFilesDocument()]),
         loadDocument: vi.fn(async () => null),
       },
       artifacts,
     );
 
-    await expectCode(client.loadSource('document-review'), 'source_unauthorized');
+    await expectCode(source.load(), 'source_unauthorized');
     expect(artifacts.loadArtifact).not.toHaveBeenCalled();
   });
 
@@ -78,19 +59,19 @@ describe('application-owned file review', () => {
       artifactId: 'artifact-other',
     };
     await expectCode(
-      createApplicationOwnedFileReviewClient(
+      createApplicationOwnedFileReviewSource(
         documentPort(document),
         artifactPort(wrongEnvelope),
-      ).loadSource(document.documentRefId),
+      ).load(),
       'identity_mismatch',
     );
 
     const wrongPayload = storedArtifact(artifactPayload({ documentRefId: 'document-other' }));
     await expectCode(
-      createApplicationOwnedFileReviewClient(
+      createApplicationOwnedFileReviewSource(
         documentPort(document),
         artifactPort(wrongPayload),
-      ).loadSource(document.documentRefId),
+      ).load(),
       'identity_mismatch',
     );
   });
@@ -102,10 +83,10 @@ describe('application-owned file review', () => {
       }),
     );
     await expectCode(
-      createApplicationOwnedFileReviewClient(
+      createApplicationOwnedFileReviewSource(
         documentPort(changedFilesDocument()),
         artifactPort(extraFile),
-      ).loadSource('document-review'),
+      ).load(),
       'identity_mismatch',
     );
 
@@ -119,23 +100,23 @@ describe('application-owned file review', () => {
       ],
     });
     await expectCode(
-      createApplicationOwnedFileReviewClient(
+      createApplicationOwnedFileReviewSource(
         documentPort(unsafeDocument),
         artifactPort(storedArtifact(artifactPayload())),
-      ).loadSource('document-review'),
+      ).load(),
       'source_unauthorized',
     );
   });
 
   it('applies the byte bound before decoding stored content', async () => {
     const artifact = storedArtifact(artifactPayload());
-    const client = createApplicationOwnedFileReviewClient(
+    const source = createApplicationOwnedFileReviewSource(
       documentPort(changedFilesDocument()),
       artifactPort(artifact),
       { maxArtifactBytes: artifact.bytes.byteLength - 1 },
     );
 
-    await expectCode(client.loadSource('document-review'), 'artifact_too_large');
+    await expectCode(source.load(), 'artifact_too_large');
   });
 
   it('distinguishes unsupported encoding and invalid UTF-8 from binary content', async () => {
@@ -164,10 +145,10 @@ describe('application-owned file review', () => {
       bytes: Uint8Array.of(0, 1, 2),
     };
     await expectCode(
-      createApplicationOwnedFileReviewClient(
+      createApplicationOwnedFileReviewSource(
         documentPort(changedFilesDocument()),
         artifactPort(binary),
-      ).loadSource('document-review'),
+      ).load(),
       'artifact_invalid',
     );
 
@@ -176,39 +157,39 @@ describe('application-owned file review', () => {
       bytes: Uint8Array.of(0xc3, 0x28),
     };
     await expectCode(
-      createApplicationOwnedFileReviewClient(
+      createApplicationOwnedFileReviewSource(
         documentPort(changedFilesDocument()),
         artifactPort(invalidUtf8),
-      ).loadSource('document-review'),
+      ).load(),
       'artifact_invalid',
     );
   });
 
   it('reports an unavailable stored artifact without inventing review content', async () => {
-    const client = createApplicationOwnedFileReviewClient(
+    const source = createApplicationOwnedFileReviewSource(
       documentPort(changedFilesDocument()),
       artifactPort(null),
     );
 
-    await expectCode(client.loadSource('document-review'), 'artifact_unavailable');
+    await expectCode(source.load(), 'artifact_unavailable');
   });
 
-  it('lists no source for Documents that are not unambiguous changed-files records', async () => {
+  it('rejects a scoped Document that is not an unambiguous changed-files record', async () => {
     const document = changedFilesDocument({
       classification: 'review_material',
       artifactIds: ['artifact-a', 'artifact-b'],
     });
-    const client = createApplicationOwnedFileReviewClient(
+    const source = createApplicationOwnedFileReviewSource(
       documentPort(document),
       artifactPort(null),
     );
 
-    await expect(client.listSources()).resolves.toEqual([]);
+    await expectCode(source.load(), 'source_unauthorized');
   });
 });
 
 async function loadContent(storedContent: ReturnType<typeof content>) {
-  const client = createApplicationOwnedFileReviewClient(
+  const source = createApplicationOwnedFileReviewSource(
     documentPort(changedFilesDocument()),
     artifactPort(
       storedArtifact(
@@ -218,7 +199,7 @@ async function loadContent(storedContent: ReturnType<typeof content>) {
       ),
     ),
   );
-  return (await client.loadSource('document-review')).files[0].content;
+  return (await source.load()).files[0].content;
 }
 
 function changedFilesDocument(
@@ -243,10 +224,7 @@ function changedFilesDocument(
 
 function documentPort(document: ApplicationFileReviewDocument): FileReviewDocumentPort {
   return {
-    listDocuments: vi.fn(async () => [document]),
-    loadDocument: vi.fn(async (documentRefId) =>
-      documentRefId === document.documentRefId ? document : null,
-    ),
+    loadDocument: vi.fn(async () => document),
   };
 }
 

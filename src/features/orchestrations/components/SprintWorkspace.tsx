@@ -31,7 +31,6 @@ export interface SprintWorkspaceProps {
   readonly detailLocation: SprintWorkspaceDetailLocation;
   readonly onDetailLocationChange: (location: SprintWorkspaceDetailLocation) => void;
   readonly onBack: () => void;
-  readonly onOpenFileReviewSource?: (sourceId: string) => void;
 }
 
 export function SprintWorkspace({
@@ -45,7 +44,6 @@ export function SprintWorkspace({
   detailLocation,
   onDetailLocationChange,
   onBack,
-  onOpenFileReviewSource,
 }: SprintWorkspaceProps) {
   const [selectedTab, setSelectedTab] = useState<SprintWorkspaceTab>('flow');
   const [selectedConcernId, setSelectedConcernId] = useState<string | null>(null);
@@ -253,7 +251,6 @@ export function SprintWorkspace({
               <SprintDocumentsPanel
                 documents={workspace.documents}
                 artifactAccess={artifactAccessController}
-                onOpenFileReviewSource={onOpenFileReviewSource}
               />
             </section>
           )}
