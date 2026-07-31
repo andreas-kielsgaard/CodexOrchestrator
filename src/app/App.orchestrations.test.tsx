@@ -7,6 +7,7 @@ import type {
   SendAgentSessionMessageCommandDto,
 } from '../application/agentSessions';
 import type {
+  EpicInitiationCapability,
   OrchestrationApplicationClient,
   ProductReadModelsV1,
 } from '../application/orchestrations';
@@ -24,6 +25,175 @@ import { productOrchestrationPresentationAdapter } from './orchestrationPresenta
 import { BUILD_EPIC_PLAN_PROMPT } from '../features/orchestrations/EpicPlanBuilder';
 
 describe('App orchestration loading', () => {
+  it('reconciles same-draft initiation capability when a user-origin Plan Builder run records a proposal', async () => {
+    const composition = createRecordedDevelopmentApplicationComposition();
+    const binding = { draftId: 'draft-plan-completion', sessionId: sessionDetails().session.id };
+    const proposal = createMutableRecordedEpicPlanProposalSource({
+      kind: 'unavailable',
+      reason: 'No current Epic Plan Proposal has been recorded.',
+    });
+    let proposalAvailable = false;
+    const proposalSource = {
+      ...proposal,
+      refresh: vi.fn(async () => {
+        if (!proposalAvailable || proposal.getSnapshot().kind === 'available') return;
+        proposal.setSnapshot({
+          kind: 'available',
+          suggestedEpicName: 'Minimal Epic Plan Test',
+          revision: {
+            id: 'proposal-revision-17c056a5-0e98-41ac-bdd7-ad5e1870d06f',
+            recordedAt: '2026-07-28T12:00:00.000Z',
+          },
+          sprints: [
+            {
+              title: 'Reconciled Sprint',
+              intendedMovement: 'Enable initiation from current durable proposal authority.',
+              concernSummaries: [],
+            },
+          ],
+        });
+      }),
+    };
+    const sessionClient: AgentSessionClient = {
+      ...agentClient(),
+      loadSession: async () => sessionDetails('completed'),
+      reloadSession: async () => sessionDetails('completed'),
+    };
+    const requestPlan = vi.fn(async () => {
+      proposalAvailable = true;
+      return { sessionId: binding.sessionId, invocationId: 'plan-invocation' };
+    });
+    const initiationCapabilityForDraft = vi.fn(
+      async (draftId: string): Promise<EpicInitiationCapability> =>
+        proposal.getSnapshot().kind === 'available'
+          ? {
+              status: 'ready',
+              request: {
+                epicPlanningDraftId: draftId,
+                expectedRevisionToken: 'revision-token-plan-completion',
+                idempotencyKey: `initiate:${draftId}:proposal-revision-plan-completion`,
+              },
+            }
+          : {
+              status: 'blocked',
+              reason: 'A current active Epic Plan Proposal is required before initiation.',
+            },
+    );
+    const list = vi.fn().mockResolvedValue([
+      {
+        epicPlanningDraftId: binding.draftId,
+        agentSessionId: binding.sessionId,
+        title: 'Plan completion draft',
+        status: 'active' as const,
+        createdAt: '2026-07-28T11:00:00.000Z',
+        updatedAt: '2026-07-28T11:00:00.000Z',
+      },
+    ]);
+    render(
+      <App
+        {...composition}
+        agentSessionClient={sessionClient}
+        managedPlanBuilderSessionClient={{ ...sessionClient, requestPlan }}
+        epicPlanProposalSourceForDraft={() => proposalSource}
+        epicInitiationCapabilityForDraft={initiationCapabilityForDraft}
+        epicPlanningDraftLifecycleClient={{
+          reconcile: vi.fn(),
+          list,
+          updateTitle: vi.fn(),
+          cancel: vi.fn(),
+        }}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /Plan completion draft/ }));
+    await waitFor(() => expect(initiationCapabilityForDraft).toHaveBeenCalledOnce());
+    expect(screen.getByRole('button', { name: 'Initiate Epic' })).toBeDisabled();
+    expect(
+      screen.getByText('A current active Epic Plan Proposal is required before initiation.'),
+    ).toBeVisible();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Plan Epic' }));
+
+    await waitFor(() => expect(requestPlan).toHaveBeenCalledOnce());
+    expect(await screen.findByText('Reconciled Sprint')).toBeVisible();
+    await waitFor(() => expect(initiationCapabilityForDraft).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('button', { name: 'Initiate Epic' })).toBeEnabled();
+    expect(screen.getByRole('main', { name: 'Plan an Epic' })).toBeVisible();
+    expect(list).toHaveBeenCalledOnce();
+  });
+
+  it('does not let an older capability response overwrite a newer proposal reconciliation', async () => {
+    const composition = createRecordedDevelopmentApplicationComposition();
+    const binding = { draftId: 'draft-capability-race', sessionId: sessionDetails().session.id };
+    const proposal = createMutableRecordedEpicPlanProposalSource({ kind: 'unavailable' });
+    let resolveInitialCapability!: (capability: EpicInitiationCapability) => void;
+    const initialCapability = new Promise<EpicInitiationCapability>((resolve) => {
+      resolveInitialCapability = resolve;
+    });
+    const readyCapability: EpicInitiationCapability = {
+      status: 'ready',
+      request: {
+        epicPlanningDraftId: binding.draftId,
+        expectedRevisionToken: 'current-revision-token',
+        idempotencyKey: 'initiate:draft-capability-race:current-revision',
+      },
+    };
+    const initiationCapabilityForDraft = vi
+      .fn<(draftId: string) => Promise<EpicInitiationCapability>>()
+      .mockReturnValueOnce(initialCapability)
+      .mockResolvedValue(readyCapability);
+    render(
+      <App
+        {...composition}
+        epicPlanProposalSourceForDraft={() => proposal}
+        epicInitiationCapabilityForDraft={initiationCapabilityForDraft}
+        epicPlanningDraftLifecycleClient={{
+          reconcile: vi.fn(),
+          list: vi.fn().mockResolvedValue([
+            {
+              epicPlanningDraftId: binding.draftId,
+              agentSessionId: binding.sessionId,
+              title: 'Capability race draft',
+              status: 'active' as const,
+              createdAt: '2026-07-28T11:00:00.000Z',
+              updatedAt: '2026-07-28T11:00:00.000Z',
+            },
+          ]),
+          updateTitle: vi.fn(),
+          cancel: vi.fn(),
+        }}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /Capability race draft/ }));
+    await waitFor(() => expect(initiationCapabilityForDraft).toHaveBeenCalledOnce());
+    await act(async () => {
+      proposal.setSnapshot({
+        kind: 'available',
+        revision: {
+          id: 'current-revision',
+          recordedAt: '2026-07-28T12:00:00.000Z',
+        },
+        sprints: [],
+      });
+    });
+    await waitFor(() => expect(initiationCapabilityForDraft).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('button', { name: 'Initiate Epic' })).toBeEnabled();
+
+    await act(async () => {
+      resolveInitialCapability({
+        status: 'blocked',
+        reason: 'A current active Epic Plan Proposal is required before initiation.',
+      });
+      await initialCapability;
+    });
+
+    expect(screen.getByRole('button', { name: 'Initiate Epic' })).toBeEnabled();
+    expect(
+      screen.queryByText('A current active Epic Plan Proposal is required before initiation.'),
+    ).toBeNull();
+  });
+
   it('loads selected-draft initiation authority, confirms it durably, and keeps the builder mounted', async () => {
     const composition = createRecordedDevelopmentApplicationComposition();
     const binding = { draftId: 'draft-initiate', sessionId: sessionDetails().session.id };

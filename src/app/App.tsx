@@ -5,6 +5,7 @@ import type {
   SprintAutomaticContinuationPolicyController,
   EpicAutomaticContinuationPolicyController,
   EpicInitiationCapability,
+  EpicPlanProposalSnapshot,
   EpicPlanProposalSource,
   EpicPlanningDraftBinding,
   EpicPlanningDraftLifecycleClient,
@@ -19,7 +20,7 @@ import {
 } from '../application/orchestrations';
 import { EpicPlanBuilder, OrchestrationSection } from '../features/orchestrations';
 import type { EmbeddedAgentSessionComposition } from '../features/agentSessions';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   productOrchestrationPresentationAdapter,
   type OrchestrationPresentationAdapter,
@@ -115,33 +116,87 @@ export function App({
         : epicInitiationCapability,
     [epicInitiationCapability, epicInitiationCapabilityForDraft],
   );
-  useEffect(() => {
-    let active = true;
-    if (!selectedDraft) {
-      setInitiationCapability(unavailableEpicInitiationCapability);
-      return () => {
-        active = false;
+  const planProposalSnapshot = useSyncExternalStore(
+    planProposalSource.subscribe,
+    planProposalSource.getSnapshot,
+    planProposalSource.getSnapshot,
+  );
+  const initiationCapabilityLoadSequence = useRef(0);
+  const initiationCapabilityLoadTarget = useRef<{
+    readonly draftId: string;
+    readonly proposalSource: EpicPlanProposalSource;
+    readonly proposalSnapshot: EpicPlanProposalSnapshot;
+    readonly promise: Promise<'loaded' | 'failed' | 'superseded'>;
+  } | null>(null);
+  const reconcileInitiationCapability = useCallback(
+    (
+      draftId: string,
+      proposalSource: EpicPlanProposalSource,
+      proposalSnapshot: EpicPlanProposalSnapshot,
+      options: {
+        readonly force?: boolean;
+        readonly loadingReason?: string;
+        readonly failureReason?: string;
+      } = {},
+    ) => {
+      const current = initiationCapabilityLoadTarget.current;
+      if (
+        !options.force &&
+        current?.draftId === draftId &&
+        current.proposalSource === proposalSource &&
+        current.proposalSnapshot === proposalSnapshot
+      )
+        return current.promise;
+
+      const sequence = ++initiationCapabilityLoadSequence.current;
+      setInitiationCapability({
+        status: 'blocked',
+        reason: options.loadingReason ?? 'Loading the current durable Epic Plan Proposal.',
+      });
+      const promise = loadInitiationCapability(draftId).then(
+        (capability) => {
+          if (initiationCapabilityLoadSequence.current !== sequence) return 'superseded' as const;
+          setInitiationCapability(capability);
+          return 'loaded' as const;
+        },
+        () => {
+          if (initiationCapabilityLoadSequence.current !== sequence) return 'superseded' as const;
+          setInitiationCapability({
+            status: 'blocked',
+            reason:
+              options.failureReason ??
+              'The current durable Epic Plan Proposal could not be loaded.',
+          });
+          return 'failed' as const;
+        },
+      );
+      initiationCapabilityLoadTarget.current = {
+        draftId,
+        proposalSource,
+        proposalSnapshot,
+        promise,
       };
+      return promise;
+    },
+    [loadInitiationCapability],
+  );
+  useEffect(() => {
+    if (!selectedDraft) {
+      initiationCapabilityLoadSequence.current += 1;
+      initiationCapabilityLoadTarget.current = null;
+      setInitiationCapability(unavailableEpicInitiationCapability);
+      return;
     }
-    setInitiationCapability({
-      status: 'blocked',
-      reason: 'Loading the current durable Epic Plan Proposal.',
-    });
-    void loadInitiationCapability(selectedDraft.draftId).then(
-      (capability) => active && setInitiationCapability(capability),
-      () =>
-        active &&
-        setInitiationCapability({
-          status: 'blocked',
-          reason: 'The current durable Epic Plan Proposal could not be loaded.',
-        }),
+    void reconcileInitiationCapability(
+      selectedDraft.draftId,
+      planProposalSource,
+      planProposalSnapshot,
     );
-    return () => {
-      active = false;
-    };
-  }, [loadInitiationCapability, selectedDraft]);
+  }, [planProposalSnapshot, planProposalSource, reconcileInitiationCapability, selectedDraft]);
   const confirmInitiation = useCallback(async () => {
     if (selectedDraft) {
+      initiationCapabilityLoadSequence.current += 1;
+      initiationCapabilityLoadTarget.current = null;
       setInitiationCapability({
         status: 'blocked',
         reason: 'Refreshing the confirmed durable Epic initiation.',
@@ -153,23 +208,38 @@ export function App({
     ]);
     let refreshAvailable = orchestrationAvailable && draftsAvailable;
     if (selectedDraft) {
+      const proposalBeforeRefresh = planProposalSource.getSnapshot();
       try {
-        setInitiationCapability(await loadInitiationCapability(selectedDraft.draftId));
+        await planProposalSource.refresh();
       } catch {
         refreshAvailable = false;
-        setInitiationCapability({
-          status: 'blocked',
-          reason: 'Current initiation state is unavailable after durable confirmation.',
-        });
       }
-      await planProposalSource.refresh();
-      if (planProposalSource.getSnapshot().kind === 'unavailable') refreshAvailable = false;
+      const proposalAfterRefresh = planProposalSource.getSnapshot();
+      const capabilityResult = await reconcileInitiationCapability(
+        selectedDraft.draftId,
+        planProposalSource,
+        proposalAfterRefresh,
+        {
+          force: proposalBeforeRefresh === proposalAfterRefresh,
+          loadingReason: 'Refreshing the confirmed durable Epic initiation.',
+          failureReason: 'Current initiation state is unavailable after durable confirmation.',
+        },
+      );
+      if (capabilityResult !== 'loaded') {
+        refreshAvailable = false;
+        if (capabilityResult === 'failed')
+          setInitiationCapability({
+            status: 'blocked',
+            reason: 'Current initiation state is unavailable after durable confirmation.',
+          });
+      }
+      if (proposalAfterRefresh.kind === 'unavailable') refreshAvailable = false;
     }
     if (!refreshAvailable) throw new Error('post-confirmation application refresh unavailable');
   }, [
-    loadInitiationCapability,
     orchestrationLoad,
     planProposalSource,
+    reconcileInitiationCapability,
     refreshDrafts,
     selectedDraft,
   ]);
@@ -179,9 +249,13 @@ export function App({
   );
   const refreshInitiationFailure = useCallback(async () => {
     if (!selectedDraft) return;
-    const refreshedCapability = await loadInitiationCapability(selectedDraft.draftId);
-    setInitiationCapability(refreshedCapability);
-  }, [loadInitiationCapability, selectedDraft]);
+    await reconcileInitiationCapability(
+      selectedDraft.draftId,
+      planProposalSource,
+      planProposalSource.getSnapshot(),
+      { force: true },
+    );
+  }, [planProposalSource, reconcileInitiationCapability, selectedDraft]);
   const bindCreatedPlanBuilderSession = useCallback(
     async (sessionId: string, title: string) => {
       if (!epicPlanningDraftLifecycleClient) return;
