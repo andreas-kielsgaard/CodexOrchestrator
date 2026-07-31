@@ -31,7 +31,7 @@ describe('recorded orchestration composition', () => {
     expect(sprintAdjunct).not.toHaveProperty('revisionViews');
   });
 
-  it('retains both ECS2E attempt outcomes while one handler owns its Session', () => {
+  it('retains both ECS2E attempt outcomes with distinct Handler and Implementer Sessions', () => {
     const sprint = composeProductOrchestrationReadModels(
       recordedProductReadCompositionInput,
     ).epics[0].sprints.find(({ sprintId }) => sprintId === 'sprint-control-surface')!;
@@ -54,22 +54,34 @@ describe('recorded orchestration composition', () => {
         ({ targetKind, targetId }) =>
           targetKind === 'work_unit_execution' && targetId === 'execution-WU-ECS2E',
       ),
-    ).toEqual([
-      expect.objectContaining({
-        agentSessionId: 'recorded-session-WU-ECS2E',
-        semanticRole: 'work_unit_handler',
-      }),
-    ]);
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          agentSessionId: 'recorded-session-WU-ECS2E',
+          semanticRole: 'work_unit_handler',
+        }),
+        expect.objectContaining({
+          agentSessionId: 'recorded-implementer-WU-ECS2E',
+          semanticRole: 'work_unit_implementer',
+        }),
+      ]),
+    );
     expect(
       recordedPresentationAdjunct.sprints?.[
         'sprint-control-surface'
       ]?.workspaceAdjunct?.workUnitSessions.filter(({ workUnitId }) => workUnitId === 'WU-ECS2E'),
-    ).toEqual([
-      expect.objectContaining({
-        sessionId: 'recorded-session-WU-ECS2E',
-        role: 'handler',
-      }),
-    ]);
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: 'recorded-session-WU-ECS2E',
+          role: 'handler',
+        }),
+        expect.objectContaining({
+          sessionId: 'recorded-implementer-WU-ECS2E',
+          role: 'implementer',
+        }),
+      ]),
+    );
   });
 
   it('keeps feature tests off the disposable compatibility fixture', () => {

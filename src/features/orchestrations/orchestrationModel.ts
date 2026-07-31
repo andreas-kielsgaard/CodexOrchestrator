@@ -32,16 +32,16 @@ export type SprintPlanItemStatus =
 export type SprintWorkspaceDetailLocation =
   | { readonly kind: 'sprint' }
   | {
-      readonly kind: 'sprint_planner_activity_group';
+      readonly kind: 'work_slice_planning_point';
       readonly revisionId: string;
-      readonly sprintPlannerActivityId: string;
+      readonly workSlicePlanningPointId: string;
     }
   | {
       readonly kind: 'work_unit';
       readonly revisionId: string;
-      readonly sprintPlannerActivityId: string;
+      readonly workSlicePlanningPointId: string;
       readonly workUnitId: string;
-      readonly origin: 'sprint_planner_activity_group' | 'concern';
+      readonly origin: 'work_slice_planning_point' | 'concern';
     };
 
 export interface EpicBlocker {
@@ -62,15 +62,15 @@ export interface SprintAgentSessionPresentation extends AgentSessionReferencePre
 
 export interface WorkUnitAgentSessionPresentation extends SprintAgentSessionPresentation {
   readonly workUnitId: string;
-  readonly role: 'sprint_planner' | 'handler' | 'worker' | 'reviewer';
+  readonly role: 'work_slice_planner' | 'handler' | 'implementer';
 }
 
 /** Deferred controller/view adjuncts. They add no Sprint plan semantics. */
 export interface SprintWorkspacePresentationAdjunct {
   readonly agentSession?: SprintAgentSessionPresentation;
-  readonly plannerActivitySessions: readonly SprintAgentSessionPresentation[];
+  readonly workSlicePlanningPointSessions: readonly SprintAgentSessionPresentation[];
   readonly workUnitSessions: readonly WorkUnitAgentSessionPresentation[];
-  readonly plannerActivityWorkflows: readonly RecordedPlanWorkflowV1[];
+  readonly workSlicePlanningPointWorkflows: readonly RecordedPlanWorkflowV1[];
 }
 
 export interface SprintPlanItemPresentation {

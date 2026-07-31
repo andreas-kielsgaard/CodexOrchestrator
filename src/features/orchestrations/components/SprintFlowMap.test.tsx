@@ -12,11 +12,11 @@ import {
 import { SprintFlowMap } from './SprintFlowMap';
 
 function StatefulSprintFlowMap({
-  onOpenSprintPlannerActivityGroup,
+  onOpenWorkSlicePlanningPointGroup,
   onOpenWorkUnit,
 }: {
-  readonly onOpenSprintPlannerActivityGroup?: (
-    sprintPlannerActivityId: string,
+  readonly onOpenWorkSlicePlanningPointGroup?: (
+    workSlicePlanningPointId: string,
     opener: HTMLButtonElement,
   ) => void;
   readonly onOpenWorkUnit?: (workUnitId: string, opener: HTMLButtonElement) => void;
@@ -29,19 +29,19 @@ function StatefulSprintFlowMap({
       workspace={recordedWorkspace}
       selectedRevisionId={selectedRevisionId}
       onSelectedRevisionChange={setSelectedRevisionId}
-      onOpenSprintPlannerActivityGroup={onOpenSprintPlannerActivityGroup}
+      onOpenWorkSlicePlanningPointGroup={onOpenWorkSlicePlanningPointGroup}
       onOpenWorkUnit={onOpenWorkUnit}
     />
   );
 }
 
 describe('SprintFlowMap', () => {
-  it('renders Sprint Planner Activity grouping with accepted Plan copy and actionable Work Units', () => {
-    const onOpenSprintPlannerActivityGroup = vi.fn();
+  it('renders Work Slice planning-point grouping with accepted Plan copy and actionable Work Units', () => {
+    const onOpenWorkSlicePlanningPointGroup = vi.fn();
     const onOpenWorkUnit = vi.fn();
     render(
       <StatefulSprintFlowMap
-        onOpenSprintPlannerActivityGroup={onOpenSprintPlannerActivityGroup}
+        onOpenWorkSlicePlanningPointGroup={onOpenWorkSlicePlanningPointGroup}
         onOpenWorkUnit={onOpenWorkUnit}
       />,
     );
@@ -56,14 +56,14 @@ describe('SprintFlowMap', () => {
     });
     expect(planButton).toHaveClass('sprint-plan-region__open');
     fireEvent.click(planButton);
-    expect(onOpenSprintPlannerActivityGroup).toHaveBeenCalledTimes(1);
-    expect(onOpenSprintPlannerActivityGroup).toHaveBeenCalledWith(
+    expect(onOpenWorkSlicePlanningPointGroup).toHaveBeenCalledTimes(1);
+    expect(onOpenWorkSlicePlanningPointGroup).toHaveBeenCalledWith(
       'planner-r4-integration',
       expect.any(HTMLButtonElement),
     );
-    onOpenSprintPlannerActivityGroup.mockClear();
+    onOpenWorkSlicePlanningPointGroup.mockClear();
     fireEvent.click(workUnit);
-    expect(onOpenSprintPlannerActivityGroup).not.toHaveBeenCalled();
+    expect(onOpenWorkSlicePlanningPointGroup).not.toHaveBeenCalled();
     expect(onOpenWorkUnit).toHaveBeenCalledWith('WU-ECS2E', expect.any(HTMLButtonElement));
     expect(screen.queryByRole('button', { name: /^View WU-/ })).toBeNull();
     expect(document.querySelector('.lucide-flag')).toBeNull();

@@ -35,7 +35,7 @@
 }
 
 .sprint-context__objectives,
-.sprint-context__problems {
+.sprint-context__runner-concerns {
   display: grid;
   gap: 6px;
   padding-top: 9px;
@@ -59,7 +59,7 @@
   line-height: 1.35;
 }
 
-.sprint-context__problems button {
+.sprint-context__runner-concerns button {
   width: 100%;
   padding: 5px 6px;
   border: 1px solid transparent;
@@ -72,9 +72,9 @@
   cursor: pointer;
 }
 
-.sprint-context__problems button:hover,
-.sprint-context__problems button.is-highlighted,
-.sprint-context__problems button:focus-visible {
+.sprint-context__runner-concerns button:hover,
+.sprint-context__runner-concerns button.is-highlighted,
+.sprint-context__runner-concerns button:focus-visible {
   border-color: #b38bc4;
   background: #f7f0fa;
   outline: none;
@@ -82,11 +82,80 @@
 
 .sprint-surface-host {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   background: #fff;
+}
+
+.sprint-start-assessment {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #d6e0e4;
+  background: #f3f7f8;
+  color: #49616d;
+  font-size: 0.7rem;
+}
+
+.sprint-start-assessment > span {
+  color: #2d6c8b;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sprint-start-assessment > time {
+  margin-left: auto;
+  color: #6c7c84;
+}
+
+.sprint-forecast {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  height: 100%;
+  padding: 22px;
+  overflow: auto;
+  background: #f8fafb;
+  color: #40545f;
+}
+
+.sprint-forecast h2 {
+  font-size: 1.05rem;
+}
+
+.sprint-forecast > p {
+  max-width: 66ch;
+  color: #64747d;
+  line-height: 1.5;
+}
+
+.sprint-forecast ul {
+  display: grid;
+  gap: 8px;
+  max-width: 760px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sprint-forecast li {
+  display: grid;
+  gap: 3px;
+  padding: 11px 12px;
+  border: 1px solid #d3dde2;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.sprint-forecast li span {
+  color: #62737c;
+  font-size: 0.78rem;
 }
 
 .sprint-auto-flow {
@@ -173,5 +242,10 @@
 
   .sprint-auto-flow__switch strong {
     font-size: 0.67rem;
+  }
+
+  .sprint-start-assessment > time {
+    width: 100%;
+    margin-left: 0;
   }
 }

@@ -18,17 +18,21 @@ import type {
 export function PlanWorkflowMap({ workflow }: { readonly workflow: RecordedPlanWorkflowV1 }) {
   const actors = new Map(workflow.actors.map((actor) => [actor.id, actor]));
   const correction = workflow.interactions.find(({ kind }) => kind === 'correction_loop');
-  const sameWorker = correction?.sameActorId ? actors.get(correction.sameActorId) : undefined;
+  const sameImplementer = correction?.sameActorId ? actors.get(correction.sameActorId) : undefined;
 
   return (
     <section className="plan-workflow" aria-label="Plan actor and conversation workflow">
       <div className="plan-workflow__canvas">
-        <WorkflowTrack label="Sprint to Planner" steps={workflow.sharedStart} actors={actors} />
+        <WorkflowTrack
+          label="Sprint start to ready work"
+          steps={workflow.sharedStart}
+          actors={actors}
+        />
 
         <section className="plan-workflow__parallel" aria-label="Parallel Work Unit lanes">
           <header>
             <Network size={16} aria-hidden="true" />
-            <span>Planner creates one initiator per ready Work Unit</span>
+            <span>Work Slice Planner defines ready Work Units</span>
             <strong>{workflow.workUnitLanes.length} parallel lanes</strong>
           </header>
           {workflow.workUnitLanes.map((lane) => (
@@ -42,6 +46,10 @@ export function PlanWorkflowMap({ workflow }: { readonly workflow: RecordedPlanW
                 <span>Work Unit</span>
                 <strong>{lane.title}</strong>
                 <code>{lane.workUnitId}</code>
+                <small>
+                  Handler: {actors.get(lane.handlerActorId)?.label} · Implementer:{' '}
+                  {actors.get(lane.implementerActorId)?.label}
+                </small>
               </div>
               <div className="plan-workflow-lane__track">
                 {lane.steps.map((step) => (
@@ -55,11 +63,11 @@ export function PlanWorkflowMap({ workflow }: { readonly workflow: RecordedPlanW
                   <div
                     className="plan-workflow__correction-loop"
                     data-correction-loop={correction.id}
-                    data-same-worker={correction.sameActorId}
+                    data-same-implementer={correction.sameActorId}
                   >
                     <RotateCcw size={14} aria-hidden="true" />
-                    <span>Re-prompt the same worker thread</span>
-                    <strong>{sameWorker?.label}</strong>
+                    <span>Re-prompt the same Work Unit Implementer Session</span>
+                    <strong>{sameImplementer?.label}</strong>
                   </div>
                 )}
               </div>
@@ -132,11 +140,11 @@ function WorkflowNode({
 
 function phaseColumn(phase: PlanWorkflowStepV1['phase']): number {
   return {
-    ready: 1,
-    planner_start: 2,
+    sprint_start: 1,
+    repository_assessment: 2,
     scope: 3,
     work_unit_start: 1,
-    worker_start: 2,
+    implementer_start: 2,
     first_return: 3,
     first_review: 4,
     correction: 5,
@@ -144,18 +152,18 @@ function phaseColumn(phase: PlanWorkflowStepV1['phase']): number {
     second_review: 7,
     integration: 8,
     settled: 9,
-    planner_complete: 1,
+    planning_complete: 1,
     sprint_return: 2,
   }[phase];
 }
 
 function iconFor(kind: PlanWorkflowStepV1['kind']) {
-  if (kind.includes('worker')) return Bot;
+  if (kind.includes('implementer')) return Bot;
   if (kind.includes('review')) return SearchCheck;
   if (kind.includes('return')) return MessageSquareReply;
-  if (kind.includes('integration') || kind === 'handoff') return GitMerge;
+  if (kind.includes('integration')) return GitMerge;
   if (kind.includes('settled') || kind.includes('completed')) return CheckCheck;
-  if (kind.includes('initiator')) return Send;
+  if (kind.includes('created')) return Send;
   if (kind === 'correction_required') return RotateCcw;
   return Workflow;
 }

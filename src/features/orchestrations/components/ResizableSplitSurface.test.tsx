@@ -62,9 +62,9 @@ describe('ResizableSplitSurface', () => {
       <ResizableSplitSurface
         axis="horizontal"
         primary={<div>Planner</div>}
-        secondary={<div>Worker</div>}
+        secondary={<div>Implementer</div>}
         primaryLabel="Planner conversation"
-        secondaryLabel="Worker conversation"
+        secondaryLabel="Implementer conversation"
       />,
     );
     expect(screen.getByRole('separator')).toHaveAttribute('aria-orientation', 'vertical');
@@ -96,9 +96,9 @@ describe('ResizableSplitSurface', () => {
       <ResizableSplitSurface
         axis="horizontal"
         primary={<div>Planner</div>}
-        secondary={<div>Worker</div>}
+        secondary={<div>Implementer</div>}
         primaryLabel="Planner conversation"
-        secondaryLabel="Worker conversation"
+        secondaryLabel="Implementer conversation"
       />,
     );
     const host = container.querySelector('.resizable-split') as HTMLDivElement;

@@ -19,11 +19,11 @@ export type AgentSessionProductLocation =
       readonly label: string;
     }
   | {
-      readonly kind: 'sprint_planner_activity';
+      readonly kind: 'work_slice_planning_point';
       readonly epicId: string;
       readonly sprintId: string;
       readonly revisionId: string;
-      readonly sprintPlannerActivityId: string;
+      readonly workSlicePlanningPointId: string;
       readonly label: string;
     }
   | {
@@ -31,7 +31,7 @@ export type AgentSessionProductLocation =
       readonly epicId: string;
       readonly sprintId: string;
       readonly revisionId: string;
-      readonly sprintPlannerActivityId: string;
+      readonly workSlicePlanningPointId: string;
       readonly workUnitId: string;
       readonly label: string;
     }
@@ -150,9 +150,7 @@ export function buildAgentSessionNavigation(
         : []),
     ]);
     const relationshipRoles = unique(
-      resolved.map(({ reference }) =>
-        roleLabel(reference.semanticRole, reference.otherSemanticRole),
-      ),
+      resolved.map(({ reference }) => roleLabel(reference.semanticRole)),
     );
     const item: AgentSessionNavigationSession = {
       kind: 'session',
@@ -273,10 +271,10 @@ function resolveReference(
       folderPath: sprintPath,
     };
 
-  if (reference.targetKind === 'sprint_planner_activity') {
+  if (reference.targetKind === 'work_slice_planning_point') {
     const matches = sprint.revisionViews.flatMap((view) =>
-      view.plannerActivityGroups
-        .filter(({ sprintPlannerActivityId }) => sprintPlannerActivityId === reference.targetId)
+      view.workSlicePlanningPointGroups
+        .filter(({ workSlicePlanningPointId }) => workSlicePlanningPointId === reference.targetId)
         .map((activity) => ({ view, activity })),
     );
     const match = matches[0];
@@ -284,17 +282,17 @@ function resolveReference(
     return {
       reference,
       locations: matches.map(({ view, activity }) => ({
-        kind: 'sprint_planner_activity' as const,
+        kind: 'work_slice_planning_point' as const,
         epicId: epic.epicId,
         sprintId: sprint.sprintId,
         revisionId: view.sprintPlanRevisionId,
-        sprintPlannerActivityId: activity.sprintPlannerActivityId,
+        workSlicePlanningPointId: activity.workSlicePlanningPointId,
         label: activity.title,
       })),
       folderPath: [
         ...sprintPath,
         {
-          id: `${sprintPath[1].id}:activity:${match.activity.sprintPlannerActivityId}`,
+          id: `${sprintPath[1].id}:activity:${match.activity.workSlicePlanningPointId}`,
           label: match.activity.title,
         },
       ],
@@ -310,7 +308,7 @@ function resolveReference(
           ),
         )
         .flatMap((unit) => {
-          const activity = view.plannerActivityGroups.find(({ workUnitScopeIds }) =>
+          const activity = view.workSlicePlanningPointGroups.find(({ workUnitScopeIds }) =>
             workUnitScopeIds.includes(unit.workUnitScopeId),
           );
           return activity ? [{ view, unit, activity }] : [];
@@ -325,18 +323,18 @@ function resolveReference(
         epicId: epic.epicId,
         sprintId: sprint.sprintId,
         revisionId: view.sprintPlanRevisionId,
-        sprintPlannerActivityId: activity.sprintPlannerActivityId,
+        workSlicePlanningPointId: activity.workSlicePlanningPointId,
         workUnitId: unit.workUnitId,
         label: unit.title,
       })),
       folderPath: [
         ...sprintPath,
         {
-          id: `${sprintPath[1].id}:activity:${match.activity.sprintPlannerActivityId}`,
+          id: `${sprintPath[1].id}:activity:${match.activity.workSlicePlanningPointId}`,
           label: match.activity.title,
         },
         {
-          id: `${sprintPath[1].id}:activity:${match.activity.sprintPlannerActivityId}:work-unit:${match.unit.workUnitId}`,
+          id: `${sprintPath[1].id}:activity:${match.activity.workSlicePlanningPointId}:work-unit:${match.unit.workUnitId}`,
           label: match.unit.title,
         },
       ],
@@ -372,17 +370,13 @@ function uniquePaths(
   });
 }
 
-function roleLabel(role: AgentSessionSemanticRole, other?: string): string {
-  if (role === 'other') return other ?? 'Other role';
+function roleLabel(role: AgentSessionSemanticRole): string {
   return {
     epic_runner: 'Epic Runner',
-    epic_plan_builder: 'Epic Plan Builder',
     sprint_runner: 'Sprint Runner',
-    sprint_planner: 'Sprint Planner',
-    work_unit_planner: 'Work Unit planner',
-    work_unit_handler: 'Work Unit handler',
-    work_unit_worker: 'Work Unit worker',
-    reviewer: 'Reviewer',
+    work_slice_planner: 'Work Slice Planner',
+    work_unit_handler: 'Work Unit Handler',
+    work_unit_implementer: 'Work Unit Implementer',
   }[role];
 }
 

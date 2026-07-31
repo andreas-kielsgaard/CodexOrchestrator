@@ -88,8 +88,8 @@ export function decodeAgentControlContractsV1(value: unknown): AgentControlContr
     const kind = literal(
       required(command, 'commandKind'),
       [
-        'request_next_ready_work_unit_planner',
-        'request_next_sprint_planner',
+        'request_next_work_slice_planner',
+        'request_next_sprint_runner',
         'request_agent_session_prompt',
       ],
       'command kind',
@@ -177,7 +177,7 @@ function validateContinuation(
   if (evaluation.continuationPolicyId !== request.continuation.policyId)
     fail('continuation request evidence must belong to its policy');
   const expectedLevel =
-    request.commandKind === 'request_next_ready_work_unit_planner' ? 'sprint' : 'epic';
+    request.commandKind === 'request_next_work_slice_planner' ? 'sprint' : 'epic';
   if (policy.level !== expectedLevel || evaluation.level !== expectedLevel)
     fail('continuation request cannot use policy or eligibility from another level');
   const requestTarget = request.target as Record<string, unknown>;
@@ -190,8 +190,8 @@ function validateContinuation(
 }
 
 function validateRequestTarget(kind: string, target: Record<string, unknown>) {
-  if (kind === 'request_next_ready_work_unit_planner') validateTarget(target, 'sprint');
-  else if (kind === 'request_next_sprint_planner') validateTarget(target, 'epic');
+  if (kind === 'request_next_work_slice_planner') validateTarget(target, 'sprint');
+  else if (kind === 'request_next_sprint_runner') validateTarget(target, 'epic');
   else {
     if (target.kind !== 'agent_session') fail('Agent Session prompt request target is invalid');
     string(required(target, 'agentSessionRefId'), 'Agent Session reference');
@@ -204,9 +204,9 @@ function validateIdempotencyScope(
   scopeId: string,
 ) {
   const expected =
-    kind === 'request_next_ready_work_unit_planner'
+    kind === 'request_next_work_slice_planner'
       ? { scopeKind: 'sprint', scopeId: target.sprintId }
-      : kind === 'request_next_sprint_planner'
+      : kind === 'request_next_sprint_runner'
         ? { scopeKind: 'epic', scopeId: target.epicId }
         : { scopeKind: 'agent_session', scopeId: target.agentSessionRefId };
   if (scopeKind !== expected.scopeKind) fail('idempotency scope kind must match semantic target');
@@ -214,11 +214,10 @@ function validateIdempotencyScope(
 }
 function validateTarget(target: Record<string, unknown>, level: 'sprint' | 'epic') {
   if (level === 'sprint') {
-    if (target.kind !== 'next_ready_work_unit_planner')
-      fail('Sprint continuation target is invalid');
+    if (target.kind !== 'next_work_slice_planner') fail('Sprint continuation target is invalid');
     string(required(target, 'sprintId'), 'sprint continuation target');
   } else {
-    if (target.kind !== 'next_sprint_planner') fail('Epic continuation target is invalid');
+    if (target.kind !== 'next_sprint_runner') fail('Epic continuation target is invalid');
     string(required(target, 'epicId'), 'Epic continuation target');
   }
 }

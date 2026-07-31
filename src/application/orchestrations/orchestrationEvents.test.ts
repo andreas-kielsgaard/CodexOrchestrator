@@ -15,7 +15,7 @@ describe('Orchestration events', () => {
     single.workUnitScopes = single.workUnitScopes.filter(
       ({ sprintPlanRevisionId }) => sprintPlanRevisionId === 'plan-revision-1',
     );
-    single.sprintPlannerActivities[0].assessedSprintPlanRevisionIds = ['plan-revision-1'];
+    single.workSlicePlanningPoints[0].assessedSprintPlanRevisionIds = ['plan-revision-1'];
     expect(decodeOrchestrationEventsV1(single).sprintPlanRevisions).toHaveLength(1);
     expect(decodeOrchestrationEventsV1(validFacts()).sprintPlanRevisions).toHaveLength(2);
   });
@@ -174,8 +174,8 @@ describe('Orchestration events', () => {
   });
 
   it.each([
-    ['sprint', 'next_work_unit', 'sprint-2'],
-    ['epic', 'next_sprint_planner', 'epic-2'],
+    ['sprint', 'next_work_slice_planner', 'sprint-2'],
+    ['epic', 'next_sprint_runner', 'epic-2'],
   ] as const)(
     'rejects a %s continuation request targeting a different policy owner',
     (level, targetKind, targetId) => {
@@ -227,7 +227,7 @@ describe('Orchestration events', () => {
     });
   });
 
-  it('associates neutral Agent Sessions with roots, planners, handlers, and extensible participants', () => {
+  it('associates neutral Agent Sessions with exactly the five product roles', () => {
     const events = validFacts();
     events.agentSessionReferences.push(
       {
@@ -238,13 +238,6 @@ describe('Orchestration events', () => {
         semanticRole: 'epic_runner',
       },
       {
-        agentSessionRefId: 'agent-session-reference-builder',
-        agentSessionId: 'agent-session-1',
-        targetKind: 'epic',
-        targetId: 'epic-1',
-        semanticRole: 'epic_plan_builder',
-      },
-      {
         agentSessionRefId: 'agent-session-reference-sprint',
         agentSessionId: 'agent-session-1',
         targetKind: 'sprint',
@@ -252,11 +245,11 @@ describe('Orchestration events', () => {
         semanticRole: 'sprint_runner',
       },
       {
-        agentSessionRefId: 'agent-session-reference-work-unit-planner',
+        agentSessionRefId: 'agent-session-reference-implementer',
         agentSessionId: 'agent-session-1',
         targetKind: 'work_unit_execution',
         targetId: 'execution-observed',
-        semanticRole: 'work_unit_planner',
+        semanticRole: 'work_unit_implementer',
       },
       {
         agentSessionRefId: 'agent-session-reference-handler',
@@ -270,13 +263,23 @@ describe('Orchestration events', () => {
         agentSessionId: 'agent-session-1',
         targetKind: 'other',
         targetId: 'future-participant-1',
-        semanticRole: 'other',
+        semanticRole: 'work_unit_implementer',
         otherTargetType: 'future_participant',
-        otherSemanticRole: 'future_role',
       },
     );
 
     expect(() => decodeOrchestrationEventsV1(events)).not.toThrow();
+  });
+
+  it('rejects role aliases outside the five-role model', () => {
+    const events = validFacts() as unknown as {
+      agentSessionReferences: Array<Record<string, unknown>>;
+    };
+    events.agentSessionReferences[0].semanticRole = 'reviewer';
+
+    expect(() => decodeOrchestrationEventsV1(events)).toThrow(
+      'agent session reference role is invalid',
+    );
   });
 
   it('rejects an Agent Session role that does not match its association target', () => {
@@ -353,9 +356,9 @@ function validFacts(): Mutable<OrchestrationEventsV1> {
         gateIds: [],
       },
     ],
-    sprintPlannerActivities: [
+    workSlicePlanningPoints: [
       {
-        sprintPlannerActivityId: 'planner-activity-1',
+        workSlicePlanningPointId: 'planner-activity-1',
         sprintPlanId: 'sprint-plan-1',
         assessedSprintPlanRevisionIds: ['plan-revision-1', 'plan-revision-2'],
       },
@@ -379,9 +382,9 @@ function validFacts(): Mutable<OrchestrationEventsV1> {
       {
         agentSessionRefId: 'agent-session-reference-1',
         agentSessionId: 'agent-session-1',
-        targetKind: 'sprint_planner_activity',
+        targetKind: 'work_slice_planning_point',
         targetId: 'planner-activity-1',
-        semanticRole: 'sprint_planner',
+        semanticRole: 'work_slice_planner',
       },
     ],
     gates: [{ gateId: 'gate-1', sprintPlanRevisionId: 'plan-revision-1' }],
@@ -460,7 +463,7 @@ function validFacts(): Mutable<OrchestrationEventsV1> {
       {
         continuationRequestId: 'continuation-request-1',
         policyEligibilityFactId: 'policy-1',
-        targetKind: 'next_work_unit',
+        targetKind: 'next_work_slice_planner',
         targetId: 'sprint-1',
         provenanceId: 'provenance-9',
       },

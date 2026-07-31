@@ -8,12 +8,12 @@ import type {
 } from './sprintReadModels';
 
 /** Provisional discovery input. This is not durable product schema. */
-export const SPRINT_PLANNER_OUTPUT_V1 = 'sprint-planner-output/v1' as const;
+export const SPRINT_RUNNER_PLAN_V1 = 'sprint-runner-plan/v1' as const;
 /** Provisional recorded execution input. This is not provider authority. */
 export const SPRINT_EXECUTION_SNAPSHOT_V1 = 'sprint-execution-snapshot/v1' as const;
 
-export interface SprintPlannerOutputV1 {
-  readonly version: typeof SPRINT_PLANNER_OUTPUT_V1;
+export interface SprintRunnerPlanV1 {
+  readonly version: typeof SPRINT_RUNNER_PLAN_V1;
   readonly epicId: string;
   readonly sprint: {
     readonly id: string;
@@ -36,7 +36,7 @@ export interface SprintPlannerOutputV1 {
     readonly supersedesPlanRevisionId?: string;
     readonly workUnitIds: readonly string[];
   }[];
-  readonly sprintPlannerActivities: readonly {
+  readonly workSlicePlanningPoints: readonly {
     readonly id: string;
     readonly title: string;
     readonly purpose: string;
@@ -50,8 +50,8 @@ export interface SprintPlannerOutputV1 {
     readonly summary: string;
     readonly priorPlanRevisionId: string;
     readonly resultingPlanRevisionId: string;
-    readonly priorSprintPlannerActivityId: string;
-    readonly resultingSprintPlannerActivityId: string;
+    readonly priorWorkSlicePlanningPointId: string;
+    readonly resultingWorkSlicePlanningPointId: string;
   }[];
   readonly parallelGroups: readonly {
     readonly id: string;
@@ -95,7 +95,7 @@ export interface SprintPlannerOutputV1 {
     readonly id: string;
     readonly title: string;
     readonly kind: 'plan' | 'brief' | 'decision' | 'handoff';
-    readonly sprintPlannerActivityId: string;
+    readonly workSlicePlanningPointId: string;
     readonly planRevisionId: string;
     readonly recordedAt: string;
   }[];
@@ -116,7 +116,7 @@ export interface SprintExecutionSnapshotV1 {
       readonly specRevisionId: string;
       readonly outcome: 'working' | 'returned' | 'accepted' | 'corrected' | 'blocked';
       readonly recordedAt: string;
-      readonly workerFeedback?: string;
+      readonly implementerFeedback?: string;
     }[];
   }[];
   readonly events: readonly {
@@ -144,7 +144,7 @@ export interface SprintExecutionSnapshotV1 {
   readonly agentSessions: readonly {
     readonly id: string;
     readonly title: string;
-    readonly role: 'sprint' | 'work_unit_handler' | 'work_unit_worker';
+    readonly role: 'sprint' | 'work_unit_handler' | 'work_unit_implementer';
     readonly workUnitId?: string;
   }[];
   readonly continuation: {
@@ -165,7 +165,7 @@ export interface SprintExecutionSnapshotV1 {
 export interface SprintControlSurfaceProjection {
   readonly sourceAuthority: 'recorded_compatibility';
   readonly readModel: SprintReadModel;
-  readonly sprint: SprintPlannerOutputV1['sprint'];
+  readonly sprint: SprintRunnerPlanV1['sprint'];
   readonly activePlanRevisionId: string;
   readonly selectedPlanRevisionId: string;
   readonly revisionGraph: readonly {
@@ -201,11 +201,11 @@ export interface SprintControlSurfaceProjection {
       readonly attemptDetails: SprintExecutionSnapshotV1['workUnits'][number]['attempts'];
       readonly events: SprintExecutionSnapshotV1['events'];
       readonly attempts: number;
-      readonly hasWorkerFeedback: boolean;
+      readonly hasImplementerFeedback: boolean;
       readonly accepted: boolean;
       readonly launched: boolean;
     };
-    readonly dependencies: SprintPlannerOutputV1['workUnits'][number]['dependencies'];
+    readonly dependencies: SprintRunnerPlanV1['workUnits'][number]['dependencies'];
     readonly parallelGroupId?: string;
   }[];
   readonly concerns: readonly {
@@ -222,27 +222,27 @@ export interface SprintControlSurfaceProjection {
     readonly kind: string;
     readonly recordedAt: string;
     readonly provenance: 'planner' | 'execution';
-    readonly sprintPlannerActivityId?: string;
+    readonly workSlicePlanningPointId?: string;
     readonly planRevisionId?: string;
     readonly workUnitId?: string;
     readonly sourceDocumentId?: string;
   }[];
   readonly mapLayout: SprintRelationshipGraph;
-  readonly sprintPlannerActivities: SprintPlannerOutputV1['sprintPlannerActivities'];
-  /** Recorded UI grouping keyed by Sprint Planner Activity identity. */
-  readonly sprintPlannerActivityGroups: SprintPlannerOutputV1['sprintPlannerActivities'];
+  readonly workSlicePlanningPoints: SprintRunnerPlanV1['workSlicePlanningPoints'];
+  /** Recorded UI grouping keyed by Work Slice planning-point identity. */
+  readonly workSlicePlanningPointGroups: SprintRunnerPlanV1['workSlicePlanningPoints'];
   readonly gates: readonly {
     readonly id: string;
-    readonly kind: SprintPlannerOutputV1['gates'][number]['kind'];
+    readonly kind: SprintRunnerPlanV1['gates'][number]['kind'];
     readonly summary: string;
   }[];
-  readonly parallelGroups: SprintPlannerOutputV1['parallelGroups'];
-  readonly planChanges: SprintPlannerOutputV1['planChanges'];
+  readonly parallelGroups: SprintRunnerPlanV1['parallelGroups'];
+  readonly planChanges: SprintRunnerPlanV1['planChanges'];
   readonly revisionViews: readonly {
     readonly planRevisionId: string;
     readonly workUnits: SprintControlSurfaceProjection['workUnits'];
-    readonly sprintPlannerActivities: SprintControlSurfaceProjection['sprintPlannerActivities'];
-    readonly sprintPlannerActivityGroups: SprintControlSurfaceProjection['sprintPlannerActivityGroups'];
+    readonly workSlicePlanningPoints: SprintControlSurfaceProjection['workSlicePlanningPoints'];
+    readonly workSlicePlanningPointGroups: SprintControlSurfaceProjection['workSlicePlanningPointGroups'];
     readonly gates: SprintControlSurfaceProjection['gates'];
     readonly parallelGroups: SprintControlSurfaceProjection['parallelGroups'];
     readonly planChanges: SprintControlSurfaceProjection['planChanges'];

@@ -927,7 +927,9 @@ describe('App orchestration loading', () => {
     expect(await screen.findByRole('button', { name: /Open Product Epic/ })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: /Open Product Epic/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Open Sprint: Product Sprint' }));
-    expect(screen.getByRole('region', { name: 'Sprint planning workspace' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Sprint planning unavailable' })).toHaveTextContent(
+      'No repository reevaluation in this direct test read model.',
+    );
   });
 
   it.each(['pending', 'unavailable', 'unsupported'] as const)(
@@ -990,7 +992,7 @@ describe('App orchestration loading', () => {
     ]) {
       const source = readFileSync(resolve(file), 'utf8');
       expect(source).not.toMatch(
-        /disposableRecordedOrchestrationView|recordedEpicPlanProposalSource|SprintPlannerOutputV1|SprintExecutionSnapshotV1/,
+        /disposableRecordedOrchestrationView|recordedEpicPlanProposalSource|SprintRunnerPlanV1|SprintExecutionSnapshotV1/,
       );
     }
   });
@@ -1111,6 +1113,12 @@ function productReadModels(
             lifecycle: status
               ? { source: { status, reason: `${status} from product` } }
               : { source: availableSource, value: 'in_progress' },
+            planningState: {
+              source: {
+                status: 'unavailable',
+                reason: 'No repository reevaluation in this direct test read model.',
+              },
+            },
             sprintPlan: {
               sprintPlanId: 'product-plan',
               currentSprintPlanRevisionId: 'product-revision-1',
@@ -1127,7 +1135,7 @@ function productReadModels(
                 },
               ],
             },
-            plannerActivities: [],
+            workSlicePlanningPoints: [],
             revisionViews: [
               {
                 sprintPlanRevisionId: 'product-revision-1',
@@ -1137,7 +1145,7 @@ function productReadModels(
                 isCurrent: true,
                 isSelected: true,
                 workUnitScopes: [],
-                plannerActivityGroups: [],
+                workSlicePlanningPointGroups: [],
                 workUnits: [],
                 gates: [],
                 reviews: [],
@@ -1148,7 +1156,7 @@ function productReadModels(
             documents: [],
             internalArtifacts: [],
             workspacePresentation: {
-              plannerActivityMembership: [],
+              workSlicePlanningPointMembership: [],
               gates: [],
               documents: [],
               narratives: {

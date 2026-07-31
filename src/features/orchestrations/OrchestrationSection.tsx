@@ -166,20 +166,20 @@ function useOrchestrationWorkspace(requestedLocation?: AgentSessionProductLocati
       return;
     }
     setSelectedRevisionId(requestedLocation.revisionId);
-    if (requestedLocation.kind === 'sprint_planner_activity') {
+    if (requestedLocation.kind === 'work_slice_planning_point') {
       setDetailLocation({
-        kind: 'sprint_planner_activity_group',
+        kind: 'work_slice_planning_point',
         revisionId: requestedLocation.revisionId,
-        sprintPlannerActivityId: requestedLocation.sprintPlannerActivityId,
+        workSlicePlanningPointId: requestedLocation.workSlicePlanningPointId,
       });
       return;
     }
     setDetailLocation({
       kind: 'work_unit',
       revisionId: requestedLocation.revisionId,
-      sprintPlannerActivityId: requestedLocation.sprintPlannerActivityId,
+      workSlicePlanningPointId: requestedLocation.workSlicePlanningPointId,
       workUnitId: requestedLocation.workUnitId,
-      origin: 'sprint_planner_activity_group',
+      origin: 'work_slice_planning_point',
     });
   }, [requestedLocation]);
   return {

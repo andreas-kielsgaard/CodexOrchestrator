@@ -167,15 +167,15 @@ export type {
 } from './productReadModels';
 export {
   decodeSprintExecutionSnapshotV1,
-  decodeSprintPlannerOutputV1,
+  decodeSprintRunnerPlanV1,
   deriveConcernState,
   projectSprintControlSurface,
   projectSprintRelationshipGraph,
   SPRINT_EXECUTION_SNAPSHOT_V1,
-  SPRINT_PLANNER_OUTPUT_V1,
+  SPRINT_RUNNER_PLAN_V1,
   type SprintControlSurfaceProjection,
   type SprintExecutionSnapshotV1,
-  type SprintPlannerOutputV1,
+  type SprintRunnerPlanV1,
   type SprintReadModel,
   type SprintRelationshipGraph,
 } from './sprintControlSurface';

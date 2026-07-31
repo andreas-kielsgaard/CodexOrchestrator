@@ -149,20 +149,8 @@ describe('orchestration native query v1', () => {
     expect(input.events.workUnits).toEqual([]);
     expect(input.events.sprintPlanRevisions).toHaveLength(1);
     expect(input.events.reviews).toEqual([]);
-    expect(input.events.agentSessionReferences).toEqual([
-      expect.objectContaining({
-        agentSessionId: 'agent-session-fixture',
-        targetKind: 'epic',
-        targetId: 'epic',
-        semanticRole: 'epic_plan_builder',
-      }),
-    ]);
-    expect(read.epics[0]?.agentSessionReferences).toEqual([
-      expect.objectContaining({
-        agentSessionId: 'agent-session-fixture',
-        semanticRole: 'epic_plan_builder',
-      }),
-    ]);
+    expect(input.events.agentSessionReferences).toEqual([]);
+    expect(read.epics[0]?.agentSessionReferences).toEqual([]);
   });
 
   it('reports blocked and ready initiation from the selected durable draft without caller-owned retry keys', () => {
