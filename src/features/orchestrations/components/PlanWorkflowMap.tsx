@@ -21,7 +21,10 @@ export function PlanWorkflowMap({ workflow }: { readonly workflow: RecordedPlanW
   const sameImplementer = correction?.sameActorId ? actors.get(correction.sameActorId) : undefined;
 
   return (
-    <section className="plan-workflow" aria-label="Plan actor and conversation workflow">
+    <section
+      className="plan-workflow"
+      aria-label="Work Slice planning point actor and conversation workflow"
+    >
       <div className="plan-workflow__canvas">
         <WorkflowTrack
           label="Sprint start to ready work"

@@ -18,6 +18,10 @@ acceptance.
 - each recorded Work Unit lane names its Handler and Implementer. WU-ECS2E and WU-RD1 keep Planner,
   Handler, and Implementer Sessions distinct; review, correction, and integration remain Handler
   actions and no Reviewer Session is created.
+- the Work Slice planning-point detail baseline comes from its typed selected-revision membership,
+  Work Units, executions, and Agent Session references. It always retains scoped Work Units and
+  explicitly marks missing Handler or Implementer relationships unavailable. A recorded detailed
+  workflow can supplement this baseline but cannot create or gate it.
 - Agent Sessions and product routes reuse the same typed Session IDs and application-owned
   destinations. Titles, transcripts, route state, Harness text, and visual position are not
   relationship authority.
@@ -28,5 +32,5 @@ acceptance.
   planning state; production reads remain unavailable without such records.
 - recurring Work Unit types, recurring Work Slice Planner semantics, specialized Implementer skill
   profiles, and further role splits are not modeled.
-- the workflow map remains recorded presentation data and does not prove provider launch,
-  execution, persistence, review, correction, integration, or restart recovery.
+- the optional detailed workflow map remains recorded presentation data and does not prove provider
+  launch, execution, persistence, review, correction, integration, or restart recovery.

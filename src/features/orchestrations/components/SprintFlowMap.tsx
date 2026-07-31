@@ -138,7 +138,7 @@ export function SprintFlowMap({
                     ? ' is-hovered'
                     : ''
                 }`}
-                aria-label={`Plan: ${group.title}`}
+                aria-label={`Work Slice planning point: ${group.title}`}
                 style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
                 onPointerEnter={() =>
                   onHoveredGraphElementChange?.({
@@ -176,7 +176,7 @@ export function SprintFlowMap({
                   data-work-slice-planning-point-id={group.workSlicePlanningPointId}
                   data-flow-element-kind="work_slice_planning_point"
                   data-flow-element-id={group.workSlicePlanningPointId}
-                  aria-label={`Open Plan: ${group.title}`}
+                  aria-label={`Open Work Slice planning point: ${group.title}`}
                   onClick={(event) =>
                     onOpenWorkSlicePlanningPointGroup?.(
                       group.workSlicePlanningPointId,
@@ -186,7 +186,7 @@ export function SprintFlowMap({
                 />
                 <header>
                   <div className="sprint-plan-region__title">
-                    <span>Plan</span>
+                    <span>Work Slice planning point</span>
                     <strong>{group.title}</strong>
                   </div>
                   {selectedView.gates.some(

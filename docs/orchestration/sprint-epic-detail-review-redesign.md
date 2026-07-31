@@ -32,6 +32,9 @@ Status: recorded product-review correction; no live orchestration support added.
 - current Plan and Work Unit state is a distinct sourced presentation element. Product-facing copy
   omits fixture notices, Direction, raw attempt labels, Responsibility Accepted, and fixed-scope
   implementation language.
+- Work Slice planning-point detail is a typed baseline: its one Planner leads to every scoped Work
+  Unit, and each Work Unit exposes typed Handler and Implementer relationships or an explicit
+  unavailable state. Recorded workflow choreography is supplementary and never gates this baseline.
 
 ## Recorded review composition
 
@@ -49,7 +52,8 @@ Automated coverage exercises:
 
 - Epic Runner objectives, Sprint Runner concerns, mixed-state horizontal flow, highlighting, and
   repeated focus order;
-- concerns-only pre-start forecasts, started Plans, historical revisions, Documents, and normalized file review;
+- concerns-only pre-start forecasts, started Plans, historical revisions, typed current
+  planning-point relationships, Documents, and normalized file review;
 - nine WU-RD1 lifecycle entries, including exact Work Slice Planner and same-Handler review turn focus;
 - the WU-ECS2E Agent Sessions -> Work Unit -> Agent Sessions round trip, with one handler identity,
   separate Planner, Handler, and Implementer conversations, and no Reviewer surface;

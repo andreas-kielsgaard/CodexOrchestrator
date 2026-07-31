@@ -186,14 +186,18 @@ describe('OrchestrationSection', () => {
     );
 
     const planOpener = screen.getByRole('button', {
-      name: 'Open Plan: Integrated detail surfaces',
+      name: 'Open Work Slice planning point: Integrated detail surfaces',
     });
     planOpener.focus();
     fireEvent.click(planOpener);
     expect(
-      screen.getByRole('main', { name: 'Plan detail: Integrated detail surfaces' }),
+      screen.getByRole('main', {
+        name: 'Work Slice planning point detail: Integrated detail surfaces',
+      }),
     ).toBeVisible();
-    const workflow = screen.getByLabelText('Plan actor and conversation workflow');
+    const workflow = screen.getByLabelText(
+      'Work Slice planning point actor and conversation workflow',
+    );
     expect(workflow).toHaveTextContent('Recorded review');
     expect(workflow).toHaveTextContent(
       'Handler: Work Unit Handler · Implementer: Work Unit Implementer',
@@ -204,7 +208,9 @@ describe('OrchestrationSection', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Back to Sprint' }));
     expect(
-      screen.getByRole('button', { name: 'Open Plan: Integrated detail surfaces' }),
+      screen.getByRole('button', {
+        name: 'Open Work Slice planning point: Integrated detail surfaces',
+      }),
     ).toHaveFocus();
 
     const workUnitOpener = screen.getByRole('button', { name: /Open Work Unit WU-ECS2E/ });
@@ -239,15 +245,17 @@ describe('OrchestrationSection', () => {
     ).toHaveAttribute('aria-orientation', 'vertical');
     expect(within(handler).queryByRole('button', { name: /Collapse/ })).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Back to Plan' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Work Slice planning point' }));
     expect(
-      screen.getByRole('main', { name: 'Plan detail: Integrated detail surfaces' }),
+      screen.getByRole('main', {
+        name: 'Work Slice planning point detail: Integrated detail surfaces',
+      }),
     ).toBeVisible();
     expect(screen.getByRole('button', { name: 'Back to Sprint' })).toHaveFocus();
     fireEvent.click(screen.getByRole('button', { name: 'Back to Sprint' }));
     expect(screen.getByRole('main', { name: 'Sprint detail' })).toBeVisible();
     expect(screen.getByRole('button', { name: /Open Work Unit WU-ECS2E/ })).toHaveFocus();
-    expect(screen.queryByRole('main', { name: /Plan detail/ })).toBeNull();
+    expect(screen.queryByRole('main', { name: /Work Slice planning point detail/ })).toBeNull();
   });
 
   it('resolves the WU-ECS2E planner and handler without a Reviewer Session', async () => {
@@ -263,12 +271,16 @@ describe('OrchestrationSection', () => {
     fireEvent.click(
       screen.getByRole('button', { name: 'Open Sprint: Sprint Control Surface Discovery' }),
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Open Plan: Integrated detail surfaces' }));
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Open Work Slice planning point: Integrated detail surfaces',
+      }),
+    );
 
-    const planner = screen.getByRole('region', { name: 'Plan Agent Sessions' });
+    const planner = screen.getByRole('region', { name: 'Work Slice Planner Agent Session' });
     expect(
       within(planner).getByRole('region', {
-        name: /Recorded planner R4 integration Agent Session/,
+        name: 'Work Slice Planner Agent Session conversation surface',
       }),
     ).toBeVisible();
     fireEvent.click(within(planner).getByRole('button', { name: 'Open Agent Session' }));
@@ -299,11 +311,20 @@ describe('OrchestrationSection', () => {
 
     const revision = screen.getByRole('combobox', { name: 'Plan revision' });
     fireEvent.change(revision, { target: { value: 'ECS-R1' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Open Plan: Planning point ECS-R1' }));
-    expect(screen.getByRole('main', { name: 'Plan detail: Planning point ECS-R1' })).toBeVisible();
-    expect(screen.getByLabelText('Plan workflow unavailable')).toHaveTextContent(
-      'No recorded workflow for this historical Plan',
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Open Work Slice planning point: Planning point ECS-R1',
+      }),
     );
+    expect(
+      screen.getByRole('main', {
+        name: 'Work Slice planning point detail: Planning point ECS-R1',
+      }),
+    ).toBeVisible();
+    expect(screen.getByLabelText('Detailed workflow unavailable')).toHaveTextContent(
+      'No detailed turn sequence is recorded for this Work Slice planning point.',
+    );
+    expect(screen.queryByText(/historical Plan/)).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Back to Sprint' }));
     expect(screen.getByRole('combobox', { name: 'Plan revision' })).toHaveValue('ECS-R1');
@@ -315,8 +336,74 @@ describe('OrchestrationSection', () => {
     expect(screen.getByLabelText('Work Unit Handler unavailable')).toBeVisible();
     expect(screen.getByLabelText('Work Unit Implementer unavailable')).toBeVisible();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Back to Plan' }));
-    expect(screen.getByRole('main', { name: 'Plan detail: Planning point ECS-R1' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Work Slice planning point' }));
+    expect(
+      screen.getByRole('main', {
+        name: 'Work Slice planning point detail: Planning point ECS-R1',
+      }),
+    ).toBeVisible();
+  });
+
+  it('renders the actual current planning point from typed Work Units and Session references', () => {
+    render(<OrchestrationSection view={canonicalRecordedView} />);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Codex Epic Runner workspace development' }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Sprint: Sprint and Epic Detail Review' }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Open Work Slice planning point: Relationship foundation',
+      }),
+    );
+
+    expect(
+      screen.getByRole('main', {
+        name: 'Work Slice planning point detail: Relationship foundation',
+      }),
+    ).toBeVisible();
+    const relationships = screen.getByLabelText('Work Slice planning point relationships');
+    expect(
+      within(relationships).getByLabelText('Work Slice Planner relationship'),
+    ).toHaveTextContent('Recorded review Work Slice Planner');
+    expect(
+      within(relationships).getByRole('listitem', { name: /Work Unit WU-RD1:/ }),
+    ).toBeVisible();
+    expect(
+      within(relationships).getByRole('listitem', { name: /Work Unit WU-RD5:/ }),
+    ).toBeVisible();
+    expect(
+      within(relationships).getByRole('button', { name: /Open Work Unit WU-RD5:/ }),
+    ).toBeVisible();
+    expect(
+      within(relationships).getByLabelText('WU-RD1 Work Unit Handler relationship'),
+    ).toHaveTextContent('Relationship Work Unit Handler');
+    expect(
+      within(relationships).getByLabelText('WU-RD1 Work Unit Implementer relationship'),
+    ).toHaveTextContent('Relationship Work Unit Implementer');
+    expect(
+      within(relationships).getByLabelText('WU-RD5 Work Unit Handler unavailable'),
+    ).toBeVisible();
+    expect(
+      within(relationships).getByLabelText('WU-RD5 Work Unit Implementer unavailable'),
+    ).toBeVisible();
+    expect(screen.getByLabelText('Detailed workflow unavailable')).toBeVisible();
+    expect(screen.queryByText(/historical Plan/)).toBeNull();
+
+    fireEvent.click(
+      within(relationships).getByRole('button', {
+        name: 'Open Work Unit WU-RD1: Model review relationships',
+      }),
+    );
+    expect(screen.getByRole('main', { name: 'Work Unit detail: WU-RD1' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Work Slice Planner' }));
+    expect(screen.getByRole('region', { name: 'Work Slice Planner Agent Session' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Work Unit Handler' }));
+    expect(screen.getByRole('region', { name: 'Work Unit Handler Agent Session' })).toBeVisible();
+    expect(
+      screen.getByRole('region', { name: 'Work Unit Implementer Agent Session' }),
+    ).toBeVisible();
   });
 
   it('describes Sprint Auto-flow without claiming eligibility or execution', () => {
@@ -742,7 +829,9 @@ describe('OrchestrationSection', () => {
     fireEvent.click(sprintRunnerConcern);
     await waitFor(() =>
       expect(
-        screen.getByRole('button', { name: 'Open Plan: Relationship foundation' }),
+        screen.getByRole('button', {
+          name: 'Open Work Slice planning point: Relationship foundation',
+        }),
       ).toHaveFocus(),
     );
 
