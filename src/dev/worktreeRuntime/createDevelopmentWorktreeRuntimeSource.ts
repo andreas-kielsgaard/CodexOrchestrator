@@ -150,27 +150,27 @@ function materials(
     {
       material: 'Source and modules',
       disposition: 'isolated',
-      detail: `${environment.VITE_RUNTIME_WORKTREE_PATH ?? 'worktree'} Â· local node_modules`,
+      detail: `${environment.VITE_RUNTIME_WORKTREE_PATH ?? 'worktree'} · local node_modules`,
       evidence: 'projected',
     },
     {
       material: 'npm download cache',
       disposition: 'shared-keyed',
-      detail: `${environment.VITE_RUNTIME_NODE_CACHE_KEY ?? 'key unavailable'} Â· ${environment.VITE_RUNTIME_NODE_CACHE_PATH ?? 'path unavailable'}`,
+      detail: `${environment.VITE_RUNTIME_NODE_CACHE_KEY ?? 'key unavailable'} · ${environment.VITE_RUNTIME_NODE_CACHE_PATH ?? 'path unavailable'}`,
       evidence: 'projected',
     },
     {
       material: 'Rust compilation',
       disposition: rustShared ? 'shared-keyed' : 'isolated',
       detail: rustShared
-        ? `${environment.VITE_RUNTIME_RUST_CACHE_KEY} Â· ${environment.VITE_RUNTIME_RUST_CACHE_PATH}`
-        : `${environment.VITE_RUNTIME_CARGO_TARGET ?? `${runtimeRoot}/cargo-target`} Â· sccache unavailable`,
+        ? `${environment.VITE_RUNTIME_RUST_CACHE_KEY} · ${environment.VITE_RUNTIME_RUST_CACHE_PATH}`
+        : `${environment.VITE_RUNTIME_CARGO_TARGET ?? `${runtimeRoot}/cargo-target`} · sccache unavailable`,
       evidence: builtEvidence,
     },
     {
       material: 'Frontend and Tauri output',
       disposition: 'isolated',
-      detail: `${environment.VITE_RUNTIME_DIST ?? `${runtimeRoot}/dist`} Â· ${environment.VITE_RUNTIME_CARGO_TARGET ?? `${runtimeRoot}/cargo-target`}`,
+      detail: `${environment.VITE_RUNTIME_DIST ?? `${runtimeRoot}/dist`} · ${environment.VITE_RUNTIME_CARGO_TARGET ?? `${runtimeRoot}/cargo-target`}`,
       evidence: builtEvidence,
     },
     {
@@ -182,19 +182,19 @@ function materials(
     {
       material: 'Ports',
       disposition: 'isolated',
-      detail: `Vite ${environment.VITE_RUNTIME_VITE_PORT ?? 'unassigned'} Â· status ${environment.VITE_RUNTIME_STATUS_PORT ?? 'unassigned'} Â· strict`,
+      detail: `Vite ${environment.VITE_RUNTIME_VITE_PORT ?? 'unassigned'} · status ${environment.VITE_RUNTIME_STATUS_PORT ?? 'unassigned'} · strict`,
       evidence: 'projected',
     },
     {
       material: 'Credentials',
       disposition: 'isolated',
-      detail: `${environment.VITE_RUNTIME_CREDENTIALS ?? `${runtimeRoot}/credentials/codex-home`} Â· ambient provider variables scrubbed`,
+      detail: `${environment.VITE_RUNTIME_CREDENTIALS ?? `${runtimeRoot}/credentials/codex-home`} · ambient provider variables scrubbed`,
       evidence: 'projected',
     },
     {
       material: 'Logs and review evidence',
       disposition: 'isolated',
-      detail: `${environment.VITE_RUNTIME_LOGS ?? `${runtimeRoot}/logs`} Â· screenshots Â· recordings`,
+      detail: `${environment.VITE_RUNTIME_LOGS ?? `${runtimeRoot}/logs`} · screenshots · recordings`,
       evidence: 'projected',
     },
   ];

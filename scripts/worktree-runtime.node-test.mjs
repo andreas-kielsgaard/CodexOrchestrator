@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 import os from 'node:os';
 import path from 'node:path';
@@ -167,6 +167,24 @@ test('nested untracked file content changes invalidate the source fingerprint', 
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
+});
+
+test('Batch 14 changed source text contains no mojibake markers', async () => {
+  const base = '82d6a781cfe0d0184de99c247d07379361594a03';
+  const changed = spawnSync('git', ['diff', '--name-only', base, 'HEAD', '--'], {
+    encoding: 'utf8',
+  });
+  assert.equal(changed.status, 0, changed.stderr);
+  const sourceFiles = changed.stdout
+    .split(/\r?\n/u)
+    .filter((file) => /\.(?:css|js|json|md|mjs|rs|toml|ts|tsx)$/u.test(file));
+  const markers = [String.fromCodePoint(0x00c2), String.fromCodePoint(0x00e2)];
+  const failures = [];
+  for (const file of sourceFiles) {
+    const content = await readFile(file, 'utf8');
+    if (markers.some((marker) => content.includes(marker))) failures.push(file);
+  }
+  assert.deepEqual(failures, []);
 });
 
 function runGit(workspace, ...args) {

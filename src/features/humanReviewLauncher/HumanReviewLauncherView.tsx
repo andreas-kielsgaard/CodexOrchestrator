@@ -230,7 +230,7 @@ export function HumanReviewLauncherView({
             <ArrowLeft size={16} />
             Build details
           </button>
-          <span>{detail.name} Â· machine main HEAD â†’ complete selected worktree</span>
+          <span>{detail.name} · machine main HEAD → complete selected worktree</span>
         </header>
         <FileReviewScreen source={client.comparison(detail.instanceRef)} />
       </section>
@@ -277,7 +277,7 @@ export function HumanReviewLauncherView({
             {sources.map((source) => (
               <option key={source.sourceRef} value={source.sourceRef}>
                 {source.label} ({source.revision})
-                {source.compatibility === 'incompatible' ? ' Â· incompatible' : ''}
+                {source.compatibility === 'incompatible' ? ' · incompatible' : ''}
               </option>
             ))}
           </select>

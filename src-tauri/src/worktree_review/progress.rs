@@ -599,7 +599,7 @@ pub(super) fn sanitize_output(input: &str) -> Option<String> {
             .chars()
             .take(MAX_OUTPUT_LINE_CHARS.saturating_sub(1))
             .collect();
-        format!("{prefix}â€¦")
+        format!("{prefix}…")
     } else {
         text
     };
@@ -828,10 +828,10 @@ mod tests {
     #[test]
     fn sanitizes_unicode_vite_output_without_poisoning_progress() {
         let sanitized = sanitize_output(
-            "../../../../../../crp/private/dist/assets/app-C84RI57Y.js 160.08 kB â”‚ gzip: 41.05 kB",
+            "../../../../../../crp/private/dist/assets/app-C84RI57Y.js 160.08 kB │ gzip: 41.05 kB",
         )
         .expect("safe Vite output");
-        assert_eq!(sanitized, "[private path] 160.08 kB â”‚ gzip: 41.05 kB");
+        assert_eq!(sanitized, "[private path] 160.08 kB │ gzip: 41.05 kB");
     }
 
     #[test]

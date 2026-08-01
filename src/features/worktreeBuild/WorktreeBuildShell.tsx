@@ -108,7 +108,7 @@ export function WorktreeBuildShell({
               <ArrowLeft size={16} />
               Build details
             </button>
-            <span>Machine main HEAD â†’ complete selected worktree</span>
+            <span>Machine main HEAD → complete selected worktree</span>
           </header>
           <FileReviewScreen source={client.comparison} />
         </section>
@@ -116,10 +116,10 @@ export function WorktreeBuildShell({
       <div className="application-widget-dock">
         <ApplicationWidget
           label="Worktree build"
-          title={context?.name ?? 'Loading identityâ€¦'}
+          title={context?.name ?? 'Loading identity…'}
           summary={
             context
-              ? `${context.branch ?? `Detached ${context.head.abbreviatedId}`} Â· ${context.dirty.dirty ? 'Dirty' : 'Clean'}`
+              ? `${context.branch ?? `Detached ${context.head.abbreviatedId}`} · ${context.dirty.dirty ? 'Dirty' : 'Clean'}`
               : 'Reading source identity'
           }
           icon={<Trees size={16} />}

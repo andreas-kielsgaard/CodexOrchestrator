@@ -95,7 +95,7 @@ export function WorktreeBuildDetailScreen({
             <strong>{context.branch ?? 'Detached HEAD'}</strong>
             <p>
               {context.dirty.dirty
-                ? `${context.dirty.staged} staged Â· ${context.dirty.unstaged} unstaged Â· ${context.dirty.untracked} untracked`
+                ? `${context.dirty.staged} staged · ${context.dirty.unstaged} unstaged · ${context.dirty.untracked} untracked`
                 : 'Clean working tree'}
             </p>
           </div>
@@ -114,7 +114,7 @@ export function WorktreeBuildDetailScreen({
           <div>
             <span>Machine main</span>
             <strong>
-              {context.main.branch ?? 'Detached HEAD'} Â· {context.main.head.abbreviatedId}
+              {context.main.branch ?? 'Detached HEAD'} · {context.main.head.abbreviatedId}
             </strong>
             <p>{context.main.head.message}</p>
             <p>
@@ -193,11 +193,11 @@ export function WorktreeBuildDetailScreen({
               }}
             >
               <summary>
-                {operation.operation} Â· {operation.stageLabel} Â· {operation.state}
+                {operation.operation} · {operation.stageLabel} · {operation.state}
               </summary>
               <p>
-                {formatTimestamp(operation.startedAtMs)} Â· {operation.output.length} safe lines
-                {!operation.outputComplete && ' Â· oldest output trimmed by the safety bound'}
+                {formatTimestamp(operation.startedAtMs)} · {operation.output.length} safe lines
+                {!operation.outputComplete && ' · oldest output trimmed by the safety bound'}
               </p>
               <pre>
                 {operation.output.length ? operation.output.join('\n') : 'No safe output recorded.'}

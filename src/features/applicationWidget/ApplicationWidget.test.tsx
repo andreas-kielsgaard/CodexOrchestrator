@@ -12,7 +12,7 @@ describe('ApplicationWidget', () => {
         <ApplicationWidget
           label="Worktree build"
           title="Alpha"
-          summary="codex/alpha Â· Clean"
+          summary="codex/alpha · Clean"
           icon={<span aria-hidden="true">W</span>}
           onOpen={open}
         />

@@ -33,7 +33,7 @@ export function WorktreeRuntimeExplorationView({
   if (!snapshot) {
     return (
       <main className="worktree-runtime" aria-label="Worktree runtime">
-        <p role={error ? 'alert' : 'status'}>{error ?? 'Loading worktree runtime evidenceâ€¦'}</p>
+        <p role={error ? 'alert' : 'status'}>{error ?? 'Loading worktree runtime evidence…'}</p>
         {error && (
           <button type="button" onClick={() => void refresh()}>
             Retry
@@ -54,7 +54,7 @@ export function WorktreeRuntimeExplorationView({
         <div className="worktree-runtime__header-actions">
           <EvidenceBadge kind="observed" label={snapshot.label} />
           <button type="button" onClick={() => void refresh()} disabled={loading}>
-            {loading ? 'Refreshingâ€¦' : 'Refresh evidence'}
+            {loading ? 'Refreshing…' : 'Refresh evidence'}
           </button>
         </div>
       </header>
@@ -201,7 +201,7 @@ function shortHash(value: string): string {
 }
 
 function boundaryLabel(value: 'isolated' | 'shared-keyed' | 'unsupported'): string {
-  if (value === 'shared-keyed') return 'Shared Â· keyed';
+  if (value === 'shared-keyed') return 'Shared · keyed';
   if (value === 'unsupported') return 'Unsupported';
   return 'Isolated';
 }
