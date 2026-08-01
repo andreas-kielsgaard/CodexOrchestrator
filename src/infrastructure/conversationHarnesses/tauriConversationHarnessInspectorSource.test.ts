@@ -35,8 +35,8 @@ describe('Tauri Conversation Harness Management source', () => {
       sessionId: 'session-1',
       catalogSchemaVersion: 2,
       profile,
-      delivery: {
-        status: 'delivered',
+      initialPromptLaunchEvidence: {
+        status: 'launch_accepted',
         invocationId: 'invocation-1',
       },
     });
@@ -114,6 +114,17 @@ describe('Tauri Conversation Harness Management source', () => {
     });
 
     invoke.mockResolvedValueOnce({ kind: 'bound', sessionId: 'session-1' });
+    await expect(source.load({ sessionId: 'session-1' })).resolves.toMatchObject({
+      kind: 'unavailable',
+    });
+
+    invoke.mockResolvedValueOnce({
+      kind: 'bound',
+      sessionId: 'session-1',
+      catalogSchemaVersion: 2,
+      profile,
+      delivery: { status: 'delivered', invocationId: 'invocation-1' },
+    });
     await expect(source.load({ sessionId: 'session-1' })).resolves.toMatchObject({
       kind: 'unavailable',
     });

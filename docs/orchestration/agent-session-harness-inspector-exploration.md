@@ -88,18 +88,20 @@ product-level `MarkdownContent` wrapper around `react-markdown` and `remark-gfm`
 does not keep a second parser or a rich-editor command layer. The previous `@mdxeditor/editor` and
 Lexical dependency tree, deferred JavaScript chunk, and editor stylesheet are removed. The
 remaining Markdown dependencies already serve Agent Session transcripts and the File Review
-surface. The validated build emits the Agent Session JavaScript chunk at 427.88 kB (129.01 kB gzip)
-and its stylesheet at 37.48 kB (6.97 kB gzip); it no longer emits a separate editor chunk or Vite's
-greater-than-500 kB chunk warning. `npm audit --omit=dev` reports no production vulnerabilities.
-The full development graph reports five high-severity advisories in the
-ESLint/minimatch/brace-expansion toolchain; the suggested automated fix would require a breaking
-ESLint upgrade and was not applied.
+surface. The convergence build emits the Agent Session JavaScript chunk at 427.51 kB (128.65 kB
+gzip) and its stylesheet at 37.71 kB (7.01 kB gzip); it no longer emits a separate editor chunk or
+Vite's greater-than-500 kB chunk warning. At that checkpoint, `npm audit --omit=dev` reports one
+high-severity PostCSS advisory. The full dependency graph reports two high-severity advisories:
+PostCSS and the development-only `brace-expansion` advisory. No dependency upgrade was applied
+outside the convergence scope.
 
 The product-backed source remains read-only. It adapts the existing managed Plan Builder query to
 the same view contract, reports the session binding as untracked, supplies no agent identity, and
-does not expose edit commands. Free-form `completionCriteria` entries are labeled **Not connected**
-because no typed registry result confirms them. It therefore does not claim Git history, durable
-assignment, activation, update delivery, interruption, or compression.
+does not expose edit commands. Its initial-prompt evidence records only whether launch was accepted,
+was not launched, or lacks durable acceptance evidence; it does not claim runtime receipt or
+delivery. Free-form `completionCriteria` entries are labeled **Not connected** because no typed
+registry result confirms them. It therefore does not claim Git history, durable assignment,
+activation, update delivery, interruption, or compression.
 
 ## Production repository and commands
 

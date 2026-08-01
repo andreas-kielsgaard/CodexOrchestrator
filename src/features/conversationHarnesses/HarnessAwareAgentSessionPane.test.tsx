@@ -66,6 +66,7 @@ describe('HarnessAwareAgentSessionPane', () => {
 
     const model = await screen.findByLabelText('Session model');
     const effort = screen.getByLabelText('Session effort');
+    expect(screen.getByText('This Session · v3 constraints')).toBeVisible();
     expect(model).toHaveValue('');
     expect(effort).toBeDisabled();
     expect(within(model).getByRole('option', { name: 'GPT-5.6 Terra' })).toBeVisible();

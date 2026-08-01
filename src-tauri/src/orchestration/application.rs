@@ -265,14 +265,14 @@ impl ManagedPlanBuilderService {
                 })
             }
         };
-        let delivery = match history.invocations.first() {
-            None => ManagedPlanBuilderHarnessDelivery::NotDelivered {
-                reason: HarnessNotDeliveredReason::NoFirstQuery,
+        let initial_prompt_launch_evidence = match history.invocations.first() {
+            None => ManagedPlanBuilderInitialPromptLaunchEvidence::NotLaunched {
+                reason: HarnessNotLaunchedReason::NoFirstQuery,
             },
             Some(first) if first.invocation.created_at < binding.associated_at => {
-                ManagedPlanBuilderHarnessDelivery::NotEvidenced {
+                ManagedPlanBuilderInitialPromptLaunchEvidence::AcceptanceNotEvidenced {
                     invocation_id: first.invocation.id.as_str().into(),
-                    reason: HarnessNotEvidencedReason::BindingPostdatesFirstQuery,
+                    reason: HarnessAcceptanceNotEvidencedReason::BindingPostdatesFirstQuery,
                 }
             }
             Some(first) => {
@@ -287,7 +287,7 @@ impl ManagedPlanBuilderService {
                 .map_err(|error| error.to_string())?;
                 match evidence {
                     ApplicationInvocationLaunchEvidence::LaunchAccepted => {
-                        ManagedPlanBuilderHarnessDelivery::Delivered {
+                        ManagedPlanBuilderInitialPromptLaunchEvidence::LaunchAccepted {
                             invocation_id: first.invocation.id.as_str().into(),
                         }
                     }
@@ -304,15 +304,15 @@ impl ManagedPlanBuilderService {
                                     )
                                 }) =>
                     {
-                        ManagedPlanBuilderHarnessDelivery::NotDelivered {
-                            reason: HarnessNotDeliveredReason::LaunchRejected,
+                        ManagedPlanBuilderInitialPromptLaunchEvidence::NotLaunched {
+                            reason: HarnessNotLaunchedReason::LaunchRejected,
                         }
                     }
                     ApplicationInvocationLaunchEvidence::PersistedNotAccepted
                     | ApplicationInvocationLaunchEvidence::NeverPersisted => {
-                        ManagedPlanBuilderHarnessDelivery::NotEvidenced {
+                        ManagedPlanBuilderInitialPromptLaunchEvidence::AcceptanceNotEvidenced {
                             invocation_id: first.invocation.id.as_str().into(),
-                            reason: HarnessNotEvidencedReason::LaunchAcceptanceMissing,
+                            reason: HarnessAcceptanceNotEvidencedReason::LaunchAcceptanceMissing,
                         }
                     }
                 }
@@ -322,7 +322,7 @@ impl ManagedPlanBuilderService {
             session_id: session_id.as_str().into(),
             catalog_schema_version: catalog.catalog_schema_version,
             profile: catalog.profile,
-            delivery,
+            initial_prompt_launch_evidence,
         })
     }
 
@@ -607,7 +607,7 @@ pub(crate) enum ManagedPlanBuilderHarnessInspection {
         session_id: String,
         catalog_schema_version: u16,
         profile: super::conversation_harness::ConversationHarnessProfile,
-        delivery: ManagedPlanBuilderHarnessDelivery,
+        initial_prompt_launch_evidence: ManagedPlanBuilderInitialPromptLaunchEvidence,
     },
     Unbound {
         session_id: String,
@@ -623,29 +623,29 @@ pub(crate) enum ManagedPlanBuilderHarnessInspection {
     rename_all = "snake_case",
     rename_all_fields = "camelCase"
 )]
-pub(crate) enum ManagedPlanBuilderHarnessDelivery {
-    Delivered {
+pub(crate) enum ManagedPlanBuilderInitialPromptLaunchEvidence {
+    LaunchAccepted {
         invocation_id: String,
     },
-    NotDelivered {
-        reason: HarnessNotDeliveredReason,
+    NotLaunched {
+        reason: HarnessNotLaunchedReason,
     },
-    NotEvidenced {
+    AcceptanceNotEvidenced {
         invocation_id: String,
-        reason: HarnessNotEvidencedReason,
+        reason: HarnessAcceptanceNotEvidencedReason,
     },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum HarnessNotDeliveredReason {
+pub(crate) enum HarnessNotLaunchedReason {
     NoFirstQuery,
     LaunchRejected,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum HarnessNotEvidencedReason {
+pub(crate) enum HarnessAcceptanceNotEvidencedReason {
     BindingPostdatesFirstQuery,
     LaunchAcceptanceMissing,
 }
@@ -1269,9 +1269,10 @@ mod tests {
                 .inspect_conversation_harness(session.id.clone())
                 .unwrap(),
             ManagedPlanBuilderHarnessInspection::Bound {
-                delivery: ManagedPlanBuilderHarnessDelivery::NotDelivered {
-                    reason: HarnessNotDeliveredReason::NoFirstQuery,
-                },
+                initial_prompt_launch_evidence:
+                    ManagedPlanBuilderInitialPromptLaunchEvidence::NotLaunched {
+                        reason: HarnessNotLaunchedReason::NoFirstQuery,
+                    },
                 ..
             }
         ));
@@ -1285,14 +1286,15 @@ mod tests {
                 None,
             )
             .unwrap();
-        let delivered = service
+        let inspected = service
             .inspect_conversation_harness(session.id.clone())
             .unwrap();
         assert!(matches!(
-            delivered,
+            inspected,
             ManagedPlanBuilderHarnessInspection::Bound {
                 catalog_schema_version: 2,
-                delivery: ManagedPlanBuilderHarnessDelivery::Delivered {
+                initial_prompt_launch_evidence:
+                    ManagedPlanBuilderInitialPromptLaunchEvidence::LaunchAccepted {
                     ref invocation_id,
                 },
                 ..
@@ -1307,7 +1309,11 @@ mod tests {
         assert_eq!(transport["kind"], "bound");
         assert_eq!(transport["catalogSchemaVersion"], 2);
         assert_eq!(transport["profile"]["key"], "epic_plan_builder");
-        assert_eq!(transport["delivery"]["status"], "delivered");
+        assert_eq!(
+            transport["initialPromptLaunchEvidence"]["status"],
+            "launch_accepted"
+        );
+        assert!(transport.get("delivery").is_none());
 
         Connection::open(&path)
             .unwrap()
@@ -1321,10 +1327,11 @@ mod tests {
                 .inspect_conversation_harness(session.id.clone())
                 .unwrap(),
             ManagedPlanBuilderHarnessInspection::Bound {
-                delivery: ManagedPlanBuilderHarnessDelivery::NotEvidenced {
-                    reason: HarnessNotEvidencedReason::LaunchAcceptanceMissing,
-                    ..
-                },
+                initial_prompt_launch_evidence:
+                    ManagedPlanBuilderInitialPromptLaunchEvidence::AcceptanceNotEvidenced {
+                        reason: HarnessAcceptanceNotEvidencedReason::LaunchAcceptanceMissing,
+                        ..
+                    },
                 ..
             }
         ));
@@ -1332,7 +1339,7 @@ mod tests {
     }
 
     #[test]
-    fn harness_inspection_reports_rejected_first_launch_as_not_delivered() {
+    fn harness_inspection_reports_rejected_first_launch_as_not_launched() {
         let (service, _runtime, _factory, _registry, path) =
             service_fixture(RuntimeMode::LaunchError);
         let sent = service
@@ -1344,9 +1351,10 @@ mod tests {
                 .inspect_conversation_harness(sent.session_id)
                 .unwrap(),
             ManagedPlanBuilderHarnessInspection::Bound {
-                delivery: ManagedPlanBuilderHarnessDelivery::NotDelivered {
-                    reason: HarnessNotDeliveredReason::LaunchRejected,
-                },
+                initial_prompt_launch_evidence:
+                    ManagedPlanBuilderInitialPromptLaunchEvidence::NotLaunched {
+                        reason: HarnessNotLaunchedReason::LaunchRejected,
+                    },
                 ..
             }
         ));

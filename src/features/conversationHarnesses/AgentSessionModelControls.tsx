@@ -100,7 +100,7 @@ export function AgentSessionModelControls({
         </select>
       </label>
       <small title="This Session choice is stored separately and stays within the applied Harness model and effort constraints.">
-        This Session Â· v{snapshot.sessionBinding.appliedRevision ?? 'untracked'} constraints
+        This Session · v{snapshot.sessionBinding.appliedRevision ?? 'untracked'} constraints
       </small>
       {error && <span role="alert">{error}</span>}
     </section>

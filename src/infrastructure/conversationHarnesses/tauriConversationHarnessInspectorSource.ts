@@ -41,14 +41,14 @@ type ProductHarnessInspection =
       readonly sessionId: string;
       readonly catalogSchemaVersion: number;
       readonly profile: ProductProfile;
-      readonly delivery:
-        | { readonly status: 'delivered'; readonly invocationId: string }
+      readonly initialPromptLaunchEvidence:
+        | { readonly status: 'launch_accepted'; readonly invocationId: string }
         | {
-            readonly status: 'not_delivered';
+            readonly status: 'not_launched';
             readonly reason: 'no_first_query' | 'launch_rejected';
           }
         | {
-            readonly status: 'not_evidenced';
+            readonly status: 'acceptance_not_evidenced';
             readonly invocationId: string;
             readonly reason: 'binding_postdates_first_query' | 'launch_acceptance_missing';
           };
@@ -272,7 +272,7 @@ function decodeInspection(value: unknown): ProductHarnessInspection {
     value.kind !== 'bound' ||
     !Number.isInteger(value.catalogSchemaVersion) ||
     !isProfile(value.profile) ||
-    !isDelivery(value.delivery)
+    !isInitialPromptLaunchEvidence(value.initialPromptLaunchEvidence)
   )
     throw new Error('invalid bound harness inspection');
   return value as ProductHarnessInspection;
@@ -307,13 +307,13 @@ function isSkillGuidance(value: unknown): boolean {
   );
 }
 
-function isDelivery(value: unknown): boolean {
+function isInitialPromptLaunchEvidence(value: unknown): boolean {
   if (!isRecord(value) || !isString(value.status)) return false;
-  if (value.status === 'delivered') return isString(value.invocationId);
-  if (value.status === 'not_delivered')
+  if (value.status === 'launch_accepted') return isString(value.invocationId);
+  if (value.status === 'not_launched')
     return value.reason === 'no_first_query' || value.reason === 'launch_rejected';
   return (
-    value.status === 'not_evidenced' &&
+    value.status === 'acceptance_not_evidenced' &&
     isString(value.invocationId) &&
     (value.reason === 'binding_postdates_first_query' ||
       value.reason === 'launch_acceptance_missing')
