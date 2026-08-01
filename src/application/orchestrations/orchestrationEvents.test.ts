@@ -242,7 +242,7 @@ describe('Orchestration events', () => {
         agentSessionId: 'agent-session-1',
         targetKind: 'epic',
         targetId: 'epic-1',
-        semanticRole: 'epic_plan_builder',
+        semanticRole: 'epic_runner',
       },
       {
         agentSessionRefId: 'agent-session-reference-sprint',
@@ -256,7 +256,7 @@ describe('Orchestration events', () => {
         agentSessionId: 'agent-session-1',
         targetKind: 'work_unit_execution',
         targetId: 'execution-observed',
-        semanticRole: 'work_unit_planner',
+        semanticRole: 'work_slice_planner',
       },
       {
         agentSessionRefId: 'agent-session-reference-handler',
@@ -381,7 +381,7 @@ function validFacts(): Mutable<OrchestrationEventsV1> {
         agentSessionId: 'agent-session-1',
         targetKind: 'sprint_planner_activity',
         targetId: 'planner-activity-1',
-        semanticRole: 'sprint_planner',
+        semanticRole: 'work_slice_planner',
       },
     ],
     gates: [{ gateId: 'gate-1', sprintPlanRevisionId: 'plan-revision-1' }],

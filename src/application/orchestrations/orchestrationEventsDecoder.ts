@@ -286,33 +286,24 @@ export function decodeOrchestrationEventsV1(value: unknown): OrchestrationEvents
       required(referenceFact, 'semanticRole'),
       [
         'epic_runner',
-        'epic_plan_builder',
         'sprint_runner',
-        'sprint_planner',
-        'work_unit_planner',
+        'work_slice_planner',
         'work_unit_handler',
-        'work_unit_worker',
-        'reviewer',
-        'other',
+        'work_unit_implementer',
       ],
       'agent session reference role',
     ) as AgentSessionSemanticRole;
-    if (semanticRole === 'other')
-      identifier(required(referenceFact, 'otherSemanticRole'), 'other agent session role');
-    else if (referenceFact.otherSemanticRole !== undefined)
-      fail('other semantic role is allowed only for an extensible role');
+    if (referenceFact.otherSemanticRole !== undefined)
+      fail('agent session references use one of the five product roles');
     const allowedRoles: Partial<
       Record<AgentSessionAssociationTargetKind, readonly AgentSessionSemanticRole[]>
     > = {
-      epic: ['epic_runner', 'epic_plan_builder', 'other'],
-      sprint: ['sprint_runner', 'other'],
-      sprint_planner_activity: ['sprint_planner', 'other'],
+      epic: ['epic_runner'],
+      sprint: ['sprint_runner'],
+      sprint_planner_activity: ['work_slice_planner'],
       work_unit_execution: [
-        'work_unit_planner',
         'work_unit_handler',
-        'work_unit_worker',
-        'reviewer',
-        'other',
+        'work_unit_implementer',
       ],
     };
     if (targetKind !== 'other' && !allowedRoles[targetKind]?.includes(semanticRole))

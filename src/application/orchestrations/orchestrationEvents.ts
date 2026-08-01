@@ -12,14 +12,10 @@ export type AgentSessionAssociationTargetKind =
 
 export type AgentSessionSemanticRole =
   | 'epic_runner'
-  | 'epic_plan_builder'
   | 'sprint_runner'
-  | 'sprint_planner'
-  | 'work_unit_planner'
+  | 'work_slice_planner'
   | 'work_unit_handler'
-  | 'work_unit_worker'
-  | 'reviewer'
-  | 'other';
+  | 'work_unit_implementer';
 
 export interface OrchestrationEventsV1 {
   readonly version: typeof ORCHESTRATION_EVENTS_V1;
