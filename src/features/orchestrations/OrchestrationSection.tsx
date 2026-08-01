@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { EpicDetail } from './components/EpicDetail';
-import { MovementBadge, StateBadge } from './components/EpicStatusBadges';
+import { EpicTitleWithDescription, MovementBadge, StateBadge } from './components/EpicStatusBadges';
 import type { SprintWorkspaceDetailLocation, OrchestrationSectionView } from './orchestrationModel';
 import type { EmbeddedAgentSessionComposition } from '../agentSessions';
 import {
@@ -98,14 +98,8 @@ export function OrchestrationSection({
             {view.epics.map((epic) => (
               <tr key={epic.id}>
                 <td data-label="Epic">
-                  <button
-                    className="orchestration-list__open"
-                    type="button"
-                    aria-label={`Open ${epic.name}`}
-                    onClick={() => workspace.openEpic(epic.id)}
-                  >
-                    <strong>{epic.name}</strong>
-                    <small>{epic.goal}</small>
+                  <EpicTitleWithDescription name={epic.name} description={epic.goal} onOpen={() => workspace.openEpic(epic.id)} />
+                  <small>{epic.goal}</small>
                     {epic.bootstrapTransition && (
                       <small
                         className={`orchestration-transition orchestration-transition--${epic.bootstrapTransition.kind}`}
@@ -116,7 +110,6 @@ export function OrchestrationSection({
                           : ''}
                       </small>
                     )}
-                  </button>
                 </td>
                 <td data-label="Current movement">
                   <MovementBadge movement={epic.movement} />
