@@ -83,6 +83,15 @@ impl TestInstanceHandle {
     }
 }
 
+/// Private evidence for application-owned consumers. Paths and Git facts never cross transport.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct VerifiedTestSource {
+    pub(crate) worktree_path: PathBuf,
+    pub(crate) current_object_id: String,
+    pub(crate) source_fingerprint: String,
+    pub(crate) clean: bool,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TestInstancePhase {
     Prepared,
@@ -215,6 +224,10 @@ pub(crate) trait WorktreeTestInstances: Send + Sync {
     fn stop(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError>;
     fn recover(&self, handle: &TestInstanceHandle)
         -> Result<TestInstanceStatus, TestInstanceError>;
+    fn verified_source(
+        &self,
+        handle: &TestInstanceHandle,
+    ) -> Result<VerifiedTestSource, TestInstanceError>;
 }
 
 pub(crate) struct WorktreeTestInstanceFacade {
@@ -538,6 +551,52 @@ impl WorktreeTestInstances for WorktreeTestInstanceFacade {
             })
             .map_err(runtime_error)?;
         self.status(handle)
+    }
+
+    fn verified_source(
+        &self,
+        handle: &TestInstanceHandle,
+    ) -> Result<VerifiedTestSource, TestInstanceError> {
+        let snapshot = self.snapshot(handle)?;
+        if snapshot.stale {
+            return Err(TestInstanceError::new(
+                TestInstanceErrorKind::Conflict,
+                "the isolated runtime instance is stale",
+            ));
+        }
+        let identity = &snapshot.projected.identity;
+        let observed = self
+            .inspector
+            .inspect(&identity.worktree_path, &self.programs)
+            .map_err(planning_error)?;
+        if observed.git_commit != identity.git_commit
+            || observed.source_fingerprint != identity.source_fingerprint
+            || observed.node_cache_key != snapshot.projected.projection.caches.node_key
+            || observed.rust_cache_key != snapshot.projected.projection.caches.rust_key
+        {
+            return Err(TestInstanceError::new(
+                TestInstanceErrorKind::Conflict,
+                "the prepared runtime source was replaced or superseded",
+            ));
+        }
+        if !matches!(
+            snapshot.projected.state,
+            InstanceState::Prepared
+                | InstanceState::Running
+                | InstanceState::Stopped
+                | InstanceState::Recovered
+        ) {
+            return Err(TestInstanceError::new(
+                TestInstanceErrorKind::InvalidState,
+                "the runtime source has not reached an accepted prepared state",
+            ));
+        }
+        Ok(VerifiedTestSource {
+            worktree_path: identity.worktree_path.clone(),
+            current_object_id: identity.git_commit.clone(),
+            source_fingerprint: identity.source_fingerprint.clone(),
+            clean: observed.clean,
+        })
     }
 }
 

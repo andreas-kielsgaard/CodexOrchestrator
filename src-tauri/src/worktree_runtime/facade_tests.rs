@@ -1462,6 +1462,7 @@ impl SourceInspector for FixedInspector {
             source_fingerprint: marker.to_string().repeat(64),
             node_cache_key: "shared-node-key".into(),
             rust_cache_key: "shared-rust-key".into(),
+            clean: true,
         })
     }
 }
@@ -1484,6 +1485,7 @@ impl SourceInspector for ChangingInspector {
             source_fingerprint: marker.to_string().repeat(64),
             node_cache_key: "shared-node-key".into(),
             rust_cache_key: "shared-rust-key".into(),
+            clean: true,
         })
     }
 }

@@ -4,7 +4,11 @@ use super::{
     detail::{assemble, now_ms, DetailInput, ReviewInstanceDetailView, ReviewLifecycleEventView},
     progress::{ProgressHandle, ProgressRegistry, ReviewOperationProgressView},
     proof_evidence::{self, ReviewBuildOperationEvidenceView},
-    worktree_build::WorktreeBuildContextView,
+    worktree_build::{git_text, WorktreeBuildContextView},
+};
+use crate::orchestration::initiated_sprint_git_authority::{
+    BindInitiatedSprintGitAuthorityError, VerifiedRuntimeGitComparison,
+    WorktreeRuntimeGitComparison,
 };
 use crate::worktree_runtime::{
     IsolatedTestRequest, TestActionOutcome, TestInstanceError, TestInstanceErrorKind,
@@ -13,6 +17,7 @@ use crate::worktree_runtime::{
 };
 use rusqlite::{params, Connection};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -29,6 +34,121 @@ pub(crate) struct ReviewSourceView {
     pub(crate) revision: String,
     pub(crate) compatibility: String,
     pub(crate) compatibility_message: String,
+}
+
+impl WorktreeRuntimeGitComparison for HumanReviewLauncherService {
+    fn resolve_verified_comparison(
+        &self,
+        runtime_instance_ref: &str,
+    ) -> Result<VerifiedRuntimeGitComparison, BindInitiatedSprintGitAuthorityError> {
+        let (handle, metadata) = self
+            .resolve(runtime_instance_ref)
+            .map_err(|_| BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable)?;
+        self.catalog
+            .ensure_compatible(&metadata.source_ref)
+            .map_err(|_| BindInitiatedSprintGitAuthorityError::RuntimeSourceIncompatible)?;
+        let verified = self
+            .runtime
+            .verified_source(&handle)
+            .map_err(|error| match error.kind {
+                TestInstanceErrorKind::Conflict => {
+                    BindInitiatedSprintGitAuthorityError::RuntimeSourceStale
+                }
+                TestInstanceErrorKind::NotFound | TestInstanceErrorKind::InvalidState => {
+                    BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable
+                }
+                _ => BindInitiatedSprintGitAuthorityError::Unavailable,
+            })?;
+        if !verified.clean {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceDirty);
+        }
+        let (repository_root, worktree_root) = self
+            .catalog
+            .comparison_roots(&metadata.source_ref)
+            .map_err(|_| BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable)?;
+        let observed_worktree = verified
+            .worktree_path
+            .canonicalize()
+            .map_err(|_| BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable)?;
+        if observed_worktree != worktree_root {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeEvidenceMismatch);
+        }
+        let repository_common_dir = common_dir(&repository_root)?;
+        if repository_common_dir != common_dir(&worktree_root)? {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeEvidenceMismatch);
+        }
+        let baseline_object_id = full_commit(&repository_root, "HEAD")?;
+        let current_object_id = full_commit(&worktree_root, "HEAD")?;
+        if current_object_id != verified.current_object_id.to_ascii_lowercase()
+            || baseline_object_id == current_object_id
+        {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeEvidenceMismatch);
+        }
+        let common_identity = normalized_path(&repository_common_dir);
+        let worktree_identity = normalized_path(&worktree_root);
+        Ok(VerifiedRuntimeGitComparison {
+            repository_id: product_id("repository", &[&common_identity]),
+            repository_root: repository_root.to_string_lossy().into_owned(),
+            repository_common_dir: repository_common_dir.to_string_lossy().into_owned(),
+            worktree_id: product_id("worktree", &[&common_identity, &worktree_identity]),
+            worktree_root: worktree_root.to_string_lossy().into_owned(),
+            baseline_object_id,
+            current_object_id,
+            runtime_instance_ref: runtime_instance_ref.to_owned(),
+            runtime_source_ref: metadata.source_ref,
+            source_fingerprint: verified.source_fingerprint.to_ascii_lowercase(),
+        })
+    }
+}
+
+fn common_dir(root: &Path) -> Result<PathBuf, BindInitiatedSprintGitAuthorityError> {
+    let value = git_text(root, ["rev-parse", "--git-common-dir"])
+        .map_err(|_| BindInitiatedSprintGitAuthorityError::ComparisonUnavailable)?;
+    let path = PathBuf::from(value);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    };
+    path.canonicalize()
+        .map_err(|_| BindInitiatedSprintGitAuthorityError::ComparisonUnavailable)
+}
+
+fn full_commit(
+    root: &Path,
+    revision: &str,
+) -> Result<String, BindInitiatedSprintGitAuthorityError> {
+    let commit = git_text(
+        root,
+        ["rev-parse", "--verify", &format!("{revision}^{{commit}}")],
+    )
+    .map_err(|_| BindInitiatedSprintGitAuthorityError::ComparisonUnavailable)?
+    .to_ascii_lowercase();
+    if (commit.len() != 40 && commit.len() != 64)
+        || !commit.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(BindInitiatedSprintGitAuthorityError::ComparisonUnavailable);
+    }
+    Ok(commit)
+}
+
+fn normalized_path(path: &Path) -> String {
+    let value = path.to_string_lossy().replace('\\', "/");
+    if cfg!(windows) {
+        value.to_ascii_lowercase()
+    } else {
+        value
+    }
+}
+
+fn product_id(kind: &str, parts: &[&str]) -> String {
+    let mut hash = Sha256::new();
+    hash.update(b"worktree-runtime-git-authority/v1");
+    for part in parts {
+        hash.update((part.len() as u64).to_be_bytes());
+        hash.update(part.as_bytes());
+    }
+    format!("{kind}-{}", &format!("{:x}", hash.finalize())[..24])
 }
 
 impl From<&ReviewWorktreeOption> for ReviewSourceView {
@@ -1095,6 +1215,7 @@ fn safe_error(error: TestInstanceError) -> String {
 #[cfg(test)]
 mod guidance_tests {
     use super::*;
+    use std::process::Command;
 
     #[test]
     fn window_readiness_failure_explains_missing_evidence_reuse_and_recovery() {
@@ -1130,5 +1251,152 @@ mod guidance_tests {
         assert_eq!(use_summary, "Build verification expired");
         assert!(action_required);
         assert!(action.contains("Run Build again"));
+    }
+
+    #[test]
+    fn prepared_runtime_source_yields_catalog_owned_immutable_comparison() {
+        let directory = tempfile::tempdir().unwrap();
+        let main = directory.path().join("main");
+        let selected = directory.path().join("selected");
+        fs::create_dir_all(main.join("src-tauri")).unwrap();
+        git(directory.path(), &["init", main.to_str().unwrap()]);
+        git(&main, &["config", "user.email", "test@example.invalid"]);
+        git(&main, &["config", "user.name", "Test"]);
+        fs::write(main.join("package-lock.json"), "{}").unwrap();
+        fs::write(main.join("src-tauri/Cargo.lock"), "").unwrap();
+        fs::write(
+            main.join("src-tauri/Cargo.toml"),
+            "[package]\nname='fixture'\nversion='0.1.0'\n",
+        )
+        .unwrap();
+        fs::write(
+            main.join("src-tauri/worktree-review-contract.json"),
+            r#"{"version":1,"readiness":"owned-window-and-rendered-application","provenance":"worktree-build-details-v1"}"#,
+        )
+        .unwrap();
+        fs::write(main.join("source.txt"), "baseline\n").unwrap();
+        git(&main, &["add", "."]);
+        git(&main, &["commit", "-m", "baseline"]);
+        let baseline = git_text(&main, ["rev-parse", "HEAD"]).unwrap();
+        git(&main, &["branch", "feature"]);
+        git(
+            &main,
+            &["worktree", "add", selected.to_str().unwrap(), "feature"],
+        );
+        fs::write(selected.join("source.txt"), "current\n").unwrap();
+        git(&selected, &["add", "."]);
+        git(&selected, &["commit", "-m", "current"]);
+        let current = git_text(&selected, ["rev-parse", "HEAD"]).unwrap();
+
+        let review = Arc::new(
+            crate::worktree_review::compose(&main, &directory.path().join("runtime"))
+                .expect("compose runtime"),
+        );
+        let source = review
+            .sources()
+            .into_iter()
+            .find(|source| source.revision == current[..12])
+            .expect("selected source");
+        let prepared = review
+            .prepare(
+                "operation-prepare".into(),
+                source.source_ref,
+                "Sprint review".into(),
+            )
+            .expect("prepare source");
+        let comparison = review
+            .resolve_verified_comparison(&prepared.instance_ref)
+            .expect("verified comparison");
+
+        assert_eq!(comparison.baseline_object_id, baseline);
+        assert_eq!(comparison.current_object_id, current);
+        assert_eq!(comparison.runtime_instance_ref, prepared.instance_ref);
+        assert_eq!(
+            PathBuf::from(comparison.worktree_root),
+            selected.canonicalize().unwrap()
+        );
+        assert_eq!(comparison.source_fingerprint.len(), 64);
+
+        let database_path = directory.path().join("active.sqlite");
+        let connection = rusqlite::Connection::open(&database_path).unwrap();
+        crate::storage::configure_sqlite_connection(&connection).unwrap();
+        crate::storage::initialize_active_database(&connection).unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .unwrap();
+        connection.execute_batch("INSERT INTO epic_initiation_provenance (id,command_id,result_id,event_id,recorded_at) VALUES ('runtime-provenance','runtime-command','runtime-result','runtime-event','t'); INSERT INTO epic_initiations (id,command_id,result_id,event_id,provenance_id,draft_id,proposal_revision_id,material_snapshot_id,epic_id,recorded_at) VALUES ('runtime-initiation','runtime-command','runtime-result','runtime-event','runtime-provenance','runtime-draft','runtime-revision','runtime-snapshot','runtime-epic','t'); INSERT INTO initiated_sprints (id,epic_id,ordinal,title,intended_movement,concern_summaries_json,sprint_plan_id,sprint_plan_revision_id) VALUES ('runtime-sprint','runtime-epic',0,'Runtime Sprint','Move','[]','runtime-plan','runtime-plan-revision');").unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", true)
+            .unwrap();
+        let repository = Arc::new(
+            crate::orchestration::repository::SqliteOrchestrationRepository::new(connection)
+                .unwrap(),
+        );
+        let transition = crate::orchestration::initiated_sprint_git_authority::InitiatedSprintGitAuthorityService::new(
+            repository.clone(),
+            review.clone(),
+        );
+        let bound = transition
+            .bind(crate::orchestration::initiated_sprint_git_authority::BindInitiatedSprintGitAuthorityRequest {
+                sprint_id: "runtime-sprint".into(),
+                runtime_instance_ref: prepared.instance_ref.clone(),
+                idempotency_key: "runtime-request".into(),
+            })
+            .expect("bind runtime comparison");
+        let durable = repository
+            .load_initiated_sprint_git_authority(&bound.authority_ref)
+            .unwrap()
+            .unwrap();
+        assert_eq!(durable.epic_id, "runtime-epic");
+        assert_eq!(durable.runtime_instance_ref, prepared.instance_ref);
+        assert_eq!(durable.baseline_object_id, baseline);
+        assert_eq!(durable.current_object_id, current);
+        assert_eq!(
+            rusqlite::Connection::open(&database_path)
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM file_review_git_capture_authorizations",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+
+        fs::write(selected.join("source.txt"), "dirty\n").unwrap();
+        assert_eq!(
+            review.resolve_verified_comparison(&prepared.instance_ref),
+            Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceStale)
+        );
+        let dirty = review
+            .prepare(
+                "operation-dirty".into(),
+                comparison.runtime_source_ref,
+                "Dirty Sprint review".into(),
+            )
+            .expect("prepare dirty source");
+        assert_eq!(
+            review.resolve_verified_comparison(&dirty.instance_ref),
+            Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceDirty)
+        );
+        assert_eq!(
+            review.resolve_verified_comparison("wt-missing"),
+            Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable)
+        );
+    }
+
+    fn git(root: &Path, arguments: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?}: {}",
+            arguments,
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

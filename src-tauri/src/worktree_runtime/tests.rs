@@ -315,6 +315,7 @@ fn planning_projects_keyed_node_reuse_but_keeps_rust_compilation_instance_local(
         source_fingerprint: fixture.identity.source_fingerprint.clone(),
         node_cache_key: "planned-node-key".into(),
         rust_cache_key: "planned-rust-key".into(),
+        clean: true,
     };
     let projection = project_runtime(
         &settings,

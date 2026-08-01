@@ -25,7 +25,8 @@ pub(crate) use facade::{
     HealthState, IsolatedTestRequest, RequestedTestInstance, TestActionOutcome, TestActionProgress,
     TestActionProgressSink, TestActionResult, TestActionStage, TestInstanceError,
     TestInstanceErrorKind, TestInstanceHandle, TestInstancePhase, TestInstanceStatus,
-    TestSourceRef, TestStartProgress, TestStartProgressSink, TestStartStage, WorktreeTestInstances,
+    TestSourceRef, TestStartProgress, TestStartProgressSink, TestStartStage, VerifiedTestSource,
+    WorktreeTestInstances,
 };
 #[cfg(any(debug_assertions, test))]
 pub(crate) use facade::{TestSourceResolver, WorktreeTestInstanceFacade};

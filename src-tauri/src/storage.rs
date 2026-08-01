@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-const ACTIVE_SCHEMA_VERSION: i64 = 10;
+const ACTIVE_SCHEMA_VERSION: i64 = 11;
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join(ACTIVE_DATABASE_FILE_NAME)
@@ -25,7 +25,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     if current_version == ACTIVE_SCHEMA_VERSION {
         return Ok(());
     }
-    if (1..=9).contains(&current_version) {
+    if (1..=10).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -96,6 +96,11 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 })?;
         }
         transaction
+            .execute_batch(crate::orchestration::repository::INITIATED_SPRINT_GIT_AUTHORITY_SCHEMA)
+            .map_err(|error| {
+                format!("Unable to migrate initiated Sprint Git authority schema: {error}")
+            })?;
+        transaction
             .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
             .map_err(|error| format!("Unable to record active schema version: {error}"))?;
         transaction
@@ -134,6 +139,11 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     transaction
         .execute_batch(crate::orchestration::repository::FILE_REVIEW_FACTS_SCHEMA)
         .map_err(|error| format!("Unable to initialize File Review facts schema: {error}"))?;
+    transaction
+        .execute_batch(crate::orchestration::repository::INITIATED_SPRINT_GIT_AUTHORITY_SCHEMA)
+        .map_err(|error| {
+            format!("Unable to initialize initiated Sprint Git authority schema: {error}")
+        })?;
     transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
         .map_err(|error| format!("Unable to record active schema version: {error}"))?;
@@ -251,6 +261,7 @@ mod tests {
                 "file_review_documents",
                 "file_review_git_capture_authorizations",
                 "initiated_planning_drafts",
+                "initiated_sprint_git_authorities",
                 "initiated_sprints",
                 "plan_builder_context_deliveries",
                 "planning_draft_agent_session_associations",
@@ -319,6 +330,79 @@ mod tests {
         }
         assert_eq!(connection.query_row("SELECT count(*) FROM pragma_index_list('file_review_git_capture_authorizations') WHERE [unique] = 1", [], |row| row.get::<_, i64>(0)).unwrap(), 2);
         assert_eq!(connection.query_row("SELECT count(*) FROM pragma_foreign_key_list('file_review_git_capture_authorizations')", [], |row| row.get::<_, i64>(0)).unwrap(), 3);
+        let git_authority_columns = connection
+            .prepare("PRAGMA table_info(initiated_sprint_git_authorities)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        for column in [
+            "repository_common_dir",
+            "runtime_instance_ref",
+            "runtime_source_ref",
+            "source_fingerprint",
+            "baseline_object_id",
+            "current_object_id",
+            "recorded_at",
+        ] {
+            assert!(git_authority_columns.contains(&column.to_string()));
+        }
+    }
+
+    #[test]
+    fn migrates_genuine_v10_schema_without_losing_private_capture_authority() {
+        let connection = Connection::open_in_memory().expect("database");
+        configure_sqlite_connection(&connection).expect("policy");
+        connection
+            .execute_batch(crate::agent_sessions::repository::AGENT_SESSION_SCHEMA)
+            .expect("v10 Agent Session schema");
+        connection
+            .execute_batch(crate::orchestration::repository::ORCHESTRATION_SCHEMA)
+            .expect("v10 orchestration schema");
+        connection
+            .execute_batch(crate::orchestration::repository::ORCHESTRATION_INITIATION_SCHEMA)
+            .expect("v10 initiation schema");
+        connection
+            .execute_batch(crate::orchestration::bootstrap_transition::POST_CONFIRMATION_SCHEMA)
+            .expect("v10 bootstrap schema");
+        connection
+            .execute_batch(
+                crate::orchestration::bootstrap_transition::POST_CONFIRMATION_ATTEMPT_SCHEMA,
+            )
+            .expect("v10 attempt schema");
+        connection
+            .execute_batch(crate::orchestration::repository::PLAN_BUILDER_CONTEXT_DELIVERY_SCHEMA)
+            .expect("v10 context schema");
+        connection
+            .execute_batch(crate::orchestration::repository::FILE_REVIEW_FACTS_SCHEMA)
+            .expect("v10 File Review schema");
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .expect("seed predecessor");
+        connection.execute_batch("INSERT INTO epic_initiation_provenance (id,command_id,result_id,event_id,recorded_at) VALUES ('provenance-v10','command-v10','result-v10','event-v10','t'); INSERT INTO epic_initiations (id,command_id,result_id,event_id,provenance_id,draft_id,proposal_revision_id,material_snapshot_id,epic_id,recorded_at) VALUES ('initiation-v10','command-v10','result-v10','event-v10','provenance-v10','draft-v10','revision-v10','snapshot-v10','epic-v10','t'); INSERT INTO initiated_sprints (id,epic_id,ordinal,title,intended_movement,concern_summaries_json,sprint_plan_id,sprint_plan_revision_id) VALUES ('sprint-v10','epic-v10',0,'Sprint','Move','[]','plan-v10','plan-revision-v10'); INSERT INTO file_review_git_capture_authorizations (capture_authorization_id,idempotency_key,payload_fingerprint,epic_id,sprint_id,provenance_id,repository_id,repository_root,worktree_id,worktree_root,baseline_object_id,current_object_id,recorded_at) VALUES ('capture-v10','capture-key-v10','capture-fingerprint-v10','epic-v10','sprint-v10','provenance-v10','repository-v10','C:\\repo','worktree-v10','C:\\repo\\worktree','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','t'); PRAGMA user_version=10;").expect("seed v10 facts");
+        connection
+            .pragma_update(None, "foreign_keys", true)
+            .expect("restore foreign keys");
+
+        initialize_active_database(&connection).expect("migrate v10");
+
+        assert!(table_exists(
+            &connection,
+            "initiated_sprint_git_authorities"
+        ));
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT payload_fingerprint FROM file_review_git_capture_authorizations WHERE capture_authorization_id='capture-v10'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .expect("preserved Batch 11 authority"),
+            "capture-fingerprint-v10"
+        );
+        assert_eq!(pragma_i64(&connection, "user_version"), 11);
+        initialize_active_database(&connection).expect("reopen v11");
     }
 
     #[test]

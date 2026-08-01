@@ -96,6 +96,7 @@ pub(crate) struct SourceSnapshot {
     pub(crate) source_fingerprint: String,
     pub(crate) node_cache_key: String,
     pub(crate) rust_cache_key: String,
+    pub(crate) clean: bool,
 }
 
 pub(crate) trait SourceInspector: Send + Sync {
@@ -213,6 +214,7 @@ impl SourceInspector for SystemSourceInspector {
             source_fingerprint: format!("{:x}", source.finalize()),
             node_cache_key,
             rust_cache_key,
+            clean: tracked_diff.is_empty() && untracked.is_empty(),
         })
     }
 }

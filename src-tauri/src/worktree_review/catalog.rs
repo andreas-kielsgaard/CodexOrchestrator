@@ -166,6 +166,15 @@ impl ReviewWorktreeCatalog {
             main: self.main_path.clone(),
         })
     }
+
+    pub(super) fn comparison_roots(&self, source_ref: &str) -> Result<(PathBuf, PathBuf), String> {
+        let selected = self
+            .paths
+            .get(source_ref)
+            .cloned()
+            .ok_or_else(|| "The selected worktree is unavailable.".to_string())?;
+        Ok((self.main_path.clone(), selected))
+    }
 }
 
 fn compatibility(path: &Path) -> (String, String) {

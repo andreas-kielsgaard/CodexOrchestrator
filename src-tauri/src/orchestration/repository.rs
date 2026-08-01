@@ -268,6 +268,22 @@ CREATE TABLE IF NOT EXISTS file_review_git_capture_authorizations (
  FOREIGN KEY (provenance_id) REFERENCES epic_initiation_provenance(id) ON DELETE RESTRICT
 );
 "#;
+
+/// Private durable relation between initiated orchestration ownership and verified runtime Git facts.
+pub(crate) const INITIATED_SPRINT_GIT_AUTHORITY_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS initiated_sprint_git_authorities (
+ authority_id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE, payload_fingerprint TEXT NOT NULL,
+ epic_id TEXT NOT NULL, sprint_id TEXT NOT NULL, provenance_id TEXT NOT NULL,
+ repository_id TEXT NOT NULL, repository_root TEXT NOT NULL, repository_common_dir TEXT NOT NULL,
+ worktree_id TEXT NOT NULL, worktree_root TEXT NOT NULL,
+ baseline_object_id TEXT NOT NULL, current_object_id TEXT NOT NULL,
+ runtime_instance_ref TEXT NOT NULL UNIQUE, runtime_source_ref TEXT NOT NULL,
+ source_fingerprint TEXT NOT NULL, recorded_at TEXT NOT NULL,
+ FOREIGN KEY (epic_id) REFERENCES epic_initiations(epic_id) ON DELETE RESTRICT,
+ FOREIGN KEY (sprint_id) REFERENCES initiated_sprints(id) ON DELETE RESTRICT,
+ FOREIGN KEY (provenance_id) REFERENCES epic_initiation_provenance(id) ON DELETE RESTRICT
+);
+"#;
 pub(crate) const STORED_FILE_REVIEW_ARTIFACT_V1: &str = "stored-file-review-artifact/v1";
 pub(crate) const FILE_REVIEW_ARTIFACT_MAX_BYTES: usize = 1_000_000;
 
@@ -317,6 +333,54 @@ pub(crate) enum FileReviewGitCaptureAuthorizationError {
 pub(crate) enum StoreFileReviewGitCaptureAuthorizationResult {
     Stored,
     IdempotentReplay,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InitiatedSprintGitAuthorityWrite {
+    pub(crate) sprint_id: String,
+    pub(crate) idempotency_key: String,
+    pub(crate) repository_id: String,
+    pub(crate) repository_root: String,
+    pub(crate) repository_common_dir: String,
+    pub(crate) worktree_id: String,
+    pub(crate) worktree_root: String,
+    pub(crate) baseline_object_id: String,
+    pub(crate) current_object_id: String,
+    pub(crate) runtime_instance_ref: String,
+    pub(crate) runtime_source_ref: String,
+    pub(crate) source_fingerprint: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InitiatedSprintGitAuthority {
+    pub(crate) authority_id: String,
+    pub(crate) epic_id: String,
+    pub(crate) sprint_id: String,
+    pub(crate) provenance_id: String,
+    pub(crate) repository_id: String,
+    pub(crate) repository_root: String,
+    pub(crate) repository_common_dir: String,
+    pub(crate) worktree_id: String,
+    pub(crate) worktree_root: String,
+    pub(crate) baseline_object_id: String,
+    pub(crate) current_object_id: String,
+    pub(crate) runtime_instance_ref: String,
+    pub(crate) runtime_source_ref: String,
+    pub(crate) source_fingerprint: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum InitiatedSprintGitAuthorityError {
+    Invalid,
+    Forbidden,
+    Conflict,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum StoreInitiatedSprintGitAuthorityResult {
+    Stored { authority_id: String },
+    IdempotentReplay { authority_id: String },
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StoreFileReviewFacts {
@@ -1217,6 +1281,108 @@ impl SqliteOrchestrationRepository {
         connection.query_row("SELECT authorization.capture_authorization_id, authorization.epic_id, authorization.sprint_id, authorization.provenance_id, authorization.repository_id, authorization.repository_root, authorization.worktree_id, authorization.worktree_root, authorization.baseline_object_id, authorization.current_object_id FROM file_review_git_capture_authorizations authorization JOIN initiated_sprints sprint ON sprint.id=authorization.sprint_id AND sprint.epic_id=authorization.epic_id JOIN epic_initiations epic ON epic.epic_id=authorization.epic_id AND epic.provenance_id=authorization.provenance_id WHERE authorization.capture_authorization_id=?1", params![capture_authorization_id], |r| Ok(FileReviewGitCaptureAuthorization { capture_authorization_id:r.get(0)?, epic_id:r.get(1)?, sprint_id:r.get(2)?, provenance_id:r.get(3)?, repository_id:r.get(4)?, repository_root:r.get(5)?, worktree_id:r.get(6)?, worktree_root:r.get(7)?, baseline_object_id:r.get(8)?, current_object_id:r.get(9)? })).optional().map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)
     }
 
+    /// Application-only transition store. Runtime and Git facts are supplied by an internal port.
+    pub(crate) fn store_initiated_sprint_git_authority(
+        &self,
+        value: InitiatedSprintGitAuthorityWrite,
+    ) -> Result<StoreInitiatedSprintGitAuthorityResult, InitiatedSprintGitAuthorityError> {
+        validate_initiated_sprint_git_authority(&value)?;
+        let authority_id = initiated_sprint_git_authority_id(&value);
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+        let ownership: Option<(String, String)> = tx
+            .query_row(
+                "SELECT sprint.epic_id, epic.provenance_id FROM initiated_sprints sprint JOIN epic_initiations epic ON epic.epic_id=sprint.epic_id JOIN epic_initiation_provenance provenance ON provenance.id=epic.provenance_id WHERE sprint.id=?1",
+                [&value.sprint_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+        let Some((epic_id, provenance_id)) = ownership else {
+            return Err(InitiatedSprintGitAuthorityError::Forbidden);
+        };
+        let fingerprint = initiated_sprint_git_authority_fingerprint(
+            &authority_id,
+            &epic_id,
+            &provenance_id,
+            &value,
+        );
+        let existing: Option<(String, String)> = tx
+            .query_row(
+                "SELECT authority_id,payload_fingerprint FROM initiated_sprint_git_authorities WHERE idempotency_key=?1 OR authority_id=?2 OR runtime_instance_ref=?3",
+                params![value.idempotency_key, authority_id, value.runtime_instance_ref],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+        if let Some((existing_id, existing_fingerprint)) = existing {
+            return if existing_fingerprint == fingerprint {
+                Ok(StoreInitiatedSprintGitAuthorityResult::IdempotentReplay {
+                    authority_id: existing_id,
+                })
+            } else {
+                Err(InitiatedSprintGitAuthorityError::Conflict)
+            };
+        }
+        tx.execute(
+            "INSERT INTO initiated_sprint_git_authorities (authority_id,idempotency_key,payload_fingerprint,epic_id,sprint_id,provenance_id,repository_id,repository_root,repository_common_dir,worktree_id,worktree_root,baseline_object_id,current_object_id,runtime_instance_ref,runtime_source_ref,source_fingerprint,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+            params![authority_id, value.idempotency_key, fingerprint, epic_id, value.sprint_id, provenance_id, value.repository_id, value.repository_root, value.repository_common_dir, value.worktree_id, value.worktree_root, value.baseline_object_id, value.current_object_id, value.runtime_instance_ref, value.runtime_source_ref, value.source_fingerprint, timestamp(self.clock.now())],
+        )
+        .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+        tx.commit()
+            .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+        Ok(StoreInitiatedSprintGitAuthorityResult::Stored { authority_id })
+    }
+
+    /// Private downstream load. The live initiated Sprint/Epic/provenance chain is reauthorized.
+    pub(crate) fn load_initiated_sprint_git_authority(
+        &self,
+        authority_id: &str,
+    ) -> Result<Option<InitiatedSprintGitAuthority>, InitiatedSprintGitAuthorityError> {
+        if !bounded_application_id(authority_id) {
+            return Err(InitiatedSprintGitAuthorityError::Invalid);
+        }
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+        let loaded = connection.query_row("SELECT authority.authority_id,authority.epic_id,authority.sprint_id,authority.provenance_id,authority.repository_id,authority.repository_root,authority.repository_common_dir,authority.worktree_id,authority.worktree_root,authority.baseline_object_id,authority.current_object_id,authority.runtime_instance_ref,authority.runtime_source_ref,authority.source_fingerprint,authority.idempotency_key,authority.payload_fingerprint FROM initiated_sprint_git_authorities authority JOIN initiated_sprints sprint ON sprint.id=authority.sprint_id AND sprint.epic_id=authority.epic_id JOIN epic_initiations epic ON epic.epic_id=authority.epic_id AND epic.provenance_id=authority.provenance_id JOIN epic_initiation_provenance provenance ON provenance.id=authority.provenance_id WHERE authority.authority_id=?1", [authority_id], |row| Ok((InitiatedSprintGitAuthority { authority_id:row.get(0)?, epic_id:row.get(1)?, sprint_id:row.get(2)?, provenance_id:row.get(3)?, repository_id:row.get(4)?, repository_root:row.get(5)?, repository_common_dir:row.get(6)?, worktree_id:row.get(7)?, worktree_root:row.get(8)?, baseline_object_id:row.get(9)?, current_object_id:row.get(10)?, runtime_instance_ref:row.get(11)?, runtime_source_ref:row.get(12)?, source_fingerprint:row.get(13)? }, row.get::<_, String>(14)?, row.get::<_, String>(15)?))).optional().map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+        let Some((authority, idempotency_key, fingerprint)) = loaded else {
+            return Ok(None);
+        };
+        let write = InitiatedSprintGitAuthorityWrite {
+            sprint_id: authority.sprint_id.clone(),
+            idempotency_key,
+            repository_id: authority.repository_id.clone(),
+            repository_root: authority.repository_root.clone(),
+            repository_common_dir: authority.repository_common_dir.clone(),
+            worktree_id: authority.worktree_id.clone(),
+            worktree_root: authority.worktree_root.clone(),
+            baseline_object_id: authority.baseline_object_id.clone(),
+            current_object_id: authority.current_object_id.clone(),
+            runtime_instance_ref: authority.runtime_instance_ref.clone(),
+            runtime_source_ref: authority.runtime_source_ref.clone(),
+            source_fingerprint: authority.source_fingerprint.clone(),
+        };
+        validate_initiated_sprint_git_authority(&write)?;
+        let expected_id = initiated_sprint_git_authority_id(&write);
+        let expected_fingerprint = initiated_sprint_git_authority_fingerprint(
+            &expected_id,
+            &authority.epic_id,
+            &authority.provenance_id,
+            &write,
+        );
+        if authority.authority_id != expected_id || fingerprint != expected_fingerprint {
+            return Err(InitiatedSprintGitAuthorityError::Forbidden);
+        }
+        Ok(Some(authority))
+    }
+
     /// Producer-only application seam. No Tauri command accepts these facts.
     pub(crate) fn store_file_review_facts(
         &self,
@@ -1551,6 +1717,92 @@ fn git_capture_authorization_fingerprint(value: &FileReviewGitCaptureAuthorizati
         &value.worktree_root,
         &value.baseline_object_id,
         &value.current_object_id,
+    ] {
+        hash.update((part.len() as u64).to_be_bytes());
+        hash.update(part.as_bytes());
+    }
+    format!("{:x}", hash.finalize())
+}
+
+fn validate_initiated_sprint_git_authority(
+    value: &InitiatedSprintGitAuthorityWrite,
+) -> Result<(), InitiatedSprintGitAuthorityError> {
+    if ![
+        &value.sprint_id,
+        &value.idempotency_key,
+        &value.repository_id,
+        &value.worktree_id,
+        &value.runtime_instance_ref,
+        &value.runtime_source_ref,
+    ]
+    .iter()
+    .all(|value| bounded_application_id(value))
+        || !canonical_absolute_root(&value.repository_root)
+        || !canonical_absolute_root(&value.repository_common_dir)
+        || !canonical_absolute_root(&value.worktree_root)
+        || !git_object_id(&value.baseline_object_id)
+        || !git_object_id(&value.current_object_id)
+        || value
+            .baseline_object_id
+            .eq_ignore_ascii_case(&value.current_object_id)
+        || value.source_fingerprint.len() != 64
+        || !value
+            .source_fingerprint
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(InitiatedSprintGitAuthorityError::Invalid);
+    }
+    Ok(())
+}
+
+fn bounded_application_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/'))
+}
+
+fn initiated_sprint_git_authority_id(value: &InitiatedSprintGitAuthorityWrite) -> String {
+    let mut hash = Sha256::new();
+    for part in [
+        b"initiated-sprint-git-authority/v1".as_slice(),
+        value.sprint_id.as_bytes(),
+        value.idempotency_key.as_bytes(),
+    ] {
+        hash.update((part.len() as u64).to_be_bytes());
+        hash.update(part);
+    }
+    format!(
+        "sprint-git-authority-{}",
+        &format!("{:x}", hash.finalize())[..24]
+    )
+}
+
+fn initiated_sprint_git_authority_fingerprint(
+    authority_id: &str,
+    epic_id: &str,
+    provenance_id: &str,
+    value: &InitiatedSprintGitAuthorityWrite,
+) -> String {
+    let mut hash = Sha256::new();
+    for part in [
+        authority_id,
+        &value.idempotency_key,
+        epic_id,
+        &value.sprint_id,
+        provenance_id,
+        &value.repository_id,
+        &value.repository_root,
+        &value.repository_common_dir,
+        &value.worktree_id,
+        &value.worktree_root,
+        &value.baseline_object_id,
+        &value.current_object_id,
+        &value.runtime_instance_ref,
+        &value.runtime_source_ref,
+        &value.source_fingerprint,
     ] {
         hash.update((part.len() as u64).to_be_bytes());
         hash.update(part.as_bytes());
