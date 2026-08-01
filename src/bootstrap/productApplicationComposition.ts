@@ -17,6 +17,7 @@ import { createTauriEpicPlanningDraftLifecycleClient } from '../infrastructure/o
 import { createTauriEpicInitiationConfirmationClient } from '../infrastructure/orchestrations/tauriEpicInitiationConfirmation';
 import { tauriEpicBootstrapTransitionClient } from '../infrastructure/orchestrations/tauriEpicBootstrapTransition';
 import { createTauriConversationHarnessInspectorSource } from '../infrastructure/conversationHarnesses/tauriConversationHarnessInspectorSource';
+import { createTauriContextualFileReviewClient } from '../infrastructure/fileReview/tauriContextualFileReview';
 
 /** Product boot owns only available application boundaries; absent orchestration runtime stays explicit. */
 export function createProductApplicationComposition(): AppProps {
@@ -27,6 +28,7 @@ export function createProductApplicationComposition(): AppProps {
       invoke,
     ),
     agentSessionHarnessManagementSource: createTauriConversationHarnessInspectorSource(invoke),
+    contextualFileReviewClient: createTauriContextualFileReviewClient(),
     orchestrationClient: createNativeQueryOrchestrationClient(
       tauriOrchestrationNativeQueryClient,
       tauriEpicBootstrapTransitionClient,

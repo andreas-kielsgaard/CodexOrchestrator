@@ -24,6 +24,10 @@ import {
 import { WorkUnitDetailWorkspace } from './WorkUnitDetailWorkspace';
 import '../styles/sprintWorkspace.css';
 import type { EmbeddedAgentSessionComposition } from '../../agentSessions';
+import type {
+  ContextualFileReviewResult,
+  ContextualFileReviewFailureReason,
+} from '../../../application/contextualFileReview';
 
 export interface SprintWorkspaceProps {
   readonly workspace: SprintWorkspacePresentationV1;
@@ -37,6 +41,7 @@ export interface SprintWorkspaceProps {
   readonly onDetailLocationChange: (location: SprintWorkspaceDetailLocation) => void;
   readonly onBack: () => void;
   readonly onOpenAgentSession?: (sessionId: string) => void;
+  readonly onRequestFileReview?: (sprintId: string) => Promise<ContextualFileReviewResult>;
 }
 
 export function SprintWorkspace({
@@ -51,6 +56,7 @@ export function SprintWorkspace({
   onDetailLocationChange,
   onBack,
   onOpenAgentSession,
+  onRequestFileReview,
 }: SprintWorkspaceProps) {
   const [selectedTab, setSelectedTab] = useState<SprintWorkspaceTab>('flow');
   const [selectedConcernId, setSelectedConcernId] = useState<string | null>(null);
@@ -67,6 +73,15 @@ export function SprintWorkspace({
     id: string;
   } | null>(null);
   const concernRestoreWorkUnitRef = useRef<string | null>(null);
+  const fileReviewRequestSequence = useRef(0);
+  const [fileReviewState, setFileReviewState] = useState<
+    | { readonly kind: 'idle' | 'pending' }
+    | {
+        readonly kind: 'failed';
+        readonly reason: ContextualFileReviewFailureReason;
+        readonly message: string;
+      }
+  >({ kind: 'idle' });
   const planningValue =
     workspace.sprint.planningState.source.status === 'available'
       ? workspace.sprint.planningState.value
@@ -90,6 +105,24 @@ export function SprintWorkspace({
       )
       ?.focus();
   }, [detailLocation]);
+
+  useEffect(() => {
+    fileReviewRequestSequence.current += 1;
+    setFileReviewState({ kind: 'idle' });
+  }, [workspace.sprint.sprintId]);
+
+  const requestFileReview = async () => {
+    if (!onRequestFileReview || fileReviewState.kind === 'pending') return;
+    const sequence = ++fileReviewRequestSequence.current;
+    setFileReviewState({ kind: 'pending' });
+    const result = await onRequestFileReview(workspace.sprint.sprintId);
+    if (fileReviewRequestSequence.current !== sequence) return;
+    setFileReviewState(
+      result.status === 'failed'
+        ? { kind: 'failed', reason: result.reason, message: result.message }
+        : { kind: 'idle' },
+    );
+  };
 
   useEffect(() => {
     if (detailLocation.kind !== 'sprint' || !concernRestoreWorkUnitRef.current) return;
@@ -208,20 +241,40 @@ export function SprintWorkspace({
         ) : undefined
       }
       control={
-        <SprintContinuationControl
-          automaticEnabled={workspace.continuation.policy?.automaticEnabled ?? false}
-          controller={automaticContinuationPolicyController}
-          policyUpdateIntent={
-            workspace.continuation.policy
-              ? {
-                  level: 'sprint',
-                  sprintId: workspace.sprint.sprintId,
-                  policyId: workspace.continuation.policy.policyId,
-                  automaticEnabled: workspace.continuation.policy.automaticEnabled,
-                }
-              : undefined
-          }
-        />
+        <div className="sprint-header-controls">
+          {hasStartedPlan && onRequestFileReview ? (
+            <div className="sprint-file-review-control">
+              <button
+                type="button"
+                disabled={fileReviewState.kind === 'pending'}
+                onClick={() => void requestFileReview()}
+              >
+                Review files
+              </button>
+              {fileReviewState.kind === 'pending' ? (
+                <small role="status">Preparing File Review…</small>
+              ) : fileReviewState.kind === 'failed' ? (
+                <small role="alert" data-reason={fileReviewState.reason}>
+                  {fileReviewState.message}
+                </small>
+              ) : null}
+            </div>
+          ) : null}
+          <SprintContinuationControl
+            automaticEnabled={workspace.continuation.policy?.automaticEnabled ?? false}
+            controller={automaticContinuationPolicyController}
+            policyUpdateIntent={
+              workspace.continuation.policy
+                ? {
+                    level: 'sprint',
+                    sprintId: workspace.sprint.sprintId,
+                    policyId: workspace.continuation.policy.policyId,
+                    automaticEnabled: workspace.continuation.policy.automaticEnabled,
+                  }
+                : undefined
+            }
+          />
+        </div>
       }
       context={
         <div className="sprint-context">

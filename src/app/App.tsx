@@ -40,6 +40,10 @@ import { useEpicInitiationConfirmation } from './useEpicInitiationConfirmation';
 import { EpicInitiationConfirmationModal } from './EpicInitiationConfirmationModal';
 import type { AgentSessionProductLocation } from '../application/agentSessionNavigation';
 import type { FileReviewSource } from '../application/fileReview';
+import type {
+  ContextualFileReviewClient,
+  ContextualFileReviewResult,
+} from '../application/contextualFileReview';
 import { FileReviewScreen } from '../features/fileReview';
 
 export type ApplicationSurface =
@@ -70,6 +74,7 @@ export interface AppProps {
   /** Present only in an injected development composition; production boot does not expose it. */
   readonly harnessManagementPreviewSurface?: ReactNode;
   readonly fileReviewSource?: FileReviewSource;
+  readonly contextualFileReviewClient?: ContextualFileReviewClient;
   /** Present only in the injected development launcher composition. */
   readonly humanReviewLauncherView?: ReactNode;
   /** Enumerated proof navigation; it cannot activate or focus a native window. */
@@ -102,6 +107,7 @@ export function App({
   agentIdentityForSession,
   harnessManagementPreviewSurface,
   fileReviewSource,
+  contextualFileReviewClient,
   humanReviewLauncherView,
   humanReviewLauncherNavigation,
   initialSurface = 'epics',
@@ -113,6 +119,8 @@ export function App({
       ? 'epics'
       : initialSurface,
   );
+  const [contextualFileReviewSource, setContextualFileReviewSource] = useState<FileReviewSource>();
+  const activeFileReviewSource = fileReviewSource ?? contextualFileReviewSource;
   const [selectedAgentSessionId, setSelectedAgentSessionId] = useState<string | null>(null);
   const [expandedAgentSessionNodes, setExpandedAgentSessionNodes] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -374,6 +382,32 @@ export function App({
     },
     [planningDrafts],
   );
+  const requestContextualFileReview = useCallback(
+    async (sprintId: string): Promise<ContextualFileReviewResult> => {
+      if (!contextualFileReviewClient)
+        return {
+          status: 'failed',
+          reason: 'unavailable',
+          message: 'File Review is unavailable right now.',
+        };
+      let result: ContextualFileReviewResult;
+      try {
+        result = await contextualFileReviewClient.requestForSprint(sprintId);
+      } catch {
+        return {
+          status: 'failed',
+          reason: 'unavailable',
+          message: 'File Review is unavailable right now.',
+        };
+      }
+      if (result.status === 'ready') {
+        setContextualFileReviewSource(result.source);
+        setSurface('file-review');
+      }
+      return result;
+    },
+    [contextualFileReviewClient],
+  );
 
   return (
     <div className="primary-app-shell">
@@ -472,9 +506,10 @@ export function App({
           }}
           requestedLocation={requestedProductLocation}
           onOpenAgentSession={openStandaloneAgentSession}
+          onRequestFileReview={contextualFileReviewClient ? requestContextualFileReview : undefined}
         />
-      ) : surface === 'file-review' && fileReviewSource ? (
-        <FileReviewScreen source={fileReviewSource} />
+      ) : surface === 'file-review' && activeFileReviewSource ? (
+        <FileReviewScreen source={activeFileReviewSource} />
       ) : surface === 'worktree-review' && humanReviewLauncherView ? (
         humanReviewLauncherView
       ) : surface === 'agent-sessions' ? (
@@ -511,6 +546,7 @@ function OrchestrationSurface({
   onOpenDraft,
   requestedLocation,
   onOpenAgentSession,
+  onRequestFileReview,
 }: {
   readonly load: ReturnType<typeof useOrchestrationLoad>;
   readonly presentation: OrchestrationPresentationAdapter;
@@ -523,6 +559,7 @@ function OrchestrationSurface({
   readonly onOpenDraft: (draft: EpicPlanningDraftSummary) => void;
   readonly requestedLocation: AgentSessionProductLocation | null;
   readonly onOpenAgentSession: (sessionId: string) => void;
+  readonly onRequestFileReview?: (sprintId: string) => Promise<ContextualFileReviewResult>;
 }) {
   if (load.kind === 'ready')
     return (
@@ -537,6 +574,7 @@ function OrchestrationSurface({
         onOpenPlanningDraft={onOpenDraft}
         requestedLocation={requestedLocation}
         onOpenAgentSession={onOpenAgentSession}
+        onRequestFileReview={onRequestFileReview}
       />
     );
   const copy =

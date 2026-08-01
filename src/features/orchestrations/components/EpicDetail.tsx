@@ -18,6 +18,7 @@ import type {
   SprintAutomaticContinuationPolicyController,
   EpicAutomaticContinuationPolicyController,
 } from '../../../application/orchestrations';
+import type { ContextualFileReviewResult } from '../../../application/contextualFileReview';
 
 export interface EpicDetailProps {
   readonly epic: EpicPresentation;
@@ -34,6 +35,7 @@ export interface EpicDetailProps {
   readonly onDetailLocationChange: (location: SprintWorkspaceDetailLocation) => void;
   readonly onBack: () => void;
   readonly onOpenAgentSession?: (sessionId: string) => void;
+  readonly onRequestFileReview?: (sprintId: string) => Promise<ContextualFileReviewResult>;
 }
 
 export function EpicDetail({
@@ -51,6 +53,7 @@ export function EpicDetail({
   onDetailLocationChange,
   onBack,
   onOpenAgentSession,
+  onRequestFileReview,
 }: EpicDetailProps) {
   const restoreSprintIdRef = useRef<string | null>(null);
   const [selectedSprintOpener, setSelectedSprintOpener] = useState<{
@@ -90,6 +93,7 @@ export function EpicDetail({
           onCloseSprint();
         }}
         onOpenAgentSession={onOpenAgentSession}
+        onRequestFileReview={onRequestFileReview}
       />
     );
   }
