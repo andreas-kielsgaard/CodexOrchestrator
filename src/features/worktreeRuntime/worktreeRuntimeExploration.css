@@ -1,0 +1,344 @@
+.worktree-runtime {
+  height: 100%;
+  overflow: auto;
+  padding: 30px clamp(20px, 4vw, 56px) 48px;
+  background: radial-gradient(circle at 88% 8%, rgb(215 230 219 / 58%), transparent 28%), #f4f2eb;
+  color: #17211b;
+}
+
+.worktree-runtime h1,
+.worktree-runtime h2,
+.worktree-runtime p {
+  margin: 0;
+}
+
+.worktree-runtime h1 {
+  margin-top: 3px;
+  font-size: clamp(2rem, 4vw, 3.25rem);
+  letter-spacing: -0.045em;
+}
+
+.worktree-runtime h2 {
+  margin-top: 4px;
+  font-size: 1.12rem;
+}
+
+.worktree-runtime__header,
+.worktree-runtime__section-heading,
+.worktree-runtime__timeline-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.worktree-runtime__header > div:first-child {
+  max-width: 700px;
+}
+
+.worktree-runtime__header > div:first-child > p:last-child {
+  margin-top: 10px;
+  color: #58655e;
+  line-height: 1.55;
+}
+
+.worktree-runtime__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.worktree-runtime button {
+  padding: 8px 12px;
+  border: 1px solid #b9c4bc;
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #17211b;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 760;
+  cursor: pointer;
+}
+
+.worktree-runtime button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.worktree-runtime__identity {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 24px 0 18px;
+  overflow: hidden;
+  border: 1px solid #d5dbd4;
+  border-radius: 12px;
+  background: #d5dbd4;
+}
+
+.worktree-runtime__identity div {
+  min-width: 0;
+  padding: 13px 15px;
+  background: rgb(255 253 248 / 88%);
+}
+
+.worktree-runtime__identity .wide {
+  grid-column: span 2;
+}
+
+.worktree-runtime__identity dt {
+  margin-bottom: 5px;
+  color: #6e7a73;
+  font-size: 0.67rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.worktree-runtime__identity dd {
+  overflow: hidden;
+  margin: 0;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worktree-runtime__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.18fr) minmax(340px, 0.82fr);
+  gap: 18px;
+}
+
+.worktree-runtime__grid--lower {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 18px;
+}
+
+.worktree-runtime__panel {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid #d5dbd4;
+  border-radius: 12px;
+  background: rgb(255 253 248 / 92%);
+  box-shadow: 0 10px 30px rgb(36 50 42 / 5%);
+}
+
+.worktree-runtime__section-heading {
+  margin-bottom: 16px;
+}
+
+.worktree-runtime__section-heading > p {
+  max-width: 210px;
+  color: #6e7a73;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  text-align: right;
+}
+
+.worktree-runtime__table-wrap {
+  overflow-x: auto;
+}
+
+.worktree-runtime table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.worktree-runtime th,
+.worktree-runtime td {
+  padding: 10px 8px;
+  border-top: 1px solid #e1e5de;
+  text-align: left;
+  vertical-align: top;
+}
+
+.worktree-runtime th {
+  border-top: 0;
+  color: #6e7a73;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.worktree-runtime td {
+  font-size: 0.78rem;
+}
+
+.worktree-runtime td strong,
+.worktree-runtime td small {
+  display: block;
+}
+
+.worktree-runtime td small {
+  max-width: 420px;
+  margin-top: 3px;
+  overflow: hidden;
+  color: #69756e;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.66rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worktree-runtime__boundary,
+.worktree-runtime__evidence {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 3px 7px;
+  border: 1px solid #ccd5cd;
+  border-radius: 999px;
+  background: #eef2ec;
+  color: #42534a;
+  font-size: 0.65rem;
+  font-weight: 820;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.worktree-runtime__boundary.shared-keyed,
+.worktree-runtime__evidence.projected {
+  border-color: #d7c898;
+  background: #fff8dd;
+  color: #645521;
+}
+
+.worktree-runtime__boundary.unsupported,
+.worktree-runtime__evidence.unsupported {
+  border-color: #dfc5bd;
+  background: #fff0ec;
+  color: #7a3f32;
+}
+
+.worktree-runtime__evidence.recorded {
+  border-color: #c7d2df;
+  background: #edf4fb;
+  color: #34536f;
+}
+
+.worktree-runtime__timeline {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.worktree-runtime__timeline li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  gap: 10px;
+  padding-bottom: 17px;
+}
+
+.worktree-runtime__timeline li:not(:last-child)::before {
+  position: absolute;
+  top: 12px;
+  bottom: -1px;
+  left: 5px;
+  width: 1px;
+  background: #ced7cf;
+  content: '';
+}
+
+.worktree-runtime__timeline-marker {
+  position: relative;
+  z-index: 1;
+  width: 11px;
+  height: 11px;
+  margin-top: 4px;
+  border: 2px solid #fdfbf5;
+  border-radius: 50%;
+  background: #4f755d;
+  box-shadow: 0 0 0 1px #7f9c89;
+}
+
+.worktree-runtime__timeline p {
+  margin-top: 3px;
+  font-size: 0.8rem;
+  font-weight: 720;
+}
+
+.worktree-runtime__timeline small {
+  display: block;
+  margin-top: 4px;
+  color: #69756e;
+  font-size: 0.71rem;
+  line-height: 1.4;
+}
+
+.worktree-runtime__limits,
+.worktree-runtime__review ol {
+  display: grid;
+  gap: 9px;
+  margin: 15px 0 0;
+  padding-left: 20px;
+  color: #4f5f56;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.worktree-runtime__limits li::marker {
+  color: #a04f3c;
+}
+
+.worktree-runtime__review {
+  border-color: #c5d2c8;
+  background: #edf3ec;
+}
+
+.worktree-runtime__review li::marker {
+  color: #426e50;
+  font-weight: 850;
+}
+
+.worktree-runtime__footer {
+  padding: 18px 2px 0;
+  color: #718078;
+  font-size: 0.7rem;
+}
+
+@media (max-width: 980px) {
+  .worktree-runtime__grid,
+  .worktree-runtime__grid--lower {
+    grid-template-columns: 1fr;
+  }
+
+  .worktree-runtime__identity {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .worktree-runtime {
+    padding: 22px 14px 36px;
+  }
+
+  .worktree-runtime__header,
+  .worktree-runtime__section-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .worktree-runtime__header-actions {
+    justify-content: space-between;
+  }
+
+  .worktree-runtime__section-heading > p {
+    max-width: none;
+    text-align: left;
+  }
+
+  .worktree-runtime__identity {
+    grid-template-columns: 1fr;
+  }
+
+  .worktree-runtime__identity .wide {
+    grid-column: auto;
+  }
+}

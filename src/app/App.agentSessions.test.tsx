@@ -24,6 +24,7 @@ describe('App application surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Orchestration' }));
     expect(screen.getByRole('main', { name: 'Orchestration' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Files & diffs' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Worktree Review Dev' })).toBeNull();
   });
 
   it('adds the development-only file review tab only when its client is injected', async () => {
@@ -42,6 +43,22 @@ describe('App application surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Files & diffs' }));
     expect(screen.getByRole('main', { name: 'Files and diffs' })).toBeVisible();
     expect(await screen.findByText('5 changed files')).toBeVisible();
+  });
+
+  it('adds Worktree Review only through the injected development composition', async () => {
+    render(
+      <App
+        agentSessionClient={emptyAgentClient()}
+        orchestrationClient={emptyOrchestrationClient()}
+        humanReviewLauncherView={<main aria-label="Retained worktree builds">Launcher</main>}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Worktree Review Dev' }));
+    expect(screen.getByRole('main', { name: 'Retained worktree builds' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestration' }));
+    expect(screen.getByRole('main', { name: 'Orchestration' })).toBeVisible();
   });
 
   it('opens one product-owned Session binding in standalone view and returns to its typed product view', async () => {

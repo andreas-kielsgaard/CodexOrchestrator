@@ -460,6 +460,16 @@ h3 {
   line-height: 1.2;
 }
 
+.surface-switcher button small {
+  padding: 2px 5px;
+  border: 1px solid #c4cec6;
+  border-radius: 999px;
+  color: #6b786f;
+  font-size: 0.56rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
 .task-card p {
   color: #59655e;
   font-size: 0.86rem;

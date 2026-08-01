@@ -42,7 +42,8 @@ import type { AgentSessionProductLocation } from '../application/agentSessionNav
 import type { FileReviewSource } from '../application/fileReview';
 import { FileReviewScreen } from '../features/fileReview';
 
-export type ApplicationSurface = 'epics' | 'agent-sessions' | 'harness-inspector' | 'file-review';
+export type ApplicationSurface =
+  'epics' | 'agent-sessions' | 'harness-inspector' | 'file-review' | 'worktree-review';
 
 export interface AppProps {
   readonly agentSessionClient: AgentSessionClient;
@@ -69,6 +70,10 @@ export interface AppProps {
   /** Present only in an injected development composition; production boot does not expose it. */
   readonly harnessManagementPreviewSurface?: ReactNode;
   readonly fileReviewSource?: FileReviewSource;
+  /** Present only in the injected development launcher composition. */
+  readonly humanReviewLauncherView?: ReactNode;
+  /** Enumerated proof navigation; it cannot activate or focus a native window. */
+  readonly humanReviewLauncherNavigation?: () => Promise<'worktree-review' | null>;
   readonly initialSurface?: ApplicationSurface;
 }
 
@@ -97,11 +102,14 @@ export function App({
   agentIdentityForSession,
   harnessManagementPreviewSurface,
   fileReviewSource,
+  humanReviewLauncherView,
+  humanReviewLauncherNavigation,
   initialSurface = 'epics',
 }: AppProps) {
   const [surface, setSurface] = useState<ApplicationSurface>(() =>
     (initialSurface === 'harness-inspector' && !harnessManagementPreviewSurface) ||
-    (initialSurface === 'file-review' && !fileReviewSource)
+    (initialSurface === 'file-review' && !fileReviewSource) ||
+    (initialSurface === 'worktree-review' && !humanReviewLauncherView)
       ? 'epics'
       : initialSurface,
   );
@@ -115,6 +123,24 @@ export function App({
     'overview',
   );
   const orchestrationLoad = useOrchestrationLoad(orchestrationClient);
+
+  useEffect(() => {
+    if (!humanReviewLauncherView || !humanReviewLauncherNavigation) return;
+    let active = true;
+    const read = () =>
+      void humanReviewLauncherNavigation().then(
+        (route) => {
+          if (active && route === 'worktree-review') setSurface(route);
+        },
+        () => undefined,
+      );
+    read();
+    const timer = window.setInterval(read, 300);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [humanReviewLauncherNavigation, humanReviewLauncherView]);
   const [selectedDraft, setSelectedDraft] = useState<EpicPlanningDraftBinding | null>(null);
   const [planningDrafts, setPlanningDrafts] = useState<readonly EpicPlanningDraftSummary[]>([]);
   const [initiationCapability, setInitiationCapability] = useState<EpicInitiationCapability>(
@@ -384,6 +410,16 @@ export function App({
             Harness Management
           </button>
         )}
+        {humanReviewLauncherView && (
+          <button
+            className={surface === 'worktree-review' ? 'active' : undefined}
+            type="button"
+            aria-current={surface === 'worktree-review' ? 'page' : undefined}
+            onClick={() => setSurface('worktree-review')}
+          >
+            Worktree Review <small>Dev</small>
+          </button>
+        )}
         {fileReviewSource ? (
           <button
             className={surface === 'file-review' ? 'active' : undefined}
@@ -439,6 +475,8 @@ export function App({
         />
       ) : surface === 'file-review' && fileReviewSource ? (
         <FileReviewScreen source={fileReviewSource} />
+      ) : surface === 'worktree-review' && humanReviewLauncherView ? (
+        humanReviewLauncherView
       ) : surface === 'agent-sessions' ? (
         <StandaloneAgentSessionScreen
           client={agentSessionClient}

@@ -1,11 +1,17 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { configDefaults } from 'vitest/config';
+import path from 'node:path';
+
+const runtimeRoot = process.env.VITE_RUNTIME_ROOT;
+const runtimePort = Number.parseInt(process.env.VITE_RUNTIME_VITE_PORT ?? '1420', 10);
 
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
+  ...(runtimeRoot ? { cacheDir: path.join(runtimeRoot, 'vite-cache') } : {}),
   build: {
+    ...(runtimeRoot ? { outDir: path.join(runtimeRoot, 'dist') } : {}),
     rollupOptions: {
       input: {
         app: 'index.html',
@@ -14,7 +20,8 @@ export default defineConfig({
     },
   },
   server: {
-    port: 1420,
+    host: '127.0.0.1',
+    port: runtimePort,
     strictPort: true,
   },
   envPrefix: ['VITE_', 'TAURI_'],

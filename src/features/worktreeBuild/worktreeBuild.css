@@ -1,0 +1,288 @@
+.worktree-build-shell {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #fffdf8;
+}
+.worktree-build-shell__application {
+  position: relative;
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+.worktree-build-shell__application .primary-app-shell {
+  height: 100%;
+}
+.worktree-build-shell__application .surface-switcher {
+  position: absolute;
+}
+.worktree-build-shell__application--hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+.worktree-build-error {
+  position: fixed;
+  z-index: 1001;
+  right: 18px;
+  top: 72px;
+  max-width: 320px;
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: #842f2f;
+  color: white;
+}
+.worktree-build-route {
+  position: relative;
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  z-index: 900;
+  display: grid;
+  grid-template-rows: 48px minmax(0, 1fr);
+  background: #f4f3ef;
+}
+.worktree-build-route__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-width: 0;
+  padding: 0 18px;
+  border-bottom: 1px solid #d4d8d1;
+  background: #fffdf8;
+  color: #5a665e;
+  font-size: 0.78rem;
+}
+.worktree-build-route__bar span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.worktree-build-route__bar button,
+.worktree-build-detail header button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #aeb7af;
+  border-radius: 7px;
+  padding: 7px 10px;
+  background: white;
+  color: #25342b;
+  font-weight: 750;
+}
+.worktree-build-detail {
+  position: relative;
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  z-index: 900;
+  overflow: auto;
+  padding: 24px;
+  background: #f5f6f2;
+  color: #17211b;
+}
+.worktree-build-detail > header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: start;
+  border: 1px solid #d8ddd5;
+  border-radius: 12px;
+  padding: 20px;
+  background: #fffdf8;
+}
+.worktree-build-detail h1,
+.worktree-build-detail p {
+  margin: 0;
+}
+.worktree-build-detail .eyebrow,
+.worktree-build-detail__orientation span,
+.worktree-build-detail__facts span {
+  color: #657269;
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.worktree-build-detail h1 {
+  margin-top: 2px;
+}
+.worktree-build-detail header div > p:last-child {
+  margin-top: 5px;
+  color: #607067;
+}
+.worktree-build-detail__compare {
+  align-self: center;
+}
+.worktree-build-detail__orientation,
+.worktree-build-detail__facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+.worktree-build-detail__orientation article,
+.worktree-build-detail__facts article {
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid #d7dcd4;
+  border-radius: 10px;
+  padding: 16px;
+  background: white;
+}
+.worktree-build-detail__orientation article > div,
+.worktree-build-detail__facts article > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.worktree-build-detail__orientation p,
+.worktree-build-detail__facts p,
+.worktree-build-detail__facts time {
+  color: #59685f;
+  font-size: 0.8rem;
+}
+.worktree-build-detail__section {
+  margin-top: 16px;
+  border: 1px solid #d7dcd4;
+  border-radius: 10px;
+  padding: 17px;
+  background: white;
+}
+.worktree-build-detail__section h2 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+.worktree-build-detail__section > p {
+  color: #526159;
+}
+.worktree-build-detail__related {
+  margin: 12px 0;
+  border-radius: 8px;
+  padding: 11px;
+  background: #f3f5f0;
+}
+.worktree-build-detail__related ul {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.worktree-build-detail__related li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.worktree-build-detail__artifacts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.worktree-build-detail__artifacts article {
+  display: flex;
+  gap: 9px;
+  min-width: 0;
+  border-radius: 8px;
+  padding: 11px;
+  background: #f3f5f0;
+}
+.worktree-build-detail__artifacts article > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.worktree-build-detail__artifacts span {
+  color: #587064;
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+.worktree-build-detail__artifacts p {
+  color: #5c6961;
+  font-size: 0.78rem;
+}
+.worktree-build-detail__history,
+.worktree-build-detail__commits {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.worktree-build-detail__history li,
+.worktree-build-detail__commits li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  border-top: 1px solid #e5e7e2;
+  padding-top: 7px;
+}
+.worktree-build-detail__history li div,
+.worktree-build-detail__commits li div {
+  min-width: 0;
+  display: grid;
+}
+.worktree-build-detail__history time,
+.worktree-build-detail__commits time {
+  color: #69756e;
+  font-size: 0.75rem;
+}
+.worktree-build-detail__section details {
+  margin-top: 10px;
+  border: 1px solid #d7dcd4;
+  border-radius: 8px;
+  padding: 10px;
+}
+.worktree-build-detail__section summary {
+  cursor: pointer;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+.worktree-build-detail__section details p {
+  margin-top: 6px;
+  color: #66736c;
+  font-size: 0.75rem;
+}
+.worktree-build-detail__section pre {
+  max-height: 420px;
+  overflow: auto;
+  margin: 9px 0 0;
+  border-radius: 7px;
+  padding: 12px;
+  background: #17211b;
+  color: #dfe9df;
+  font:
+    11px/1.5 ui-monospace,
+    Consolas,
+    monospace;
+  white-space: pre-wrap;
+}
+@media (max-width: 900px) {
+  .worktree-build-detail {
+    padding: 14px;
+  }
+  .worktree-build-detail > header {
+    grid-template-columns: 1fr;
+  }
+  .worktree-build-detail__orientation,
+  .worktree-build-detail__facts {
+    grid-template-columns: 1fr;
+  }
+  .worktree-build-detail__compare {
+    justify-self: start;
+  }
+}

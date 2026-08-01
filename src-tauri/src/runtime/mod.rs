@@ -4,4 +4,5 @@
 
 pub(crate) mod capabilities;
 pub(crate) mod codex;
+pub(crate) mod instance;
 pub(crate) mod processes;

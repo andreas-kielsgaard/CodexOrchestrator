@@ -18,6 +18,10 @@ mod agent_sessions;
 mod orchestration;
 mod runtime;
 mod storage;
+#[cfg(debug_assertions)]
+mod worktree_review;
+#[allow(dead_code)]
+mod worktree_runtime;
 
 const APP_DATABASE_FILE_NAME: &str = "codex-orchestrator.sqlite";
 
