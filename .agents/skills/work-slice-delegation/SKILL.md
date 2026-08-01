@@ -16,7 +16,7 @@ Run as the planner-owned delegation path after `orchestration-next-work-planner`
 
 Stage exactly one independent worker-root for one work slice, then own coordination across callbacks through review, merge/reconciliation, reporting, and planner notification.
 
-For shared ownership, owner-liveness, work-route, context-routing, and notification concepts, read `../_orchestration-common/concepts.md` when the prompt is unclear.
+When needed, read the applicable files under `../_shared-skill-concepts/`: `ownership.md`, `owner-liveness.md`, `work-route-vs-content-dependency.md`, `context-routing.md`, and `reporting-flow.md`.
 
 Do not stage a worker from a root acceptance capsule alone. If the planner handoff payload or planner final output is missing, stop and ask the planner fork for the missing planner output.
 
@@ -24,7 +24,7 @@ Do not implement the slice. Start the worker as an independent `root-orchestrati
 
 Treat worker startup as an intermediate stage. Complete this delegation only after the slice is reviewed, merged or signed off, reported, and the source planner route is notified, or after the slice is blocked or escalated.
 
-When starting a worker root, apply the shared reasoning-routing and thread-naming concepts. Omit model overrides unless the human explicitly requested a model.
+When starting a worker root, apply `../_shared-skill-concepts/reasoning-routing.md` and `../_shared-skill-concepts/thread-naming.md`. Omit model overrides unless the human explicitly requested a model.
 
 ## Inputs
 
@@ -109,6 +109,8 @@ Whenever progress depends on another actor, tool, or human and the required requ
 
 When the worker completes, continue this same delegation actor with `review-before-merge` using the review payload defined by `orchestration-worker`. Do not start a separate review thread for normal flow.
 
+The worker's notification transfers active disposition to this delegation actor. Route later review, integration, reporting, and record settlement through the delegation, planner, and record actors. Reactivate the worker only for a correction, clarification, or similar action it still owns; informational disposition does not require a worker message.
+
 After review:
 
 - if the decision is `merge`, continue this same delegation actor with `merge-accepted-work`
@@ -118,8 +120,6 @@ After review:
 - if the decision is `human-needed`, ask for the exact decision needed and keep the delegation lifecycle `waiting-on-human`
 
 After `merge-accepted-work` or `merge-reconciliation`, continue this same delegation actor with `work-slice-reporter`. When reporting is complete and the record-root handoff is made or clearly requested, notify the planner fork that the slice is settled, blocked, signed off, or `waiting-on-human`.
-
-If review requests changes, the re-prompt goes back to the independent worker thread.
 
 When the worker reports blocked or needs clarification, forward the compact status to the planner fork. If the issue is attention-only route/ref drift, keep the existing worker route and continue rather than replanning.
 
