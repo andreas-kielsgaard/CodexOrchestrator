@@ -285,8 +285,8 @@ export function decodeOrchestrationEventsV1(value: unknown): OrchestrationEvents
     const semanticRole = literal(
       required(referenceFact, 'semanticRole'),
       [
-        'epic_runner',
-        'sprint_runner',
+        'epic',
+        'sprint',
         'work_slice_planner',
         'work_unit_handler',
         'work_unit_implementer',
@@ -298,8 +298,8 @@ export function decodeOrchestrationEventsV1(value: unknown): OrchestrationEvents
     const allowedRoles: Partial<
       Record<AgentSessionAssociationTargetKind, readonly AgentSessionSemanticRole[]>
     > = {
-      epic: ['epic_runner'],
-      sprint: ['sprint_runner'],
+      epic: ['epic'],
+      sprint: ['sprint'],
       sprint_planner_activity: ['work_slice_planner'],
       work_unit_execution: [
         'work_unit_handler',

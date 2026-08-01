@@ -235,27 +235,27 @@ describe('Orchestration events', () => {
         agentSessionId: 'agent-session-1',
         targetKind: 'epic',
         targetId: 'epic-1',
-        semanticRole: 'epic_runner',
+        semanticRole: 'epic',
       },
       {
         agentSessionRefId: 'agent-session-reference-builder',
         agentSessionId: 'agent-session-1',
         targetKind: 'epic',
         targetId: 'epic-1',
-        semanticRole: 'epic_runner',
+        semanticRole: 'epic',
       },
       {
         agentSessionRefId: 'agent-session-reference-sprint',
         agentSessionId: 'agent-session-1',
         targetKind: 'sprint',
         targetId: 'sprint-1',
-        semanticRole: 'sprint_runner',
+        semanticRole: 'sprint',
       },
       {
         agentSessionRefId: 'agent-session-reference-work-unit-planner',
         agentSessionId: 'agent-session-1',
-        targetKind: 'work_unit_execution',
-        targetId: 'execution-observed',
+        targetKind: 'sprint_planner_activity',
+        targetId: 'planner-activity-1',
         semanticRole: 'work_slice_planner',
       },
       {
@@ -266,13 +266,11 @@ describe('Orchestration events', () => {
         semanticRole: 'work_unit_handler',
       },
       {
-        agentSessionRefId: 'agent-session-reference-future',
+        agentSessionRefId: 'agent-session-reference-implementer',
         agentSessionId: 'agent-session-1',
-        targetKind: 'other',
-        targetId: 'future-participant-1',
+        targetKind: 'work_unit_execution',
+        targetId: 'execution-observed',
         semanticRole: 'work_unit_implementer',
-        otherTargetType: 'future_participant',
-        otherSemanticRole: 'future_role',
       },
     );
 
@@ -281,7 +279,7 @@ describe('Orchestration events', () => {
 
   it('rejects an Agent Session role that does not match its association target', () => {
     const events = validFacts();
-    events.agentSessionReferences[0].semanticRole = 'epic_runner';
+    events.agentSessionReferences[0].semanticRole = 'sprint';
 
     expect(() => decodeOrchestrationEventsV1(events)).toThrow(
       'agent session reference role must match its association target',

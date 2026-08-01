@@ -11,8 +11,8 @@ export type AgentSessionAssociationTargetKind =
   'epic' | 'sprint' | 'sprint_planner_activity' | 'work_unit_execution' | 'other';
 
 export type AgentSessionSemanticRole =
-  | 'epic_runner'
-  | 'sprint_runner'
+  | 'epic'
+  | 'sprint'
   | 'work_slice_planner'
   | 'work_unit_handler'
   | 'work_unit_implementer';
