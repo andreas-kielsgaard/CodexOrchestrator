@@ -23,7 +23,21 @@ export interface OrchestrationNativeQueryV2 {
   readonly initiatedSprints: readonly NativeInitiatedSprintV2[];
   readonly fileReviewDocuments: readonly NativeFileReviewDocumentV1[];
 }
-export interface NativeFileReviewDocumentV1 { readonly documentRefId: string; readonly epicId: string; readonly sprintId: string; readonly provenanceId: string; readonly title: string; readonly summary?: string; readonly artifactId: string; readonly changedFiles: readonly { readonly changedFileReferenceId: string; readonly displayName: string; readonly changeKind: 'added' | 'modified' | 'deleted' | 'renamed'; readonly previousDisplayName?: string }[]; }
+export interface NativeFileReviewDocumentV1 {
+  readonly documentRefId: string;
+  readonly epicId: string;
+  readonly sprintId: string;
+  readonly provenanceId: string;
+  readonly title: string;
+  readonly summary?: string;
+  readonly artifactId: string;
+  readonly changedFiles: readonly {
+    readonly changedFileReferenceId: string;
+    readonly displayName: string;
+    readonly changeKind: 'added' | 'modified' | 'deleted' | 'renamed';
+    readonly previousDisplayName?: string;
+  }[];
+}
 export interface NativeInitiatedEpicV2 {
   readonly initiationId: string;
   readonly epicPlanningDraftId: string;
@@ -182,7 +196,10 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
     materialSnapshots: array(root.materialSnapshots, 'materialSnapshots').map(materialSnapshot),
     initiatedEpics: array(root.initiatedEpics, 'initiatedEpics').map(initiatedEpic),
     initiatedSprints: array(root.initiatedSprints, 'initiatedSprints').map(initiatedSprint),
-    fileReviewDocuments: root.fileReviewDocuments === undefined ? [] : array(root.fileReviewDocuments, 'fileReviewDocuments').map(fileReviewDocument),
+    fileReviewDocuments:
+      root.fileReviewDocuments === undefined
+        ? []
+        : array(root.fileReviewDocuments, 'fileReviewDocuments').map(fileReviewDocument),
   };
   validate(query);
   return query;
@@ -281,8 +298,15 @@ export function nativeQueryProductCompositionInputV2(
     continuationRequests: [],
     observedContinuations: [],
     observedHandoffs: [],
-    internalArtifacts: query.fileReviewDocuments.map((x) => ({ artifactId: x.artifactId, provenanceId: x.provenanceId })),
-    documentReferences: query.fileReviewDocuments.map((x) => ({ documentRefId: x.documentRefId, artifactIds: [x.artifactId], provenanceId: x.provenanceId })),
+    internalArtifacts: query.fileReviewDocuments.map((x) => ({
+      artifactId: x.artifactId,
+      provenanceId: x.provenanceId,
+    })),
+    documentReferences: query.fileReviewDocuments.map((x) => ({
+      documentRefId: x.documentRefId,
+      artifactIds: [x.artifactId],
+      provenanceId: x.provenanceId,
+    })),
     provenance: initiated.map((x) => ({
       provenanceId: x.provenanceId,
       sourceKind: 'application' as const,
@@ -302,9 +326,21 @@ export function nativeQueryProductCompositionInputV2(
     },
     artifactAccess: {
       version: ARTIFACT_ACCESS_CONTRACTS_V1,
-      artifacts: query.fileReviewDocuments.map((x) => ({ artifactId: x.artifactId as import('./artifactAccess').ArtifactId, kind: 'review_material' as const, provenanceReference: x.provenanceId })),
+      artifacts: query.fileReviewDocuments.map((x) => ({
+        artifactId: x.artifactId as import('./artifactAccess').ArtifactId,
+        kind: 'review_material' as const,
+        provenanceReference: x.provenanceId,
+      })),
       changedFileReferences: query.fileReviewDocuments.flatMap((x) => x.changedFiles),
-      documents: query.fileReviewDocuments.map((x) => ({ documentRefId: x.documentRefId as import('./artifactAccess').DocumentRefId, classification: 'changed_files' as const, title: x.title, ...(x.summary ? { summary: x.summary } : {}), artifactIds: [x.artifactId as import('./artifactAccess').ArtifactId], changedFileReferenceIds: x.changedFiles.map((f) => f.changedFileReferenceId), provenanceReference: x.provenanceId })),
+      documents: query.fileReviewDocuments.map((x) => ({
+        documentRefId: x.documentRefId as import('./artifactAccess').DocumentRefId,
+        classification: 'changed_files' as const,
+        title: x.title,
+        ...(x.summary ? { summary: x.summary } : {}),
+        artifactIds: [x.artifactId as import('./artifactAccess').ArtifactId],
+        changedFileReferenceIds: x.changedFiles.map((f) => f.changedFileReferenceId),
+        provenanceReference: x.provenanceId,
+      })),
       requests: [],
       results: [],
     },
@@ -361,11 +397,30 @@ export function nativeQueryProductCompositionInputV2(
         title: draft.title ?? 'Epic Plan Builder',
         source: source(epic.provenanceId),
       })),
-      artifactOwnership: query.fileReviewDocuments.map((x) => ({ artifactId: x.artifactId, sprintId: x.sprintId, source: source(x.provenanceId) })),
-      documentOwnership: query.fileReviewDocuments.map((x) => ({ documentRefId: x.documentRefId, sprintId: x.sprintId, source: source(x.provenanceId) })),
+      artifactOwnership: query.fileReviewDocuments.map((x) => ({
+        artifactId: x.artifactId,
+        sprintId: x.sprintId,
+        source: source(x.provenanceId),
+      })),
+      documentOwnership: query.fileReviewDocuments.map((x) => ({
+        documentRefId: x.documentRefId,
+        sprintId: x.sprintId,
+        source: source(x.provenanceId),
+      })),
       sprintWorkspacePresentation: {
-        workSlicePlanningPointMembership: [], gates: [],
-        documents: query.fileReviewDocuments.map((x) => ({ documentRefId: x.documentRefId, displayOrder: query.fileReviewDocuments.filter((item) => item.sprintId === x.sprintId).indexOf(x), recordedAt: { source: source(x.provenanceId), value: query.generatedAt }, displayCategory: { source: source(x.provenanceId), value: 'File review' }, sprintPlanRevisionIds: [], workSlicePlanningPointIds: [], workUnitScopeIds: [] })),
+        workSlicePlanningPointMembership: [],
+        gates: [],
+        documents: query.fileReviewDocuments.map((x) => ({
+          documentRefId: x.documentRefId,
+          displayOrder: query.fileReviewDocuments
+            .filter((item) => item.sprintId === x.sprintId)
+            .indexOf(x),
+          recordedAt: { source: source(x.provenanceId), value: query.generatedAt },
+          displayCategory: { source: source(x.provenanceId), value: 'File review' },
+          sprintPlanRevisionIds: [],
+          workSlicePlanningPointIds: [],
+          workUnitScopeIds: [],
+        })),
       },
     },
     ...(transitionQuery
@@ -721,8 +776,54 @@ const initiatedSprint = (value: unknown): NativeInitiatedSprintV2 => {
 };
 const fileReviewDocument = (value: unknown): NativeFileReviewDocumentV1 => {
   const x = object(value, 'file review document');
-  keys(x, ['documentRefId','epicId','sprintId','provenanceId','title','summary','artifactId','changedFiles'], 'file review document');
-  return { documentRefId: string(x.documentRefId, 'documentRefId'), epicId: string(x.epicId, 'epicId'), sprintId: string(x.sprintId, 'sprintId'), provenanceId: string(x.provenanceId, 'provenanceId'), title: boundedString(x.title, 240, 'Document title'), ...(x.summary === undefined ? {} : { summary: boundedString(x.summary, 4000, 'Document summary') }), artifactId: string(x.artifactId, 'artifactId'), changedFiles: array(x.changedFiles, 'changedFiles').map((value) => { const file = object(value, 'changed file'); keys(file, ['changedFileReferenceId','displayName','changeKind','previousDisplayName'], 'changed file'); if (!['added','modified','deleted','renamed'].includes(file.changeKind as string)) fail('invalid changed file kind'); const changeKind = file.changeKind as 'added' | 'modified' | 'deleted' | 'renamed'; const previousDisplayName = file.previousDisplayName === undefined ? undefined : boundedString(file.previousDisplayName, 4000, 'previousDisplayName'); if ((changeKind === 'renamed') !== (previousDisplayName !== undefined)) fail('invalid renamed previous display name'); return { changedFileReferenceId: string(file.changedFileReferenceId, 'changedFileReferenceId'), displayName: boundedString(file.displayName, 4000, 'displayName'), changeKind, ...(previousDisplayName === undefined ? {} : { previousDisplayName }) }; }) };
+  keys(
+    x,
+    [
+      'documentRefId',
+      'epicId',
+      'sprintId',
+      'provenanceId',
+      'title',
+      'summary',
+      'artifactId',
+      'changedFiles',
+    ],
+    'file review document',
+  );
+  return {
+    documentRefId: string(x.documentRefId, 'documentRefId'),
+    epicId: string(x.epicId, 'epicId'),
+    sprintId: string(x.sprintId, 'sprintId'),
+    provenanceId: string(x.provenanceId, 'provenanceId'),
+    title: boundedString(x.title, 240, 'Document title'),
+    ...(x.summary === undefined
+      ? {}
+      : { summary: boundedString(x.summary, 4000, 'Document summary') }),
+    artifactId: string(x.artifactId, 'artifactId'),
+    changedFiles: array(x.changedFiles, 'changedFiles').map((value) => {
+      const file = object(value, 'changed file');
+      keys(
+        file,
+        ['changedFileReferenceId', 'displayName', 'changeKind', 'previousDisplayName'],
+        'changed file',
+      );
+      if (!['added', 'modified', 'deleted', 'renamed'].includes(file.changeKind as string))
+        fail('invalid changed file kind');
+      const changeKind = file.changeKind as 'added' | 'modified' | 'deleted' | 'renamed';
+      const previousDisplayName =
+        file.previousDisplayName === undefined
+          ? undefined
+          : boundedString(file.previousDisplayName, 4000, 'previousDisplayName');
+      if ((changeKind === 'renamed') !== (previousDisplayName !== undefined))
+        fail('invalid renamed previous display name');
+      return {
+        changedFileReferenceId: string(file.changedFileReferenceId, 'changedFileReferenceId'),
+        displayName: boundedString(file.displayName, 4000, 'displayName'),
+        changeKind,
+        ...(previousDisplayName === undefined ? {} : { previousDisplayName }),
+      };
+    }),
+  };
 };
 function validate(query: OrchestrationNativeQueryV2) {
   unique(query.planningDrafts, (x) => x.epicPlanningDraftId, 'planning draft ID');
