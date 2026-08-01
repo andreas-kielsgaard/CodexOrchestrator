@@ -6,6 +6,7 @@ import { DetailWorkspace } from './DetailWorkspace';
 import { ResizableSplitSurface } from './ResizableSplitSurface';
 import { SharedAgentSessionPanel } from './SharedAgentSessionPanel';
 import '../styles/orchestrationSubdetail.css';
+import type { ReactNode } from 'react';
 
 export interface WorkUnitDetailWorkspaceProps {
   readonly unit: SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number];
@@ -16,6 +17,7 @@ export interface WorkUnitDetailWorkspaceProps {
   readonly backLabel?: string;
   readonly onBack: () => void;
   readonly onOpenAgentSession?: (sessionId: string) => void;
+  readonly sprintControl?: ReactNode;
 }
 
 interface SessionFocusTarget {
@@ -33,6 +35,7 @@ export function WorkUnitDetailWorkspace({
   backLabel = 'Back to Work Slice planning point',
   onBack,
   onOpenAgentSession,
+  sprintControl,
 }: WorkUnitDetailWorkspaceProps) {
   const workUnitId = unit.workUnitId;
   const workSlicePlanner = sessions.find(
@@ -73,10 +76,13 @@ export function WorkUnitDetailWorkspace({
       focusBackOnMount
       hotbarContext={workSlicePlanningPointGroupTitle}
       control={
-        <span className={`work-unit-state work-unit-state--${unit.presentationState}`}>
-          <small>Current work</small>
-          <strong>{workUnitStatusLabel(unit.presentationState)}</strong>
-        </span>
+        <div className="sprint-header-controls">
+          {sprintControl}
+          <span className={`work-unit-state work-unit-state--${unit.presentationState}`}>
+            <small>Current work</small>
+            <strong>{workUnitStatusLabel(unit.presentationState)}</strong>
+          </span>
+        </div>
       }
       context={
         <div className="subdetail-context">

@@ -223,6 +223,68 @@ describe('OrchestrationSection', () => {
     expect(action).toBeEnabled();
   });
 
+  it('retains the shared Sprint File Review request across planning-point and Work Unit detail', async () => {
+    let settle!: (result: ContextualFileReviewResult) => void;
+    const requestFileReview = vi.fn(
+      () =>
+        new Promise<ContextualFileReviewResult>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    render(
+      <OrchestrationSection
+        view={disposableRecordedOrchestrationView}
+        onRequestFileReview={requestFileReview}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Codex Epic Runner workspace development' }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Sprint: Sprint Control Surface Discovery' }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Open Work Slice planning point: Integrated detail surfaces',
+      }),
+    );
+
+    expect(
+      screen.getByRole('main', {
+        name: 'Work Slice planning point detail: Integrated detail surfaces',
+      }),
+    ).toBeVisible();
+    let action = screen.getByRole('button', { name: 'Review files' });
+    let control = action.closest('.sprint-file-review-control') as HTMLElement;
+    expect(action.closest('.detail-workspace__control')).toBeVisible();
+    fireEvent.click(action);
+    expect(action).toBeDisabled();
+    expect(within(control).getByRole('status')).toHaveTextContent('Preparing File Review…');
+    expect(requestFileReview).toHaveBeenNthCalledWith(1, 'sprint-control-surface');
+
+    fireEvent.click(screen.getByRole('button', { name: /Open Work Unit WU-ECS2E/ }));
+    expect(screen.getByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
+    action = screen.getByRole('button', { name: 'Review files' });
+    control = action.closest('.sprint-file-review-control') as HTMLElement;
+    expect(action.closest('.detail-workspace__control')).toBeVisible();
+    expect(action).toBeDisabled();
+    expect(within(control).getByRole('status')).toHaveTextContent('Preparing File Review…');
+    expect(requestFileReview).toHaveBeenCalledTimes(1);
+    expect(requestFileReview.mock.calls[0]).toEqual(['sprint-control-surface']);
+
+    await act(async () => {
+      settle({
+        status: 'failed',
+        reason: 'conflict',
+        message: 'File Review could not confirm one current Sprint source.',
+      });
+    });
+    const failure = within(control).getByRole('alert');
+    expect(failure).toHaveAttribute('data-reason', 'conflict');
+    expect(failure).toHaveTextContent('File Review could not confirm one current Sprint source.');
+    expect(action).toBeEnabled();
+  });
+
   it('navigates Plan and Work Unit details, restores focus, and coordinates dual sessions', () => {
     render(<OrchestrationSection view={disposableRecordedOrchestrationView} />);
     fireEvent.click(

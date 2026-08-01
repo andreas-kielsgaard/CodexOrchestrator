@@ -29,6 +29,14 @@ import type {
   ContextualFileReviewFailureReason,
 } from '../../../application/contextualFileReview';
 
+type SprintFileReviewControlState =
+  | { readonly kind: 'idle' | 'pending' }
+  | {
+      readonly kind: 'failed';
+      readonly reason: ContextualFileReviewFailureReason;
+      readonly message: string;
+    };
+
 export interface SprintWorkspaceProps {
   readonly workspace: SprintWorkspacePresentationV1;
   readonly adjunct?: SprintWorkspacePresentationAdjunct;
@@ -74,14 +82,9 @@ export function SprintWorkspace({
   } | null>(null);
   const concernRestoreWorkUnitRef = useRef<string | null>(null);
   const fileReviewRequestSequence = useRef(0);
-  const [fileReviewState, setFileReviewState] = useState<
-    | { readonly kind: 'idle' | 'pending' }
-    | {
-        readonly kind: 'failed';
-        readonly reason: ContextualFileReviewFailureReason;
-        readonly message: string;
-      }
-  >({ kind: 'idle' });
+  const [fileReviewState, setFileReviewState] = useState<SprintFileReviewControlState>({
+    kind: 'idle',
+  });
   const planningValue =
     workspace.sprint.planningState.source.status === 'available'
       ? workspace.sprint.planningState.value
@@ -123,6 +126,10 @@ export function SprintWorkspace({
         : { kind: 'idle' },
     );
   };
+  const fileReviewControl =
+    hasStartedPlan && onRequestFileReview ? (
+      <SprintFileReviewControl state={fileReviewState} onRequest={requestFileReview} />
+    ) : undefined;
 
   useEffect(() => {
     if (detailLocation.kind !== 'sprint' || !concernRestoreWorkUnitRef.current) return;
@@ -180,6 +187,7 @@ export function SprintWorkspace({
           });
         }}
         onOpenAgentSession={onOpenAgentSession}
+        sprintControl={fileReviewControl}
       />
     );
   }
@@ -223,6 +231,7 @@ export function SprintWorkspace({
           });
         }}
         onOpenAgentSession={onOpenAgentSession}
+        sprintControl={fileReviewControl}
       />
     );
   }
@@ -242,24 +251,7 @@ export function SprintWorkspace({
       }
       control={
         <div className="sprint-header-controls">
-          {hasStartedPlan && onRequestFileReview ? (
-            <div className="sprint-file-review-control">
-              <button
-                type="button"
-                disabled={fileReviewState.kind === 'pending'}
-                onClick={() => void requestFileReview()}
-              >
-                Review files
-              </button>
-              {fileReviewState.kind === 'pending' ? (
-                <small role="status">Preparing File Review…</small>
-              ) : fileReviewState.kind === 'failed' ? (
-                <small role="alert" data-reason={fileReviewState.reason}>
-                  {fileReviewState.message}
-                </small>
-              ) : null}
-            </div>
-          ) : null}
+          {fileReviewControl}
           <SprintContinuationControl
             automaticEnabled={workspace.continuation.policy?.automaticEnabled ?? false}
             controller={automaticContinuationPolicyController}
@@ -494,6 +486,29 @@ export function SprintWorkspace({
         ) : undefined
       }
     />
+  );
+}
+
+function SprintFileReviewControl({
+  state,
+  onRequest,
+}: {
+  readonly state: SprintFileReviewControlState;
+  readonly onRequest: () => Promise<void>;
+}) {
+  return (
+    <div className="sprint-file-review-control">
+      <button type="button" disabled={state.kind === 'pending'} onClick={() => void onRequest()}>
+        Review files
+      </button>
+      {state.kind === 'pending' ? (
+        <small role="status">Preparing File Review…</small>
+      ) : state.kind === 'failed' ? (
+        <small role="alert" data-reason={state.reason}>
+          {state.message}
+        </small>
+      ) : null}
+    </div>
   );
 }
 
