@@ -129,7 +129,7 @@ export const recordedPresentationAdjunct: RecordedPresentationAdjunct = {
             sessionId: `recorded-session-${workUnitId}`,
             title: `Recorded ${workUnitId} worker`,
             workUnitId,
-            role: 'worker' as const,
+            role: 'implementer' as const,
             transcript: transcript(
               `recorded-session-${workUnitId}`,
               `Recorded ${workUnitId} worker`,

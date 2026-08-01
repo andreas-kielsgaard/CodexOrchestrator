@@ -67,7 +67,7 @@ export interface SprintAgentSessionPresentation extends AgentSessionReferencePre
 
 export interface WorkUnitAgentSessionPresentation extends SprintAgentSessionPresentation {
   readonly workUnitId: string;
-  readonly role: 'handler' | 'worker' | 'reviewer';
+  readonly role: 'handler' | 'implementer';
 }
 
 /** Deferred controller/view adjuncts. They add no Sprint plan semantics. */

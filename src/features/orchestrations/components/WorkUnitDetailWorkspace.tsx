@@ -27,14 +27,10 @@ export function WorkUnitDetailWorkspace({
   const handler = sessions.find(
     (session) => session.workUnitId === workUnitId && session.role === 'handler',
   );
-  const worker = sessions.find(
-    (session) => session.workUnitId === workUnitId && session.role === 'worker',
+  const implementer = sessions.find(
+    (session) => session.workUnitId === workUnitId && session.role === 'implementer',
   );
-  const reviewer = sessions.find(
-    (session) => session.workUnitId === workUnitId && session.role === 'reviewer',
-  );
-  const [dominant, setDominant] = useState<'handler' | 'worker' | null>(null);
-  const [reviewerExpanded, setReviewerExpanded] = useState(false);
+  const [dominant, setDominant] = useState<'handler' | 'implementer' | null>(null);
 
   return (
     <DetailWorkspace
@@ -86,32 +82,23 @@ export function WorkUnitDetailWorkspace({
       primary={
         <section
           className="work-unit-sessions"
-          aria-label="Handler and worker Agent Sessions"
+          aria-label="Handler and Implementer Agent Sessions"
           data-dominant={dominant ?? 'equal'}
         >
           <SessionSlot
             label="Handler / planner fork"
             session={handler}
             agentSessionComposition={agentSessionComposition}
-            expanded={dominant !== 'worker'}
-            onExpandedChange={(expanded) => setDominant(expanded ? 'handler' : 'worker')}
+            expanded={dominant !== 'implementer'}
+            onExpandedChange={(expanded) => setDominant(expanded ? 'handler' : 'implementer')}
           />
           <SessionSlot
-            label="Implementation worker"
-            session={worker}
+            label="Work Unit Implementer"
+            session={implementer}
             agentSessionComposition={agentSessionComposition}
             expanded={dominant !== 'handler'}
-            onExpandedChange={(expanded) => setDominant(expanded ? 'worker' : 'handler')}
+            onExpandedChange={(expanded) => setDominant(expanded ? 'implementer' : 'handler')}
           />
-          {reviewer && (
-            <SessionSlot
-              label="Reviewer"
-              session={reviewer}
-              agentSessionComposition={agentSessionComposition}
-              expanded={reviewerExpanded}
-              onExpandedChange={setReviewerExpanded}
-            />
-          )}
         </section>
       }
     />
