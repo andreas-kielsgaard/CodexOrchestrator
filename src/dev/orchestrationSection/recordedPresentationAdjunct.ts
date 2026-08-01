@@ -124,8 +124,8 @@ export const recordedPresentationAdjunct: RecordedPresentationAdjunct = {
             ),
           },
         ],
-        workUnitSessions: ['WU-ECS2B', 'WU-ECS2C', 'WU-ECS2E', 'WU-ECS2D', 'WU-ECS3']
-          .map((workUnitId): WorkUnitAgentSessionPresentation => ({
+        workUnitSessions: ['WU-ECS2B', 'WU-ECS2C', 'WU-ECS2E', 'WU-ECS2D', 'WU-ECS3'].map(
+          (workUnitId): WorkUnitAgentSessionPresentation => ({
             sessionId: `recorded-session-${workUnitId}`,
             title: `Recorded ${workUnitId} worker`,
             workUnitId,
@@ -135,20 +135,8 @@ export const recordedPresentationAdjunct: RecordedPresentationAdjunct = {
               `Recorded ${workUnitId} worker`,
               'Recorded worker conversation; no live task was started.',
             ),
-          }))
-          .concat([
-            {
-              sessionId: 'recorded-session-reviewer-WU-ECS2E',
-              title: 'Recorded reviewer WU-ECS2E',
-              workUnitId: 'WU-ECS2E',
-              role: 'reviewer' as const,
-              transcript: transcript(
-                'recorded-session-reviewer-WU-ECS2E',
-                'Recorded reviewer WU-ECS2E',
-                'Recorded reviewer session; no review command was sent.',
-              ),
-            },
-          ]),
+          }),
+        ),
         plannerActivityWorkflows: [recordedPlanWorkflowAdjunct],
       },
     },
