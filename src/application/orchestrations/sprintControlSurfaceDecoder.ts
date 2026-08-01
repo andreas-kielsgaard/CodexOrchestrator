@@ -221,7 +221,7 @@ export function decodeSprintExecutionSnapshotV1(
     fields(session, ['id', 'title']);
     const role = literal(
       session.role,
-      ['sprint', 'work_unit_handler', 'work_unit_worker'],
+      ['sprint', 'work_unit_handler', 'work_unit_implementer'],
       'agent session role',
     );
     if (role === 'sprint' && session.workUnitId !== undefined)

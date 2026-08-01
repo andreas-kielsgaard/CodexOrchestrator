@@ -74,7 +74,7 @@ export interface SprintReadModel {
   readonly agentSessionReferences: readonly {
     readonly agentSessionRefId: string;
     readonly title: string;
-    readonly role: 'sprint' | 'work_unit_handler' | 'work_unit_worker';
+    readonly role: 'sprint' | 'work_unit_handler' | 'work_unit_implementer';
     readonly workUnitId?: string;
   }[];
   readonly continuation: {

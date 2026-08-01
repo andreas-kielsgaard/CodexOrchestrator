@@ -640,7 +640,7 @@ function executionSnapshot(): SprintExecutionSnapshotV1 {
       {
         id: 'agent-session-work-unit-1',
         title: 'Work Unit worker',
-        role: 'work_unit_worker',
+        role: 'work_unit_implementer',
         workUnitId: 'work-unit-1',
       },
     ],

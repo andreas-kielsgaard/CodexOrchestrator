@@ -253,7 +253,7 @@ export const recordedProductReadCompositionInput = {
         agentSessionId: `recorded-session-${workUnitId}`,
         targetKind: 'work_unit_execution',
         targetId: `execution-${workUnitId}`,
-        semanticRole: 'work_unit_worker',
+        semanticRole: 'work_unit_implementer',
       })),
     ],
     gates: ['ECS-R1', 'ECS-R2', 'ECS-R3', 'ECS-R4'].map((revision) => ({

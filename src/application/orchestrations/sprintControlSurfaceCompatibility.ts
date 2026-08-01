@@ -144,7 +144,7 @@ export interface SprintExecutionSnapshotV1 {
   readonly agentSessions: readonly {
     readonly id: string;
     readonly title: string;
-    readonly role: 'sprint' | 'work_unit_handler' | 'work_unit_worker';
+    readonly role: 'sprint' | 'work_unit_handler' | 'work_unit_implementer';
     readonly workUnitId?: string;
   }[];
   readonly continuation: {

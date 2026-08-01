@@ -474,7 +474,7 @@ function productInput(): Mutable<ProductReadCompositionInputV1> {
           agentSessionId: 'session-1',
           targetKind: 'work_unit_execution',
           targetId: 'execution-1',
-          semanticRole: 'work_unit_worker',
+          semanticRole: 'work_unit_implementer',
         },
         {
           agentSessionRefId: 'session-ref-planner',
@@ -873,7 +873,7 @@ function addSecondSprint(input: Mutable<ProductReadCompositionInputV1>) {
     agentSessionId: 'session-1',
     targetKind: 'sprint',
     targetId: 'sprint-2',
-    semanticRole: 'sprint_runner',
+    semanticRole: 'sprint',
   });
   input.events.internalArtifacts.push({ artifactId: 'artifact-2', provenanceId: 'provenance-1' });
   input.events.documentReferences.push({
