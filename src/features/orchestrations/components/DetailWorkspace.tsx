@@ -67,8 +67,17 @@ export function DetailWorkspace({
         primaryLabel={contextLabel}
         secondaryLabel="Sprint workspace"
         initialPrimaryPercent={28}
-        primary={<aside className="detail-workspace__context-rail" aria-label={contextLabel}>{context}</aside>}
-        secondary={<div className="detail-workspace__main-column"><div className="detail-workspace__primary">{primary}</div>{agentSession && <div className="detail-workspace__agent-session">{agentSession}</div>}</div>}
+        primary={
+          <aside className="detail-workspace__context-rail" aria-label={contextLabel}>
+            {context}
+          </aside>
+        }
+        secondary={
+          <div className="detail-workspace__main-column">
+            <div className="detail-workspace__primary">{primary}</div>
+            {agentSession && <div className="detail-workspace__agent-session">{agentSession}</div>}
+          </div>
+        }
       />
     </main>
   );
