@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-const ACTIVE_SCHEMA_VERSION: i64 = 11;
+const ACTIVE_SCHEMA_VERSION: i64 = 12;
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join(ACTIVE_DATABASE_FILE_NAME)
@@ -25,7 +25,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     if current_version == ACTIVE_SCHEMA_VERSION {
         return Ok(());
     }
-    if (1..=10).contains(&current_version) {
+    if (1..=11).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -101,6 +101,13 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 format!("Unable to migrate initiated Sprint Git authority schema: {error}")
             })?;
         transaction
+            .execute_batch(
+                crate::orchestration::conversation_harness_working_copy::HARNESS_WORKING_COPY_SCHEMA,
+            )
+            .map_err(|error| {
+                format!("Unable to migrate Harness working-copy schema: {error}")
+            })?;
+        transaction
             .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
             .map_err(|error| format!("Unable to record active schema version: {error}"))?;
         transaction
@@ -144,6 +151,11 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .map_err(|error| {
             format!("Unable to initialize initiated Sprint Git authority schema: {error}")
         })?;
+    transaction
+        .execute_batch(
+            crate::orchestration::conversation_harness_working_copy::HARNESS_WORKING_COPY_SCHEMA,
+        )
+        .map_err(|error| format!("Unable to initialize Harness working-copy schema: {error}"))?;
     transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
         .map_err(|error| format!("Unable to record active schema version: {error}"))?;
@@ -260,6 +272,8 @@ mod tests {
                 "file_review_changed_files",
                 "file_review_documents",
                 "file_review_git_capture_authorizations",
+                "harness_working_copies",
+                "harness_working_copy_commands",
                 "initiated_planning_drafts",
                 "initiated_sprint_git_authorities",
                 "initiated_sprints",
@@ -401,8 +415,40 @@ mod tests {
                 .expect("preserved Batch 11 authority"),
             "capture-fingerprint-v10"
         );
-        assert_eq!(pragma_i64(&connection, "user_version"), 11);
-        initialize_active_database(&connection).expect("reopen v11");
+        assert_eq!(pragma_i64(&connection, "user_version"), 12);
+        initialize_active_database(&connection).expect("reopen current schema");
+    }
+
+    #[test]
+    fn migrates_v11_predecessor_and_reopens_without_losing_existing_rows() {
+        let connection = Connection::open_in_memory().expect("database");
+        configure_sqlite_connection(&connection).expect("policy");
+        initialize_active_database(&connection).expect("seed current schema");
+        connection
+            .execute_batch(
+                "DROP TABLE harness_working_copy_commands;
+                 DROP TABLE harness_working_copies;
+                 INSERT INTO epic_planning_drafts (id,title,status,created_at,updated_at) VALUES ('draft-v11','preserved','active','t','t');
+                 PRAGMA user_version=11;",
+            )
+            .expect("shape genuine v11 predecessor");
+
+        initialize_active_database(&connection).expect("migrate v11");
+
+        assert!(table_exists(&connection, "harness_working_copies"));
+        assert!(table_exists(&connection, "harness_working_copy_commands"));
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT title FROM epic_planning_drafts WHERE id='draft-v11'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .expect("preserved predecessor row"),
+            "preserved"
+        );
+        assert_eq!(pragma_i64(&connection, "user_version"), 12);
+        initialize_active_database(&connection).expect("reopen v12");
     }
 
     #[test]

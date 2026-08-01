@@ -680,6 +680,28 @@ impl OrchestrationApplication {
         self.repository.native_query()
     }
 
+    /// Saves one complete dirty Harness working copy. No commit, activation, binding, or runtime
+    /// effect is part of this internal application command.
+    pub(crate) fn save_harness_working_copy(
+        &self,
+        command: super::conversation_harness_working_copy::SaveHarnessWorkingCopyCommand,
+    ) -> Result<
+        super::conversation_harness_working_copy::SaveHarnessWorkingCopyResult,
+        super::conversation_harness_working_copy::HarnessWorkingCopyError,
+    > {
+        self.repository.save_harness_working_copy(command)
+    }
+
+    pub(crate) fn load_harness_working_copy(
+        &self,
+        harness_key: &str,
+    ) -> Result<
+        Option<super::conversation_harness_working_copy::HarnessWorkingCopy>,
+        super::conversation_harness_working_copy::HarnessWorkingCopyError,
+    > {
+        self.repository.load_harness_working_copy(harness_key)
+    }
+
     pub(crate) fn load_scoped_file_review(
         &self,
         opaque_reference: &str,

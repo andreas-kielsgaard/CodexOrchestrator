@@ -1,3 +1,10 @@
+use super::conversation_harness_working_copy::{
+    validate_command as validate_harness_working_copy_command, validate_harness_key,
+    validate_working_copy, HarnessEditorKind, HarnessEffectiveConfigurationEnvelope,
+    HarnessWorkingCopy, HarnessWorkingCopyEditor, HarnessWorkingCopyError,
+    SaveHarnessWorkingCopyCommand, SaveHarnessWorkingCopyResult,
+    HARNESS_EFFECTIVE_CONFIGURATION_V1,
+};
 use super::domain::{
     CapabilityProfileId, EffectProvenanceId, EpicPlanningDraftId, PlanBuilderProposal,
     PlanningDraftAgentSessionAssociationId, ProposalCommandId, ProposalEventId, ProposalResultId,
@@ -1232,6 +1239,141 @@ impl SqliteOrchestrationRepository {
         self.native_query_at(self.clock.now())
     }
 
+    /// Internal application command. It persists a complete dirty draft only; it does not commit,
+    /// activate, bind, or apply a Harness configuration.
+    pub(crate) fn save_harness_working_copy(
+        &self,
+        command: SaveHarnessWorkingCopyCommand,
+    ) -> Result<SaveHarnessWorkingCopyResult, HarnessWorkingCopyError> {
+        validate_harness_working_copy_command(&command)?;
+        let fingerprint = harness_working_copy_command_fingerprint(&command)?;
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| HarnessWorkingCopyError::Unavailable)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| HarnessWorkingCopyError::Unavailable)?;
+
+        let replay: Option<(String, String, i64, i64, String, String, String)> = transaction
+            .query_row(
+                "SELECT payload_fingerprint,harness_key,expected_current_revision,result_revision,result_json,result_digest,recorded_at FROM harness_working_copy_commands WHERE idempotency_key=?1",
+                [&command.idempotency_key],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
+            )
+            .optional()
+            .map_err(|_| HarnessWorkingCopyError::Unavailable)?;
+        if let Some((
+            existing_fingerprint,
+            harness_key,
+            expected_revision,
+            result_revision,
+            result_json,
+            result_digest,
+            recorded_at,
+        )) = replay
+        {
+            if existing_fingerprint != fingerprint {
+                return Err(HarnessWorkingCopyError::Conflict);
+            }
+            if result_digest != format!("{:x}", Sha256::digest(result_json.as_bytes()))
+                || harness_key != command.harness_key
+                || expected_revision != command.expected_current_revision as i64
+                || result_revision != expected_revision + 1
+            {
+                return Err(HarnessWorkingCopyError::InvalidStoredState);
+            }
+            let result = decode_harness_working_copy_result(&result_json)?;
+            if result.harness_key != command.harness_key
+                || result.draft_revision != command.expected_current_revision + 1
+                || result.configuration != command.configuration
+                || result.editor != command.editor
+                || timestamp(result.saved_at) != recorded_at
+            {
+                return Err(HarnessWorkingCopyError::InvalidStoredState);
+            }
+            return Ok(SaveHarnessWorkingCopyResult::IdempotentReplay(result));
+        }
+
+        let current =
+            load_harness_working_copy_from_connection(&transaction, &command.harness_key)?;
+        let current_revision = current.as_ref().map_or(0, |copy| copy.draft_revision);
+        if current_revision != command.expected_current_revision {
+            return Err(HarnessWorkingCopyError::Conflict);
+        }
+        let draft_revision = current_revision
+            .checked_add(1)
+            .filter(|revision| *revision <= i64::MAX as u64)
+            .ok_or(HarnessWorkingCopyError::Invalid)?;
+        let saved_at = self.clock.now();
+        let working_copy = HarnessWorkingCopy {
+            harness_key: command.harness_key.clone(),
+            configuration: command.configuration.clone(),
+            draft_revision,
+            dirty: true,
+            editor: command.editor.clone(),
+            saved_at,
+        };
+        validate_working_copy(&working_copy)?;
+        let envelope = HarnessEffectiveConfigurationEnvelope {
+            contract_version: HARNESS_EFFECTIVE_CONFIGURATION_V1.into(),
+            configuration: command.configuration,
+        };
+        let configuration_json =
+            serde_json::to_string(&envelope).map_err(|_| HarnessWorkingCopyError::Invalid)?;
+        let configuration_digest = format!("{:x}", Sha256::digest(configuration_json.as_bytes()));
+        let result_json =
+            serde_json::to_string(&working_copy).map_err(|_| HarnessWorkingCopyError::Invalid)?;
+        let result_digest = format!("{:x}", Sha256::digest(result_json.as_bytes()));
+        transaction
+            .execute(
+                "INSERT INTO harness_working_copies (harness_key,configuration_contract_version,configuration_json,configuration_digest,draft_revision,dirty,editor_kind,editor_reference,saved_at) VALUES (?1,?2,?3,?4,?5,1,?6,?7,?8) ON CONFLICT(harness_key) DO UPDATE SET configuration_contract_version=excluded.configuration_contract_version,configuration_json=excluded.configuration_json,configuration_digest=excluded.configuration_digest,draft_revision=excluded.draft_revision,dirty=1,editor_kind=excluded.editor_kind,editor_reference=excluded.editor_reference,saved_at=excluded.saved_at",
+                params![
+                    command.harness_key,
+                    HARNESS_EFFECTIVE_CONFIGURATION_V1,
+                    configuration_json,
+                    configuration_digest,
+                    draft_revision as i64,
+                    command.editor.kind.as_str(),
+                    command.editor.reference,
+                    timestamp(saved_at),
+                ],
+            )
+            .map_err(|_| HarnessWorkingCopyError::Unavailable)?;
+        transaction
+            .execute(
+                "INSERT INTO harness_working_copy_commands (idempotency_key,payload_fingerprint,harness_key,expected_current_revision,result_revision,result_json,result_digest,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                params![
+                    command.idempotency_key,
+                    fingerprint,
+                    working_copy.harness_key,
+                    command.expected_current_revision as i64,
+                    draft_revision as i64,
+                    result_json,
+                    result_digest,
+                    timestamp(saved_at),
+                ],
+            )
+            .map_err(|_| HarnessWorkingCopyError::Unavailable)?;
+        transaction
+            .commit()
+            .map_err(|_| HarnessWorkingCopyError::Unavailable)?;
+        Ok(SaveHarnessWorkingCopyResult::Stored(working_copy))
+    }
+
+    /// Private read for later Harness commit/version work. No transport or NativeQuery exposes it.
+    pub(crate) fn load_harness_working_copy(
+        &self,
+        harness_key: &str,
+    ) -> Result<Option<HarnessWorkingCopy>, HarnessWorkingCopyError> {
+        validate_harness_key(harness_key)?;
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| HarnessWorkingCopyError::Unavailable)?;
+        load_harness_working_copy_from_connection(&connection, harness_key)
+    }
+
     /// Control-side write seam. There is intentionally no Tauri command for this authority.
     pub(crate) fn store_file_review_git_capture_authorization(
         &self,
@@ -1883,6 +2025,90 @@ fn fingerprint(command: &SaveEpicPlanProposalCommand) -> Result<String, SaveProp
     ))
     .map_err(|error| SaveProposalError::Unavailable(error.to_string()))
 }
+fn harness_working_copy_command_fingerprint(
+    command: &SaveHarnessWorkingCopyCommand,
+) -> Result<String, HarnessWorkingCopyError> {
+    let bytes = serde_json::to_vec(command).map_err(|_| HarnessWorkingCopyError::Invalid)?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn decode_harness_working_copy_result(
+    value: &str,
+) -> Result<HarnessWorkingCopy, HarnessWorkingCopyError> {
+    let result: HarnessWorkingCopy =
+        serde_json::from_str(value).map_err(|_| HarnessWorkingCopyError::InvalidStoredState)?;
+    validate_working_copy(&result)?;
+    Ok(result)
+}
+
+fn load_harness_working_copy_from_connection(
+    connection: &Connection,
+    harness_key: &str,
+) -> Result<Option<HarnessWorkingCopy>, HarnessWorkingCopyError> {
+    let row: Option<(String, String, String, i64, i64, String, String, String)> = connection
+        .query_row(
+            "SELECT configuration_contract_version,configuration_json,configuration_digest,draft_revision,dirty,editor_kind,editor_reference,saved_at FROM harness_working_copies WHERE harness_key=?1",
+            [harness_key],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| HarnessWorkingCopyError::Unavailable)?;
+    let Some((
+        contract,
+        configuration_json,
+        digest,
+        revision,
+        dirty,
+        editor_kind,
+        editor_reference,
+        saved_at,
+    )) = row
+    else {
+        return Ok(None);
+    };
+    if contract != HARNESS_EFFECTIVE_CONFIGURATION_V1
+        || digest != format!("{:x}", Sha256::digest(configuration_json.as_bytes()))
+        || revision <= 0
+        || dirty != 1
+    {
+        return Err(HarnessWorkingCopyError::InvalidStoredState);
+    }
+    let envelope: HarnessEffectiveConfigurationEnvelope = serde_json::from_str(&configuration_json)
+        .map_err(|_| HarnessWorkingCopyError::InvalidStoredState)?;
+    if envelope.contract_version != HARNESS_EFFECTIVE_CONFIGURATION_V1 {
+        return Err(HarnessWorkingCopyError::InvalidStoredState);
+    }
+    let editor_kind = HarnessEditorKind::parse(&editor_kind)
+        .ok_or(HarnessWorkingCopyError::InvalidStoredState)?;
+    let saved_at = DateTime::parse_from_rfc3339(&saved_at)
+        .map_err(|_| HarnessWorkingCopyError::InvalidStoredState)?
+        .with_timezone(&Utc);
+    let working_copy = HarnessWorkingCopy {
+        harness_key: harness_key.into(),
+        configuration: envelope.configuration,
+        draft_revision: revision as u64,
+        dirty: true,
+        editor: HarnessWorkingCopyEditor {
+            kind: editor_kind,
+            reference: editor_reference,
+        },
+        saved_at,
+    };
+    validate_working_copy(&working_copy)?;
+    Ok(Some(working_copy))
+}
+
 fn timestamp(value: DateTime<Utc>) -> String {
     value.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
