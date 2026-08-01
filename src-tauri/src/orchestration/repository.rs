@@ -220,7 +220,8 @@ CREATE TABLE IF NOT EXISTS file_review_documents (
 );
 CREATE TABLE IF NOT EXISTS file_review_changed_files (
  document_ref_id TEXT NOT NULL, changed_file_reference_id TEXT NOT NULL, display_name TEXT NOT NULL,
- change_kind TEXT NOT NULL CHECK (change_kind IN ('added','modified','deleted','renamed')), ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+ change_kind TEXT NOT NULL CHECK (change_kind IN ('added','modified','deleted','renamed')), previous_display_name TEXT, ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+ CHECK ((change_kind = 'renamed' AND previous_display_name IS NOT NULL) OR (change_kind <> 'renamed' AND previous_display_name IS NULL)),
  PRIMARY KEY (document_ref_id, changed_file_reference_id), UNIQUE (document_ref_id, ordinal),
  FOREIGN KEY (document_ref_id) REFERENCES file_review_documents(document_ref_id) ON DELETE RESTRICT
 );
@@ -231,9 +232,30 @@ CREATE TABLE IF NOT EXISTS stored_file_review_artifacts (
  FOREIGN KEY (document_ref_id) REFERENCES file_review_documents(document_ref_id) ON DELETE RESTRICT,
  FOREIGN KEY (provenance_id) REFERENCES epic_initiation_provenance(id) ON DELETE RESTRICT
 );
+CREATE TABLE IF NOT EXISTS file_review_git_capture_authorizations (
+ capture_authorization_id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE, payload_fingerprint TEXT NOT NULL,
+ epic_id TEXT NOT NULL, sprint_id TEXT NOT NULL, provenance_id TEXT NOT NULL,
+ repository_id TEXT NOT NULL, repository_root TEXT NOT NULL, worktree_id TEXT NOT NULL, worktree_root TEXT NOT NULL,
+ baseline_object_id TEXT NOT NULL, current_object_id TEXT NOT NULL, recorded_at TEXT NOT NULL,
+ FOREIGN KEY (epic_id) REFERENCES epic_initiations(epic_id) ON DELETE RESTRICT,
+ FOREIGN KEY (sprint_id) REFERENCES initiated_sprints(id) ON DELETE RESTRICT,
+ FOREIGN KEY (provenance_id) REFERENCES epic_initiation_provenance(id) ON DELETE RESTRICT
+);
 "#;
 pub(crate) const FILE_REVIEW_FACTS_IDEMPOTENCY_SCHEMA: &str = r#"
 ALTER TABLE file_review_documents ADD COLUMN payload_fingerprint TEXT NOT NULL DEFAULT '';
+"#;
+pub(crate) const FILE_REVIEW_GIT_CAPTURE_AUTHORIZATION_SCHEMA: &str = r#"
+ALTER TABLE file_review_changed_files ADD COLUMN previous_display_name TEXT;
+CREATE TABLE file_review_git_capture_authorizations (
+ capture_authorization_id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE, payload_fingerprint TEXT NOT NULL,
+ epic_id TEXT NOT NULL, sprint_id TEXT NOT NULL, provenance_id TEXT NOT NULL,
+ repository_id TEXT NOT NULL, repository_root TEXT NOT NULL, worktree_id TEXT NOT NULL, worktree_root TEXT NOT NULL,
+ baseline_object_id TEXT NOT NULL, current_object_id TEXT NOT NULL, recorded_at TEXT NOT NULL,
+ FOREIGN KEY (epic_id) REFERENCES epic_initiations(epic_id) ON DELETE RESTRICT,
+ FOREIGN KEY (sprint_id) REFERENCES initiated_sprints(id) ON DELETE RESTRICT,
+ FOREIGN KEY (provenance_id) REFERENCES epic_initiation_provenance(id) ON DELETE RESTRICT
+);
 "#;
 pub(crate) const STORED_FILE_REVIEW_ARTIFACT_V1: &str = "stored-file-review-artifact/v1";
 pub(crate) const FILE_REVIEW_ARTIFACT_MAX_BYTES: usize = 1_000_000;
@@ -243,6 +265,42 @@ pub(crate) struct FileReviewChangedFileWrite {
     pub(crate) changed_file_reference_id: String,
     pub(crate) display_name: String,
     pub(crate) change_kind: String,
+    pub(crate) previous_display_name: Option<String>,
+}
+/// Producer/control-only authority. Roots remain private and are never serialized by NativeQuery.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FileReviewGitCaptureAuthorizationWrite {
+    pub(crate) capture_authorization_id: String,
+    pub(crate) idempotency_key: String,
+    pub(crate) epic_id: String,
+    pub(crate) sprint_id: String,
+    pub(crate) provenance_id: String,
+    pub(crate) repository_id: String,
+    pub(crate) repository_root: String,
+    pub(crate) worktree_id: String,
+    pub(crate) worktree_root: String,
+    pub(crate) baseline_object_id: String,
+    pub(crate) current_object_id: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FileReviewGitCaptureAuthorization {
+    pub(crate) capture_authorization_id: String,
+    pub(crate) repository_root: String,
+    pub(crate) worktree_root: String,
+    pub(crate) baseline_object_id: String,
+    pub(crate) current_object_id: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum FileReviewGitCaptureAuthorizationError {
+    Invalid,
+    Forbidden,
+    Conflict,
+    Unavailable,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum StoreFileReviewGitCaptureAuthorizationResult {
+    Stored,
+    IdempotentReplay,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StoreFileReviewFacts {
@@ -294,6 +352,7 @@ pub(crate) struct FileReviewChangedFileDto {
     pub(crate) changed_file_reference_id: String,
     pub(crate) display_name: String,
     pub(crate) change_kind: String,
+    pub(crate) previous_display_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -955,7 +1014,7 @@ impl SqliteOrchestrationRepository {
         let file_review_documents = collect(&connection, "SELECT document.document_ref_id, document.epic_id, document.sprint_id, document.provenance_id, document.title, document.summary, artifact.artifact_id FROM file_review_documents document JOIN initiated_sprints sprint ON sprint.id = document.sprint_id AND sprint.epic_id = document.epic_id JOIN epic_initiations epic ON epic.epic_id = document.epic_id AND epic.provenance_id = document.provenance_id JOIN stored_file_review_artifacts artifact ON artifact.document_ref_id = document.document_ref_id AND artifact.provenance_id = document.provenance_id AND artifact.contract_version = 'stored-file-review-artifact/v1' AND artifact.payload_bytes > 0 AND artifact.payload_bytes <= 1000000 ORDER BY document.recorded_at, document.document_ref_id", |row| Ok(FileReviewDocumentDto { document_ref_id: row.get(0)?, epic_id: row.get(1)?, sprint_id: row.get(2)?, provenance_id: row.get(3)?, title: row.get(4)?, summary: row.get(5)?, artifact_id: row.get(6)?, changed_files: Vec::new() }))?;
         let mut file_review_documents = file_review_documents;
         for document in &mut file_review_documents {
-            document.changed_files = connection.prepare("SELECT changed_file_reference_id, display_name, change_kind FROM file_review_changed_files WHERE document_ref_id = ?1 ORDER BY ordinal").map_err(|e| e.to_string())?.query_map(params![document.document_ref_id], |row| Ok(FileReviewChangedFileDto { changed_file_reference_id: row.get(0)?, display_name: row.get(1)?, change_kind: row.get(2)? })).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+            document.changed_files = connection.prepare("SELECT changed_file_reference_id, display_name, change_kind, previous_display_name FROM file_review_changed_files WHERE document_ref_id = ?1 ORDER BY ordinal").map_err(|e| e.to_string())?.query_map(params![document.document_ref_id], |row| Ok(FileReviewChangedFileDto { changed_file_reference_id: row.get(0)?, display_name: row.get(1)?, change_kind: row.get(2)?, previous_display_name: row.get(3)? })).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
         }
         Ok(NativeQueryV2 {
             contract_version: NATIVE_QUERY_VERSION,
@@ -1093,6 +1152,55 @@ impl SqliteOrchestrationRepository {
         self.native_query_at(self.clock.now())
     }
 
+    /// Control-side write seam. There is intentionally no Tauri command for this authority.
+    pub(crate) fn store_file_review_git_capture_authorization(
+        &self,
+        value: FileReviewGitCaptureAuthorizationWrite,
+    ) -> Result<StoreFileReviewGitCaptureAuthorizationResult, FileReviewGitCaptureAuthorizationError>
+    {
+        validate_git_capture_authorization(&value)?;
+        let fingerprint = git_capture_authorization_fingerprint(&value);
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)?;
+        let owned: Option<i64> = tx.query_row("SELECT 1 FROM initiated_sprints sprint JOIN epic_initiations epic ON epic.epic_id=sprint.epic_id AND epic.provenance_id=?3 WHERE sprint.id=?1 AND sprint.epic_id=?2", params![value.sprint_id, value.epic_id, value.provenance_id], |r| r.get(0)).optional().map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)?;
+        if owned.is_none() {
+            return Err(FileReviewGitCaptureAuthorizationError::Forbidden);
+        }
+        let existing: Option<String> = tx.query_row("SELECT payload_fingerprint FROM file_review_git_capture_authorizations WHERE idempotency_key=?1 OR capture_authorization_id=?2", params![value.idempotency_key, value.capture_authorization_id], |r| r.get(0)).optional().map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)?;
+        if let Some(existing) = existing {
+            return if existing == fingerprint {
+                Ok(StoreFileReviewGitCaptureAuthorizationResult::IdempotentReplay)
+            } else {
+                Err(FileReviewGitCaptureAuthorizationError::Conflict)
+            };
+        }
+        tx.execute("INSERT INTO file_review_git_capture_authorizations (capture_authorization_id,idempotency_key,payload_fingerprint,epic_id,sprint_id,provenance_id,repository_id,repository_root,worktree_id,worktree_root,baseline_object_id,current_object_id,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)", params![value.capture_authorization_id, value.idempotency_key, fingerprint, value.epic_id, value.sprint_id, value.provenance_id, value.repository_id, value.repository_root, value.worktree_id, value.worktree_root, value.baseline_object_id, value.current_object_id, timestamp(self.clock.now())]).map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)?;
+        tx.commit()
+            .map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)?;
+        Ok(StoreFileReviewGitCaptureAuthorizationResult::Stored)
+    }
+
+    /// Producer-facing capability: the opaque authorization identity is its sole input.
+    pub(crate) fn load_file_review_git_capture_authorization(
+        &self,
+        capture_authorization_id: &str,
+    ) -> Result<Option<FileReviewGitCaptureAuthorization>, FileReviewGitCaptureAuthorizationError>
+    {
+        if capture_authorization_id.trim().is_empty() {
+            return Err(FileReviewGitCaptureAuthorizationError::Invalid);
+        }
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)?;
+        connection.query_row("SELECT authorization.capture_authorization_id, authorization.repository_root, authorization.worktree_root, authorization.baseline_object_id, authorization.current_object_id FROM file_review_git_capture_authorizations authorization JOIN initiated_sprints sprint ON sprint.id=authorization.sprint_id AND sprint.epic_id=authorization.epic_id JOIN epic_initiations epic ON epic.epic_id=authorization.epic_id AND epic.provenance_id=authorization.provenance_id WHERE authorization.capture_authorization_id=?1", params![capture_authorization_id], |r| Ok(FileReviewGitCaptureAuthorization { capture_authorization_id:r.get(0)?, repository_root:r.get(1)?, worktree_root:r.get(2)?, baseline_object_id:r.get(3)?, current_object_id:r.get(4)? })).optional().map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)
+    }
+
     /// Producer-only application seam. No Tauri command accepts these facts.
     pub(crate) fn store_file_review_facts(
         &self,
@@ -1133,7 +1241,7 @@ impl SqliteOrchestrationRepository {
         let now = timestamp(self.clock.now());
         transaction.execute("INSERT INTO file_review_documents (document_ref_id,epic_id,sprint_id,provenance_id,opaque_reference,title,summary,idempotency_key,payload_fingerprint,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)", params![facts.document_ref_id, facts.epic_id, facts.sprint_id, facts.provenance_id, facts.opaque_reference, facts.title, facts.summary, facts.idempotency_key, payload_fingerprint, now]).map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
         for (ordinal, file) in facts.changed_files.iter().enumerate() {
-            transaction.execute("INSERT INTO file_review_changed_files (document_ref_id,changed_file_reference_id,display_name,change_kind,ordinal) VALUES (?1,?2,?3,?4,?5)", params![facts.document_ref_id, file.changed_file_reference_id, file.display_name, file.change_kind, ordinal as i64]).map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
+            transaction.execute("INSERT INTO file_review_changed_files (document_ref_id,changed_file_reference_id,display_name,change_kind,previous_display_name,ordinal) VALUES (?1,?2,?3,?4,?5,?6)", params![facts.document_ref_id, file.changed_file_reference_id, file.display_name, file.change_kind, file.previous_display_name, ordinal as i64]).map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
         }
         transaction.execute("INSERT INTO stored_file_review_artifacts (artifact_id,document_ref_id,contract_version,payload,payload_bytes,provenance_id) VALUES (?1,?2,?3,?4,?5,?6)", params![facts.artifact_id, facts.document_ref_id, STORED_FILE_REVIEW_ARTIFACT_V1, facts.payload, facts.payload.len() as i64, facts.provenance_id]).map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
         transaction
@@ -1174,7 +1282,7 @@ impl SqliteOrchestrationRepository {
         {
             return Ok(ScopedFileReviewLoad::Invalid);
         }
-        let changed_files = connection.prepare("SELECT changed_file_reference_id, display_name, change_kind FROM file_review_changed_files WHERE document_ref_id = ?1 ORDER BY ordinal").map_err(|e| e.to_string())?.query_map(params![document_ref_id], |row| Ok(FileReviewChangedFileDto { changed_file_reference_id: row.get(0)?, display_name: row.get(1)?, change_kind: row.get(2)? })).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+        let changed_files = connection.prepare("SELECT changed_file_reference_id, display_name, change_kind, previous_display_name FROM file_review_changed_files WHERE document_ref_id = ?1 ORDER BY ordinal").map_err(|e| e.to_string())?.query_map(params![document_ref_id], |row| Ok(FileReviewChangedFileDto { changed_file_reference_id: row.get(0)?, display_name: row.get(1)?, change_kind: row.get(2)?, previous_display_name: row.get(3)? })).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
         if changed_files.is_empty() {
             return Ok(ScopedFileReviewLoad::Invalid);
         }
@@ -1350,12 +1458,88 @@ fn validate_file_review_facts(facts: &StoreFileReviewFacts) -> Result<(), FileRe
                 .display_name
                 .split(['/', '\\'])
                 .any(|part| part == "..")
+            || (file.change_kind == "renamed") != file.previous_display_name.is_some()
+            || file
+                .previous_display_name
+                .as_ref()
+                .is_some_and(|path| !display_safe_path(path))
             || !ids.insert(&file.changed_file_reference_id)
         {
             return Err(FileReviewFactsError::Invalid);
         }
     }
     Ok(())
+}
+
+fn display_safe_path(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= 4_000
+        && !value.chars().any(|c| c.is_control())
+        && !value.starts_with('/')
+        && !value.starts_with('\\')
+        && !value.split(['/', '\\']).any(|part| part == "..")
+}
+
+fn validate_git_capture_authorization(
+    value: &FileReviewGitCaptureAuthorizationWrite,
+) -> Result<(), FileReviewGitCaptureAuthorizationError> {
+    let nonblank = |x: &str| !x.trim().is_empty() && x.len() <= 4_000;
+    let ids = [
+        &value.capture_authorization_id,
+        &value.idempotency_key,
+        &value.epic_id,
+        &value.sprint_id,
+        &value.provenance_id,
+        &value.repository_id,
+        &value.worktree_id,
+    ];
+    if !ids.iter().all(|x| nonblank(x))
+        || !canonical_absolute_root(&value.repository_root)
+        || !canonical_absolute_root(&value.worktree_root)
+        || !std::path::Path::new(&value.worktree_root)
+            .starts_with(std::path::Path::new(&value.repository_root))
+        || !git_object_id(&value.baseline_object_id)
+        || !git_object_id(&value.current_object_id)
+        || value
+            .baseline_object_id
+            .eq_ignore_ascii_case(&value.current_object_id)
+    {
+        return Err(FileReviewGitCaptureAuthorizationError::Invalid);
+    }
+    Ok(())
+}
+fn canonical_absolute_root(value: &str) -> bool {
+    let path = std::path::Path::new(value);
+    path.is_absolute()
+        && !path.components().any(|part| {
+            matches!(
+                part,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+}
+fn git_object_id(value: &str) -> bool {
+    (value.len() == 40 || value.len() == 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+fn git_capture_authorization_fingerprint(value: &FileReviewGitCaptureAuthorizationWrite) -> String {
+    let mut hash = Sha256::new();
+    for part in [
+        &value.capture_authorization_id,
+        &value.idempotency_key,
+        &value.epic_id,
+        &value.sprint_id,
+        &value.provenance_id,
+        &value.repository_id,
+        &value.repository_root,
+        &value.worktree_id,
+        &value.worktree_root,
+        &value.baseline_object_id,
+        &value.current_object_id,
+    ] {
+        hash.update((part.len() as u64).to_be_bytes());
+        hash.update(part.as_bytes());
+    }
+    format!("{:x}", hash.finalize())
 }
 
 fn file_review_fingerprint(facts: &StoreFileReviewFacts) -> Result<String, FileReviewFactsError> {
@@ -1389,6 +1573,13 @@ fn file_review_fingerprint(facts: &StoreFileReviewFacts) -> Result<String, FileR
         ] {
             hash.update((value.len() as u64).to_be_bytes());
             hash.update(value.as_bytes());
+        }
+        if let Some(previous) = &file.previous_display_name {
+            hash.update([1]);
+            hash.update((previous.len() as u64).to_be_bytes());
+            hash.update(previous.as_bytes());
+        } else {
+            hash.update([0]);
         }
     }
     Ok(format!("{:x}", hash.finalize()))

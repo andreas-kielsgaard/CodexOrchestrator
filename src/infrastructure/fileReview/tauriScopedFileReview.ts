@@ -19,6 +19,7 @@ interface Document {
     readonly changedFileReferenceId: string;
     readonly displayName: string;
     readonly changeKind: string;
+    readonly previousDisplayName?: string;
   }[];
 }
 export type ScopedFileReviewInvoke = (
@@ -67,6 +68,9 @@ export function createTauriScopedFileReviewPorts(
               changedFiles: document.changedFiles.map((file) => ({
                 changedFileReferenceId: file.changedFileReferenceId,
                 displayName: file.displayName,
+                ...(file.previousDisplayName === undefined
+                  ? {}
+                  : { previousDisplayName: file.previousDisplayName }),
                 changeKind:
                   file.changeKind as ApplicationFileReviewDocument['changedFiles'][number]['changeKind'],
               })),

@@ -371,6 +371,7 @@ mod tests {
                     changed_file_reference_id: "file".into(),
                     display_name: "src/a.ts".into(),
                     change_kind: "modified".into(),
+                    previous_display_name: None,
                 }],
             },
         };

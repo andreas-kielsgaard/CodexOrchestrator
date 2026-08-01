@@ -16,6 +16,7 @@ export interface ApplicationFileReviewChangedFile {
   readonly changedFileReferenceId: string;
   readonly displayName: string;
   readonly changeKind: FileReviewChangeKind | 'other';
+  readonly previousDisplayName?: string;
 }
 
 export interface ApplicationFileReviewDocument {
@@ -185,6 +186,9 @@ function decodeFile(
   const file: FileReviewFile = {
     fileId: authorized.changedFileReferenceId,
     displayPath: authorized.displayName,
+    ...(authorized.previousDisplayName === undefined
+      ? {}
+      : { previousDisplayPath: authorized.previousDisplayName }),
     changeKind: authorized.changeKind,
     additions: counts.additions,
     deletions: counts.deletions,
@@ -283,6 +287,11 @@ function validateDocument(document: ApplicationFileReviewDocument) {
       fail('identity_mismatch', 'The Document repeats a changed-file identity.');
     changedFileIds.add(file.changedFileReferenceId);
     validateDisplayName(file.displayName);
+    if (file.changeKind === 'renamed' && file.previousDisplayName === undefined)
+      fail('source_unauthorized', 'A renamed changed-file requires its previous display name.');
+    if (file.changeKind !== 'renamed' && file.previousDisplayName !== undefined)
+      fail('source_unauthorized', 'Only a renamed changed-file may carry a previous display name.');
+    if (file.previousDisplayName !== undefined) validateDisplayName(file.previousDisplayName);
   }
 }
 

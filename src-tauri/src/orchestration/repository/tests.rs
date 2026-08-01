@@ -44,6 +44,7 @@ fn file_review_store_replays_exact_facts_and_reauthorizes_on_load() {
             changed_file_reference_id: "changed-1".into(),
             display_name: "src/a.ts".into(),
             change_kind: "modified".into(),
+            previous_display_name: None,
         }],
     };
     assert_eq!(
@@ -64,6 +65,63 @@ fn file_review_store_replays_exact_facts_and_reauthorizes_on_load() {
         }
         other => panic!("unexpected {other:?}"),
     }
+}
+
+#[test]
+fn git_capture_authorization_is_private_replay_safe_and_reauthorized() {
+    let repository = repository_at(time());
+    let saved = repository
+        .save_epic_plan_proposal(command(None, proposal("review"), "save"))
+        .unwrap();
+    repository
+        .initiate_epic(super::super::domain::InitiateEpicCommand {
+            epic_planning_draft_id: EpicPlanningDraftId::new("epic-planning-draft-1").unwrap(),
+            expected_revision_token: saved.revision_token,
+            actor_id: "application-user".into(),
+            idempotency_key: "init".into(),
+        })
+        .unwrap();
+    let query = repository.native_query().unwrap();
+    let epic = &query.initiated_epics[0];
+    let value = FileReviewGitCaptureAuthorizationWrite {
+        capture_authorization_id: "capture-1".into(),
+        idempotency_key: "capture-key".into(),
+        epic_id: epic.epic_id.clone(),
+        sprint_id: query.initiated_sprints[0].sprint_id.clone(),
+        provenance_id: epic.provenance_id.clone(),
+        repository_id: "repository-1".into(),
+        repository_root: "C:\\repo".into(),
+        worktree_id: "worktree-1".into(),
+        worktree_root: "C:\\repo\\worktree".into(),
+        baseline_object_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+        current_object_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+    };
+    assert_eq!(
+        repository
+            .store_file_review_git_capture_authorization(value.clone())
+            .unwrap(),
+        StoreFileReviewGitCaptureAuthorizationResult::Stored
+    );
+    assert_eq!(
+        repository
+            .store_file_review_git_capture_authorization(value.clone())
+            .unwrap(),
+        StoreFileReviewGitCaptureAuthorizationResult::IdempotentReplay
+    );
+    let loaded = repository
+        .load_file_review_git_capture_authorization("capture-1")
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.worktree_root, "C:\\repo\\worktree");
+    assert!(!serde_json::to_string(&repository.native_query().unwrap())
+        .unwrap()
+        .contains("C:\\repo"));
+    let mut conflict = value;
+    conflict.current_object_id = "cccccccccccccccccccccccccccccccccccccccc".into();
+    assert!(matches!(
+        repository.store_file_review_git_capture_authorization(conflict),
+        Err(FileReviewGitCaptureAuthorizationError::Conflict)
+    ));
 }
 
 #[test]
@@ -96,6 +154,7 @@ fn file_review_store_rejects_wrong_provenance_without_writing() {
             changed_file_reference_id: "changed-1".into(),
             display_name: "src/a.ts".into(),
             change_kind: "modified".into(),
+            previous_display_name: None,
         }],
     });
     assert!(matches!(result, Err(FileReviewFactsError::Forbidden)));
@@ -144,6 +203,7 @@ fn scoped_file_review_distinguishes_unknown_invalid_and_broken_membership() {
                 changed_file_reference_id: "changed-1".into(),
                 display_name: "src/a.ts".into(),
                 change_kind: "modified".into(),
+                previous_display_name: None,
             }],
         })
         .unwrap();
@@ -234,6 +294,7 @@ fn file_review_rejects_a_valid_other_epic_provenance_and_omits_it_from_query() {
                 changed_file_reference_id: "changed".into(),
                 display_name: "src/a.ts".into(),
                 change_kind: "modified".into(),
+                previous_display_name: None,
             }],
         })
         .unwrap();
