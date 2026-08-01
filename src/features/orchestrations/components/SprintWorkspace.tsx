@@ -281,7 +281,7 @@ function plannerActivitySessions(
   return workspace.agentSessionReferences
     .filter(
       (reference) =>
-        reference.targetKind === 'sprint_planner_activity' &&
+        reference.targetKind === 'work_slice_planning_point' &&
         reference.targetId === plannerActivityId &&
         ['sprint_planner', 'work_unit_planner'].includes(reference.semanticRole),
     )

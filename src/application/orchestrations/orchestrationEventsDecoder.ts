@@ -262,7 +262,7 @@ export function decodeOrchestrationEventsV1(value: unknown): OrchestrationEvents
     );
     const targetKind = literal(
       required(referenceFact, 'targetKind'),
-      ['epic', 'sprint', 'sprint_planner_activity', 'work_unit_execution', 'other'],
+      ['epic', 'sprint', 'work_slice_planning_point', 'work_unit_execution', 'other'],
       'agent session reference target kind',
     ) as AgentSessionAssociationTargetKind;
     const targetId = required(referenceFact, 'targetId');
@@ -275,7 +275,7 @@ export function decodeOrchestrationEventsV1(value: unknown): OrchestrationEvents
           ? epicIds
           : targetKind === 'sprint'
             ? sprintIds
-            : targetKind === 'sprint_planner_activity'
+            : targetKind === 'work_slice_planning_point'
               ? plannerActivityIds
               : executionIds;
       reference(targetId, targetIds, 'agent session reference target');
@@ -300,7 +300,7 @@ export function decodeOrchestrationEventsV1(value: unknown): OrchestrationEvents
     > = {
       epic: ['epic'],
       sprint: ['sprint'],
-      sprint_planner_activity: ['work_slice_planner'],
+      work_slice_planning_point: ['work_slice_planner'],
       work_unit_execution: [
         'work_unit_handler',
         'work_unit_implementer',

@@ -8,7 +8,11 @@
 export const ORCHESTRATION_EVENTS_V1 = 'orchestration-events/v1' as const;
 
 export type AgentSessionAssociationTargetKind =
-  'epic' | 'sprint' | 'sprint_planner_activity' | 'work_unit_execution' | 'other';
+  | 'epic'
+  | 'sprint'
+  | 'work_slice_planning_point'
+  | 'work_unit_execution'
+  | 'other';
 
 export type AgentSessionSemanticRole =
   | 'epic'

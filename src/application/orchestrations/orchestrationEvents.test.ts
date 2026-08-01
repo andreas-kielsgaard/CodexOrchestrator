@@ -254,7 +254,7 @@ describe('Orchestration events', () => {
       {
         agentSessionRefId: 'agent-session-reference-work-unit-planner',
         agentSessionId: 'agent-session-1',
-        targetKind: 'sprint_planner_activity',
+        targetKind: 'work_slice_planning_point',
         targetId: 'planner-activity-1',
         semanticRole: 'work_slice_planner',
       },
@@ -377,7 +377,7 @@ function validFacts(): Mutable<OrchestrationEventsV1> {
       {
         agentSessionRefId: 'agent-session-reference-1',
         agentSessionId: 'agent-session-1',
-        targetKind: 'sprint_planner_activity',
+        targetKind: 'work_slice_planning_point',
         targetId: 'planner-activity-1',
         semanticRole: 'work_slice_planner',
       },

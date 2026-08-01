@@ -972,7 +972,7 @@ function belongsToEpic(
     return events.sprints.some(
       (sprint) => sprint.sprintId === reference.targetId && sprint.epicId === epicId,
     );
-  if (reference.targetKind === 'sprint_planner_activity') {
+  if (reference.targetKind === 'work_slice_planning_point') {
     const activity = events.sprintPlannerActivities.find(
       (item) => item.sprintPlannerActivityId === reference.targetId,
     );
@@ -1012,7 +1012,7 @@ function belongsToSprint(
   sprintId: string,
 ) {
   if (reference.targetKind === 'sprint') return reference.targetId === sprintId;
-  if (reference.targetKind === 'sprint_planner_activity') {
+  if (reference.targetKind === 'work_slice_planning_point') {
     const activity = events.sprintPlannerActivities.find(
       (item) => item.sprintPlannerActivityId === reference.targetId,
     );
