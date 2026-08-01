@@ -270,7 +270,7 @@ describe('Orchestration events', () => {
         agentSessionId: 'agent-session-1',
         targetKind: 'other',
         targetId: 'future-participant-1',
-        semanticRole: 'other',
+        semanticRole: 'work_unit_implementer',
         otherTargetType: 'future_participant',
         otherSemanticRole: 'future_role',
       },
