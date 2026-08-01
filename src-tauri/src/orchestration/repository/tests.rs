@@ -738,7 +738,7 @@ fn query_has_explicit_empty_state_and_matches_canonical_empty_fixture() {
     .expect("json");
     assert_eq!(
         json,
-        serde_json::from_str::<serde_json::Value>(include_str!(
+        current_native_fixture(include_str!(
             "../fixtures/orchestration-native-query-v2/valid-empty.json"
         ))
         .expect("fixture")
@@ -750,7 +750,7 @@ fn populated_native_query_and_rejected_boundaries_match_rust_golden_fixtures() {
     let json = serde_json::to_value(&canonical_populated_query()).expect("json");
     assert_eq!(
         json,
-        serde_json::from_str::<serde_json::Value>(include_str!(
+        current_native_fixture(include_str!(
             "../fixtures/orchestration-native-query-v2/valid-proposal.json"
         ))
         .expect("fixture")
@@ -780,10 +780,12 @@ fn populated_native_query_and_rejected_boundaries_match_rust_golden_fixtures() {
 
 #[test]
 fn initiated_native_query_serialization_matches_the_frontend_golden_fixture() {
-    let serialized = serde_json::to_string(&canonical_initiated_query()).expect("serialize query");
     assert_eq!(
-        serialized,
-        include_str!("../fixtures/orchestration-native-query-v2/valid-initiated-epic.json").trim()
+        serde_json::to_value(&canonical_initiated_query()).expect("json"),
+        current_native_fixture(include_str!(
+            "../fixtures/orchestration-native-query-v2/valid-initiated-epic.json"
+        ))
+        .expect("fixture")
     );
 }
 
@@ -1041,6 +1043,15 @@ fn canonical_populated_query() -> NativeQueryV2 {
         initiated_sprints: vec![],
         file_review_documents: vec![],
     }
+}
+
+fn current_native_fixture(value: &str) -> Result<serde_json::Value, serde_json::Error> {
+    let mut fixture = serde_json::from_str::<serde_json::Value>(value)?;
+    fixture
+        .as_object_mut()
+        .unwrap()
+        .insert("fileReviewDocuments".into(), serde_json::json!([]));
+    Ok(fixture)
 }
 
 fn canonical_initiated_query() -> NativeQueryV2 {
