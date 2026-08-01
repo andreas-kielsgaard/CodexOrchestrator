@@ -5,9 +5,17 @@ use crate::orchestration::{
         CapabilityProfileId, EpicPlanningDraftId, PlanBuilderProposal,
         PlanningDraftAgentSessionAssociationId, ProposedSprint,
     },
+    file_review_git_producer::{
+        produce_file_review_from_git, FileReviewGitProducerError, ProduceFileReviewFromGit,
+    },
 };
 use chrono::{TimeZone, Utc};
-use std::sync::{Arc, Mutex};
+use std::{
+    fs,
+    path::Path,
+    process::Command,
+    sync::{Arc, Mutex},
+};
 
 const SESSION_ID: &str = "agent-session-plan-builder";
 const ASSOCIATION_ID: &str = "planning-draft-agent-session-association-1";
@@ -122,6 +130,303 @@ fn git_capture_authorization_is_private_replay_safe_and_reauthorized() {
         repository.store_file_review_git_capture_authorization(conflict),
         Err(FileReviewGitCaptureAuthorizationError::Conflict)
     ));
+}
+
+#[test]
+fn git_producer_persists_complete_ordered_real_object_facts_and_replays_exactly() {
+    let git = real_file_review_repository();
+    let repository = initiated_repository_with_capture("capture-real", &git);
+
+    let first = produce_file_review_from_git(
+        &repository,
+        ProduceFileReviewFromGit {
+            capture_authorization_id: "capture-real".into(),
+        },
+    )
+    .expect("produce");
+    assert!(!first.idempotent_replay);
+    assert_eq!(first.changed_file_count, 6);
+
+    let document = match repository
+        .load_scoped_file_review(&first.opaque_reference)
+        .expect("scoped load")
+    {
+        ScopedFileReviewLoad::Available { document } => document,
+        other => panic!("unexpected scoped load: {other:?}"),
+    };
+    assert_eq!(document.document_ref_id, first.document_ref_id);
+    assert_eq!(document.artifact_id, first.artifact_id);
+    let paths = document
+        .changed_files
+        .iter()
+        .map(|file| file.display_name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        paths,
+        [
+            "added.md",
+            "binary.bin",
+            "deleted.md",
+            "docs/new-name.md",
+            "modified.txt",
+            "unsupported.dat",
+        ]
+    );
+    let renamed = &document.changed_files[3];
+    assert_eq!(renamed.change_kind, "renamed");
+    assert_eq!(
+        renamed.previous_display_name.as_deref(),
+        Some("docs/old-name.md")
+    );
+
+    let payload: serde_json::Value = serde_json::from_slice(&document.payload).expect("payload");
+    assert_eq!(payload["contractVersion"], STORED_FILE_REVIEW_ARTIFACT_V1);
+    assert_eq!(payload["documentRefId"], first.document_ref_id);
+    assert_eq!(payload["artifactId"], first.artifact_id);
+    let files = payload["files"].as_array().expect("files");
+    assert_eq!(files.len(), document.changed_files.len());
+    for (payload_file, membership) in files.iter().zip(&document.changed_files) {
+        assert_eq!(
+            payload_file["changedFileReferenceId"],
+            membership.changed_file_reference_id
+        );
+    }
+    let encoding_for = |path: &str| {
+        let index = document
+            .changed_files
+            .iter()
+            .position(|file| file.display_name == path)
+            .expect("membership");
+        files[index]["content"]["encoding"]
+            .as_str()
+            .expect("encoding")
+    };
+    assert_eq!(encoding_for("added.md"), "utf-8");
+    assert_eq!(encoding_for("binary.bin"), "binary");
+    assert_eq!(encoding_for("unsupported.dat"), "unsupported");
+    assert!(!files[0]["hunks"].as_array().expect("text hunks").is_empty());
+    assert!(files[1]["hunks"]
+        .as_array()
+        .expect("binary hunks")
+        .is_empty());
+
+    let query_json = serde_json::to_string(&repository.native_query().expect("native query"))
+        .expect("query json");
+    assert!(query_json.contains(&first.document_ref_id));
+    assert!(!query_json.contains("capture-real"));
+    assert!(!query_json.contains(git.root.to_string_lossy().as_ref()));
+
+    let replay = produce_file_review_from_git(
+        &repository,
+        ProduceFileReviewFromGit {
+            capture_authorization_id: "capture-real".into(),
+        },
+    )
+    .expect("replay");
+    assert!(replay.idempotent_replay);
+    assert_eq!(replay.document_ref_id, first.document_ref_id);
+    assert_eq!(replay.artifact_id, first.artifact_id);
+    assert_eq!(replay.opaque_reference, first.opaque_reference);
+}
+
+#[test]
+fn git_producer_denies_missing_tampered_object_and_repository_identity() {
+    let git = real_file_review_repository();
+    let repository = initiated_repository_with_capture("capture-denial", &git);
+    let other_epic_provenance = initiate_second_epic(&repository);
+    assert_eq!(
+        produce_file_review_from_git(
+            &repository,
+            ProduceFileReviewFromGit {
+                capture_authorization_id: " ".into(),
+            }
+        ),
+        Err(FileReviewGitProducerError::InvalidRequest)
+    );
+    assert_eq!(
+        produce_file_review_from_git(
+            &repository,
+            ProduceFileReviewFromGit {
+                capture_authorization_id: "missing".into(),
+            }
+        ),
+        Err(FileReviewGitProducerError::Unauthorized)
+    );
+
+    repository
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE file_review_git_capture_authorizations SET current_object_id=?1 WHERE capture_authorization_id='capture-denial'",
+            ["cccccccccccccccccccccccccccccccccccccccc"],
+        )
+        .unwrap();
+    assert_eq!(
+        produce_file_review_from_git(
+            &repository,
+            ProduceFileReviewFromGit {
+                capture_authorization_id: "capture-denial".into(),
+            }
+        ),
+        Err(FileReviewGitProducerError::GitObjectUnavailable)
+    );
+
+    let other = real_file_review_repository();
+    repository
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE file_review_git_capture_authorizations SET current_object_id=?1, worktree_root=?2 WHERE capture_authorization_id='capture-denial'",
+            params![git.current, canonical_root(&other.root)],
+        )
+        .unwrap();
+    assert_eq!(
+        produce_file_review_from_git(
+            &repository,
+            ProduceFileReviewFromGit {
+                capture_authorization_id: "capture-denial".into(),
+            }
+        ),
+        Err(FileReviewGitProducerError::RepositoryMismatch)
+    );
+
+    repository
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE file_review_git_capture_authorizations SET provenance_id=?1 WHERE capture_authorization_id='capture-denial'",
+            [&other_epic_provenance],
+        )
+        .unwrap();
+    assert_eq!(
+        produce_file_review_from_git(
+            &repository,
+            ProduceFileReviewFromGit {
+                capture_authorization_id: "capture-denial".into(),
+            }
+        ),
+        Err(FileReviewGitProducerError::Unauthorized)
+    );
+}
+
+#[test]
+fn git_producer_fails_closed_on_count_size_and_conflicting_replay() {
+    let oversized = tempfile::tempdir().expect("temp repo");
+    init_git(oversized.path());
+    write_git_file(oversized.path(), "small.txt", b"baseline\n");
+    git(oversized.path(), &["add", "-A"]);
+    git(oversized.path(), &["commit", "-m", "baseline"]);
+    let baseline = git_text(oversized.path(), &["rev-parse", "HEAD"]);
+    write_git_file(oversized.path(), "small.txt", &vec![b'x'; 256_001]);
+    git(oversized.path(), &["add", "-A"]);
+    git(oversized.path(), &["commit", "-m", "current"]);
+    let current = git_text(oversized.path(), &["rev-parse", "HEAD"]);
+    let oversized_git = RealGitRepository {
+        root: oversized.path().to_path_buf(),
+        _temp: oversized,
+        baseline,
+        current,
+    };
+    let oversized_repository =
+        initiated_repository_with_capture("capture-oversized", &oversized_git);
+    assert_eq!(
+        produce_file_review_from_git(
+            &oversized_repository,
+            ProduceFileReviewFromGit {
+                capture_authorization_id: "capture-oversized".into(),
+            }
+        ),
+        Err(FileReviewGitProducerError::LimitsExceeded)
+    );
+    assert!(oversized_repository
+        .native_query()
+        .unwrap()
+        .file_review_documents
+        .is_empty());
+
+    let excessive = tempfile::tempdir().expect("temp repo");
+    init_git(excessive.path());
+    git(
+        excessive.path(),
+        &["commit", "--allow-empty", "-m", "baseline"],
+    );
+    let baseline = git_text(excessive.path(), &["rev-parse", "HEAD"]);
+    for index in 0..=500 {
+        write_git_file(
+            excessive.path(),
+            &format!("many/file-{index:03}.txt"),
+            b"changed\n",
+        );
+    }
+    git(excessive.path(), &["add", "-A"]);
+    git(excessive.path(), &["commit", "-m", "current"]);
+    let current = git_text(excessive.path(), &["rev-parse", "HEAD"]);
+    let excessive_git = RealGitRepository {
+        root: excessive.path().to_path_buf(),
+        _temp: excessive,
+        baseline,
+        current,
+    };
+    let excessive_repository =
+        initiated_repository_with_capture("capture-excessive", &excessive_git);
+    assert_eq!(
+        produce_file_review_from_git(
+            &excessive_repository,
+            ProduceFileReviewFromGit {
+                capture_authorization_id: "capture-excessive".into(),
+            }
+        ),
+        Err(FileReviewGitProducerError::LimitsExceeded)
+    );
+    assert!(excessive_repository
+        .native_query()
+        .unwrap()
+        .file_review_documents
+        .is_empty());
+
+    let git = real_file_review_repository();
+    let repository = initiated_repository_with_capture("capture-conflict", &git);
+    let first = produce_file_review_from_git(
+        &repository,
+        ProduceFileReviewFromGit {
+            capture_authorization_id: "capture-conflict".into(),
+        },
+    )
+    .unwrap();
+    let connection = repository.lock().unwrap();
+    connection
+        .execute(
+            "UPDATE file_review_documents SET payload_fingerprint='tampered' WHERE document_ref_id=?1",
+            [&first.document_ref_id],
+        )
+        .unwrap();
+    let counts = |connection: &Connection| {
+        [
+            "file_review_documents",
+            "file_review_changed_files",
+            "stored_file_review_artifacts",
+        ]
+        .map(|table| {
+            connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap()
+        })
+    };
+    let before = counts(&connection);
+    drop(connection);
+    assert_eq!(
+        produce_file_review_from_git(
+            &repository,
+            ProduceFileReviewFromGit {
+                capture_authorization_id: "capture-conflict".into(),
+            }
+        ),
+        Err(FileReviewGitProducerError::Conflict)
+    );
+    let after = counts(&repository.lock().unwrap());
+    assert_eq!(after, before);
 }
 
 #[test]
@@ -932,6 +1237,176 @@ fn restart_preserves_initiated_epic_and_ordered_preparatory_sprints() {
 
 fn repository_at(now: chrono::DateTime<Utc>) -> SqliteOrchestrationRepository {
     repository_with_clock(Arc::new(MutableClock::new(now)), at(2030, 1, 1))
+}
+
+struct RealGitRepository {
+    root: std::path::PathBuf,
+    _temp: tempfile::TempDir,
+    baseline: String,
+    current: String,
+}
+
+fn real_file_review_repository() -> RealGitRepository {
+    let temp = tempfile::tempdir().expect("temp repo");
+    let root = temp.path().to_path_buf();
+    init_git(&root);
+    write_git_file(&root, "modified.txt", b"before\nline\n");
+    write_git_file(&root, "deleted.md", b"# Gone\n\nBody\n");
+    write_git_file(&root, "docs/old-name.md", b"# Retained\n");
+    write_git_file(&root, "binary.bin", &[0, 1, 2]);
+    write_git_file(&root, "unsupported.dat", &[0xff, 0xfe]);
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-m", "baseline"]);
+    let baseline = git_text(&root, &["rev-parse", "HEAD"]);
+
+    write_git_file(&root, "modified.txt", b"after\nline\n");
+    fs::remove_file(root.join("deleted.md")).expect("delete file");
+    git(&root, &["mv", "docs/old-name.md", "docs/new-name.md"]);
+    write_git_file(&root, "added.md", b"# Added\n\nReview text.\n");
+    write_git_file(&root, "binary.bin", &[0, 9, 2]);
+    write_git_file(&root, "unsupported.dat", &[0xff, 0xfd]);
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-m", "current"]);
+    let current = git_text(&root, &["rev-parse", "HEAD"]);
+    RealGitRepository {
+        root,
+        _temp: temp,
+        baseline,
+        current,
+    }
+}
+
+fn initiated_repository_with_capture(
+    capture_authorization_id: &str,
+    git_repository: &RealGitRepository,
+) -> SqliteOrchestrationRepository {
+    let repository = repository_at(time());
+    let saved = repository
+        .save_epic_plan_proposal(command(None, proposal("git review"), "git-review-save"))
+        .unwrap();
+    repository
+        .initiate_epic(super::super::domain::InitiateEpicCommand {
+            epic_planning_draft_id: EpicPlanningDraftId::new("epic-planning-draft-1").unwrap(),
+            expected_revision_token: saved.revision_token,
+            actor_id: "application-user".into(),
+            idempotency_key: "git-review-init".into(),
+        })
+        .unwrap();
+    let query = repository.native_query().unwrap();
+    let epic = &query.initiated_epics[0];
+    repository
+        .store_file_review_git_capture_authorization(FileReviewGitCaptureAuthorizationWrite {
+            capture_authorization_id: capture_authorization_id.into(),
+            idempotency_key: format!("{capture_authorization_id}-authorization"),
+            epic_id: epic.epic_id.clone(),
+            sprint_id: query.initiated_sprints[0].sprint_id.clone(),
+            provenance_id: epic.provenance_id.clone(),
+            repository_id: "authorized-repository".into(),
+            repository_root: canonical_root(&git_repository.root),
+            worktree_id: "authorized-worktree".into(),
+            worktree_root: canonical_root(&git_repository.root),
+            baseline_object_id: git_repository.baseline.clone(),
+            current_object_id: git_repository.current.clone(),
+        })
+        .unwrap();
+    repository
+}
+
+fn initiate_second_epic(repository: &SqliteOrchestrationRepository) -> String {
+    let existing_provenance = repository.native_query().unwrap().initiated_epics[0]
+        .provenance_id
+        .clone();
+    let draft = EpicPlanningDraftId::new("epic-planning-draft-git-other").unwrap();
+    let profile = CapabilityProfileId::new("capability-profile-git-other").unwrap();
+    let association = PlanningDraftAgentSessionAssociationId::new(
+        "planning-draft-agent-session-association-git-other",
+    )
+    .unwrap();
+    repository.create_planning_draft(&draft, time()).unwrap();
+    repository
+        .create_capability_profile(&profile, "active", time())
+        .unwrap();
+    repository
+        .associate_agent_session(&association, &draft, SESSION_ID, ACTOR_ID, time())
+        .unwrap();
+    repository
+        .assign_profile(&draft, &profile, &association, at(2030, 1, 1), time())
+        .unwrap();
+    let saved = repository
+        .save_epic_plan_proposal(SaveEpicPlanProposalCommand {
+            epic_planning_draft_id: draft.clone(),
+            capability_profile_id: profile,
+            agent_session_association_id: association,
+            agent_session_id: SESSION_ID.into(),
+            actor_id: ACTOR_ID.into(),
+            expected_revision: None,
+            proposal: proposal("git other"),
+            idempotency_key: "git-other-save".into(),
+        })
+        .unwrap();
+    repository
+        .initiate_epic(super::super::domain::InitiateEpicCommand {
+            epic_planning_draft_id: draft,
+            expected_revision_token: saved.revision_token,
+            actor_id: "application-user".into(),
+            idempotency_key: "git-other-init".into(),
+        })
+        .unwrap();
+    repository
+        .native_query()
+        .unwrap()
+        .initiated_epics
+        .into_iter()
+        .find(|epic| epic.provenance_id != existing_provenance)
+        .expect("second epic")
+        .provenance_id
+}
+
+fn canonical_root(path: &Path) -> String {
+    fs::canonicalize(path)
+        .expect("canonical root")
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn init_git(root: &Path) {
+    git(root, &["init"]);
+    git(root, &["config", "user.name", "File Review Test"]);
+    git(
+        root,
+        &["config", "user.email", "file-review@example.invalid"],
+    );
+    git(root, &["config", "commit.gpgsign", "false"]);
+}
+
+fn write_git_file(root: &Path, relative: &str, bytes: &[u8]) {
+    let path = root.join(relative);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("parent directories");
+    }
+    fs::write(path, bytes).expect("write git file");
+}
+
+fn git(root: &Path, args: &[&str]) -> Vec<u8> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output.stdout
+}
+
+fn git_text(root: &Path, args: &[&str]) -> String {
+    String::from_utf8(git(root, args))
+        .expect("utf8 git output")
+        .trim()
+        .to_string()
 }
 fn repository_with_clock(
     clock: Arc<MutableClock>,

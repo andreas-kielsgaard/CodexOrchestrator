@@ -296,7 +296,12 @@ pub(crate) struct FileReviewGitCaptureAuthorizationWrite {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FileReviewGitCaptureAuthorization {
     pub(crate) capture_authorization_id: String,
+    pub(crate) epic_id: String,
+    pub(crate) sprint_id: String,
+    pub(crate) provenance_id: String,
+    pub(crate) repository_id: String,
     pub(crate) repository_root: String,
+    pub(crate) worktree_id: String,
     pub(crate) worktree_root: String,
     pub(crate) baseline_object_id: String,
     pub(crate) current_object_id: String,
@@ -1209,7 +1214,7 @@ impl SqliteOrchestrationRepository {
             .connection
             .lock()
             .map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)?;
-        connection.query_row("SELECT authorization.capture_authorization_id, authorization.repository_root, authorization.worktree_root, authorization.baseline_object_id, authorization.current_object_id FROM file_review_git_capture_authorizations authorization JOIN initiated_sprints sprint ON sprint.id=authorization.sprint_id AND sprint.epic_id=authorization.epic_id JOIN epic_initiations epic ON epic.epic_id=authorization.epic_id AND epic.provenance_id=authorization.provenance_id WHERE authorization.capture_authorization_id=?1", params![capture_authorization_id], |r| Ok(FileReviewGitCaptureAuthorization { capture_authorization_id:r.get(0)?, repository_root:r.get(1)?, worktree_root:r.get(2)?, baseline_object_id:r.get(3)?, current_object_id:r.get(4)? })).optional().map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)
+        connection.query_row("SELECT authorization.capture_authorization_id, authorization.epic_id, authorization.sprint_id, authorization.provenance_id, authorization.repository_id, authorization.repository_root, authorization.worktree_id, authorization.worktree_root, authorization.baseline_object_id, authorization.current_object_id FROM file_review_git_capture_authorizations authorization JOIN initiated_sprints sprint ON sprint.id=authorization.sprint_id AND sprint.epic_id=authorization.epic_id JOIN epic_initiations epic ON epic.epic_id=authorization.epic_id AND epic.provenance_id=authorization.provenance_id WHERE authorization.capture_authorization_id=?1", params![capture_authorization_id], |r| Ok(FileReviewGitCaptureAuthorization { capture_authorization_id:r.get(0)?, epic_id:r.get(1)?, sprint_id:r.get(2)?, provenance_id:r.get(3)?, repository_id:r.get(4)?, repository_root:r.get(5)?, worktree_id:r.get(6)?, worktree_root:r.get(7)?, baseline_object_id:r.get(8)?, current_object_id:r.get(9)? })).optional().map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)
     }
 
     /// Producer-only application seam. No Tauri command accepts these facts.
