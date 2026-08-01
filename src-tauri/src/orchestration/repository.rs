@@ -221,7 +221,7 @@ CREATE TABLE IF NOT EXISTS file_review_documents (
 CREATE TABLE IF NOT EXISTS file_review_changed_files (
  document_ref_id TEXT NOT NULL, changed_file_reference_id TEXT NOT NULL, display_name TEXT NOT NULL,
  change_kind TEXT NOT NULL CHECK (change_kind IN ('added','modified','deleted','renamed')), previous_display_name TEXT, ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
- CHECK ((change_kind = 'renamed' AND previous_display_name IS NOT NULL) OR (change_kind <> 'renamed' AND previous_display_name IS NULL)),
+ CHECK (change_kind = 'renamed' OR previous_display_name IS NULL),
  PRIMARY KEY (document_ref_id, changed_file_reference_id), UNIQUE (document_ref_id, ordinal),
  FOREIGN KEY (document_ref_id) REFERENCES file_review_documents(document_ref_id) ON DELETE RESTRICT
 );
@@ -246,8 +246,19 @@ pub(crate) const FILE_REVIEW_FACTS_IDEMPOTENCY_SCHEMA: &str = r#"
 ALTER TABLE file_review_documents ADD COLUMN payload_fingerprint TEXT NOT NULL DEFAULT '';
 "#;
 pub(crate) const FILE_REVIEW_GIT_CAPTURE_AUTHORIZATION_SCHEMA: &str = r#"
-ALTER TABLE file_review_changed_files ADD COLUMN previous_display_name TEXT;
-CREATE TABLE file_review_git_capture_authorizations (
+ALTER TABLE file_review_changed_files RENAME TO file_review_changed_files_v9;
+CREATE TABLE file_review_changed_files (
+ document_ref_id TEXT NOT NULL, changed_file_reference_id TEXT NOT NULL, display_name TEXT NOT NULL,
+ change_kind TEXT NOT NULL CHECK (change_kind IN ('added','modified','deleted','renamed')), previous_display_name TEXT,
+ ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+ CHECK (change_kind = 'renamed' OR previous_display_name IS NULL),
+ PRIMARY KEY (document_ref_id, changed_file_reference_id), UNIQUE (document_ref_id, ordinal),
+ FOREIGN KEY (document_ref_id) REFERENCES file_review_documents(document_ref_id) ON DELETE RESTRICT
+);
+INSERT INTO file_review_changed_files (document_ref_id,changed_file_reference_id,display_name,change_kind,previous_display_name,ordinal)
+ SELECT document_ref_id,changed_file_reference_id,display_name,change_kind,NULL,ordinal FROM file_review_changed_files_v9;
+DROP TABLE file_review_changed_files_v9;
+CREATE TABLE IF NOT EXISTS file_review_git_capture_authorizations (
  capture_authorization_id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE, payload_fingerprint TEXT NOT NULL,
  epic_id TEXT NOT NULL, sprint_id TEXT NOT NULL, provenance_id TEXT NOT NULL,
  repository_id TEXT NOT NULL, repository_root TEXT NOT NULL, worktree_id TEXT NOT NULL, worktree_root TEXT NOT NULL,

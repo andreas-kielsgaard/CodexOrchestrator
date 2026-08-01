@@ -84,7 +84,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                     format!("Unable to migrate File Review idempotency schema: {error}")
                 })?;
         }
-        if current_version == 9 {
+        if current_version <= 9 {
             transaction
                 .execute_batch(
                     crate::orchestration::repository::FILE_REVIEW_GIT_CAPTURE_AUTHORIZATION_SCHEMA,
@@ -225,6 +225,7 @@ mod tests {
                 "epic_planning_drafts",
                 "file_review_changed_files",
                 "file_review_documents",
+                "file_review_git_capture_authorizations",
                 "initiated_planning_drafts",
                 "initiated_sprints",
                 "plan_builder_context_deliveries",
@@ -266,6 +267,34 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .expect("collect File Review schema");
         assert!(file_review_columns.contains(&"payload_fingerprint".to_string()));
+        let membership_columns = connection
+            .prepare("PRAGMA table_info(file_review_changed_files)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(membership_columns.contains(&"previous_display_name".to_string()));
+        let authorization_columns = connection
+            .prepare("PRAGMA table_info(file_review_git_capture_authorizations)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        for column in [
+            "capture_authorization_id",
+            "idempotency_key",
+            "repository_root",
+            "worktree_root",
+            "baseline_object_id",
+            "current_object_id",
+            "recorded_at",
+        ] {
+            assert!(authorization_columns.contains(&column.to_string()));
+        }
+        assert_eq!(connection.query_row("SELECT count(*) FROM pragma_index_list('file_review_git_capture_authorizations') WHERE [unique] = 1", [], |row| row.get::<_, i64>(0)).unwrap(), 2);
+        assert_eq!(connection.query_row("SELECT count(*) FROM pragma_foreign_key_list('file_review_git_capture_authorizations')", [], |row| row.get::<_, i64>(0)).unwrap(), 3);
     }
 
     #[test]
@@ -312,12 +341,25 @@ mod tests {
         assert!(columns.contains(&"payload_fingerprint".to_string()));
         assert_eq!(connection.query_row("SELECT payload_fingerprint FROM file_review_documents WHERE document_ref_id='doc-v8'", [], |r| r.get::<_, String>(0)).unwrap(), "");
         assert_eq!(connection.query_row("SELECT payload FROM stored_file_review_artifacts WHERE artifact_id='artifact-v8'", [], |r| r.get::<_, Vec<u8>>(0)).unwrap(), vec![1,2]);
+        assert_eq!(connection.query_row("SELECT previous_display_name FROM file_review_changed_files WHERE changed_file_reference_id='file-1'", [], |r| r.get::<_, Option<String>>(0)).unwrap(), None);
         let files = connection.prepare("SELECT changed_file_reference_id FROM file_review_changed_files WHERE document_ref_id='doc-v8' ORDER BY ordinal").unwrap().query_map([], |r| r.get::<_, String>(0)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(files, vec!["file-1", "file-2"]);
         assert_eq!(
             pragma_i64(&connection, "user_version"),
             ACTIVE_SCHEMA_VERSION
         );
+    }
+
+    #[test]
+    fn migrates_v9_file_review_rows_and_preserves_historical_rename_null() {
+        let connection = Connection::open_in_memory().expect("database");
+        configure_sqlite_connection(&connection).expect("policy");
+        initialize_active_database(&connection).expect("current schema");
+        connection.execute_batch("PRAGMA foreign_keys=OFF; ALTER TABLE file_review_changed_files RENAME TO old_files; CREATE TABLE file_review_changed_files (document_ref_id TEXT NOT NULL, changed_file_reference_id TEXT NOT NULL, display_name TEXT NOT NULL, change_kind TEXT NOT NULL, ordinal INTEGER NOT NULL, PRIMARY KEY(document_ref_id,changed_file_reference_id), UNIQUE(document_ref_id,ordinal)); INSERT INTO file_review_changed_files VALUES ('doc','rename','src/new.ts','renamed',0); DROP TABLE old_files; PRAGMA user_version=9;").expect("represent v9");
+        initialize_active_database(&connection).expect("migrate v9");
+        assert_eq!(connection.query_row("SELECT previous_display_name FROM file_review_changed_files WHERE changed_file_reference_id='rename'", [], |r| r.get::<_, Option<String>>(0)).unwrap(), None);
+        assert!(connection.execute("INSERT INTO file_review_changed_files (document_ref_id,changed_file_reference_id,display_name,change_kind,previous_display_name,ordinal) VALUES ('doc','bad','src/a.ts','modified','src/b.ts',1)", []).is_err());
+        initialize_active_database(&connection).expect("reopen current schema");
     }
 
     #[test]
