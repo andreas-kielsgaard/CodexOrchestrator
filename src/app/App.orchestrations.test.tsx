@@ -19,7 +19,7 @@ import {
   recordedDevelopmentOrchestrationPresentation,
   recordedPlanBuilderAgentIdentity,
 } from '../dev/orchestrationSection/recordedOrchestrationClient';
-import { sessionDetails } from '../features/agentSessions/testFixtures';
+import { runtimeEvent, sessionDetails } from '../features/agentSessions/testFixtures';
 import { createTauriEpicPlanningDraftLifecycleClient } from '../infrastructure/orchestrations/tauriEpicPlanningDraftLifecycle';
 import { App } from './App';
 import { productOrchestrationPresentationAdapter } from './orchestrationPresentation';
@@ -662,7 +662,26 @@ describe('App orchestration loading', () => {
     const sendMessage = client.sendMessage.bind(client);
     client.sendMessage = async (command) => {
       sent.push(command);
-      return sendMessage(command);
+      const acknowledgement = await sendMessage(command);
+      if (sent.length === 2) {
+        const details = client.store.sessions.get(acknowledgement.sessionId)!;
+        const entry = details.invocations.find(
+          ({ invocation }) => invocation.id === acknowledgement.invocationId,
+        )!;
+        entry.events.push({
+          ...runtimeEvent(1, 'agent_message', 'The planning context is ready for review.', {
+            role: 'final',
+          }),
+          id: 'recorded-plan-builder-final',
+          invocationId: acknowledgement.invocationId,
+        });
+        Object.assign(entry.invocation, {
+          status: 'completed',
+          completedAt: entry.invocation.updatedAt,
+          exitCode: 0,
+        });
+      }
+      return acknowledgement;
     };
     render(
       <App
@@ -699,16 +718,25 @@ describe('App orchestration loading', () => {
       screen.getByRole('region', { name: 'Planning conversation and plan preview' }),
     ).toBeVisible();
     expect(screen.getByLabelText('Epic Plan Builder conversation')).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Avery: Epic Plan Builder' })).toBeVisible();
+    const conversation = screen.getByLabelText('Epic Plan Builder conversation');
+    const identityTitle = within(conversation).getByRole('heading', {
+      name: 'Avery: Epic Plan Builder',
+    });
+    expect(identityTitle).toBeVisible();
+    expect(identityTitle.closest('header')).toHaveClass('agent-session-header');
     expect(screen.getByRole('heading', { name: "Avery's Proposed Plan:" })).toBeVisible();
     expect(
       screen.getByRole('heading', { name: "Avery's Proposed Plan:" }).closest('header'),
     ).toHaveClass('epic-plan-builder__proposal-header');
     const identityMarkers = document.querySelectorAll('[data-visual-identity-token="sunflower"]');
-    expect(identityMarkers).toHaveLength(2);
+    expect(identityMarkers).toHaveLength(1);
+    expect(
+      screen.getByRole('heading', { name: "Avery's Proposed Plan:" }).closest('header'),
+    ).toContainElement(identityMarkers[0] as HTMLElement);
+    expect(conversation.querySelector('[data-visual-identity-token]')).toBeNull();
     expect(screen.getByRole('textbox', { name: 'Epic name' })).toHaveValue('Suggested Epic');
     expect(screen.getByText('Epic name')).toBeVisible();
-    expect(screen.queryByText('Agent Session')).toBeNull();
+    expect(within(conversation).getByText('Agent Session')).toBeVisible();
     expect(screen.queryByText('New Agent Session')).toBeNull();
     expect(await screen.findByText('Let’s build a plan')).toBeVisible();
     expect(screen.getByText(/Paste a prepared Epic description or begin discussing/)).toBeVisible();
@@ -769,6 +797,10 @@ describe('App orchestration loading', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByText('Continue the same plan')).toBeVisible();
+    const planningResponse = await screen.findByText('The planning context is ready for review.');
+    const attribution = within(planningResponse.closest('article')!).getByText('Avery');
+    expect(attribution.parentElement).toHaveClass('transcript-message__agent');
+    expect(attribution.parentElement).toHaveTextContent(/^Avery$/);
     const planBuilderSession = [...client.store.sessions.values()][0];
     expect(planBuilderSession.invocations).toHaveLength(2);
     expect(
@@ -1024,7 +1056,7 @@ describe('App orchestration loading', () => {
       /\.epic-plan-builder__proposal-header\s*\{[\s\S]*height: var\(--epic-plan-builder-workspace-header-height\);[\s\S]*min-height: var\(--epic-plan-builder-workspace-header-height\);/,
     );
     expect(planStyles).toMatch(
-      /\.epic-plan-builder__conversation \.agent-session-identity-header\s*\{[\s\S]*height: var\(--epic-plan-builder-workspace-header-height\);[\s\S]*min-height: var\(--epic-plan-builder-workspace-header-height\);/,
+      /\.epic-plan-builder__conversation \.agent-session-header\s*\{[\s\S]*height: var\(--epic-plan-builder-workspace-header-height\);[\s\S]*min-height: var\(--epic-plan-builder-workspace-header-height\);/,
     );
     expect(planStyles).toMatch(
       /@media \(max-width: 1100px\)\s*\{[\s\S]*\.epic-plan-builder__layout\s*\{[\s\S]*grid-template-columns: minmax\(180px, 210px\) minmax\(0, 1fr\);[\s\S]*\.epic-plan-builder__workspace\s*\{[\s\S]*grid-template-columns: minmax\(300px, 1fr\) minmax\(280px, 340px\);/,
