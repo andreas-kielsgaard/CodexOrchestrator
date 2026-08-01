@@ -10,7 +10,7 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['scripts/**/*.{js,cjs,mjs}'],
+    files: ['scripts/**/*.{js,cjs,mjs}', 'review-tools/app-inspector/**/*.{js,mjs}'],
     languageOptions: {
       ecmaVersion: 2022,
       globals: globals.node,
