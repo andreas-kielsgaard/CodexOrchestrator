@@ -14,13 +14,15 @@ const sprintId = 'sprint-control-surface';
 const sprintSessionId = 'recorded-sprint-control-surface-discovery';
 const reviewSprintId = 'sprint-parallel-review';
 const reviewSprintSessionId = 'recorded-sprint-parallel-review';
+const epicRunnerResponse =
+  'For Epic detail, keep the menu and outer frame fixed; scroll only a contained region whose content exceeds its bounds.';
 
 const transcript = (id: string, title: string, response: string) =>
   projectAgentSessionTranscript(session(id, title, response));
 const epicRunnerTranscript = transcript(
   epicRunnerSessionId,
   'Orientation discovery handler',
-  'Recorded development presentation only; no runtime continuation was initiated.',
+  epicRunnerResponse,
 );
 const sprintTranscript = transcript(
   sprintSessionId,
@@ -95,11 +97,7 @@ const rd1ImplementerDetails = lifecycleSession(
 );
 /** Recorded Agent Session inputs used by the embedded composition in the app-mounted demo. */
 export const recordedAgentSessionDetails: readonly AgentSessionDetailsDto[] = [
-  session(
-    epicRunnerSessionId,
-    'Orientation discovery handler',
-    'Recorded development presentation only; no runtime continuation was initiated.',
-  ),
+  session(epicRunnerSessionId, 'Orientation discovery handler', epicRunnerResponse),
   session(
     reviewSprintSessionId,
     'Recorded parallel review Sprint',

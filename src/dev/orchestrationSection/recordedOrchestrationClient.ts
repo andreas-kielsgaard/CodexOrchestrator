@@ -28,6 +28,7 @@ import {
 } from '../conversationHarnesses/recordedHarnessInspectorSource';
 import { HarnessInspectorDevelopmentSurface } from '../../features/conversationHarnesses';
 import { createElement } from 'react';
+import { recordedEpicProductDecisionSource } from '../productDecisions/recordedEpicProductDecisionSource';
 
 /** Recorded development data enters through canonical composition; it is not a product connector. */
 export const recordedDevelopmentOrchestrationClient = recordedOrchestrationClient(
@@ -84,6 +85,7 @@ export function createRecordedDevelopmentApplicationComposition(options?: {
     epicAutomaticContinuationPolicyController:
       unsupportedProductEpicAutomaticContinuationPolicyController,
     epicPlanProposalSource: recordedLocalEpicPlanProposalSource,
+    epicProductDecisionSource: recordedEpicProductDecisionSource,
     agentSessionHarnessManagementSource: harnessManagementSource,
     agentIdentityForSession: (sessionId) =>
       sessionId === recordedHarnessInspectorSessionId ? harnessIdentity : undefined,

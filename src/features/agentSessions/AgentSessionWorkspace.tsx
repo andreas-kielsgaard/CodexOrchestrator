@@ -1,7 +1,6 @@
 import { Check, ClipboardCopy } from 'lucide-react';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { AgentIdentity } from '../../application/agentSessions';
-import { AgentIdentityMarker } from './AgentIdentityMarker';
 import { ConversationViewport } from './ConversationViewport';
 import {
   browserAgentSessionClipboard,
@@ -113,33 +112,15 @@ export function AgentSessionWorkspace({
       }${contextualChrome.settings ? ' agent-session-workspace--with-settings' : ''}`}
       aria-label={presentation.ariaLabel ?? title}
     >
-      {identityHeader ? (
-        <header className="agent-session-identity-header">
-          <div className="agent-session-identity-header__title">
-            {identityHeader.agentIdentity && (
-              <AgentIdentityMarker identity={identityHeader.agentIdentity} />
-            )}
-            <h2>
-              {identityHeader.agentIdentity
-                ? `${identityHeader.agentIdentity.name}: ${identityHeader.title}`
-                : identityHeader.title}
-            </h2>
-          </div>
-          <div className="agent-session-identity-header__actions">
-            {contextualChrome.actions}
-            {copyAction}
-            {active && (
-              <span className="working-status" role="status">
-                Working
-              </span>
-            )}
-          </div>
-        </header>
-      ) : showHeader ? (
+      {identityHeader || showHeader ? (
         <header className="agent-session-header">
           <div>
             <p className="eyebrow">Agent Session</p>
-            <h2>{title}</h2>
+            <h2>
+              {identityHeader?.agentIdentity
+                ? `${identityHeader.agentIdentity.name}: ${identityHeader.title}`
+                : (identityHeader?.title ?? title)}
+            </h2>
             {presentation.composer?.showWorkingDirectory &&
               controller.details?.session.workingDirectory && (
                 <p
