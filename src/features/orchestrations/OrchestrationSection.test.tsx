@@ -10,6 +10,7 @@ import {
 } from '../../dev/agentSessions';
 import { movementLabel, type OrchestrationSectionView } from './orchestrationModel';
 import { OrchestrationSection } from './OrchestrationSection';
+import { recordedEpicProductDecisionSource } from '../../dev/productDecisions/recordedEpicProductDecisionSource';
 
 const canonicalRecordedView = presentProductOrchestrations(
   composeProductOrchestrationReadModels(recordedProductReadCompositionInput),
@@ -31,6 +32,28 @@ const disposableRecordedOrchestrationView = {
 };
 
 describe('OrchestrationSection', () => {
+  it('attaches the reusable recorded product-decisions panel to Epic detail', async () => {
+    render(
+      <OrchestrationSection
+        view={disposableRecordedOrchestrationView}
+        epicProductDecisionSource={recordedEpicProductDecisionSource}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Codex Epic Runner workspace development' }),
+    );
+    expect(screen.getByRole('region', { name: 'Epic plan' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Product decisions' }));
+    expect(await screen.findByRole('heading', { name: 'Stable workspace' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Epic plan' })).toBeNull();
+    expect(screen.getByRole('main', { name: 'Epic detail' })).toHaveAttribute(
+      'data-viewport-contained',
+      'true',
+    );
+  });
+
   it('renders exactly the three semantic overview columns from structured movement and state', () => {
     render(<OrchestrationSection view={disposableRecordedOrchestrationView} />);
 

@@ -28,6 +28,34 @@
   font-weight: 800;
 }
 
+.epic-detail__section-switch {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid #d5dce2;
+  border-radius: 8px;
+  background: #f3f6f7;
+}
+
+.epic-detail__section-switch button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #5b6d77;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.epic-detail__section-switch button[aria-pressed='true'] {
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(31 48 56 / 12%);
+  color: #23453a;
+}
+
 @media (max-width: 720px) {
   .orchestration-context-rail__epic {
     gap: 6px;

@@ -12,6 +12,7 @@ import {
 import './styles/orchestrationSection.css';
 import type { EpicPlanningDraftSummary } from '../../application/orchestrations';
 import type { AgentSessionProductLocation } from '../../application/agentSessionNavigation';
+import type { EpicProductDecisionSource } from '../../application/productDecisions';
 
 export interface OrchestrationSectionProps {
   readonly view: OrchestrationSectionView;
@@ -24,6 +25,7 @@ export interface OrchestrationSectionProps {
   readonly onOpenPlanningDraft?: (draft: EpicPlanningDraftSummary) => void;
   readonly requestedLocation?: AgentSessionProductLocation | null;
   readonly onOpenAgentSession?: (sessionId: string) => void;
+  readonly epicProductDecisionSource?: EpicProductDecisionSource;
 }
 
 export function OrchestrationSection({
@@ -37,6 +39,7 @@ export function OrchestrationSection({
   onOpenPlanningDraft,
   requestedLocation,
   onOpenAgentSession,
+  epicProductDecisionSource,
 }: OrchestrationSectionProps) {
   const workspace = useOrchestrationWorkspace(requestedLocation);
   const selected = view.epics.find(({ id }) => id === workspace.epicId);
@@ -49,6 +52,7 @@ export function OrchestrationSection({
         artifactAccessController={artifactAccessController}
         sprintAutomaticContinuationPolicyController={sprintAutomaticContinuationPolicyController}
         epicAutomaticContinuationPolicyController={epicAutomaticContinuationPolicyController}
+        epicProductDecisionSource={epicProductDecisionSource}
         selectedSprintId={workspace.sprintId}
         selectedRevisionId={workspace.selectedRevisionId}
         detailLocation={workspace.detailLocation}

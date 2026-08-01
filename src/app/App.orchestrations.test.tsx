@@ -640,9 +640,11 @@ describe('App orchestration loading', () => {
     render(<App {...createRecordedDevelopmentApplicationComposition()} />);
 
     expect(screen.getByRole('status')).toHaveTextContent('Loading orchestration data');
-    expect(
+    fireEvent.click(
       await screen.findByRole('button', { name: /Open Codex Epic Runner workspace development/ }),
-    ).toBeVisible();
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Product decisions' }));
+    expect(await screen.findByRole('heading', { name: 'Stable workspace' })).toBeVisible();
   });
 
   it('opens one conversation-primary Plan Builder and only changes its proposal through the injected source', async () => {

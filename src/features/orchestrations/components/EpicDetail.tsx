@@ -18,6 +18,8 @@ import type {
   SprintAutomaticContinuationPolicyController,
   EpicAutomaticContinuationPolicyController,
 } from '../../../application/orchestrations';
+import type { EpicProductDecisionSource } from '../../../application/productDecisions';
+import { EpicProductDecisionsPanel } from '../../productDecisions';
 
 export interface EpicDetailProps {
   readonly epic: EpicPresentation;
@@ -34,6 +36,7 @@ export interface EpicDetailProps {
   readonly onDetailLocationChange: (location: SprintWorkspaceDetailLocation) => void;
   readonly onBack: () => void;
   readonly onOpenAgentSession?: (sessionId: string) => void;
+  readonly epicProductDecisionSource?: EpicProductDecisionSource;
 }
 
 export function EpicDetail({
@@ -51,12 +54,14 @@ export function EpicDetail({
   onDetailLocationChange,
   onBack,
   onOpenAgentSession,
+  epicProductDecisionSource,
 }: EpicDetailProps) {
   const restoreSprintIdRef = useRef<string | null>(null);
   const [selectedSprintOpener, setSelectedSprintOpener] = useState<{
     readonly sprint: SprintPlanItemPresentation;
     readonly opener: HTMLButtonElement;
   } | null>(null);
+  const [epicSection, setEpicSection] = useState<'plan' | 'product-decisions'>('plan');
   const selectedSprint = epic.plan.items.find(({ id }) => id === selectedSprintId);
   const activeSprint =
     epic.plan.items.find(({ status }) => status === 'in_progress') ??
@@ -102,6 +107,26 @@ export function EpicDetail({
         contextLabel="Epic context"
         backLabel="Back to Epics"
         onBack={onBack}
+        hotbarNavigation={
+          epicProductDecisionSource ? (
+            <div className="epic-detail__section-switch" aria-label="Epic detail views">
+              <button
+                type="button"
+                aria-pressed={epicSection === 'plan'}
+                onClick={() => setEpicSection('plan')}
+              >
+                Plan
+              </button>
+              <button
+                type="button"
+                aria-pressed={epicSection === 'product-decisions'}
+                onClick={() => setEpicSection('product-decisions')}
+              >
+                Product decisions
+              </button>
+            </div>
+          ) : undefined
+        }
         control={
           epic.continuation ? (
             <ContinuationControl
@@ -134,13 +159,17 @@ export function EpicDetail({
           </>
         }
         primary={
-          <SprintPlan
-            items={epic.plan.items}
-            onOpen={(sprint, opener) => {
-              setSelectedSprintOpener({ sprint, opener });
-              onOpenSprint(sprint.id, sprint.workspace?.selectedSprintPlanRevisionId ?? '');
-            }}
-          />
+          epicSection === 'product-decisions' && epicProductDecisionSource ? (
+            <EpicProductDecisionsPanel epicId={epic.id} source={epicProductDecisionSource} />
+          ) : (
+            <SprintPlan
+              items={epic.plan.items}
+              onOpen={(sprint, opener) => {
+                setSelectedSprintOpener({ sprint, opener });
+                onOpenSprint(sprint.id, sprint.workspace?.selectedSprintPlanRevisionId ?? '');
+              }}
+            />
+          )
         }
         agentSession={
           epic.epicRunnerSession ? (

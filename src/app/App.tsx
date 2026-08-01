@@ -41,6 +41,7 @@ import { EpicInitiationConfirmationModal } from './EpicInitiationConfirmationMod
 import type { AgentSessionProductLocation } from '../application/agentSessionNavigation';
 import type { FileReviewSource } from '../application/fileReview';
 import { FileReviewScreen } from '../features/fileReview';
+import type { EpicProductDecisionSource } from '../application/productDecisions';
 
 export type ApplicationSurface =
   'epics' | 'agent-sessions' | 'harness-inspector' | 'file-review' | 'worktree-review';
@@ -70,6 +71,8 @@ export interface AppProps {
   /** Present only in an injected development composition; production boot does not expose it. */
   readonly harnessManagementPreviewSurface?: ReactNode;
   readonly fileReviewSource?: FileReviewSource;
+  /** Optional application-owned Epic read; the recorded development composition supplies the demo. */
+  readonly epicProductDecisionSource?: EpicProductDecisionSource;
   /** Present only in the injected development launcher composition. */
   readonly humanReviewLauncherView?: ReactNode;
   /** Enumerated proof navigation; it cannot activate or focus a native window. */
@@ -102,6 +105,7 @@ export function App({
   agentIdentityForSession,
   harnessManagementPreviewSurface,
   fileReviewSource,
+  epicProductDecisionSource,
   humanReviewLauncherView,
   humanReviewLauncherNavigation,
   initialSurface = 'epics',
@@ -457,6 +461,7 @@ export function App({
           artifactAccessController={artifactAccessController}
           sprintAutomaticContinuationPolicyController={sprintAutomaticContinuationPolicyController}
           epicAutomaticContinuationPolicyController={epicAutomaticContinuationPolicyController}
+          epicProductDecisionSource={epicProductDecisionSource}
           planningDrafts={planningDrafts}
           onOpenDraft={(draft) => {
             setSelectedDraft({
@@ -506,6 +511,7 @@ function OrchestrationSurface({
   artifactAccessController,
   sprintAutomaticContinuationPolicyController,
   epicAutomaticContinuationPolicyController,
+  epicProductDecisionSource,
   onPlanEpic,
   planningDrafts,
   onOpenDraft,
@@ -518,6 +524,7 @@ function OrchestrationSurface({
   readonly artifactAccessController: ArtifactAccessController;
   readonly sprintAutomaticContinuationPolicyController?: SprintAutomaticContinuationPolicyController;
   readonly epicAutomaticContinuationPolicyController?: EpicAutomaticContinuationPolicyController;
+  readonly epicProductDecisionSource?: EpicProductDecisionSource;
   readonly onPlanEpic: () => void;
   readonly planningDrafts: readonly EpicPlanningDraftSummary[];
   readonly onOpenDraft: (draft: EpicPlanningDraftSummary) => void;
@@ -532,6 +539,7 @@ function OrchestrationSurface({
         artifactAccessController={artifactAccessController}
         sprintAutomaticContinuationPolicyController={sprintAutomaticContinuationPolicyController}
         epicAutomaticContinuationPolicyController={epicAutomaticContinuationPolicyController}
+        epicProductDecisionSource={epicProductDecisionSource}
         onPlanEpic={onPlanEpic}
         planningDrafts={planningDrafts}
         onOpenPlanningDraft={onOpenDraft}
