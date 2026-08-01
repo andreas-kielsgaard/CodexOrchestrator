@@ -9,7 +9,7 @@ use super::{
     },
     repository::{
         FileReviewGitCaptureAuthorizationError, FileReviewGitCaptureAuthorizationWrite,
-        SqliteOrchestrationRepository,
+        InitiatedSprintGitAuthorityError, SqliteOrchestrationRepository,
     },
 };
 use sha2::{Digest, Sha256};
@@ -89,6 +89,39 @@ impl FileReviewOriginatingEntryService {
             },
         )
         .map_err(map_producer_error)
+    }
+
+    /// Product-context entry. No private authority, runtime identity, path, ref, or Git object is
+    /// accepted from presentation.
+    pub(crate) fn produce_for_sprint_context(
+        &self,
+        sprint_id: &str,
+    ) -> Result<ProducedFileReview, FileReviewOriginatingEntryError> {
+        let authority = self
+            .repository
+            .load_initiated_sprint_git_authority_for_sprint(sprint_id)
+            .map_err(map_context_authority_error)?
+            .ok_or(FileReviewOriginatingEntryError::Unauthorized)?;
+        self.produce(ProduceFileReviewForInitiatedSprint {
+            authority_ref: authority.authority_id,
+        })
+    }
+}
+
+fn map_context_authority_error(
+    error: InitiatedSprintGitAuthorityError,
+) -> FileReviewOriginatingEntryError {
+    match error {
+        InitiatedSprintGitAuthorityError::Invalid => {
+            FileReviewOriginatingEntryError::InvalidRequest
+        }
+        InitiatedSprintGitAuthorityError::Forbidden => {
+            FileReviewOriginatingEntryError::Unauthorized
+        }
+        InitiatedSprintGitAuthorityError::Conflict => FileReviewOriginatingEntryError::Conflict,
+        InitiatedSprintGitAuthorityError::Unavailable => {
+            FileReviewOriginatingEntryError::Unavailable
+        }
     }
 }
 
@@ -409,6 +442,27 @@ mod tests {
         assert!(!query_json.contains("runtime-real"));
         assert!(!query_json.contains(comparison.main_root.to_string_lossy().as_ref()));
         assert!(!query_json.contains(comparison.worktree_root.to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn product_context_resolves_private_authority_by_initiated_sprint() {
+        let comparison = real_comparison();
+        let (repository, _authority_ref, _database_path) = bound_repository(&comparison);
+        let service = FileReviewOriginatingEntryService::new(repository, comparison.port.clone());
+
+        let first = service.produce_for_sprint_context("sprint-1").unwrap();
+        assert!(!first.idempotent_replay);
+        let replay = service.produce_for_sprint_context("sprint-1").unwrap();
+        assert!(replay.idempotent_replay);
+        assert_eq!(replay.opaque_reference, first.opaque_reference);
+        assert_eq!(
+            service.produce_for_sprint_context("sprint-2"),
+            Err(FileReviewOriginatingEntryError::Unauthorized)
+        );
+        assert_eq!(
+            service.produce_for_sprint_context(" "),
+            Err(FileReviewOriginatingEntryError::InvalidRequest)
+        );
     }
 
     #[test]

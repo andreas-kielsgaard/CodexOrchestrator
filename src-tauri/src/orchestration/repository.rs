@@ -1535,6 +1535,39 @@ impl SqliteOrchestrationRepository {
         Ok(Some(authority))
     }
 
+    /// Application-owned context lookup. The caller supplies only the initiated Sprint identity;
+    /// private runtime and Git authority remain inside the repository boundary.
+    pub(crate) fn load_initiated_sprint_git_authority_for_sprint(
+        &self,
+        sprint_id: &str,
+    ) -> Result<Option<InitiatedSprintGitAuthority>, InitiatedSprintGitAuthorityError> {
+        if !bounded_application_id(sprint_id) {
+            return Err(InitiatedSprintGitAuthorityError::Invalid);
+        }
+        let authority_ids = {
+            let connection = self
+                .connection
+                .lock()
+                .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+            let mut statement = connection
+                .prepare(
+                    "SELECT authority_id FROM initiated_sprint_git_authorities WHERE sprint_id=?1 ORDER BY recorded_at, authority_id LIMIT 2",
+                )
+                .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+            let authority_ids = statement
+                .query_map([sprint_id], |row| row.get::<_, String>(0))
+                .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+            authority_ids
+        };
+        match authority_ids.as_slice() {
+            [] => Ok(None),
+            [authority_id] => self.load_initiated_sprint_git_authority(authority_id),
+            _ => Err(InitiatedSprintGitAuthorityError::Conflict),
+        }
+    }
+
     /// Producer-only application seam. No Tauri command accepts these facts.
     pub(crate) fn store_file_review_facts(
         &self,

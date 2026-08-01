@@ -1,6 +1,9 @@
 use super::{
     application::{ManagedPlanBuilderService, OrchestrationApplication},
     bootstrap_transition::{BootstrapTransitionQueryV2, PostConfirmationTransitionService},
+    file_review_originating_entry::{
+        FileReviewOriginatingEntryError, FileReviewOriginatingEntryService,
+    },
     repository::NativeQueryV2,
 };
 use crate::agent_sessions::{
@@ -13,6 +16,29 @@ use tauri::{AppHandle, Emitter, State};
 
 pub(crate) struct OrchestrationTauriState {
     application: Arc<OrchestrationApplication>,
+}
+
+pub(crate) struct ContextualFileReviewTauriState {
+    application: Arc<OrchestrationApplication>,
+    service: Option<Arc<FileReviewOriginatingEntryService>>,
+}
+impl ContextualFileReviewTauriState {
+    pub(crate) fn available(
+        application: Arc<OrchestrationApplication>,
+        service: Arc<FileReviewOriginatingEntryService>,
+    ) -> Self {
+        Self {
+            application,
+            service: Some(service),
+        }
+    }
+
+    pub(crate) fn unavailable(application: Arc<OrchestrationApplication>) -> Self {
+        Self {
+            application,
+            service: None,
+        }
+    }
 }
 impl OrchestrationTauriState {
     pub(crate) fn new(application: Arc<OrchestrationApplication>) -> Self {
@@ -342,6 +368,88 @@ pub(crate) fn load_scoped_file_review(
         .map_err(|_| "File Review facts are unavailable.".to_string())
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RequestContextualFileReviewInput {
+    sprint_id: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(crate) enum RequestContextualFileReviewResult {
+    Available {
+        #[serde(rename = "opaqueReference")]
+        opaque_reference: String,
+        #[serde(rename = "idempotentReplay")]
+        idempotent_replay: bool,
+    },
+    Unavailable {
+        reason: &'static str,
+    },
+}
+
+/// Application action: Sprint context selects the private relation; success is returned only after
+/// durable production and a scoped reauthorization/load have both succeeded.
+#[tauri::command]
+pub(crate) fn request_contextual_file_review(
+    state: State<'_, ContextualFileReviewTauriState>,
+    input: RequestContextualFileReviewInput,
+) -> Result<RequestContextualFileReviewResult, String> {
+    let Some(service) = &state.service else {
+        return Ok(RequestContextualFileReviewResult::Unavailable {
+            reason: "not_ready",
+        });
+    };
+    let produced = match service.produce_for_sprint_context(&input.sprint_id) {
+        Ok(produced) => produced,
+        Err(error) => {
+            return Ok(RequestContextualFileReviewResult::Unavailable {
+                reason: contextual_file_review_reason(error),
+            })
+        }
+    };
+    match state
+        .application
+        .load_scoped_file_review(&produced.opaque_reference)
+        .map_err(|_| "File Review facts are unavailable.".to_string())?
+    {
+        super::repository::ScopedFileReviewLoad::Available { .. } => {
+            Ok(RequestContextualFileReviewResult::Available {
+                opaque_reference: produced.opaque_reference,
+                idempotent_replay: produced.idempotent_replay,
+            })
+        }
+        super::repository::ScopedFileReviewLoad::Unavailable
+        | super::repository::ScopedFileReviewLoad::Unauthorized
+        | super::repository::ScopedFileReviewLoad::Invalid => {
+            Ok(RequestContextualFileReviewResult::Unavailable {
+                reason: "source_unavailable",
+            })
+        }
+    }
+}
+
+fn contextual_file_review_reason(error: FileReviewOriginatingEntryError) -> &'static str {
+    match error {
+        FileReviewOriginatingEntryError::Unauthorized
+        | FileReviewOriginatingEntryError::InvalidRequest => "not_ready",
+        FileReviewOriginatingEntryError::RuntimeSourceStale
+        | FileReviewOriginatingEntryError::RuntimeSourceDirty
+        | FileReviewOriginatingEntryError::RuntimeSourceIncompatible
+        | FileReviewOriginatingEntryError::RuntimeSourceUnavailable
+        | FileReviewOriginatingEntryError::RuntimeEvidenceMismatch
+        | FileReviewOriginatingEntryError::ComparisonUnavailable => "source_not_ready",
+        FileReviewOriginatingEntryError::Conflict => "conflict",
+        FileReviewOriginatingEntryError::RepositoryUnavailable
+        | FileReviewOriginatingEntryError::RepositoryMismatch
+        | FileReviewOriginatingEntryError::GitObjectUnavailable
+        | FileReviewOriginatingEntryError::InvalidGitState
+        | FileReviewOriginatingEntryError::LimitsExceeded
+        | FileReviewOriginatingEntryError::IncompleteArtifact
+        | FileReviewOriginatingEntryError::Unavailable => "unavailable",
+    }
+}
+
 #[tauri::command]
 pub(crate) fn load_epic_bootstrap_transition_query(
     state: State<'_, BootstrapTransitionTauriState>,
@@ -394,6 +502,37 @@ mod tests {
         let sanitized = Err::<(), _>(error.to_string())
             .map_err(|_| "File Review facts are unavailable.".to_string());
         assert_eq!(sanitized.unwrap_err(), "File Review facts are unavailable.");
+    }
+
+    #[test]
+    fn contextual_file_review_failures_are_bounded() {
+        use super::{contextual_file_review_reason, RequestContextualFileReviewResult};
+        use crate::orchestration::file_review_originating_entry::FileReviewOriginatingEntryError;
+
+        assert_eq!(
+            contextual_file_review_reason(FileReviewOriginatingEntryError::Unauthorized),
+            "not_ready"
+        );
+        assert_eq!(
+            contextual_file_review_reason(FileReviewOriginatingEntryError::RuntimeSourceDirty),
+            "source_not_ready"
+        );
+        assert_eq!(
+            contextual_file_review_reason(FileReviewOriginatingEntryError::LimitsExceeded),
+            "unavailable"
+        );
+        assert_eq!(
+            serde_json::to_value(RequestContextualFileReviewResult::Available {
+                opaque_reference: "opaque".into(),
+                idempotent_replay: true,
+            })
+            .unwrap(),
+            serde_json::json!({
+                "status": "available",
+                "opaqueReference": "opaque",
+                "idempotentReplay": true,
+            })
+        );
     }
 
     #[test]

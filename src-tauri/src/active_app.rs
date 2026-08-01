@@ -108,7 +108,7 @@ pub(crate) fn run() {
             );
             let orchestration = Arc::new(
                 crate::orchestration::application::OrchestrationApplication::new(
-                    orchestration_repository,
+                    orchestration_repository.clone(),
                 ),
             );
             app.manage(
@@ -161,7 +161,7 @@ pub(crate) fn run() {
             app.manage(
                 crate::orchestration::transport::ManagedPlanBuilderTauriState::new(
                     crate::orchestration::application::ManagedPlanBuilderService::new(
-                        orchestration,
+                        orchestration.clone(),
                         application,
                         registry,
                         initiation_confirmations,
@@ -183,6 +183,17 @@ pub(crate) fn run() {
                             .join("dev.codex-orchestrator.human-review")
                     });
                 let review = Arc::new(crate::worktree_review::compose(&source, &review_root)?);
+                app.manage(
+                    crate::orchestration::transport::ContextualFileReviewTauriState::available(
+                        orchestration.clone(),
+                        Arc::new(
+                            crate::orchestration::file_review_originating_entry::FileReviewOriginatingEntryService::new(
+                                orchestration_repository.clone(),
+                                review.clone(),
+                            ),
+                        ),
+                    ),
+                );
                 if let Some(controller) =
                     crate::worktree_review::debug_controller::start_if_enabled(
                         review.clone(),
@@ -203,6 +214,12 @@ pub(crate) fn run() {
                         .map_err(|_| "Unable to identify the isolated review launcher window")?;
                 }
             }
+            #[cfg(not(debug_assertions))]
+            app.manage(
+                crate::orchestration::transport::ContextualFileReviewTauriState::unavailable(
+                    orchestration.clone(),
+                ),
+            );
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -231,6 +248,7 @@ pub(crate) fn run() {
             crate::orchestration::transport::resolve_epic_initiation_confirmation,
             crate::orchestration::transport::load_orchestration_native_query,
             crate::orchestration::transport::load_scoped_file_review,
+            crate::orchestration::transport::request_contextual_file_review,
             crate::orchestration::transport::load_epic_bootstrap_transition_query,
             #[cfg(debug_assertions)]
             crate::worktree_review::transport::list_human_review_worktrees,
