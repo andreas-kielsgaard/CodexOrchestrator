@@ -16,8 +16,26 @@ const recordedSnapshot: EpicProductDecisionSnapshot = validateEpicProductDecisio
         kind: 'human_interaction',
         opaqueId: 'layout-review-outcome-2026-07-29',
       },
-      label: 'Human layout review: preserve pane positions while reading',
+      label: 'Epic detail review: keep its menu and outer frame stable while reading',
       occurredAt: '2026-07-29T09:15:00.000Z',
+    },
+    {
+      evidenceId: 'evidence-agent-session-layout-passage',
+      originReference: {
+        kind: 'agent_session_completed',
+        opaqueId: 'recorded-epic-runner-manual-continuation-ready',
+      },
+      conversationCitation: {
+        kind: 'agent_session_passage',
+        sessionId: 'recorded-epic-runner-manual-continuation-ready',
+        invocationId: 'recorded-epic-runner-manual-continuation-ready-recorded-turn',
+        passage: {
+          kind: 'final_response',
+          runtimeEventId: 'recorded-epic-runner-manual-continuation-ready-recorded-turn-response',
+        },
+      },
+      label: 'Recorded Epic Runner passage stating the bounded Epic detail layout',
+      occurredAt: '2026-07-29T09:20:00.000Z',
     },
     {
       evidenceId: 'evidence-work-unit-detail-approval',
@@ -41,16 +59,23 @@ const recordedSnapshot: EpicProductDecisionSnapshot = validateEpicProductDecisio
   decisions: [
     {
       decisionId: 'decision-stable-workspace',
-      title: 'Stable workspace',
+      title: 'Contained Epic detail',
       statement:
-        'Keep the outer workspace fixed; only a contained region with more content than it can display may scroll.',
-      intent: 'Protect spatial orientation while people move between related panes and details.',
-      evidenceIds: ['evidence-human-layout-review', 'evidence-work-unit-detail-approval'],
+        'In Epic detail, keep the menu and outer frame fixed; scroll only a contained region whose content exceeds its bounds.',
+      intent: 'Keep the current Epic recognizable while its own detail content is reviewed.',
+      evidenceIds: [
+        'evidence-human-layout-review',
+        'evidence-agent-session-layout-passage',
+        'evidence-work-unit-detail-approval',
+      ],
       lineage: { kind: 'introduced', supersedesDecisionIds: [] },
     },
     {
       decisionId: 'decision-progressive-detail',
-      parentDecisionId: 'decision-stable-workspace',
+      hierarchyRelationship: {
+        kind: 'expands',
+        targetDecisionId: 'decision-stable-workspace',
+      },
       title: 'Progressive detail',
       statement:
         'Keep the primary flow calm and reveal supporting evidence within its local context.',
@@ -86,7 +111,7 @@ const recordedSnapshot: EpicProductDecisionSnapshot = validateEpicProductDecisio
       requestId: 'review-request-contained-scroll',
       triggeredByDecisionId: 'decision-stable-workspace',
       reason:
-        'A later manual review should check existing Epic detail surfaces against the recorded policy.',
+        'A later manual review should check Epic detail surfaces against this bounded recorded policy.',
       status: 'requested',
     },
   ],

@@ -28,6 +28,7 @@ export interface SharedAgentSessionPanelProps {
   readonly displayMode?: 'collapsible' | 'always_open';
   readonly focusInvocationId?: string;
   readonly focusRequest?: number;
+  readonly transcriptRange?: TranscriptAnchorRange;
 }
 
 /** Shared embedded Agent Session presentation with an injected application boundary. */
@@ -43,6 +44,7 @@ export function SharedAgentSessionPanel({
   displayMode = 'collapsible',
   focusInvocationId,
   focusRequest,
+  transcriptRange,
 }: SharedAgentSessionPanelProps) {
   const conversationId = useId();
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
@@ -131,9 +133,14 @@ export function SharedAgentSessionPanel({
               session={session}
               composition={composition}
               ariaLabel={conversationAriaLabel}
+              transcriptRange={transcriptRange}
             />
           ) : (
-            <ReadOnlyAgentSessionConversation session={session} ariaLabel={conversationAriaLabel} />
+            <ReadOnlyAgentSessionConversation
+              session={session}
+              ariaLabel={conversationAriaLabel}
+              transcriptRange={transcriptRange}
+            />
           )}
         </div>
       )}
@@ -145,10 +152,12 @@ function ConnectedAgentSessionConversation({
   session,
   composition,
   ariaLabel,
+  transcriptRange,
 }: {
   readonly session: SharedAgentSessionPresentation;
   readonly composition: EmbeddedAgentSessionComposition;
   readonly ariaLabel: string;
+  readonly transcriptRange?: TranscriptAnchorRange;
 }) {
   const controller = useAgentSession(composition.client, {
     selectedSessionId: session.sessionId,
@@ -159,7 +168,17 @@ function ConnectedAgentSessionConversation({
 
   return (
     <ConversationViewport
-      segments={transcript ? [{ id: transcript.sessionId, transcript }] : []}
+      segments={
+        transcript
+          ? [
+              {
+                id: transcript.sessionId,
+                transcript,
+                ...(transcriptRange ? { range: transcriptRange } : {}),
+              },
+            ]
+          : []
+      }
       loading={controller.loading}
       expandedProcessing={controller.expandedProcessing}
       onToggleProcessing={controller.toggleProcessing}
@@ -189,15 +208,25 @@ function ConnectedAgentSessionConversation({
 function ReadOnlyAgentSessionConversation({
   session,
   ariaLabel,
+  transcriptRange,
 }: {
   readonly session: SharedAgentSessionPresentation;
   readonly ariaLabel: string;
+  readonly transcriptRange?: TranscriptAnchorRange;
 }) {
   const [expandedProcessing, setExpandedProcessing] = useState<ReadonlySet<string>>(new Set());
   return (
     <ConversationViewport
       segments={
-        session.transcript ? [{ id: session.sessionId, transcript: session.transcript }] : []
+        session.transcript
+          ? [
+              {
+                id: session.sessionId,
+                transcript: session.transcript,
+                ...(transcriptRange ? { range: transcriptRange } : {}),
+              },
+            ]
+          : []
       }
       loading={false}
       expandedProcessing={expandedProcessing}

@@ -37,9 +37,7 @@ describe('SharedAgentSessionPanel controller composition', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Open Agent Session' }));
-    await waitFor(() =>
-      expect(screen.getByText(/Recorded development presentation only/)).toBeVisible(),
-    );
+    await waitFor(() => expect(screen.getByText(/For Epic detail, keep the menu/)).toBeVisible());
     expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();
 
     rerender(

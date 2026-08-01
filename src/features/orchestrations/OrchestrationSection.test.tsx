@@ -32,7 +32,7 @@ const disposableRecordedOrchestrationView = {
 };
 
 describe('OrchestrationSection', () => {
-  it('attaches the reusable recorded product-decisions panel to Epic detail', async () => {
+  it('opens Product Decisions as a distinct Epic view with persistent identity and Plan separation', async () => {
     render(
       <OrchestrationSection
         view={disposableRecordedOrchestrationView}
@@ -44,14 +44,34 @@ describe('OrchestrationSection', () => {
       screen.getByRole('button', { name: 'Open Codex Epic Runner workspace development' }),
     );
     expect(screen.getByRole('region', { name: 'Epic plan' })).toBeVisible();
+    expect(
+      within(screen.getByLabelText('Epic controls')).getByLabelText(
+        'Current Epic: Codex Epic Runner workspace development',
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Plan' })).toHaveAttribute('aria-current', 'page');
 
     fireEvent.click(screen.getByRole('button', { name: 'Product decisions' }));
-    expect(await screen.findByRole('heading', { name: 'Stable workspace' })).toBeVisible();
+    const productDecisionsView = screen.getByRole('main', { name: 'Epic Product Decisions' });
+    expect(
+      within(productDecisionsView).getByLabelText(
+        'Current Epic: Codex Epic Runner workspace development',
+      ),
+    ).toBeVisible();
+    expect(
+      within(productDecisionsView).getByRole('button', { name: 'Product decisions' }),
+    ).toHaveAttribute('aria-current', 'page');
+    expect(await screen.findByRole('heading', { name: 'Contained Epic detail' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Epic plan' })).toBeNull();
-    expect(screen.getByRole('main', { name: 'Epic detail' })).toHaveAttribute(
-      'data-viewport-contained',
-      'true',
-    );
+    expect(screen.queryByRole('main', { name: 'Epic detail' })).toBeNull();
+    expect(screen.queryByLabelText('Epic context')).toBeNull();
+    expect(screen.queryByLabelText('Epic Runner Agent Session')).toBeNull();
+    expect(productDecisionsView).toHaveAttribute('data-view-layout', 'single-column');
+    expect(screen.queryByText('Changes needing human review')).toBeNull();
+
+    fireEvent.click(within(productDecisionsView).getByRole('button', { name: 'Plan' }));
+    expect(screen.getByRole('region', { name: 'Epic plan' })).toBeVisible();
+    expect(screen.getByLabelText('Epic context')).toBeVisible();
   });
 
   it('renders exactly the three semantic overview columns from structured movement and state', () => {

@@ -644,7 +644,7 @@ describe('App orchestration loading', () => {
       await screen.findByRole('button', { name: /Open Codex Epic Runner workspace development/ }),
     );
     fireEvent.click(screen.getByRole('button', { name: 'Product decisions' }));
-    expect(await screen.findByRole('heading', { name: 'Stable workspace' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Contained Epic detail' })).toBeVisible();
   });
 
   it('opens one conversation-primary Plan Builder and only changes its proposal through the injected source', async () => {

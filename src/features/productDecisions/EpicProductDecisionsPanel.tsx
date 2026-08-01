@@ -1,24 +1,43 @@
-import { AlertTriangle, GitMerge, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, GitMerge, ShieldCheck, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type {
   EpicProductDecisionLoadResult,
   EpicProductDecisionSource,
   ProductDecision,
+  ProductDecisionConversationPassageReference,
   ProductDecisionEvidence,
 } from '../../application/productDecisions';
+import type { TranscriptAnchorRange } from '../agentSessions';
+import {
+  SharedAgentSessionPanel,
+  type SharedAgentSessionPresentation,
+} from '../orchestrations/components/SharedAgentSessionPanel';
 import './epicProductDecisions.css';
 
 export interface EpicProductDecisionsPanelProps {
   readonly epicId: string;
   readonly source: EpicProductDecisionSource;
+  readonly citedAgentSessions?: readonly SharedAgentSessionPresentation[];
+  readonly onOpenAgentSession?: (sessionId: string) => void;
 }
 
-export function EpicProductDecisionsPanel({ epicId, source }: EpicProductDecisionsPanelProps) {
+interface OpenCitation {
+  readonly evidence: ProductDecisionEvidence;
+  readonly reference: ProductDecisionConversationPassageReference;
+  readonly session?: SharedAgentSessionPresentation;
+}
+
+export function EpicProductDecisionsPanel({
+  epicId,
+  source,
+  citedAgentSessions = [],
+  onOpenAgentSession,
+}: EpicProductDecisionsPanelProps) {
   const [load, setLoad] = useState<EpicProductDecisionLoadResult | { kind: 'loading' }>({
     kind: 'loading',
   });
-  const [section, setSection] = useState<'tree' | 'review'>('tree');
-  const [selectedDecisionId, setSelectedDecisionId] = useState<string | null>(null);
+  const [reviewExpanded, setReviewExpanded] = useState(false);
+  const [openCitation, setOpenCitation] = useState<OpenCitation | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -37,15 +56,6 @@ export function EpicProductDecisionsPanel({ epicId, source }: EpicProductDecisio
   }, [epicId, source]);
 
   const snapshot = load.kind === 'available' ? load.snapshot : undefined;
-  useEffect(() => {
-    if (!snapshot?.decisions.length) {
-      setSelectedDecisionId(null);
-      return;
-    }
-    if (!snapshot.decisions.some(({ decisionId }) => decisionId === selectedDecisionId))
-      setSelectedDecisionId(snapshot.decisions[0].decisionId);
-  }, [selectedDecisionId, snapshot]);
-
   const decisionById = useMemo(
     () => new Map(snapshot?.decisions.map((decision) => [decision.decisionId, decision]) ?? []),
     [snapshot],
@@ -54,7 +64,6 @@ export function EpicProductDecisionsPanel({ epicId, source }: EpicProductDecisio
     () => new Map(snapshot?.evidence.map((item) => [item.evidenceId, item]) ?? []),
     [snapshot],
   );
-  const selected = selectedDecisionId ? decisionById.get(selectedDecisionId) : undefined;
 
   if (load.kind !== 'available')
     return (
@@ -71,195 +80,273 @@ export function EpicProductDecisionsPanel({ epicId, source }: EpicProductDecisio
     );
   const available = load.snapshot;
 
+  const showCitation = (evidence: ProductDecisionEvidence) => {
+    const reference = evidence.conversationCitation;
+    if (!reference) return;
+    setOpenCitation({
+      evidence,
+      reference,
+      session: citedAgentSessions.find(({ sessionId }) => sessionId === reference.sessionId),
+    });
+  };
+
   return (
     <section className="product-decisions" aria-label="Product decisions">
       <header className="product-decisions__header">
         <div>
           <p className="eyebrow">Epic product identity</p>
           <h2>Product decisions</h2>
-          <p>Recorded reasoning intended to guide future work.</p>
+          <p>Recorded policy for this Epic. Conversation passages remain supporting context.</p>
         </div>
-        <dl className="product-decisions__summary">
-          <div>
-            <dt>Current</dt>
-            <dd>{available.decisions.length}</dd>
-          </div>
-          <div className={available.conflicts.length ? 'needs-attention' : undefined}>
-            <dt>Needs review</dt>
-            <dd>{available.conflicts.length}</dd>
-          </div>
-        </dl>
-      </header>
-
-      <nav className="product-decisions__tabs" aria-label="Product decision views">
         <button
+          className="product-decisions__review-toggle"
           type="button"
-          className={section === 'tree' ? 'active' : undefined}
-          aria-current={section === 'tree' ? 'page' : undefined}
-          onClick={() => setSection('tree')}
+          aria-expanded={reviewExpanded}
+          aria-controls="product-decisions-review"
+          onClick={() => setReviewExpanded((current) => !current)}
         >
-          Decision tree
-        </button>
-        <button
-          type="button"
-          className={section === 'review' ? 'active' : undefined}
-          aria-current={section === 'review' ? 'page' : undefined}
-          onClick={() => setSection('review')}
-        >
-          Review conflicts
+          Review recorded changes
           {available.conflicts.length > 0 && <span>{available.conflicts.length}</span>}
         </button>
-      </nav>
+      </header>
 
-      {section === 'tree' ? (
-        <div className="product-decisions__workspace">
-          <nav className="product-decisions__tree" aria-label="Decision tree">
-            <DecisionTree
-              decisions={available.decisions}
-              selectedDecisionId={selectedDecisionId}
-              onSelect={setSelectedDecisionId}
-            />
-          </nav>
-          <article className="product-decisions__detail" aria-live="polite">
-            {selected ? (
-              <>
-                <p className="eyebrow">Current decision</p>
-                <h3>{selected.title}</h3>
-                <p className="product-decisions__statement">{selected.statement}</p>
-                <section>
-                  <h4>Why it matters</h4>
-                  <p>{selected.intent}</p>
-                </section>
-                {selected.lineage.kind !== 'introduced' && (
-                  <p className="product-decisions__lineage">
-                    <GitMerge size={16} aria-hidden="true" />
-                    {selected.lineage.kind === 'combined'
-                      ? `Combines ${selected.lineage.supersedesDecisionIds.length} earlier decisions into this policy.`
-                      : 'Refines an earlier expression of this policy.'}
-                  </p>
-                )}
-                <EvidenceList
-                  evidence={selected.evidenceIds
-                    .map((evidenceId) => evidenceById.get(evidenceId))
-                    .filter((item): item is ProductDecisionEvidence => Boolean(item))}
-                />
-                {available.complianceReviewRequests
-                  .filter(
-                    ({ triggeredByDecisionId }) => triggeredByDecisionId === selected.decisionId,
-                  )
-                  .map((review) => (
-                    <aside className="product-decisions__compliance" key={review.requestId}>
-                      <ShieldCheck size={18} aria-hidden="true" />
+      <div className="product-decisions__content">
+        <section className="product-decisions__current" aria-labelledby="current-decisions-heading">
+          <h3 id="current-decisions-heading">Current decisions</h3>
+          <p>Relationships appear only when they are explicitly recorded.</p>
+          <DecisionHierarchy
+            decisions={available.decisions}
+            decisionById={decisionById}
+            evidenceById={evidenceById}
+            complianceReviewRequests={available.complianceReviewRequests}
+            onOpenCitation={showCitation}
+          />
+        </section>
+
+        {reviewExpanded && (
+          <section
+            className="product-decisions__reviews"
+            id="product-decisions-review"
+            aria-label="Recorded Product Decision changes"
+          >
+            <header>
+              <AlertTriangle size={19} aria-hidden="true" />
+              <div>
+                <h3>Changes needing human review</h3>
+                <p>Recorded candidates cannot rewrite current policy in this read-only view.</p>
+              </div>
+            </header>
+            {available.conflicts.length ? (
+              available.conflicts.map((conflict) => {
+                const candidate = available.candidates.find(
+                  ({ candidateId }) => candidateId === conflict.candidateId,
+                );
+                if (!candidate) return null;
+                return (
+                  <article key={conflict.conflictId}>
+                    <p className="eyebrow">Proposed change</p>
+                    <h4>{candidate.title}</h4>
+                    <blockquote>{candidate.proposedStatement}</blockquote>
+                    <p>{conflict.explanation}</p>
+                    <dl>
                       <div>
-                        <strong>Codebase review requested</strong>
-                        <p>{review.reason}</p>
+                        <dt>Conflicts with</dt>
+                        <dd>
+                          {conflict.conflictsWithDecisionIds
+                            .map((decisionId) => decisionById.get(decisionId)?.title ?? decisionId)
+                            .join(', ')}
+                        </dd>
                       </div>
-                    </aside>
-                  ))}
-              </>
+                    </dl>
+                    <EvidenceList
+                      evidence={candidate.evidenceIds
+                        .map((evidenceId) => evidenceById.get(evidenceId))
+                        .filter((item): item is ProductDecisionEvidence => Boolean(item))}
+                      onOpenCitation={showCitation}
+                    />
+                    <p className="product-decisions__read-only-note">
+                      Recorded candidate only. Acceptance and rejection are not implemented.
+                    </p>
+                  </article>
+                );
+              })
             ) : (
-              <p>No product decision is selected.</p>
+              <p>No recorded changes need review.</p>
             )}
-          </article>
-        </div>
-      ) : (
-        <div className="product-decisions__reviews">
-          <header>
-            <AlertTriangle size={20} aria-hidden="true" />
-            <div>
-              <h3>Human judgment required</h3>
-              <p>Contrary candidates never rewrite current product policy automatically.</p>
-            </div>
-          </header>
-          {available.conflicts.length ? (
-            available.conflicts.map((conflict) => {
-              const candidate = available.candidates.find(
-                ({ candidateId }) => candidateId === conflict.candidateId,
-              );
-              if (!candidate) return null;
-              return (
-                <article key={conflict.conflictId}>
-                  <p className="eyebrow">Proposed change</p>
-                  <h4>{candidate.title}</h4>
-                  <blockquote>{candidate.proposedStatement}</blockquote>
-                  <p>{conflict.explanation}</p>
-                  <dl>
-                    <div>
-                      <dt>Conflicts with</dt>
-                      <dd>
-                        {conflict.conflictsWithDecisionIds
-                          .map((decisionId) => decisionById.get(decisionId)?.title ?? decisionId)
-                          .join(', ')}
-                      </dd>
-                    </div>
-                  </dl>
-                  <EvidenceList
-                    evidence={candidate.evidenceIds
-                      .map((evidenceId) => evidenceById.get(evidenceId))
-                      .filter((item): item is ProductDecisionEvidence => Boolean(item))}
-                  />
-                  <p className="product-decisions__read-only-note">
-                    Recorded candidate only. Acceptance and rejection are not implemented in this
-                    exploration.
-                  </p>
-                </article>
-              );
-            })
-          ) : (
-            <p>No contrary decision candidates need review.</p>
-          )}
+          </section>
+        )}
+      </div>
+
+      {openCitation && (
+        <div className="product-decisions__citation-backdrop">
+          <section
+            className="product-decisions__citation-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Conversation citation: ${openCitation.evidence.label}`}
+          >
+            <header>
+              <div>
+                <p className="eyebrow">Exact conversation passage</p>
+                <h3>{openCitation.evidence.label}</h3>
+              </div>
+              <button
+                type="button"
+                aria-label="Close conversation citation"
+                onClick={() => setOpenCitation(null)}
+              >
+                <X size={18} aria-hidden="true" />
+              </button>
+            </header>
+            {openCitation.session ? (
+              <SharedAgentSessionPanel
+                ariaLabel="Cited Agent Session passage"
+                conversationAriaLabel="Cited Agent Session passage conversation"
+                session={openCitation.session}
+                displayMode="always_open"
+                transcriptRange={citationRange(openCitation.reference)}
+                focusInvocationId={openCitation.reference.invocationId}
+                focusRequest={1}
+                onOpenStandalone={onOpenAgentSession}
+              />
+            ) : (
+              <p role="alert">The referenced Agent Session passage is unavailable.</p>
+            )}
+            <p className="product-decisions__citation-note">
+              This passage is supporting context. Transcript prose is not durable policy authority.
+            </p>
+          </section>
         </div>
       )}
     </section>
   );
 }
 
-function DecisionTree({
+function DecisionHierarchy({
   decisions,
-  selectedDecisionId,
-  onSelect,
+  decisionById,
+  evidenceById,
+  complianceReviewRequests,
+  onOpenCitation,
 }: {
   readonly decisions: readonly ProductDecision[];
-  readonly selectedDecisionId: string | null;
-  readonly onSelect: (decisionId: string) => void;
+  readonly decisionById: ReadonlyMap<string, ProductDecision>;
+  readonly evidenceById: ReadonlyMap<string, ProductDecisionEvidence>;
+  readonly complianceReviewRequests: readonly {
+    readonly requestId: string;
+    readonly triggeredByDecisionId: string;
+    readonly reason: string;
+  }[];
+  readonly onOpenCitation: (evidence: ProductDecisionEvidence) => void;
 }) {
-  const children = (parentDecisionId?: string) =>
-    decisions.filter((decision) => decision.parentDecisionId === parentDecisionId);
-  const render = (decision: ProductDecision, depth: number) => (
-    <li key={decision.decisionId}>
-      <button
-        type="button"
-        className={decision.decisionId === selectedDecisionId ? 'active' : undefined}
-        aria-current={decision.decisionId === selectedDecisionId ? 'true' : undefined}
-        style={{ '--decision-depth': depth } as React.CSSProperties}
-        onClick={() => onSelect(decision.decisionId)}
-      >
-        <span>{decision.title}</span>
-        {decision.lineage.kind === 'combined' && <small>Combined</small>}
-      </button>
-      {children(decision.decisionId).length > 0 && (
-        <ul>{children(decision.decisionId).map((child) => render(child, depth + 1))}</ul>
-      )}
-    </li>
+  const children = (targetDecisionId?: string) =>
+    decisions.filter(
+      (decision) => decision.hierarchyRelationship?.targetDecisionId === targetDecisionId,
+    );
+  const render = (decision: ProductDecision, depth: number) => {
+    const relationship = decision.hierarchyRelationship;
+    const target = relationship ? decisionById.get(relationship.targetDecisionId) : undefined;
+    const decisionEvidence = decision.evidenceIds
+      .map((evidenceId) => evidenceById.get(evidenceId))
+      .filter((item): item is ProductDecisionEvidence => Boolean(item));
+    const reviewRequests = complianceReviewRequests.filter(
+      ({ triggeredByDecisionId }) => triggeredByDecisionId === decision.decisionId,
+    );
+    return (
+      <li key={decision.decisionId} data-decision-depth={depth}>
+        <article>
+          {relationship && target && (
+            <p className="product-decisions__relationship">
+              {relationshipLabel(relationship.kind)} <strong>{target.title}</strong>
+            </p>
+          )}
+          <h4>{decision.title}</h4>
+          <p className="product-decisions__statement">{decision.statement}</p>
+          <details>
+            <summary>Intent and evidence</summary>
+            <div className="product-decisions__decision-detail">
+              <h5>Why it matters</h5>
+              <p>{decision.intent}</p>
+              {decision.lineage.kind !== 'introduced' && (
+                <p className="product-decisions__lineage">
+                  <GitMerge size={16} aria-hidden="true" />
+                  {decision.lineage.kind === 'combined'
+                    ? `Combines ${decision.lineage.supersedesDecisionIds.length} recorded decisions.`
+                    : 'Refines one recorded decision.'}
+                </p>
+              )}
+              <EvidenceList evidence={decisionEvidence} onOpenCitation={onOpenCitation} />
+              {reviewRequests.map((review) => (
+                <aside className="product-decisions__compliance" key={review.requestId}>
+                  <ShieldCheck size={18} aria-hidden="true" />
+                  <div>
+                    <strong>Codebase review requested</strong>
+                    <p>{review.reason}</p>
+                  </div>
+                </aside>
+              ))}
+            </div>
+          </details>
+        </article>
+        {children(decision.decisionId).length > 0 && (
+          <ul>{children(decision.decisionId).map((child) => render(child, depth + 1))}</ul>
+        )}
+      </li>
+    );
+  };
+  return (
+    <ul className="product-decisions__hierarchy">{children().map((item) => render(item, 0))}</ul>
   );
-  return <ul>{children().map((decision) => render(decision, 0))}</ul>;
 }
 
-function EvidenceList({ evidence }: { readonly evidence: readonly ProductDecisionEvidence[] }) {
+function EvidenceList({
+  evidence,
+  onOpenCitation,
+}: {
+  readonly evidence: readonly ProductDecisionEvidence[];
+  readonly onOpenCitation: (evidence: ProductDecisionEvidence) => void;
+}) {
   return (
     <section className="product-decisions__sources">
-      <h4>Evidence on record</h4>
+      <h5>Evidence on record</h5>
       <ul>
         {evidence.map((item) => (
           <li key={item.evidenceId}>
             <span>{evidenceKindLabel(item.originReference.kind)}</span>
             <strong>{item.label}</strong>
             <small>Origin reference: {item.originReference.opaqueId}</small>
+            {item.conversationCitation && (
+              <button type="button" onClick={() => onOpenCitation(item)}>
+                Open cited conversation passage
+              </button>
+            )}
           </li>
         ))}
       </ul>
     </section>
   );
+}
+
+function citationRange(
+  reference: ProductDecisionConversationPassageReference,
+): TranscriptAnchorRange {
+  const anchor = {
+    sessionId: reference.sessionId,
+    invocationId: reference.invocationId,
+    kind: reference.passage.kind,
+    ...('runtimeEventId' in reference.passage
+      ? { runtimeEventId: reference.passage.runtimeEventId }
+      : {}),
+  };
+  return { start: anchor, end: anchor };
+}
+
+function relationshipLabel(kind: NonNullable<ProductDecision['hierarchyRelationship']>['kind']) {
+  return {
+    derives_from: 'Builds on',
+    expands: 'Expands',
+    contradicts: 'Contradicts',
+  }[kind];
 }
 
 function evidenceKindLabel(kind: ProductDecisionEvidence['originReference']['kind']) {

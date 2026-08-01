@@ -119,12 +119,42 @@ describe('Epic product decision snapshot', () => {
     ).toThrow('Evidence origin reference identity cannot be empty');
   });
 
+  it('validates an exact typed Agent Session passage citation', () => {
+    const citedEvidence: ProductDecisionEvidence = {
+      ...evidence[0],
+      conversationCitation: {
+        kind: 'agent_session_passage',
+        sessionId: 'session-1',
+        invocationId: 'invocation-1',
+        passage: { kind: 'final_response', runtimeEventId: 'event-1' },
+      },
+    };
+
+    expect(validateWith({ evidence: [citedEvidence] })).toMatchObject({
+      evidence: [citedEvidence],
+    });
+    expect(() =>
+      validateWith({
+        evidence: [
+          {
+            ...citedEvidence,
+            conversationCitation: {
+              ...citedEvidence.conversationCitation!,
+              sessionId: ' ',
+            },
+          },
+        ],
+      }),
+    ).toThrow('Conversation citation Session identity cannot be empty');
+  });
+
   it('accepts relation-aware canonical lineage and change-candidate graphs', () => {
     const decisions: readonly ProductDecision[] = [
       introducedDecision,
       {
         ...introducedDecision,
         decisionId: 'decision-2',
+        hierarchyRelationship: { kind: 'expands', targetDecisionId: 'decision-1' },
         lineage: { kind: 'refined', supersedesDecisionIds: ['decision-1'] },
       },
       {
@@ -215,6 +245,52 @@ describe('Epic product decision snapshot', () => {
     ).toThrow('Decision lineage cannot contain a cycle');
   });
 
+  it('accepts only explicit, known, acyclic decision hierarchy relationships', () => {
+    const related: ProductDecision = {
+      ...introducedDecision,
+      decisionId: 'decision-2',
+      hierarchyRelationship: { kind: 'expands', targetDecisionId: 'decision-1' },
+    };
+    expect(validateWith({ decisions: [introducedDecision, related] })).toMatchObject({
+      decisions: [introducedDecision, related],
+    });
+    expect(() =>
+      validateWith({
+        decisions: [
+          introducedDecision,
+          {
+            ...related,
+            hierarchyRelationship: { kind: 'derives_from', targetDecisionId: 'missing' },
+          },
+        ],
+      }),
+    ).toThrow('Decision hierarchy references an unknown decision');
+    expect(() =>
+      validateWith({
+        decisions: [
+          {
+            ...introducedDecision,
+            hierarchyRelationship: { kind: 'contradicts', targetDecisionId: 'decision-1' },
+          },
+        ],
+      }),
+    ).toThrow('Decision hierarchy cannot reference its own identity');
+    expect(() =>
+      validateWith({
+        decisions: [
+          {
+            ...introducedDecision,
+            hierarchyRelationship: { kind: 'derives_from', targetDecisionId: 'decision-2' },
+          },
+          {
+            ...related,
+            hierarchyRelationship: { kind: 'expands', targetDecisionId: 'decision-1' },
+          },
+        ],
+      }),
+    ).toThrow('Decision hierarchy cannot contain a cycle');
+  });
+
   it('rejects invalid change-candidate cardinality and references', () => {
     const candidate = (
       relation: ProductDecisionChangeCandidate['relation'],
@@ -250,13 +326,10 @@ describe('Epic product decision snapshot', () => {
     ).toThrow('cannot reference its own identity');
   });
 
-  it('rejects unsourced policy, decision-tree cycles, and invalid conflicts', () => {
+  it('rejects unsourced policy and invalid conflicts', () => {
     expect(() => validateWith({ decisions: [{ ...introducedDecision, evidenceIds: [] }] })).toThrow(
       'Decision evidence must retain at least one reference',
     );
-    expect(() =>
-      validateWith({ decisions: [{ ...introducedDecision, parentDecisionId: 'decision-1' }] }),
-    ).toThrow('Decision tree cannot contain a cycle');
     expect(() =>
       validateWith({ conflicts: [{ ...snapshot.conflicts[0], candidateId: 'missing' }] }),
     ).toThrow('Conflict references an unknown candidate');

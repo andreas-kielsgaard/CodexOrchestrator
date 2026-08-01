@@ -13,10 +13,20 @@ export type ProductDecisionEvidenceOriginReference =
   | { readonly kind: 'sprint_completed'; readonly opaqueId: string }
   | { readonly kind: 'epic_completed'; readonly opaqueId: string };
 
+export type ProductDecisionConversationPassageReference = Readonly<{
+  kind: 'agent_session_passage';
+  sessionId: string;
+  invocationId: string;
+  passage:
+    | Readonly<{ kind: 'submitted_input' | 'outcome' }>
+    | Readonly<{ kind: 'activity' | 'final_response'; runtimeEventId: string }>;
+}>;
+
 /** Provenance identifies eligible context; it does not claim that context caused a decision. */
 export interface ProductDecisionEvidence {
   readonly evidenceId: string;
   readonly originReference: ProductDecisionEvidenceOriginReference;
+  readonly conversationCitation?: ProductDecisionConversationPassageReference;
   readonly label: string;
   readonly occurredAt: string;
 }
@@ -26,10 +36,15 @@ export interface ProductDecisionLineage {
   readonly supersedesDecisionIds: readonly string[];
 }
 
+export interface ProductDecisionHierarchyRelationship {
+  readonly kind: 'derives_from' | 'expands' | 'contradicts';
+  readonly targetDecisionId: string;
+}
+
 /** A current reasoning-level policy, distinct from observations and enforceable rules. */
 export interface ProductDecision {
   readonly decisionId: string;
-  readonly parentDecisionId?: string;
+  readonly hierarchyRelationship?: ProductDecisionHierarchyRelationship;
   readonly title: string;
   readonly statement: string;
   readonly intent: string;
@@ -100,6 +115,7 @@ export function validateEpicProductDecisionSnapshot(
     requireText(item.label, 'Evidence label');
     requireText(item.occurredAt, 'Evidence time');
     requireOriginReference(item.originReference);
+    if (item.conversationCitation) requireConversationCitation(item.conversationCitation);
   });
   snapshot.decisions.forEach((decision) => {
     requireText(decision.title, 'Decision title');
@@ -113,10 +129,21 @@ export function validateEpicProductDecisionSnapshot(
       'Decision lineage',
       decision.decisionId,
     );
-    if (decision.parentDecisionId && !decisions.has(decision.parentDecisionId))
-      fail('Decision parent must reference a current decision');
+    if (decision.hierarchyRelationship) {
+      if (
+        !new Set(['derives_from', 'expands', 'contradicts']).has(
+          decision.hierarchyRelationship.kind,
+        )
+      )
+        fail('Decision hierarchy relationship kind is invalid');
+      requireText(decision.hierarchyRelationship.targetDecisionId, 'Decision hierarchy reference');
+      if (decision.hierarchyRelationship.targetDecisionId === decision.decisionId)
+        fail('Decision hierarchy cannot reference its own identity');
+      if (!decisions.has(decision.hierarchyRelationship.targetDecisionId))
+        fail('Decision hierarchy references an unknown decision');
+    }
   });
-  assertAcyclic(snapshot.decisions, decisions, 'parentDecisionId', 'Decision tree');
+  assertHierarchyAcyclic(snapshot.decisions, decisions);
   assertLineageAcyclic(snapshot.decisions, decisions);
   snapshot.candidates.forEach((candidate) => {
     requireText(candidate.title, 'Candidate title');
@@ -201,19 +228,17 @@ function requireRelationReferences<T>(
   });
 }
 
-function assertAcyclic(
+function assertHierarchyAcyclic(
   values: readonly ProductDecision[],
   decisions: ReadonlyMap<string, ProductDecision>,
-  edge: 'parentDecisionId',
-  label: string,
 ) {
   values.forEach((value) => {
     const visited = new Set([value.decisionId]);
-    let parentId = value[edge];
-    while (parentId) {
-      if (visited.has(parentId)) fail(`${label} cannot contain a cycle`);
-      visited.add(parentId);
-      parentId = decisions.get(parentId)?.[edge];
+    let targetId = value.hierarchyRelationship?.targetDecisionId;
+    while (targetId) {
+      if (visited.has(targetId)) fail('Decision hierarchy cannot contain a cycle');
+      visited.add(targetId);
+      targetId = decisions.get(targetId)?.hierarchyRelationship?.targetDecisionId;
     }
   });
 }
@@ -244,6 +269,25 @@ function requireOriginReference(reference: ProductDecisionEvidenceOriginReferenc
   if (!reference || !evidenceKinds.has(reference.kind))
     fail('Evidence origin reference kind is not eligible');
   requireText(reference.opaqueId, 'Evidence origin reference identity');
+}
+
+function requireConversationCitation(reference: ProductDecisionConversationPassageReference) {
+  if (!reference || reference.kind !== 'agent_session_passage')
+    fail('Conversation citation kind is invalid');
+  requireText(reference.sessionId, 'Conversation citation Session identity');
+  requireText(reference.invocationId, 'Conversation citation invocation identity');
+  if (
+    !reference.passage ||
+    !new Set(['submitted_input', 'activity', 'final_response', 'outcome']).has(
+      reference.passage.kind,
+    )
+  )
+    fail('Conversation citation passage kind is invalid');
+  if (
+    (reference.passage.kind === 'activity' || reference.passage.kind === 'final_response') &&
+    !reference.passage.runtimeEventId.trim()
+  )
+    fail('Conversation citation runtime event identity cannot be empty');
 }
 
 function requireText(value: string, label: string) {

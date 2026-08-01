@@ -1,3 +1,4 @@
+import { ArrowLeft } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type {
   SprintPlanItemPresentation,
@@ -99,6 +100,34 @@ export function EpicDetail({
     );
   }
 
+  if (epicSection === 'product-decisions' && epicProductDecisionSource) {
+    return (
+      <main
+        className="epic-product-decisions-view"
+        aria-label="Epic Product Decisions"
+        data-viewport-contained="true"
+        data-view-layout="single-column"
+      >
+        <div className="epic-product-decisions-view__menu" aria-label="Epic controls">
+          <button className="epic-product-decisions-view__back" type="button" onClick={onBack}>
+            <ArrowLeft size={16} aria-hidden="true" />
+            Back to Epics
+          </button>
+          <EpicIdentity epicName={epic.name} />
+          <EpicViewNavigation current="product-decisions" onChange={setEpicSection} />
+        </div>
+        <div className="epic-product-decisions-view__content">
+          <EpicProductDecisionsPanel
+            epicId={epic.id}
+            source={epicProductDecisionSource}
+            citedAgentSessions={epic.epicRunnerSession ? [epic.epicRunnerSession] : []}
+            onOpenAgentSession={onOpenAgentSession}
+          />
+        </div>
+      </main>
+    );
+  }
+
   return (
     <>
       <DetailWorkspace
@@ -107,24 +136,10 @@ export function EpicDetail({
         contextLabel="Epic context"
         backLabel="Back to Epics"
         onBack={onBack}
+        hotbarContext={<EpicIdentity epicName={epic.name} />}
         hotbarNavigation={
           epicProductDecisionSource ? (
-            <div className="epic-detail__section-switch" aria-label="Epic detail views">
-              <button
-                type="button"
-                aria-pressed={epicSection === 'plan'}
-                onClick={() => setEpicSection('plan')}
-              >
-                Plan
-              </button>
-              <button
-                type="button"
-                aria-pressed={epicSection === 'product-decisions'}
-                onClick={() => setEpicSection('product-decisions')}
-              >
-                Product decisions
-              </button>
-            </div>
+            <EpicViewNavigation current="plan" onChange={setEpicSection} />
           ) : undefined
         }
         control={
@@ -159,17 +174,13 @@ export function EpicDetail({
           </>
         }
         primary={
-          epicSection === 'product-decisions' && epicProductDecisionSource ? (
-            <EpicProductDecisionsPanel epicId={epic.id} source={epicProductDecisionSource} />
-          ) : (
-            <SprintPlan
-              items={epic.plan.items}
-              onOpen={(sprint, opener) => {
-                setSelectedSprintOpener({ sprint, opener });
-                onOpenSprint(sprint.id, sprint.workspace?.selectedSprintPlanRevisionId ?? '');
-              }}
-            />
-          )
+          <SprintPlan
+            items={epic.plan.items}
+            onOpen={(sprint, opener) => {
+              setSelectedSprintOpener({ sprint, opener });
+              onOpenSprint(sprint.id, sprint.workspace?.selectedSprintPlanRevisionId ?? '');
+            }}
+          />
         }
         agentSession={
           epic.epicRunnerSession ? (
@@ -192,5 +203,41 @@ export function EpicDetail({
         />
       )}
     </>
+  );
+}
+
+function EpicIdentity({ epicName }: { readonly epicName: string }) {
+  return (
+    <span className="epic-detail__identity" aria-label={`Current Epic: ${epicName}`}>
+      <small>Epic</small>
+      <strong>{epicName}</strong>
+    </span>
+  );
+}
+
+function EpicViewNavigation({
+  current,
+  onChange,
+}: {
+  readonly current: 'plan' | 'product-decisions';
+  readonly onChange: (view: 'plan' | 'product-decisions') => void;
+}) {
+  return (
+    <div className="epic-detail__section-switch" aria-label="Epic views">
+      <button
+        type="button"
+        aria-current={current === 'plan' ? 'page' : undefined}
+        onClick={() => onChange('plan')}
+      >
+        Plan
+      </button>
+      <button
+        type="button"
+        aria-current={current === 'product-decisions' ? 'page' : undefined}
+        onClick={() => onChange('product-decisions')}
+      >
+        Product decisions
+      </button>
+    </div>
   );
 }
