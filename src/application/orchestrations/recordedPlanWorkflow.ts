@@ -2,31 +2,34 @@
 export const RECORDED_PLAN_WORKFLOW_V1 = 'plan-workflow/v1' as const;
 
 export type PlanWorkflowActorKind =
-  'sprint' | 'planner' | 'work_unit_initiator' | 'worker' | 'repository';
+  | 'sprint_runner'
+  | 'work_slice_planner'
+  | 'work_unit_handler'
+  | 'work_unit_implementer'
+  | 'repository';
 
 export type PlanWorkflowStepKind =
-  | 'ready_scope'
-  | 'planner_instantiated'
+  | 'sprint_started'
+  | 'repository_reevaluated'
   | 'ready_work_determined'
-  | 'initiator_instantiated'
-  | 'worker_instantiated'
-  | 'worker_progress'
-  | 'worker_return'
-  | 'initiator_review'
+  | 'handler_created'
+  | 'implementer_created'
+  | 'implementer_progress'
+  | 'implementer_return'
+  | 'handler_review'
   | 'correction_required'
-  | 'worker_reprompted'
-  | 'repository_integration'
-  | 'handoff'
+  | 'implementer_reprompted'
+  | 'handler_integration'
   | 'work_unit_settled'
-  | 'planner_completed'
-  | 'sprint_outcome';
+  | 'work_slice_planner_completed'
+  | 'sprint_runner_outcome';
 
 export type PlanWorkflowPhase =
-  | 'ready'
-  | 'planner_start'
+  | 'sprint_start'
+  | 'repository_assessment'
   | 'scope'
   | 'work_unit_start'
-  | 'worker_start'
+  | 'implementer_start'
   | 'first_return'
   | 'first_review'
   | 'correction'
@@ -34,7 +37,7 @@ export type PlanWorkflowPhase =
   | 'second_review'
   | 'integration'
   | 'settled'
-  | 'planner_complete'
+  | 'planning_complete'
   | 'sprint_return';
 
 export interface PlanWorkflowStepV1 {
@@ -49,7 +52,7 @@ export interface PlanWorkflowStepV1 {
 
 export interface RecordedPlanWorkflowV1 {
   readonly version: typeof RECORDED_PLAN_WORKFLOW_V1;
-  readonly sprintPlannerActivityId: string;
+  readonly workSlicePlanningPointId: string;
   readonly scopeSummary: string;
   readonly fixtureKind: 'recorded_theoretical';
   readonly actors: readonly {
@@ -63,8 +66,8 @@ export interface RecordedPlanWorkflowV1 {
     readonly id: string;
     readonly workUnitId: string;
     readonly title: string;
-    readonly initiatorActorId: string;
-    readonly workerActorId: string;
+    readonly handlerActorId: string;
+    readonly implementerActorId: string;
     readonly steps: readonly PlanWorkflowStepV1[];
   }[];
   readonly sharedCompletion: readonly PlanWorkflowStepV1[];
@@ -80,7 +83,7 @@ export interface RecordedPlanWorkflowV1 {
 export function decodeRecordedPlanWorkflowV1(value: unknown): RecordedPlanWorkflowV1 {
   if (!isRecord(value) || value.version !== RECORDED_PLAN_WORKFLOW_V1)
     fail('invalid Plan workflow version');
-  string(value.sprintPlannerActivityId, 'sprintPlannerActivityId');
+  string(value.workSlicePlanningPointId, 'workSlicePlanningPointId');
   string(value.scopeSummary, 'scopeSummary');
   if (value.fixtureKind !== 'recorded_theoretical') fail('invalid fixtureKind');
   const actors = array(value.actors, 'actors');
@@ -89,9 +92,13 @@ export function decodeRecordedPlanWorkflowV1(value: unknown): RecordedPlanWorkfl
     if (!isRecord(candidate)) fail('invalid actor');
     string(candidate.label, 'actor label');
     if (
-      !['sprint', 'planner', 'work_unit_initiator', 'worker', 'repository'].includes(
-        String(candidate.kind),
-      )
+      ![
+        'sprint_runner',
+        'work_slice_planner',
+        'work_unit_handler',
+        'work_unit_implementer',
+        'repository',
+      ].includes(String(candidate.kind))
     )
       fail('invalid actor kind');
     if (candidate.workUnitId !== undefined) string(candidate.workUnitId, 'actor workUnitId');
@@ -104,8 +111,8 @@ export function decodeRecordedPlanWorkflowV1(value: unknown): RecordedPlanWorkfl
     if (!isRecord(candidate)) fail('invalid Work Unit lane');
     string(candidate.workUnitId, 'workUnitId');
     string(candidate.title, 'title');
-    reference(candidate.initiatorActorId, actorIds, 'initiator actor');
-    reference(candidate.workerActorId, actorIds, 'worker actor');
+    reference(candidate.handlerActorId, actorIds, 'handler actor');
+    reference(candidate.implementerActorId, actorIds, 'implementer actor');
     return validateSteps(candidate.steps, actorIds);
   });
   const allSteps = [...sharedStart, ...laneSteps, ...sharedCompletion];
@@ -133,31 +140,30 @@ function validateSteps(value: unknown, actorIds: ReadonlySet<string>): PlanWorkf
     string(candidate.summary, 'step summary');
     if (
       ![
-        'ready_scope',
-        'planner_instantiated',
+        'sprint_started',
+        'repository_reevaluated',
         'ready_work_determined',
-        'initiator_instantiated',
-        'worker_instantiated',
-        'worker_progress',
-        'worker_return',
-        'initiator_review',
+        'handler_created',
+        'implementer_created',
+        'implementer_progress',
+        'implementer_return',
+        'handler_review',
         'correction_required',
-        'worker_reprompted',
-        'repository_integration',
-        'handoff',
+        'implementer_reprompted',
+        'handler_integration',
         'work_unit_settled',
-        'planner_completed',
-        'sprint_outcome',
+        'work_slice_planner_completed',
+        'sprint_runner_outcome',
       ].includes(String(candidate.kind))
     )
       fail('invalid workflow step kind');
     if (
       ![
-        'ready',
-        'planner_start',
+        'sprint_start',
+        'repository_assessment',
         'scope',
         'work_unit_start',
-        'worker_start',
+        'implementer_start',
         'first_return',
         'first_review',
         'correction',
@@ -165,7 +171,7 @@ function validateSteps(value: unknown, actorIds: ReadonlySet<string>): PlanWorkf
         'second_review',
         'integration',
         'settled',
-        'planner_complete',
+        'planning_complete',
         'sprint_return',
       ].includes(String(candidate.phase))
     )

@@ -138,13 +138,13 @@ function composeSprint(
       .filter((ownership) => ownership.sprintId === sprintId)
       .map((ownership) => ownership.documentRefId),
   );
-  const plannerActivities = events.sprintPlannerActivities
+  const workSlicePlanningPoints = events.workSlicePlanningPoints
     .filter((activity) => activity.sprintPlanId === plan.sprintPlanId)
     .map((activity) => ({
       ...required(
         index.activities,
-        activity.sprintPlannerActivityId,
-        'planner activity reference index',
+        activity.workSlicePlanningPointId,
+        'Work Slice planning-point reference index',
       ),
       assessedSprintPlanRevisionIds: activity.assessedSprintPlanRevisionIds,
     }));
@@ -161,7 +161,7 @@ function composeSprint(
       revision,
       current.sprintPlanRevisionId,
       selectedId,
-      plannerActivities,
+      workSlicePlanningPoints,
       workspacePresentation,
     ),
   );
@@ -180,6 +180,15 @@ function composeSprint(
     details: sprint.details,
     source: sprint.source,
     ...(sprint.lifecycle ? { lifecycle: sprint.lifecycle } : {}),
+    planningState:
+      sprint.planningState ??
+      ({
+        source: {
+          status: 'unavailable',
+          reason:
+            'No application-owned Sprint start and repository reevaluation record is available.',
+        },
+      } as const),
     sprintPlan: {
       sprintPlanId: plan.sprintPlanId,
       currentSprintPlanRevisionId: current.sprintPlanRevisionId,
@@ -209,7 +218,7 @@ function composeSprint(
           })),
       })),
     },
-    plannerActivities,
+    workSlicePlanningPoints,
     revisionViews,
     concerns: index.concerns
       .filter((concern) => concern.sprintId === sprintId)
@@ -267,7 +276,7 @@ function composeWorkspacePresentation(
   sprintId: string,
   documentIds: ReadonlySet<string>,
 ) {
-  const empty = { plannerActivityMembership: [], gates: [], documents: [] } as const;
+  const empty = { workSlicePlanningPointMembership: [], gates: [], documents: [] } as const;
   if (!metadata) return empty;
   const revisionIds = new Set(
     events.sprintPlanRevisions
@@ -279,8 +288,8 @@ function composeWorkspacePresentation(
       .map((revision) => revision.sprintPlanRevisionId),
   );
   return {
-    plannerActivityMembership: metadata.plannerActivityMembership.filter((membership) =>
-      revisionIds.has(membership.sprintPlanRevisionId),
+    workSlicePlanningPointMembership: metadata.workSlicePlanningPointMembership.filter(
+      (membership) => revisionIds.has(membership.sprintPlanRevisionId),
     ),
     gates: metadata.gates.filter((presentation) =>
       events.gates.some(
@@ -290,6 +299,27 @@ function composeWorkspacePresentation(
     documents: metadata.documents.filter((presentation) =>
       documentIds.has(presentation.documentRefId),
     ),
+    ...(metadata.epicRunnerObjectives
+      ? {
+          epicRunnerObjectives: metadata.epicRunnerObjectives.filter(
+            ({ sprintId: candidate }) => candidate === sprintId,
+          ),
+        }
+      : {}),
+    ...(metadata.sprintRunnerConcerns
+      ? {
+          sprintRunnerConcerns: metadata.sprintRunnerConcerns.filter(
+            ({ sprintId: candidate }) => candidate === sprintId,
+          ),
+        }
+      : {}),
+    ...(metadata.workUnitLifecycle
+      ? {
+          workUnitLifecycle: metadata.workUnitLifecycle.filter(
+            ({ sprintId: candidate }) => candidate === sprintId,
+          ),
+        }
+      : {}),
     ...(metadata.narratives?.find((narratives) => narratives.sprintId === sprintId)
       ? {
           narratives: projectWorkspaceNarratives(
@@ -306,7 +336,7 @@ function composeRevisionView(
   revision: ReturnType<typeof decodeOrchestrationEventsV1>['sprintPlanRevisions'][number],
   currentSprintPlanRevisionId: string,
   selectedSprintPlanRevisionId: string,
-  plannerActivities: readonly ProductSprintReadModelV1['plannerActivities'][number][],
+  workSlicePlanningPoints: readonly ProductSprintReadModelV1['workSlicePlanningPoints'][number][],
   workspacePresentation: ReturnType<typeof composeWorkspacePresentation>,
 ): import('./productReadModels').ProductSprintRevisionViewV1 {
   const scopes = events.workUnitScopes
@@ -339,18 +369,21 @@ function composeRevisionView(
       dependsOnWorkUnitScopeIds: scope.dependsOnWorkUnitScopeIds,
       gateIds: scope.gateIds,
     })),
-    plannerActivityGroups: workspacePresentation.plannerActivityMembership
+    workSlicePlanningPointGroups: workspacePresentation.workSlicePlanningPointMembership
       .filter((membership) => membership.sprintPlanRevisionId === revision.sprintPlanRevisionId)
       .map((membership) => {
         const activity = required(
           new Map(
-            plannerActivities.map((candidate) => [candidate.sprintPlannerActivityId, candidate]),
+            workSlicePlanningPoints.map((candidate) => [
+              candidate.workSlicePlanningPointId,
+              candidate,
+            ]),
           ),
-          membership.sprintPlannerActivityId,
-          'Planner Activity group',
+          membership.workSlicePlanningPointId,
+          'Work Slice planning-point group',
         );
         return {
-          sprintPlannerActivityId: activity.sprintPlannerActivityId,
+          workSlicePlanningPointId: activity.workSlicePlanningPointId,
           title: activity.title,
           purpose: activity.purpose,
           source: activity.source,
@@ -359,7 +392,7 @@ function composeRevisionView(
         };
       })
       .sort((left, right) =>
-        left.sprintPlannerActivityId.localeCompare(right.sprintPlannerActivityId),
+        left.workSlicePlanningPointId.localeCompare(right.workSlicePlanningPointId),
       ),
     workUnits,
     gates: events.gates
@@ -493,11 +526,11 @@ function composeContinuation(
     );
   const commands = controls.commands.filter((command) =>
     level === 'sprint'
-      ? command.commandKind === 'request_next_ready_work_unit_planner' &&
-        command.target.kind === 'next_ready_work_unit_planner' &&
+      ? command.commandKind === 'request_next_work_slice_planner' &&
+        command.target.kind === 'next_work_slice_planner' &&
         command.target.sprintId === targetId
-      : command.commandKind === 'request_next_sprint_planner' &&
-        command.target.kind === 'next_sprint_planner' &&
+      : command.commandKind === 'request_next_sprint_runner' &&
+        command.target.kind === 'next_sprint_runner' &&
         command.target.epicId === targetId,
   );
   const commandIds = new Set(commands.map((command) => command.agentControlCommandId));
@@ -590,6 +623,17 @@ function validateCrossContractReferences(
   artifacts: ReturnType<typeof decodeArtifactAccessContractsV1>,
   facts: ReadonlyMap<string, string | undefined>,
 ) {
+  const plannerTargets = new Set<string>();
+  events.agentSessionReferences.forEach((reference) => {
+    if (
+      reference.targetKind !== 'work_slice_planning_point' ||
+      reference.semanticRole !== 'work_slice_planner'
+    )
+      return;
+    if (plannerTargets.has(reference.targetId))
+      fail('Work Slice planning point cannot have more than one Work Slice Planner Session');
+    plannerTargets.add(reference.targetId);
+  });
   const sessionRefs = new Set(
     events.agentSessionReferences.map((reference) => reference.agentSessionRefId),
   );
@@ -602,9 +646,9 @@ function validateCrossContractReferences(
     if (!sessionRefs.has(command.recipientAgentSessionRefId))
       fail('Agent Control recipient must be an Orchestration Event Agent Session reference');
     const targetId =
-      command.target.kind === 'next_ready_work_unit_planner'
+      command.target.kind === 'next_work_slice_planner'
         ? command.target.sprintId
-        : command.target.kind === 'next_sprint_planner'
+        : command.target.kind === 'next_sprint_runner'
           ? command.target.epicId
           : command.target.agentSessionRefId;
     if (!eventIdentity.has(targetId))
@@ -662,7 +706,7 @@ function validateReferenceIndex(
     ...events.epics.map((item) => item.epicId),
     ...events.sprints.map((item) => item.sprintId),
     ...events.sprintPlanRevisions.map((item) => item.sprintPlanRevisionId),
-    ...events.sprintPlannerActivities.map((item) => item.sprintPlannerActivityId),
+    ...events.workSlicePlanningPoints.map((item) => item.workSlicePlanningPointId),
     ...events.workUnits.map((item) => item.workUnitId),
     ...events.gates.map((item) => item.gateId),
     ...events.agentSessions.map((item) => item.agentSessionId),
@@ -677,7 +721,7 @@ function validateReferenceIndex(
     ...index.epicOverviews.map((item) => ({ source: item.state.source })),
     ...index.sprints,
     ...index.sprintPlanRevisions,
-    ...index.plannerActivities,
+    ...index.workSlicePlanningPoints,
     ...index.workUnits,
     ...index.gates,
     ...index.concerns,
@@ -689,7 +733,7 @@ function validateReferenceIndex(
     ...index.epics.map((entry) => entry.epicId),
     ...index.sprints.map((entry) => entry.sprintId),
     ...index.sprintPlanRevisions.map((entry) => entry.sprintPlanRevisionId),
-    ...index.plannerActivities.map((entry) => entry.sprintPlannerActivityId),
+    ...index.workSlicePlanningPoints.map((entry) => entry.workSlicePlanningPointId),
     ...index.workUnits.map((entry) => entry.workUnitId),
     ...index.gates.map((entry) => entry.gateId),
     ...index.agentSessions.map((entry) => entry.agentSessionId),
@@ -724,6 +768,37 @@ function validateReferenceIndex(
       fail('Epic overview references an unknown Epic');
     validateSourcedReadValue(overview.currentMovement, facts, 'Epic current movement');
     validateSourcedReadValue(overview.state, facts, 'Epic state');
+  });
+  index.sprints.forEach((sprint) => {
+    if (sprint.planningState)
+      validateSourcedReadValue(sprint.planningState, facts, 'Sprint planning state');
+    if (
+      sprint.lifecycle?.source.status !== 'available' ||
+      sprint.planningState?.source.status !== 'available'
+    )
+      return;
+    const lifecycle = sprint.lifecycle.value;
+    const planning = sprint.planningState.value;
+    if (!planning) fail('Sprint planning state is available but has no value');
+    if (lifecycle === 'not_started' && planning.kind !== 'pre_start_forecast')
+      fail('a not-started Sprint may expose only a pre-start concern forecast');
+    if (lifecycle !== 'not_started' && planning.kind !== 'started_plan')
+      fail('a started Sprint requires a repository-reevaluated Sprint Plan');
+    if (planning.kind === 'started_plan') {
+      if (!planning.repositoryAssessmentSummary.trim())
+        fail('a started Sprint repository assessment requires a summary');
+      if (Number.isNaN(Date.parse(planning.reevaluatedAt)))
+        fail('a started Sprint repository assessment requires a timestamp');
+      const planningPoint = events.workSlicePlanningPoints.find(
+        ({ workSlicePlanningPointId }) =>
+          workSlicePlanningPointId === planning.currentWorkSlicePlanningPointId,
+      );
+      const sprintPlan =
+        planningPoint &&
+        events.sprintPlans.find(({ sprintPlanId }) => sprintPlanId === planningPoint.sprintPlanId);
+      if (sprintPlan?.sprintId !== sprint.sprintId)
+        fail('a started Sprint planning point must belong to that Sprint');
+    }
   });
   requireComplete(
     index.epics,
@@ -783,10 +858,10 @@ function validateReferenceIndex(
     (item) => item.sprintPlanRevisionId,
   );
   requireComplete(
-    index.plannerActivities,
-    events.sprintPlannerActivities.map((item) => item.sprintPlannerActivityId),
-    'planner activity',
-    (item) => item.sprintPlannerActivityId,
+    index.workSlicePlanningPoints,
+    events.workSlicePlanningPoints.map((item) => item.workSlicePlanningPointId),
+    'Work Slice planning point',
+    (item) => item.workSlicePlanningPointId,
   );
   requireComplete(
     index.workUnits,
@@ -837,41 +912,47 @@ function validateWorkspacePresentation(
     events.sprintPlanRevisions.map((revision) => [revision.sprintPlanRevisionId, revision]),
   );
   const activityById = new Map(
-    events.sprintPlannerActivities.map((activity) => [activity.sprintPlannerActivityId, activity]),
+    events.workSlicePlanningPoints.map((activity) => [activity.workSlicePlanningPointId, activity]),
   );
   const planById = new Map(events.sprintPlans.map((plan) => [plan.sprintPlanId, plan]));
   const documentOwnerById = new Map(
     index.documentOwnership.map((owner) => [owner.documentRefId, owner.sprintId]),
   );
   const coveredScopeIds = new Set<string>();
-  metadata.plannerActivityMembership.forEach((membership) => {
-    validateAvailableSource(membership.source, facts, 'Planner Activity membership');
-    const activity = required(activityById, membership.sprintPlannerActivityId, 'Planner Activity');
+  metadata.workSlicePlanningPointMembership.forEach((membership) => {
+    validateAvailableSource(membership.source, facts, 'Work Slice planning-point membership');
+    const activity = required(
+      activityById,
+      membership.workSlicePlanningPointId,
+      'Work Slice planning point',
+    );
     const revision = required(revisionById, membership.sprintPlanRevisionId, 'revision');
     if (activity.sprintPlanId !== revision.sprintPlanId)
-      fail('Planner Activity membership must use an Activity and revision from the same plan');
+      fail(
+        'Work Slice planning-point membership must use a planning point and revision from the same plan',
+      );
     if (!activity.assessedSprintPlanRevisionIds.includes(revision.sprintPlanRevisionId))
-      fail('Planner Activity membership revision must be assessed by the Activity');
+      fail('Work Slice planning-point membership revision must be assessed at that planning point');
     if (!planById.has(revision.sprintPlanId))
-      fail('Planner Activity membership revision has no plan');
+      fail('Work Slice planning-point membership revision has no plan');
     if (new Set(membership.workUnitScopeIds).size !== membership.workUnitScopeIds.length)
-      fail('Planner Activity membership cannot repeat a Work Unit scope');
+      fail('Work Slice planning-point membership cannot repeat a Work Unit scope');
     membership.workUnitScopeIds.forEach((scopeId) => {
       const scope = required(scopeById, scopeId, 'Work Unit scope');
       if (scope.sprintPlanRevisionId !== revision.sprintPlanRevisionId)
-        fail('Planner Activity membership Work Unit scope must belong to its revision');
+        fail('Work Slice planning-point membership Work Unit scope must belong to its revision');
       if (!events.workUnits.some((unit) => unit.workUnitId === scope.workUnitId))
-        fail('Planner Activity membership Work Unit scope has an unknown Work Unit');
+        fail('Work Slice planning-point membership Work Unit scope has an unknown Work Unit');
       if (coveredScopeIds.has(scopeId))
         fail(
-          'workspace presentation must assign each Work Unit scope to exactly one Planner Activity',
+          'workspace presentation must assign each Work Unit scope to exactly one Work Slice planning point',
         );
       coveredScopeIds.add(scopeId);
     });
   });
   if (scopeIds.some((scopeId) => !coveredScopeIds.has(scopeId)))
     fail(
-      'workspace presentation must explicitly place every Work Unit scope in a Planner Activity',
+      'workspace presentation must explicitly place every Work Unit scope in a Work Slice planning point',
     );
   metadata.gates.forEach((presentation) => {
     if (!events.gates.some((gate) => gate.gateId === presentation.gateId))
@@ -900,10 +981,14 @@ function validateWorkspacePresentation(
       if (planById.get(revision.sprintPlanId)?.sprintId !== ownerSprintId)
         fail('Document presentation revision must belong to the Document Sprint');
     });
-    presentation.sprintPlannerActivityIds.forEach((activityId) => {
-      const activity = required(activityById, activityId, 'Document presentation Planner Activity');
+    presentation.workSlicePlanningPointIds.forEach((activityId) => {
+      const activity = required(
+        activityById,
+        activityId,
+        'Document presentation Work Slice planning point',
+      );
       if (planById.get(activity.sprintPlanId)?.sprintId !== ownerSprintId)
-        fail('Document presentation Planner Activity must belong to the Document Sprint');
+        fail('Document presentation Work Slice planning point must belong to the Document Sprint');
     });
     presentation.workUnitScopeIds.forEach((scopeId) => {
       const scope = required(scopeById, scopeId, 'Document presentation Work Unit scope');
@@ -915,6 +1000,121 @@ function validateWorkspacePresentation(
       if (planById.get(revision.sprintPlanId)?.sprintId !== ownerSprintId)
         fail('Document presentation Work Unit scope must belong to the Document Sprint');
     });
+  });
+  const objectiveIds = new Set<string>();
+  (metadata.epicRunnerObjectives ?? []).forEach((objective) => {
+    if (!objective.objectiveId.trim()) fail('Epic Runner Sprint objective requires an identity');
+    if (objectiveIds.has(objective.objectiveId))
+      fail('Epic Runner Sprint objectives cannot repeat an objective identity');
+    objectiveIds.add(objective.objectiveId);
+    if (!objective.title.trim()) fail('Epic Runner Sprint objective requires a title');
+    validateAvailableSource(objective.source, facts, 'Epic Runner Sprint objective');
+    if (!events.sprints.some(({ sprintId }) => sprintId === objective.sprintId))
+      fail('Epic Runner Sprint objective references an unknown Sprint');
+  });
+  const sprintRunnerConcernIds = new Set<string>();
+  (metadata.sprintRunnerConcerns ?? []).forEach((sprintRunnerConcern) => {
+    if (sprintRunnerConcernIds.has(sprintRunnerConcern.sprintRunnerConcernId))
+      fail('workspace Sprint Runner concerns cannot repeat a concern identity');
+    sprintRunnerConcernIds.add(sprintRunnerConcern.sprintRunnerConcernId);
+    validateAvailableSource(sprintRunnerConcern.source, facts, 'workspace sprintRunnerConcern');
+    if (!events.sprints.some(({ sprintId }) => sprintId === sprintRunnerConcern.sprintId))
+      fail('workspace sprintRunnerConcern references an unknown Sprint');
+    if (!sprintRunnerConcern.graphElementRefs.length)
+      fail('workspace sprintRunnerConcern must link to at least one graph element');
+    sprintRunnerConcern.graphElementRefs.forEach((reference) => {
+      const sprintIds =
+        reference.kind === 'work_unit'
+          ? events.workUnitScopes
+              .filter(({ workUnitId }) => workUnitId === reference.id)
+              .map(
+                ({ sprintPlanRevisionId }) =>
+                  planById.get(
+                    required(revisionById, sprintPlanRevisionId, 'revision').sprintPlanId,
+                  )?.sprintId,
+              )
+          : reference.kind === 'gate'
+            ? events.gates
+                .filter(({ gateId }) => gateId === reference.id)
+                .map(
+                  ({ sprintPlanRevisionId }) =>
+                    planById.get(
+                      required(revisionById, sprintPlanRevisionId, 'revision').sprintPlanId,
+                    )?.sprintId,
+                )
+            : events.workSlicePlanningPoints
+                .filter(({ workSlicePlanningPointId }) => workSlicePlanningPointId === reference.id)
+                .map(({ sprintPlanId }) => planById.get(sprintPlanId)?.sprintId);
+      if (!sprintIds.length)
+        fail('workspace sprintRunnerConcern references an unknown graph element');
+      if (!sprintIds.includes(sprintRunnerConcern.sprintId))
+        fail('workspace sprintRunnerConcern graph element must belong to the same Sprint');
+    });
+  });
+  const lifecycleIds = new Set<string>();
+  const lifecycleSequences = new Set<string>();
+  (metadata.workUnitLifecycle ?? []).forEach((entry) => {
+    if (lifecycleIds.has(entry.entryId))
+      fail('Work Unit lifecycle cannot repeat an entry identity');
+    lifecycleIds.add(entry.entryId);
+    if (!Number.isSafeInteger(entry.sequence) || entry.sequence < 0)
+      fail('Work Unit lifecycle sequence must be a non-negative integer');
+    const sequenceKey = `${entry.workUnitId}:${entry.sequence}`;
+    if (lifecycleSequences.has(sequenceKey))
+      fail('Work Unit lifecycle sequence must be unique within a Work Unit');
+    lifecycleSequences.add(sequenceKey);
+    if (!events.sprints.some(({ sprintId }) => sprintId === entry.sprintId))
+      fail('Work Unit lifecycle references an unknown Sprint');
+    if (!events.workUnits.some(({ workUnitId }) => workUnitId === entry.workUnitId))
+      fail('Work Unit lifecycle references an unknown Work Unit');
+    const workUnitBelongsToSprint = events.workUnitScopes.some((scope) => {
+      if (scope.workUnitId !== entry.workUnitId) return false;
+      const revision = revisionById.get(scope.sprintPlanRevisionId);
+      return revision ? planById.get(revision.sprintPlanId)?.sprintId === entry.sprintId : false;
+    });
+    if (!workUnitBelongsToSprint) fail('Work Unit lifecycle Work Unit must belong to its Sprint');
+    if (!events.agentSessions.some(({ agentSessionId }) => agentSessionId === entry.agentSessionId))
+      fail('Work Unit lifecycle references an unknown Agent Session');
+    const sessionAssociatedWithWorkUnit = events.agentSessionReferences.some((reference) => {
+      if (
+        reference.agentSessionId !== entry.agentSessionId ||
+        reference.targetKind !== 'work_unit_execution'
+      )
+        return false;
+      const execution = events.workUnitExecutions.find(
+        ({ workUnitExecutionId }) => workUnitExecutionId === reference.targetId,
+      );
+      if (!execution || execution.workUnitId !== entry.workUnitId) return false;
+      const scope = scopeById.get(execution.fixedWorkUnitScopeId);
+      const revision = scope && revisionById.get(scope.sprintPlanRevisionId);
+      return revision ? planById.get(revision.sprintPlanId)?.sprintId === entry.sprintId : false;
+    });
+    const sessionAssociatedWithOwningWorkSlicePlanningPoint = events.agentSessionReferences.some(
+      (reference) => {
+        if (
+          reference.agentSessionId !== entry.agentSessionId ||
+          reference.targetKind !== 'work_slice_planning_point'
+        )
+          return false;
+        return metadata.workSlicePlanningPointMembership.some((membership) => {
+          if (membership.workSlicePlanningPointId !== reference.targetId) return false;
+          return membership.workUnitScopeIds.some((scopeId) => {
+            const scope = scopeById.get(scopeId);
+            const revision = scope && revisionById.get(scope.sprintPlanRevisionId);
+            return (
+              scope?.workUnitId === entry.workUnitId &&
+              (revision ? planById.get(revision.sprintPlanId)?.sprintId : undefined) ===
+                entry.sprintId
+            );
+          });
+        });
+      },
+    );
+    if (!sessionAssociatedWithWorkUnit && !sessionAssociatedWithOwningWorkSlicePlanningPoint)
+      fail(
+        'Work Unit lifecycle Agent Session must be associated with its Work Unit or owning Work Slice planning point and Sprint',
+      );
+    validateAvailableSource(entry.source, facts, 'Work Unit lifecycle');
   });
   const narratives = metadata.narratives ?? [];
   if (new Set(narratives.map((narrative) => narrative.sprintId)).size !== narratives.length)
@@ -973,8 +1173,8 @@ function belongsToEpic(
       (sprint) => sprint.sprintId === reference.targetId && sprint.epicId === epicId,
     );
   if (reference.targetKind === 'work_slice_planning_point') {
-    const activity = events.sprintPlannerActivities.find(
-      (item) => item.sprintPlannerActivityId === reference.targetId,
+    const activity = events.workSlicePlanningPoints.find(
+      (item) => item.workSlicePlanningPointId === reference.targetId,
     );
     const plan =
       activity && events.sprintPlans.find((item) => item.sprintPlanId === activity.sprintPlanId);
@@ -1013,8 +1213,8 @@ function belongsToSprint(
 ) {
   if (reference.targetKind === 'sprint') return reference.targetId === sprintId;
   if (reference.targetKind === 'work_slice_planning_point') {
-    const activity = events.sprintPlannerActivities.find(
-      (item) => item.sprintPlannerActivityId === reference.targetId,
+    const activity = events.workSlicePlanningPoints.find(
+      (item) => item.workSlicePlanningPointId === reference.targetId,
     );
     return activity
       ? events.sprintPlans.some(
@@ -1048,7 +1248,7 @@ function indexReferenceData(index: ProductReadReferenceIndexV1) {
     sprints: new Map(index.sprints.map((item) => [item.sprintId, item])),
     revisions: new Map(index.sprintPlanRevisions.map((item) => [item.sprintPlanRevisionId, item])),
     activities: new Map(
-      index.plannerActivities.map((item) => [item.sprintPlannerActivityId, item]),
+      index.workSlicePlanningPoints.map((item) => [item.workSlicePlanningPointId, item]),
     ),
     workUnits: new Map(index.workUnits.map((item) => [item.workUnitId, item])),
     gates: new Map(index.gates.map((item) => [item.gateId, item])),

@@ -38,8 +38,11 @@ import { useOrchestrationLoad } from './useOrchestrationLoad';
 import type { ManagedPlanBuilderSessionClient } from '../infrastructure/orchestrations/tauriManagedPlanBuilderSessionClient';
 import { useEpicInitiationConfirmation } from './useEpicInitiationConfirmation';
 import { EpicInitiationConfirmationModal } from './EpicInitiationConfirmationModal';
+import type { AgentSessionProductLocation } from '../application/agentSessionNavigation';
+import type { FileReviewClient } from '../application/fileReview';
+import { FileReviewScreen } from '../features/fileReview';
 
-export type ApplicationSurface = 'epics' | 'agent-sessions' | 'harness-inspector';
+export type ApplicationSurface = 'epics' | 'agent-sessions' | 'harness-inspector' | 'file-review';
 
 export interface AppProps {
   readonly agentSessionClient: AgentSessionClient;
@@ -65,6 +68,7 @@ export interface AppProps {
   readonly agentIdentityForSession?: (sessionId: string) => AgentIdentity | undefined;
   /** Present only in an injected development composition; production boot does not expose it. */
   readonly harnessManagementPreviewSurface?: ReactNode;
+  readonly fileReviewClient?: FileReviewClient;
   readonly initialSurface?: ApplicationSurface;
 }
 
@@ -92,13 +96,22 @@ export function App({
   agentSessionHarnessManagementSource,
   agentIdentityForSession,
   harnessManagementPreviewSurface,
+  fileReviewClient,
   initialSurface = 'epics',
 }: AppProps) {
   const [surface, setSurface] = useState<ApplicationSurface>(() =>
-    initialSurface === 'harness-inspector' && !harnessManagementPreviewSurface
+    (initialSurface === 'harness-inspector' && !harnessManagementPreviewSurface) ||
+    (initialSurface === 'file-review' && !fileReviewClient)
       ? 'epics'
       : initialSurface,
   );
+  const [selectedAgentSessionId, setSelectedAgentSessionId] = useState<string | null>(null);
+  const [expandedAgentSessionNodes, setExpandedAgentSessionNodes] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [requestedProductLocation, setRequestedProductLocation] =
+    useState<AgentSessionProductLocation | null>(null);
+  const [fileReviewSourceId, setFileReviewSourceId] = useState<string | undefined>();
   const [orchestrationRoute, setOrchestrationRoute] = useState<'overview' | 'plan-builder'>(
     'overview',
   );
@@ -311,6 +324,31 @@ export function App({
     },
     [epicPlanningDraftLifecycleClient, refreshDrafts],
   );
+  const openStandaloneAgentSession = useCallback((sessionId: string) => {
+    setSelectedAgentSessionId(sessionId);
+    setSurface('agent-sessions');
+  }, []);
+  const navigateToProductLocation = useCallback(
+    (location: AgentSessionProductLocation) => {
+      if (location.kind === 'epic_planning_draft') {
+        const draft = planningDrafts.find(
+          ({ epicPlanningDraftId }) => epicPlanningDraftId === location.epicPlanningDraftId,
+        );
+        if (!draft) return;
+        setSelectedDraft({
+          draftId: draft.epicPlanningDraftId,
+          sessionId: draft.agentSessionId,
+          ...(draft.title ? { title: draft.title } : {}),
+        });
+        setOrchestrationRoute('plan-builder');
+      } else {
+        setRequestedProductLocation(location);
+        setOrchestrationRoute('overview');
+      }
+      setSurface('epics');
+    },
+    [planningDrafts],
+  );
 
   return (
     <div className="primary-app-shell">
@@ -347,6 +385,16 @@ export function App({
             Harness Management
           </button>
         )}
+        {fileReviewClient ? (
+          <button
+            className={surface === 'file-review' ? 'active' : undefined}
+            type="button"
+            aria-current={surface === 'file-review' ? 'page' : undefined}
+            onClick={() => setSurface('file-review')}
+          >
+            Files &amp; diffs
+          </button>
+        ) : null}
       </nav>
       {surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
         <EpicPlanBuilder
@@ -387,12 +435,37 @@ export function App({
             setSelectedDraft(null);
             setOrchestrationRoute('plan-builder');
           }}
+          requestedLocation={requestedProductLocation}
+          onOpenAgentSession={openStandaloneAgentSession}
+          onOpenFileReviewSource={
+            fileReviewClient
+              ? (sourceId) => {
+                  setFileReviewSourceId(sourceId);
+                  setSurface('file-review');
+                }
+              : undefined
+          }
+        />
+      ) : surface === 'file-review' && fileReviewClient ? (
+        <FileReviewScreen
+          client={fileReviewClient}
+          initialSourceId={fileReviewSourceId}
+          fixedSource={Boolean(fileReviewSourceId)}
         />
       ) : surface === 'agent-sessions' ? (
         <StandaloneAgentSessionScreen
           client={agentSessionClient}
           harnessManagementSource={agentSessionHarnessManagementSource}
           agentIdentityForSession={agentIdentityForSession}
+          orchestrations={
+            orchestrationLoad.kind === 'ready' ? orchestrationLoad.readModels : undefined
+          }
+          planningDrafts={planningDrafts}
+          selectedSessionId={selectedAgentSessionId}
+          onSelectedSessionChange={setSelectedAgentSessionId}
+          expandedNodeIds={expandedAgentSessionNodes}
+          onExpandedNodeIdsChange={setExpandedAgentSessionNodes}
+          onNavigateToProduct={navigateToProductLocation}
         />
       ) : (
         harnessManagementPreviewSurface
@@ -411,6 +484,9 @@ function OrchestrationSurface({
   onPlanEpic,
   planningDrafts,
   onOpenDraft,
+  requestedLocation,
+  onOpenAgentSession,
+  onOpenFileReviewSource,
 }: {
   readonly load: ReturnType<typeof useOrchestrationLoad>;
   readonly presentation: OrchestrationPresentationAdapter;
@@ -421,6 +497,9 @@ function OrchestrationSurface({
   readonly onPlanEpic: () => void;
   readonly planningDrafts: readonly EpicPlanningDraftSummary[];
   readonly onOpenDraft: (draft: EpicPlanningDraftSummary) => void;
+  readonly requestedLocation: AgentSessionProductLocation | null;
+  readonly onOpenAgentSession: (sessionId: string) => void;
+  readonly onOpenFileReviewSource?: (sourceId: string) => void;
 }) {
   if (load.kind === 'ready')
     return (
@@ -433,6 +512,9 @@ function OrchestrationSurface({
         onPlanEpic={onPlanEpic}
         planningDrafts={planningDrafts}
         onOpenPlanningDraft={onOpenDraft}
+        requestedLocation={requestedLocation}
+        onOpenAgentSession={onOpenAgentSession}
+        onOpenFileReviewSource={onOpenFileReviewSource}
       />
     );
   const copy =

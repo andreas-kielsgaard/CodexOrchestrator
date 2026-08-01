@@ -21,14 +21,12 @@ export interface PromptProvenanceV1 {
 }
 
 export type AgentControlTargetV1 =
-  | { readonly kind: 'next_ready_work_unit_planner'; readonly sprintId: string }
-  | { readonly kind: 'next_sprint_planner'; readonly epicId: string }
+  | { readonly kind: 'next_work_slice_planner'; readonly sprintId: string }
+  | { readonly kind: 'next_sprint_runner'; readonly epicId: string }
   | { readonly kind: 'agent_session'; readonly agentSessionRefId: string };
 
 export type AgentControlCommandKind =
-  | 'request_next_ready_work_unit_planner'
-  | 'request_next_sprint_planner'
-  | 'request_agent_session_prompt';
+  'request_next_work_slice_planner' | 'request_next_sprint_runner' | 'request_agent_session_prompt';
 
 export interface AgentControlCommandV1 {
   readonly agentControlCommandId: string;
@@ -82,7 +80,7 @@ export interface ContinuationEligibilityEvaluationV1 {
   readonly level: 'sprint' | 'epic';
   readonly target: Extract<
     AgentControlTargetV1,
-    { readonly kind: 'next_ready_work_unit_planner' | 'next_sprint_planner' }
+    { readonly kind: 'next_work_slice_planner' | 'next_sprint_runner' }
   >;
   readonly requiredConditionsSatisfied: boolean;
   readonly designedForFeedback: boolean;

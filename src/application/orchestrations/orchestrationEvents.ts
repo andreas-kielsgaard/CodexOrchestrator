@@ -8,18 +8,10 @@
 export const ORCHESTRATION_EVENTS_V1 = 'orchestration-events/v1' as const;
 
 export type AgentSessionAssociationTargetKind =
-  | 'epic'
-  | 'sprint'
-  | 'work_slice_planning_point'
-  | 'work_unit_execution'
-  | 'other';
+  'epic' | 'sprint' | 'work_slice_planning_point' | 'work_unit_execution' | 'other';
 
 export type AgentSessionSemanticRole =
-  | 'epic'
-  | 'sprint'
-  | 'work_slice_planner'
-  | 'work_unit_handler'
-  | 'work_unit_implementer';
+  'epic' | 'sprint' | 'work_slice_planner' | 'work_unit_handler' | 'work_unit_implementer';
 
 export interface OrchestrationEventsV1 {
   readonly version: typeof ORCHESTRATION_EVENTS_V1;
@@ -42,15 +34,15 @@ export interface OrchestrationEventsV1 {
     readonly dependsOnWorkUnitScopeIds: readonly string[];
     readonly gateIds: readonly string[];
   }[];
-  /** Planner activity is distinct from both the Sprint Plan and Agent Session. */
-  readonly sprintPlannerActivities: readonly {
-    readonly sprintPlannerActivityId: string;
+  /** A temporal planning point is distinct from both the Sprint Plan and its Planner Session. */
+  readonly workSlicePlanningPoints: readonly {
+    readonly workSlicePlanningPointId: string;
     readonly sprintPlanId: string;
     readonly assessedSprintPlanRevisionIds: readonly string[];
   }[];
   /**
-   * This execution record fixes scope for a requested or later observed planner/execution. Its
-   * presence does not prove planner instantiation or launch; attempts only repeat the same scope.
+   * This execution record fixes scope for requested or later observed Work Unit handling. Its
+   * presence does not prove Handler or Implementer creation; attempts only repeat the same scope.
    */
   readonly workUnitExecutions: readonly {
     readonly workUnitExecutionId: string;
@@ -71,8 +63,6 @@ export interface OrchestrationEventsV1 {
     readonly semanticRole: AgentSessionSemanticRole;
     /** Required only when the association target is not yet a first-class product entity. */
     readonly otherTargetType?: string;
-    /** Required only when the role is not yet first-class product vocabulary. */
-    readonly otherSemanticRole?: string;
   }[];
   readonly gates: readonly { readonly gateId: string; readonly sprintPlanRevisionId: string }[];
   readonly gateCriteriaRevisions: readonly {
@@ -139,7 +129,7 @@ export interface OrchestrationEventsV1 {
   readonly continuationRequests: readonly {
     readonly continuationRequestId: string;
     readonly policyEligibilityFactId: string;
-    readonly targetKind: 'next_work_unit' | 'next_sprint_planner';
+    readonly targetKind: 'next_work_slice_planner' | 'next_sprint_runner';
     readonly targetId: string;
     readonly provenanceId: string;
   }[];

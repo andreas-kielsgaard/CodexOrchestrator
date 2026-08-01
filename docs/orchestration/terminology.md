@@ -1,6 +1,6 @@
 # Orchestration product terminology
 
-Status: current authority for active product-domain terminology as of Sprint 2.
+Status: current authority for active product-domain terminology.
 
 | Term          | Current meaning                                                              |
 | ------------- | ---------------------------------------------------------------------------- |
@@ -16,10 +16,26 @@ Agent Session remains provider- and role-neutral. Agent Control remains the cont
 Orchestration Event remains the capability-wide event category. Document and internal artifact
 remain distinct.
 
-The planning surface is Epic Plan Builder and its entity-associated role is Epic Runner. Epic-level
-continuation advances to the next Sprint Planner. Sprint-level continuation advances to the next
-ready Work Unit planner. Policy update, eligibility, continuation request, observed result, and
-recorded Orchestration Event remain distinct facts.
+The orchestration role vocabulary has exactly five names:
+
+| Role                  | Responsibility                                                                           |
+| --------------------- | ---------------------------------------------------------------------------------------- |
+| Epic Runner           | Epic organization, Sprint-to-Sprint flow, and cross-Sprint integration.                  |
+| Sprint Runner         | Sprint organization, start-time replanning, and implementation flow across the Sprint.   |
+| Work Slice Planner    | Plans actually-ready work once at the recorded temporal planning point.                  |
+| Work Unit Handler     | Creates the Implementer, reviews returns, requests corrections, and integrates the unit. |
+| Work Unit Implementer | Performs the implementation for one Work Unit.                                           |
+
+Work Slice Planner is a role, not a durable Work Slice entity. A Work Slice planning point is a
+typed temporal planning record; current contracts do not imply recurring Planner reuse. Epic-level
+continuation advances to the next Sprint Runner. Sprint-level continuation advances to the next
+Work Slice Planner. Policy update, eligibility, continuation request, observed result, and recorded
+Orchestration Event remain distinct facts.
+
+Before Sprint start, the Sprint Runner plan may expose only a low-resolution forecast of concerns.
+After an explicit start and recorded branch/repository reevaluation, it may expose concrete Work
+Units, dependencies, parallel lanes, and the current Work Slice planning point. Missing authority is
+unavailable, not inferred from UI state or Agent prose.
 
 Sprint 2 is a clean terminology break. No production orchestration data exists, so no data migration,
 compatibility alias, or dual schema is required. Recorded fixtures are disposable and may be rebuilt.

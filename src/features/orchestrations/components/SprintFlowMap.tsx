@@ -20,19 +20,33 @@ export interface SprintFlowMapProps {
   readonly workspace: SprintWorkspacePresentationV1;
   readonly selectedRevisionId: string;
   readonly onSelectedRevisionChange: (revisionId: string) => void;
-  readonly onOpenSprintPlannerActivityGroup?: (
-    sprintPlannerActivityId: string,
+  readonly onOpenWorkSlicePlanningPointGroup?: (
+    workSlicePlanningPointId: string,
     opener: HTMLButtonElement,
   ) => void;
   readonly onOpenWorkUnit?: (workUnitId: string, opener: HTMLButtonElement) => void;
+  readonly highlightedSprintRunnerConcernId?: string | null;
+  readonly hoveredGraphElement?: {
+    readonly kind: 'work_slice_planning_point' | 'work_unit' | 'gate';
+    readonly id: string;
+  } | null;
+  readonly onHoveredGraphElementChange?: (
+    element: {
+      readonly kind: 'work_slice_planning_point' | 'work_unit' | 'gate';
+      readonly id: string;
+    } | null,
+  ) => void;
 }
 
 export function SprintFlowMap({
   workspace,
   selectedRevisionId,
   onSelectedRevisionChange,
-  onOpenSprintPlannerActivityGroup,
+  onOpenWorkSlicePlanningPointGroup,
   onOpenWorkUnit,
+  highlightedSprintRunnerConcernId,
+  hoveredGraphElement,
+  onHoveredGraphElementChange,
 }: SprintFlowMapProps) {
   const selectedView =
     workspace.revisionViews.find(
@@ -44,16 +58,33 @@ export function SprintFlowMap({
     [selectedView, layout],
   );
   const positions = new Map(layout.positions.map((position) => [position.id, position]));
-  const sprintPlannerActivityGroupPositions = new Map(
-    layout.sprintPlannerActivityGroupPositions.map((position) => [position.id, position]),
+  const workSlicePlanningPointGroupPositions = new Map(
+    layout.workSlicePlanningPointGroupPositions.map((position) => [position.id, position]),
   );
   const userReviews = selectedView.gates.filter(
     ({ presentationRole }) => presentationRole.kind === 'accepted_review_marker',
   );
+  const highlightedRefs = new Set(
+    workspace.sprintRunnerConcerns
+      .find(
+        ({ sprintRunnerConcernId }) => sprintRunnerConcernId === highlightedSprintRunnerConcernId,
+      )
+      ?.graphElementRefs.map(({ kind, id }) => `${kind}:${id}`) ?? [],
+  );
+  const priorRevision = workspace.revisionViews
+    .filter(({ revision }) => revision < selectedView.revision)
+    .sort((left, right) => right.revision - left.revision)[0];
+  const priorWorkUnitIds = new Set(priorRevision?.workUnits.map(({ workUnitId }) => workUnitId));
 
   return (
     <section className="sprint-flow" aria-label="Sprint plan overview">
       <div className="sprint-flow__overlay">
+        <div className="sprint-flow__legend" aria-label="Flow states">
+          <span data-state="planned">Planned</span>
+          <span data-state="processing">Processing</span>
+          <span data-state="completed">Completed</span>
+          <span data-state="divergent">Later divergence</span>
+        </div>
         <label className="sprint-revision-select">
           <span className="visually-hidden">Plan revision</span>
           <select
@@ -77,7 +108,7 @@ export function SprintFlowMap({
         >
           <svg aria-hidden="true" width={layout.width} height={layout.height}>
             {connectorRoutes
-              .filter(({ scopeSprintPlannerActivityId }) => !scopeSprintPlannerActivityId)
+              .filter(({ scopeWorkSlicePlanningPointId }) => !scopeWorkSlicePlanningPointId)
               .map((connector) => {
                 return (
                   <path
@@ -91,15 +122,31 @@ export function SprintFlowMap({
               })}
           </svg>
 
-          {selectedView.plannerActivityGroups.map((group) => {
-            const box = sprintPlannerActivityGroupPositions.get(group.sprintPlannerActivityId);
+          {selectedView.workSlicePlanningPointGroups.map((group) => {
+            const box = workSlicePlanningPointGroupPositions.get(group.workSlicePlanningPointId);
             if (!box) return null;
             return (
               <section
-                key={group.sprintPlannerActivityId}
-                className="sprint-plan-region"
-                aria-label={`Plan: ${group.title}`}
+                key={group.workSlicePlanningPointId}
+                className={`sprint-plan-region${
+                  highlightedRefs.has(`work_slice_planning_point:${group.workSlicePlanningPointId}`)
+                    ? ' is-runner-concern-highlighted'
+                    : ''
+                }${
+                  hoveredGraphElement?.kind === 'work_slice_planning_point' &&
+                  hoveredGraphElement.id === group.workSlicePlanningPointId
+                    ? ' is-hovered'
+                    : ''
+                }`}
+                aria-label={`Work Slice planning point: ${group.title}`}
                 style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
+                onPointerEnter={() =>
+                  onHoveredGraphElementChange?.({
+                    kind: 'work_slice_planning_point',
+                    id: group.workSlicePlanningPointId,
+                  })
+                }
+                onPointerLeave={() => onHoveredGraphElementChange?.(null)}
               >
                 <svg
                   className="sprint-plan-region__connectors"
@@ -110,15 +157,15 @@ export function SprintFlowMap({
                 >
                   {connectorRoutes
                     .filter(
-                      ({ scopeSprintPlannerActivityId }) =>
-                        scopeSprintPlannerActivityId === group.sprintPlannerActivityId,
+                      ({ scopeWorkSlicePlanningPointId }) =>
+                        scopeWorkSlicePlanningPointId === group.workSlicePlanningPointId,
                     )
                     .map((connector) => (
                       <path
                         key={`${connector.from}-${connector.to}`}
                         className={`sprint-flow__connector sprint-flow__connector--${connector.kind}`}
                         data-connector={`${connector.from}->${connector.to}`}
-                        data-connector-scope={group.sprintPlannerActivityId}
+                        data-connector-scope={group.workSlicePlanningPointId}
                         d={connector.path}
                       />
                     ))}
@@ -126,18 +173,20 @@ export function SprintFlowMap({
                 <button
                   type="button"
                   className="sprint-plan-region__open"
-                  data-sprint-planner-activity-id={group.sprintPlannerActivityId}
-                  aria-label={`Open Plan: ${group.title}`}
+                  data-work-slice-planning-point-id={group.workSlicePlanningPointId}
+                  data-flow-element-kind="work_slice_planning_point"
+                  data-flow-element-id={group.workSlicePlanningPointId}
+                  aria-label={`Open Work Slice planning point: ${group.title}`}
                   onClick={(event) =>
-                    onOpenSprintPlannerActivityGroup?.(
-                      group.sprintPlannerActivityId,
+                    onOpenWorkSlicePlanningPointGroup?.(
+                      group.workSlicePlanningPointId,
                       event.currentTarget,
                     )
                   }
                 />
                 <header>
                   <div className="sprint-plan-region__title">
-                    <span>Plan</span>
+                    <span>Work Slice planning point</span>
                     <strong>{group.title}</strong>
                   </div>
                   {selectedView.gates.some(
@@ -166,13 +215,39 @@ export function SprintFlowMap({
                     return (
                       <article
                         key={unit.workUnitId}
-                        className={`sprint-work-unit sprint-work-unit--${displayState(unit.presentationState)}`}
+                        className={`sprint-work-unit sprint-work-unit--${displayState(unit.presentationState)}${
+                          priorRevision && !priorWorkUnitIds.has(unit.workUnitId)
+                            ? ' sprint-work-unit--divergent'
+                            : ''
+                        }${
+                          highlightedRefs.has(`work_unit:${unit.workUnitId}`)
+                            ? ' is-runner-concern-highlighted'
+                            : ''
+                        }${
+                          hoveredGraphElement?.kind === 'work_unit' &&
+                          hoveredGraphElement.id === unit.workUnitId
+                            ? ' is-hovered'
+                            : ''
+                        }`}
                         style={{ left: position.x - box.x, top: position.y - box.y }}
+                        onPointerEnter={(event) => {
+                          event.stopPropagation();
+                          onHoveredGraphElementChange?.({
+                            kind: 'work_unit',
+                            id: unit.workUnitId,
+                          });
+                        }}
+                        onPointerLeave={(event) => {
+                          event.stopPropagation();
+                          onHoveredGraphElementChange?.(null);
+                        }}
                       >
                         <button
                           type="button"
                           className="sprint-work-unit__open"
                           data-work-unit-id={unit.workUnitId}
+                          data-flow-element-kind="work_unit"
+                          data-flow-element-id={unit.workUnitId}
                           aria-label={`Open Work Unit ${unit.workUnitId}: ${unit.title}, ${statusLabel(unit.presentationState)}`}
                           title={unit.summary}
                           onClick={(event) => {
@@ -188,6 +263,9 @@ export function SprintFlowMap({
                           </span>
                           <strong>{unit.title}</strong>
                           <code>{unit.workUnitId}</code>
+                          {priorRevision && !priorWorkUnitIds.has(unit.workUnitId) ? (
+                            <small>Added in later plan</small>
+                          ) : null}
                         </button>
                         {attachedReviews.map((gate) => (
                           <span

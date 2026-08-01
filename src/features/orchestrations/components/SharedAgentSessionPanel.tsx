@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import {
   ConversationViewport,
   embeddedSessionIsWritable,
@@ -24,6 +24,10 @@ export interface SharedAgentSessionPanelProps {
   readonly defaultExpanded?: boolean;
   readonly expanded?: boolean;
   readonly onExpandedChange?: (expanded: boolean) => void;
+  readonly onOpenStandalone?: (sessionId: string) => void;
+  readonly displayMode?: 'collapsible' | 'always_open';
+  readonly focusInvocationId?: string;
+  readonly focusRequest?: number;
 }
 
 /** Shared embedded Agent Session presentation with an injected application boundary. */
@@ -35,45 +39,93 @@ export function SharedAgentSessionPanel({
   defaultExpanded = false,
   expanded: controlledExpanded,
   onExpandedChange,
+  onOpenStandalone,
+  displayMode = 'collapsible',
+  focusInvocationId,
+  focusRequest,
 }: SharedAgentSessionPanelProps) {
   const conversationId = useId();
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
-  const expanded = controlledExpanded ?? internalExpanded;
+  const hostRef = useRef<HTMLElement>(null);
+  const expanded = displayMode === 'always_open' || (controlledExpanded ?? internalExpanded);
   const setExpanded = (next: boolean) => {
     setInternalExpanded(next);
     onExpandedChange?.(next);
   };
 
+  useEffect(() => {
+    if (!focusInvocationId) return;
+    const target = Array.from(
+      hostRef.current?.querySelectorAll<HTMLElement>('[data-invocation-id]') ?? [],
+    ).find((candidate) => candidate.dataset.invocationId === focusInvocationId);
+    target?.scrollIntoView?.({ block: 'center' });
+    target?.focus({ preventScroll: true });
+  }, [focusInvocationId, focusRequest]);
+
   return (
     <section
+      ref={hostRef}
       className={`shared-agent-session${expanded ? ' is-expanded' : ''}`}
       aria-label={ariaLabel}
+      data-session-id={session.sessionId}
     >
       {!expanded ? (
         <div className="shared-agent-session__compact">
           <span>Agent Session</span>
           <strong>{session.title}</strong>
-          <button
-            className="shared-agent-session__open"
-            type="button"
-            aria-expanded="false"
-            aria-controls={conversationId}
-            onClick={() => setExpanded(true)}
-          >
-            Open Agent Session
-          </button>
+          <div className="shared-agent-session__actions">
+            <button
+              className="shared-agent-session__open"
+              type="button"
+              aria-expanded="false"
+              aria-controls={conversationId}
+              onClick={() => setExpanded(true)}
+            >
+              Open Agent Session
+            </button>
+            {onOpenStandalone && (
+              <button
+                className="shared-agent-session__standalone"
+                type="button"
+                onClick={() => onOpenStandalone(session.sessionId)}
+              >
+                Open in Agent Sessions
+              </button>
+            )}
+          </div>
         </div>
       ) : (
-        <div id={conversationId} className="shared-agent-session__conversation">
-          <button
-            className="shared-agent-session__collapse"
-            type="button"
-            aria-expanded="true"
-            aria-controls={conversationId}
-            onClick={() => setExpanded(false)}
-          >
-            Collapse Agent Session
-          </button>
+        <div
+          id={conversationId}
+          className="shared-agent-session__conversation"
+          data-display-mode={displayMode}
+        >
+          <header className="shared-agent-session__heading">
+            <span>Agent Session</span>
+            <strong>{session.title}</strong>
+            <div className="shared-agent-session__actions">
+              {displayMode === 'collapsible' ? (
+                <button
+                  className="shared-agent-session__collapse"
+                  type="button"
+                  aria-expanded="true"
+                  aria-controls={conversationId}
+                  onClick={() => setExpanded(false)}
+                >
+                  Collapse Agent Session
+                </button>
+              ) : null}
+              {onOpenStandalone ? (
+                <button
+                  className="shared-agent-session__standalone"
+                  type="button"
+                  onClick={() => onOpenStandalone(session.sessionId)}
+                >
+                  Open in Agent Sessions
+                </button>
+              ) : null}
+            </div>
+          </header>
           {composition ? (
             <ConnectedAgentSessionConversation
               session={session}

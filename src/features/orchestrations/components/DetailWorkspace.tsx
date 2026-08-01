@@ -1,7 +1,7 @@
 import { ArrowLeft } from 'lucide-react';
 import { useEffect, useRef, type ReactNode } from 'react';
-import '../styles/detailWorkspace.css';
 import { ResizableSplitSurface } from './ResizableSplitSurface';
+import '../styles/detailWorkspace.css';
 
 export interface DetailWorkspaceProps {
   readonly ariaLabel: string;
@@ -62,23 +62,33 @@ export function DetailWorkspace({
         <div className="detail-workspace__control">{control}</div>
       </div>
 
-      <ResizableSplitSurface
-        axis="horizontal"
-        primaryLabel={contextLabel}
-        secondaryLabel="Sprint workspace"
-        initialPrimaryPercent={28}
-        primary={
-          <aside className="detail-workspace__context-rail" aria-label={contextLabel}>
-            {context}
-          </aside>
-        }
-        secondary={
-          <div className="detail-workspace__main-column">
+      <div className="detail-workspace__layout">
+        <aside
+          className="detail-workspace__context-rail"
+          aria-label={contextLabel}
+          data-scrollable-context="true"
+          tabIndex={0}
+        >
+          {context}
+        </aside>
+        <div className="detail-workspace__main-column">
+          {agentSession ? (
+            <ResizableSplitSurface
+              axis="vertical"
+              primary={<div className="detail-workspace__primary">{primary}</div>}
+              secondary={<div className="detail-workspace__agent-session">{agentSession}</div>}
+              primaryLabel="Detail flow"
+              secondaryLabel="Agent Session"
+              initialPrimaryPercent={82}
+              minimumPrimaryPixels={220}
+              minimumSecondaryPixels={44}
+              maximizePrimaryLabel="Maximize flow"
+            />
+          ) : (
             <div className="detail-workspace__primary">{primary}</div>
-            {agentSession && <div className="detail-workspace__agent-session">{agentSession}</div>}
-          </div>
-        }
-      />
+          )}
+        </div>
+      </div>
     </main>
   );
 }

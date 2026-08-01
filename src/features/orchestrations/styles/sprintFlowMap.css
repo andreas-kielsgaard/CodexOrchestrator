@@ -11,7 +11,54 @@
   z-index: 20;
   top: 10px;
   right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   pointer-events: none;
+}
+
+.sprint-flow__legend {
+  display: flex;
+  gap: 6px;
+  padding: 5px 7px;
+  border: 1px solid #c4ced3;
+  border-radius: 7px;
+  background: rgb(255 255 255 / 96%);
+  color: #52656f;
+  font-size: 0.58rem;
+  font-weight: 800;
+  box-shadow: 0 2px 8px rgb(31 52 64 / 10%);
+}
+
+.sprint-flow__legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sprint-flow__legend span::before {
+  width: 8px;
+  height: 8px;
+  border: 1px solid #aebbc3;
+  border-radius: 2px;
+  background: #f4f6f7;
+  content: '';
+}
+
+.sprint-flow__legend [data-state='processing']::before {
+  border-color: #3b91c2;
+  background: #eaf5fc;
+}
+
+.sprint-flow__legend [data-state='completed']::before {
+  border-color: #89b99a;
+  background: #edf7f0;
+}
+
+.sprint-flow__legend [data-state='divergent']::before {
+  border-color: #a17bb0;
+  border-style: dashed;
+  background: #f8f1fa;
 }
 
 .sprint-revision-select,
@@ -92,7 +139,7 @@
   position: absolute;
   z-index: 4;
   border: 1px solid #b9c7ce;
-  border-radius: 16px;
+  border-radius: 12px;
   background: rgb(255 255 255 / 76%);
   box-shadow: inset 0 0 0 5px rgb(233 238 241 / 54%);
 }
@@ -102,9 +149,9 @@
   z-index: 7;
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 58px;
-  padding: 10px 14px;
+  gap: 6px;
+  min-height: 48px;
+  padding: 7px 10px;
   pointer-events: none;
 }
 
@@ -123,6 +170,14 @@
 .sprint-plan-region:hover {
   border-color: #7895a4;
   background: rgb(249 252 253 / 92%);
+}
+
+.sprint-plan-region.is-runner-concern-highlighted,
+.sprint-plan-region.is-hovered {
+  border-color: #9f6ab7;
+  box-shadow:
+    inset 0 0 0 4px rgb(159 106 183 / 12%),
+    0 0 0 3px rgb(159 106 183 / 18%);
 }
 
 .sprint-plan-region:has(.sprint-plan-region__open:focus-visible) {
@@ -165,8 +220,8 @@
 .sprint-work-unit {
   position: absolute;
   z-index: 5;
-  width: 178px;
-  min-height: 96px;
+  width: 158px;
+  min-height: 76px;
   border: 1px solid #bbc8cf;
   border-radius: 11px;
   background: #fff;
@@ -179,8 +234,8 @@
   align-content: center;
   gap: 5px;
   width: 100%;
-  min-height: 94px;
-  padding: 12px 13px;
+  min-height: 74px;
+  padding: 7px 10px;
   border: 0;
   border-radius: inherit;
   background: transparent;
@@ -198,6 +253,12 @@
 .sprint-work-unit code {
   color: #71808a;
   font-size: 0.61rem;
+}
+
+.sprint-work-unit small {
+  color: #70487f;
+  font-size: 0.56rem;
+  font-weight: 800;
 }
 
 .sprint-work-unit__state {
@@ -246,6 +307,23 @@
 .sprint-work-unit--deferred {
   border-style: dashed;
   background: #f1f2f3;
+}
+
+.sprint-work-unit--divergent {
+  border-style: dashed;
+  box-shadow:
+    inset 0 0 0 2px rgb(159 106 183 / 14%),
+    0 3px 9px rgb(37 57 68 / 10%);
+}
+
+.sprint-work-unit.is-runner-concern-highlighted,
+.sprint-work-unit.is-hovered,
+.sprint-work-unit:hover {
+  z-index: 9;
+  border-color: #9f6ab7;
+  box-shadow:
+    0 0 0 3px rgb(159 106 183 / 22%),
+    0 5px 14px rgb(37 57 68 / 15%);
 }
 
 .sprint-review-marker {

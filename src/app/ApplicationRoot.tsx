@@ -10,7 +10,13 @@ export function ApplicationRoot() {
     let active = true;
     const developmentRoute = new URLSearchParams(window.location.search);
     const harnessInspectorRequested = developmentRoute.has('harness-inspector');
-    if (
+    if (viteDevelopmentMode() && developmentRoute.has('file-diff-viewer')) {
+      void import('../dev/fileReview/recordedFileReviewClient').then(
+        ({ createRecordedFileReviewApplicationComposition }) => {
+          if (active) setComposition(createRecordedFileReviewApplicationComposition());
+        },
+      );
+    } else if (
       viteDevelopmentMode() &&
       (developmentRoute.has('recorded-plan-builder') || harnessInspectorRequested)
     ) {

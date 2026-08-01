@@ -1,6 +1,6 @@
 import type {
   SprintExecutionSnapshotV1,
-  SprintPlannerOutputV1,
+  SprintRunnerPlanV1,
 } from './sprintControlSurfaceCompatibility';
 import type {
   ConcernState,
@@ -9,7 +9,7 @@ import type {
 } from './sprintReadModels';
 
 export function deriveWorkUnitPresentation(
-  unit: SprintPlannerOutputV1['workUnits'][number],
+  unit: SprintRunnerPlanV1['workUnits'][number],
   execution: WorkUnitExecutionState,
   states: ReadonlyMap<string, SprintExecutionSnapshotV1['workUnits'][number]>,
 ): WorkUnitPresentationState {
@@ -29,7 +29,7 @@ export function deriveWorkUnitPresentation(
 }
 
 export function deriveConcernState(
-  concern: SprintPlannerOutputV1['concerns'][number],
+  concern: SprintRunnerPlanV1['concerns'][number],
   decision: SprintExecutionSnapshotV1['concernDecisions'][number] | undefined,
   states: ReadonlyMap<string, WorkUnitPresentationState>,
 ): ConcernState {

@@ -39,7 +39,7 @@ export function decodeOrchestrationEventsV1(value: unknown): OrchestrationEvents
     'sprintPlanRevisions',
     'workUnits',
     'workUnitScopes',
-    'sprintPlannerActivities',
+    'workSlicePlanningPoints',
     'workUnitExecutions',
     'attempts',
     'agentSessions',
@@ -70,7 +70,7 @@ export function decodeOrchestrationEventsV1(value: unknown): OrchestrationEvents
   const revisionIds = ids('sprintPlanRevisions', 'sprintPlanRevisionId');
   const workUnitIds = ids('workUnits', 'workUnitId');
   const scopeIds = ids('workUnitScopes', 'workUnitScopeId');
-  const plannerActivityIds = ids('sprintPlannerActivities', 'sprintPlannerActivityId');
+  const workSlicePlanningPointIds = ids('workSlicePlanningPoints', 'workSlicePlanningPointId');
   const executionIds = ids('workUnitExecutions', 'workUnitExecutionId');
   const attemptIds = ids('attempts', 'attemptId');
   const sessionIds = ids('agentSessions', 'agentSessionId');
@@ -207,20 +207,23 @@ export function decodeOrchestrationEventsV1(value: unknown): OrchestrationEvents
       fail('duplicate gate criteria revision number');
     criteriaNumbers.add(`${gateId}:${revision}`);
   }
-  for (const item of arrays.sprintPlannerActivities) {
-    const activity = object(item, 'sprint planner activity');
-    const planId = identifier(required(activity, 'sprintPlanId'), 'planner activity sprint plan');
-    reference(planId, planIds, 'planner activity sprint plan');
+  for (const item of arrays.workSlicePlanningPoints) {
+    const activity = object(item, 'Work Slice planning point');
+    const planId = identifier(
+      required(activity, 'sprintPlanId'),
+      'Work Slice planning-point Sprint Plan',
+    );
+    reference(planId, planIds, 'Work Slice planning-point Sprint Plan');
     for (const revisionId of array(
       required(activity, 'assessedSprintPlanRevisionIds'),
-      'planner activity assessments',
+      'Work Slice planning-point assessments',
     )) {
-      reference(revisionId, revisionIds, 'planner activity assessed revision');
+      reference(revisionId, revisionIds, 'Work Slice planning-point assessed revision');
       if (
-        revisionById.get(identifier(revisionId, 'planner activity assessed revision'))
+        revisionById.get(identifier(revisionId, 'Work Slice planning-point assessed revision'))
           ?.sprintPlanId !== planId
       )
-        fail('planner activity may assess only revisions of its sprint plan');
+        fail('Work Slice planning point may assess only revisions of its Sprint Plan');
     }
   }
   const executionById = new Map<string, Record<string, unknown>>();
@@ -276,7 +279,7 @@ export function decodeOrchestrationEventsV1(value: unknown): OrchestrationEvents
           : targetKind === 'sprint'
             ? sprintIds
             : targetKind === 'work_slice_planning_point'
-              ? plannerActivityIds
+              ? workSlicePlanningPointIds
               : executionIds;
       reference(targetId, targetIds, 'agent session reference target');
       if (referenceFact.otherTargetType !== undefined)
@@ -284,29 +287,21 @@ export function decodeOrchestrationEventsV1(value: unknown): OrchestrationEvents
     }
     const semanticRole = literal(
       required(referenceFact, 'semanticRole'),
-      [
-        'epic',
-        'sprint',
-        'work_slice_planner',
-        'work_unit_handler',
-        'work_unit_implementer',
-      ],
+      ['epic', 'sprint', 'work_slice_planner', 'work_unit_handler', 'work_unit_implementer'],
       'agent session reference role',
     ) as AgentSessionSemanticRole;
     if (referenceFact.otherSemanticRole !== undefined)
-      fail('agent session references use one of the five product roles');
+      fail('agent session references support only the five product roles');
     const allowedRoles: Partial<
       Record<AgentSessionAssociationTargetKind, readonly AgentSessionSemanticRole[]>
     > = {
       epic: ['epic'],
       sprint: ['sprint'],
       work_slice_planning_point: ['work_slice_planner'],
-      work_unit_execution: [
-        'work_unit_handler',
-        'work_unit_implementer',
-      ],
+      work_unit_execution: ['work_unit_handler', 'work_unit_implementer'],
+      other: ['epic', 'sprint', 'work_slice_planner', 'work_unit_handler', 'work_unit_implementer'],
     };
-    if (targetKind !== 'other' && !allowedRoles[targetKind]?.includes(semanticRole))
+    if (!allowedRoles[targetKind]?.includes(semanticRole))
       fail('agent session reference role must match its association target');
   }
   for (const item of arrays.provenance) {
@@ -459,7 +454,7 @@ export function decodeOrchestrationEventsV1(value: unknown): OrchestrationEvents
     );
     const kind = literal(
       required(request, 'targetKind'),
-      ['next_work_unit', 'next_sprint_planner'],
+      ['next_work_slice_planner', 'next_sprint_runner'],
       'continuation target kind',
     );
     reference(policyId, policyFactIds, 'continuation policy');
@@ -470,11 +465,15 @@ export function decodeOrchestrationEventsV1(value: unknown): OrchestrationEvents
     if (
       !policy ||
       object(policy, 'policy eligibility fact').level !==
-        (kind === 'next_work_unit' ? 'sprint' : 'epic')
+        (kind === 'next_work_slice_planner' ? 'sprint' : 'epic')
     )
       fail('continuation target kind must match its policy level');
     const targetId = identifier(required(request, 'targetId'), 'continuation target');
-    reference(targetId, kind === 'next_work_unit' ? sprintIds : epicIds, 'continuation target');
+    reference(
+      targetId,
+      kind === 'next_work_slice_planner' ? sprintIds : epicIds,
+      'continuation target',
+    );
     if (object(policy, 'policy eligibility fact').targetId !== targetId)
       fail('continuation request target must equal its policy target');
     provenance(required(request, 'provenanceId'), 'continuation request provenance');

@@ -39,6 +39,15 @@ export type ProductSourcedReadValueV1<T> =
       readonly value?: never;
     };
 
+export type ProductSprintPlanningStateV1 =
+  | { readonly kind: 'pre_start_forecast' }
+  | {
+      readonly kind: 'started_plan';
+      readonly currentWorkSlicePlanningPointId: string;
+      readonly repositoryAssessmentSummary: string;
+      readonly reevaluatedAt: string;
+    };
+
 export type ProductGatePresentationRoleV1 =
   | { readonly kind: 'accepted_review_marker' }
   | { readonly kind: 'other'; readonly fallbackLabel: string };
@@ -50,8 +59,8 @@ export interface ProductSprintWorkspaceNarrativesV1 {
 }
 
 export interface ProductSprintWorkspacePresentationMetadataV1 {
-  readonly plannerActivityMembership: readonly {
-    readonly sprintPlannerActivityId: string;
+  readonly workSlicePlanningPointMembership: readonly {
+    readonly workSlicePlanningPointId: string;
     readonly sprintPlanRevisionId: string;
     readonly workUnitScopeIds: readonly string[];
     readonly source: ReadSourceAuthorityV1;
@@ -67,8 +76,48 @@ export interface ProductSprintWorkspacePresentationMetadataV1 {
     readonly recordedAt: ProductSourcedReadValueV1<string>;
     readonly displayCategory: ProductSourcedReadValueV1<string>;
     readonly sprintPlanRevisionIds: readonly string[];
-    readonly sprintPlannerActivityIds: readonly string[];
+    readonly workSlicePlanningPointIds: readonly string[];
     readonly workUnitScopeIds: readonly string[];
+  }[];
+  /** Epic Runner-authored Sprint objectives. Global Epic goals are not substituted here. */
+  readonly epicRunnerObjectives?: readonly {
+    readonly objectiveId: string;
+    readonly sprintId: string;
+    readonly title: string;
+    readonly source: ReadSourceAuthorityV1;
+  }[];
+  /** Explicit Sprint Runner concern-to-graph links. Transcript prose is never parsed for these. */
+  readonly sprintRunnerConcerns?: readonly {
+    readonly sprintRunnerConcernId: string;
+    readonly sprintId: string;
+    readonly title: string;
+    readonly source: ReadSourceAuthorityV1;
+    readonly graphElementRefs: readonly {
+      readonly kind: 'work_slice_planning_point' | 'work_unit' | 'gate';
+      readonly id: string;
+    }[];
+  }[];
+  /** Recorded navigation metadata only; runtime lifecycle support is not implied. */
+  readonly workUnitLifecycle?: readonly {
+    readonly entryId: string;
+    readonly sprintId: string;
+    readonly workUnitId: string;
+    readonly sequence: number;
+    readonly kind:
+      | 'planning'
+      | 'launch'
+      | 'work'
+      | 'review'
+      | 'reprompt'
+      | 'renewed_work'
+      | 'merge'
+      | 'completion';
+    readonly title: string;
+    readonly summary: string;
+    readonly agentSessionId: string;
+    readonly agentRole: AgentSessionSemanticRole;
+    readonly invocationId: string;
+    readonly source: ReadSourceAuthorityV1;
   }[];
   readonly narratives?: readonly (Readonly<{ readonly sprintId: string }> &
     ProductSprintWorkspaceNarrativesV1)[];
@@ -97,14 +146,16 @@ export interface ProductReadReferenceIndexV1 {
     readonly details: string;
     readonly source: ReadSourceAuthorityV1;
     readonly lifecycle?: ProductSourcedReadValueV1<'completed' | 'in_progress' | 'not_started'>;
+    /** Typed planning authority. Missing production support projects as unavailable. */
+    readonly planningState?: ProductSourcedReadValueV1<ProductSprintPlanningStateV1>;
   }[];
   readonly sprintPlanRevisions: readonly {
     readonly sprintPlanRevisionId: string;
     readonly summary: string;
     readonly source: ReadSourceAuthorityV1;
   }[];
-  readonly plannerActivities: readonly {
-    readonly sprintPlannerActivityId: string;
+  readonly workSlicePlanningPoints: readonly {
+    readonly workSlicePlanningPointId: string;
     readonly title: string;
     readonly purpose: string;
     readonly source: ReadSourceAuthorityV1;
@@ -210,7 +261,7 @@ export interface ProductContinuationReadModelV1 {
   }[];
   readonly continuationRequests: readonly {
     readonly continuationRequestId: string;
-    readonly targetKind: 'next_work_unit' | 'next_sprint_planner';
+    readonly targetKind: 'next_work_slice_planner' | 'next_sprint_runner';
   }[];
   readonly observedContinuationIds: readonly string[];
   /** True only from an observed continuation Event; policy, eligibility, and command results stay separate. */
@@ -226,7 +277,6 @@ export interface ProductAgentSessionReferenceReadModelV1 {
   readonly targetId: string;
   readonly semanticRole: AgentSessionSemanticRole;
   readonly otherTargetType?: string;
-  readonly otherSemanticRole?: string;
 }
 
 export interface ProductSprintRevisionViewV1 {
@@ -243,8 +293,8 @@ export interface ProductSprintRevisionViewV1 {
     readonly dependsOnWorkUnitScopeIds: readonly string[];
     readonly gateIds: readonly string[];
   }[];
-  readonly plannerActivityGroups: readonly {
-    readonly sprintPlannerActivityId: string;
+  readonly workSlicePlanningPointGroups: readonly {
+    readonly workSlicePlanningPointId: string;
     readonly title: string;
     readonly purpose: string;
     readonly source: ReadSourceAuthorityV1;
@@ -309,6 +359,7 @@ export interface ProductSprintReadModelV1 {
   readonly details: string;
   readonly source: ReadSourceAuthorityV1;
   readonly lifecycle?: ProductSourcedReadValueV1<'completed' | 'in_progress' | 'not_started'>;
+  readonly planningState: ProductSourcedReadValueV1<ProductSprintPlanningStateV1>;
   readonly sprintPlan: {
     readonly sprintPlanId: string;
     readonly currentSprintPlanRevisionId: string;
@@ -329,8 +380,8 @@ export interface ProductSprintReadModelV1 {
       }[];
     }[];
   };
-  readonly plannerActivities: readonly {
-    readonly sprintPlannerActivityId: string;
+  readonly workSlicePlanningPoints: readonly {
+    readonly workSlicePlanningPointId: string;
     readonly title: string;
     readonly purpose: string;
     readonly source: ReadSourceAuthorityV1;
@@ -380,9 +431,12 @@ export interface ProductSprintReadModelV1 {
     readonly ownershipSource: ReadSourceAuthorityV1;
   }[];
   readonly workspacePresentation: Readonly<{
-    readonly plannerActivityMembership: ProductSprintWorkspacePresentationMetadataV1['plannerActivityMembership'];
+    readonly workSlicePlanningPointMembership: ProductSprintWorkspacePresentationMetadataV1['workSlicePlanningPointMembership'];
     readonly gates: ProductSprintWorkspacePresentationMetadataV1['gates'];
     readonly documents: ProductSprintWorkspacePresentationMetadataV1['documents'];
+    readonly epicRunnerObjectives?: ProductSprintWorkspacePresentationMetadataV1['epicRunnerObjectives'];
+    readonly sprintRunnerConcerns?: ProductSprintWorkspacePresentationMetadataV1['sprintRunnerConcerns'];
+    readonly workUnitLifecycle?: ProductSprintWorkspacePresentationMetadataV1['workUnitLifecycle'];
     readonly narratives?: ProductSprintWorkspaceNarrativesV1;
   }>;
   readonly agentSessionReferences: readonly ProductAgentSessionReferenceReadModelV1[];

@@ -1,12 +1,12 @@
 import {
   decodeSprintExecutionSnapshotV1,
-  decodeSprintPlannerOutputV1,
+  decodeSprintRunnerPlanV1,
   deriveConcernState,
   projectSprintControlSurface,
 } from './sprintControlSurface';
 import type {
   SprintExecutionSnapshotV1,
-  SprintPlannerOutputV1,
+  SprintRunnerPlanV1,
   WorkUnitPresentationState,
 } from './sprintControlSurface';
 
@@ -14,7 +14,7 @@ describe('Sprint control-surface read boundary', () => {
   it('accepts a single revision and an ordered multi-revision chain', () => {
     const single = mutablePlanner();
     single.planRevisions = [single.planRevisions[0]];
-    single.sprintPlannerActivities = [single.sprintPlannerActivities[0]];
+    single.workSlicePlanningPoints = [single.workSlicePlanningPoints[0]];
     single.planChanges = [];
     single.workUnits = [
       {
@@ -26,8 +26,8 @@ describe('Sprint control-surface read boundary', () => {
     single.gates = [];
     single.documents = [];
 
-    expect(decodeSprintPlannerOutputV1(single).planRevisions).toHaveLength(1);
-    expect(decodeSprintPlannerOutputV1(plannerOutput()).planRevisions).toHaveLength(2);
+    expect(decodeSprintRunnerPlanV1(single).planRevisions).toHaveLength(1);
+    expect(decodeSprintRunnerPlanV1(plannerOutput()).planRevisions).toHaveLength(2);
   });
 
   it.each<[string, PlannerMutator, string]>([
@@ -71,13 +71,13 @@ describe('Sprint control-surface read boundary', () => {
   ])('rejects %s revision lineage', (_name, mutate, message) => {
     const planner = mutablePlanner();
     mutate(planner);
-    expect(() => decodeSprintPlannerOutputV1(planner)).toThrow(message);
+    expect(() => decodeSprintRunnerPlanV1(planner)).toThrow(message);
   });
 
   it('rejects a dangling supersession reference', () => {
     const planner = mutablePlanner();
     planner.planRevisions[1].supersedesPlanRevisionId = 'missing-plan-revision';
-    expect(() => decodeSprintPlannerOutputV1(planner)).toThrow(
+    expect(() => decodeSprintRunnerPlanV1(planner)).toThrow(
       'dangling superseded revision reference',
     );
   });
@@ -85,7 +85,7 @@ describe('Sprint control-surface read boundary', () => {
   it('decodes revisions, Work Units, concerns, Documents, and observed execution history', () => {
     const planner = plannerOutput();
     const snapshot = mutableSnapshot();
-    expect(decodeSprintPlannerOutputV1(planner)).toEqual(planner);
+    expect(decodeSprintRunnerPlanV1(planner)).toEqual(planner);
     expect(decodeSprintExecutionSnapshotV1(snapshot, planner)).toEqual(snapshot);
     const projection = projectSprintControlSurface(planner, snapshot);
     expect(projection.workUnits.find(({ id }) => id === 'work-unit-1')).toMatchObject({
@@ -124,12 +124,12 @@ describe('Sprint control-surface read boundary', () => {
     );
   });
 
-  it('keeps Sprint Plan, Revision, Sprint Planner Activity, Work Unit, and Agent Session identities independent', () => {
+  it('keeps Sprint Plan, Revision, Work Slice planning point, Work Unit, and Agent Session identities independent', () => {
     const read = projectSprintControlSurface(plannerOutput(), executionSnapshot()).readModel;
     const ids = [
       read.sprintPlan.sprintPlanId,
       read.sprintPlanRevisions[0].sprintPlanRevisionId,
-      read.sprintPlannerActivities[0].sprintPlannerActivityId,
+      read.workSlicePlanningPoints[0].workSlicePlanningPointId,
       read.workUnits[0].workUnitId,
       read.agentSessionReferences[0].agentSessionRefId,
     ];
@@ -140,11 +140,11 @@ describe('Sprint control-surface read boundary', () => {
       ),
     ).toBe(true);
     expect(read.sprintPlan.sprintPlanId).not.toBe(
-      read.sprintPlannerActivities[0].sprintPlannerActivityId,
+      read.workSlicePlanningPoints[0].workSlicePlanningPointId,
     );
   });
 
-  it('projects explicit Sprint Plan relationships without cloning Sprint Planner Activities into Plan identity', () => {
+  it('projects explicit Sprint Plan relationships without cloning Work Slice planning points into Plan identity', () => {
     const projection = projectSprintControlSurface(plannerOutput(), executionSnapshot());
     expect(projection.readModel.sprintPlan).toEqual({
       sprintPlanId: 'sprint-plan-1',
@@ -161,7 +161,7 @@ describe('Sprint control-surface read boundary', () => {
       }),
     );
     expect(projection).not.toHaveProperty('plans');
-    expect(projection.sprintPlannerActivityGroups).toBe(projection.sprintPlannerActivities);
+    expect(projection.workSlicePlanningPointGroups).toBe(projection.workSlicePlanningPoints);
   });
 
   it('does not infer request, launch, or accepted completion from planned compatibility facts', () => {
@@ -207,11 +207,11 @@ describe('Sprint control-surface read boundary', () => {
         source: 'sprint_conversation',
         priorPlanRevisionId: 'sprint-plan-revision-1',
         resultingPlanRevisionId: 'sprint-plan-revision-2',
-        priorSprintPlannerActivityId: 'sprint-planner-activity-1',
-        resultingSprintPlannerActivityId: 'sprint-planner-activity-2',
+        priorWorkSlicePlanningPointId: 'sprint-planner-activity-1',
+        resultingWorkSlicePlanningPointId: 'sprint-planner-activity-2',
       }),
     ]);
-    expect(projection.sprintPlannerActivityGroups.map(({ id }) => id)).toEqual([
+    expect(projection.workSlicePlanningPointGroups.map(({ id }) => id)).toEqual([
       'sprint-planner-activity-2',
     ]);
   });
@@ -235,8 +235,8 @@ describe('Sprint control-surface read boundary', () => {
     expect(projection.mapLayout.nodes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: 'sprint_planner_activity:sprint-planner-activity-2',
-          type: 'sprint_planner_activity',
+          id: 'work_slice_planning_point:sprint-planner-activity-2',
+          type: 'work_slice_planning_point',
         }),
         expect.objectContaining({ id: 'work_unit:work-unit-2', type: 'work_unit' }),
         expect.objectContaining({ id: 'gate:gate-1', type: 'gate' }),
@@ -366,7 +366,7 @@ describe('Sprint control-surface read boundary', () => {
       },
     ];
     planner.workUnits.forEach((unit) => (unit.parallelGroupId = 'parallel-1'));
-    expect(decodeSprintPlannerOutputV1(planner)).toEqual(planner);
+    expect(decodeSprintRunnerPlanV1(planner)).toEqual(planner);
   });
 
   it.each<[string, PlannerMutator]>([
@@ -404,14 +404,12 @@ describe('Sprint control-surface read boundary', () => {
     ],
     [
       'invalid plan change source',
-      (planner) => ((planner.planChanges[0] as { source: string }).source = 'worker'),
+      (planner) => ((planner.planChanges[0] as { source: string }).source = 'display'),
     ],
   ])('rejects planner output with %s', (_label, mutate) => {
     const planner = mutablePlanner();
     mutate(planner);
-    expect(() => decodeSprintPlannerOutputV1(planner)).toThrow(
-      'Invalid Sprint control surface data',
-    );
+    expect(() => decodeSprintRunnerPlanV1(planner)).toThrow('Invalid Sprint control surface data');
   });
 
   it.each<[string, SnapshotMutator]>([
@@ -447,9 +445,9 @@ describe('Sprint control-surface read boundary', () => {
   });
 });
 
-function plannerOutput(): SprintPlannerOutputV1 {
+function plannerOutput(): SprintRunnerPlanV1 {
   return {
-    version: 'sprint-planner-output/v1',
+    version: 'sprint-runner-plan/v1',
     epicId: 'epic-1',
     sprint: {
       id: 'sprint-1',
@@ -482,7 +480,7 @@ function plannerOutput(): SprintPlannerOutputV1 {
         workUnitIds: ['work-unit-1', 'work-unit-2'],
       },
     ],
-    sprintPlannerActivities: [
+    workSlicePlanningPoints: [
       {
         id: 'sprint-planner-activity-1',
         title: 'Initial planning',
@@ -507,8 +505,8 @@ function plannerOutput(): SprintPlannerOutputV1 {
         summary: 'Recorded direct Sprint plan change.',
         priorPlanRevisionId: 'sprint-plan-revision-1',
         resultingPlanRevisionId: 'sprint-plan-revision-2',
-        priorSprintPlannerActivityId: 'sprint-planner-activity-1',
-        resultingSprintPlannerActivityId: 'sprint-planner-activity-2',
+        priorWorkSlicePlanningPointId: 'sprint-planner-activity-1',
+        resultingWorkSlicePlanningPointId: 'sprint-planner-activity-2',
       },
     ],
     parallelGroups: [],
@@ -576,7 +574,7 @@ function plannerOutput(): SprintPlannerOutputV1 {
         id: 'document-1',
         title: 'Recorded Sprint plan',
         kind: 'plan',
-        sprintPlannerActivityId: 'sprint-planner-activity-2',
+        workSlicePlanningPointId: 'sprint-planner-activity-2',
         planRevisionId: 'sprint-plan-revision-2',
         recordedAt: '2026-07-15T09:00:00.000Z',
       },
@@ -636,10 +634,10 @@ function executionSnapshot(): SprintExecutionSnapshotV1 {
       },
     ],
     agentSessions: [
-      { id: 'agent-session-sprint-1', title: 'Sprint Planner', role: 'sprint' },
+      { id: 'agent-session-sprint-1', title: 'Work Slice Planner', role: 'sprint' },
       {
         id: 'agent-session-work-unit-1',
-        title: 'Work Unit worker',
+        title: 'Work Unit Implementer',
         role: 'work_unit_implementer',
         workUnitId: 'work-unit-1',
       },
@@ -651,8 +649,8 @@ function executionSnapshot(): SprintExecutionSnapshotV1 {
   };
 }
 
-function mutablePlanner(): Mutable<SprintPlannerOutputV1> {
-  return structuredClone(plannerOutput()) as Mutable<SprintPlannerOutputV1>;
+function mutablePlanner(): Mutable<SprintRunnerPlanV1> {
+  return structuredClone(plannerOutput()) as Mutable<SprintRunnerPlanV1>;
 }
 
 function mutableSnapshot(): Mutable<SprintExecutionSnapshotV1> {
@@ -664,5 +662,5 @@ type Mutable<T> = T extends readonly (infer Item)[]
   : T extends object
     ? { -readonly [Key in keyof T]: Mutable<T[Key]> }
     : T;
-type PlannerMutator = (planner: Mutable<SprintPlannerOutputV1>) => unknown;
+type PlannerMutator = (planner: Mutable<SprintRunnerPlanV1>) => unknown;
 type SnapshotMutator = (snapshot: Mutable<SprintExecutionSnapshotV1>) => unknown;

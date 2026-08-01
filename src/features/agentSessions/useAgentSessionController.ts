@@ -44,11 +44,21 @@ export type AgentSessionWorkspaceController = Omit<
   'summaries' | 'selectSession' | 'startNewSession'
 >;
 
+export interface AgentSessionCollectionOptions {
+  readonly selectedSessionId?: string | null;
+  readonly onSelectedSessionChange?: (sessionId: string | null) => void;
+}
+
 export function useAgentSessionCollection(
   client: AgentSessionClient,
+  options: AgentSessionCollectionOptions = {},
 ): AgentSessionCollectionController {
+  const { selectedSessionId: controlledSelectedSessionId, onSelectedSessionChange } = options;
   const [summaries, setSummaries] = useState<AgentSessionSummaryDto[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
+    controlledSelectedSessionId ?? null,
+  );
+  const selectedSessionIdRef = useRef<string | null>(controlledSelectedSessionId ?? null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const reload = useCallback(async () => {
@@ -57,13 +67,19 @@ export function useAgentSessionCollection(
     try {
       const next = await client.listSessions({ availability: 'available' });
       setSummaries(next);
-      setSelectedSessionId((current) => current ?? next[0]?.id ?? null);
+      const selected =
+        selectedSessionIdRef.current ?? controlledSelectedSessionId ?? next[0]?.id ?? null;
+      if (selected !== selectedSessionIdRef.current) {
+        selectedSessionIdRef.current = selected;
+        setSelectedSessionId(selected);
+        onSelectedSessionChange?.(selected);
+      }
     } catch (caught) {
       if (mountedRef.current) setError(`Session list reload failed: ${errorMessage(caught)}`);
     } finally {
       setLoading(false);
     }
-  }, [client]);
+  }, [client, controlledSelectedSessionId, onSelectedSessionChange]);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -72,6 +88,11 @@ export function useAgentSessionCollection(
       mountedRef.current = false;
     };
   }, [reload]);
+  useEffect(() => {
+    if (controlledSelectedSessionId === undefined) return;
+    selectedSessionIdRef.current = controlledSelectedSessionId;
+    setSelectedSessionId(controlledSelectedSessionId);
+  }, [controlledSelectedSessionId]);
   return {
     summaries,
     selectedSessionId,
@@ -79,11 +100,15 @@ export function useAgentSessionCollection(
     error,
     selectSession: async (id) => {
       setError(null);
+      selectedSessionIdRef.current = id;
       setSelectedSessionId(id);
+      onSelectedSessionChange?.(id);
     },
     startNewSession: () => {
       setError(null);
+      selectedSessionIdRef.current = null;
       setSelectedSessionId(null);
+      onSelectedSessionChange?.(null);
     },
     reload,
     clearError: () => setError(null),

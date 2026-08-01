@@ -216,6 +216,25 @@ export function nativeQueryProductCompositionInputV2(
   transitionQuery?: import('./epicBootstrapTransition').EpicBootstrapTransitionQueryV2,
 ): ProductReadCompositionInputV1 {
   const initiated = query.initiatedEpics;
+  const initiatedPlanBuilders = initiated.map((epic) => {
+    const association = query.agentSessionAssociations.find(
+      (item) => item.epicPlanningDraftId === epic.epicPlanningDraftId,
+    );
+    const draft = query.planningDrafts.find(
+      (item) => item.epicPlanningDraftId === epic.epicPlanningDraftId,
+    );
+    if (!association || !draft)
+      throw new Error(
+        'Invalid orchestration native query: initiated Epic planning binding is missing',
+      );
+    return { epic, association, draft };
+  });
+  const uniquePlanBuilderSessions = initiatedPlanBuilders.filter(
+    (item, index, items) =>
+      items.findIndex(
+        ({ association }) => association.agentSessionId === item.association.agentSessionId,
+      ) === index,
+  );
   const source = (id: string) => ({
     status: 'available' as const,
     sourceKind: 'application_interpretation' as const,
@@ -236,10 +255,14 @@ export function nativeQueryProductCompositionInputV2(
     })),
     workUnits: [],
     workUnitScopes: [],
-    sprintPlannerActivities: [],
+    workSlicePlanningPoints: [],
     workUnitExecutions: [],
     attempts: [],
-    agentSessions: [],
+    agentSessions: uniquePlanBuilderSessions.map(({ association }) => ({
+      agentSessionId: association.agentSessionId,
+    })),
+    // Plan Builder Sessions remain associated with their durable planning drafts. Initiation does
+    // not relabel them as one of the five orchestration runtime roles.
     agentSessionReferences: [],
     gates: [],
     gateCriteriaRevisions: [],
@@ -315,17 +338,25 @@ export function nativeQueryProductCompositionInputV2(
           source: source(initiated.find((e) => e.epicId === x.epicId)!.provenanceId),
           value: 'not_started' as const,
         },
+        planningState: {
+          source: source(initiated.find((e) => e.epicId === x.epicId)!.provenanceId),
+          value: { kind: 'pre_start_forecast' as const },
+        },
       })),
       sprintPlanRevisions: query.initiatedSprints.map((x) => ({
         sprintPlanRevisionId: x.sprintPlanRevisionId,
         summary: 'Preparatory initial Sprint Plan revision.',
         source: source(initiated.find((e) => e.epicId === x.epicId)!.provenanceId),
       })),
-      plannerActivities: [],
+      workSlicePlanningPoints: [],
       workUnits: [],
       gates: [],
       concerns: [],
-      agentSessions: [],
+      agentSessions: uniquePlanBuilderSessions.map(({ epic, association, draft }) => ({
+        agentSessionId: association.agentSessionId,
+        title: draft.title ?? 'Epic Plan Builder',
+        source: source(epic.provenanceId),
+      })),
       artifactOwnership: [],
       documentOwnership: [],
     },

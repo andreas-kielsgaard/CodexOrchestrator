@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
   type KeyboardEvent,
@@ -19,6 +20,7 @@ export interface ResizableSplitSurfaceProps {
   readonly minimumPrimaryPixels?: number;
   readonly minimumSecondaryPixels?: number;
   readonly maximizePrimaryLabel?: string;
+  readonly compactBreakpoint?: 720 | 860;
 }
 
 /** Reusable two-pane surface with pointer and keyboard resizing. */
@@ -32,27 +34,40 @@ export function ResizableSplitSurface({
   minimumPrimaryPixels = 160,
   minimumSecondaryPixels = 120,
   maximizePrimaryLabel,
+  compactBreakpoint = 720,
 }: ResizableSplitSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const primaryPaneId = useId();
+  const secondaryPaneId = useId();
   const [primaryPixels, setPrimaryPixels] = useState<number | null>(null);
+  const [ariaValue, setAriaValue] = useState(() => ({
+    minimum: 0,
+    maximum: 100,
+    now: Math.min(100, Math.max(0, Math.round(initialPrimaryPercent))),
+  }));
   const [stackHorizontal, setStackHorizontal] = useState(
     () =>
       axis === 'horizontal' &&
       typeof window !== 'undefined' &&
-      window.matchMedia?.('(max-width: 720px)').matches === true,
+      window.matchMedia?.(`(max-width: ${compactBreakpoint}px)`).matches === true,
   );
   const effectiveAxis = axis === 'horizontal' && stackHorizontal ? 'vertical' : axis;
 
   useEffect(() => {
     if (axis !== 'horizontal' || typeof window === 'undefined' || !window.matchMedia) return;
-    const media = window.matchMedia('(max-width: 720px)');
+    const media = window.matchMedia(`(max-width: ${compactBreakpoint}px)`);
     const updateAxis = () => {
       setStackHorizontal(media.matches);
       setPrimaryPixels(null);
+      setAriaValue({
+        minimum: 0,
+        maximum: 100,
+        now: Math.min(100, Math.max(0, Math.round(initialPrimaryPercent))),
+      });
     };
     media.addEventListener('change', updateAxis);
     return () => media.removeEventListener('change', updateAxis);
-  }, [axis]);
+  }, [axis, compactBreakpoint, initialPrimaryPercent]);
 
   const bounds = useCallback(() => {
     const rect = hostRef.current?.getBoundingClientRect();
@@ -70,7 +85,13 @@ export function ResizableSplitSurface({
     (requested: number) => {
       const nextBounds = bounds();
       if (!nextBounds) return;
-      setPrimaryPixels(Math.min(nextBounds.maximum, Math.max(nextBounds.minimum, requested)));
+      const next = Math.min(nextBounds.maximum, Math.max(nextBounds.minimum, requested));
+      setPrimaryPixels(next);
+      setAriaValue({
+        minimum: Math.round((nextBounds.minimum / nextBounds.total) * 100),
+        maximum: Math.round((nextBounds.maximum / nextBounds.total) * 100),
+        now: Math.round((next / nextBounds.total) * 100),
+      });
     },
     [bounds],
   );
@@ -95,13 +116,17 @@ export function ResizableSplitSurface({
     event.preventDefault();
     const host = hostRef.current;
     if (!host) return;
+    const separator = event.currentTarget;
+    separator.setPointerCapture?.(event.pointerId);
     const onMove = (moveEvent: PointerEvent) => {
       const rect = host.getBoundingClientRect();
       update(
         effectiveAxis === 'vertical' ? moveEvent.clientY - rect.top : moveEvent.clientX - rect.left,
       );
     };
-    const stop = () => {
+    const stop = (stopEvent: PointerEvent) => {
+      if (separator.hasPointerCapture?.(stopEvent.pointerId))
+        separator.releasePointerCapture(stopEvent.pointerId);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', stop);
       window.removeEventListener('pointercancel', stop);
@@ -131,31 +156,40 @@ export function ResizableSplitSurface({
   return (
     <div
       ref={hostRef}
-      className={`resizable-split resizable-split--${axis}`}
+      className={`resizable-split resizable-split--${axis} resizable-split--compact-${compactBreakpoint}`}
       style={splitStyle}
       data-split-axis={axis}
       data-effective-split-axis={effectiveAxis}
     >
       <section
+        id={primaryPaneId}
         className="resizable-split__pane resizable-split__pane--primary"
         aria-label={primaryLabel}
       >
         {primary}
       </section>
-      <div
-        className="resizable-split__separator"
-        role="separator"
-        aria-label={`Resize ${primaryLabel} and ${secondaryLabel}`}
-        aria-orientation={effectiveAxis === 'vertical' ? 'horizontal' : 'vertical'}
-        tabIndex={0}
-        onPointerDown={beginPointerResize}
-        onKeyDown={resizeWithKeyboard}
-      >
-        <span aria-hidden="true" />
+      <div className="resizable-split__separator-shell">
+        <div
+          className="resizable-split__separator"
+          role="separator"
+          aria-label={`Resize ${primaryLabel} and ${secondaryLabel}`}
+          aria-controls={`${primaryPaneId} ${secondaryPaneId}`}
+          aria-orientation={effectiveAxis === 'vertical' ? 'horizontal' : 'vertical'}
+          aria-valuemin={ariaValue.minimum}
+          aria-valuemax={ariaValue.maximum}
+          aria-valuenow={ariaValue.now}
+          aria-valuetext={`${ariaValue.now}% allocated to ${primaryLabel}`}
+          tabIndex={0}
+          onPointerDown={beginPointerResize}
+          onKeyDown={resizeWithKeyboard}
+        >
+          <span aria-hidden="true" />
+        </div>
         {maximizePrimaryLabel ? (
           <button
             type="button"
-            onPointerDown={(event) => event.stopPropagation()}
+            className="resizable-split__maximize"
+            aria-controls={primaryPaneId}
             onClick={() => {
               const nextBounds = bounds();
               if (nextBounds) update(nextBounds.maximum);
@@ -166,6 +200,7 @@ export function ResizableSplitSurface({
         ) : null}
       </div>
       <section
+        id={secondaryPaneId}
         className="resizable-split__pane resizable-split__pane--secondary"
         aria-label={secondaryLabel}
       >

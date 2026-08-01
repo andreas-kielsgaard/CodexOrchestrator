@@ -4,6 +4,7 @@ import {
   composeProductOrchestrationReadModels,
   ORCHESTRATION_EVENTS_V1,
   type ProductReadCompositionInputV1,
+  type ProductSprintWorkspacePresentationMetadataV1,
 } from './index';
 
 describe('product read-model composer', () => {
@@ -17,12 +18,15 @@ describe('product read-model composer', () => {
       continuation: { policy: { automaticEnabled: true }, initiationObserved: false },
     });
     expect(read.agentSessionReferences).toEqual(
-      expect.arrayContaining([expect.objectContaining({ semanticRole: 'epic_runner' })]),
+      expect.arrayContaining([expect.objectContaining({ semanticRole: 'epic' })]),
     );
     const sprint = read.sprints[0];
     expect(result.unassociatedAgentSessionReferences).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ semanticRole: 'other', otherTargetType: 'future_target' }),
+        expect.objectContaining({
+          semanticRole: 'work_unit_implementer',
+          otherTargetType: 'future_target',
+        }),
       ]),
     );
     expect(sprint).toMatchObject({
@@ -30,7 +34,9 @@ describe('product read-model composer', () => {
         currentSprintPlanRevisionId: 'revision-1',
         selectedSprintPlanRevisionId: 'revision-1',
       },
-      plannerActivities: [expect.objectContaining({ sprintPlannerActivityId: 'activity-1' })],
+      workSlicePlanningPoints: [
+        expect.objectContaining({ workSlicePlanningPointId: 'activity-1' }),
+      ],
       revisionViews: [
         expect.objectContaining({
           gates: [
@@ -53,13 +59,16 @@ describe('product read-model composer', () => {
         initiationObserved: true,
         observedContinuationIds: ['continuation-1'],
         continuationRequests: [
-          { continuationRequestId: 'continuation-request-1', targetKind: 'next_work_unit' },
+          {
+            continuationRequestId: 'continuation-request-1',
+            targetKind: 'next_work_slice_planner',
+          },
         ],
         commandResults: [{ commandId: 'command-sprint', state: 'orchestration_event_recorded' }],
       },
     });
     expect(sprint.agentSessionReferences).toEqual(
-      expect.arrayContaining([expect.objectContaining({ semanticRole: 'sprint_runner' })]),
+      expect.arrayContaining([expect.objectContaining({ semanticRole: 'sprint' })]),
     );
     expect(sprint.revisionViews[0].workUnits).toEqual(
       expect.arrayContaining([
@@ -98,6 +107,80 @@ describe('product read-model composer', () => {
       observedContinuationIds: [],
       initiationObserved: false,
     });
+  });
+
+  it('keeps Sprint planning unavailable when no application-owned start state is recorded', () => {
+    const planningState = compose(productInput()).epics[0].sprints[0].planningState;
+
+    expect(planningState.source).toEqual({
+      status: 'unavailable',
+      reason: 'No application-owned Sprint start and repository reevaluation record is available.',
+    });
+  });
+
+  it('accepts a concerns-only pre-start forecast and rejects concrete started planning before start', () => {
+    const input = productInput();
+    input.referenceIndex.sprints[0].lifecycle = { source: source(), value: 'not_started' };
+    input.referenceIndex.sprints[0].planningState = {
+      source: source(),
+      value: { kind: 'pre_start_forecast' },
+    };
+
+    expect(compose(input).epics[0].sprints[0].planningState).toMatchObject({
+      value: { kind: 'pre_start_forecast' },
+    });
+
+    input.referenceIndex.sprints[0].planningState = {
+      source: source(),
+      value: {
+        kind: 'started_plan',
+        currentWorkSlicePlanningPointId: 'activity-1',
+        repositoryAssessmentSummary: 'Current branch and repository state.',
+        reevaluatedAt: TIME,
+      },
+    };
+    expect(() => compose(input)).toThrow(
+      'a not-started Sprint may expose only a pre-start concern forecast',
+    );
+  });
+
+  it('requires a started Sprint plan to name its current Work Slice planning point', () => {
+    const input = productInput();
+    input.referenceIndex.sprints[0].lifecycle = { source: source(), value: 'in_progress' };
+    input.referenceIndex.sprints[0].planningState = {
+      source: source(),
+      value: {
+        kind: 'started_plan',
+        currentWorkSlicePlanningPointId: 'missing-planning-point',
+        repositoryAssessmentSummary: 'Current branch and repository state.',
+        reevaluatedAt: TIME,
+      },
+    };
+
+    expect(() => compose(input)).toThrow(
+      'a started Sprint planning point must belong to that Sprint',
+    );
+  });
+
+  it('rejects speculative multiple Work Slice Planner Sessions for one planning point', () => {
+    const input = productInput();
+    input.events.agentSessions.push({ agentSessionId: 'session-2' });
+    input.events.agentSessionReferences.push({
+      agentSessionRefId: 'session-ref-planner-2',
+      agentSessionId: 'session-2',
+      targetKind: 'work_slice_planning_point',
+      targetId: 'activity-1',
+      semanticRole: 'work_slice_planner',
+    });
+    input.referenceIndex.agentSessions.push({
+      agentSessionId: 'session-2',
+      title: 'Second planner',
+      source: source(),
+    });
+
+    expect(() => compose(input)).toThrow(
+      'Work Slice planning point cannot have more than one Work Slice Planner Session',
+    );
   });
 
   it.each(['pending', 'unavailable', 'unsupported'] as const)(
@@ -229,9 +312,9 @@ describe('product read-model composer', () => {
       summary: 'Revision 5',
       source: source(),
     });
-    input.events.sprintPlannerActivities[0].assessedSprintPlanRevisionIds.push('revision-5');
-    input.referenceIndex.sprintWorkspacePresentation!.plannerActivityMembership.push({
-      sprintPlannerActivityId: 'activity-1',
+    input.events.workSlicePlanningPoints[0].assessedSprintPlanRevisionIds.push('revision-5');
+    input.referenceIndex.sprintWorkspacePresentation!.workSlicePlanningPointMembership.push({
+      workSlicePlanningPointId: 'activity-1',
       sprintPlanRevisionId: 'revision-5',
       workUnitScopeIds: ['scope-5a', 'scope-5b'],
       source: source(),
@@ -279,7 +362,7 @@ describe('product read-model composer', () => {
       {
         sprintPlanRevisionId: 'revision-5',
         isSelected: true,
-        plannerActivityGroups: [{ workUnitScopeIds: ['scope-5a', 'scope-5b'] }],
+        workSlicePlanningPointGroups: [{ workUnitScopeIds: ['scope-5a', 'scope-5b'] }],
         workUnits: [
           { workUnitId: 'work-unit-5a', presentationState: 'not_started' },
           { workUnitId: 'work-unit-5b', presentationState: 'waiting_for_dependencies' },
@@ -307,9 +390,50 @@ describe('product read-model composer', () => {
         progress: { source: { status: 'pending', reason: 'awaiting review evidence' } },
       },
     ];
+    input.referenceIndex.sprintWorkspacePresentation!.sprintRunnerConcerns = [
+      {
+        sprintRunnerConcernId: 'sprintRunnerConcern-1',
+        sprintId: 'sprint-1',
+        title: 'Keep the relationship explicit.',
+        source: source(),
+        graphElementRefs: [
+          { kind: 'work_slice_planning_point', id: 'activity-1' },
+          { kind: 'work_unit', id: 'work-unit-1' },
+        ],
+      },
+    ];
+    input.referenceIndex.sprintWorkspacePresentation!.epicRunnerObjectives = [
+      {
+        objectiveId: 'objective-1',
+        sprintId: 'sprint-1',
+        title: 'Preserve the planned Sprint task.',
+        source: source(),
+      },
+      {
+        objectiveId: 'objective-2',
+        sprintId: 'sprint-1',
+        title: 'Make the review relationship explicit.',
+        source: source(),
+      },
+    ];
+    input.referenceIndex.sprintWorkspacePresentation!.workUnitLifecycle = [
+      {
+        entryId: 'lifecycle-1',
+        sprintId: 'sprint-1',
+        workUnitId: 'work-unit-1',
+        sequence: 0,
+        kind: 'work',
+        title: 'Work',
+        summary: 'Recorded work.',
+        agentSessionId: 'session-1',
+        agentRole: 'work_unit_implementer',
+        invocationId: 'invocation-1',
+        source: source(),
+      },
+    ];
 
     const presentation = compose(input).epics[0].sprints[0].workspacePresentation;
-    expect(presentation.plannerActivityMembership).toEqual([
+    expect(presentation.workSlicePlanningPointMembership).toEqual([
       expect.objectContaining({ workUnitScopeIds: ['scope-1'] }),
     ]);
     expect(presentation.gates[0]).toMatchObject({
@@ -319,15 +443,54 @@ describe('product read-model composer', () => {
       source: { status: 'pending', reason: 'awaiting review evidence' },
     });
     expect(presentation.narratives?.progress).not.toHaveProperty('value');
+    expect(presentation.sprintRunnerConcerns?.[0].graphElementRefs).toEqual([
+      { kind: 'work_slice_planning_point', id: 'activity-1' },
+      { kind: 'work_unit', id: 'work-unit-1' },
+    ]);
+    expect(presentation.epicRunnerObjectives?.map(({ title }) => title)).toEqual([
+      'Preserve the planned Sprint task.',
+      'Make the review relationship explicit.',
+    ]);
+    expect(presentation.workUnitLifecycle?.[0]).toMatchObject({
+      entryId: 'lifecycle-1',
+      agentSessionId: 'session-1',
+    });
+  });
+
+  it('projects Epic Runner objectives only to their owning Sprint', () => {
+    const input = productInput();
+    addSecondSprint(input);
+    input.referenceIndex.sprintWorkspacePresentation!.epicRunnerObjectives = [
+      {
+        objectiveId: 'objective-1',
+        sprintId: 'sprint-1',
+        title: 'First Sprint task.',
+        source: source(),
+      },
+      {
+        objectiveId: 'objective-2',
+        sprintId: 'sprint-2',
+        title: 'Second Sprint task.',
+        source: source(),
+      },
+    ];
+
+    const sprints = compose(input).epics[0].sprints;
+    expect(
+      sprints[0].workspacePresentation.epicRunnerObjectives?.map(({ objectiveId }) => objectiveId),
+    ).toEqual(['objective-1']);
+    expect(
+      sprints[1].workspacePresentation.epicRunnerObjectives?.map(({ objectiveId }) => objectiveId),
+    ).toEqual(['objective-2']);
   });
 
   it.each([
     [
-      'cross-plan Planner Activity membership',
+      'cross-plan Work Slice planning-point membership',
       (input: Mutable<ProductReadCompositionInputV1>) => {
         addSecondSprint(input);
-        input.referenceIndex.sprintWorkspacePresentation!.plannerActivityMembership[0] = {
-          sprintPlannerActivityId: 'activity-1',
+        input.referenceIndex.sprintWorkspacePresentation!.workSlicePlanningPointMembership[0] = {
+          workSlicePlanningPointId: 'activity-1',
           sprintPlanRevisionId: 'revision-2',
           workUnitScopeIds: ['scope-2'],
           source: source(),
@@ -338,20 +501,20 @@ describe('product read-model composer', () => {
     [
       'unknown Work Unit scope membership',
       (input: Mutable<ProductReadCompositionInputV1>) =>
-        (input.referenceIndex.sprintWorkspacePresentation!.plannerActivityMembership[0].workUnitScopeIds =
+        (input.referenceIndex.sprintWorkspacePresentation!.workSlicePlanningPointMembership[0].workUnitScopeIds =
           ['scope-missing']),
       'missing Work Unit scope',
     ],
     [
-      'one Work Unit scope assigned to multiple Planner Activities',
+      'one Work Unit scope assigned to multiple Work Slice planning points',
       (input: Mutable<ProductReadCompositionInputV1>) =>
-        input.referenceIndex.sprintWorkspacePresentation!.plannerActivityMembership.push({
-          sprintPlannerActivityId: 'activity-1',
+        input.referenceIndex.sprintWorkspacePresentation!.workSlicePlanningPointMembership.push({
+          workSlicePlanningPointId: 'activity-1',
           sprintPlanRevisionId: 'revision-1',
           workUnitScopeIds: ['scope-1'],
           source: source(),
         }),
-      'exactly one Planner Activity',
+      'exactly one Work Slice planning point',
     ],
     [
       'cross-Sprint Document revision link',
@@ -362,6 +525,49 @@ describe('product read-model composer', () => {
         ];
       },
       'Document Sprint',
+    ],
+    [
+      'Epic Runner objective without an identity',
+      (input: Mutable<ProductReadCompositionInputV1>) =>
+        (input.referenceIndex.sprintWorkspacePresentation!.epicRunnerObjectives = [
+          { objectiveId: ' ', sprintId: 'sprint-1', title: 'Task', source: source() },
+        ]),
+      'requires an identity',
+    ],
+    [
+      'Epic Runner objective owned by an unknown Sprint',
+      (input: Mutable<ProductReadCompositionInputV1>) =>
+        (input.referenceIndex.sprintWorkspacePresentation!.epicRunnerObjectives = [
+          {
+            objectiveId: 'objective-1',
+            sprintId: 'sprint-missing',
+            title: 'Task',
+            source: source(),
+          },
+        ]),
+      'unknown Sprint',
+    ],
+    [
+      'duplicate Epic Runner objective identity',
+      (input: Mutable<ProductReadCompositionInputV1>) =>
+        (input.referenceIndex.sprintWorkspacePresentation!.epicRunnerObjectives = [
+          { objectiveId: 'objective-1', sprintId: 'sprint-1', title: 'First', source: source() },
+          { objectiveId: 'objective-1', sprintId: 'sprint-1', title: 'Second', source: source() },
+        ]),
+      'cannot repeat an objective identity',
+    ],
+    [
+      'Epic Runner objective without sourced authority',
+      (input: Mutable<ProductReadCompositionInputV1>) =>
+        (input.referenceIndex.sprintWorkspacePresentation!.epicRunnerObjectives = [
+          {
+            objectiveId: 'objective-1',
+            sprintId: 'sprint-1',
+            title: 'Task',
+            source: { ...source(), sourceReferences: ['missing-provenance'] },
+          },
+        ]),
+      'source must name known facts or provenance',
     ],
     [
       'invented pending narrative value',
@@ -381,6 +587,85 @@ describe('product read-model composer', () => {
     const input = productInput();
     mutate(input);
     expect(() => compose(input)).toThrow(message);
+  });
+
+  it('rejects lifecycle entries that cross Sprint or Agent Session relationships', () => {
+    const crossSprint = productInput();
+    addSecondSprint(crossSprint);
+    crossSprint.referenceIndex.sprintWorkspacePresentation!.workUnitLifecycle = [
+      lifecycleEntry({ sprintId: 'sprint-2', workUnitId: 'work-unit-1' }),
+    ];
+    expect(() => compose(crossSprint)).toThrow('Work Unit must belong to its Sprint');
+
+    const unrelatedSession = productInput();
+    unrelatedSession.events.agentSessions.push({ agentSessionId: 'session-2' });
+    unrelatedSession.events.agentSessionReferences.push({
+      agentSessionRefId: 'session-ref-unrelated',
+      agentSessionId: 'session-2',
+      targetKind: 'sprint',
+      targetId: 'sprint-1',
+      semanticRole: 'sprint',
+    });
+    unrelatedSession.referenceIndex.agentSessions.push({
+      agentSessionId: 'session-2',
+      title: 'Unrelated session',
+      source: source(),
+    });
+    unrelatedSession.referenceIndex.sprintWorkspacePresentation!.workUnitLifecycle = [
+      lifecycleEntry({ agentSessionId: 'session-2' }),
+    ];
+    expect(() => compose(unrelatedSession)).toThrow(
+      'Agent Session must be associated with its Work Unit or owning Work Slice planning point and Sprint',
+    );
+  });
+
+  it('accepts a Work Slice Planner lifecycle turn only through exact planning-point membership', () => {
+    const input = productInput();
+    input.events.agentSessionReferences = input.events.agentSessionReferences.filter(
+      ({ targetKind }) => targetKind !== 'work_unit_execution',
+    );
+    input.referenceIndex.sprintWorkspacePresentation!.workUnitLifecycle = [
+      lifecycleEntry({
+        kind: 'planning',
+        agentRole: 'work_slice_planner',
+        invocationId: 'planner-scope-turn',
+      }),
+    ];
+
+    expect(
+      compose(input).epics[0].sprints[0].workspacePresentation.workUnitLifecycle?.[0],
+    ).toMatchObject({
+      kind: 'planning',
+      agentRole: 'work_slice_planner',
+      agentSessionId: 'session-1',
+    });
+
+    input.events.workSlicePlanningPoints.push({
+      workSlicePlanningPointId: 'activity-unrelated',
+      sprintPlanId: 'plan-1',
+      assessedSprintPlanRevisionIds: ['revision-1'],
+    });
+    input.referenceIndex.workSlicePlanningPoints.push({
+      workSlicePlanningPointId: 'activity-unrelated',
+      title: 'Unrelated planning step',
+      purpose: 'Does not own the Work Unit.',
+      source: source(),
+    });
+    input.events.agentSessionReferences.find(
+      ({ targetKind }) => targetKind === 'work_slice_planning_point',
+    )!.targetId = 'activity-unrelated';
+    expect(() => compose(input)).toThrow(
+      'Agent Session must be associated with its Work Unit or owning Work Slice planning point and Sprint',
+    );
+  });
+
+  it('rejects duplicate lifecycle sequence numbers within one Work Unit', () => {
+    const input = productInput();
+    input.referenceIndex.sprintWorkspacePresentation!.workUnitLifecycle = [
+      lifecycleEntry({ entryId: 'lifecycle-1' }),
+      lifecycleEntry({ entryId: 'lifecycle-2' }),
+    ];
+    expect(() => compose(input)).toThrow('sequence must be unique within a Work Unit');
   });
 
   it.each([
@@ -412,6 +697,25 @@ function source() {
     sourceReferences: ['provenance-1'],
   };
 }
+type LifecycleEntry = Mutable<
+  NonNullable<ProductSprintWorkspacePresentationMetadataV1['workUnitLifecycle']>
+>[number];
+function lifecycleEntry(overrides: Partial<LifecycleEntry> = {}): LifecycleEntry {
+  return {
+    entryId: 'lifecycle-1',
+    sprintId: 'sprint-1',
+    workUnitId: 'work-unit-1',
+    sequence: 1,
+    kind: 'work',
+    title: 'Work',
+    summary: 'Recorded work.',
+    agentSessionId: 'session-1',
+    agentRole: 'work_unit_implementer',
+    invocationId: 'invocation-1',
+    source: source(),
+    ...overrides,
+  };
+}
 function productInput(): Mutable<ProductReadCompositionInputV1> {
   return {
     events: {
@@ -432,9 +736,9 @@ function productInput(): Mutable<ProductReadCompositionInputV1> {
           gateIds: ['gate-1'],
         },
       ],
-      sprintPlannerActivities: [
+      workSlicePlanningPoints: [
         {
-          sprintPlannerActivityId: 'activity-1',
+          workSlicePlanningPointId: 'activity-1',
           sprintPlanId: 'plan-1',
           assessedSprintPlanRevisionIds: ['revision-1'],
         },
@@ -460,17 +764,17 @@ function productInput(): Mutable<ProductReadCompositionInputV1> {
           agentSessionId: 'session-1',
           targetKind: 'epic',
           targetId: 'epic-1',
-          semanticRole: 'epic_runner',
+          semanticRole: 'epic',
         },
         {
           agentSessionRefId: 'session-ref-sprint',
           agentSessionId: 'session-1',
           targetKind: 'sprint',
           targetId: 'sprint-1',
-          semanticRole: 'sprint_runner',
+          semanticRole: 'sprint',
         },
         {
-          agentSessionRefId: 'session-ref-worker',
+          agentSessionRefId: 'session-ref-implementer',
           agentSessionId: 'session-1',
           targetKind: 'work_unit_execution',
           targetId: 'execution-1',
@@ -479,9 +783,9 @@ function productInput(): Mutable<ProductReadCompositionInputV1> {
         {
           agentSessionRefId: 'session-ref-planner',
           agentSessionId: 'session-1',
-          targetKind: 'sprint_planner_activity',
+          targetKind: 'work_slice_planning_point',
           targetId: 'activity-1',
-          semanticRole: 'sprint_planner',
+          semanticRole: 'work_slice_planner',
         },
         {
           agentSessionRefId: 'session-ref-handler',
@@ -491,20 +795,12 @@ function productInput(): Mutable<ProductReadCompositionInputV1> {
           semanticRole: 'work_unit_handler',
         },
         {
-          agentSessionRefId: 'session-ref-reviewer',
-          agentSessionId: 'session-1',
-          targetKind: 'work_unit_execution',
-          targetId: 'execution-1',
-          semanticRole: 'reviewer',
-        },
-        {
           agentSessionRefId: 'session-ref-other',
           agentSessionId: 'session-1',
           targetKind: 'other',
           targetId: 'future-1',
-          semanticRole: 'other',
+          semanticRole: 'work_unit_implementer',
           otherTargetType: 'future_target',
-          otherSemanticRole: 'future_role',
         },
       ],
       gates: [{ gateId: 'gate-1', sprintPlanRevisionId: 'revision-1' }],
@@ -605,7 +901,7 @@ function productInput(): Mutable<ProductReadCompositionInputV1> {
         {
           continuationRequestId: 'continuation-request-1',
           policyEligibilityFactId: 'fact-sprint',
-          targetKind: 'next_work_unit',
+          targetKind: 'next_work_slice_planner',
           targetId: 'sprint-1',
           provenanceId: 'provenance-1',
         },
@@ -661,7 +957,7 @@ function productInput(): Mutable<ProductReadCompositionInputV1> {
           continuationEligibilityEvaluationId: 'eligibility-sprint',
           continuationPolicyId: 'policy-sprint',
           level: 'sprint',
-          target: { kind: 'next_ready_work_unit_planner', sprintId: 'sprint-1' },
+          target: { kind: 'next_work_slice_planner', sprintId: 'sprint-1' },
           requiredConditionsSatisfied: true,
           designedForFeedback: false,
           allPendingDevelopmentTechnicallyBlocked: false,
@@ -672,7 +968,7 @@ function productInput(): Mutable<ProductReadCompositionInputV1> {
           continuationEligibilityEvaluationId: 'eligibility-epic',
           continuationPolicyId: 'policy-epic',
           level: 'epic',
-          target: { kind: 'next_sprint_planner', epicId: 'epic-1' },
+          target: { kind: 'next_sprint_runner', epicId: 'epic-1' },
           requiredConditionsSatisfied: true,
           designedForFeedback: false,
           allPendingDevelopmentTechnicallyBlocked: false,
@@ -683,9 +979,9 @@ function productInput(): Mutable<ProductReadCompositionInputV1> {
       commands: [
         command(
           'command-sprint',
-          'request_next_ready_work_unit_planner',
+          'request_next_work_slice_planner',
           'session-ref-sprint',
-          { kind: 'next_ready_work_unit_planner', sprintId: 'sprint-1' },
+          { kind: 'next_work_slice_planner', sprintId: 'sprint-1' },
           'sprint',
           'sprint-1',
           'policy-sprint',
@@ -693,9 +989,9 @@ function productInput(): Mutable<ProductReadCompositionInputV1> {
         ),
         command(
           'command-epic',
-          'request_next_sprint_planner',
+          'request_next_sprint_runner',
           'session-ref-epic',
-          { kind: 'next_sprint_planner', epicId: 'epic-1' },
+          { kind: 'next_sprint_runner', epicId: 'epic-1' },
           'epic',
           'epic-1',
           'policy-epic',
@@ -764,9 +1060,9 @@ function productInput(): Mutable<ProductReadCompositionInputV1> {
       sprintPlanRevisions: [
         { sprintPlanRevisionId: 'revision-1', summary: 'Revision 1', source: source() },
       ],
-      plannerActivities: [
+      workSlicePlanningPoints: [
         {
-          sprintPlannerActivityId: 'activity-1',
+          workSlicePlanningPointId: 'activity-1',
           title: 'Planning',
           purpose: 'Assess plan',
           source: source(),
@@ -802,9 +1098,9 @@ function productInput(): Mutable<ProductReadCompositionInputV1> {
       artifactOwnership: [{ artifactId: 'artifact-1', sprintId: 'sprint-1', source: source() }],
       documentOwnership: [{ documentRefId: 'document-1', sprintId: 'sprint-1', source: source() }],
       sprintWorkspacePresentation: {
-        plannerActivityMembership: [
+        workSlicePlanningPointMembership: [
           {
-            sprintPlannerActivityId: 'activity-1',
+            workSlicePlanningPointId: 'activity-1',
             sprintPlanRevisionId: 'revision-1',
             workUnitScopeIds: ['scope-1'],
             source: source(),
@@ -824,7 +1120,7 @@ function productInput(): Mutable<ProductReadCompositionInputV1> {
             recordedAt: { source: source(), value: TIME },
             displayCategory: { source: source(), value: 'handoff' },
             sprintPlanRevisionIds: ['revision-1'],
-            sprintPlannerActivityIds: ['activity-1'],
+            workSlicePlanningPointIds: ['activity-1'],
             workUnitScopeIds: ['scope-1'],
           },
         ],
@@ -863,8 +1159,8 @@ function addSecondSprint(input: Mutable<ProductReadCompositionInputV1>) {
     dependsOnWorkUnitScopeIds: [],
     gateIds: [],
   });
-  input.events.sprintPlannerActivities.push({
-    sprintPlannerActivityId: 'activity-2',
+  input.events.workSlicePlanningPoints.push({
+    workSlicePlanningPointId: 'activity-2',
     sprintPlanId: 'plan-2',
     assessedSprintPlanRevisionIds: ['revision-2'],
   });
@@ -906,8 +1202,8 @@ function addSecondSprint(input: Mutable<ProductReadCompositionInputV1>) {
     summary: 'Revision 2',
     source: source(),
   });
-  input.referenceIndex.plannerActivities.push({
-    sprintPlannerActivityId: 'activity-2',
+  input.referenceIndex.workSlicePlanningPoints.push({
+    workSlicePlanningPointId: 'activity-2',
     title: 'Second planning',
     purpose: 'Assess second plan',
     source: source(),
@@ -929,8 +1225,8 @@ function addSecondSprint(input: Mutable<ProductReadCompositionInputV1>) {
     sprintId: 'sprint-2',
     source: source(),
   });
-  input.referenceIndex.sprintWorkspacePresentation!.plannerActivityMembership.push({
-    sprintPlannerActivityId: 'activity-2',
+  input.referenceIndex.sprintWorkspacePresentation!.workSlicePlanningPointMembership.push({
+    workSlicePlanningPointId: 'activity-2',
     sprintPlanRevisionId: 'revision-2',
     workUnitScopeIds: ['scope-2'],
     source: source(),
@@ -941,17 +1237,17 @@ function addSecondSprint(input: Mutable<ProductReadCompositionInputV1>) {
     recordedAt: { source: source(), value: TIME },
     displayCategory: { source: source(), value: 'handoff' },
     sprintPlanRevisionIds: ['revision-2'],
-    sprintPlannerActivityIds: ['activity-2'],
+    workSlicePlanningPointIds: ['activity-2'],
     workUnitScopeIds: ['scope-2'],
   });
 }
 function command(
   id: string,
-  commandKind: 'request_next_ready_work_unit_planner' | 'request_next_sprint_planner',
+  commandKind: 'request_next_work_slice_planner' | 'request_next_sprint_runner',
   recipientAgentSessionRefId: string,
   target:
-    | { kind: 'next_ready_work_unit_planner'; sprintId: string }
-    | { kind: 'next_sprint_planner'; epicId: string },
+    | { kind: 'next_work_slice_planner'; sprintId: string }
+    | { kind: 'next_sprint_runner'; epicId: string },
   scopeKind: 'sprint' | 'epic',
   scopeId: string,
   policyId: string,

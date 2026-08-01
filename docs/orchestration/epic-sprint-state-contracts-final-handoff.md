@@ -28,16 +28,18 @@ unit; there is no durable Work Slice.
 - A Work Unit execution fixes one revision-specific scope; attempts cannot retarget it.
 - Superseded revisions retain requested and observed history. Unstarted superseded future work has
   no execution.
-- Sprint Planner Activity is evidence about planning work, not Sprint Plan identity.
+- A Work Slice planning point is temporal planning evidence, not Sprint Plan identity or a recurring
+  Planner contract.
 
 ## Agent Session relationships and roles
 
 Agent Sessions and Agent Session References remain provider-neutral. Provider thread ids,
 credentials, tokens, runtime fields, and transcript projections are not product identity.
 
-Associations include Epic Runner, Epic Plan Builder, Sprint Runner, Sprint Planner, Work Unit
-planner, worker, and reviewer, with an extension form for later participant types. Epic Runner is
-the entity-associated role; Orchestrator is reserved for a capability-wide coordinator.
+Orchestration associations use exactly five roles: Epic Runner, Sprint Runner, Work Slice Planner,
+Work Unit Handler, and Work Unit Implementer. Epic Plan Builder remains a pre-initiation Session
+context, not a sixth orchestration role. Review and correction are Handler actions, not a Reviewer
+role. Role references remain typed even when a target uses the forward-compatible `other` kind.
 
 ## Agent Control and continuation authority
 
@@ -48,8 +50,8 @@ its resulting Orchestration Event can prove an observed effect.
 Epic-level and Sprint-level continuation have distinct policies, eligibility evaluations, requests,
 and observations:
 
-- Sprint-level continuation targets the next ready Work Unit planner.
-- Epic-level continuation targets the next Sprint Planner.
+- Sprint-level continuation targets the next Work Slice Planner.
+- Epic-level continuation targets the next Sprint Runner.
 
 Policy updates, eligibility, continuation requests, command results, and observed initiation never
 collapse into one fact. Auto-flow state alone proves none of them.
@@ -64,8 +66,13 @@ inspectable reference. Resolution, system opening, and copy-path are separate fo
 raw paths occur only in a successful copy-path result.
 
 Product read models are provider-neutral and independent from recorded compatibility shapes. The
-logical Sprint Plan is not reconstructed from Sprint Planner Activities. The event root remains the
+logical Sprint Plan is not reconstructed from Work Slice planning points. The event root remains the
 composition authority, and the product composer remains the one canonical product composition path.
+
+Before Sprint start, the typed planning state permits only a low-resolution concern forecast. A
+started Sprint Plan requires a recorded current Work Slice planning point, branch/repository
+assessment summary, and reevaluation timestamp. Production remains unavailable when that authority
+is absent; titles, transcripts, routes, Harness labels, and display state cannot reconstruct it.
 
 | Module group                                           | Responsibility                                                                       |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------ |

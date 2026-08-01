@@ -75,6 +75,7 @@ export function sessionSummary(active = false): AgentSessionSummaryDto {
     title: 'Durable session',
     availability: 'available',
     hasActiveInvocation: active,
+    latestInvocationStatus: active ? 'running' : 'completed',
     createdAt: fixtureTime,
     updatedAt: fixtureTime,
   };

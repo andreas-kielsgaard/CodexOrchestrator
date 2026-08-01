@@ -41,8 +41,8 @@ export interface SprintReadModel {
     readonly isActive: boolean;
     readonly isSelected: boolean;
   }[];
-  readonly sprintPlannerActivities: readonly {
-    readonly sprintPlannerActivityId: string;
+  readonly workSlicePlanningPoints: readonly {
+    readonly workSlicePlanningPointId: string;
     readonly sprintPlanRevisionId: string;
     readonly title: string;
     readonly purpose: string;
@@ -87,7 +87,7 @@ export interface SprintRelationshipGraph {
   readonly nodes: readonly {
     readonly id: string;
     readonly type:
-      'sprint_plan' | 'plan_revision' | 'sprint_planner_activity' | 'work_unit' | 'gate';
+      'sprint_plan' | 'plan_revision' | 'work_slice_planning_point' | 'work_unit' | 'gate';
     readonly semanticId: string;
     readonly parallelGroupId?: string;
   }[];

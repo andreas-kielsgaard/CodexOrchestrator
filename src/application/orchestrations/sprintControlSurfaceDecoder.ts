@@ -1,14 +1,14 @@
 import {
   SPRINT_EXECUTION_SNAPSHOT_V1,
-  SPRINT_PLANNER_OUTPUT_V1,
+  SPRINT_RUNNER_PLAN_V1,
   type SprintExecutionSnapshotV1,
-  type SprintPlannerOutputV1,
+  type SprintRunnerPlanV1,
 } from './sprintControlSurfaceCompatibility';
 
 /** Decodes only provisional discovery compatibility input and validates its references. */
-export function decodeSprintPlannerOutputV1(value: unknown): SprintPlannerOutputV1 {
+export function decodeSprintRunnerPlanV1(value: unknown): SprintRunnerPlanV1 {
   const output = record(value, 'planner output');
-  equal(output.version, SPRINT_PLANNER_OUTPUT_V1, 'version');
+  equal(output.version, SPRINT_RUNNER_PLAN_V1, 'version');
   string(output.epicId, 'epicId');
   const sprint = record(output.sprint, 'sprint');
   fields(sprint, ['id', 'title', 'summary', 'details']);
@@ -17,7 +17,7 @@ export function decodeSprintPlannerOutputV1(value: unknown): SprintPlannerOutput
   if (sprintPlan.sprintId !== sprint.id) fail('sprint plan belongs to a different sprint');
 
   const revisions = list(output.planRevisions, 'planRevisions');
-  const activities = list(output.sprintPlannerActivities, 'sprintPlannerActivities');
+  const activities = list(output.workSlicePlanningPoints, 'workSlicePlanningPoints');
   const groups = list(output.parallelGroups, 'parallelGroups');
   const changes = list(output.planChanges, 'planChanges');
   const units = list(output.workUnits, 'workUnits');
@@ -25,7 +25,7 @@ export function decodeSprintPlannerOutputV1(value: unknown): SprintPlannerOutput
   const gates = list(output.gates, 'gates');
   const documents = list(output.documents, 'documents');
   const revisionIds = identifiers(revisions, 'plan revision');
-  const activityIds = identifiers(activities, 'Sprint Planner Activity');
+  const activityIds = identifiers(activities, 'Work Slice planning point');
   const groupIds = identifiers(groups, 'parallel group');
   const unitIds = identifiers(units, 'work unit');
   const concernIds = identifiers(concerns, 'concern');
@@ -47,27 +47,27 @@ export function decodeSprintPlannerOutputV1(value: unknown): SprintPlannerOutput
 
   const ownedByRevision = new Map<string, Set<string>>();
   activities.forEach((candidate) => {
-    const activity = record(candidate, 'Sprint Planner Activity');
+    const activity = record(candidate, 'Work Slice planning point');
     fields(activity, ['id', 'title', 'purpose', 'planRevisionId']);
-    reference(activity.planRevisionId, revisionIds, 'Sprint Planner Activity plan revision');
+    reference(activity.planRevisionId, revisionIds, 'Work Slice planning-point plan revision');
     const revision = revisions.find(
       (item) => record(item, 'revision').id === activity.planRevisionId,
     );
     const revisionUnits = new Set(list(record(revision, 'revision').workUnitIds, 'workUnitIds'));
     const owned = ownedByRevision.get(activity.planRevisionId as string) ?? new Set<string>();
     list(activity.workUnitIds, 'workUnitIds').forEach((id) => {
-      reference(id, unitIds, 'Sprint Planner Activity work unit');
+      reference(id, unitIds, 'Work Slice planning-point Work Unit');
       if (!revisionUnits.has(id))
-        fail('Sprint Planner Activity owns a work unit outside its revision');
+        fail('Work Slice planning point contains a Work Unit outside its revision');
       if (owned.has(id as string))
-        fail('work unit cannot be owned by multiple Sprint Planner Activities in one revision');
+        fail('work unit cannot belong to multiple Work Slice planning points in one revision');
       owned.add(id as string);
     });
     ownedByRevision.set(activity.planRevisionId as string, owned);
     references(
       list(activity.userReviewGateIds, 'userReviewGateIds'),
       gateIds,
-      'Sprint Planner Activity gate',
+      'Work Slice planning-point gate',
     );
   });
 
@@ -170,17 +170,17 @@ export function decodeSprintPlannerOutputV1(value: unknown): SprintPlannerOutput
       'summary',
       'priorPlanRevisionId',
       'resultingPlanRevisionId',
-      'priorSprintPlannerActivityId',
-      'resultingSprintPlannerActivityId',
+      'priorWorkSlicePlanningPointId',
+      'resultingWorkSlicePlanningPointId',
     ]);
     equal(change.source, 'sprint_conversation', 'plan change source');
     reference(change.priorPlanRevisionId, revisionIds, 'prior revision');
     reference(change.resultingPlanRevisionId, revisionIds, 'resulting revision');
-    reference(change.priorSprintPlannerActivityId, activityIds, 'prior Sprint Planner Activity');
+    reference(change.priorWorkSlicePlanningPointId, activityIds, 'prior Work Slice planning point');
     reference(
-      change.resultingSprintPlannerActivityId,
+      change.resultingWorkSlicePlanningPointId,
       activityIds,
-      'resulting Sprint Planner Activity',
+      'resulting Work Slice planning point',
     );
     const resulting = record(
       revisions.find((item) => record(item, 'revision').id === change.resultingPlanRevisionId),
@@ -192,18 +192,18 @@ export function decodeSprintPlannerOutputV1(value: unknown): SprintPlannerOutput
 
   documents.forEach((candidate) => {
     const document = record(candidate, 'document');
-    fields(document, ['id', 'title', 'sprintPlannerActivityId', 'planRevisionId']);
+    fields(document, ['id', 'title', 'workSlicePlanningPointId', 'planRevisionId']);
     literal(document.kind, ['plan', 'brief', 'decision', 'handoff'], 'document kind');
-    reference(document.sprintPlannerActivityId, activityIds, 'document Sprint Planner Activity');
+    reference(document.workSlicePlanningPointId, activityIds, 'document Work Slice planning point');
     reference(document.planRevisionId, revisionIds, 'document plan revision');
     timestamp(document.recordedAt, 'document recordedAt');
   });
-  return value as SprintPlannerOutputV1;
+  return value as SprintRunnerPlanV1;
 }
 
 export function decodeSprintExecutionSnapshotV1(
   value: unknown,
-  planner: SprintPlannerOutputV1,
+  planner: SprintRunnerPlanV1,
 ): SprintExecutionSnapshotV1 {
   const snapshot = record(value, 'execution snapshot');
   equal(snapshot.version, SPRINT_EXECUTION_SNAPSHOT_V1, 'version');
@@ -286,7 +286,8 @@ export function decodeSprintExecutionSnapshotV1(
         'attempt outcome',
       );
       timestamp(attempt.recordedAt, 'attempt recordedAt');
-      if (attempt.workerFeedback !== undefined) string(attempt.workerFeedback, 'workerFeedback');
+      if (attempt.implementerFeedback !== undefined)
+        string(attempt.implementerFeedback, 'implementerFeedback');
     });
   });
   identifiers(list(snapshot.concernDecisions, 'concernDecisions'), 'concern decision', 'concernId');

@@ -21,6 +21,7 @@ export interface SprintWorkspacePresentationV1 {
     readonly details: string;
     readonly source: ReadSourceAuthorityV1;
     readonly lifecycle?: ProductSprintReadModelV1['lifecycle'];
+    readonly planningState: ProductSprintReadModelV1['planningState'];
   }>;
   readonly revisions: readonly Readonly<{
     readonly sprintPlanRevisionId: string;
@@ -36,6 +37,15 @@ export interface SprintWorkspacePresentationV1 {
   readonly selectedSprintPlanRevisionId: string;
   readonly revisionViews: readonly ProductSprintRevisionViewV1[];
   readonly concerns: readonly Concern[];
+  readonly epicRunnerObjectives: NonNullable<
+    ProductSprintReadModelV1['workspacePresentation']['epicRunnerObjectives']
+  >;
+  readonly sprintRunnerConcerns: NonNullable<
+    ProductSprintReadModelV1['workspacePresentation']['sprintRunnerConcerns']
+  >;
+  readonly workUnitLifecycle: NonNullable<
+    ProductSprintReadModelV1['workspacePresentation']['workUnitLifecycle']
+  >;
   /** Documents and internal Artifacts remain separate ownership surfaces. */
   readonly documents: readonly (Document &
     Readonly<{
@@ -43,7 +53,7 @@ export interface SprintWorkspacePresentationV1 {
       readonly recordedAt: ProductSourcedReadValueV1<string>;
       readonly displayCategory: ProductSourcedReadValueV1<string>;
       readonly sprintPlanRevisionIds: readonly string[];
-      readonly sprintPlannerActivityIds: readonly string[];
+      readonly workSlicePlanningPointIds: readonly string[];
       readonly workUnitScopeIds: readonly string[];
     }>)[];
   readonly internalArtifacts: readonly Artifact[];
@@ -71,6 +81,7 @@ export function projectSprintWorkspacePresentation(
       details: sprint.details,
       source: sprint.source,
       ...(sprint.lifecycle ? { lifecycle: sprint.lifecycle } : {}),
+      planningState: sprint.planningState,
     },
     revisions: sprint.sprintPlan.revisions.map((revision) => ({ ...revision })),
     activeSprintPlanRevisionId: sprint.sprintPlan.currentSprintPlanRevisionId,
@@ -78,10 +89,10 @@ export function projectSprintWorkspacePresentation(
     revisionViews: sprint.revisionViews.map((view) => ({
       ...view,
       workUnitScopes: view.workUnitScopes.map((scope) => ({ ...scope })),
-      plannerActivityGroups: view.plannerActivityGroups
+      workSlicePlanningPointGroups: view.workSlicePlanningPointGroups
         .map((group) => ({ ...group, workUnitScopeIds: [...group.workUnitScopeIds].sort() }))
         .sort((left, right) =>
-          left.sprintPlannerActivityId.localeCompare(right.sprintPlannerActivityId),
+          left.workSlicePlanningPointId.localeCompare(right.workSlicePlanningPointId),
         ),
       workUnits: view.workUnits
         .map((workUnit) => ({ ...workUnit }))
@@ -92,6 +103,23 @@ export function projectSprintWorkspacePresentation(
       reviews: view.reviews.map((review) => ({ ...review })),
     })),
     concerns: sprint.concerns.map((concern) => ({ ...concern })),
+    epicRunnerObjectives: (sprint.workspacePresentation.epicRunnerObjectives ?? []).map(
+      (objective) => ({ ...objective }),
+    ),
+    sprintRunnerConcerns: (sprint.workspacePresentation.sprintRunnerConcerns ?? []).map(
+      (sprintRunnerConcern) => ({
+        ...sprintRunnerConcern,
+        graphElementRefs: sprintRunnerConcern.graphElementRefs.map((reference) => ({
+          ...reference,
+        })),
+      }),
+    ),
+    workUnitLifecycle: [...(sprint.workspacePresentation.workUnitLifecycle ?? [])]
+      .map((entry) => ({ ...entry }))
+      .sort(
+        (left, right) =>
+          left.sequence - right.sequence || left.entryId.localeCompare(right.entryId),
+      ),
     documents: sprint.documents
       .map((document) => {
         const presentation = documentPresentationById.get(document.documentRefId);

@@ -9,7 +9,7 @@ describe('Sprint workspace presentation projector', () => {
       revisionViews: sprint.revisionViews.map((view) => ({
         ...view,
         workUnits: [...view.workUnits].reverse(),
-        plannerActivityGroups: view.plannerActivityGroups.map((group) => ({
+        workSlicePlanningPointGroups: view.workSlicePlanningPointGroups.map((group) => ({
           ...group,
           workUnitScopeIds: [...group.workUnitScopeIds].reverse(),
         })),
@@ -26,14 +26,14 @@ describe('Sprint workspace presentation projector', () => {
     expect(first.revisionViews).toMatchObject([
       {
         sprintPlanRevisionId: 'revision-1',
-        plannerActivityGroups: [
-          { sprintPlannerActivityId: 'activity-a', workUnitScopeIds: ['scope-1'] },
+        workSlicePlanningPointGroups: [
+          { workSlicePlanningPointId: 'activity-a', workUnitScopeIds: ['scope-1'] },
         ],
       },
       {
         sprintPlanRevisionId: 'revision-2',
-        plannerActivityGroups: [
-          { sprintPlannerActivityId: 'activity-b', workUnitScopeIds: ['scope-2a', 'scope-2b'] },
+        workSlicePlanningPointGroups: [
+          { workSlicePlanningPointId: 'activity-b', workUnitScopeIds: ['scope-2a', 'scope-2b'] },
         ],
       },
     ]);
@@ -70,10 +70,29 @@ describe('Sprint workspace presentation projector', () => {
     expect(presentation.narratives?.progress).toEqual({
       source: { status: 'unavailable', reason: 'not recorded' },
     });
+    expect(presentation.epicRunnerObjectives.map(({ title }) => title)).toEqual([
+      'Preserve the Sprint task.',
+      'Make the plan reviewable.',
+    ]);
+    expect(presentation.sprintRunnerConcerns).toEqual([
+      expect.objectContaining({
+        sprintRunnerConcernId: 'sprintRunnerConcern-1',
+        graphElementRefs: [
+          { kind: 'work_slice_planning_point', id: 'activity-a' },
+          { kind: 'work_unit', id: 'work-unit-1' },
+        ],
+      }),
+    ]);
+    expect(presentation.workUnitLifecycle.map(({ entryId }) => entryId)).toEqual([
+      'lifecycle-1',
+      'lifecycle-2',
+    ]);
     expect(presentation.continuation).toMatchObject({
       policy: { automaticEnabled: true },
       eligibility: { status: 'eligible' },
-      continuationRequests: [{ continuationRequestId: 'request-1', targetKind: 'next_work_unit' }],
+      continuationRequests: [
+        { continuationRequestId: 'request-1', targetKind: 'next_work_slice_planner' },
+      ],
       observedContinuationIds: [],
       initiationObserved: false,
     });
@@ -96,6 +115,15 @@ function sprintReadModel(): ProductSprintReadModelV1 {
     summary: 'Summary',
     details: 'Details',
     source: source(),
+    planningState: {
+      source: source(),
+      value: {
+        kind: 'started_plan',
+        currentWorkSlicePlanningPointId: 'activity-b',
+        repositoryAssessmentSummary: 'Recorded current branch and repository state.',
+        reevaluatedAt: '2026-07-15T09:00:00.000Z',
+      },
+    },
     sprintPlan: {
       sprintPlanId: 'plan-1',
       currentSprintPlanRevisionId: 'revision-2',
@@ -142,16 +170,16 @@ function sprintReadModel(): ProductSprintReadModelV1 {
         },
       ],
     },
-    plannerActivities: [
+    workSlicePlanningPoints: [
       {
-        sprintPlannerActivityId: 'activity-a',
+        workSlicePlanningPointId: 'activity-a',
         title: 'A',
         purpose: 'Historical',
         source: source(),
         assessedSprintPlanRevisionIds: ['revision-1'],
       },
       {
-        sprintPlannerActivityId: 'activity-b',
+        workSlicePlanningPointId: 'activity-b',
         title: 'B',
         purpose: 'Active',
         source: source(),
@@ -174,9 +202,9 @@ function sprintReadModel(): ProductSprintReadModelV1 {
             gateIds: ['gate-1'],
           },
         ],
-        plannerActivityGroups: [
+        workSlicePlanningPointGroups: [
           {
-            sprintPlannerActivityId: 'activity-a',
+            workSlicePlanningPointId: 'activity-a',
             title: 'A',
             purpose: 'Historical',
             source: source(),
@@ -246,9 +274,9 @@ function sprintReadModel(): ProductSprintReadModelV1 {
             gateIds: [],
           },
         ],
-        plannerActivityGroups: [
+        workSlicePlanningPointGroups: [
           {
-            sprintPlannerActivityId: 'activity-b',
+            workSlicePlanningPointId: 'activity-b',
             title: 'B',
             purpose: 'Active',
             source: source(),
@@ -348,15 +376,15 @@ function sprintReadModel(): ProductSprintReadModelV1 {
       },
     ],
     workspacePresentation: {
-      plannerActivityMembership: [
+      workSlicePlanningPointMembership: [
         {
-          sprintPlannerActivityId: 'activity-b',
+          workSlicePlanningPointId: 'activity-b',
           sprintPlanRevisionId: 'revision-2',
           workUnitScopeIds: ['scope-2'],
           source: source(),
         },
         {
-          sprintPlannerActivityId: 'activity-a',
+          workSlicePlanningPointId: 'activity-a',
           sprintPlanRevisionId: 'revision-1',
           workUnitScopeIds: ['scope-1'],
           source: source(),
@@ -372,7 +400,7 @@ function sprintReadModel(): ProductSprintReadModelV1 {
           recordedAt: { source: source(), value: '2026-07-15T10:00:00.000Z' },
           displayCategory: { source: source(), value: 'handoff' },
           sprintPlanRevisionIds: ['revision-1'],
-          sprintPlannerActivityIds: ['activity-a'],
+          workSlicePlanningPointIds: ['activity-a'],
           workUnitScopeIds: ['scope-1'],
         },
         {
@@ -381,13 +409,77 @@ function sprintReadModel(): ProductSprintReadModelV1 {
           recordedAt: { source: source(), value: '2026-07-15T09:00:00.000Z' },
           displayCategory: { source: source(), value: 'handoff' },
           sprintPlanRevisionIds: [],
-          sprintPlannerActivityIds: [],
+          workSlicePlanningPointIds: [],
           workUnitScopeIds: [],
+        },
+      ],
+      epicRunnerObjectives: [
+        {
+          objectiveId: 'objective-1',
+          sprintId: 'sprint-1',
+          title: 'Preserve the Sprint task.',
+          source: source(),
+        },
+        {
+          objectiveId: 'objective-2',
+          sprintId: 'sprint-1',
+          title: 'Make the plan reviewable.',
+          source: source(),
+        },
+      ],
+      sprintRunnerConcerns: [
+        {
+          sprintRunnerConcernId: 'sprintRunnerConcern-1',
+          sprintId: 'sprint-1',
+          title: 'Connect the Plan and Work Unit.',
+          source: source(),
+          graphElementRefs: [
+            { kind: 'work_slice_planning_point', id: 'activity-a' },
+            { kind: 'work_unit', id: 'work-unit-1' },
+          ],
+        },
+      ],
+      workUnitLifecycle: [
+        {
+          entryId: 'lifecycle-2',
+          sprintId: 'sprint-1',
+          workUnitId: 'work-unit-1',
+          sequence: 2,
+          kind: 'review',
+          title: 'Review',
+          summary: 'Reviewed.',
+          agentSessionId: 'session-1',
+          agentRole: 'work_unit_handler',
+          invocationId: 'invocation-2',
+          source: source(),
+        },
+        {
+          entryId: 'lifecycle-1',
+          sprintId: 'sprint-1',
+          workUnitId: 'work-unit-1',
+          sequence: 1,
+          kind: 'work',
+          title: 'Work',
+          summary: 'Worked.',
+          agentSessionId: 'session-1',
+          agentRole: 'work_unit_implementer',
+          invocationId: 'invocation-1',
+          source: source(),
         },
       ],
       narratives: { progress: { source: { status: 'unavailable', reason: 'not recorded' } } },
     },
-    agentSessionReferences: [],
+    agentSessionReferences: [
+      {
+        agentSessionRefId: 'session-ref-1',
+        agentSessionId: 'session-1',
+        title: 'Recorded session',
+        source: source(),
+        targetKind: 'work_unit_execution',
+        targetId: 'execution-1',
+        semanticRole: 'work_unit_implementer',
+      },
+    ],
     continuation: {
       level: 'sprint',
       policy: { policyId: 'policy-1', automaticEnabled: true },
@@ -396,7 +488,9 @@ function sprintReadModel(): ProductSprintReadModelV1 {
       eventEligibilityFacts: [
         { policyEligibilityFactId: 'fact-1', automaticEnabled: true, eligible: true },
       ],
-      continuationRequests: [{ continuationRequestId: 'request-1', targetKind: 'next_work_unit' }],
+      continuationRequests: [
+        { continuationRequestId: 'request-1', targetKind: 'next_work_slice_planner' },
+      ],
       observedContinuationIds: [],
       initiationObserved: false,
     },

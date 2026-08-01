@@ -52,7 +52,12 @@ export function AgentSessionTranscript({
   return (
     <ol className="agent-transcript" aria-label="Agent Session transcript">
       {visibleInvocations.map((invocation) => (
-        <li className="transcript-invocation" key={invocation.id}>
+        <li
+          className="transcript-invocation"
+          key={invocation.id}
+          data-invocation-id={invocation.id}
+          tabIndex={-1}
+        >
           {invocation.showInput && (
             <article className="transcript-message user-message">
               <header>

@@ -12,11 +12,11 @@ import {
 import { SprintFlowMap } from './SprintFlowMap';
 
 function StatefulSprintFlowMap({
-  onOpenSprintPlannerActivityGroup,
+  onOpenWorkSlicePlanningPointGroup,
   onOpenWorkUnit,
 }: {
-  readonly onOpenSprintPlannerActivityGroup?: (
-    sprintPlannerActivityId: string,
+  readonly onOpenWorkSlicePlanningPointGroup?: (
+    workSlicePlanningPointId: string,
     opener: HTMLButtonElement,
   ) => void;
   readonly onOpenWorkUnit?: (workUnitId: string, opener: HTMLButtonElement) => void;
@@ -29,41 +29,45 @@ function StatefulSprintFlowMap({
       workspace={recordedWorkspace}
       selectedRevisionId={selectedRevisionId}
       onSelectedRevisionChange={setSelectedRevisionId}
-      onOpenSprintPlannerActivityGroup={onOpenSprintPlannerActivityGroup}
+      onOpenWorkSlicePlanningPointGroup={onOpenWorkSlicePlanningPointGroup}
       onOpenWorkUnit={onOpenWorkUnit}
     />
   );
 }
 
 describe('SprintFlowMap', () => {
-  it('renders Sprint Planner Activity grouping with accepted Plan copy and actionable Work Units', () => {
-    const onOpenSprintPlannerActivityGroup = vi.fn();
+  it('renders Work Slice planning-point grouping with accepted Plan copy and actionable Work Units', () => {
+    const onOpenWorkSlicePlanningPointGroup = vi.fn();
     const onOpenWorkUnit = vi.fn();
     render(
       <StatefulSprintFlowMap
-        onOpenSprintPlannerActivityGroup={onOpenSprintPlannerActivityGroup}
+        onOpenWorkSlicePlanningPointGroup={onOpenWorkSlicePlanningPointGroup}
         onOpenWorkUnit={onOpenWorkUnit}
       />,
     );
 
-    const plan = screen.getByRole('region', { name: 'Plan: Integrated detail surfaces' });
+    const plan = screen.getByRole('region', {
+      name: 'Work Slice planning point: Integrated detail surfaces',
+    });
     expect(
-      within(plan).getByRole('button', { name: 'Open Plan: Integrated detail surfaces' }),
+      within(plan).getByRole('button', {
+        name: 'Open Work Slice planning point: Integrated detail surfaces',
+      }),
     ).toBeVisible();
     const workUnit = screen.getByRole('button', { name: /Open Work Unit WU-ECS2E/ });
     const planButton = within(plan).getByRole('button', {
-      name: 'Open Plan: Integrated detail surfaces',
+      name: 'Open Work Slice planning point: Integrated detail surfaces',
     });
     expect(planButton).toHaveClass('sprint-plan-region__open');
     fireEvent.click(planButton);
-    expect(onOpenSprintPlannerActivityGroup).toHaveBeenCalledTimes(1);
-    expect(onOpenSprintPlannerActivityGroup).toHaveBeenCalledWith(
+    expect(onOpenWorkSlicePlanningPointGroup).toHaveBeenCalledTimes(1);
+    expect(onOpenWorkSlicePlanningPointGroup).toHaveBeenCalledWith(
       'planner-r4-integration',
       expect.any(HTMLButtonElement),
     );
-    onOpenSprintPlannerActivityGroup.mockClear();
+    onOpenWorkSlicePlanningPointGroup.mockClear();
     fireEvent.click(workUnit);
-    expect(onOpenSprintPlannerActivityGroup).not.toHaveBeenCalled();
+    expect(onOpenWorkSlicePlanningPointGroup).not.toHaveBeenCalled();
     expect(onOpenWorkUnit).toHaveBeenCalledWith('WU-ECS2E', expect.any(HTMLButtonElement));
     expect(screen.queryByRole('button', { name: /^View WU-/ })).toBeNull();
     expect(document.querySelector('.lucide-flag')).toBeNull();
@@ -107,7 +111,9 @@ describe('SprintFlowMap', () => {
 
   it('supports keyboard activation through native Plan, Work Unit, revision, and plan-change controls', () => {
     render(<StatefulSprintFlowMap />);
-    const plan = screen.getByRole('button', { name: 'Open Plan: Integrated detail surfaces' });
+    const plan = screen.getByRole('button', {
+      name: 'Open Work Slice planning point: Integrated detail surfaces',
+    });
     const workUnit = screen.getByRole('button', { name: /Open Work Unit WU-ECS2E/ });
     for (const control of [plan, workUnit, screen.getByRole('combobox')]) {
       control.focus();
