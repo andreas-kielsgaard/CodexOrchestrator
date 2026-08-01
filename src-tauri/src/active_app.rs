@@ -192,6 +192,7 @@ pub(crate) fn run() {
             crate::orchestration::transport::request_epic_initiation_confirmation,
             crate::orchestration::transport::resolve_epic_initiation_confirmation,
             crate::orchestration::transport::load_orchestration_native_query,
+            crate::orchestration::transport::load_scoped_file_review,
             crate::orchestration::transport::load_epic_bootstrap_transition_query
         ])
         .build(tauri::generate_context!())

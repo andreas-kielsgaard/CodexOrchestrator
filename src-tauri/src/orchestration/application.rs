@@ -679,6 +679,13 @@ impl OrchestrationApplication {
     pub(crate) fn native_query(&self) -> Result<NativeQueryV2, String> {
         self.repository.native_query()
     }
+
+    pub(crate) fn load_scoped_file_review(
+        &self,
+        opaque_reference: &str,
+    ) -> Result<super::repository::ScopedFileReviewLoad, String> {
+        self.repository.load_scoped_file_review(opaque_reference)
+    }
     pub(crate) fn initiate_epic(
         &self,
         command: super::domain::InitiateEpicCommand,

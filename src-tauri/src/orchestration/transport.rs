@@ -324,6 +324,24 @@ pub(crate) fn load_orchestration_native_query(
     state.application.native_query()
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LoadScopedFileReviewInput {
+    opaque_reference: String,
+}
+
+/// Read-only capability: the opaque reference is resolved and reauthorized by durable ownership.
+#[tauri::command]
+pub(crate) fn load_scoped_file_review(
+    state: State<'_, OrchestrationTauriState>,
+    input: LoadScopedFileReviewInput,
+) -> Result<super::repository::ScopedFileReviewLoad, String> {
+    state
+        .application
+        .load_scoped_file_review(&input.opaque_reference)
+        .map_err(|_| "File Review facts are unavailable.".to_string())
+}
+
 #[tauri::command]
 pub(crate) fn load_epic_bootstrap_transition_query(
     state: State<'_, BootstrapTransitionTauriState>,
@@ -336,6 +354,46 @@ mod tests {
     use super::InitiationConfirmationTransportError;
     use crate::orchestration::confirmation::InitiationConfirmationError;
     use crate::orchestration::domain::InitiateEpicError;
+
+    #[test]
+    fn scoped_file_review_transport_shapes_are_bounded() {
+        use crate::orchestration::repository::{
+            FileReviewChangedFileDto, ScopedFileReviewDocument, ScopedFileReviewLoad,
+        };
+        let available = ScopedFileReviewLoad::Available {
+            document: ScopedFileReviewDocument {
+                document_ref_id: "document".into(),
+                title: "Changed files".into(),
+                summary: None,
+                artifact_id: "artifact".into(),
+                payload: vec![1],
+                changed_files: vec![FileReviewChangedFileDto {
+                    changed_file_reference_id: "file".into(),
+                    display_name: "src/a.ts".into(),
+                    change_kind: "modified".into(),
+                }],
+            },
+        };
+        assert_eq!(
+            serde_json::to_value(available).unwrap()["status"],
+            "available"
+        );
+        for value in [
+            ScopedFileReviewLoad::Unavailable,
+            ScopedFileReviewLoad::Unauthorized,
+            ScopedFileReviewLoad::Invalid,
+        ] {
+            let json = serde_json::to_value(value).unwrap();
+            assert!(matches!(
+                json["status"].as_str(),
+                Some("unavailable" | "unauthorized" | "invalid")
+            ));
+        }
+        let error = "database error: C:\\secret.sqlite";
+        let sanitized = Err::<(), _>(error.to_string())
+            .map_err(|_| "File Review facts are unavailable.".to_string());
+        assert_eq!(sanitized.unwrap_err(), "File Review facts are unavailable.");
+    }
 
     #[test]
     fn confirmation_errors_are_safe_codes_without_native_details() {

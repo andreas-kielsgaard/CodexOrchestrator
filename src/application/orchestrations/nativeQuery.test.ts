@@ -55,6 +55,16 @@ describe('orchestration native query v1', () => {
     );
   });
 
+  it('projects durable File Review ownership and rejects an unknown owner Sprint', () => {
+    const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
+    value.fileReviewDocuments = [{ documentRefId: 'review-doc', epicId: 'epic-fixture', sprintId: 'sprint-fixture', provenanceId: 'init-provenance-fixture', title: 'Changed files', artifactId: 'review-artifact', changedFiles: [{ changedFileReferenceId: 'changed-1', displayName: 'src/a.ts', changeKind: 'modified' }] }];
+    const query = decodeOrchestrationNativeQueryV2(value);
+    const models = composeProductOrchestrationReadModels(nativeQueryProductCompositionInputV2(query));
+    expect(models.epics[0].sprints[0].documents[0]).toMatchObject({ documentRefId: 'review-doc', artifactIds: ['review-artifact'], changedFileReferenceIds: ['changed-1'] });
+    (value.fileReviewDocuments as Array<Record<string, unknown>>)[0].sprintId = 'missing-sprint';
+    expect(() => composeProductOrchestrationReadModels(nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(value)))).toThrow('artifact ownership references an unknown Sprint');
+  });
+
   it('projects only a correlated initiated Epic with ordered preparatory Sprints and no Work Units', () => {
     const value = fixture('valid-proposal.json') as Record<string, unknown>;
     const revision = (value.proposalRevisions as Array<Record<string, unknown>>)[0];

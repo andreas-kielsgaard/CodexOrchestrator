@@ -14,6 +14,250 @@ const ASSOCIATION_ID: &str = "planning-draft-agent-session-association-1";
 const ACTOR_ID: &str = "managed-plan-builder";
 
 #[test]
+fn file_review_store_replays_exact_facts_and_reauthorizes_on_load() {
+    let repository = repository_at(time());
+    let saved = repository
+        .save_epic_plan_proposal(command(None, proposal("review"), "review-save"))
+        .unwrap();
+    repository
+        .initiate_epic(super::super::domain::InitiateEpicCommand {
+            epic_planning_draft_id: EpicPlanningDraftId::new("epic-planning-draft-1").unwrap(),
+            expected_revision_token: saved.revision_token,
+            actor_id: "application-user".into(),
+            idempotency_key: "review-init".into(),
+        })
+        .unwrap();
+    let query = repository.native_query().unwrap();
+    let epic = &query.initiated_epics[0];
+    let facts = StoreFileReviewFacts {
+        document_ref_id: "review-document".into(),
+        epic_id: epic.epic_id.clone(),
+        sprint_id: query.initiated_sprints[0].sprint_id.clone(),
+        provenance_id: epic.provenance_id.clone(),
+        opaque_reference: "opaque-review".into(),
+        title: "Changed files".into(),
+        summary: None,
+        artifact_id: "review-artifact".into(),
+        payload: b"{}".to_vec(),
+        idempotency_key: "review-store".into(),
+        changed_files: vec![FileReviewChangedFileWrite {
+            changed_file_reference_id: "changed-1".into(),
+            display_name: "src/a.ts".into(),
+            change_kind: "modified".into(),
+        }],
+    };
+    assert_eq!(
+        repository.store_file_review_facts(facts.clone()).unwrap(),
+        StoreFileReviewFactsResult::Stored
+    );
+    assert_eq!(
+        repository.store_file_review_facts(facts).unwrap(),
+        StoreFileReviewFactsResult::IdempotentReplay
+    );
+    match repository.load_scoped_file_review("opaque-review").unwrap() {
+        ScopedFileReviewLoad::Available { document } => {
+            assert_eq!(document.artifact_id, "review-artifact");
+            assert_eq!(
+                document.changed_files[0].changed_file_reference_id,
+                "changed-1"
+            );
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[test]
+fn file_review_store_rejects_wrong_provenance_without_writing() {
+    let repository = repository_at(time());
+    let saved = repository
+        .save_epic_plan_proposal(command(None, proposal("review"), "review-save"))
+        .unwrap();
+    repository
+        .initiate_epic(super::super::domain::InitiateEpicCommand {
+            epic_planning_draft_id: EpicPlanningDraftId::new("epic-planning-draft-1").unwrap(),
+            expected_revision_token: saved.revision_token,
+            actor_id: "application-user".into(),
+            idempotency_key: "review-init".into(),
+        })
+        .unwrap();
+    let query = repository.native_query().unwrap();
+    let result = repository.store_file_review_facts(StoreFileReviewFacts {
+        document_ref_id: "bad-document".into(),
+        epic_id: query.initiated_epics[0].epic_id.clone(),
+        sprint_id: query.initiated_sprints[0].sprint_id.clone(),
+        provenance_id: "wrong-provenance".into(),
+        opaque_reference: "opaque-bad".into(),
+        title: "Changed files".into(),
+        summary: None,
+        artifact_id: "bad-artifact".into(),
+        payload: b"{}".to_vec(),
+        idempotency_key: "bad-store".into(),
+        changed_files: vec![FileReviewChangedFileWrite {
+            changed_file_reference_id: "changed-1".into(),
+            display_name: "src/a.ts".into(),
+            change_kind: "modified".into(),
+        }],
+    });
+    assert!(matches!(result, Err(FileReviewFactsError::Forbidden)));
+    assert!(matches!(
+        repository.load_scoped_file_review("opaque-bad").unwrap(),
+        ScopedFileReviewLoad::Unavailable
+    ));
+}
+
+#[test]
+fn scoped_file_review_distinguishes_unknown_invalid_and_broken_membership() {
+    let repository = repository_at(time());
+    assert!(matches!(
+        repository.load_scoped_file_review("missing").unwrap(),
+        ScopedFileReviewLoad::Unavailable
+    ));
+    assert!(matches!(
+        repository.load_scoped_file_review(" ").unwrap(),
+        ScopedFileReviewLoad::Invalid
+    ));
+    let saved = repository
+        .save_epic_plan_proposal(command(None, proposal("review"), "status-save"))
+        .unwrap();
+    repository
+        .initiate_epic(super::super::domain::InitiateEpicCommand {
+            epic_planning_draft_id: EpicPlanningDraftId::new("epic-planning-draft-1").unwrap(),
+            expected_revision_token: saved.revision_token,
+            actor_id: "application-user".into(),
+            idempotency_key: "status-init".into(),
+        })
+        .unwrap();
+    let query = repository.native_query().unwrap();
+    repository
+        .store_file_review_facts(StoreFileReviewFacts {
+            document_ref_id: "status-document".into(),
+            epic_id: query.initiated_epics[0].epic_id.clone(),
+            sprint_id: query.initiated_sprints[0].sprint_id.clone(),
+            provenance_id: query.initiated_epics[0].provenance_id.clone(),
+            opaque_reference: "opaque-status".into(),
+            title: "Changed files".into(),
+            summary: None,
+            artifact_id: "status-artifact".into(),
+            payload: b"{}".to_vec(),
+            idempotency_key: "status-store".into(),
+            changed_files: vec![FileReviewChangedFileWrite {
+                changed_file_reference_id: "changed-1".into(),
+                display_name: "src/a.ts".into(),
+                change_kind: "modified".into(),
+            }],
+        })
+        .unwrap();
+    repository
+        .lock()
+        .unwrap()
+        .execute(
+            "DELETE FROM stored_file_review_artifacts WHERE artifact_id='status-artifact'",
+            [],
+        )
+        .unwrap();
+    assert!(matches!(
+        repository.load_scoped_file_review("opaque-status").unwrap(),
+        ScopedFileReviewLoad::Unauthorized
+    ));
+}
+
+#[test]
+fn file_review_rejects_a_valid_other_epic_provenance_and_omits_it_from_query() {
+    let repository = repository_at(time());
+    let first = repository
+        .save_epic_plan_proposal(command(None, proposal("one"), "one-save"))
+        .unwrap();
+    repository
+        .initiate_epic(super::super::domain::InitiateEpicCommand {
+            epic_planning_draft_id: EpicPlanningDraftId::new("epic-planning-draft-1").unwrap(),
+            expected_revision_token: first.revision_token,
+            actor_id: "application-user".into(),
+            idempotency_key: "one-init".into(),
+        })
+        .unwrap();
+    let draft = EpicPlanningDraftId::new("epic-planning-draft-2").unwrap();
+    let profile = CapabilityProfileId::new("capability-profile-2").unwrap();
+    let association =
+        PlanningDraftAgentSessionAssociationId::new("planning-draft-agent-session-association-2")
+            .unwrap();
+    repository.create_planning_draft(&draft, time()).unwrap();
+    repository
+        .create_capability_profile(&profile, "active", time())
+        .unwrap();
+    repository
+        .associate_agent_session(&association, &draft, SESSION_ID, ACTOR_ID, time())
+        .unwrap();
+    repository
+        .assign_profile(&draft, &profile, &association, at(2030, 1, 1), time())
+        .unwrap();
+    let second = repository
+        .save_epic_plan_proposal(SaveEpicPlanProposalCommand {
+            epic_planning_draft_id: draft.clone(),
+            capability_profile_id: profile,
+            agent_session_association_id: association,
+            agent_session_id: SESSION_ID.into(),
+            actor_id: ACTOR_ID.into(),
+            expected_revision: None,
+            proposal: proposal("two"),
+            idempotency_key: "two-save".into(),
+        })
+        .unwrap();
+    repository
+        .initiate_epic(super::super::domain::InitiateEpicCommand {
+            epic_planning_draft_id: draft,
+            expected_revision_token: second.revision_token,
+            actor_id: "application-user".into(),
+            idempotency_key: "two-init".into(),
+        })
+        .unwrap();
+    let query = repository.native_query().unwrap();
+    let first_epic = &query.initiated_epics[0];
+    repository
+        .store_file_review_facts(StoreFileReviewFacts {
+            document_ref_id: "tamper-document".into(),
+            epic_id: first_epic.epic_id.clone(),
+            sprint_id: query
+                .initiated_sprints
+                .iter()
+                .find(|x| x.epic_id == first_epic.epic_id)
+                .unwrap()
+                .sprint_id
+                .clone(),
+            provenance_id: first_epic.provenance_id.clone(),
+            opaque_reference: "opaque-tamper".into(),
+            title: "Changed files".into(),
+            summary: None,
+            artifact_id: "tamper-artifact".into(),
+            payload: b"{}".to_vec(),
+            idempotency_key: "tamper-store".into(),
+            changed_files: vec![FileReviewChangedFileWrite {
+                changed_file_reference_id: "changed".into(),
+                display_name: "src/a.ts".into(),
+                change_kind: "modified".into(),
+            }],
+        })
+        .unwrap();
+    let other = query
+        .initiated_epics
+        .iter()
+        .find(|x| x.epic_id != first_epic.epic_id)
+        .unwrap()
+        .provenance_id
+        .clone();
+    let connection = repository.lock().unwrap();
+    connection.execute("UPDATE file_review_documents SET provenance_id=?1 WHERE document_ref_id='tamper-document'", [&other]).unwrap();
+    connection.execute("UPDATE stored_file_review_artifacts SET provenance_id=?1 WHERE artifact_id='tamper-artifact'", [&other]).unwrap();
+    drop(connection);
+    assert!(matches!(
+        repository.load_scoped_file_review("opaque-tamper").unwrap(),
+        ScopedFileReviewLoad::Unauthorized
+    ));
+    assert!(!serde_json::to_string(&repository.native_query().unwrap())
+        .unwrap()
+        .contains("tamper-document"));
+}
+
+#[test]
 fn initiation_is_atomic_idempotent_and_preserves_the_consumed_revision() {
     let repository = repository_at(time());
     let saved = repository
@@ -660,6 +904,9 @@ fn initialize_connection(connection: &Connection) {
     connection
         .execute_batch(PLAN_BUILDER_CONTEXT_DELIVERY_SCHEMA)
         .expect("context delivery schema");
+    connection
+        .execute_batch(FILE_REVIEW_FACTS_SCHEMA)
+        .expect("File Review facts schema");
     seed_session(connection);
 }
 fn seed(repository: &SqliteOrchestrationRepository, expiry: chrono::DateTime<Utc>) {
@@ -792,6 +1039,7 @@ fn canonical_populated_query() -> NativeQueryV2 {
         material_snapshots: vec![],
         initiated_epics: vec![],
         initiated_sprints: vec![],
+        file_review_documents: vec![],
     }
 }
 
