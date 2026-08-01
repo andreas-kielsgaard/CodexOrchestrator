@@ -159,7 +159,7 @@ describe('App application surfaces', () => {
     expect(loadedSessionIds).not.toContain('recorded-session-reviewer-WU-ECS2E');
   });
 
-  it('opens the authorized application-owned source from its Sprint Document', async () => {
+  it('keeps the application-owned File Review source out of Sprint Document actions', async () => {
     render(<App {...createRecordedFileReviewApplicationComposition()} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Orchestration' }));
@@ -174,20 +174,8 @@ describe('App application surfaces', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Documents' }));
     const documentTitle = screen.getByText('Application-owned file review');
     expect(documentTitle).toBeVisible();
-    const documentCard = documentTitle.closest('article');
-    expect(documentCard).not.toBeNull();
-
-    fireEvent.click(
-      within(documentCard as HTMLElement).getByRole('button', { name: 'View document' }),
-    );
-
-    expect(await screen.findByRole('main', { name: 'Files and diffs' })).toBeVisible();
-    expect(screen.queryByRole('combobox', { name: 'Review source' })).toBeNull();
-    expect(screen.getByText('Application-owned file review')).toBeVisible();
-    expect(await screen.findByText('1 changed files')).toBeVisible();
-    expect(screen.getByText('Recorded application-owned review material')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'File' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('button', { name: 'Compare with Sprint start' })).toBeVisible();
+    expect(documentTitle.closest('article')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Review files|View document/ })).toBeNull();
   });
 });
 

@@ -1,19 +1,21 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { recordedFileReviewClient } from '../../dev/fileReview/recordedFileReviewClient';
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import { createRecordedFileReviewSource } from '../../dev/fileReview/recordedFileReviewClient';
 import { FileReviewScreen } from './FileReviewScreen';
 
 describe('FileReviewScreen', () => {
   it('navigates changed files, expands context, and switches unified and split layouts', async () => {
-    const { container } = render(<FileReviewScreen client={recordedFileReviewClient} />);
+    const { container } = render(
+      <FileReviewScreen source={createRecordedFileReviewSource('working-tree')} />,
+    );
 
     expect(await screen.findByText('5 changed files')).toBeVisible();
-    expect(screen.getByText('+84')).toBeVisible();
-    expect(screen.getByText('−16')).toBeVisible();
-    expect(screen.queryByText('Repository identity remains inside the adapter.')).toBeNull();
+    expect(screen.getByText('+12')).toBeVisible();
+    expect(screen.getByText('−4')).toBeVisible();
+    expect(screen.queryByText(/The viewer presents/)).toBeNull();
     expect(screen.queryByRole('button', { name: /edit|save|stage|discard|write/i })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Show 3 unchanged lines above' }));
-    expect(screen.getByText('Repository identity remains inside the adapter.')).toBeVisible();
+    expect(screen.getByText(/The viewer presents/)).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Split' }));
     expect(screen.getByRole('button', { name: 'Split' })).toHaveAttribute('aria-pressed', 'true');
@@ -24,11 +26,13 @@ describe('FileReviewScreen', () => {
         name: 'Review src/features/fileReview/FileReviewScreen.tsx',
       }),
     );
-    expect(screen.getByText('@@ -0,0 +1,8 @@')).toBeVisible();
+    expect(screen.getByText('@@ -0,0 +1,7 @@')).toBeVisible();
   });
 
   it('reuses safe Markdown rendering and names binary and unsupported states', async () => {
-    const { container } = render(<FileReviewScreen client={recordedFileReviewClient} />);
+    const { container } = render(
+      <FileReviewScreen source={createRecordedFileReviewSource('working-tree')} />,
+    );
 
     await screen.findByText('5 changed files');
     fireEvent.click(screen.getByRole('button', { name: 'File' }));
@@ -55,51 +59,45 @@ describe('FileReviewScreen', () => {
     expect(screen.getByRole('heading', { name: 'File type not supported' })).toBeVisible();
   });
 
-  it('loads every provenance class through an opaque source selection', async () => {
-    render(<FileReviewScreen client={recordedFileReviewClient} />);
+  it('renders one scoped review without origin or storage provenance controls', async () => {
+    render(<FileReviewScreen source={createRecordedFileReviewSource('application-owned')} />);
 
-    const source = await screen.findByRole('combobox', { name: 'Review source' });
-    for (const [sourceId, expectedDetail] of [
-      ['source-staged', 'Index snapshot · ready for commit review'],
-      ['source-commit-range', 'main…exploration · three commits'],
-      ['source-generated', 'Bootstrap preview · not persisted'],
-      ['doc-file-review', 'Recorded application-owned review material'],
-    ] as const) {
-      fireEvent.change(source, { target: { value: sourceId } });
-      expect(await screen.findByText(expectedDetail)).toBeVisible();
-    }
-
+    expect(await screen.findByText('1 changed files')).toBeVisible();
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(screen.queryByText('Application-owned')).toBeNull();
+    expect(screen.queryByText('Recorded application-owned review material')).toBeNull();
     expect(screen.queryByText(/C:\\|C:\//)).toBeNull();
   });
 
-  it('names the empty authorized-source state instead of remaining in loading', async () => {
+  it('names an empty scoped review instead of remaining in loading', async () => {
     render(
       <FileReviewScreen
-        client={{
-          listSources: async () => [],
-          loadSource: async () => {
-            throw new Error('No source is authorized.');
-          },
+        source={{
+          load: async () => ({ files: [] }),
         }}
       />,
     );
 
-    expect(await screen.findByRole('heading', { name: 'No review sources' })).toBeVisible();
-    expect(screen.getByText('No authorized review material is currently available.')).toBeVisible();
-    expect(screen.queryByText('Loading review material')).toBeNull();
+    expect(await screen.findByRole('heading', { name: 'No changed files' })).toBeVisible();
+    expect(screen.getByText('No files are available for this review.')).toBeVisible();
   });
 
-  it('locks an application-owned Document and defaults to its complete content', async () => {
-    render(
-      <FileReviewScreen client={recordedFileReviewClient} initialSourceId="doc-g1" fixedSource />,
-    );
+  it('keeps Unified/Split left and Changes/File right with a stable non-focusable slot', async () => {
+    render(<FileReviewScreen source={createRecordedFileReviewSource('working-tree')} />);
 
-    expect(await screen.findByRole('button', { name: 'File' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
-    expect(screen.queryByRole('combobox', { name: 'Review source' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Compare with Sprint start' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'G1 feedback and ECS-R2 replan' })).toBeVisible();
+    await screen.findByText('5 changed files');
+    const inspectionModes = screen.getByRole('group', { name: 'File inspection mode' });
+    const layoutSlot = screen.getByTestId('diff-layout-slot');
+    expect(layoutSlot.nextElementSibling).toBe(inspectionModes);
+    expect(screen.getByRole('group', { name: 'Diff layout' })).toBe(layoutSlot.firstElementChild);
+    expect(layoutSlot).toHaveStyle({ width: '152px' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'File' }));
+
+    expect(screen.getByRole('group', { name: 'File inspection mode' })).toBe(inspectionModes);
+    expect(layoutSlot.nextElementSibling).toBe(inspectionModes);
+    expect(layoutSlot).toHaveStyle({ width: '152px' });
+    expect(screen.queryByRole('group', { name: 'Diff layout' })).toBeNull();
+    expect(within(layoutSlot).queryAllByRole('button')).toHaveLength(0);
   });
 });

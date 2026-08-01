@@ -24,7 +24,6 @@ export interface OrchestrationSectionProps {
   readonly onOpenPlanningDraft?: (draft: EpicPlanningDraftSummary) => void;
   readonly requestedLocation?: AgentSessionProductLocation | null;
   readonly onOpenAgentSession?: (sessionId: string) => void;
-  readonly onOpenFileReviewSource?: (sourceId: string) => void;
 }
 
 export function OrchestrationSection({
@@ -38,7 +37,6 @@ export function OrchestrationSection({
   onOpenPlanningDraft,
   requestedLocation,
   onOpenAgentSession,
-  onOpenFileReviewSource,
 }: OrchestrationSectionProps) {
   const workspace = useOrchestrationWorkspace(requestedLocation);
   const selected = view.epics.find(({ id }) => id === workspace.epicId);
@@ -60,7 +58,6 @@ export function OrchestrationSection({
         onDetailLocationChange={workspace.setDetailLocation}
         onBack={workspace.backToOverview}
         onOpenAgentSession={onOpenAgentSession}
-        onOpenFileReviewSource={onOpenFileReviewSource}
       />
     );
   }
@@ -107,18 +104,22 @@ export function OrchestrationSection({
             {view.epics.map((epic) => (
               <tr key={epic.id}>
                 <td data-label="Epic">
-                  <EpicTitleWithDescription name={epic.name} description={epic.goal} onOpen={() => workspace.openEpic(epic.id)} />
+                  <EpicTitleWithDescription
+                    name={epic.name}
+                    description={epic.goal}
+                    onOpen={() => workspace.openEpic(epic.id)}
+                  />
                   <small>{epic.goal}</small>
-                    {epic.bootstrapTransition && (
-                      <small
-                        className={`orchestration-transition orchestration-transition--${epic.bootstrapTransition.kind}`}
-                      >
-                        {epic.bootstrapTransition.label}
-                        {epic.bootstrapTransition.kind === 'blocked'
-                          ? `: ${epic.bootstrapTransition.reason}`
-                          : ''}
-                      </small>
-                    )}
+                  {epic.bootstrapTransition && (
+                    <small
+                      className={`orchestration-transition orchestration-transition--${epic.bootstrapTransition.kind}`}
+                    >
+                      {epic.bootstrapTransition.label}
+                      {epic.bootstrapTransition.kind === 'blocked'
+                        ? `: ${epic.bootstrapTransition.reason}`
+                        : ''}
+                    </small>
+                  )}
                 </td>
                 <td data-label="Current movement">
                   <MovementBadge movement={epic.movement} />

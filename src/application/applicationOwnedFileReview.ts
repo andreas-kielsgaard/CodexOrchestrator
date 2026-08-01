@@ -1,13 +1,13 @@
 import type {
   FileReviewChangeKind,
-  FileReviewClient,
   FileReviewContent,
   FileReviewDiffHunk,
   FileReviewDiffLine,
   FileReviewFile,
   FileReviewSnapshot,
-  FileReviewSourceSummary,
+  FileReviewSource,
 } from './fileReview';
+import { assertCompleteFileReviewFile } from './fileReview';
 
 export const STORED_FILE_REVIEW_ARTIFACT_V1 = 'stored-file-review-artifact/v1' as const;
 export const DEFAULT_FILE_REVIEW_ARTIFACT_SIZE_LIMIT = 1_000_000;
@@ -27,10 +27,9 @@ export interface ApplicationFileReviewDocument {
   readonly changedFiles: readonly ApplicationFileReviewChangedFile[];
 }
 
-/** Authoritative application-owned Document catalog. Loading rechecks current authorization. */
+/** Authoritative application-owned Document resolver. Loading rechecks current authorization. */
 export interface FileReviewDocumentPort {
-  listDocuments(): Promise<readonly ApplicationFileReviewDocument[]>;
-  loadDocument(documentRefId: string): Promise<ApplicationFileReviewDocument | null>;
+  loadDocument(): Promise<ApplicationFileReviewDocument | null>;
 }
 
 export interface StoredFileReviewArtifact {
@@ -64,34 +63,22 @@ export class FileReviewSourceError extends Error {
   }
 }
 
-export function createApplicationOwnedFileReviewClient(
+export function createApplicationOwnedFileReviewSource(
   documents: FileReviewDocumentPort,
   artifacts: StoredFileReviewArtifactPort,
   options: { readonly maxArtifactBytes?: number } = {},
-): FileReviewClient {
+): FileReviewSource {
   const maxArtifactBytes = options.maxArtifactBytes ?? DEFAULT_FILE_REVIEW_ARTIFACT_SIZE_LIMIT;
   if (!Number.isSafeInteger(maxArtifactBytes) || maxArtifactBytes < 1)
     throw new Error('File review artifact size limit must be a positive safe integer.');
 
   return {
-    async listSources() {
-      const listed = await documents.listDocuments();
-      const sourceIds = new Set<string>();
-      return listed.flatMap((document) => {
-        if (!isEligibleDocument(document)) return [];
-        validateDocument(document);
-        if (sourceIds.has(document.documentRefId))
-          fail('identity_mismatch', 'The Document catalog returned a duplicate source identity.');
-        sourceIds.add(document.documentRefId);
-        return [toSource(document)];
-      });
-    },
-    async loadSource(sourceId) {
-      const document = await documents.loadDocument(sourceId);
-      if (!document || document.documentRefId !== sourceId || !isEligibleDocument(document))
+    async load() {
+      const document = await documents.loadDocument();
+      if (!document || !isEligibleDocument(document))
         fail(
           'source_unauthorized',
-          'The requested Document review is unavailable or not authorized.',
+          'The scoped changed-files Document is unavailable or not authorized.',
         );
       validateDocument(document);
 
@@ -114,35 +101,6 @@ export function createApplicationOwnedFileReviewClient(
         );
 
       return decodeSnapshot(document, artifact);
-    },
-  };
-}
-
-export function combineFileReviewClients(clients: readonly FileReviewClient[]): FileReviewClient {
-  return {
-    async listSources() {
-      const groups = await Promise.all(clients.map((client) => client.listSources()));
-      const seen = new Set<string>();
-      return groups.flat().map((source) => {
-        if (seen.has(source.sourceId))
-          fail('identity_mismatch', 'Multiple review clients returned the same source identity.');
-        seen.add(source.sourceId);
-        return source;
-      });
-    },
-    async loadSource(sourceId) {
-      const groups = await Promise.all(clients.map((client) => client.listSources()));
-      const owners = groups
-        .map((sources, index) =>
-          sources.some((source) => source.sourceId === sourceId) ? index : -1,
-        )
-        .filter((index) => index >= 0);
-      if (owners.length !== 1)
-        fail(
-          'source_unauthorized',
-          'The requested review source has no unambiguous authorized client.',
-        );
-      return clients[owners[0]].loadSource(sourceId);
     },
   };
 }
@@ -203,7 +161,6 @@ function decodeSnapshot(
   });
 
   return {
-    source: toSource(document),
     files,
   };
 }
@@ -225,7 +182,7 @@ function decodeFile(
     },
     { additions: 0, deletions: 0 },
   );
-  return {
+  const file: FileReviewFile = {
     fileId: authorized.changedFileReferenceId,
     displayPath: authorized.displayName,
     changeKind: authorized.changeKind,
@@ -234,6 +191,15 @@ function decodeFile(
     content: decodeContent(record(stored.content, 'file content'), authorized.displayName),
     hunks,
   };
+  try {
+    assertCompleteFileReviewFile(file);
+  } catch (error) {
+    fail(
+      'artifact_invalid',
+      error instanceof Error ? error.message : 'Stored file review facts are inconsistent.',
+    );
+  }
+  return file;
 }
 
 function decodeContent(content: Record<string, unknown>, displayName: string): FileReviewContent {
@@ -302,18 +268,8 @@ function decodeLine(value: unknown): FileReviewDiffLine {
   };
 }
 
-function toSource(document: ApplicationFileReviewDocument): FileReviewSourceSummary {
-  return {
-    sourceId: document.documentRefId,
-    kind: 'application_owned',
-    label: document.title,
-    detail: document.summary ?? 'Application-owned Document',
-    comparisonLabel: 'Compare with Sprint start',
-  };
-}
-
 function isEligibleDocument(document: ApplicationFileReviewDocument) {
-  return document.artifactIds.length === 1 && document.changedFiles.length > 0;
+  return document.classification === 'changed_files' && document.artifactIds.length === 1;
 }
 
 function validateDocument(document: ApplicationFileReviewDocument) {

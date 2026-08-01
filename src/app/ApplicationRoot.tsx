@@ -13,7 +13,12 @@ export function ApplicationRoot() {
     if (viteDevelopmentMode() && developmentRoute.has('file-diff-viewer')) {
       void import('../dev/fileReview/recordedFileReviewClient').then(
         ({ createRecordedFileReviewApplicationComposition }) => {
-          if (active) setComposition(createRecordedFileReviewApplicationComposition());
+          if (active)
+            setComposition(
+              createRecordedFileReviewApplicationComposition(
+                recordedFileReviewFixture(developmentRoute.get('file-review-fixture')),
+              ),
+            );
         },
       );
     } else if (
@@ -44,4 +49,15 @@ export function ApplicationRoot() {
 function viteDevelopmentMode(): boolean {
   const env = (import.meta as unknown as { env?: { DEV?: boolean } }).env;
   return env?.DEV === true;
+}
+
+function recordedFileReviewFixture(value: string | null) {
+  if (
+    value === 'staged' ||
+    value === 'commit-range' ||
+    value === 'generated' ||
+    value === 'application-owned'
+  )
+    return value;
+  return 'working-tree' as const;
 }

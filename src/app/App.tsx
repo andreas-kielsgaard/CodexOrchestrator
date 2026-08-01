@@ -39,7 +39,7 @@ import type { ManagedPlanBuilderSessionClient } from '../infrastructure/orchestr
 import { useEpicInitiationConfirmation } from './useEpicInitiationConfirmation';
 import { EpicInitiationConfirmationModal } from './EpicInitiationConfirmationModal';
 import type { AgentSessionProductLocation } from '../application/agentSessionNavigation';
-import type { FileReviewClient } from '../application/fileReview';
+import type { FileReviewSource } from '../application/fileReview';
 import { FileReviewScreen } from '../features/fileReview';
 
 export type ApplicationSurface = 'epics' | 'agent-sessions' | 'harness-inspector' | 'file-review';
@@ -68,7 +68,7 @@ export interface AppProps {
   readonly agentIdentityForSession?: (sessionId: string) => AgentIdentity | undefined;
   /** Present only in an injected development composition; production boot does not expose it. */
   readonly harnessManagementPreviewSurface?: ReactNode;
-  readonly fileReviewClient?: FileReviewClient;
+  readonly fileReviewSource?: FileReviewSource;
   readonly initialSurface?: ApplicationSurface;
 }
 
@@ -96,12 +96,12 @@ export function App({
   agentSessionHarnessManagementSource,
   agentIdentityForSession,
   harnessManagementPreviewSurface,
-  fileReviewClient,
+  fileReviewSource,
   initialSurface = 'epics',
 }: AppProps) {
   const [surface, setSurface] = useState<ApplicationSurface>(() =>
     (initialSurface === 'harness-inspector' && !harnessManagementPreviewSurface) ||
-    (initialSurface === 'file-review' && !fileReviewClient)
+    (initialSurface === 'file-review' && !fileReviewSource)
       ? 'epics'
       : initialSurface,
   );
@@ -111,7 +111,6 @@ export function App({
   );
   const [requestedProductLocation, setRequestedProductLocation] =
     useState<AgentSessionProductLocation | null>(null);
-  const [fileReviewSourceId, setFileReviewSourceId] = useState<string | undefined>();
   const [orchestrationRoute, setOrchestrationRoute] = useState<'overview' | 'plan-builder'>(
     'overview',
   );
@@ -385,7 +384,7 @@ export function App({
             Harness Management
           </button>
         )}
-        {fileReviewClient ? (
+        {fileReviewSource ? (
           <button
             className={surface === 'file-review' ? 'active' : undefined}
             type="button"
@@ -437,21 +436,9 @@ export function App({
           }}
           requestedLocation={requestedProductLocation}
           onOpenAgentSession={openStandaloneAgentSession}
-          onOpenFileReviewSource={
-            fileReviewClient
-              ? (sourceId) => {
-                  setFileReviewSourceId(sourceId);
-                  setSurface('file-review');
-                }
-              : undefined
-          }
         />
-      ) : surface === 'file-review' && fileReviewClient ? (
-        <FileReviewScreen
-          client={fileReviewClient}
-          initialSourceId={fileReviewSourceId}
-          fixedSource={Boolean(fileReviewSourceId)}
-        />
+      ) : surface === 'file-review' && fileReviewSource ? (
+        <FileReviewScreen source={fileReviewSource} />
       ) : surface === 'agent-sessions' ? (
         <StandaloneAgentSessionScreen
           client={agentSessionClient}
@@ -486,7 +473,6 @@ function OrchestrationSurface({
   onOpenDraft,
   requestedLocation,
   onOpenAgentSession,
-  onOpenFileReviewSource,
 }: {
   readonly load: ReturnType<typeof useOrchestrationLoad>;
   readonly presentation: OrchestrationPresentationAdapter;
@@ -499,7 +485,6 @@ function OrchestrationSurface({
   readonly onOpenDraft: (draft: EpicPlanningDraftSummary) => void;
   readonly requestedLocation: AgentSessionProductLocation | null;
   readonly onOpenAgentSession: (sessionId: string) => void;
-  readonly onOpenFileReviewSource?: (sourceId: string) => void;
 }) {
   if (load.kind === 'ready')
     return (
@@ -514,7 +499,6 @@ function OrchestrationSurface({
         onOpenPlanningDraft={onOpenDraft}
         requestedLocation={requestedLocation}
         onOpenAgentSession={onOpenAgentSession}
-        onOpenFileReviewSource={onOpenFileReviewSource}
       />
     );
   const copy =
