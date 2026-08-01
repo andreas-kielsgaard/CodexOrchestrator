@@ -300,23 +300,7 @@ function workUnitSessions(
   const existing = (adjunct?.workUnitSessions ?? []).filter(
     (session) => session.workUnitId === unit.workUnitId,
   );
-  const executionIds = new Set(unit.attempts.map((attempt) => attempt.workUnitExecutionId));
-  const adjunctById = new Map(existing.map((session) => [session.sessionId, session]));
-  // Reviewer references are attempt/review-oriented, so the existing Work Unit detail is their
-  // smallest coherent surface; no reviewer is inferred from workflow prose or geometry.
-  const reviewerSessions = workspace.agentSessionReferences
-    .filter(
-      (reference) =>
-        reference.targetKind === 'work_unit_execution' &&
-        executionIds.has(reference.targetId) &&
-        reference.semanticRole === 'reviewer',
-    )
-    .map((reference) => ({
-      sessionId: reference.agentSessionId,
-      title: reference.title,
-      workUnitId: unit.workUnitId,
-      role: 'reviewer' as const,
-      transcript: adjunctById.get(reference.agentSessionId)?.transcript,
-    }));
-  return [...existing, ...reviewerSessions];
+  // Review evidence remains part of the Work Unit record. It does not create a sixth
+  // Agent Session role or a session inferred from execution history.
+  return existing;
 }
