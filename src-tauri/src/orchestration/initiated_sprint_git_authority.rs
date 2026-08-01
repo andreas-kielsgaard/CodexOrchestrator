@@ -1,6 +1,7 @@
 use super::repository::{
-    InitiatedSprintGitAuthorityError, InitiatedSprintGitAuthorityWrite,
-    SqliteOrchestrationRepository, StoreInitiatedSprintGitAuthorityResult,
+    InitiatedSprintGitAuthority, InitiatedSprintGitAuthorityError,
+    InitiatedSprintGitAuthorityWrite, SqliteOrchestrationRepository,
+    StoreInitiatedSprintGitAuthorityResult,
 };
 use std::{error::Error, fmt, sync::Arc};
 
@@ -96,6 +97,41 @@ impl InitiatedSprintGitAuthorityService {
                 }
             })
             .map_err(Into::into)
+    }
+
+    /// Reauthorizes the durable relation against the live Worktree Runtime boundary.
+    pub(crate) fn reauthorize(
+        &self,
+        authority_ref: &str,
+    ) -> Result<InitiatedSprintGitAuthority, BindInitiatedSprintGitAuthorityError> {
+        if !bounded_id(authority_ref) {
+            return Err(BindInitiatedSprintGitAuthorityError::InvalidRequest);
+        }
+        let authority = self
+            .repository
+            .load_initiated_sprint_git_authority(authority_ref)?
+            .ok_or(BindInitiatedSprintGitAuthorityError::SprintUnauthorized)?;
+        let comparison = self
+            .runtime
+            .resolve_verified_comparison(&authority.runtime_instance_ref)?;
+        if comparison.repository_id != authority.repository_id
+            || comparison.repository_root != authority.repository_root
+            || comparison.repository_common_dir != authority.repository_common_dir
+            || comparison.worktree_id != authority.worktree_id
+            || comparison.worktree_root != authority.worktree_root
+            || !comparison
+                .baseline_object_id
+                .eq_ignore_ascii_case(&authority.baseline_object_id)
+            || !comparison
+                .current_object_id
+                .eq_ignore_ascii_case(&authority.current_object_id)
+            || comparison.runtime_instance_ref != authority.runtime_instance_ref
+            || comparison.runtime_source_ref != authority.runtime_source_ref
+            || comparison.source_fingerprint != authority.source_fingerprint
+        {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeEvidenceMismatch);
+        }
+        Ok(authority)
     }
 }
 

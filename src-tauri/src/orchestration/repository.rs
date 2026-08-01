@@ -1678,8 +1678,6 @@ fn validate_git_capture_authorization(
     if !ids.iter().all(|x| nonblank(x))
         || !canonical_absolute_root(&value.repository_root)
         || !canonical_absolute_root(&value.worktree_root)
-        || !std::path::Path::new(&value.worktree_root)
-            .starts_with(std::path::Path::new(&value.repository_root))
         || !git_object_id(&value.baseline_object_id)
         || !git_object_id(&value.current_object_id)
         || value
