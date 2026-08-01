@@ -559,7 +559,9 @@ impl ManagedPlanBuilderInvocation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orchestration::repository::{ORCHESTRATION_INITIATION_SCHEMA, ORCHESTRATION_SCHEMA};
+    use crate::orchestration::repository::{
+        FILE_REVIEW_FACTS_SCHEMA, ORCHESTRATION_INITIATION_SCHEMA, ORCHESTRATION_SCHEMA,
+    };
     use chrono::{TimeZone, Utc};
     use rusqlite::{params, Connection};
     use std::sync::{mpsc, Mutex};
@@ -1075,6 +1077,9 @@ mod tests {
         connection
             .execute_batch(ORCHESTRATION_SCHEMA)
             .expect("schema");
+        connection
+            .execute_batch(FILE_REVIEW_FACTS_SCHEMA)
+            .expect("File Review schema");
         connection
             .execute_batch(ORCHESTRATION_INITIATION_SCHEMA)
             .expect("initiation schema");

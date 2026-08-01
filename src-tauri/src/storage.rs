@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-const ACTIVE_SCHEMA_VERSION: i64 = 7;
+const ACTIVE_SCHEMA_VERSION: i64 = 9;
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join(ACTIVE_DATABASE_FILE_NAME)
@@ -25,7 +25,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     if current_version == ACTIVE_SCHEMA_VERSION {
         return Ok(());
     }
-    if (1..=6).contains(&current_version) {
+    if (1..=8).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -73,6 +73,18 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 format!("Unable to migrate Agent Session launch acceptance schema: {error}")
             })?;
         transaction
+            .execute_batch(crate::orchestration::repository::FILE_REVIEW_FACTS_SCHEMA)
+            .map_err(|error| format!("Unable to migrate File Review facts schema: {error}"))?;
+        if current_version == 8 {
+            transaction
+                .execute_batch(
+                    crate::orchestration::repository::FILE_REVIEW_FACTS_IDEMPOTENCY_SCHEMA,
+                )
+                .map_err(|error| {
+                    format!("Unable to migrate File Review idempotency schema: {error}")
+                })?;
+        }
+        transaction
             .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
             .map_err(|error| format!("Unable to record active schema version: {error}"))?;
         transaction
@@ -108,6 +120,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     transaction
         .execute_batch(crate::orchestration::repository::PLAN_BUILDER_CONTEXT_DELIVERY_SCHEMA)
         .map_err(|error| format!("Unable to initialize Plan Builder context schema: {error}"))?;
+    transaction
+        .execute_batch(crate::orchestration::repository::FILE_REVIEW_FACTS_SCHEMA)
+        .map_err(|error| format!("Unable to initialize File Review facts schema: {error}"))?;
     transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
         .map_err(|error| format!("Unable to record active schema version: {error}"))?;
@@ -197,6 +212,8 @@ mod tests {
                 "epic_initiation_results",
                 "epic_initiations",
                 "epic_planning_drafts",
+                "file_review_changed_files",
+                "file_review_documents",
                 "initiated_planning_drafts",
                 "initiated_sprints",
                 "plan_builder_context_deliveries",
@@ -207,6 +224,7 @@ mod tests {
                 "proposal_commands",
                 "proposal_events",
                 "proposal_revisions",
+                "stored_file_review_artifacts",
             ]
         );
         assert_eq!(
@@ -229,6 +247,14 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .expect("collect context schema");
         assert!(context_columns.contains(&"target_invocation_id".to_string()));
+        let file_review_columns = connection
+            .prepare("PRAGMA table_info(file_review_documents)")
+            .expect("prepare File Review schema")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("query File Review schema")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect File Review schema");
+        assert!(file_review_columns.contains(&"payload_fingerprint".to_string()));
     }
 
     #[test]
@@ -255,6 +281,31 @@ mod tests {
         assert_eq!(
             active_path.file_name().unwrap(),
             "codex-orchestrator-active-v3.sqlite"
+        );
+    }
+
+    #[test]
+    fn migrates_v8_file_review_rows_to_fingerprint_schema_without_losing_data() {
+        let connection = Connection::open_in_memory().expect("database");
+        configure_sqlite_connection(&connection).expect("policy");
+        initialize_active_database(&connection).expect("current schema");
+        connection.execute_batch("ALTER TABLE file_review_documents DROP COLUMN payload_fingerprint; PRAGMA foreign_keys = OFF; INSERT INTO file_review_documents (document_ref_id,epic_id,sprint_id,provenance_id,opaque_reference,title,idempotency_key,recorded_at) VALUES ('doc-v8','epic','sprint','provenance','opaque','Changed files','key','t'); INSERT INTO file_review_changed_files (document_ref_id,changed_file_reference_id,display_name,change_kind,ordinal) VALUES ('doc-v8','file-2','src/b.ts','modified',1),('doc-v8','file-1','src/a.ts','added',0); INSERT INTO stored_file_review_artifacts (artifact_id,document_ref_id,contract_version,payload,payload_bytes,provenance_id) VALUES ('artifact-v8','doc-v8','stored-file-review-artifact/v1',x'0102',2,'provenance'); PRAGMA foreign_keys = ON; PRAGMA user_version = 8;").expect("represent v8");
+        initialize_active_database(&connection).expect("migrate v8");
+        let columns = connection
+            .prepare("PRAGMA table_info(file_review_documents)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(columns.contains(&"payload_fingerprint".to_string()));
+        assert_eq!(connection.query_row("SELECT payload_fingerprint FROM file_review_documents WHERE document_ref_id='doc-v8'", [], |r| r.get::<_, String>(0)).unwrap(), "");
+        assert_eq!(connection.query_row("SELECT payload FROM stored_file_review_artifacts WHERE artifact_id='artifact-v8'", [], |r| r.get::<_, Vec<u8>>(0)).unwrap(), vec![1,2]);
+        let files = connection.prepare("SELECT changed_file_reference_id FROM file_review_changed_files WHERE document_ref_id='doc-v8' ORDER BY ordinal").unwrap().query_map([], |r| r.get::<_, String>(0)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_eq!(files, vec!["file-1", "file-2"]);
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
         );
     }
 

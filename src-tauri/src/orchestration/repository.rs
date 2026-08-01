@@ -210,6 +210,92 @@ CREATE UNIQUE INDEX plan_builder_context_target_invocation
   WHERE target_invocation_id IS NOT NULL;
 "#;
 
+/// Normalized ownership and membership facts for a producer-owned File Review payload.
+pub(crate) const FILE_REVIEW_FACTS_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS file_review_documents (
+ document_ref_id TEXT PRIMARY KEY, epic_id TEXT NOT NULL, sprint_id TEXT NOT NULL, provenance_id TEXT NOT NULL,
+ opaque_reference TEXT NOT NULL UNIQUE, title TEXT NOT NULL, summary TEXT, idempotency_key TEXT NOT NULL UNIQUE, payload_fingerprint TEXT NOT NULL, recorded_at TEXT NOT NULL,
+ FOREIGN KEY (epic_id) REFERENCES epic_initiations(epic_id) ON DELETE RESTRICT, FOREIGN KEY (sprint_id) REFERENCES initiated_sprints(id) ON DELETE RESTRICT,
+ FOREIGN KEY (provenance_id) REFERENCES epic_initiation_provenance(id) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS file_review_changed_files (
+ document_ref_id TEXT NOT NULL, changed_file_reference_id TEXT NOT NULL, display_name TEXT NOT NULL,
+ change_kind TEXT NOT NULL CHECK (change_kind IN ('added','modified','deleted','renamed')), ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+ PRIMARY KEY (document_ref_id, changed_file_reference_id), UNIQUE (document_ref_id, ordinal),
+ FOREIGN KEY (document_ref_id) REFERENCES file_review_documents(document_ref_id) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS stored_file_review_artifacts (
+ artifact_id TEXT PRIMARY KEY, document_ref_id TEXT NOT NULL UNIQUE,
+ contract_version TEXT NOT NULL CHECK (contract_version = 'stored-file-review-artifact/v1'), payload BLOB NOT NULL,
+ payload_bytes INTEGER NOT NULL CHECK (payload_bytes > 0 AND payload_bytes <= 1000000), provenance_id TEXT NOT NULL,
+ FOREIGN KEY (document_ref_id) REFERENCES file_review_documents(document_ref_id) ON DELETE RESTRICT,
+ FOREIGN KEY (provenance_id) REFERENCES epic_initiation_provenance(id) ON DELETE RESTRICT
+);
+"#;
+pub(crate) const FILE_REVIEW_FACTS_IDEMPOTENCY_SCHEMA: &str = r#"
+ALTER TABLE file_review_documents ADD COLUMN payload_fingerprint TEXT NOT NULL DEFAULT '';
+"#;
+pub(crate) const STORED_FILE_REVIEW_ARTIFACT_V1: &str = "stored-file-review-artifact/v1";
+pub(crate) const FILE_REVIEW_ARTIFACT_MAX_BYTES: usize = 1_000_000;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FileReviewChangedFileWrite {
+    pub(crate) changed_file_reference_id: String,
+    pub(crate) display_name: String,
+    pub(crate) change_kind: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StoreFileReviewFacts {
+    pub(crate) document_ref_id: String,
+    pub(crate) epic_id: String,
+    pub(crate) sprint_id: String,
+    pub(crate) provenance_id: String,
+    pub(crate) opaque_reference: String,
+    pub(crate) title: String,
+    pub(crate) summary: Option<String>,
+    pub(crate) artifact_id: String,
+    pub(crate) payload: Vec<u8>,
+    pub(crate) idempotency_key: String,
+    pub(crate) changed_files: Vec<FileReviewChangedFileWrite>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum FileReviewFactsError {
+    Invalid,
+    Forbidden,
+    Conflict,
+    Unavailable(String),
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum StoreFileReviewFactsResult {
+    Stored,
+    IdempotentReplay,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(crate) enum ScopedFileReviewLoad {
+    Available { document: ScopedFileReviewDocument },
+    Unavailable,
+    Unauthorized,
+    Invalid,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ScopedFileReviewDocument {
+    pub(crate) document_ref_id: String,
+    pub(crate) title: String,
+    pub(crate) summary: Option<String>,
+    pub(crate) artifact_id: String,
+    pub(crate) payload: Vec<u8>,
+    pub(crate) changed_files: Vec<FileReviewChangedFileDto>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FileReviewChangedFileDto {
+    pub(crate) changed_file_reference_id: String,
+    pub(crate) display_name: String,
+    pub(crate) change_kind: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PendingPlanBuilderContextDelivery {
     pub(crate) delivery_id: String,
@@ -866,6 +952,11 @@ impl SqliteOrchestrationRepository {
         let material_snapshots = collect(&connection, "SELECT id, draft_id, proposal_revision_id, version, proposal_json, content_hash, recorded_at FROM epic_initiation_material_snapshots ORDER BY recorded_at, id", |row| Ok(MaterialSnapshotDto { material_snapshot_id: row.get(0)?, epic_planning_draft_id: row.get(1)?, proposal_revision_id: row.get(2)?, version: row.get(3)?, proposal: parse_proposal_json(row.get::<_, String>(4)?)?, content_hash: row.get(5)?, recorded_at: row.get(6)? }))?;
         let initiated_epics = collect(&connection, "SELECT id, draft_id, proposal_revision_id, material_snapshot_id, epic_id, recorded_at, command_id, result_id, event_id, provenance_id FROM epic_initiations ORDER BY recorded_at, id", |row| Ok(InitiatedEpicDto { initiation_id: row.get(0)?, epic_planning_draft_id: row.get(1)?, proposal_revision_id: row.get(2)?, material_snapshot_id: row.get(3)?, epic_id: row.get(4)?, recorded_at: row.get(5)?, command_id: row.get(6)?, result_id: row.get(7)?, event_id: row.get(8)?, provenance_id: row.get(9)? }))?;
         let initiated_sprints = collect(&connection, "SELECT id, epic_id, ordinal, title, intended_movement, concern_summaries_json, sprint_plan_id, sprint_plan_revision_id FROM initiated_sprints ORDER BY epic_id, ordinal", |row| Ok(InitiatedSprintDto { sprint_id: row.get(0)?, epic_id: row.get(1)?, ordinal: row.get(2)?, title: row.get(3)?, intended_movement: row.get(4)?, concern_summaries: serde_json::from_str(&row.get::<_, String>(5)?).map_err(|e| to_sql_error(e.to_string()))?, sprint_plan_id: row.get(6)?, sprint_plan_revision_id: row.get(7)? }))?;
+        let file_review_documents = collect(&connection, "SELECT document.document_ref_id, document.epic_id, document.sprint_id, document.provenance_id, document.title, document.summary, artifact.artifact_id FROM file_review_documents document JOIN initiated_sprints sprint ON sprint.id = document.sprint_id AND sprint.epic_id = document.epic_id JOIN epic_initiations epic ON epic.epic_id = document.epic_id AND epic.provenance_id = document.provenance_id JOIN stored_file_review_artifacts artifact ON artifact.document_ref_id = document.document_ref_id AND artifact.provenance_id = document.provenance_id AND artifact.contract_version = 'stored-file-review-artifact/v1' AND artifact.payload_bytes > 0 AND artifact.payload_bytes <= 1000000 ORDER BY document.recorded_at, document.document_ref_id", |row| Ok(FileReviewDocumentDto { document_ref_id: row.get(0)?, epic_id: row.get(1)?, sprint_id: row.get(2)?, provenance_id: row.get(3)?, title: row.get(4)?, summary: row.get(5)?, artifact_id: row.get(6)?, changed_files: Vec::new() }))?;
+        let mut file_review_documents = file_review_documents;
+        for document in &mut file_review_documents {
+            document.changed_files = connection.prepare("SELECT changed_file_reference_id, display_name, change_kind FROM file_review_changed_files WHERE document_ref_id = ?1 ORDER BY ordinal").map_err(|e| e.to_string())?.query_map(params![document.document_ref_id], |row| Ok(FileReviewChangedFileDto { changed_file_reference_id: row.get(0)?, display_name: row.get(1)?, change_kind: row.get(2)? })).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+        }
         Ok(NativeQueryV2 {
             contract_version: NATIVE_QUERY_VERSION,
             generated_at: timestamp(generated_at),
@@ -881,6 +972,7 @@ impl SqliteOrchestrationRepository {
             material_snapshots,
             initiated_epics,
             initiated_sprints,
+            file_review_documents,
         })
     }
 
@@ -999,6 +1091,103 @@ impl SqliteOrchestrationRepository {
 
     pub(crate) fn native_query(&self) -> Result<NativeQueryV2, String> {
         self.native_query_at(self.clock.now())
+    }
+
+    /// Producer-only application seam. No Tauri command accepts these facts.
+    pub(crate) fn store_file_review_facts(
+        &self,
+        facts: StoreFileReviewFacts,
+    ) -> Result<StoreFileReviewFactsResult, FileReviewFactsError> {
+        validate_file_review_facts(&facts)?;
+        let payload_fingerprint = file_review_fingerprint(&facts)?;
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| FileReviewFactsError::Unavailable("database lock is poisoned".into()))?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
+        let ownership: Option<i64> = transaction.query_row("SELECT 1 FROM initiated_sprints sprint JOIN epic_initiations epic ON epic.epic_id = sprint.epic_id AND epic.provenance_id = ?3 WHERE sprint.id = ?1 AND sprint.epic_id = ?2", params![facts.sprint_id, facts.epic_id, facts.provenance_id], |row| row.get(0)).optional().map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
+        if ownership.is_none() {
+            return Err(FileReviewFactsError::Forbidden);
+        }
+        let existing: Option<String> = transaction
+            .query_row(
+                "SELECT payload_fingerprint FROM file_review_documents WHERE idempotency_key = ?1",
+                params![facts.idempotency_key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
+        if let Some(existing) = existing {
+            return if existing == payload_fingerprint {
+                Ok(StoreFileReviewFactsResult::IdempotentReplay)
+            } else {
+                Err(FileReviewFactsError::Conflict)
+            };
+        }
+        let occupied: Option<()> = transaction.query_row("SELECT 1 FROM file_review_documents WHERE document_ref_id = ?1 OR opaque_reference = ?2", params![facts.document_ref_id, facts.opaque_reference], |_| Ok(())).optional().map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
+        if occupied.is_some() {
+            return Err(FileReviewFactsError::Conflict);
+        }
+        let now = timestamp(self.clock.now());
+        transaction.execute("INSERT INTO file_review_documents (document_ref_id,epic_id,sprint_id,provenance_id,opaque_reference,title,summary,idempotency_key,payload_fingerprint,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)", params![facts.document_ref_id, facts.epic_id, facts.sprint_id, facts.provenance_id, facts.opaque_reference, facts.title, facts.summary, facts.idempotency_key, payload_fingerprint, now]).map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
+        for (ordinal, file) in facts.changed_files.iter().enumerate() {
+            transaction.execute("INSERT INTO file_review_changed_files (document_ref_id,changed_file_reference_id,display_name,change_kind,ordinal) VALUES (?1,?2,?3,?4,?5)", params![facts.document_ref_id, file.changed_file_reference_id, file.display_name, file.change_kind, ordinal as i64]).map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
+        }
+        transaction.execute("INSERT INTO stored_file_review_artifacts (artifact_id,document_ref_id,contract_version,payload,payload_bytes,provenance_id) VALUES (?1,?2,?3,?4,?5,?6)", params![facts.artifact_id, facts.document_ref_id, STORED_FILE_REVIEW_ARTIFACT_V1, facts.payload, facts.payload.len() as i64, facts.provenance_id]).map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
+        transaction
+            .commit()
+            .map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
+        Ok(StoreFileReviewFactsResult::Stored)
+    }
+
+    /// Opaque references select a pre-authorized Document; every lookup rechecks durable scope.
+    pub(crate) fn load_scoped_file_review(
+        &self,
+        opaque_reference: &str,
+    ) -> Result<ScopedFileReviewLoad, String> {
+        if opaque_reference.trim().is_empty() {
+            return Ok(ScopedFileReviewLoad::Invalid);
+        }
+        let connection = self.lock().map_err(|e| e.to_string())?;
+        let exists = connection
+            .query_row(
+                "SELECT 1 FROM file_review_documents WHERE opaque_reference = ?1",
+                params![opaque_reference],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .is_some();
+        if !exists {
+            return Ok(ScopedFileReviewLoad::Unavailable);
+        }
+        let document: Option<(String, String, Option<String>, String, Vec<u8>, i64)> = connection.query_row("SELECT document.document_ref_id, document.title, document.summary, artifact.artifact_id, artifact.payload, artifact.payload_bytes FROM file_review_documents document JOIN initiated_sprints sprint ON sprint.id = document.sprint_id AND sprint.epic_id = document.epic_id JOIN epic_initiations epic ON epic.epic_id = document.epic_id AND epic.provenance_id = document.provenance_id JOIN stored_file_review_artifacts artifact ON artifact.document_ref_id = document.document_ref_id AND artifact.provenance_id = document.provenance_id WHERE document.opaque_reference = ?1 AND artifact.contract_version = ?2", params![opaque_reference, STORED_FILE_REVIEW_ARTIFACT_V1], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))).optional().map_err(|e| e.to_string())?;
+        let Some((document_ref_id, title, summary, artifact_id, payload, payload_bytes)) = document
+        else {
+            return Ok(ScopedFileReviewLoad::Unauthorized);
+        };
+        if payload_bytes < 1
+            || payload_bytes as usize != payload.len()
+            || payload.len() > FILE_REVIEW_ARTIFACT_MAX_BYTES
+        {
+            return Ok(ScopedFileReviewLoad::Invalid);
+        }
+        let changed_files = connection.prepare("SELECT changed_file_reference_id, display_name, change_kind FROM file_review_changed_files WHERE document_ref_id = ?1 ORDER BY ordinal").map_err(|e| e.to_string())?.query_map(params![document_ref_id], |row| Ok(FileReviewChangedFileDto { changed_file_reference_id: row.get(0)?, display_name: row.get(1)?, change_kind: row.get(2)? })).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+        if changed_files.is_empty() {
+            return Ok(ScopedFileReviewLoad::Invalid);
+        }
+        Ok(ScopedFileReviewLoad::Available {
+            document: ScopedFileReviewDocument {
+                document_ref_id,
+                title,
+                summary,
+                artifact_id,
+                payload,
+                changed_files,
+            },
+        })
     }
 
     /// Captures the authorized optimistic precondition for one managed Agent Invocation. The
@@ -1130,6 +1319,81 @@ impl SqliteOrchestrationRepository {
     }
 }
 
+fn validate_file_review_facts(facts: &StoreFileReviewFacts) -> Result<(), FileReviewFactsError> {
+    let non_blank = |value: &str| !value.trim().is_empty() && value.len() <= 4_000;
+    if !non_blank(&facts.document_ref_id)
+        || !non_blank(&facts.epic_id)
+        || !non_blank(&facts.sprint_id)
+        || !non_blank(&facts.provenance_id)
+        || !non_blank(&facts.opaque_reference)
+        || !non_blank(&facts.title)
+        || !non_blank(&facts.artifact_id)
+        || !non_blank(&facts.idempotency_key)
+        || facts.payload.is_empty()
+        || facts.payload.len() > FILE_REVIEW_ARTIFACT_MAX_BYTES
+        || facts.changed_files.is_empty()
+    {
+        return Err(FileReviewFactsError::Invalid);
+    }
+    let mut ids = std::collections::HashSet::new();
+    for file in &facts.changed_files {
+        if !non_blank(&file.changed_file_reference_id)
+            || !non_blank(&file.display_name)
+            || !matches!(
+                file.change_kind.as_str(),
+                "added" | "modified" | "deleted" | "renamed"
+            )
+            || file.display_name.chars().any(|c| c.is_control())
+            || file.display_name.starts_with('/')
+            || file.display_name.starts_with('\\')
+            || file
+                .display_name
+                .split(['/', '\\'])
+                .any(|part| part == "..")
+            || !ids.insert(&file.changed_file_reference_id)
+        {
+            return Err(FileReviewFactsError::Invalid);
+        }
+    }
+    Ok(())
+}
+
+fn file_review_fingerprint(facts: &StoreFileReviewFacts) -> Result<String, FileReviewFactsError> {
+    let mut hash = Sha256::new();
+    for value in [
+        &facts.document_ref_id,
+        &facts.epic_id,
+        &facts.sprint_id,
+        &facts.provenance_id,
+        &facts.opaque_reference,
+        &facts.title,
+        &facts.artifact_id,
+    ] {
+        hash.update((value.len() as u64).to_be_bytes());
+        hash.update(value.as_bytes());
+    }
+    if let Some(summary) = &facts.summary {
+        hash.update([1]);
+        hash.update((summary.len() as u64).to_be_bytes());
+        hash.update(summary.as_bytes());
+    } else {
+        hash.update([0]);
+    }
+    hash.update((facts.payload.len() as u64).to_be_bytes());
+    hash.update(&facts.payload);
+    for file in &facts.changed_files {
+        for value in [
+            &file.changed_file_reference_id,
+            &file.display_name,
+            &file.change_kind,
+        ] {
+            hash.update((value.len() as u64).to_be_bytes());
+            hash.update(value.as_bytes());
+        }
+    }
+    Ok(format!("{:x}", hash.finalize()))
+}
+
 fn find_command_result(
     transaction: &Transaction<'_>,
     idempotency_key: &str,
@@ -1203,6 +1467,7 @@ pub(crate) struct NativeQueryV2 {
     material_snapshots: Vec<MaterialSnapshotDto>,
     initiated_epics: Vec<InitiatedEpicDto>,
     initiated_sprints: Vec<InitiatedSprintDto>,
+    file_review_documents: Vec<FileReviewDocumentDto>,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1343,6 +1608,18 @@ struct InitiatedSprintDto {
     concern_summaries: Vec<String>,
     sprint_plan_id: String,
     sprint_plan_revision_id: String,
+}
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileReviewDocumentDto {
+    document_ref_id: String,
+    epic_id: String,
+    sprint_id: String,
+    provenance_id: String,
+    title: String,
+    summary: Option<String>,
+    artifact_id: String,
+    changed_files: Vec<FileReviewChangedFileDto>,
 }
 
 #[cfg(test)]

@@ -434,7 +434,8 @@ mod tests {
     use crate::orchestration::{
         domain::{PlanBuilderProposal, ProposedSprint, SaveEpicPlanProposalCommand},
         repository::{
-            SqliteOrchestrationRepository, ORCHESTRATION_INITIATION_SCHEMA, ORCHESTRATION_SCHEMA,
+            SqliteOrchestrationRepository, FILE_REVIEW_FACTS_SCHEMA,
+            ORCHESTRATION_INITIATION_SCHEMA, ORCHESTRATION_SCHEMA,
         },
     };
     use chrono::{TimeZone, Utc};
@@ -516,6 +517,7 @@ mod tests {
             .execute_batch(crate::agent_sessions::repository::AGENT_SESSION_SCHEMA)
             .unwrap();
         connection.execute_batch(ORCHESTRATION_SCHEMA).unwrap();
+        connection.execute_batch(FILE_REVIEW_FACTS_SCHEMA).unwrap();
         connection
             .execute_batch(ORCHESTRATION_INITIATION_SCHEMA)
             .unwrap();
