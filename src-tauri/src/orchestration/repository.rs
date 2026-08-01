@@ -1321,22 +1321,32 @@ impl SqliteOrchestrationRepository {
         };
         let configuration_json =
             serde_json::to_string(&envelope).map_err(|_| HarnessWorkingCopyError::Invalid)?;
-        let configuration_digest = format!("{:x}", Sha256::digest(configuration_json.as_bytes()));
+        let saved_at_text = timestamp(saved_at);
+        let working_copy_digest = harness_working_copy_digest(
+            &command.harness_key,
+            HARNESS_EFFECTIVE_CONFIGURATION_V1,
+            &configuration_json,
+            draft_revision as i64,
+            1,
+            command.editor.kind.as_str(),
+            &command.editor.reference,
+            &saved_at_text,
+        );
         let result_json =
             serde_json::to_string(&working_copy).map_err(|_| HarnessWorkingCopyError::Invalid)?;
         let result_digest = format!("{:x}", Sha256::digest(result_json.as_bytes()));
         transaction
             .execute(
-                "INSERT INTO harness_working_copies (harness_key,configuration_contract_version,configuration_json,configuration_digest,draft_revision,dirty,editor_kind,editor_reference,saved_at) VALUES (?1,?2,?3,?4,?5,1,?6,?7,?8) ON CONFLICT(harness_key) DO UPDATE SET configuration_contract_version=excluded.configuration_contract_version,configuration_json=excluded.configuration_json,configuration_digest=excluded.configuration_digest,draft_revision=excluded.draft_revision,dirty=1,editor_kind=excluded.editor_kind,editor_reference=excluded.editor_reference,saved_at=excluded.saved_at",
+                "INSERT INTO harness_working_copies (harness_key,configuration_contract_version,configuration_json,working_copy_digest,draft_revision,dirty,editor_kind,editor_reference,saved_at) VALUES (?1,?2,?3,?4,?5,1,?6,?7,?8) ON CONFLICT(harness_key) DO UPDATE SET configuration_contract_version=excluded.configuration_contract_version,configuration_json=excluded.configuration_json,working_copy_digest=excluded.working_copy_digest,draft_revision=excluded.draft_revision,dirty=1,editor_kind=excluded.editor_kind,editor_reference=excluded.editor_reference,saved_at=excluded.saved_at",
                 params![
                     command.harness_key,
                     HARNESS_EFFECTIVE_CONFIGURATION_V1,
                     configuration_json,
-                    configuration_digest,
+                    working_copy_digest,
                     draft_revision as i64,
                     command.editor.kind.as_str(),
                     command.editor.reference,
-                    timestamp(saved_at),
+                    saved_at_text,
                 ],
             )
             .map_err(|_| HarnessWorkingCopyError::Unavailable)?;
@@ -1351,7 +1361,7 @@ impl SqliteOrchestrationRepository {
                     draft_revision as i64,
                     result_json,
                     result_digest,
-                    timestamp(saved_at),
+                    saved_at_text,
                 ],
             )
             .map_err(|_| HarnessWorkingCopyError::Unavailable)?;
@@ -2047,7 +2057,7 @@ fn load_harness_working_copy_from_connection(
 ) -> Result<Option<HarnessWorkingCopy>, HarnessWorkingCopyError> {
     let row: Option<(String, String, String, i64, i64, String, String, String)> = connection
         .query_row(
-            "SELECT configuration_contract_version,configuration_json,configuration_digest,draft_revision,dirty,editor_kind,editor_reference,saved_at FROM harness_working_copies WHERE harness_key=?1",
+            "SELECT configuration_contract_version,configuration_json,working_copy_digest,draft_revision,dirty,editor_kind,editor_reference,saved_at FROM harness_working_copies WHERE harness_key=?1",
             [harness_key],
             |row| {
                 Ok((
@@ -2077,8 +2087,18 @@ fn load_harness_working_copy_from_connection(
     else {
         return Ok(None);
     };
-    if contract != HARNESS_EFFECTIVE_CONFIGURATION_V1
-        || digest != format!("{:x}", Sha256::digest(configuration_json.as_bytes()))
+    if digest
+        != harness_working_copy_digest(
+            harness_key,
+            &contract,
+            &configuration_json,
+            revision,
+            dirty,
+            &editor_kind,
+            &editor_reference,
+            &saved_at,
+        )
+        || contract != HARNESS_EFFECTIVE_CONFIGURATION_V1
         || revision <= 0
         || dirty != 1
     {
@@ -2107,6 +2127,34 @@ fn load_harness_working_copy_from_connection(
     };
     validate_working_copy(&working_copy)?;
     Ok(Some(working_copy))
+}
+
+fn harness_working_copy_digest(
+    harness_key: &str,
+    contract: &str,
+    configuration_json: &str,
+    revision: i64,
+    dirty: i64,
+    editor_kind: &str,
+    editor_reference: &str,
+    saved_at: &str,
+) -> String {
+    let mut digest = Sha256::new();
+    for part in [
+        b"harness-working-copy-envelope/v1".as_slice(),
+        harness_key.as_bytes(),
+        contract.as_bytes(),
+        configuration_json.as_bytes(),
+        &revision.to_be_bytes(),
+        &dirty.to_be_bytes(),
+        editor_kind.as_bytes(),
+        editor_reference.as_bytes(),
+        saved_at.as_bytes(),
+    ] {
+        digest.update((part.len() as u64).to_be_bytes());
+        digest.update(part);
+    }
+    format!("{:x}", digest.finalize())
 }
 
 fn timestamp(value: DateTime<Utc>) -> String {

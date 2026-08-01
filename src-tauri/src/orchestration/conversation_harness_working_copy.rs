@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS harness_working_copies (
   harness_key TEXT PRIMARY KEY,
   configuration_contract_version TEXT NOT NULL CHECK (configuration_contract_version = 'harness-effective-configuration/v1'),
   configuration_json TEXT NOT NULL CHECK (json_valid(configuration_json)),
-  configuration_digest TEXT NOT NULL,
+  working_copy_digest TEXT NOT NULL,
   draft_revision INTEGER NOT NULL CHECK (draft_revision > 0),
   dirty INTEGER NOT NULL CHECK (dirty = 1),
   editor_kind TEXT NOT NULL CHECK (editor_kind IN ('application_user', 'agent_session')),
@@ -325,13 +325,13 @@ pub(crate) fn validate_command(
 ) -> Result<(), HarnessWorkingCopyError> {
     if !valid_harness_key(&command.harness_key)
         || command.configuration.identity.machine_key != command.harness_key
-        || !bounded_text(&command.editor.reference, 1, 240)
+        || !required_text(&command.editor.reference, 240)
         || !bounded_token(&command.idempotency_key, 240)
         || command.expected_current_revision >= i64::MAX as u64
     {
         return Err(HarnessWorkingCopyError::Invalid);
     }
-    validate_configuration(&command.configuration)
+    validate_draft_configuration(&command.configuration)
 }
 
 pub(crate) fn validate_working_copy(
@@ -342,11 +342,11 @@ pub(crate) fn validate_working_copy(
         || working_copy.draft_revision == 0
         || working_copy.draft_revision > i64::MAX as u64
         || !working_copy.dirty
-        || !bounded_text(&working_copy.editor.reference, 1, 240)
+        || !required_text(&working_copy.editor.reference, 240)
     {
         return Err(HarnessWorkingCopyError::InvalidStoredState);
     }
-    validate_configuration(&working_copy.configuration)
+    validate_draft_configuration(&working_copy.configuration)
         .map_err(|_| HarnessWorkingCopyError::InvalidStoredState)
 }
 
@@ -356,14 +356,14 @@ pub(crate) fn validate_harness_key(value: &str) -> Result<(), HarnessWorkingCopy
         .ok_or(HarnessWorkingCopyError::Invalid)
 }
 
-fn validate_configuration(
+fn validate_draft_configuration(
     configuration: &HarnessEffectiveConfiguration,
 ) -> Result<(), HarnessWorkingCopyError> {
-    if !bounded_text(&configuration.identity.name, 1, 120)
+    if !draft_text(&configuration.identity.name, 120)
         || !valid_harness_key(&configuration.identity.machine_key)
-        || !bounded_text(&configuration.prompt_prefix.content, 1, 200_000)
-        || !bounded_text(&configuration.tools.schema_boundary, 1, 4_000)
-        || !bounded_text(&configuration.runtime.authority_summary, 1, 4_000)
+        || !draft_text(&configuration.prompt_prefix.content, 200_000)
+        || !draft_text(&configuration.tools.schema_boundary, 4_000)
+        || !draft_text(&configuration.runtime.authority_summary, 4_000)
     {
         return Err(HarnessWorkingCopyError::Invalid);
     }
@@ -373,7 +373,7 @@ fn validate_configuration(
         }
     }
     if let Some(visual) = &configuration.identity.visual_identity {
-        if !bounded_token(&visual.token, 120) || !bounded_text(&visual.accent, 1, 120) {
+        if !bounded_token(&visual.token, 120) || !draft_text(&visual.accent, 120) {
             return Err(HarnessWorkingCopyError::Invalid);
         }
     }
@@ -403,7 +403,7 @@ fn validate_configuration(
         let path = Path::new(&skill.path);
         if !bounded_token(&skill.name, 160)
             || !skill_names.insert(skill.name.as_str())
-            || !bounded_text(&skill.path, 1, 500)
+            || !required_text(&skill.path, 500)
             || !path.is_relative()
             || path.components().any(|part| {
                 matches!(
@@ -413,8 +413,8 @@ fn validate_configuration(
                         | std::path::Component::Prefix(_)
                 )
             })
-            || !bounded_text(&skill.purpose, 1, 4_000)
-            || !bounded_text(&skill.use_when, 1, 4_000)
+            || !draft_text(&skill.purpose, 4_000)
+            || !draft_text(&skill.use_when, 4_000)
         {
             return Err(HarnessWorkingCopyError::Invalid);
         }
@@ -464,12 +464,12 @@ fn validate_configuration(
     if configuration.hooks.iter().any(|hook| {
         !bounded_token(&hook.name, 160)
             || !hook_names.insert(hook.name.as_str())
-            || !bounded_text(&hook.detail, 1, 4_000)
+            || !draft_text(&hook.detail, 4_000)
     }) {
         return Err(HarnessWorkingCopyError::Invalid);
     }
     if let HarnessUpdatePolicy::NotConfigured { reason } = &configuration.update_policy {
-        if !bounded_text(reason, 1, 4_000) {
+        if !draft_text(reason, 4_000) {
             return Err(HarnessWorkingCopyError::Invalid);
         }
     }
@@ -485,20 +485,26 @@ fn valid_harness_key(value: &str) -> bool {
         })
 }
 
-fn bounded_text(value: &str, minimum: usize, maximum: usize) -> bool {
-    let trimmed = value.trim();
-    trimmed.len() >= minimum && trimmed.len() <= maximum && !value.contains('\0')
+fn draft_text(value: &str, maximum: usize) -> bool {
+    value.len() <= maximum
+        && value
+            .chars()
+            .all(|character| !character.is_control() || matches!(character, '\n' | '\r' | '\t'))
+}
+
+fn required_text(value: &str, maximum: usize) -> bool {
+    draft_text(value, maximum) && !value.trim().is_empty()
 }
 
 fn bounded_token(value: &str, maximum: usize) -> bool {
-    bounded_text(value, 1, maximum) && value.trim() == value
+    required_text(value, maximum) && value.trim() == value
 }
 
 fn unique_bounded_text(values: &[String], maximum: usize) -> bool {
     let mut unique = HashSet::new();
     values
         .iter()
-        .all(|value| bounded_text(value, 1, maximum) && unique.insert(value.as_str()))
+        .all(|value| required_text(value, maximum) && unique.insert(value.as_str()))
 }
 
 #[cfg(test)]
@@ -692,7 +698,52 @@ mod tests {
     }
 
     #[test]
-    fn invalid_command_shape_and_complete_configuration_fail_without_mutation() {
+    fn partial_draft_saves_loads_and_replays_without_coercion() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("active.sqlite");
+        let repository = open_repository(&path);
+        let application = OrchestrationApplication::new(repository);
+        let mut partial = command("epic_plan_builder", 0, "partial-save");
+        partial.configuration.identity.name.clear();
+        partial.configuration.prompt_prefix.content.clear();
+        partial
+            .configuration
+            .identity
+            .visual_identity
+            .as_mut()
+            .unwrap()
+            .accent
+            .clear();
+        partial.configuration.skills.items[0].purpose.clear();
+        partial.configuration.skills.items[0].use_when.clear();
+        partial.configuration.tools.schema_boundary.clear();
+        partial.configuration.runtime.authority_summary.clear();
+        partial.configuration.hooks[0].detail.clear();
+        partial.configuration.update_policy = HarnessUpdatePolicy::NotConfigured {
+            reason: String::new(),
+        };
+
+        let stored = application
+            .save_harness_working_copy(partial.clone())
+            .unwrap();
+        let SaveHarnessWorkingCopyResult::Stored(stored) = stored else {
+            unreachable!()
+        };
+        assert_eq!(stored.configuration, partial.configuration);
+        assert_eq!(
+            application
+                .load_harness_working_copy("epic_plan_builder")
+                .unwrap(),
+            Some(stored.clone())
+        );
+        assert_eq!(
+            application.save_harness_working_copy(partial).unwrap(),
+            SaveHarnessWorkingCopyResult::IdempotentReplay(stored)
+        );
+    }
+
+    #[test]
+    fn malformed_or_unsafe_command_structure_fails_without_mutation() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("active.sqlite");
         let repository = open_repository(&path);
@@ -715,6 +766,9 @@ mod tests {
         let mut invalid_path = command("epic_plan_builder", 0, "invalid-path");
         invalid_path.configuration.skills.items[0].path = "../outside/SKILL.md".into();
         cases.push(invalid_path);
+        let mut invalid_control = command("epic_plan_builder", 0, "invalid-control");
+        invalid_control.configuration.prompt_prefix.content = "unsafe\u{0007}control".into();
+        cases.push(invalid_control);
 
         for candidate in cases {
             assert_eq!(
@@ -787,7 +841,7 @@ mod tests {
     }
 
     #[test]
-    fn private_read_reopens_and_rejects_tampered_configuration_time_and_revision() {
+    fn private_read_reopens_and_rejects_any_tampered_envelope_field() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("active.sqlite");
         let repository = open_repository(&path);
@@ -809,8 +863,15 @@ mod tests {
 
         for statement in [
             "UPDATE harness_working_copies SET configuration_json='{}'",
-            "UPDATE harness_working_copies SET saved_at='not-a-time'",
+            "UPDATE harness_working_copies SET working_copy_digest='0000000000000000000000000000000000000000000000000000000000000000'",
+            "PRAGMA ignore_check_constraints=ON; UPDATE harness_working_copies SET configuration_contract_version='harness-effective-configuration/v2'; PRAGMA ignore_check_constraints=OFF",
+            "UPDATE harness_working_copies SET draft_revision=2",
             "PRAGMA ignore_check_constraints=ON; UPDATE harness_working_copies SET draft_revision=0; PRAGMA ignore_check_constraints=OFF",
+            "PRAGMA ignore_check_constraints=ON; UPDATE harness_working_copies SET dirty=0; PRAGMA ignore_check_constraints=OFF",
+            "UPDATE harness_working_copies SET editor_kind='agent_session'",
+            "UPDATE harness_working_copies SET editor_reference='another-valid-editor'",
+            "UPDATE harness_working_copies SET saved_at='2026-08-01T10:31:00.000Z'",
+            "UPDATE harness_working_copies SET saved_at='not-a-time'",
         ] {
             let connection = Connection::open(&path).unwrap();
             connection.execute_batch("DELETE FROM harness_working_copy_commands; DELETE FROM harness_working_copies;").unwrap();

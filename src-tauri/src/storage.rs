@@ -362,6 +362,34 @@ mod tests {
         ] {
             assert!(git_authority_columns.contains(&column.to_string()));
         }
+        let harness_columns = connection
+            .prepare("PRAGMA table_info(harness_working_copies)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        for column in [
+            "configuration_contract_version",
+            "configuration_json",
+            "working_copy_digest",
+            "draft_revision",
+            "dirty",
+            "editor_kind",
+            "editor_reference",
+            "saved_at",
+        ] {
+            assert!(harness_columns.contains(&column.to_string()));
+        }
+        let command_columns = connection
+            .prepare("PRAGMA table_info(harness_working_copy_commands)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(command_columns.contains(&"payload_fingerprint".to_string()));
+        assert!(command_columns.contains(&"result_digest".to_string()));
     }
 
     #[test]
