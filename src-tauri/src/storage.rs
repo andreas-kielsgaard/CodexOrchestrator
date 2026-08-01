@@ -161,6 +161,30 @@ pub(crate) fn configure_sqlite_connection(connection: &Connection) -> rusqlite::
 mod tests {
     use super::*;
 
+    fn table_exists(connection: &Connection, name: &str) -> bool {
+        connection
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
+                [name],
+                |_| Ok(()),
+            )
+            .is_ok()
+    }
+
+    fn seed_file_review_predecessor(
+        connection: &Connection,
+        version: i64,
+        fingerprint: bool,
+        first_kind: &str,
+    ) {
+        let document_fingerprint = if fingerprint {
+            ", payload_fingerprint TEXT NOT NULL"
+        } else {
+            ""
+        };
+        connection.execute_batch(&format!("CREATE TABLE epic_initiations (epic_id TEXT PRIMARY KEY); CREATE TABLE initiated_sprints (id TEXT PRIMARY KEY); CREATE TABLE epic_initiation_provenance (id TEXT PRIMARY KEY); INSERT INTO epic_initiations VALUES ('epic'); INSERT INTO initiated_sprints VALUES ('sprint'); INSERT INTO epic_initiation_provenance VALUES ('provenance'); CREATE TABLE file_review_documents (document_ref_id TEXT PRIMARY KEY, epic_id TEXT NOT NULL, sprint_id TEXT NOT NULL, provenance_id TEXT NOT NULL, opaque_reference TEXT NOT NULL UNIQUE, title TEXT NOT NULL, summary TEXT, idempotency_key TEXT NOT NULL UNIQUE{document_fingerprint}, recorded_at TEXT NOT NULL, FOREIGN KEY(epic_id) REFERENCES epic_initiations(epic_id), FOREIGN KEY(sprint_id) REFERENCES initiated_sprints(id), FOREIGN KEY(provenance_id) REFERENCES epic_initiation_provenance(id)); CREATE TABLE file_review_changed_files (document_ref_id TEXT NOT NULL, changed_file_reference_id TEXT NOT NULL, display_name TEXT NOT NULL, change_kind TEXT NOT NULL CHECK(change_kind IN ('added','modified','deleted','renamed')), ordinal INTEGER NOT NULL CHECK(ordinal >= 0), PRIMARY KEY(document_ref_id,changed_file_reference_id), UNIQUE(document_ref_id,ordinal), FOREIGN KEY(document_ref_id) REFERENCES file_review_documents(document_ref_id)); CREATE TABLE stored_file_review_artifacts (artifact_id TEXT PRIMARY KEY, document_ref_id TEXT NOT NULL UNIQUE, contract_version TEXT NOT NULL CHECK(contract_version='stored-file-review-artifact/v1'), payload BLOB NOT NULL, payload_bytes INTEGER NOT NULL, provenance_id TEXT NOT NULL, FOREIGN KEY(document_ref_id) REFERENCES file_review_documents(document_ref_id), FOREIGN KEY(provenance_id) REFERENCES epic_initiation_provenance(id)); INSERT INTO file_review_documents (document_ref_id,epic_id,sprint_id,provenance_id,opaque_reference,title,idempotency_key{fingerprint_column},recorded_at) VALUES ('doc','epic','sprint','provenance','opaque','Changed files','key'{fingerprint_value},'t'); INSERT INTO file_review_changed_files VALUES ('doc','file-2','src/b.ts','modified',1),('doc','file-1','src/a.ts','{first_kind}',0); INSERT INTO stored_file_review_artifacts VALUES ('artifact','doc','stored-file-review-artifact/v1',x'0102',2,'provenance'); PRAGMA user_version={version};", fingerprint_column = if fingerprint { ",payload_fingerprint" } else { "" }, fingerprint_value = if fingerprint { ",''" } else { "" })).expect("seed predecessor");
+    }
+
     #[test]
     fn applies_explicit_connection_policy() {
         let connection = Connection::open_in_memory().expect("memory database");
@@ -328,8 +352,11 @@ mod tests {
     fn migrates_v8_file_review_rows_to_fingerprint_schema_without_losing_data() {
         let connection = Connection::open_in_memory().expect("database");
         configure_sqlite_connection(&connection).expect("policy");
-        initialize_active_database(&connection).expect("current schema");
-        connection.execute_batch("ALTER TABLE file_review_documents DROP COLUMN payload_fingerprint; PRAGMA foreign_keys = OFF; INSERT INTO file_review_documents (document_ref_id,epic_id,sprint_id,provenance_id,opaque_reference,title,idempotency_key,recorded_at) VALUES ('doc-v8','epic','sprint','provenance','opaque','Changed files','key','t'); INSERT INTO file_review_changed_files (document_ref_id,changed_file_reference_id,display_name,change_kind,ordinal) VALUES ('doc-v8','file-2','src/b.ts','modified',1),('doc-v8','file-1','src/a.ts','added',0); INSERT INTO stored_file_review_artifacts (artifact_id,document_ref_id,contract_version,payload,payload_bytes,provenance_id) VALUES ('artifact-v8','doc-v8','stored-file-review-artifact/v1',x'0102',2,'provenance'); PRAGMA foreign_keys = ON; PRAGMA user_version = 8;").expect("represent v8");
+        seed_file_review_predecessor(&connection, 8, false, "added");
+        assert!(!table_exists(
+            &connection,
+            "file_review_git_capture_authorizations"
+        ));
         initialize_active_database(&connection).expect("migrate v8");
         let columns = connection
             .prepare("PRAGMA table_info(file_review_documents)")
@@ -339,11 +366,34 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert!(columns.contains(&"payload_fingerprint".to_string()));
-        assert_eq!(connection.query_row("SELECT payload_fingerprint FROM file_review_documents WHERE document_ref_id='doc-v8'", [], |r| r.get::<_, String>(0)).unwrap(), "");
-        assert_eq!(connection.query_row("SELECT payload FROM stored_file_review_artifacts WHERE artifact_id='artifact-v8'", [], |r| r.get::<_, Vec<u8>>(0)).unwrap(), vec![1,2]);
+        assert_eq!(connection.query_row("SELECT payload_fingerprint FROM file_review_documents WHERE document_ref_id='doc'", [], |r| r.get::<_, String>(0)).unwrap(), "");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT payload FROM stored_file_review_artifacts WHERE artifact_id='artifact'",
+                    [],
+                    |r| r.get::<_, Vec<u8>>(0)
+                )
+                .unwrap(),
+            vec![1, 2]
+        );
         assert_eq!(connection.query_row("SELECT previous_display_name FROM file_review_changed_files WHERE changed_file_reference_id='file-1'", [], |r| r.get::<_, Option<String>>(0)).unwrap(), None);
-        let files = connection.prepare("SELECT changed_file_reference_id FROM file_review_changed_files WHERE document_ref_id='doc-v8' ORDER BY ordinal").unwrap().query_map([], |r| r.get::<_, String>(0)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        let files = connection.prepare("SELECT changed_file_reference_id FROM file_review_changed_files WHERE document_ref_id='doc' ORDER BY ordinal").unwrap().query_map([], |r| r.get::<_, String>(0)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(files, vec!["file-1", "file-2"]);
+        assert!(table_exists(
+            &connection,
+            "file_review_git_capture_authorizations"
+        ));
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM pragma_foreign_key_list('file_review_changed_files')",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            1
+        );
         assert_eq!(
             pragma_i64(&connection, "user_version"),
             ACTIVE_SCHEMA_VERSION
@@ -354,10 +404,13 @@ mod tests {
     fn migrates_v9_file_review_rows_and_preserves_historical_rename_null() {
         let connection = Connection::open_in_memory().expect("database");
         configure_sqlite_connection(&connection).expect("policy");
-        initialize_active_database(&connection).expect("current schema");
-        connection.execute_batch("PRAGMA foreign_keys=OFF; ALTER TABLE file_review_changed_files RENAME TO old_files; CREATE TABLE file_review_changed_files (document_ref_id TEXT NOT NULL, changed_file_reference_id TEXT NOT NULL, display_name TEXT NOT NULL, change_kind TEXT NOT NULL, ordinal INTEGER NOT NULL, PRIMARY KEY(document_ref_id,changed_file_reference_id), UNIQUE(document_ref_id,ordinal)); INSERT INTO file_review_changed_files VALUES ('doc','rename','src/new.ts','renamed',0); DROP TABLE old_files; PRAGMA user_version=9;").expect("represent v9");
+        seed_file_review_predecessor(&connection, 9, true, "renamed");
+        assert!(!table_exists(
+            &connection,
+            "file_review_git_capture_authorizations"
+        ));
         initialize_active_database(&connection).expect("migrate v9");
-        assert_eq!(connection.query_row("SELECT previous_display_name FROM file_review_changed_files WHERE changed_file_reference_id='rename'", [], |r| r.get::<_, Option<String>>(0)).unwrap(), None);
+        assert_eq!(connection.query_row("SELECT previous_display_name FROM file_review_changed_files WHERE changed_file_reference_id='file-1'", [], |r| r.get::<_, Option<String>>(0)).unwrap(), None);
         assert!(connection.execute("INSERT INTO file_review_changed_files (document_ref_id,changed_file_reference_id,display_name,change_kind,previous_display_name,ordinal) VALUES ('doc','bad','src/a.ts','modified','src/b.ts',1)", []).is_err());
         initialize_active_database(&connection).expect("reopen current schema");
     }
