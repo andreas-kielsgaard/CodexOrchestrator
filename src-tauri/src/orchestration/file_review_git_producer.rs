@@ -7,7 +7,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
-    fs,
+    env, fs,
     io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -466,28 +466,39 @@ fn run_git(
     args: &[&str],
     limit: usize,
 ) -> Result<Vec<u8>, FileReviewGitProducerError> {
-    let mut child = Command::new("git")
-        .args(["--no-pager"])
-        .args(args)
-        .current_dir(root)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_COMMON_DIR")
-        .env_remove("GIT_OBJECT_DIRECTORY")
-        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
-        .env_remove("GIT_INDEX_FILE")
-        .env_remove("GIT_NAMESPACE")
-        .env_remove("GIT_SHALLOW_FILE")
-        .env_remove("GIT_CEILING_DIRECTORIES")
-        .env_remove("GIT_DISCOVERY_ACROSS_FILESYSTEM")
-        .env_remove("GIT_CONFIG_COUNT")
+    let executable = resolve_git_executable()?;
+    let executable_directory = executable
+        .parent()
+        .ok_or(FileReviewGitProducerError::RepositoryUnavailable)?;
+    let child_path = minimal_child_path(executable_directory)?;
+    let mut command = Command::new(executable);
+    command
+        .env_clear()
+        .env("PATH", child_path)
+        .env("LC_ALL", "C")
         .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", null_device())
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_OPTIONAL_LOCKS", "0")
-        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .args([
+            "--no-pager",
+            "--no-replace-objects",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "credential.interactive=false",
+            "-c",
+            "diff.external=",
+        ])
+        .arg("-c")
+        .arg(format!("core.hooksPath={}", null_device()))
+        .args(args)
+        .current_dir(root)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    add_platform_child_environment(&mut command);
+    let mut child = command
         .spawn()
         .map_err(|_| FileReviewGitProducerError::RepositoryUnavailable)?;
     let mut output = Vec::new();
@@ -511,6 +522,60 @@ fn run_git(
         return Err(FileReviewGitProducerError::InvalidGitState);
     }
     Ok(output)
+}
+
+fn resolve_git_executable() -> Result<PathBuf, FileReviewGitProducerError> {
+    let path = env::var_os("PATH").ok_or(FileReviewGitProducerError::RepositoryUnavailable)?;
+    #[cfg(windows)]
+    let names = ["git.exe", "git"];
+    #[cfg(not(windows))]
+    let names = ["git"];
+    for directory in env::split_paths(&path) {
+        for name in names {
+            let candidate = directory.join(name);
+            if candidate.is_file() {
+                return fs::canonicalize(candidate)
+                    .map_err(|_| FileReviewGitProducerError::RepositoryUnavailable);
+            }
+        }
+    }
+    Err(FileReviewGitProducerError::RepositoryUnavailable)
+}
+
+fn minimal_child_path(
+    executable_directory: &Path,
+) -> Result<std::ffi::OsString, FileReviewGitProducerError> {
+    let mut directories = vec![executable_directory.to_path_buf()];
+    #[cfg(windows)]
+    if let Some(system_root) = env::var_os("SystemRoot") {
+        let system32 = PathBuf::from(system_root).join("System32");
+        if system32.is_dir() {
+            directories.push(system32);
+        }
+    }
+    env::join_paths(directories).map_err(|_| FileReviewGitProducerError::RepositoryUnavailable)
+}
+
+#[cfg(windows)]
+fn add_platform_child_environment(command: &mut Command) {
+    if let Some(system_root) = env::var_os("SystemRoot") {
+        command
+            .env("SystemRoot", &system_root)
+            .env("WINDIR", system_root);
+    }
+}
+
+#[cfg(not(windows))]
+fn add_platform_child_environment(_command: &mut Command) {}
+
+#[cfg(windows)]
+fn null_device() -> &'static str {
+    "NUL"
+}
+
+#[cfg(not(windows))]
+fn null_device() -> &'static str {
+    "/dev/null"
 }
 
 fn stable_identity_seed(authorization: &FileReviewGitCaptureAuthorization) -> String {

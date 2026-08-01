@@ -11,7 +11,7 @@ use crate::orchestration::{
 };
 use chrono::{TimeZone, Utc};
 use std::{
-    fs,
+    env, fs,
     path::Path,
     process::Command,
     sync::{Arc, Mutex},
@@ -227,6 +227,93 @@ fn git_producer_persists_complete_ordered_real_object_facts_and_replays_exactly(
     assert_eq!(replay.document_ref_id, first.document_ref_id);
     assert_eq!(replay.artifact_id, first.artifact_id);
     assert_eq!(replay.opaque_reference, first.opaque_reference);
+}
+
+#[test]
+fn git_producer_ignores_hostile_inherited_git_environment() {
+    const CHILD: &str = "FILE_REVIEW_HOSTILE_GIT_CHILD";
+    if env::var_os(CHILD).is_some() {
+        let root = std::path::PathBuf::from(env::var("FILE_REVIEW_TEST_ROOT").unwrap());
+        let authorized = RealGitRepository {
+            root,
+            _temp: tempfile::tempdir().unwrap(),
+            baseline: env::var("FILE_REVIEW_TEST_BASELINE").unwrap(),
+            current: env::var("FILE_REVIEW_TEST_CURRENT").unwrap(),
+        };
+        let repository = initiated_repository_with_capture("capture-hostile", &authorized);
+        let first = produce_file_review_from_git(
+            &repository,
+            ProduceFileReviewFromGit {
+                capture_authorization_id: "capture-hostile".into(),
+            },
+        )
+        .expect("hostile-environment production");
+        let first_document = match repository
+            .load_scoped_file_review(&first.opaque_reference)
+            .unwrap()
+        {
+            ScopedFileReviewLoad::Available { document } => document,
+            other => panic!("unexpected first load: {other:?}"),
+        };
+        let replay = produce_file_review_from_git(
+            &repository,
+            ProduceFileReviewFromGit {
+                capture_authorization_id: "capture-hostile".into(),
+            },
+        )
+        .expect("hostile-environment replay");
+        let replay_document = match repository
+            .load_scoped_file_review(&replay.opaque_reference)
+            .unwrap()
+        {
+            ScopedFileReviewLoad::Available { document } => document,
+            other => panic!("unexpected replay load: {other:?}"),
+        };
+        assert!(replay.idempotent_replay);
+        assert_eq!(replay.document_ref_id, first.document_ref_id);
+        assert_eq!(replay.artifact_id, first.artifact_id);
+        assert_eq!(replay.opaque_reference, first.opaque_reference);
+        assert_eq!(replay_document, first_document);
+        return;
+    }
+
+    let authorized = real_file_review_repository();
+    let hostile = real_file_review_repository();
+    let evidence = tempfile::tempdir().unwrap();
+    let trace = evidence.path().join("ambient-git-trace.log");
+    let trace2 = evidence.path().join("ambient-git-trace2.json");
+    let global_config = evidence.path().join("hostile.gitconfig");
+    fs::write(&global_config, b"[core]\n\tbare = true\n").unwrap();
+    let status = Command::new(env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "orchestration::repository::tests::git_producer_ignores_hostile_inherited_git_environment",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("FILE_REVIEW_TEST_ROOT", canonical_root(&authorized.root))
+        .env("FILE_REVIEW_TEST_BASELINE", &authorized.baseline)
+        .env("FILE_REVIEW_TEST_CURRENT", &authorized.current)
+        .env("GIT_TRACE", &trace)
+        .env("GIT_TRACE2_EVENT", &trace2)
+        .env("GIT_DIR", hostile.root.join(".git"))
+        .env("GIT_WORK_TREE", &hostile.root)
+        .env("GIT_CONFIG_GLOBAL", &global_config)
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "core.bare")
+        .env("GIT_CONFIG_VALUE_0", "true")
+        .env("GIT_EXEC_PATH", &hostile.root)
+        .status()
+        .expect("hostile child test");
+    assert!(status.success());
+    assert!(
+        !trace.exists(),
+        "ambient GIT_TRACE created an external file"
+    );
+    assert!(
+        !trace2.exists(),
+        "ambient GIT_TRACE2_EVENT created an external file"
+    );
 }
 
 #[test]
