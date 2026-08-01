@@ -12,6 +12,9 @@ describe('EpicProductDecisionsPanel', () => {
     );
 
     expect(await screen.findByRole('heading', { name: 'Stable workspace' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Evidence on record' })).toBeVisible();
+    expect(screen.queryByText('Derived from')).not.toBeInTheDocument();
+    expect(screen.getByText('Origin reference: layout-review-outcome-2026-07-29')).toBeVisible();
     expect(screen.getByText('Codebase review requested')).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: /Review conflicts/ }));

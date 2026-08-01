@@ -248,12 +248,13 @@ function DecisionTree({
 function EvidenceList({ evidence }: { readonly evidence: readonly ProductDecisionEvidence[] }) {
   return (
     <section className="product-decisions__sources">
-      <h4>Derived from</h4>
+      <h4>Evidence on record</h4>
       <ul>
         {evidence.map((item) => (
           <li key={item.evidenceId}>
-            <span>{evidenceKindLabel(item.kind)}</span>
+            <span>{evidenceKindLabel(item.originReference.kind)}</span>
             <strong>{item.label}</strong>
+            <small>Origin reference: {item.originReference.opaqueId}</small>
           </li>
         ))}
       </ul>
@@ -261,7 +262,7 @@ function EvidenceList({ evidence }: { readonly evidence: readonly ProductDecisio
   );
 }
 
-function evidenceKindLabel(kind: ProductDecisionEvidence['kind']) {
+function evidenceKindLabel(kind: ProductDecisionEvidence['originReference']['kind']) {
   return {
     human_interaction: 'Human input',
     agent_session_completed: 'Agent Session',

@@ -5,10 +5,18 @@ export type ProductDecisionEvidenceKind =
   | 'sprint_completed'
   | 'epic_completed';
 
-/** Provenance points to eligible work; it does not imply that work produced a decision. */
+/** An immutable, typed link to the originating application record. Its identity stays opaque. */
+export type ProductDecisionEvidenceOriginReference =
+  | { readonly kind: 'human_interaction'; readonly opaqueId: string }
+  | { readonly kind: 'agent_session_completed'; readonly opaqueId: string }
+  | { readonly kind: 'work_unit_approved'; readonly opaqueId: string }
+  | { readonly kind: 'sprint_completed'; readonly opaqueId: string }
+  | { readonly kind: 'epic_completed'; readonly opaqueId: string };
+
+/** Provenance identifies eligible context; it does not claim that context caused a decision. */
 export interface ProductDecisionEvidence {
   readonly evidenceId: string;
-  readonly kind: ProductDecisionEvidenceKind;
+  readonly originReference: ProductDecisionEvidenceOriginReference;
   readonly label: string;
   readonly occurredAt: string;
 }
@@ -91,28 +99,37 @@ export function validateEpicProductDecisionSnapshot(
   snapshot.evidence.forEach((item) => {
     requireText(item.label, 'Evidence label');
     requireText(item.occurredAt, 'Evidence time');
+    requireOriginReference(item.originReference);
   });
   snapshot.decisions.forEach((decision) => {
     requireText(decision.title, 'Decision title');
     requireText(decision.statement, 'Decision statement');
     requireText(decision.intent, 'Decision intent');
     requireKnown(decision.evidenceIds, evidence, 'Decision evidence');
-    decision.lineage.supersedesDecisionIds.forEach((decisionId) => {
-      if (decisionId === decision.decisionId)
-        fail('Decision lineage cannot supersede its current identity');
-    });
+    requireRelationReferences(
+      decision.lineage.kind,
+      decision.lineage.supersedesDecisionIds,
+      decisions,
+      'Decision lineage',
+      decision.decisionId,
+    );
     if (decision.parentDecisionId && !decisions.has(decision.parentDecisionId))
       fail('Decision parent must reference a current decision');
   });
-  assertAcyclic(snapshot.decisions, decisions);
+  assertAcyclic(snapshot.decisions, decisions, 'parentDecisionId', 'Decision tree');
+  assertLineageAcyclic(snapshot.decisions, decisions);
   snapshot.candidates.forEach((candidate) => {
     requireText(candidate.title, 'Candidate title');
     requireText(candidate.proposedStatement, 'Candidate statement');
     requireText(candidate.rationale, 'Candidate rationale');
     requireKnown(candidate.evidenceIds, evidence, 'Candidate evidence');
-    candidate.targetDecisionIds.forEach((decisionId) => {
-      if (!decisions.has(decisionId)) fail('Candidate targets an unknown decision');
-    });
+    requireRelationReferences(
+      candidate.relation,
+      candidate.targetDecisionIds,
+      decisions,
+      'Candidate target',
+      candidate.candidateId,
+    );
   });
   snapshot.conflicts.forEach((conflict) => {
     requireText(conflict.explanation, 'Conflict explanation');
@@ -144,24 +161,89 @@ function uniqueBy<T>(
 
 function requireKnown<T>(ids: readonly string[], values: ReadonlyMap<string, T>, label: string) {
   if (!ids.length) fail(`${label} must retain at least one reference`);
+  const distinct = new Set<string>();
   ids.forEach((id) => {
+    requireText(id, `${label} reference`);
+    if (distinct.has(id)) fail(`${label} references must be distinct`);
+    distinct.add(id);
     if (!values.has(id)) fail(`${label} references an unknown identity`);
+  });
+}
+
+function requireRelationReferences<T>(
+  relation: 'introduced' | 'refined' | 'combined' | 'introduce' | 'refine' | 'combine',
+  ids: readonly string[],
+  values: ReadonlyMap<string, T>,
+  label: string,
+  selfId: string,
+) {
+  const normalized =
+    relation === 'introduce'
+      ? 'introduced'
+      : relation === 'refine'
+        ? 'refined'
+        : relation === 'combine'
+          ? 'combined'
+          : relation;
+  if (normalized === 'introduced' && ids.length)
+    fail(`${label} introduction cannot contain references`);
+  if (normalized === 'refined' && ids.length !== 1)
+    fail(`${label} refinement must identify exactly one reference`);
+  if (normalized === 'combined' && ids.length < 2)
+    fail(`${label} combination must identify at least two references`);
+  const distinct = new Set<string>();
+  ids.forEach((id) => {
+    requireText(id, `${label} reference`);
+    if (id === selfId) fail(`${label} cannot reference its own identity`);
+    if (distinct.has(id)) fail(`${label} references must be distinct`);
+    distinct.add(id);
+    if (!values.has(id)) fail(`${label} references an unknown decision`);
   });
 }
 
 function assertAcyclic(
   values: readonly ProductDecision[],
   decisions: ReadonlyMap<string, ProductDecision>,
+  edge: 'parentDecisionId',
+  label: string,
 ) {
   values.forEach((value) => {
     const visited = new Set([value.decisionId]);
-    let parentId = value.parentDecisionId;
+    let parentId = value[edge];
     while (parentId) {
-      if (visited.has(parentId)) fail('Decision tree cannot contain a cycle');
+      if (visited.has(parentId)) fail(`${label} cannot contain a cycle`);
       visited.add(parentId);
-      parentId = decisions.get(parentId)?.parentDecisionId;
+      parentId = decisions.get(parentId)?.[edge];
     }
   });
+}
+
+function assertLineageAcyclic(
+  values: readonly ProductDecision[],
+  decisions: ReadonlyMap<string, ProductDecision>,
+) {
+  const visit = (decisionId: string, path: ReadonlySet<string>) => {
+    if (path.has(decisionId)) fail('Decision lineage cannot contain a cycle');
+    const nextPath = new Set(path).add(decisionId);
+    decisions
+      .get(decisionId)
+      ?.lineage.supersedesDecisionIds.forEach((targetId) => visit(targetId, nextPath));
+  };
+  values.forEach(({ decisionId }) => visit(decisionId, new Set()));
+}
+
+const evidenceKinds = new Set<ProductDecisionEvidenceKind>([
+  'human_interaction',
+  'agent_session_completed',
+  'work_unit_approved',
+  'sprint_completed',
+  'epic_completed',
+]);
+
+function requireOriginReference(reference: ProductDecisionEvidenceOriginReference) {
+  if (!reference || !evidenceKinds.has(reference.kind))
+    fail('Evidence origin reference kind is not eligible');
+  requireText(reference.opaqueId, 'Evidence origin reference identity');
 }
 
 function requireText(value: string, label: string) {

@@ -272,6 +272,11 @@
   color: #7a888e;
 }
 
+.product-decisions__sources li small {
+  grid-column: 2;
+  color: #7a888e;
+}
+
 .product-decisions__compliance {
   display: flex;
   gap: 10px;

@@ -12,19 +12,28 @@ const recordedSnapshot: EpicProductDecisionSnapshot = validateEpicProductDecisio
   evidence: [
     {
       evidenceId: 'evidence-human-layout-review',
-      kind: 'human_interaction',
+      originReference: {
+        kind: 'human_interaction',
+        opaqueId: 'layout-review-outcome-2026-07-29',
+      },
       label: 'Human layout review: preserve pane positions while reading',
       occurredAt: '2026-07-29T09:15:00.000Z',
     },
     {
       evidenceId: 'evidence-work-unit-detail-approval',
-      kind: 'work_unit_approved',
+      originReference: {
+        kind: 'work_unit_approved',
+        opaqueId: 'epic-detail-containment-approval',
+      },
       label: 'Epic detail containment Work Unit approval',
       occurredAt: '2026-07-29T11:45:00.000Z',
     },
     {
       evidenceId: 'evidence-sprint-detail-completion',
-      kind: 'sprint_completed',
+      originReference: {
+        kind: 'sprint_completed',
+        opaqueId: 'recorded-epic-detail-review-completion',
+      },
       label: 'Recorded Epic detail review Sprint completion',
       occurredAt: '2026-07-29T12:00:00.000Z',
     },
@@ -37,10 +46,7 @@ const recordedSnapshot: EpicProductDecisionSnapshot = validateEpicProductDecisio
         'Keep the outer workspace fixed; only a contained region with more content than it can display may scroll.',
       intent: 'Protect spatial orientation while people move between related panes and details.',
       evidenceIds: ['evidence-human-layout-review', 'evidence-work-unit-detail-approval'],
-      lineage: {
-        kind: 'combined',
-        supersedesDecisionIds: ['historical-fixed-shell', 'historical-contained-overflow'],
-      },
+      lineage: { kind: 'introduced', supersedesDecisionIds: [] },
     },
     {
       decisionId: 'decision-progressive-detail',
@@ -80,7 +86,7 @@ const recordedSnapshot: EpicProductDecisionSnapshot = validateEpicProductDecisio
       requestId: 'review-request-contained-scroll',
       triggeredByDecisionId: 'decision-stable-workspace',
       reason:
-        'The combined policy supersedes two earlier formulations; a later manual review should check existing Epic detail surfaces.',
+        'A later manual review should check existing Epic detail surfaces against the recorded policy.',
       status: 'requested',
     },
   ],
