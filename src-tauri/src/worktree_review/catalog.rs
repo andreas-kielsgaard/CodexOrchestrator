@@ -351,4 +351,69 @@ mod tests {
             .expect_err("legacy rejected");
         assert!(error.contains("waiting for a window cannot repair"));
     }
+
+    #[test]
+    fn discovered_full_baseline_does_not_follow_later_machine_main_head() {
+        let directory = tempfile::tempdir().expect("directory");
+        let main = directory.path().join("main");
+        let selected = directory.path().join("selected");
+        git(directory.path(), &["init", main.to_str().unwrap()]);
+        git(&main, &["config", "user.email", "test@example.invalid"]);
+        git(&main, &["config", "user.name", "Test"]);
+        fs::write(main.join("source.txt"), "baseline\n").unwrap();
+        git(&main, &["add", "."]);
+        git(&main, &["commit", "-m", "baseline"]);
+        let baseline = git_output(&main, &["rev-parse", "HEAD"]);
+        git(&main, &["branch", "feature"]);
+        git(
+            &main,
+            &["worktree", "add", selected.to_str().unwrap(), "feature"],
+        );
+        let catalog = ReviewWorktreeCatalog::discover(&main, Path::new("git")).unwrap();
+        let selected_ref = catalog
+            .options()
+            .iter()
+            .find(|option| !option.label.contains("launcher source"))
+            .unwrap()
+            .source_ref
+            .clone();
+
+        fs::write(main.join("later.txt"), "later\n").unwrap();
+        git(&main, &["add", "."]);
+        git(&main, &["commit", "-m", "later"]);
+        assert_ne!(git_output(&main, &["rev-parse", "HEAD"]), baseline);
+
+        assert_eq!(
+            catalog
+                .comparison_identity(&selected_ref)
+                .unwrap()
+                .baseline_object_id,
+            baseline
+        );
+    }
+
+    fn git(root: &Path, arguments: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn git_output(root: &Path, arguments: &[&str]) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
 }
