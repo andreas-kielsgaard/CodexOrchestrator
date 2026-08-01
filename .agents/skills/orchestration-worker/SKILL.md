@@ -48,7 +48,7 @@ Load and follow `$agent-interface-first` when implementation or validation could
 
 When complete, prepare a review payload addressed to the `work-slice-delegation` thread that staged this slice. The delegation thread should continue with `review-before-merge` using that payload; the worker should not start a separate review thread.
 
-After the review payload and required owner notification are delivered, end the current turn. The reviewer owns the active next step. If a correction or other actionable message arrives in a later turn, handle it then. Do not poll, wait on, or repeatedly inspect the reviewer after reporting.
+After one review-payload and owner-notification attempt, end the current turn. State separately whether the harness evidenced message delivery and whether it evidenced an activated receiving turn. The reviewer owns the next step once activated. If a correction or other actionable message arrives in a later turn, handle it then. Do not poll, wait on, or repeatedly inspect the reviewer after reporting.
 
 When blocked, complete, or needing clarification, notify the nearest owner before ending the turn when a delegation, planner, or root thread id was supplied. Use the shared reporting flow and keep the notification compact: status, evidence, changed files or worktree state, next requested action, and whether review should start.
 
@@ -92,4 +92,4 @@ When reporting to the delegation owner or review stage, return:
 - validation
 - review payload
 - next requested action
-- owner notification sent, or `OWNER_NOTIFICATION_REQUIRED` payload
+- owner notification delivery and receiver-activation evidence, or `OWNER_NOTIFICATION_REQUIRED` payload

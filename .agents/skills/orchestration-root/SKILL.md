@@ -13,7 +13,7 @@ This skill defines root behavior. It does not implement a work slice directly.
 
 This is a control role in the current Codex development workflow. It does not define the Codex Orchestrator product's future Epic Runner.
 
-For shared topology, context-routing, relationship metadata, and reporting concepts, read `../_orchestration-common/concepts.md` when those concepts are ambiguous in the current prompt.
+When needed, read the applicable files in `../_shared-skill-concepts/`, especially `ownership.md`, `context-routing.md`, `relationship-metadata.md`, `reporting-flow.md`, and `owner-liveness.md`.
 
 ## Intake And Instantiation
 
@@ -45,7 +45,7 @@ After resume recovery, accept or adjust the recovery recommendation before resta
 
 ## Thread Topology
 
-Use the ownership model in `../_orchestration-common/concepts.md`.
+Use `../_shared-skill-concepts/ownership.md`.
 
 From this root, create only the control helpers the root owns: `orchestration-intake-refresh`, `orchestration-interruption-recovery`, and planner forks using `orchestration-next-work-planner`.
 
@@ -53,13 +53,13 @@ Planner forks own ordinary work-slice delegation and worker-root startup. Worker
 
 An `orchestration-record-maintainer` may instantiate an `orchestration-intake-refresh` child/fork from this root when record maintenance changes root-carry state. Treat that intake as root-owned even though the maintainer authored the prompt. The record root should not relay this handoff.
 
-When creating or prompting these helpers, apply the reasoning-routing and thread-naming concepts in `../_orchestration-common/concepts.md`. Omit model overrides unless the human requested a specific model.
+When creating or prompting these helpers, apply `../_shared-skill-concepts/reasoning-routing.md` and `../_shared-skill-concepts/thread-naming.md`. Omit model overrides unless the human requested a specific model.
 
 ## Operating Loop
 
 1. Keep the current objective and accepted state visible.
 2. Run or request `orchestration-intake-refresh` when the root needs refreshed state, especially after record-root summaries, worker completions, interruptions, or context compression.
-3. Keep a compact skill context capsule current using the shared concept in `../_orchestration-common/concepts.md`, especially before creating planner forks and after context compression.
+3. Keep a compact skill context capsule current using `../_shared-skill-concepts/skill-context-capsules.md`, especially before creating planner forks and after context compression.
 4. Create a forked `orchestration-next-work-planner` thread after intake when the next action is not already being handled by an active planner fork.
 5. Bootstrap the planner fork with instructions to report readiness for the planner prompt.
 6. When the planner fork reports ready, send the actual planner prompt.
@@ -67,9 +67,19 @@ When creating or prompting these helpers, apply the reasoning-routing and thread
 8. Do not reflect on or approve ordinary planner decisions.
 9. Keep only orchestration-relevant conclusions in this root: active planner forks, accepted direction, sourced open items, concrete human-input requests, and next gates.
 
+## Unattended Liveness
+
+When the user authorizes an unattended run and callback delivery does not guarantee an activated receiving turn, first inspect harness state for a liveness task already bound to the same orchestration and root-planner route. Reuse the one harness-evidenced active task. Create one only when the harness evidences that none exists and the user's authorization remains current.
+
+Treat unavailable or unverifiable task state as `waiting-on-tool` and liveness unverified, not as evidence that a new task may be created. Give the single recovery task the orchestration home, root and current planner task ids, the objective's terminal boundary, and enough ownership state to identify the existing actor for the next continuation.
+
+Have it inspect compact task status, start the exact idle owner when an actionable callback or ready continuation has been delivered without activating a turn, and distinguish delivery from activation using harness evidence. It should not reread active work, duplicate an owned slice, or treat a clean worktree as evidence that the orchestration loop is advancing.
+
+Treat the scheduled task as active only when the harness evidences its identity, binding, and active status. User cancellation, removal, or archiving stops that liveness route. Create a replacement only after explicit renewed user authorization; prior unattended authorization is insufficient.
+
 ## Validation Across The Orchestration
 
-Use the shared validation-scope concept in `../_orchestration-common/concepts.md`. Ask planners for broad placement clues, not prescribed validation. At orchestration boundaries, ensure deferred validation has been completed without changing the scope of earlier work.
+Use `../_shared-skill-concepts/validation-scope.md`. Ask planners for broad placement clues, not prescribed validation. At orchestration boundaries, ensure deferred validation has been completed without changing the scope of earlier work.
 
 ## Planner Fork Rule
 
@@ -103,7 +113,7 @@ If the root notices something record-relevant, keep it compact in the root's ord
 
 ## Context Discipline
 
-Use the context-routing and relationship-metadata concepts in `../_orchestration-common/concepts.md`.
+Use `../_shared-skill-concepts/context-routing.md` and `../_shared-skill-concepts/relationship-metadata.md`.
 
 Give child/forked threads the immediate context they need in the prompt. Use `sub-agent-context` only as compact thread-relationship recovery metadata, not as a task archive or orchestration ledger.
 

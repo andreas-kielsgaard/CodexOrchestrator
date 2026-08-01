@@ -19,7 +19,7 @@ Directly ask the human when a concrete decision or resource is required. If the 
 
 For one selected immediate slice, continue this planner thread with `work-slice-delegation` and stage one independent worker root from there. For multiple independent immediate slices, fork this planner thread once per parallel slice and prompt each fork to use `work-slice-delegation` for exactly one slice. Do not fork for a single slice.
 
-For shared ownership, owner-liveness, context-routing, work-route, and reporting concepts, read `../_orchestration-common/concepts.md` when the prompt does not already make those concepts clear.
+When needed, read the applicable files under `../_shared-skill-concepts/`: `ownership.md`, `owner-liveness.md`, `context-routing.md`, `work-route-vs-content-dependency.md`, and `reporting-flow.md`.
 
 Apply the shared reasoning-routing and naming concepts when starting delegation continuations, planner forks, and worker roots. Omit model overrides unless the human explicitly requested a model.
 
@@ -72,7 +72,7 @@ Do not silently work around a blocked tool, missing access, or unresolved produc
 
 ## Context Propagation
 
-Route discoveries by audience using the shared buckets in `../_orchestration-common/concepts.md`.
+Route discoveries by audience using `../_shared-skill-concepts/context-routing.md`.
 
 Do not send ordinary planner decisions or completion summaries directly to the root. Put slice-specific source files, repo routing, validation, constraints, and worker-facing discoveries in delegation handoff payloads and use those payloads when starting `work-slice-delegation` sub-agents. Route settled planner-batch state, sourced decisions, active slice ownership, stale-plan triggers, and future refresh cues into record-root/record-maintainer material so root can ingest them through intake refresh.
 
@@ -80,7 +80,7 @@ When routing planner-batch settlement to the record root, include this planner t
 
 ## Validation Allocation
 
-Use the shared validation-scope concept in `../_orchestration-common/concepts.md` when selecting and sequencing work.
+Use `../_shared-skill-concepts/validation-scope.md` when selecting and sequencing work.
 
 Pass broad validation-placement clues to each slice and let its worker choose the validation. A validation deferral never moves implementation or acceptance scope. Name the later owner when validation is deferred.
 
@@ -91,14 +91,14 @@ After deciding an immediate batch:
 1. Keep a concise planning decision capsule in this planner thread and, when useful, in record-root material. Do not ask root to approve ordinary next-work decisions.
 2. For a single immediate slice, continue this planner thread with `work-slice-delegation`. For multiple parallel slices, fork this planner thread once per slice, set a role/slice title when tooling supports it, and prompt each fork to use `work-slice-delegation`. Request `thinking: medium` by default or `thinking: high` when prompt scope, repo boundaries, or content dependencies are subtle.
 3. Instruct each delegation path to start the independent worker root, preserve the source planner thread id and any planner fork id, and pass a compact skill context capsule for the worker and delegation-stage path.
-4. Require each work-slice reporter to notify this planner fork when the slice is complete, blocked, signed off without merge, or abandoned.
+4. Require each work-slice reporter to notify this planner fork when the slice is complete, blocked, signed off without merge, or abandoned, and to distinguish delivery from receiver-activation evidence.
 5. Track launched slices until all are complete, blocked, or escalated. A delegation path that merely produced a worker prompt or started a worker is still active until review, merge/sign-off, reporting, record-root handoff, and planner notification are settled.
 6. When all planned slices are settled, write or send a concise planner-batch settlement update to the root record thread/record maintainer. Include only state that affects future planning, sourced unresolved items, active ownership, and refresh cues, plus the planner callback route.
 7. Park the batch as `waiting-on-record-callback`. When the record root or maintainer callbacks with record-settled status and no slice sub-agent remains active, archive this planner fork when thread tooling supports it.
 
 If the required continuation or planner fork is unavailable for any immediate slice, emit the complete `work-slice-delegation` prompt for that slice, keep the slice in `waiting-on-tool`, and include the missing thread action as planner-batch tracking. Resume by launching that exact prompt through the available thread path.
 
-Use proactive owner notification rather than polling. Escalate to interruption recovery only after a user-visible interruption or explicit request.
+Use one proactive owner notification rather than polling. A delivered callback does not prove that this planner started a turn. Keep the planner id, active owner id, and exact next stage in planner-batch tracking so the root's unattended liveness task can restart this existing route without rereading worker history or duplicating work. Escalate to interruption recovery only after a user-visible interruption or explicit request.
 
 If a delegator cannot start the worker, message the worker for corrections, notify the planner, or route record-root material because tooling is unavailable in that turn, treat the slice as waiting-on-tool rather than complete. Perform the single missing mechanical action yourself when tooling is available, or record the exact missing action as record-root/recovery material. Do not replan or duplicate the worker.
 
@@ -125,7 +125,7 @@ If self-archiving is unavailable after callback, record that the planner is read
 
 ## Work Route Handoff Policy
 
-Separate work route from content dependency using `../_orchestration-common/concepts.md`. In handoff payloads, name the route, any true content dependency, and whether drift is fatal or attention-only.
+Separate work route from content dependency using `../_shared-skill-concepts/work-route-vs-content-dependency.md`. In handoff payloads, name the route, any true content dependency, and whether drift is fatal or attention-only.
 
 ## Reasoning Guidance
 
@@ -163,4 +163,4 @@ Return:
   - record-root discoveries
   - suppressed details
 - delegation actions taken: direct delegation continuation or planner-fork delegation paths created, worker roots started or startup prompts produced, or exact delegation prompts waiting on tool availability
-- planner-batch tracking: active slice ids, completion notification route, requested/applied reasoning for launched actors, record-root settlement trigger, planner callback route/status, and archive-on-completion status
+- planner-batch tracking: active slice ids, exact next stage, completion notification route, callback delivery and receiver-activation evidence, requested/applied reasoning for launched actors, record-root settlement trigger, planner callback route/status, and archive-on-completion status
