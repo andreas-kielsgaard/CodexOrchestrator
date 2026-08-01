@@ -205,7 +205,7 @@
   background: #fffdf8;
 }
 
-.epic-plan-builder__conversation .agent-session-identity-header {
+.epic-plan-builder__conversation .agent-session-header {
   height: var(--epic-plan-builder-workspace-header-height);
   min-height: var(--epic-plan-builder-workspace-header-height);
 }

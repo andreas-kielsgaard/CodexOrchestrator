@@ -106,7 +106,7 @@ describe('AgentSessionWorkspace', () => {
     expect(conversation?.lastElementChild).toHaveClass('agent-session-composer');
   });
 
-  it('renders a compact session-owned identity header without inventing an unavailable name', () => {
+  it('enriches the canonical session header inline without inventing an unavailable name', () => {
     const details = sessionDetails('completed');
     const controller = workspaceController(details);
     const { rerender } = render(
@@ -126,10 +126,10 @@ describe('AgentSessionWorkspace', () => {
       />,
     );
 
-    expect(screen.getByRole('heading', { name: 'Avery: Epic Plan Builder' })).toBeVisible();
-    expect(document.querySelector('[data-visual-identity-token="sunflower"]')).toHaveTextContent(
-      'A',
-    );
+    const heading = screen.getByRole('heading', { name: 'Avery: Epic Plan Builder' });
+    expect(heading).toBeVisible();
+    expect(heading.closest('header')).toHaveClass('agent-session-header');
+    expect(document.querySelector('[data-visual-identity-token="sunflower"]')).toBeNull();
     expect(screen.getByRole('button', { name: 'Copy entire session' })).toBeVisible();
 
     rerender(

@@ -7,7 +7,6 @@ import { AgentMarkdown } from './AgentMarkdown';
 import { ProcessingDisclosure } from './ProcessingDisclosure';
 import { TechnicalDiagnosticDisclosure } from './TechnicalDiagnosticDisclosure';
 import type { AgentIdentity } from '../../application/agentSessions';
-import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
 
 interface AgentSessionTranscriptProps {
   transcript: ProjectedTranscript | null;
@@ -86,7 +85,6 @@ export function AgentSessionTranscript({
               <article className="transcript-message agent-final-message">
                 <header>
                   <span className="transcript-message__agent">
-                    {agentIdentity && <AgentIdentityBadge identity={agentIdentity} compact />}
                     <span>{agentIdentity?.name ?? 'Agent'}</span>
                   </span>
                   <span className="outcome-label">{invocation.outcome.label}</span>

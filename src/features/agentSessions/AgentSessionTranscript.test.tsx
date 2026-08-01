@@ -39,6 +39,31 @@ describe('AgentSessionTranscript', () => {
     expect(onToggle).toHaveBeenCalledWith('invocation-1');
   });
 
+  it('enriches the canonical agent attribution inline without an identity marker', () => {
+    render(
+      <AgentSessionTranscript
+        transcript={projectAgentSessionTranscript(
+          sessionDetails('completed', [
+            runtimeEvent(1, 'agent_message', 'Finished result', { role: 'final' }),
+          ]),
+        )}
+        loading={false}
+        expandedProcessing={new Set()}
+        onToggleProcessing={() => undefined}
+        agentIdentity={{
+          name: 'Avery',
+          harnessRole: 'epic_plan_builder',
+          visualIdentityToken: 'sunflower',
+        }}
+      />,
+    );
+
+    const attribution = screen.getByText('Avery');
+    expect(attribution.parentElement).toHaveClass('transcript-message__agent');
+    expect(attribution.parentElement).toHaveTextContent(/^Avery$/);
+    expect(document.querySelector('[data-visual-identity-token]')).toBeNull();
+  });
+
   it.each([
     ['failed', 'Failed. Runtime failed'],
     ['canceled', 'Canceled. This invocation was canceled.'],
