@@ -22,6 +22,16 @@ pub(crate) struct ReviewWorktreeCatalog {
     options: Vec<ReviewWorktreeOption>,
     paths: HashMap<String, PathBuf>,
     main_path: PathBuf,
+    /// Discovery-time immutable baseline; later machine-main HEAD movement does not replace it.
+    main_head: String,
+    common_dir: Option<PathBuf>,
+}
+
+pub(super) struct CatalogComparisonIdentity {
+    pub(super) main_root: PathBuf,
+    pub(super) selected_root: PathBuf,
+    pub(super) baseline_object_id: String,
+    pub(super) common_dir: PathBuf,
 }
 
 impl ReviewWorktreeCatalog {
@@ -40,13 +50,24 @@ impl ReviewWorktreeCatalog {
         }
         let text = String::from_utf8(output.stdout)
             .map_err(|_| "Git worktree discovery was not UTF-8".to_string())?;
-        Self::from_porcelain(&text, &current_source)
+        let mut catalog = Self::from_porcelain(&text, &current_source)?;
+        let common_dir = git_common_dir(&catalog.main_path, git)?;
+        for path in catalog.paths.values() {
+            if git_common_dir(path, git)? != common_dir {
+                return Err(
+                    "A discovered worktree does not belong to the catalog repository".into(),
+                );
+            }
+        }
+        catalog.common_dir = Some(common_dir);
+        Ok(catalog)
     }
 
     fn from_porcelain(text: &str, current_source: &Path) -> Result<Self, String> {
         let mut options = Vec::new();
         let mut paths = HashMap::new();
         let mut main_path = None;
+        let mut main_head = None;
         for block in text.split("\n\n").filter(|block| !block.trim().is_empty()) {
             let mut path = None;
             let mut head = None;
@@ -66,6 +87,7 @@ impl ReviewWorktreeCatalog {
                 .map_err(|error| format!("resolve discovered worktree: {error}"))?;
             if main_path.is_none() {
                 main_path = Some(path.clone());
+                main_head = head.clone();
             }
             let head = head.ok_or_else(|| "Git returned a worktree without HEAD".to_string())?;
             let digest = format!("{:x}", Sha256::digest(path.to_string_lossy().as_bytes()));
@@ -105,6 +127,9 @@ impl ReviewWorktreeCatalog {
             paths,
             main_path: main_path
                 .ok_or_else(|| "No main Git worktree was discovered".to_string())?,
+            main_head: main_head
+                .ok_or_else(|| "No machine-main Git object was discovered".to_string())?,
+            common_dir: None,
         })
     }
 
@@ -167,14 +192,47 @@ impl ReviewWorktreeCatalog {
         })
     }
 
-    pub(super) fn comparison_roots(&self, source_ref: &str) -> Result<(PathBuf, PathBuf), String> {
+    pub(super) fn comparison_identity(
+        &self,
+        source_ref: &str,
+    ) -> Result<CatalogComparisonIdentity, String> {
         let selected = self
             .paths
             .get(source_ref)
             .cloned()
             .ok_or_else(|| "The selected worktree is unavailable.".to_string())?;
-        Ok((self.main_path.clone(), selected))
+        Ok(CatalogComparisonIdentity {
+            main_root: self.main_path.clone(),
+            selected_root: selected,
+            baseline_object_id: self.main_head.clone(),
+            common_dir: self
+                .common_dir
+                .clone()
+                .ok_or_else(|| "The catalog Git repository identity is unavailable.".to_string())?,
+        })
     }
+}
+
+fn git_common_dir(root: &Path, git: &Path) -> Result<PathBuf, String> {
+    let output = Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--git-common-dir"])
+        .output()
+        .map_err(|error| format!("resolve Git common directory: {error}"))?;
+    if !output.status.success() {
+        return Err("Git common-directory discovery failed".into());
+    }
+    let value = String::from_utf8(output.stdout)
+        .map_err(|_| "Git common-directory output was not UTF-8".to_string())?;
+    let path = PathBuf::from(value.trim());
+    let path = if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    };
+    path.canonicalize()
+        .map_err(|error| format!("resolve canonical Git common directory: {error}"))
 }
 
 fn compatibility(path: &Path) -> (String, String) {

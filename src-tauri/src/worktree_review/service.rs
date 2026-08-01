@@ -62,10 +62,23 @@ impl WorktreeRuntimeGitComparison for HumanReviewLauncherService {
         if !verified.clean {
             return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceDirty);
         }
-        let (repository_root, worktree_root) = self
+        let catalog_identity = self
             .catalog
-            .comparison_roots(&metadata.source_ref)
+            .comparison_identity(&metadata.source_ref)
             .map_err(|_| BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable)?;
+        let repository_root = catalog_identity
+            .main_root
+            .canonicalize()
+            .map_err(|_| BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable)?;
+        let worktree_root = catalog_identity
+            .selected_root
+            .canonicalize()
+            .map_err(|_| BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable)?;
+        if repository_root != catalog_identity.main_root
+            || worktree_root != catalog_identity.selected_root
+        {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeEvidenceMismatch);
+        }
         let observed_worktree = verified
             .worktree_path
             .canonicalize()
@@ -74,10 +87,16 @@ impl WorktreeRuntimeGitComparison for HumanReviewLauncherService {
             return Err(BindInitiatedSprintGitAuthorityError::RuntimeEvidenceMismatch);
         }
         let repository_common_dir = common_dir(&repository_root)?;
-        if repository_common_dir != common_dir(&worktree_root)? {
+        if repository_common_dir != catalog_identity.common_dir
+            || repository_common_dir != common_dir(&worktree_root)?
+        {
             return Err(BindInitiatedSprintGitAuthorityError::RuntimeEvidenceMismatch);
         }
-        let baseline_object_id = full_commit(&repository_root, "HEAD")?;
+        let baseline_object_id =
+            full_commit(&repository_root, &catalog_identity.baseline_object_id)?;
+        if baseline_object_id != catalog_identity.baseline_object_id.to_ascii_lowercase() {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeEvidenceMismatch);
+        }
         let current_object_id = full_commit(&worktree_root, "HEAD")?;
         if current_object_id != verified.current_object_id.to_ascii_lowercase()
             || baseline_object_id == current_object_id
@@ -1304,6 +1323,11 @@ mod guidance_tests {
                 "Sprint review".into(),
             )
             .expect("prepare source");
+        fs::write(main.join("advanced-main.txt"), "later main\n").unwrap();
+        git(&main, &["add", "."]);
+        git(&main, &["commit", "-m", "advance machine main"]);
+        let advanced_main = git_text(&main, ["rev-parse", "HEAD"]).unwrap();
+        assert_ne!(advanced_main, baseline);
         let comparison = review
             .resolve_verified_comparison(&prepared.instance_ref)
             .expect("verified comparison");
@@ -1382,6 +1406,27 @@ mod guidance_tests {
         assert_eq!(
             review.resolve_verified_comparison("wt-missing"),
             Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable)
+        );
+
+        let displaced = directory.path().join("selected-original");
+        fs::rename(&selected, &displaced).unwrap();
+        fs::create_dir_all(selected.join("src-tauri")).unwrap();
+        git(directory.path(), &["init", selected.to_str().unwrap()]);
+        git(&selected, &["config", "user.email", "test@example.invalid"]);
+        git(&selected, &["config", "user.name", "Test"]);
+        fs::write(selected.join("package-lock.json"), "{}").unwrap();
+        fs::write(selected.join("src-tauri/Cargo.lock"), "").unwrap();
+        fs::write(
+            selected.join("src-tauri/Cargo.toml"),
+            "[package]\nname='replacement'\nversion='0.1.0'\n",
+        )
+        .unwrap();
+        fs::write(selected.join("replacement.txt"), "replacement\n").unwrap();
+        git(&selected, &["add", "."]);
+        git(&selected, &["commit", "-m", "replacement root"]);
+        assert_eq!(
+            review.resolve_verified_comparison(&prepared.instance_ref),
+            Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceStale)
         );
     }
 
