@@ -21,6 +21,7 @@ export function WorktreeBuildShell({
   const [detail, setDetail] = useState<WorktreeBuildDetail | null>(null);
   const [error, setError] = useState('');
   const [surface, setSurface] = useState<'application' | 'details' | 'files'>('application');
+  const [widgetMinimized, setWidgetMinimized] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -56,8 +57,16 @@ export function WorktreeBuildShell({
         (navigation) => {
           if (!active || !navigation || navigation.sequence === lastSequence) return;
           lastSequence = navigation.sequence;
+          if (navigation.route === 'widget-minimized') setWidgetMinimized(true);
+          if (
+            navigation.route === 'widget-expanded' ||
+            navigation.route === 'widget-restored' ||
+            navigation.route === 'widget-build-details'
+          ) {
+            setWidgetMinimized(false);
+          }
           setSurface(
-            navigation.route === 'worktree-details'
+            navigation.route === 'worktree-details' || navigation.route === 'widget-build-details'
               ? 'details'
               : navigation.route === 'file-review'
                 ? 'files'
@@ -115,6 +124,8 @@ export function WorktreeBuildShell({
           }
           icon={<Trees size={16} />}
           onOpen={() => setSurface('details')}
+          minimized={widgetMinimized}
+          onMinimizedChange={setWidgetMinimized}
         />
       </div>
       {error && (

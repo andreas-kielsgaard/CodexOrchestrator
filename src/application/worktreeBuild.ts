@@ -84,6 +84,13 @@ export interface WorktreeBuildClient {
 }
 
 export interface WorktreeProofNavigation {
-  readonly route: 'application' | 'worktree-details' | 'file-review';
+  readonly route:
+    | 'application'
+    | 'widget-expanded'
+    | 'widget-minimized'
+    | 'widget-restored'
+    | 'widget-build-details'
+    | 'worktree-details'
+    | 'file-review';
   readonly sequence: string;
 }

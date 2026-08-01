@@ -1,6 +1,7 @@
 use super::{
     comparison::WorktreeComparisonView,
     detail::ReviewInstanceDetailView,
+    proof_evidence::ReviewBuildOperationEvidenceView,
     service::{
         AcceptedReviewOperationView, HumanReviewLauncherService, ReviewInstanceView,
         ReviewOperationStatusView, ReviewSourceView,
@@ -58,7 +59,13 @@ pub(crate) fn worktree_review_proof_navigation() -> Result<Option<ProofNavigatio
     .map_err(|_| "Proof navigation state is invalid.".to_string())?;
     if !matches!(
         value.route.as_str(),
-        "application" | "worktree-details" | "file-review"
+        "application"
+            | "widget-expanded"
+            | "widget-minimized"
+            | "widget-restored"
+            | "widget-build-details"
+            | "worktree-details"
+            | "file-review"
     ) || value.sequence.len() != 32
         || !value.sequence.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
@@ -337,6 +344,13 @@ enum ControllerCommand {
     NavigateLauncherDetail {
         instance_ref: String,
     },
+    NavigateLauncherOperation {
+        instance_ref: String,
+        operation_ref: String,
+    },
+    SelectLauncherSource {
+        source_ref: String,
+    },
     Navigate {
         instance_ref: String,
         route: ProofRoute,
@@ -349,6 +363,9 @@ enum ControllerCommand {
     },
     BuildDetail {
         instance_ref: String,
+    },
+    BuildEvidence {
+        operation_ref: String,
     },
 }
 
@@ -383,6 +400,9 @@ fn parse_envelope(value: serde_json::Value) -> Result<CommandEnvelope, DispatchE
                 &["kind", "instanceRef"][..]
             }
         }
+        "build_evidence" => &["kind", "operationRef"],
+        "navigate_launcher_operation" => &["kind", "instanceRef", "operationRef"],
+        "select_launcher_source" => &["kind", "sourceRef"],
         "begin_open" => &["kind", "instanceRef", "activation"],
         "navigate" => &["kind", "instanceRef", "route"],
         _ => {
@@ -418,6 +438,10 @@ enum OpenActivation {
 #[serde(rename_all = "kebab-case")]
 enum ProofRoute {
     Application,
+    WidgetExpanded,
+    WidgetMinimized,
+    WidgetRestored,
+    WidgetBuildDetails,
     WorktreeDetails,
     FileReview,
 }
@@ -426,6 +450,10 @@ impl ProofRoute {
     fn as_str(self) -> &'static str {
         match self {
             Self::Application => "application",
+            Self::WidgetExpanded => "widget-expanded",
+            Self::WidgetMinimized => "widget-minimized",
+            Self::WidgetRestored => "widget-restored",
+            Self::WidgetBuildDetails => "widget-build-details",
             Self::WorktreeDetails => "worktree-details",
             Self::FileReview => "file-review",
         }
@@ -444,6 +472,7 @@ enum ControllerOutput {
     WorktreeContext(WorktreeBuildContextView),
     FileReview(WorktreeComparisonView),
     BuildDetail(ReviewInstanceDetailView),
+    BuildEvidence(ReviewBuildOperationEvidenceView),
 }
 
 #[derive(Clone)]
@@ -556,6 +585,21 @@ impl ControllerState {
                 .map(|()| ControllerOutput::Navigated {
                     route: "worktree-review-detail".into(),
                 }),
+            ControllerCommand::NavigateLauncherOperation {
+                instance_ref,
+                operation_ref,
+            } => self
+                .backend
+                .navigate_launcher_operation(instance_ref, operation_ref)
+                .map(|()| ControllerOutput::Navigated {
+                    route: "worktree-review-operation-output".into(),
+                }),
+            ControllerCommand::SelectLauncherSource { source_ref } => self
+                .backend
+                .select_launcher_source(source_ref)
+                .map(|()| ControllerOutput::Navigated {
+                    route: "worktree-review-source".into(),
+                }),
             ControllerCommand::Navigate {
                 instance_ref,
                 route,
@@ -577,6 +621,10 @@ impl ControllerState {
                 .backend
                 .detail(instance_ref)
                 .map(ControllerOutput::BuildDetail),
+            ControllerCommand::BuildEvidence { operation_ref } => self
+                .backend
+                .build_evidence(operation_ref)
+                .map(ControllerOutput::BuildEvidence),
         };
         result.map_err(DispatchError::safe)
     }
@@ -617,10 +665,20 @@ trait ControllerBackend: Send + Sync {
     fn recover(&self, instance_ref: String) -> Result<ReviewInstanceView, String>;
     fn navigate_launcher(&self) -> Result<(), String>;
     fn navigate_launcher_detail(&self, instance_ref: String) -> Result<(), String>;
+    fn navigate_launcher_operation(
+        &self,
+        instance_ref: String,
+        operation_ref: String,
+    ) -> Result<(), String>;
+    fn select_launcher_source(&self, source_ref: String) -> Result<(), String>;
     fn navigate(&self, instance_ref: String, route: ProofRoute) -> Result<(), String>;
     fn context(&self, instance_ref: String) -> Result<WorktreeBuildContextView, String>;
     fn file_review(&self, instance_ref: String) -> Result<WorktreeComparisonView, String>;
     fn detail(&self, instance_ref: String) -> Result<ReviewInstanceDetailView, String>;
+    fn build_evidence(
+        &self,
+        operation_ref: String,
+    ) -> Result<ReviewBuildOperationEvidenceView, String>;
 }
 
 struct ServiceBackend {
@@ -676,6 +734,19 @@ impl ControllerBackend for ServiceBackend {
         self.service.proof_navigate_launcher_detail(instance_ref)
     }
 
+    fn navigate_launcher_operation(
+        &self,
+        instance_ref: String,
+        operation_ref: String,
+    ) -> Result<(), String> {
+        self.service
+            .proof_navigate_launcher_operation(instance_ref, operation_ref)
+    }
+
+    fn select_launcher_source(&self, source_ref: String) -> Result<(), String> {
+        self.service.proof_select_launcher_source(source_ref)
+    }
+
     fn navigate(&self, instance_ref: String, route: ProofRoute) -> Result<(), String> {
         self.service.proof_navigate(instance_ref, route.as_str())
     }
@@ -690,6 +761,13 @@ impl ControllerBackend for ServiceBackend {
 
     fn detail(&self, instance_ref: String) -> Result<ReviewInstanceDetailView, String> {
         self.service.detail(instance_ref)
+    }
+
+    fn build_evidence(
+        &self,
+        operation_ref: String,
+    ) -> Result<ReviewBuildOperationEvidenceView, String> {
+        self.service.proof_build_operation_evidence(operation_ref)
     }
 }
 
@@ -786,6 +864,24 @@ mod tests {
         fn navigate_launcher_detail(&self, _instance_ref: String) -> Result<(), String> {
             unreachable!()
         }
+        fn navigate_launcher_operation(
+            &self,
+            instance_ref: String,
+            operation_ref: String,
+        ) -> Result<(), String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("launcher-output:{instance_ref}:{operation_ref}"));
+            Ok(())
+        }
+        fn select_launcher_source(&self, source_ref: String) -> Result<(), String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("launcher-source:{source_ref}"));
+            Ok(())
+        }
         fn navigate(&self, _instance_ref: String, _route: ProofRoute) -> Result<(), String> {
             unreachable!()
         }
@@ -796,6 +892,12 @@ mod tests {
             unreachable!()
         }
         fn detail(&self, _instance_ref: String) -> Result<ReviewInstanceDetailView, String> {
+            unreachable!()
+        }
+        fn build_evidence(
+            &self,
+            _operation_ref: String,
+        ) -> Result<ReviewBuildOperationEvidenceView, String> {
             unreachable!()
         }
     }
@@ -876,6 +978,55 @@ mod tests {
             backend.calls.lock().unwrap().as_slice(),
             ["sources", "navigate-launcher"]
         );
+    }
+
+    #[test]
+    fn accepts_only_enumerated_presentation_proof_commands() {
+        let backend = Arc::new(FakeBackend::default());
+        let state = ControllerState::new(backend.clone(), "secret".into());
+        let output = state
+            .dispatch(
+                parse_envelope(serde_json::json!({
+                    "requestRef": "presentation-request-1",
+                    "command": {
+                        "kind": "navigate_launcher_operation",
+                        "instanceRef": "wt-proof",
+                        "operationRef": "review-operation-proof"
+                    }
+                }))
+                .expect("command"),
+            )
+            .expect("presentation");
+        assert!(matches!(
+            output,
+            ControllerOutput::Navigated { route }
+                if route == "worktree-review-operation-output"
+        ));
+        state
+            .dispatch(
+                parse_envelope(serde_json::json!({
+                    "requestRef": "presentation-request-2",
+                    "command": {
+                        "kind": "select_launcher_source",
+                        "sourceRef": "review-source-legacy"
+                    }
+                }))
+                .expect("command"),
+            )
+            .expect("source");
+        assert_eq!(
+            backend.calls.lock().unwrap().as_slice(),
+            [
+                "launcher-output:wt-proof:review-operation-proof",
+                "launcher-source:review-source-legacy"
+            ]
+        );
+        let rejected = parse_envelope(serde_json::json!({
+            "requestRef": "presentation-request-3",
+            "command": {"kind": "navigate_launcher_operation", "instanceRef": "wt-proof", "operationRef": "review-operation-proof", "script": "forbidden"}
+        }))
+        .expect_err("generic authority remains unavailable");
+        assert_eq!(rejected.status, StatusCode::BAD_REQUEST);
     }
 
     async fn request(

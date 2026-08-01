@@ -309,6 +309,7 @@ fn append_retained_logs(root: &Path, operations: &mut Vec<ReviewOperationHistory
             stage_label: label.into(),
             started_at_ms: timestamp,
             updated_at_ms: timestamp,
+            stage_history: Vec::new(),
             output,
             output_complete,
         });

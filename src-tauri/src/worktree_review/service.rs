@@ -3,6 +3,7 @@ use super::{
     comparison::WorktreeComparisonView,
     detail::{assemble, now_ms, DetailInput, ReviewInstanceDetailView, ReviewLifecycleEventView},
     progress::{ProgressHandle, ProgressRegistry, ReviewOperationProgressView},
+    proof_evidence::{self, ReviewBuildOperationEvidenceView},
     worktree_build::WorktreeBuildContextView,
 };
 use crate::worktree_runtime::{
@@ -83,6 +84,17 @@ pub(crate) struct LauncherDetailNavigationView {
     pub(crate) sequence: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LauncherProofPresentationView {
+    pub(crate) route: String,
+    pub(crate) origin: String,
+    pub(crate) instance_ref: Option<String>,
+    pub(crate) operation_ref: Option<String>,
+    pub(crate) source_ref: Option<String>,
+    pub(crate) sequence: String,
+}
+
 #[derive(Clone)]
 struct ReviewMetadata {
     name: String,
@@ -107,6 +119,7 @@ pub(crate) struct HumanReviewLauncherService {
     operation_results: Mutex<HashMap<String, ReviewOperationResult>>,
     launcher_proof_navigation: Mutex<Option<String>>,
     launcher_detail_navigation: Mutex<Option<LauncherDetailNavigationView>>,
+    launcher_proof_presentation: Mutex<Option<LauncherProofPresentationView>>,
     instances_root: PathBuf,
 }
 
@@ -171,6 +184,7 @@ impl HumanReviewLauncherService {
             operation_results: Mutex::new(HashMap::new()),
             launcher_proof_navigation: Mutex::new(None),
             launcher_detail_navigation: Mutex::new(None),
+            launcher_proof_presentation: Mutex::new(None),
             instances_root,
         })
     }
@@ -601,7 +615,16 @@ impl HumanReviewLauncherService {
 
     pub(crate) fn proof_navigate(&self, instance_ref: String, route: &str) -> Result<(), String> {
         self.resolve(&instance_ref)?;
-        if !matches!(route, "application" | "worktree-details" | "file-review") {
+        if !matches!(
+            route,
+            "application"
+                | "widget-expanded"
+                | "widget-minimized"
+                | "widget-restored"
+                | "widget-build-details"
+                | "worktree-details"
+                | "file-review"
+        ) {
             return Err("That proof surface is unavailable.".into());
         }
         let target = self
@@ -634,6 +657,7 @@ impl HumanReviewLauncherService {
             .lock()
             .map_err(|_| "Launcher proof navigation is unavailable.".to_string())? =
             Some("worktree-review".into());
+        self.set_launcher_presentation("overview", "launcher", None, None, None)?;
         Ok(())
     }
 
@@ -655,10 +679,54 @@ impl HumanReviewLauncherService {
             .lock()
             .map_err(|_| "Launcher detail proof navigation is unavailable.".to_string())? =
             Some(LauncherDetailNavigationView {
-                instance_ref,
+                instance_ref: instance_ref.clone(),
                 sequence: Uuid::new_v4().simple().to_string(),
             });
+        self.set_launcher_presentation(
+            "details",
+            "retained-build-card",
+            Some(instance_ref),
+            None,
+            None,
+        )?;
         Ok(())
+    }
+
+    pub(crate) fn proof_navigate_launcher_operation(
+        &self,
+        instance_ref: String,
+        operation_ref: String,
+    ) -> Result<(), String> {
+        let detail = self.detail(instance_ref.clone())?;
+        if !detail
+            .operations
+            .iter()
+            .any(|operation| operation.operation_ref == operation_ref)
+        {
+            return Err("The retained operation output is unavailable for this build.".into());
+        }
+        self.proof_navigate_launcher()?;
+        self.set_launcher_presentation(
+            "details",
+            "retained-operation-output",
+            Some(instance_ref),
+            Some(operation_ref),
+            None,
+        )
+    }
+
+    pub(crate) fn proof_select_launcher_source(&self, source_ref: String) -> Result<(), String> {
+        if self.catalog.label(&source_ref).is_none() {
+            return Err("The selected worktree is unavailable.".into());
+        }
+        self.proof_navigate_launcher()?;
+        self.set_launcher_presentation(
+            "overview",
+            "selected-worktree",
+            None,
+            None,
+            Some(source_ref),
+        )
     }
 
     pub(crate) fn launcher_detail_navigation(
@@ -668,6 +736,54 @@ impl HumanReviewLauncherService {
             .lock()
             .map(|route| route.clone())
             .map_err(|_| "Launcher detail proof navigation is unavailable.".to_string())
+    }
+
+    pub(crate) fn launcher_proof_presentation(
+        &self,
+    ) -> Result<Option<LauncherProofPresentationView>, String> {
+        self.launcher_proof_presentation
+            .lock()
+            .map(|presentation| presentation.clone())
+            .map_err(|_| "Launcher proof presentation is unavailable.".to_string())
+    }
+
+    pub(crate) fn proof_build_operation_evidence(
+        &self,
+        operation_ref: String,
+    ) -> Result<ReviewBuildOperationEvidenceView, String> {
+        let (instance_ref, operation) = self.progress.history(&operation_ref)?;
+        let instance_ref = instance_ref.ok_or_else(|| {
+            "The Build operation is not associated with a retained instance.".to_string()
+        })?;
+        let registry_path = self
+            .instances_root
+            .parent()
+            .ok_or_else(|| "The isolated review registry location is invalid.".to_string())?
+            .join("registry.sqlite");
+        proof_evidence::assemble(registry_path, instance_ref, operation)
+    }
+
+    fn set_launcher_presentation(
+        &self,
+        route: &str,
+        origin: &str,
+        instance_ref: Option<String>,
+        operation_ref: Option<String>,
+        source_ref: Option<String>,
+    ) -> Result<(), String> {
+        *self
+            .launcher_proof_presentation
+            .lock()
+            .map_err(|_| "Launcher proof presentation is unavailable.".to_string())? =
+            Some(LauncherProofPresentationView {
+                route: route.into(),
+                origin: origin.into(),
+                instance_ref,
+                operation_ref,
+                source_ref,
+                sequence: Uuid::new_v4().simple().to_string(),
+            });
+        Ok(())
     }
 
     fn lifecycle(

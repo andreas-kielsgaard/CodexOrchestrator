@@ -53,6 +53,14 @@ pub(crate) struct ReviewOperationProgressView {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct ReviewOperationStageView {
+    pub(crate) stage: String,
+    pub(crate) stage_label: String,
+    pub(crate) observed_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ReviewOperationHistoryView {
     pub(crate) operation_ref: String,
     pub(crate) operation: String,
@@ -60,6 +68,7 @@ pub(crate) struct ReviewOperationHistoryView {
     pub(crate) stage_label: String,
     pub(crate) started_at_ms: u64,
     pub(crate) updated_at_ms: u64,
+    pub(crate) stage_history: Vec<ReviewOperationStageView>,
     pub(crate) output: Vec<String>,
     pub(crate) output_complete: bool,
 }
@@ -74,6 +83,7 @@ struct ProgressRecord {
     stage_label: String,
     started_at_ms: u64,
     updated_at_ms: u64,
+    stage_history: Vec<ReviewOperationStageView>,
     recent_output: VecDeque<String>,
     full_output: VecDeque<String>,
     output_complete: bool,
@@ -140,6 +150,11 @@ impl ProgressRegistry {
                 stage_label: stage_label.to_owned(),
                 started_at_ms: now,
                 updated_at_ms: now,
+                stage_history: vec![ReviewOperationStageView {
+                    stage: stage.to_owned(),
+                    stage_label: stage_label.to_owned(),
+                    observed_at_ms: now,
+                }],
                 recent_output: VecDeque::new(),
                 full_output: VecDeque::new(),
                 output_complete: true,
@@ -202,10 +217,43 @@ impl ProgressRegistry {
                 stage_label: record.stage_label.clone(),
                 started_at_ms: record.started_at_ms,
                 updated_at_ms: record.updated_at_ms,
+                stage_history: record.stage_history.clone(),
                 output: record.full_output.iter().cloned().collect(),
                 output_complete: record.output_complete,
             })
             .collect()
+    }
+
+    pub(crate) fn history(
+        &self,
+        operation_ref: &str,
+    ) -> Result<(Option<String>, ReviewOperationHistoryView), String> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| "Review progress is unavailable.".to_string())?;
+        let record = inner
+            .records
+            .get(operation_ref)
+            .ok_or_else(|| "Review operation evidence is unavailable.".to_string())?;
+        let instance_ref = record
+            .scope
+            .split_once(':')
+            .map(|(_, instance_ref)| instance_ref.to_owned());
+        Ok((
+            instance_ref,
+            ReviewOperationHistoryView {
+                operation_ref: record.operation_ref.clone(),
+                operation: record.operation.clone(),
+                state: state_name(record.state).into(),
+                stage_label: record.stage_label.clone(),
+                started_at_ms: record.started_at_ms,
+                updated_at_ms: record.updated_at_ms,
+                stage_history: record.stage_history.clone(),
+                output: record.full_output.iter().cloned().collect(),
+                output_complete: record.output_complete,
+            },
+        ))
     }
 
     pub(crate) fn fail_operation(&self, operation_ref: &str) {
@@ -219,6 +267,11 @@ impl ProgressRegistry {
                 record.stage = "failed".into();
                 record.stage_label = "Stopped with an error".into();
                 record.updated_at_ms = now;
+                record.stage_history.push(ReviewOperationStageView {
+                    stage: "failed".into(),
+                    stage_label: "Stopped with an error".into(),
+                    observed_at_ms: now,
+                });
             }
         }
         inner
@@ -405,9 +458,17 @@ impl ProgressHandle {
         if record.state != OperationState::Pending {
             return;
         }
-        let mut meaningful = record.stage != stage || record.stage_label != stage_label;
+        let stage_changed = record.stage != stage || record.stage_label != stage_label;
+        let mut meaningful = stage_changed;
         record.stage = stage.to_owned();
         record.stage_label = stage_label.to_owned();
+        if stage_changed {
+            record.stage_history.push(ReviewOperationStageView {
+                stage: stage.to_owned(),
+                stage_label: stage_label.to_owned(),
+                observed_at_ms: now,
+            });
+        }
         if let Some(output) = output {
             if record.recent_output.back() != Some(&output) {
                 meaningful = true;
@@ -452,6 +513,17 @@ impl ProgressHandle {
                 record.stage = stage.into();
                 record.stage_label = label.into();
                 record.updated_at_ms = now;
+                if record
+                    .stage_history
+                    .last()
+                    .is_none_or(|last| last.stage != stage || last.stage_label != label)
+                {
+                    record.stage_history.push(ReviewOperationStageView {
+                        stage: stage.into(),
+                        stage_label: label.into(),
+                        observed_at_ms: now,
+                    });
+                }
             }
         }
         if active {
@@ -732,6 +804,14 @@ mod tests {
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].output.len(), 20);
         assert!(history[0].output_complete);
+        assert_eq!(
+            history[0]
+                .stage_history
+                .iter()
+                .map(|stage| stage.stage.as_str())
+                .collect::<Vec<_>>(),
+            ["typecheck", "tauri-compile-link"]
+        );
     }
 
     #[test]

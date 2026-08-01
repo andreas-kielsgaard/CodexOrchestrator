@@ -11,6 +11,7 @@ import {
   PackageCheck,
   Trees,
 } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 import type { WorktreeBuildDetail } from '../../application/worktreeBuild';
 import './worktreeBuild.css';
 
@@ -18,12 +19,18 @@ export function WorktreeBuildDetailScreen({
   detail,
   onBack,
   onCompare,
+  expandedOperationRef,
 }: {
   readonly detail: WorktreeBuildDetail;
   readonly onBack: () => void;
   readonly onCompare: () => void;
+  readonly expandedOperationRef?: string;
 }) {
   const context = detail.context;
+  const expandedOperation = useRef<HTMLDetailsElement | null>(null);
+  useEffect(() => {
+    expandedOperation.current?.scrollIntoView?.({ block: 'center' });
+  }, [expandedOperationRef, detail]);
   return (
     <main className="worktree-build-detail" aria-label="Worktree build details">
       <header>
@@ -174,7 +181,17 @@ export function WorktreeBuildDetailScreen({
         </p>
         {detail.operations.length ? (
           detail.operations.map((operation) => (
-            <details key={operation.operationRef} open={operation.state === 'pending'}>
+            <details
+              key={operation.operationRef}
+              open={
+                operation.state === 'pending' || operation.operationRef === expandedOperationRef
+              }
+              ref={(element) => {
+                if (operation.operationRef === expandedOperationRef) {
+                  expandedOperation.current = element;
+                }
+              }}
+            >
               <summary>
                 {operation.operation} · {operation.stageLabel} · {operation.state}
               </summary>

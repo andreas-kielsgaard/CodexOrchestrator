@@ -32,6 +32,7 @@ export const tauriHumanReviewLauncher: HumanReviewLauncherClient = {
   }),
   proofNavigation: () => invoke('human_review_launcher_proof_navigation'),
   proofDetailNavigation: () => invoke('human_review_launcher_detail_navigation'),
+  proofPresentation: () => invoke('human_review_launcher_proof_presentation'),
   status: action('status_human_review_instance'),
   focus: action('focus_human_review_instance'),
   stop: action('stop_human_review_instance'),

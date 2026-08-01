@@ -8,14 +8,23 @@ export function ApplicationWidget({
   summary,
   icon,
   onOpen,
+  minimized: controlledMinimized,
+  onMinimizedChange,
 }: {
   readonly label: string;
   readonly title: string;
   readonly summary: string;
   readonly icon: ReactNode;
   readonly onOpen: () => void;
+  readonly minimized?: boolean;
+  readonly onMinimizedChange?: (minimized: boolean) => void;
 }) {
-  const [minimized, setMinimized] = useState(false);
+  const [localMinimized, setLocalMinimized] = useState(false);
+  const minimized = controlledMinimized ?? localMinimized;
+  const setMinimized = (next: boolean) => {
+    setLocalMinimized(next);
+    onMinimizedChange?.(next);
+  };
 
   return (
     <aside

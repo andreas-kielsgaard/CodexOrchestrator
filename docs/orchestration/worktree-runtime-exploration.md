@@ -241,6 +241,16 @@ request reference, and the exact schema. Replay and in-flight reference collisio
 Controller-started operations use the same application service and progress store rendered by the
 launcher; there is no proof-only lifecycle model.
 
+The proof schema also has narrow presentation/read operations for exact-checkpoint review. They can
+expand, minimize, and restore the child widget; open the widget or one retained launcher card into
+the shared build-details projection; select one opaque source so an incompatible legacy contract is
+visible; and open one retained operation's sanitized full-history panel. A typed Build evidence read
+returns operation start/end/duration, observed stage history, exact same-instance reuse and
+no-compilation facts, opaque instance and source identities, private receipt identity, and projected
+isolation facts. Absolute artifact paths appear only in this authenticated developer evidence
+response, never in ordinary product UI. These enumerated operations still provide no generic input,
+script evaluation, arbitrary route, filesystem read, Focus, or desktop activation authority.
+
 `worktree_review_controller` records the foreground HWND and owning process before and after every
 request and fails the proof if either changes. `Open` adds one typed `background_proof` activation
 policy to the normal artifact-verified launch pipeline. Neither that policy nor proof navigation
@@ -339,9 +349,12 @@ $env:CODEX_ORCHESTRATOR_REVIEW_CONTROLLER = 'enabled'
 ```
 
 Continue with the semantic helper's `prepare`, `build`, `open`, `operation`, `status`, `stop`, and
-`recover` actions. The launcher renders the same operation progress. Omit the controller setting and
-start the launcher normally for hands-on human review; no controller descriptor or listener is then
-created.
+`recover` actions. For non-activating presentation evidence use only the enumerated `navigate`,
+`launcher-detail`, `launcher-output`, and `launcher-source` actions; `build-evidence` emits the exact
+typed Build receipt and stage facts. Any one non-streaming response can also be retained with
+`--output <new-absolute-json-path>`. The launcher renders the same operation progress. Omit the
+controller setting and start the launcher normally for hands-on human review; no controller
+descriptor or listener is then created.
 
 ## Visual inspection
 

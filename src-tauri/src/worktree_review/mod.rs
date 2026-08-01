@@ -5,6 +5,7 @@ mod composition;
 pub(crate) mod debug_controller;
 pub(crate) mod detail;
 mod progress;
+mod proof_evidence;
 mod service;
 pub(crate) mod transport;
 pub(crate) mod worktree_build;

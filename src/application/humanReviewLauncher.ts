@@ -84,6 +84,7 @@ export interface HumanReviewLauncherClient {
   comparison(instanceRef: string): import('./fileReview').FileReviewSource;
   proofNavigation?(): Promise<'worktree-review' | null>;
   proofDetailNavigation?(): Promise<HumanReviewDetailNavigation | null>;
+  proofPresentation?(): Promise<HumanReviewProofPresentation | null>;
   status(instanceRef: string): Promise<HumanReviewInstance>;
   focus(instanceRef: string): Promise<HumanReviewInstance>;
   stop(instanceRef: string): Promise<HumanReviewInstance>;
@@ -92,5 +93,15 @@ export interface HumanReviewLauncherClient {
 
 export interface HumanReviewDetailNavigation {
   readonly instanceRef: string;
+  readonly sequence: string;
+}
+
+export interface HumanReviewProofPresentation {
+  readonly route: 'overview' | 'details';
+  readonly origin:
+    'launcher' | 'retained-build-card' | 'retained-operation-output' | 'selected-worktree';
+  readonly instanceRef?: string;
+  readonly operationRef?: string;
+  readonly sourceRef?: string;
   readonly sequence: string;
 }

@@ -249,6 +249,8 @@ pub(crate) fn run() {
             #[cfg(debug_assertions)]
             crate::worktree_review::transport::human_review_launcher_detail_navigation,
             #[cfg(debug_assertions)]
+            crate::worktree_review::transport::human_review_launcher_proof_presentation,
+            #[cfg(debug_assertions)]
             crate::worktree_review::transport::mark_worktree_build_ready,
             #[cfg(debug_assertions)]
             crate::worktree_review::debug_controller::worktree_review_proof_navigation,

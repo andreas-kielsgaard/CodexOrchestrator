@@ -26,6 +26,7 @@ export function HumanReviewLauncherView({
   const [ownedProgress, setOwnedProgress] = useState<HumanReviewOperationProgress | null>(null);
   const [detail, setDetail] = useState<WorktreeBuildDetail | null>(null);
   const [surface, setSurface] = useState<'overview' | 'details' | 'files'>('overview');
+  const [expandedOperationRef, setExpandedOperationRef] = useState<string | undefined>();
 
   const load = useCallback(async () => {
     setBusy('load');
@@ -43,6 +44,48 @@ export function HumanReviewLauncherView({
     } finally {
       setBusy(null);
     }
+  }, [client]);
+
+  useEffect(() => {
+    if (!client.proofPresentation) return;
+    let active = true;
+    let lastSequence = '';
+    const read = () =>
+      void client.proofPresentation!().then(
+        (presentation) => {
+          if (!active || !presentation || presentation.sequence === lastSequence) return;
+          lastSequence = presentation.sequence;
+          if (presentation.sourceRef) setSourceRef(presentation.sourceRef);
+          if (presentation.route === 'overview') {
+            setExpandedOperationRef(undefined);
+            setSurface('overview');
+            return;
+          }
+          if (!presentation.instanceRef) return;
+          setBusy(`detail:${presentation.instanceRef}`);
+          void client.detail(presentation.instanceRef).then(
+            (value) => {
+              if (!active) return;
+              setDetail(value);
+              setExpandedOperationRef(presentation.operationRef);
+              setSurface('details');
+              setBusy(null);
+            },
+            (cause) => {
+              if (!active) return;
+              setError(message(cause));
+              setBusy(null);
+            },
+          );
+        },
+        () => undefined,
+      );
+    read();
+    const timer = window.setInterval(read, 300);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
   }, [client]);
 
   useEffect(() => void load(), [load]);
@@ -117,6 +160,7 @@ export function HumanReviewLauncherView({
     setError(null);
     try {
       setDetail(await client.detail(instanceRef));
+      setExpandedOperationRef(undefined);
       setSurface('details');
     } catch (cause) {
       setError(message(cause));
@@ -174,6 +218,7 @@ export function HumanReviewLauncherView({
         detail={detail}
         onBack={() => setSurface('overview')}
         onCompare={() => setSurface('files')}
+        expandedOperationRef={expandedOperationRef}
       />
     );
   }

@@ -3,8 +3,8 @@ use super::{
     detail::ReviewInstanceDetailView,
     progress::ReviewOperationProgressView,
     service::{
-        HumanReviewLauncherService, LauncherDetailNavigationView, ReviewInstanceView,
-        ReviewSourceView,
+        HumanReviewLauncherService, LauncherDetailNavigationView, LauncherProofPresentationView,
+        ReviewInstanceView, ReviewSourceView,
     },
 };
 use serde::Deserialize;
@@ -114,6 +114,13 @@ pub(crate) fn human_review_launcher_detail_navigation(
     state: State<'_, HumanReviewLauncherTauriState>,
 ) -> Result<Option<LauncherDetailNavigationView>, String> {
     state.0.launcher_detail_navigation()
+}
+
+#[tauri::command]
+pub(crate) fn human_review_launcher_proof_presentation(
+    state: State<'_, HumanReviewLauncherTauriState>,
+) -> Result<Option<LauncherProofPresentationView>, String> {
+    state.0.launcher_proof_presentation()
 }
 
 #[tauri::command]

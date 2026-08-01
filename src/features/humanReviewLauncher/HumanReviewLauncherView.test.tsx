@@ -4,6 +4,7 @@ import type {
   HumanReviewInstance,
   HumanReviewLauncherClient,
   HumanReviewOperationProgress,
+  HumanReviewProofPresentation,
 } from '../../application/humanReviewLauncher';
 import type { WorktreeBuildDetail } from '../../application/worktreeBuild';
 import { HumanReviewLauncherView } from './HumanReviewLauncherView';
@@ -151,6 +152,64 @@ describe('HumanReviewLauncherView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(await screen.findByRole('heading', { name: 'Retained review builds' })).toBeVisible();
   });
+
+  it('uses typed proof presentation for legacy selection and retained full-output drill-down', async () => {
+    const client = new FakeClient();
+    const legacy = {
+      ...instance('Legacy build', 'prepared', 'not-built'),
+      compatibility: 'incompatible' as const,
+      actionRequired: true,
+      actionSummary: 'Update to a compatible worktree lineage before Build or Open.',
+    };
+    client.listSources = async () => [
+      {
+        sourceRef: 'compatible-source',
+        label: 'codex/compatible',
+        revision: 'abcdef012345',
+        compatibility: 'compatible' as const,
+        compatibilityMessage: 'Compatible.',
+      },
+      {
+        sourceRef: 'legacy-source',
+        label: 'legacy branch',
+        revision: '123456789abc',
+        compatibility: 'incompatible' as const,
+        compatibilityMessage:
+          'This branch predates the Worktree Review child contract. Update it before Build or Open.',
+      },
+    ];
+    client.listInstances = async () => [legacy];
+    client.detail = async () => detail(legacy);
+    let presentation: HumanReviewProofPresentation = {
+      route: 'overview',
+      origin: 'selected-worktree',
+      sourceRef: 'legacy-source',
+      sequence: '0123456789abcdef0123456789abcdef',
+    };
+    client.proofPresentation = vi.fn(async () => presentation);
+    render(<HumanReviewLauncherView client={client} />);
+
+    expect(await screen.findByText(/predates the Worktree Review child contract/)).toBeVisible();
+    const card = screen.getByRole('heading', { name: 'Legacy build' }).closest('article')!;
+    expect(within(card).getByRole('button', { name: 'Build' })).toBeDisabled();
+    expect(within(card).getByRole('button', { name: 'Open' })).toBeDisabled();
+
+    presentation = {
+      route: 'details',
+      origin: 'retained-operation-output',
+      instanceRef: legacy.instanceRef,
+      operationRef: 'operation-build-fixture',
+      sequence: '1123456789abcdef0123456789abcdef',
+    };
+    const detailView = await screen.findByRole('main', { name: 'Worktree build details' });
+    expect(within(detailView).getByText(/24 safe lines/)).toBeVisible();
+    expect(detailView).toHaveTextContent('safe output 24');
+    expect(
+      within(detailView)
+        .getByText(/build .* Finished .* succeeded/)
+        .closest('details'),
+    ).toHaveAttribute('open');
+  });
 });
 
 class LongBuildClient implements HumanReviewLauncherClient {
@@ -207,7 +266,8 @@ class LongBuildClient implements HumanReviewLauncherClient {
 
 class FakeClient implements HumanReviewLauncherClient {
   private instance: HumanReviewInstance | undefined;
-  listSources = async () => [
+  proofPresentation?: HumanReviewLauncherClient['proofPresentation'];
+  listSources: HumanReviewLauncherClient['listSources'] = async () => [
     {
       sourceRef: 'opaque',
       label: 'codex/feature - review',

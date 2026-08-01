@@ -3,6 +3,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     env, fs,
+    fs::OpenOptions,
+    io::Write,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -38,13 +40,23 @@ async fn main() -> Result<(), String> {
     let mut arguments = env::args().skip(1);
     let runtime_root = PathBuf::from(arguments.next().ok_or_else(usage)?);
     let action = arguments.next().ok_or_else(usage)?;
+    let mut arguments = arguments.collect::<Vec<_>>();
+    let output_path = output_path(&mut arguments)?;
     let descriptor = read_descriptor(&runtime_root)?;
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|_| "Create the background proof client.".to_string())?;
     if action == "watch" {
-        let operation_ref = arguments.next().ok_or_else(usage)?;
+        if output_path.is_some() {
+            return Err(
+                "Watch streams responses and does not write a single proof output file.".into(),
+            );
+        }
+        if arguments.len() != 1 {
+            return Err(usage());
+        }
+        let operation_ref = arguments[0].clone();
         loop {
             let response = send(
                 &client,
@@ -52,11 +64,7 @@ async fn main() -> Result<(), String> {
                 json!({"kind": "operation", "operationRef": operation_ref}),
             )
             .await?;
-            println!(
-                "{}",
-                serde_json::to_string(&response)
-                    .map_err(|_| "Encode the proof response.".to_string())?
-            );
+            emit(&response, None, false)?;
             if response["response"]["kind"] == "operation"
                 && response["response"]["value"]["progress"]["state"] != "pending"
             {
@@ -66,13 +74,50 @@ async fn main() -> Result<(), String> {
         }
         return Ok(());
     }
-    let command = command(&action, arguments.collect())?;
+    let command = command(&action, arguments)?;
     let response = send(&client, &descriptor, command).await?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&response)
-            .map_err(|_| "Encode the proof response.".to_string())?
-    );
+    emit(&response, output_path.as_deref(), true)?;
+    Ok(())
+}
+
+fn output_path(arguments: &mut Vec<String>) -> Result<Option<PathBuf>, String> {
+    let Some(index) = arguments.iter().position(|argument| argument == "--output") else {
+        return Ok(None);
+    };
+    if index + 2 != arguments.len() {
+        return Err(usage());
+    }
+    let path = PathBuf::from(arguments.remove(index + 1));
+    arguments.remove(index);
+    if !path.is_absolute() || path.extension().and_then(|value| value.to_str()) != Some("json") {
+        return Err("The proof output must be a new absolute JSON file.".into());
+    }
+    Ok(Some(path))
+}
+
+fn emit(value: &Value, output: Option<&Path>, pretty: bool) -> Result<(), String> {
+    let bytes = if pretty {
+        serde_json::to_vec_pretty(value)
+    } else {
+        serde_json::to_vec(value)
+    }
+    .map_err(|_| "Encode the proof response.".to_string())?;
+    if let Some(path) = output {
+        let parent = path
+            .parent()
+            .ok_or_else(|| "The proof output location is invalid.".to_string())?;
+        if !parent.is_dir() {
+            return Err("The proof output directory does not exist.".into());
+        }
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|_| "Create a new proof output file.".to_string())?;
+        file.write_all(&bytes)
+            .map_err(|_| "Write the proof output file.".to_string())?;
+    }
+    println!("{}", String::from_utf8_lossy(&bytes));
     Ok(())
 }
 
@@ -85,6 +130,15 @@ fn command(action: &str, arguments: Vec<String>) -> Result<Value, String> {
         "launcher-detail" => Ok(json!({
             "kind": "navigate_launcher_detail",
             "instanceRef": value(0)?,
+        })),
+        "launcher-output" => Ok(json!({
+            "kind": "navigate_launcher_operation",
+            "instanceRef": value(0)?,
+            "operationRef": value(1)?,
+        })),
+        "launcher-source" => Ok(json!({
+            "kind": "select_launcher_source",
+            "sourceRef": value(0)?,
         })),
         "prepare" => Ok(json!({
             "kind": "begin_prepare",
@@ -107,6 +161,10 @@ fn command(action: &str, arguments: Vec<String>) -> Result<Value, String> {
         "context" => Ok(json!({"kind": "worktree_context", "instanceRef": value(0)?})),
         "files" => Ok(json!({"kind": "file_review", "instanceRef": value(0)?})),
         "detail" => Ok(json!({"kind": "build_detail", "instanceRef": value(0)?})),
+        "build-evidence" => Ok(json!({
+            "kind": "build_evidence",
+            "operationRef": value(0)?,
+        })),
         _ => Err(usage()),
     }
 }
@@ -288,5 +346,5 @@ fn foreground() -> Foreground {
 }
 
 fn usage() -> String {
-    "Usage: cargo run --example worktree_review_controller -- <isolated-runtime-root> <sources|instances|launcher|launcher-detail|prepare|build|open|operation|watch|status|stop|recover|navigate|context|files|detail> [opaque arguments]".into()
+    "Usage: cargo run --example worktree_review_controller -- <isolated-runtime-root> <sources|instances|launcher|launcher-detail|launcher-output|launcher-source|prepare|build|open|operation|watch|status|stop|recover|navigate|context|files|detail|build-evidence> [opaque arguments] [--output <new-absolute-json-path>]".into()
 }
