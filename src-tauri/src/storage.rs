@@ -308,6 +308,8 @@ mod tests {
                 "epic_initiation_results",
                 "epic_initiations",
                 "epic_planning_drafts",
+                "execution_support_attempt_authorizations",
+                "execution_support_grants",
                 "file_review_changed_files",
                 "file_review_documents",
                 "file_review_git_capture_authorizations",
