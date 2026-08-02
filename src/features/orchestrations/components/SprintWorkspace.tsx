@@ -337,7 +337,7 @@ export function SprintWorkspace({
               />
             </section>
           ) : null}
-          <WorkSlicePlannerBoundary sprint={workspace.sprint} />
+          <WorkSlicePlannerBoundary sprint={workspace.sprint} workUnits={activeView.workUnits} />
           <section className="sprint-context__objectives" aria-label="Epic Runner objectives">
             <h2>Epic Runner objectives</h2>
             {workspace.epicRunnerObjectives.length > 0 ? (
@@ -547,11 +547,14 @@ export function SprintWorkspace({
 
 export function WorkSlicePlannerBoundary({
   sprint,
+  workUnits = [],
 }: {
   readonly sprint: SprintWorkspacePresentationV1['sprint'];
+  readonly workUnits?: SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'];
 }) {
   const transition = sprint.sprintRunnerTransition;
   const materializations = sprint.workUnitMaterializations ?? [];
+  const handlerActivityWorkUnits = workUnits.filter(({ details }) => details.includes(' Handler '));
   const createdWorkUnits = hasCreatedWorkUnits(sprint);
   if (!transition?.workSlicePlannerRequestId) return null;
   const stage = (label: string, recorded: boolean) => (
@@ -608,9 +611,21 @@ export function WorkSlicePlannerBoundary({
               </li>
             ))}
           </ul>
-          <p>
-            These are planned responsibilities only. No Handler activation or execution is shown.
-          </p>
+          {handlerActivityWorkUnits.length ? (
+            <section aria-label="Handler activation activity">
+              <h3>Handler activity</h3>
+              <ul>
+                {handlerActivityWorkUnits.map((workUnit) => (
+                  <li key={workUnit.workUnitId}>
+                    {workUnit.title}: {workUnit.details}
+                  </li>
+                ))}
+              </ul>
+              <p>These records stop at Handler activation.</p>
+            </section>
+          ) : (
+            <p>These are planned responsibilities only. No Handler activation is recorded.</p>
+          )}
         </section>
       ) : null}
       <small>{plannerObservationSummary(transition)}</small>
@@ -622,7 +637,9 @@ export function SprintRunnerActivationObservation({
   transition,
   hasCreatedWorkUnits,
 }: {
-  readonly transition: NonNullable<SprintWorkspacePresentationV1['sprint']['sprintRunnerTransition']>;
+  readonly transition: NonNullable<
+    SprintWorkspacePresentationV1['sprint']['sprintRunnerTransition']
+  >;
   readonly hasCreatedWorkUnits: boolean;
 }) {
   return (

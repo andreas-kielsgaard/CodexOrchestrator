@@ -306,7 +306,12 @@ describe('orchestration native query v1', () => {
       { workUnitId: 'unit-2', dependencies: [{ workUnitId: 'unit-1' }] },
     ]);
     const input = nativeQueryProductCompositionInputV2(query);
-    expect(input.referenceIndex.workUnits[0]!.details).toContain('Handler provider activity observed');
+    expect(input.referenceIndex.workUnits[0]!.details).toContain(
+      'Handler launch accepted and application Handler readiness recorded.',
+    );
+    expect(input.referenceIndex.workUnits[0]!.details).toContain(
+      'Provider activity observed separately',
+    );
     expect(input.referenceIndex.workUnits[1]!.details).toContain('Handler activation blocked');
 
     (value.workUnitRelationships as Array<Record<string, unknown>>).push({

@@ -602,17 +602,18 @@ function materializationStage(materialization: NativeWorkUnitMaterializationV1) 
 
 function handlerActivationDetail(activation: NativeWorkUnitHandlerActivationV1 | undefined) {
   if (!activation) return '';
-  if (activation.providerActivationObservedAt)
-    return ' Handler provider activity observed; no provider lifecycle, outcome, or acceptance is implied.';
-  if (activation.handlerReadyAt)
-    return ' Handler launch accepted and ready; provider activation is unobserved.';
   if (activation.eligibilityState === 'blocked')
     return ` Handler activation blocked: ${activation.blockedReason}.`;
+  const providerObservation = activation.providerActivationObservedAt
+    ? ' Provider activity observed separately; no provider lifecycle, outcome, or acceptance is implied.'
+    : ' Provider activity is unobserved.';
+  if (activation.handlerReadyAt)
+    return ` Handler launch accepted and application Handler readiness recorded.${providerObservation}`;
   if (activation.launchRequestedAt)
-    return ' Handler launch requested; acceptance is not yet recorded.';
+    return ` Handler launch requested; acceptance is not yet recorded.${providerObservation}`;
   if (activation.handlerInvocationPreparedAt)
-    return ' Handler invocation prepared; launch is not yet recorded.';
-  return ' Handler activation is eligible but not yet prepared.';
+    return ` Handler invocation prepared; launch is not yet recorded.${providerObservation}`;
+  return ` Handler activation is eligible but not yet prepared.${providerObservation}`;
 }
 
 const draft = (value: unknown): NativePlanningDraftV1 => {
@@ -1030,12 +1031,26 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
   keys(
     x,
     [
-      'attemptId', 'handlerSessionId', 'handlerInvocationId', 'handlerHarnessRevisionId',
-      'handlerHarnessConfigurationDigest', 'handlerHarnessRepositoryCommitRef', 'eligibilityState', 'blockedReason',
-      'requestedAt', 'authorizedAt', 'attemptCreatedAt', 'executionSupportGrantedAt',
-      'isolatedWorktreeReadyAt', 'handlerSessionCreatedAt', 'handlerInvocationPreparedAt',
-      'handlerHarnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt',
-      'providerActivationObservedAt', 'handlerReadyAt',
+      'attemptId',
+      'handlerSessionId',
+      'handlerInvocationId',
+      'handlerHarnessRevisionId',
+      'handlerHarnessConfigurationDigest',
+      'handlerHarnessRepositoryCommitRef',
+      'eligibilityState',
+      'blockedReason',
+      'requestedAt',
+      'authorizedAt',
+      'attemptCreatedAt',
+      'executionSupportGrantedAt',
+      'isolatedWorktreeReadyAt',
+      'handlerSessionCreatedAt',
+      'handlerInvocationPreparedAt',
+      'handlerHarnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+      'providerActivationObservedAt',
+      'handlerReadyAt',
     ],
     'Work Unit Handler activation',
   );
@@ -1054,9 +1069,7 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
     fail('eligible Handler activation cannot have a blocked reason');
   const result = {
     attemptId: string(x.attemptId, 'attemptId'),
-    ...(optional('handlerSessionId')
-      ? { handlerSessionId: optional('handlerSessionId') }
-      : {}),
+    ...(optional('handlerSessionId') ? { handlerSessionId: optional('handlerSessionId') } : {}),
     ...(optional('handlerInvocationId')
       ? { handlerInvocationId: optional('handlerInvocationId') }
       : {}),

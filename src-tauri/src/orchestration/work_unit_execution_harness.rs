@@ -7,17 +7,17 @@ use super::{
     application::OrchestrationApplication,
     conversation_harness::{self, ConversationHarnessProfile, ConversationHarnessRole},
     conversation_harness_revision::{
-        CreateHarnessRevisionCommand, CreateHarnessRevisionResult,
-        HarnessRevision, HarnessRevisionCreationProvenance, HarnessRevisionError,
-        HarnessRevisionHistoryOutcome, HarnessRevisionProvenanceKind, HarnessRevisionReadOutcome,
+        CreateHarnessRevisionCommand, CreateHarnessRevisionResult, HarnessRevision,
+        HarnessRevisionCreationProvenance, HarnessRevisionError, HarnessRevisionHistoryOutcome,
+        HarnessRevisionProvenanceKind, HarnessRevisionReadOutcome,
     },
     conversation_harness_working_copy::{
         HarnessEditorKind, HarnessWorkingCopyEditor, SaveHarnessWorkingCopyCommand,
     },
     execution_support::{
-        AuthorizeExistingWorkUnitExecutionAttempt, ChangedFileManifestEntry, ExecutionSupportError, ExecutionSupportIntent,
-        ExecutionSupportReference, ExecutionSupportResponse, ExecutionSupportService,
-        WorkUnitExecutionRole,
+        AuthorizeExistingWorkUnitExecutionAttempt, ChangedFileManifestEntry, ExecutionSupportError,
+        ExecutionSupportIntent, ExecutionSupportReference, ExecutionSupportResponse,
+        ExecutionSupportService, WorkUnitExecutionRole,
     },
 };
 use crate::{
@@ -108,7 +108,9 @@ impl WorkUnitExecutionHarnessService {
     pub(crate) fn current_handler_revision(
         &self,
     ) -> Result<PinnedHandlerHarnessRevision, WorkUnitHarnessError> {
-        let history = self.orchestration.load_harness_revision_history("work_unit_handler");
+        let history = self
+            .orchestration
+            .load_harness_revision_history("work_unit_handler");
         let revision = match history {
             HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions
                 .last()
@@ -116,7 +118,9 @@ impl WorkUnitExecutionHarnessService {
                 .ok_or(WorkUnitHarnessError::Unavailable)?,
             HarnessRevisionHistoryOutcome::Missing => self.bootstrap_initial_handler_revision()?,
             HarnessRevisionHistoryOutcome::InvalidLocalCommitEvidence
-            | HarnessRevisionHistoryOutcome::Unavailable => return Err(WorkUnitHarnessError::Unavailable),
+            | HarnessRevisionHistoryOutcome::Unavailable => {
+                return Err(WorkUnitHarnessError::Unavailable)
+            }
         };
         self.pinned_handler_revision_from_revision(revision)
     }
@@ -183,8 +187,13 @@ impl WorkUnitExecutionHarnessService {
         }
     }
 
-    fn load_newly_published_handler_revision(&self) -> Result<HarnessRevision, WorkUnitHarnessError> {
-        match self.orchestration.load_harness_revision_history("work_unit_handler") {
+    fn load_newly_published_handler_revision(
+        &self,
+    ) -> Result<HarnessRevision, WorkUnitHarnessError> {
+        match self
+            .orchestration
+            .load_harness_revision_history("work_unit_handler")
+        {
             HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions
                 .last()
                 .cloned()

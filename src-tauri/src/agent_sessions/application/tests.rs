@@ -386,7 +386,9 @@ fn prepared_launch_refuses_to_allocate_a_missing_invocation() {
         Err(error) => error,
     };
 
-    assert!(error.to_string().contains("prepared application invocation not found"));
+    assert!(error
+        .to_string()
+        .contains("prepared application invocation not found"));
     assert_eq!(
         harness
             .repository
@@ -394,7 +396,12 @@ fn prepared_launch_refuses_to_allocate_a_missing_invocation() {
             .expect("invocation lookup"),
         None
     );
-    assert!(harness.runtime.calls.lock().expect("runtime calls").is_empty());
+    assert!(harness
+        .runtime
+        .calls
+        .lock()
+        .expect("runtime calls")
+        .is_empty());
 }
 
 #[test]

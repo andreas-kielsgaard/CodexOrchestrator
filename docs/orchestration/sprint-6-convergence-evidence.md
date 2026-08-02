@@ -269,3 +269,33 @@ strict native-query correction `974ee2c`. The audit used this detached-worktree 
 - Latest focused validation: the coordinator integration test **1/1** (306 filtered), immutable
   Harness revision suite **13/13** (294 filtered), Handler surface **1/1** (306 filtered), Cargo
   check, diff check, and isolated native-query Vitest **17/17** plus TypeScript typecheck passed.
+
+### HA-01 correction: approved Work Unit activity projection
+
+- The approved `WorkSlicePlannerBoundary` now receives only the already-composed current Work Unit
+  presentation view. It renders Handler activity from those authoritative details; JSX does not
+  query Tauri or reconstruct activation state. With no activation detail it keeps the
+  materialization-only statement, “No Handler activation is recorded.”
+- The native-query projection states Handler launch acceptance and application Handler readiness
+  together, while provider activity remains a separate observation. It also keeps eligible,
+  prepared, launch-requested, and dependency-blocked states distinct. A blocked dependent shows
+  the durable `prerequisite_satisfaction_not_authoritative` reason; provider observation states no
+  provider lifecycle, outcome, or acceptance.
+- The integrated planner-boundary regression starts from a decoded native query, composes the
+  product read model, projects the Sprint workspace, and renders a ready root plus a blocked
+  dependent. It asserts the distinct wording and no Implementer, Handler-review, implementation
+  output, retry, application-acceptance, or continuation claim.
+- Validation for this correction: focused Rust coordinator integration **1/1** (306 filtered),
+  immutable Harness revision **13/13** (294 filtered), execution-Harness **2/2** (305 filtered),
+  and `cargo check --manifest-path src-tauri/Cargo.toml` passed. In an isolated temporary
+  dependency root provisioned with `npm ci --ignore-scripts` and without changing this worktree’s
+  manifest or lockfile, focused native-query plus Sprint Workspace Vitest passed **2 files / 22
+  tests**, TypeScript passed, ESLint passed, and `npm run build` passed. Focused Prettier then
+  passed for the four changed TypeScript/React files.
+- `rustfmt --edition 2021` was intentionally limited to the five HA-02-named Rust files:
+  `agent_sessions/application/lifecycle.rs`, `agent_sessions/application/tests.rs`,
+  `orchestration/conversation_harness.rs`, `orchestration/repository/tests.rs`, and
+  `orchestration/work_unit_execution_harness.rs` (**189 additions / 78 deletions**, formatting
+  only). Broader mixed baseline/candidate drift was not reformatted. `git diff --check` passed.
+  This evidence remains local and deterministic; no live-provider compliance, lifecycle/outcome,
+  human observation, process reattachment, Implementer activity, or downstream result is claimed.
