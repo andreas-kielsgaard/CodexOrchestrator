@@ -40,4 +40,11 @@ describe('product application composition', () => {
       );
     }
   });
+
+  it('wires the production Tauri Epic controller factory rather than a shaped unsupported controller', () => {
+    const source = readFileSync(resolve('src/bootstrap/productApplicationComposition.ts'), 'utf8');
+    expect(source).toContain("import { createTauriEpicPauseRestartController } from '../infrastructure/orchestrations/tauriEpicPauseRestart';");
+    expect(source).toContain('epicPauseRestartController: createTauriEpicPauseRestartController(),');
+    expect(source).not.toContain('epicPauseRestartController: unsupportedEpicPauseRestartController');
+  });
 });
