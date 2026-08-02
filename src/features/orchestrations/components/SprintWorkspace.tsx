@@ -331,14 +331,10 @@ export function SprintWorkspace({
                   <li>Planning-ready; downstream has not started</li>
                 ) : null}
               </ul>
-              <small>
-                {workspace.sprint.sprintRunnerTransition.providerReceiverActivationObservedAt
-                  ? 'Provider/receiver activation has been observed.'
-                  : 'Provider/receiver activation has not been observed.'}{' '}
-                {workspace.sprint.sprintRunnerTransition.downstreamNotStarted
-                  ? 'No Work Slice or Work Unit has been created.'
-                  : ''}
-              </small>
+              <SprintRunnerActivationObservation
+                transition={workspace.sprint.sprintRunnerTransition}
+                hasCreatedWorkUnits={hasCreatedWorkUnits(workspace.sprint)}
+              />
             </section>
           ) : null}
           <WorkSlicePlannerBoundary sprint={workspace.sprint} />
@@ -556,6 +552,7 @@ export function WorkSlicePlannerBoundary({
 }) {
   const transition = sprint.sprintRunnerTransition;
   const materializations = sprint.workUnitMaterializations ?? [];
+  const createdWorkUnits = hasCreatedWorkUnits(sprint);
   if (!transition?.workSlicePlannerRequestId) return null;
   const stage = (label: string, recorded: boolean) => (
     <li key={label}>{recorded ? label : `${label} (not recorded)`}</li>
@@ -563,7 +560,11 @@ export function WorkSlicePlannerBoundary({
   return (
     <section className="sprint-context__runner-transition" aria-label="Work Slice Planner boundary">
       <h2>Work Slice Planner boundary</h2>
-      <p>This Sprint currently stops at the application-owned Work Slice Planner boundary.</p>
+      <p>
+        {createdWorkUnits
+          ? 'This Sprint has durable planned responsibilities. The recorded Planner boundary remains historical.'
+          : 'This Sprint currently stops at the application-owned Work Slice Planner boundary.'}
+      </p>
       <ul>
         {stage('Planner request', Boolean(transition.workSlicePlannerRequestedAt))}
         {stage('Planner authorization', Boolean(transition.workSlicePlannerAuthorizedAt))}
@@ -614,6 +615,33 @@ export function WorkSlicePlannerBoundary({
       ) : null}
       <small>{plannerObservationSummary(transition)}</small>
     </section>
+  );
+}
+
+export function SprintRunnerActivationObservation({
+  transition,
+  hasCreatedWorkUnits,
+}: {
+  readonly transition: NonNullable<SprintWorkspacePresentationV1['sprint']['sprintRunnerTransition']>;
+  readonly hasCreatedWorkUnits: boolean;
+}) {
+  return (
+    <small>
+      {transition.providerReceiverActivationObservedAt
+        ? 'Provider/receiver activation has been observed.'
+        : 'Provider/receiver activation has not been observed.'}{' '}
+      {transition.downstreamNotStarted
+        ? hasCreatedWorkUnits
+          ? 'The pre-materialization downstream-not-started record remains historical.'
+          : 'No Work Slice or Work Unit has been created.'
+        : ''}
+    </small>
+  );
+}
+
+function hasCreatedWorkUnits(sprint: SprintWorkspacePresentationV1['sprint']) {
+  return (sprint.workUnitMaterializations ?? []).some((materialization) =>
+    ['work_units_created', 'relationships_complete', 'settled'].includes(materialization.stage),
   );
 }
 

@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import type { ProductSprintRunnerTransitionStatusV1 } from '../../../application/orchestrations';
-import { WorkSlicePlannerBoundary } from './SprintWorkspace';
+import { SprintRunnerActivationObservation, WorkSlicePlannerBoundary } from './SprintWorkspace';
 
 const transition: ProductSprintRunnerTransitionStatusV1 = {
   label: 'Work Slice Planner request authorized; planning point pending',
@@ -62,27 +62,37 @@ describe('Work Slice Planner boundary disclosure', () => {
     expect(region).not.toHaveTextContent('Materialize Work Units');
   });
 
-  it('labels a partial materialization without claiming settled Work Units', () => {
+  it('keeps a settled materialization current without claiming a current downstream stop', () => {
+    const settled = [
+      {
+        materializationId: 'materialization-1',
+        planningPointId: 'point-1',
+        acceptedRevisionId: 'accepted-revision-1',
+        stage: 'settled',
+        source: {
+          status: 'available',
+          sourceKind: 'application_interpretation',
+          sourceReferences: ['materialization-1'],
+        },
+      },
+    ];
     render(
-      <WorkSlicePlannerBoundary
-        sprint={sprint(transition, [
-          {
-            materializationId: 'materialization-1',
-            planningPointId: 'point-1',
-            acceptedRevisionId: 'accepted-revision-1',
-            stage: 'work_units_created',
-            source: {
-              status: 'available',
-              sourceKind: 'application_interpretation',
-              sourceReferences: ['materialization-1'],
-            },
-          },
-        ])}
-      />,
+      <>
+        <SprintRunnerActivationObservation
+          transition={{ ...transition, downstreamNotStarted: true }}
+          hasCreatedWorkUnits
+        />
+        <WorkSlicePlannerBoundary sprint={sprint(transition, settled)} />
+      </>,
     );
     const region = screen.getByRole('region', { name: 'Work Slice Planner boundary' });
     expect(region).toHaveTextContent('Accepted revision accepted-revision-1');
-    expect(region).toHaveTextContent('Work Units created; relationships not complete');
+    expect(region).toHaveTextContent('Work Units and relationships settled');
     expect(region).toHaveTextContent('No Handler activation or execution is shown.');
+    expect(region).not.toHaveTextContent('currently stops at the application-owned Work Slice Planner boundary');
+    expect(screen.queryByText('No Work Slice or Work Unit has been created.')).toBeNull();
+    expect(document.body).toHaveTextContent(
+      'The pre-materialization downstream-not-started record remains historical.',
+    );
   });
 });
