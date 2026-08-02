@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-const ACTIVE_SCHEMA_VERSION: i64 = 14;
+const ACTIVE_SCHEMA_VERSION: i64 = 15;
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join(ACTIVE_DATABASE_FILE_NAME)
@@ -25,7 +25,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     if current_version == ACTIVE_SCHEMA_VERSION {
         return Ok(());
     }
-    if (1..=13).contains(&current_version) {
+    if (1..=14).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -110,6 +110,15 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         transaction
             .execute_batch(crate::orchestration::execution_support::EXECUTION_SUPPORT_SCHEMA)
             .map_err(|error| format!("Unable to migrate execution-support schema: {error}"))?;
+        if current_version == 14 {
+            transaction
+                .execute_batch(
+                    crate::orchestration::execution_support::EXECUTION_SUPPORT_BASELINE_MIGRATION,
+                )
+                .map_err(|error| {
+                    format!("Unable to migrate execution-support attempt baseline: {error}")
+                })?;
+        }
         transaction
             .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
             .map_err(|error| format!("Unable to record active schema version: {error}"))?;
@@ -451,7 +460,7 @@ mod tests {
                 .expect("preserved Batch 11 authority"),
             "capture-fingerprint-v10"
         );
-        assert_eq!(pragma_i64(&connection, "user_version"), 14);
+        assert_eq!(pragma_i64(&connection, "user_version"), 15);
         initialize_active_database(&connection).expect("reopen current schema");
     }
 
@@ -483,8 +492,8 @@ mod tests {
                 .expect("preserved predecessor row"),
             "preserved"
         );
-        assert_eq!(pragma_i64(&connection, "user_version"), 14);
-        initialize_active_database(&connection).expect("reopen v14");
+        assert_eq!(pragma_i64(&connection, "user_version"), 15);
+        initialize_active_database(&connection).expect("reopen v15");
     }
 
     #[test]
