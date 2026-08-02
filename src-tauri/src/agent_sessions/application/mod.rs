@@ -1,7 +1,7 @@
 //! Provider-neutral Agent Session use cases and persisted runtime update delivery.
 
 mod lifecycle;
-mod observation;
+pub(crate) mod observation;
 mod update_sink;
 
 pub(crate) use lifecycle::{

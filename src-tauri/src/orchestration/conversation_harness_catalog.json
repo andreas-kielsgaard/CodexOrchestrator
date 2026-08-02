@@ -162,6 +162,60 @@
         "contextDelivery": "first_query",
         "completionCriteria": ["planner_ready_boundary_only"]
       }
+    },
+    {
+      "key": "work_unit_handler",
+      "version": 1,
+      "context": "You are the Work Unit Handler for an already-authorized execution attempt. The application package implements only changed-file manifest, comparison, evidence-content, and correlated invocation-observation actions; no MCP server or Session launch is implemented by this Harness revision. Do not create Work Units, execution attempts, sessions, Implementers, requests, outcomes, acceptance, integration, settlement, or continuations. Invocation persistence, launch acceptance, external context, provider activity, provider terminal evidence, process terminal outcome, semantic MCP activity, and application acceptance remain distinct facts.",
+      "skillGuidance": [
+        {
+          "canonicalName": "work-unit-handler",
+          "canonicalPath": ".agents/product-skills/work-unit-handler/SKILL.md",
+          "purpose": "Inspect one already-authorized attempt's bounded evidence.",
+          "useWhen": "the application has constructed the Handler capability package for an existing authorization."
+        }
+      ],
+      "runtime": {
+        "model": null,
+        "reasoningEffort": null,
+        "sandbox": "read_only",
+        "approvalPolicy": "never"
+      },
+      "mcp": {
+        "required": false,
+        "enabledTools": []
+      },
+      "lifecycle": {
+        "contextDelivery": "first_query",
+        "completionCriteria": ["application_observed_bounded_evidence_or_terminal_observation"]
+      }
+    },
+    {
+      "key": "work_unit_implementer",
+      "version": 1,
+      "context": "You are the Work Unit Implementer for an already-authorized execution attempt. The application package implements only changed-file manifest, comparison, evidence-content, and correlated invocation-observation actions; no MCP server or Session launch is implemented by this Harness revision. Do not create Work Units, execution attempts, sessions, Handler requests, outcomes, acceptance, integration, settlement, or continuations. Invocation persistence, launch acceptance, external context, provider activity, provider terminal evidence, process terminal outcome, semantic MCP activity, and application acceptance remain distinct facts.",
+      "skillGuidance": [
+        {
+          "canonicalName": "work-unit-implementer",
+          "canonicalPath": ".agents/product-skills/work-unit-implementer/SKILL.md",
+          "purpose": "Inspect one already-authorized attempt's bounded evidence.",
+          "useWhen": "the application has constructed the Implementer capability package for an existing authorization."
+        }
+      ],
+      "runtime": {
+        "model": null,
+        "reasoningEffort": null,
+        "sandbox": "read_only",
+        "approvalPolicy": "never"
+      },
+      "mcp": {
+        "required": false,
+        "enabledTools": []
+      },
+      "lifecycle": {
+        "contextDelivery": "first_query",
+        "completionCriteria": ["application_observed_bounded_evidence_or_terminal_observation"]
+      }
     }
   ]
 }

@@ -17,6 +17,8 @@ pub(crate) enum ConversationHarnessRole {
     SprintRunner,
     SprintRunnerPlanningControl,
     WorkSlicePlanner,
+    WorkUnitHandler,
+    WorkUnitImplementer,
 }
 
 impl ConversationHarnessRole {
@@ -28,6 +30,8 @@ impl ConversationHarnessRole {
             Self::SprintRunner => "sprint_runner",
             Self::SprintRunnerPlanningControl => "sprint_runner_planning_control",
             Self::WorkSlicePlanner => "work_slice_planner",
+            Self::WorkUnitHandler => "work_unit_handler",
+            Self::WorkUnitImplementer => "work_unit_implementer",
         }
     }
 }
@@ -241,6 +245,8 @@ pub(crate) fn role_discovery_root(role: ConversationHarnessRole) -> Result<Strin
         ConversationHarnessRole::SprintRunner => "sprint-runner",
         ConversationHarnessRole::SprintRunnerPlanningControl => "sprint-runner",
         ConversationHarnessRole::WorkSlicePlanner => "work-slice-planner",
+        ConversationHarnessRole::WorkUnitHandler => "work-unit-handler",
+        ConversationHarnessRole::WorkUnitImplementer => "work-unit-implementer",
     };
     let skill = profile
         .skill_guidance
@@ -293,17 +299,30 @@ mod tests {
         let bootstrap = profile(ConversationHarnessRole::EpicBootstrapGenerator).unwrap();
         let runner = profile(ConversationHarnessRole::EpicRunner).unwrap();
         let sprint_runner = profile(ConversationHarnessRole::SprintRunner).unwrap();
-        let planning_control = profile(ConversationHarnessRole::SprintRunnerPlanningControl).unwrap();
+        let planning_control =
+            profile(ConversationHarnessRole::SprintRunnerPlanningControl).unwrap();
         let planner = profile(ConversationHarnessRole::WorkSlicePlanner).unwrap();
+        let handler = profile(ConversationHarnessRole::WorkUnitHandler).unwrap();
+        let implementer = profile(ConversationHarnessRole::WorkUnitImplementer).unwrap();
 
         assert_eq!(plan_builder.version, 4);
         assert_eq!(runner.key, "epic_runner");
         assert_eq!(runner.version, 3);
         assert_eq!(sprint_runner.key, "sprint_runner");
         assert_eq!(sprint_runner.version, 2);
-        assert_eq!(planning_control.mcp.enabled_tools, ["request_work_slice_planner"]);
+        assert_eq!(
+            planning_control.mcp.enabled_tools,
+            ["request_work_slice_planner"]
+        );
         assert!(planning_control.mcp.required);
         assert_eq!(planner.key, "work_slice_planner");
+        assert_eq!(handler.key, "work_unit_handler");
+        assert_eq!(implementer.key, "work_unit_implementer");
+        assert_eq!(handler.version, 1);
+        assert_eq!(implementer.version, 1);
+        assert!(handler.mcp.enabled_tools.is_empty());
+        assert!(!handler.mcp.required);
+        assert_eq!(implementer.mcp.enabled_tools, handler.mcp.enabled_tools);
         assert_eq!(
             plan_builder.runtime_options().sandbox,
             Some(RuntimeSandboxMode::ReadOnly)

@@ -96,6 +96,7 @@ struct CapturedInspection {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ExecutionSupportReference {
     pub(crate) capability_ref: String,
+    pub(crate) working_directory: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -127,7 +128,7 @@ pub(crate) enum WorkUnitExecutionRole {
     Implementer,
 }
 impl WorkUnitExecutionRole {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Handler => "work_unit_handler",
             Self::Implementer => "work_unit_implementer",
@@ -190,6 +191,11 @@ trait ExecutionWorkspaceResolver: Send + Sync {
         binding: &ExecutionWorkspaceBinding,
         capability_ref: &str,
     ) -> Result<CapturedInspection, ExecutionSupportError>;
+    fn working_directory(
+        &self,
+        attempt: &AuthorizedExecutionAttempt,
+        binding: &ExecutionWorkspaceBinding,
+    ) -> Result<String, ExecutionSupportError>;
 }
 
 pub(crate) struct ProductExecutionWorkspaceResolver {
@@ -431,6 +437,17 @@ impl ExecutionWorkspaceResolver for ProductExecutionWorkspaceResolver {
             comparison: Some(document.payload),
         })
     }
+
+    fn working_directory(
+        &self,
+        attempt: &AuthorizedExecutionAttempt,
+        binding: &ExecutionWorkspaceBinding,
+    ) -> Result<String, ExecutionSupportError> {
+        let (root, _) = self.validate_attempt_workspace(attempt, binding)?;
+        root.to_str()
+            .map(str::to_owned)
+            .ok_or(ExecutionSupportError::Unavailable)
+    }
 }
 
 pub(crate) struct SqliteExecutionSupportRepository {
@@ -637,6 +654,7 @@ impl ExecutionSupportService {
                 .map_err(|_| ExecutionSupportError::Unavailable)?;
             return Ok(ExecutionSupportReference {
                 capability_ref: existing.capability_ref,
+                working_directory: self.resolver.working_directory(&attempt, &binding)?,
             });
         }
         let capability_ref = stable_id("execution-support", attempt_id);
@@ -648,7 +666,27 @@ impl ExecutionSupportService {
         transaction
             .commit()
             .map_err(|_| ExecutionSupportError::Unavailable)?;
-        Ok(ExecutionSupportReference { capability_ref })
+        Ok(ExecutionSupportReference {
+            capability_ref,
+            working_directory: self.resolver.working_directory(&attempt, &binding)?,
+        })
+    }
+
+    /// A role-specific package must match the durable authorization before it receives the
+    /// opaque capability. Neither caller-provided routes nor an existing grant can change role.
+    pub(crate) fn grant_for_role(
+        &self,
+        attempt_id: &str,
+        role: WorkUnitExecutionRole,
+    ) -> Result<ExecutionSupportReference, ExecutionSupportError> {
+        if !bounded_id(attempt_id) {
+            return Err(ExecutionSupportError::Denied);
+        }
+        let attempt = self.repository.load_authorized_attempt(attempt_id)?;
+        if attempt.role_kind != role.as_str() {
+            return Err(ExecutionSupportError::Denied);
+        }
+        self.grant(attempt_id)
     }
 
     pub(crate) fn consume(
@@ -1162,6 +1200,29 @@ mod tests {
         assert!(
             matches!(reopened.consume(&reference.capability_ref, ExecutionSupportIntent::ChangedFileManifest), Ok(ExecutionSupportResponse::ChangedFileManifest(files)) if files.is_empty())
         );
+    }
+
+    #[test]
+    fn role_bound_grant_denies_cross_role_and_preserves_existing_attempt_boundary() {
+        let fixture = fixture();
+        let service = fixture.service();
+        fixture.authorize(&service, "attempt-1", "work-unit-1");
+        assert_eq!(
+            service.grant_for_role("attempt-1", WorkUnitExecutionRole::Handler),
+            Err(ExecutionSupportError::Denied)
+        );
+        assert!(!fixture.workspace_parent.exists());
+        let reference = service
+            .grant_for_role("attempt-1", WorkUnitExecutionRole::Implementer)
+            .unwrap();
+        assert!(Path::new(&reference.working_directory).is_dir());
+        assert!(reference.working_directory.ends_with(&stable_id(
+            "execution-workspace",
+            &format!("{}:attempt-1", fixture.authority_id),
+        )));
+        assert!(service
+            .grant_for_role("C:/attempt", WorkUnitExecutionRole::Implementer)
+            .is_err());
     }
 
     #[test]

@@ -514,7 +514,10 @@ mod tests {
                 .expect("preserved Batch 11 authority"),
             "capture-fingerprint-v10"
         );
-        assert_eq!(pragma_i64(&connection, "user_version"), ACTIVE_SCHEMA_VERSION);
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
+        );
         initialize_active_database(&connection).expect("reopen current schema");
     }
 
@@ -546,7 +549,10 @@ mod tests {
                 .expect("preserved predecessor row"),
             "preserved"
         );
-        assert_eq!(pragma_i64(&connection, "user_version"), ACTIVE_SCHEMA_VERSION);
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
+        );
         initialize_active_database(&connection).expect("reopen current schema");
     }
 
@@ -585,7 +591,10 @@ mod tests {
                 .expect("preserved predecessor row"),
             "preserved"
         );
-        assert_eq!(pragma_i64(&connection, "user_version"), ACTIVE_SCHEMA_VERSION);
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
+        );
         initialize_active_database(&connection).expect("reopen current schema");
     }
 
@@ -614,8 +623,18 @@ mod tests {
             .pragma_update(None, "foreign_keys", false)
             .expect("temporarily bypass unrelated authority fixtures");
         for (attempt, work_unit, role, fingerprint) in [
-            ("attempt-1", "work-unit-1", "work_unit_implementer", "fingerprint-1"),
-            ("attempt-2", "work-unit-2", "work_unit_handler", "fingerprint-2"),
+            (
+                "attempt-1",
+                "work-unit-1",
+                "work_unit_implementer",
+                "fingerprint-1",
+            ),
+            (
+                "attempt-2",
+                "work-unit-2",
+                "work_unit_handler",
+                "fingerprint-2",
+            ),
         ] {
             connection
                 .execute(
@@ -627,7 +646,10 @@ mod tests {
         connection
             .pragma_update(None, "foreign_keys", true)
             .expect("restore foreign keys");
-        assert_eq!(pragma_i64(&connection, "user_version"), ACTIVE_SCHEMA_VERSION);
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
+        );
     }
 
     #[test]

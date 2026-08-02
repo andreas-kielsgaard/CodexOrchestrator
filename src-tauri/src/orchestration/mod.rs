@@ -15,3 +15,4 @@ pub(crate) mod mcp;
 pub(crate) mod repository;
 pub(crate) mod sprint_runner_transition;
 pub(crate) mod transport;
+pub(crate) mod work_unit_execution_harness;

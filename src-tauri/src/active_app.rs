@@ -17,7 +17,13 @@ struct ManagedPlanBuilderNotifier {
             >,
         >,
     >,
-    sprint_transition: Arc<Mutex<Option<Weak<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>>>>,
+    sprint_transition: Arc<
+        Mutex<
+            Option<
+                Weak<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>,
+            >,
+        >,
+    >,
 }
 impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBuilderNotifier {
     fn notify(
@@ -41,16 +47,27 @@ impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBui
             .transpose()
             .err()
             .map(|error| error.to_string());
-        let sprint_transition_error = self.sprint_transition.lock()
+        let sprint_transition_error = self
+            .sprint_transition
+            .lock()
             .map_err(|_| "Sprint Runner notification registry is unavailable".to_string())?
-            .clone().and_then(|service| service.upgrade())
+            .clone()
+            .and_then(|service| service.upgrade())
             .map(|service| service.on_agent_notification(&notification))
-            .transpose().err().map(|error| error.to_string());
+            .transpose()
+            .err()
+            .map(|error| error.to_string());
         let inner_error = self.inner.notify(notification).err();
         match (transition_error, sprint_transition_error, inner_error) {
             (None, None, None) => Ok(()),
-            (Some(error), None, None) | (None, Some(error), None) | (None, None, Some(error)) => Err(error),
-            (transition, sprint, inner) => Err([transition, sprint, inner].into_iter().flatten().collect::<Vec<_>>().join("; ")),
+            (Some(error), None, None) | (None, Some(error), None) | (None, None, Some(error)) => {
+                Err(error)
+            }
+            (transition, sprint, inner) => Err([transition, sprint, inner]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join("; ")),
         }
     }
 }
@@ -79,14 +96,14 @@ pub(crate) fn run() {
                 .map_err(|error| error.to_string())?,
             );
             // This product-native seam resolves only durable application-owned attempt authority.
-            app.manage(
-                crate::orchestration::execution_support::ProductExecutionSupportState::new(
-                    &database_path,
-                    app_data_dir.join("execution-workspaces"),
-                    orchestration_repository.clone(),
-                )
-                .map_err(|error| error.to_string())?,
-            );
+            let execution_support = crate::orchestration::execution_support::ProductExecutionSupportState::new(
+                &database_path,
+                app_data_dir.join("execution-workspaces"),
+                orchestration_repository.clone(),
+            )
+            .map_err(|error| error.to_string())?;
+            let execution_support_service = execution_support.service();
+            app.manage(execution_support);
             // Startup never probes the provider. Capability failures are handled per invocation.
             let runtime = Arc::new(crate::runtime::codex::CodexCliRuntime::system(
                 "codex", None,
@@ -123,6 +140,14 @@ pub(crate) fn run() {
                 .map_err(|error| error.to_string())?;
             app.manage(
                 crate::agent_sessions::transport::AgentSessionTauriState::new(application.clone()),
+            );
+            // Composition only makes the bounded package constructible. It creates no workflow
+            // Session, invocation, Work Unit, or attempt at startup.
+            app.manage(
+                crate::orchestration::work_unit_execution_harness::WorkUnitExecutionHarnessService::new(
+                    execution_support_service,
+                    application.clone(),
+                ),
             );
             let orchestration = Arc::new(
                 crate::orchestration::application::OrchestrationApplication::new(
