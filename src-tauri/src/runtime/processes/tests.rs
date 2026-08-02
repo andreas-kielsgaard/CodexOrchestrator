@@ -425,7 +425,83 @@ fn cancellation_settles_after_direct_exit_when_an_unowned_reader_stays_open() {
         ProcessTerminalOutcome::Canceled { .. }
     ));
     assert!(!supervisor.is_active(&invocation).expect("active state"));
+    assert_eq!(
+        supervisor
+            .retained_reader_count()
+            .expect("retained reader count"),
+        1
+    );
+    let shutdown = supervisor
+        .shutdown()
+        .expect_err("shutdown reports retained reader boundary without blocking");
+    assert!(shutdown.message.contains("retained output reader"));
     stdout.release();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while supervisor
+        .retained_reader_count()
+        .expect("retained reader count")
+        != 0
+    {
+        assert!(Instant::now() < deadline, "retained reader did not finish");
+        thread::sleep(Duration::from_millis(10));
+    }
+    supervisor
+        .shutdown()
+        .expect("shutdown after reader cleanup");
+}
+
+#[test]
+fn cancellation_refuses_to_exceed_retained_reader_capacity() {
+    let (factory, sink, supervisor) = fixture();
+    let first_child = Arc::new(FakeChild::default());
+    let first_reader = BlockingReader::default();
+    factory.push_process_with_readers(
+        first_child,
+        Box::new(first_reader.clone()),
+        Box::new(Cursor::new(Vec::<u8>::new())),
+    );
+    let first = invocation_id("invocation-reader-capacity-first");
+    supervisor
+        .start(
+            session_id("session-reader-capacity-first"),
+            first.clone(),
+            spec(),
+        )
+        .expect("start first");
+    supervisor.cancel(&first).expect("cancel first");
+    sink.wait_for_terminal(&first);
+
+    let second_child = Arc::new(FakeChild::default());
+    factory.push_process(second_child.clone());
+    let second = invocation_id("invocation-reader-capacity-second");
+    supervisor
+        .start(
+            session_id("session-reader-capacity-second"),
+            second.clone(),
+            spec(),
+        )
+        .expect("start second");
+    let error = supervisor
+        .cancel(&second)
+        .expect_err("capacity must refuse another cancellation");
+    assert_eq!(error.kind, SupervisorErrorKind::CancellationFailed);
+    assert!(error.message.contains("cleanup capacity"));
+    second_child.complete(0);
+    sink.wait_for_terminal(&second);
+
+    first_reader.release();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while supervisor
+        .retained_reader_count()
+        .expect("retained reader count")
+        != 0
+    {
+        assert!(Instant::now() < deadline, "retained reader did not finish");
+        thread::sleep(Duration::from_millis(10));
+    }
+    supervisor
+        .shutdown()
+        .expect("shutdown after retained cleanup");
 }
 
 #[test]

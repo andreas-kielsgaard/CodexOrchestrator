@@ -1,9 +1,10 @@
 //! Ownership and supervision for invocation-scoped operating-system processes.
 //!
 //! The supervisor owns each direct child from spawn through reap, including its stdout and stderr
-//! reader threads. It deliberately does not own persistence, provider protocol parsing, scheduling,
-//! or application lifecycle policy. Callbacks are invoked without holding supervisor registry or
-//! child locks.
+//! reader threads in the normal path. After cancellation and observed direct-child exit, it bounds
+//! still-open readers under a retained-cleanup limit rather than waiting forever. It deliberately
+//! does not own persistence, provider protocol parsing, scheduling, or application lifecycle policy.
+//! Callbacks are invoked without holding supervisor registry or child locks.
 //!
 //! SystemProcessFactory terminates only the direct process returned by std::process::Command::spawn.
 //! Rust's portable process API does not guarantee descendant-tree termination. In particular,

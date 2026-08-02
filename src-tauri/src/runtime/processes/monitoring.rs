@@ -1,5 +1,5 @@
 use super::{
-    supervisor::{RequestedTermination, SupervisorInner},
+    supervisor::{retain_cancellation_readers, RequestedTermination, SupervisorInner},
     ProcessEventSink, ProcessExit, ProcessFailureKind, ProcessOutput, ProcessOutputStream,
     ProcessTerminalOutcome, SpawnedProcess, SupervisedChild,
 };
@@ -164,12 +164,13 @@ pub(super) fn monitor_process(
         }
     };
 
-    // A Windows child can leave its inherited output handles open in an unowned descendant after
-    // the direct child has exited. Cancellation has already observed the only process boundary
-    // this supervisor owns, so do not withhold that terminal result on readers it cannot safely
-    // interrupt or reattach to. Normal exits still drain both readers before their terminal.
-    let skip_reader_join =
-        exit.is_some() && cancellation_requested(&inner, &invocation_id, &process);
+    // The BlockingReader regression demonstrates that a reader can remain open after the direct
+    // child exits. Inherited handles in an unowned Windows descendant are one supported mechanism,
+    // not a claim about a particular Codex process. Preserve the direct-child terminal, retain the
+    // reader handle under the supervisor's bounded cleanup policy, and keep normal exits draining.
+    let skip_reader_join = exit.is_some()
+        && cancellation_requested(&inner, &invocation_id, &process)
+        && retain_cancellation_readers(&inner, &invocation_id, &process);
     if !skip_reader_join {
         if let Some(reader_failure) = join_readers(&process) {
             first_reader_failure.get_or_insert(reader_failure);
@@ -261,6 +262,9 @@ fn finalize_process(
             .active
             .remove(invocation_id)
             .expect("active process was checked before removal");
+        registry.reserved_reader_cleanup_slots = registry
+            .reserved_reader_cleanup_slots
+            .saturating_sub(entry.reader_cleanup_slots);
         if registry.sessions.get(&entry.session_id) == Some(invocation_id) {
             registry.sessions.remove(&entry.session_id);
         }

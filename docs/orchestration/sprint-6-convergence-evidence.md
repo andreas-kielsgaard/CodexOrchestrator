@@ -45,15 +45,23 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
   The prior same-isolated attempt persisted cancellation but timed out after 180 seconds waiting
   for the source terminal. Its supervisor waited for output readers before delivering any terminal
   outcome. The bounded correction delivers cancellation settlement after the directly owned child
-  has exited, without waiting on readers that an unowned Windows descendant can keep open through
-  inherited handles. The regression proves that boundary and the new live run proves the resulting
-  Pause progression. This retains no process-tree claim, provider-terminal claim, reattachment,
-  or provider-compliance claim. Normal exits still drain readers before terminal delivery. The
-  earlier failed-Pause Restart correction remains: Restart excludes every prior control message
-  from failed/interrupted source candidates.
+  has exited. The `BlockingReader` regression demonstrates that a reader can remain open after
+  direct-child exit; inherited handles in an unowned Windows descendant are a supported mechanism
+  or hypothesis, not a causal claim about the installed Codex invocation. The live runs prove the
+  former missing-terminal symptom and post-change source settlement with Pause progression, not
+  that mechanism. After cancellation/direct-child exit, the supervisor retains at most two reader
+  handles, reaps finished readers before a later cancellation and at shutdown, refuses a later
+  cancellation while that bounded capacity is exhausted, and reports an incomplete retained-reader
+  cleanup at shutdown.
+  It neither kills nor reattaches to descendants. Normal exits still drain readers before terminal
+  delivery. This retains no process-tree claim, provider-terminal claim, or provider-compliance
+  claim. The earlier failed-Pause Restart correction remains: Restart excludes every prior control
+  message from failed/interrupted source candidates.
 
 - Checkpoint validation: WCT-1 process supervision Rust **15 passed**; focused Epic control Rust
-  **8 passed, 1 live ignored**, plus the isolated controlled-live exchange **1 passed**. The later
+  **8 passed, 1 live ignored**, plus the isolated controlled-live exchange **1 passed**. The
+  retained-reader correction adds focused process coverage for bounded retention, reaping,
+  cancellation refusal, and shutdown behavior (**16 passed**). The later
   strict nested-observation decoder correction reran the frontend native-
   contract, Tauri transport, production-composition, and control UI at **4 files / 30 tests
   passed**. The later terminal-status and signed-exit-code correction reran the same set at **4

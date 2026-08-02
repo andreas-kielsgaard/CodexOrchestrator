@@ -1,5 +1,5 @@
 use super::{
-    monitoring::{join_readers, monitor_process, start_readers, ActiveProcess},
+    monitoring::{join_readers, monitor_process, start_readers, ActiveProcess, ReaderResult},
     system::SystemProcessFactory,
     ChildProcessFactory, ProcessEventSink, ProcessExit, ProcessFailureKind, ProcessLaunchSpec,
     ProcessTerminalOutcome, SupervisorError, SupervisorErrorKind,
@@ -23,6 +23,7 @@ pub(super) struct ActiveEntry {
     pub(super) session_id: AgentSessionId,
     pub(super) process: Option<Arc<ActiveProcess>>,
     pub(super) requested_termination: Option<RequestedTermination>,
+    pub(super) reader_cleanup_slots: usize,
     pub(super) termination_operations: usize,
     pub(super) termination_error: Option<String>,
 }
@@ -33,6 +34,8 @@ pub(super) struct Registry {
     pub(super) sessions: HashMap<AgentSessionId, AgentInvocationId>,
     pub(super) shutting_down: bool,
     pub(super) terminal_callbacks_in_progress: usize,
+    pub(super) retained_reader_threads: Vec<thread::JoinHandle<ReaderResult>>,
+    pub(super) reserved_reader_cleanup_slots: usize,
 }
 
 pub(super) struct SupervisorInner {
@@ -42,7 +45,9 @@ pub(super) struct SupervisorInner {
     pub(super) changed: Condvar,
 }
 
-/// Owns all processes launched through it until they have exited and been reaped.
+const RETAINED_READER_THREAD_LIMIT: usize = 2;
+
+/// Owns each direct child through reap and bounds retained reader threads after cancellation.
 pub(crate) struct ProcessSupervisor {
     inner: Arc<SupervisorInner>,
 }
@@ -170,6 +175,7 @@ impl ProcessSupervisor {
     }
 
     pub(crate) fn cancel(&self, invocation_id: &AgentInvocationId) -> Result<(), SupervisorError> {
+        self.reap_retained_reader_threads();
         let process = {
             let mut registry = self.lock_registry()?;
             if registry.shutting_down {
@@ -178,20 +184,46 @@ impl ProcessSupervisor {
                     "process supervisor is shutting down",
                 ));
             }
-            let entry = registry.active.get_mut(invocation_id).ok_or_else(|| {
-                SupervisorError::new(
-                    SupervisorErrorKind::NotActive,
-                    format!("invocation {invocation_id} is not active"),
-                )
-            })?;
-            if entry.requested_termination == Some(RequestedTermination::Cancellation) {
+            let already_canceling = registry
+                .active
+                .get(invocation_id)
+                .ok_or_else(|| {
+                    SupervisorError::new(
+                        SupervisorErrorKind::NotActive,
+                        format!("invocation {invocation_id} is not active"),
+                    )
+                })?
+                .requested_termination
+                == Some(RequestedTermination::Cancellation);
+            if already_canceling {
                 return Ok(());
             }
-            entry.requested_termination = Some(RequestedTermination::Cancellation);
-            let process = entry.process.clone();
-            if process.is_some() {
-                entry.termination_operations += 1;
+            if registry.retained_reader_threads.len()
+                + registry.reserved_reader_cleanup_slots
+                + RETAINED_READER_THREAD_LIMIT
+                > RETAINED_READER_THREAD_LIMIT
+            {
+                return Err(SupervisorError::new(
+                    SupervisorErrorKind::CancellationFailed,
+                    "refusing cancellation: retained output-reader cleanup capacity is exhausted",
+                ));
             }
+            let process = {
+                let entry = registry.active.get_mut(invocation_id).ok_or_else(|| {
+                    SupervisorError::new(
+                        SupervisorErrorKind::NotActive,
+                        format!("invocation {invocation_id} is not active"),
+                    )
+                })?;
+                entry.requested_termination = Some(RequestedTermination::Cancellation);
+                entry.reader_cleanup_slots = RETAINED_READER_THREAD_LIMIT;
+                let process = entry.process.clone();
+                if process.is_some() {
+                    entry.termination_operations += 1;
+                }
+                process
+            };
+            registry.reserved_reader_cleanup_slots += RETAINED_READER_THREAD_LIMIT;
             process
         };
 
@@ -272,9 +304,10 @@ impl ProcessSupervisor {
             })?;
         }
 
-        if termination_failures.is_empty() {
-            Ok(())
-        } else {
+        drop(registry);
+        self.reap_retained_reader_threads();
+        let retained = self.lock_registry()?.retained_reader_threads.len();
+        if !termination_failures.is_empty() {
             Err(SupervisorError::new(
                 SupervisorErrorKind::CancellationFailed,
                 format!(
@@ -282,6 +315,15 @@ impl ProcessSupervisor {
                     termination_failures.join("; ")
                 ),
             ))
+        } else if retained != 0 {
+            Err(SupervisorError::new(
+                SupervisorErrorKind::Internal,
+                format!(
+                    "shutdown completed direct-child cleanup but {retained} retained output reader(s) remain"
+                ),
+            ))
+        } else {
+            Ok(())
         }
     }
 
@@ -294,6 +336,34 @@ impl ProcessSupervisor {
         invocation_id: &AgentInvocationId,
     ) -> Result<bool, SupervisorError> {
         Ok(self.lock_registry()?.active.contains_key(invocation_id))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retained_reader_count(&self) -> Result<usize, SupervisorError> {
+        self.reap_retained_reader_threads();
+        Ok(self.lock_registry()?.retained_reader_threads.len())
+    }
+
+    fn reap_retained_reader_threads(&self) {
+        let completed = {
+            let Ok(mut registry) = self.inner.registry.lock() else {
+                return;
+            };
+            let mut completed = Vec::new();
+            let mut retained = Vec::new();
+            for handle in registry.retained_reader_threads.drain(..) {
+                if handle.is_finished() {
+                    completed.push(handle);
+                } else {
+                    retained.push(handle);
+                }
+            }
+            registry.retained_reader_threads = retained;
+            completed
+        };
+        for handle in completed {
+            let _ = handle.join();
+        }
     }
 
     fn reserve(
@@ -332,6 +402,7 @@ impl ProcessSupervisor {
                 session_id,
                 process: None,
                 requested_termination: None,
+                reader_cleanup_slots: 0,
                 termination_operations: 0,
                 termination_error: None,
             },
@@ -460,6 +531,38 @@ impl ProcessSupervisor {
             )
         })
     }
+}
+
+pub(super) fn retain_cancellation_readers(
+    inner: &Arc<SupervisorInner>,
+    invocation_id: &AgentInvocationId,
+    process: &Arc<ActiveProcess>,
+) -> bool {
+    let Ok(mut readers) = process.reader_threads.lock() else {
+        return false;
+    };
+    let retained = readers.drain(..).collect::<Vec<_>>();
+    drop(readers);
+    let Ok(mut registry) = inner.registry.lock() else {
+        return false;
+    };
+    let Some(entry) = registry.active.get_mut(invocation_id) else {
+        return false;
+    };
+    if entry
+        .process
+        .as_ref()
+        .is_none_or(|active| !Arc::ptr_eq(active, process))
+    {
+        return false;
+    }
+    let slots = entry.reader_cleanup_slots;
+    entry.reader_cleanup_slots = 0;
+    registry.reserved_reader_cleanup_slots =
+        registry.reserved_reader_cleanup_slots.saturating_sub(slots);
+    registry.retained_reader_threads.extend(retained);
+    inner.changed.notify_all();
+    true
 }
 
 impl Drop for ProcessSupervisor {
