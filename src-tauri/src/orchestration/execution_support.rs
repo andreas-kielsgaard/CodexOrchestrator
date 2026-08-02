@@ -299,7 +299,21 @@ impl ProductExecutionWorkspaceResolver {
     ) -> Result<ExecutionWorkspaceBinding, ExecutionSupportError> {
         let root = self.workspace_root(attempt, true)?;
         if root.exists() || fs::symlink_metadata(&root).is_ok() {
-            return Err(ExecutionSupportError::Unavailable);
+            // A stop after `git worktree add` but before the durable grant commits leaves this
+            // exact deterministic side effect. Adopt only a complete, untouched first grant.
+            let binding = ExecutionWorkspaceBinding {
+                workspace_id: self.workspace_id(attempt),
+                workspace_fingerprint: workspace_fingerprint(attempt, &root),
+            };
+            let (verified, head) = self.validate_attempt_workspace(attempt, &binding)?;
+            if verified != root
+                || head != attempt.baseline_object_id
+                || !git_is_detached(&root)?
+                || !git_text(&root, &["status", "--porcelain"])?.is_empty()
+            {
+                return Err(ExecutionSupportError::CorrelationMismatch);
+            }
+            return Ok(binding);
         }
         let authority = &attempt.authority;
         let repository_root = canonical_authorized_root(&authority.repository_root)?;
@@ -327,6 +341,7 @@ impl ProductExecutionWorkspaceResolver {
         let (verified, head) = self.validate_attempt_workspace(attempt, &binding)?;
         if verified != root
             || head != attempt.baseline_object_id
+            || !git_is_detached(&root)?
             || !git_text(&root, &["status", "--porcelain"])?.is_empty()
         {
             return Err(ExecutionSupportError::CorrelationMismatch);
@@ -606,6 +621,9 @@ impl ExecutionSupportService {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| ExecutionSupportError::Unavailable)?;
+        // One ProductExecutionSupportState owns this mutex; the immediate writer transaction
+        // serializes its native first-grant side effect. SQLite extends that serialization to a
+        // second product process before either can create a duplicate deterministic worktree.
         let existing = load_grant(&transaction, attempt_id)?;
         let binding = self
             .resolver
@@ -821,6 +839,22 @@ fn git_path(root: &Path, args: &[&str]) -> Result<PathBuf, ExecutionSupportError
     })
     .canonicalize()
     .map_err(|_| ExecutionSupportError::Unavailable)
+}
+fn git_is_detached(root: &Path) -> Result<bool, ExecutionSupportError> {
+    let output = Command::new("git")
+        .args(["symbolic-ref", "-q", "HEAD"])
+        .current_dir(root)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .map_err(|_| ExecutionSupportError::Unavailable)?;
+    if output.stdout.len() > 256_000 {
+        return Err(ExecutionSupportError::Unavailable);
+    }
+    match output.status.code() {
+        Some(0) => Ok(false),
+        Some(1) => Ok(true),
+        _ => Err(ExecutionSupportError::Unavailable),
+    }
 }
 fn git_argument_path(path: &Path) -> String {
     let value = path.to_string_lossy();
@@ -1128,6 +1162,99 @@ mod tests {
         assert!(
             matches!(reopened.consume(&reference.capability_ref, ExecutionSupportIntent::ChangedFileManifest), Ok(ExecutionSupportResponse::ChangedFileManifest(files)) if files.is_empty())
         );
+    }
+
+    #[test]
+    fn interrupted_first_grant_reopens_and_adopts_the_exact_detached_workspace() {
+        let fixture = fixture();
+        let service = fixture.service();
+        fixture.authorize(&service, "attempt-1", "work-unit-1");
+        let attempt = service
+            .repository
+            .load_authorized_attempt("attempt-1")
+            .unwrap();
+        let binding = service.resolver.resolve(&attempt, None).unwrap();
+        let root = fixture.attempt_root("attempt-1");
+        assert!(root.is_dir());
+        assert_eq!(fixture.git(&root, &["rev-parse", "HEAD"]), fixture.baseline);
+        assert!(git_is_detached(&root).unwrap());
+        assert!(
+            registered_worktree(&fixture.repository_root, &root.canonicalize().unwrap()).unwrap()
+        );
+        let grants: i64 = Connection::open(&fixture.database)
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM execution_support_grants WHERE attempt_id='attempt-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(grants, 0);
+        drop(service);
+
+        let reopened = fixture.service();
+        let reference = reopened.grant("attempt-1").unwrap();
+        let stored = load_grant_for_capability(
+            &reopened.repository.connection.lock().unwrap(),
+            &reference.capability_ref,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(stored.binding, binding);
+        assert!(matches!(
+            reopened.consume(
+                &reference.capability_ref,
+                ExecutionSupportIntent::ChangedFileManifest
+            ),
+            Ok(ExecutionSupportResponse::ChangedFileManifest(files)) if files.is_empty()
+        ));
+    }
+
+    #[test]
+    fn concurrent_first_grants_share_one_product_service_workspace_creation() {
+        let fixture = fixture();
+        let service = Arc::new(fixture.service());
+        fixture.authorize(&service, "attempt-1", "work-unit-1");
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let calls = (0..2)
+            .map(|_| {
+                let service = service.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.grant("attempt-1")
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = calls
+            .into_iter()
+            .map(|call| call.join().unwrap().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(results[0], results[1]);
+        let root = fixture.attempt_root("attempt-1");
+        let canonical_root = root.canonicalize().unwrap();
+        let registrations = fixture
+            .git(
+                &fixture.repository_root,
+                &["worktree", "list", "--porcelain"],
+            )
+            .lines()
+            .filter(|line| {
+                line.strip_prefix("worktree ")
+                    .and_then(|value| PathBuf::from(value).canonicalize().ok())
+                    .is_some_and(|candidate| candidate == canonical_root)
+            })
+            .count();
+        assert_eq!(registrations, 1);
+        let grants: i64 = Connection::open(&fixture.database)
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM execution_support_grants WHERE attempt_id='attempt-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(grants, 1);
     }
 
     #[test]
