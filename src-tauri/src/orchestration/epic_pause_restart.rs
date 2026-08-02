@@ -236,20 +236,21 @@ impl EpicPauseRestartService {
                     );
                 };
                 if invocation.status.is_active() {
-                    self.sessions
-                        .cancel_invocation(CancelAgentInvocationCommand {
+                    if let Err(error) = self.sessions.cancel_invocation(
+                        CancelAgentInvocationCommand {
                             invocation_id: source,
-                        })
-                        .map_err(|e| {
-                            self.record_failure(
-                                action_id,
-                                target,
-                                "cancellation_failed",
-                                &e.to_string(),
-                            )
-                            .ok();
-                            e.to_string()
-                        })?;
+                        },
+                    ) {
+                        // A port failure is durable target evidence, not a reason to abandon the
+                        // other independently-correlated targets in this action.
+                        self.record_failure(
+                            action_id,
+                            target,
+                            "cancellation_failed",
+                            &error.to_string(),
+                        )?;
+                        return Ok(());
+                    }
                     self.mark_cancel_requested(action_id, target)?;
                     return Ok(());
                 }
@@ -571,8 +572,186 @@ fn restart_targets(
 
 #[cfg(test)]
 mod tests {
-    use super::EPIC_PAUSE_RESTART_SCHEMA;
+    use super::*;
+    use crate::{
+        agent_sessions::{
+            application::{
+                AgentSessionNotifier,
+                CreateAgentSessionCommand, CreateApplicationAgentSessionCommand,
+                SendAgentSessionMessageCommand,
+                SendIdempotentApplicationAgentSessionMessageCommand,
+                SystemAgentSessionProviders, AgentSessionApplication,
+            },
+            domain::{AgentInvocationId, AgentInvocationTerminalStatus, AgentRuntimeOptions, AgentSessionId},
+            ports::{
+                AgentRuntime, AgentRuntimeUpdateSink, RuntimeInvocationMode,
+                RuntimeInvocationOutcome, RuntimeInvocationPreflight, RuntimeInvocationRequest,
+                RuntimePortError, RuntimePortErrorKind, RuntimeUpdate,
+            },
+            repository::SqliteAgentSessionRepository,
+        },
+        storage::{initialize_active_database, open_active_database},
+    };
     use rusqlite::Connection;
+    use std::{
+        collections::HashMap,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Weak,
+        },
+    };
+
+    #[derive(Default)]
+    struct RecordedRuntime {
+        requests: Mutex<Vec<RuntimeInvocationRequest>>,
+        sinks: Mutex<HashMap<AgentInvocationId, Arc<dyn AgentRuntimeUpdateSink>>>,
+        cancellations: Mutex<Vec<AgentInvocationId>>,
+        fail_cancellations: AtomicUsize,
+        fail_launches: AtomicUsize,
+    }
+
+    impl RecordedRuntime {
+        fn requests_with_text(&self, text: &str) -> Vec<RuntimeInvocationRequest> {
+            self.requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|request| request.submitted_text == text)
+                .cloned()
+                .collect()
+        }
+
+        fn finish(&self, invocation_id: &str, status: AgentInvocationTerminalStatus) {
+            let invocation_id = AgentInvocationId::new(invocation_id).unwrap();
+            let sink = self.sinks.lock().unwrap().get(&invocation_id).cloned().unwrap();
+            sink.emit_update(
+                &invocation_id,
+                RuntimeUpdate::Finished(RuntimeInvocationOutcome {
+                    status,
+                    exit_code: None,
+                    signal: None,
+                    runtime_error: None,
+                }),
+            )
+            .unwrap();
+        }
+    }
+
+    impl AgentRuntime for RecordedRuntime {
+        fn preflight_invocation(
+            &self,
+            _mode: RuntimeInvocationMode,
+            requested_options: &AgentRuntimeOptions,
+        ) -> Result<RuntimeInvocationPreflight, RuntimePortError> {
+            Ok(RuntimeInvocationPreflight { effective_options: requested_options.clone() })
+        }
+
+        fn start_invocation(
+            &self,
+            request: RuntimeInvocationRequest,
+            sink: Arc<dyn AgentRuntimeUpdateSink>,
+        ) -> Result<(), RuntimePortError> {
+            self.requests.lock().unwrap().push(request.clone());
+            if self.fail_launches.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| count.checked_sub(1)).is_ok() {
+                return Err(RuntimePortError::new(RuntimePortErrorKind::LaunchFailed, "induced launch failure"));
+            }
+            self.sinks.lock().unwrap().insert(request.invocation_id, sink);
+            Ok(())
+        }
+
+        fn resume_invocation(
+            &self,
+            request: RuntimeInvocationRequest,
+            _external_context_id: crate::agent_sessions::domain::ExternalRuntimeContextId,
+            sink: Arc<dyn AgentRuntimeUpdateSink>,
+        ) -> Result<(), RuntimePortError> {
+            self.start_invocation(request, sink)
+        }
+
+        fn cancel_invocation(&self, invocation_id: &AgentInvocationId) -> Result<(), RuntimePortError> {
+            self.cancellations.lock().unwrap().push(invocation_id.clone());
+            if self.fail_cancellations.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| count.checked_sub(1)).is_ok() {
+                return Err(RuntimePortError::new(RuntimePortErrorKind::CancellationFailed, "induced cancellation failure"));
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct ControlNotifier { service: Mutex<Option<Weak<EpicPauseRestartService>>> }
+
+    impl ControlNotifier {
+        fn set(&self, service: &Arc<EpicPauseRestartService>) {
+            *self.service.lock().unwrap() = Some(Arc::downgrade(service));
+        }
+    }
+
+    impl AgentSessionNotifier for ControlNotifier {
+        fn notify(&self, notification: AgentSessionNotification) -> Result<(), String> {
+            let service = self.service.lock().unwrap().as_ref().and_then(Weak::upgrade);
+            if let Some(service) = service {
+                service.on_agent_notification(&notification)?;
+            }
+            Ok(())
+        }
+    }
+
+    struct Fixture {
+        directory: tempfile::TempDir,
+        database_path: std::path::PathBuf,
+        runtime: Arc<RecordedRuntime>,
+        sessions: Arc<AgentSessionApplication>,
+        service: Arc<EpicPauseRestartService>,
+        source_ids: Vec<String>,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let directory = tempfile::tempdir().unwrap();
+            let database_path = directory.path().join("active.sqlite");
+            open_active_database(&database_path).unwrap();
+            let runtime = Arc::new(RecordedRuntime::default());
+            let notifier = Arc::new(ControlNotifier::default());
+            let sessions = Arc::new(AgentSessionApplication::new(
+                Arc::new(SqliteAgentSessionRepository::open(&database_path).unwrap()),
+                runtime.clone(), notifier.clone(), Arc::new(SystemAgentSessionProviders),
+                Arc::new(SystemAgentSessionProviders), Some("test-runtime".into()),
+            ));
+            let names = ["bootstrap", "runner", "epic-runner", "sprint-runner", "planner", "unrelated"];
+            for name in names {
+                sessions.create_application_session(CreateApplicationAgentSessionCommand {
+                    session_id: AgentSessionId::new(format!("{name}-session")).unwrap(),
+                    session: CreateAgentSessionCommand { title: Some(name.into()), working_directory: None, requested_options: AgentRuntimeOptions::default() },
+                }).unwrap();
+            }
+            let mut source_ids = Vec::new();
+            for name in names {
+                let source = format!("{name}-source");
+                sessions.send_idempotent_application_message_with_launch_observation(
+                    SendIdempotentApplicationAgentSessionMessageCommand {
+                        invocation_id: AgentInvocationId::new(source.clone()).unwrap(),
+                        message: SendAgentSessionMessageCommand { session_id: Some(AgentSessionId::new(format!("{name}-session")).unwrap()), submitted_text: format!("{name} original work"), title: None, working_directory: None, requested_options: None },
+                    }, None,
+                ).unwrap();
+                source_ids.push(source);
+            }
+            let seed = Connection::open(&database_path).unwrap();
+            seed.pragma_update(None, "foreign_keys", false).unwrap();
+            seed.execute_batch("CREATE TABLE IF NOT EXISTS sprint_runner_transitions (sprint_id TEXT PRIMARY KEY, epic_id TEXT NOT NULL, epic_runner_session_id TEXT NOT NULL, sprint_runner_session_id TEXT NOT NULL); CREATE TABLE IF NOT EXISTS work_slice_planner_transitions (sprint_id TEXT PRIMARY KEY, planner_session_id TEXT NOT NULL);").unwrap();
+            seed.execute_batch("INSERT INTO epic_initiations (id,command_id,result_id,event_id,provenance_id,draft_id,proposal_revision_id,material_snapshot_id,epic_id,recorded_at) VALUES ('initiation','command','result','event','provenance','draft','revision','snapshot','epic','t'); INSERT INTO epic_bootstrap_transitions (initiation_id,epic_id,proposal_revision_id,material_snapshot_hash,proposal_json,preparation_id,prepared_root,approved_plan_path,manifest_path,overview_path,runner_brief_path,bootstrap_session_id,bootstrap_invocation_id,runner_session_id,runner_invocation_id,created_at,updated_at) VALUES ('initiation','epic','revision','hash','{}','preparation','root','plan','manifest','overview','brief','bootstrap-session','bootstrap-source','runner-session','runner-source','t','t'); INSERT INTO sprint_runner_transitions VALUES ('sprint','epic','epic-runner-session','sprint-runner-session'); INSERT INTO work_slice_planner_transitions VALUES ('sprint','planner-session');").unwrap();
+            seed.pragma_update(None, "foreign_keys", true).unwrap();
+            drop(seed);
+            let service = EpicPauseRestartService::open(&database_path, sessions.clone()).unwrap();
+            notifier.set(&service);
+            Self { directory, database_path, runtime, sessions, service, source_ids }
+        }
+
+        fn target_rows(&self, action_id: &str) -> Vec<(String, String, Option<String>, Option<String>)> {
+            let connection = Connection::open(&self.database_path).unwrap();
+            let mut statement = connection.prepare("SELECT session_id, source_invocation_id, message_invocation_id, failure_category FROM epic_control_targets WHERE action_id=?1 ORDER BY session_id").unwrap();
+            statement.query_map([action_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))).unwrap().collect::<Result<_, _>>().unwrap()
+        }
+    }
 
     #[test]
     fn control_schema_is_idempotent_for_fresh_and_reopened_databases() {
@@ -609,5 +788,87 @@ mod tests {
         connection.execute("INSERT INTO epic_control_actions VALUES ('action-1','epic-1','pause','pending','now',NULL)", []).unwrap();
         connection.execute("INSERT INTO epic_control_targets(action_id,session_id,source_invocation_id,interruption_status) VALUES ('action-1','session-1','source-1','awaiting_cancel')", []).unwrap();
         assert!(connection.execute("INSERT INTO epic_control_targets(action_id,session_id,source_invocation_id,interruption_status) VALUES ('action-1','session-1','source-1','awaiting_cancel')", []).is_err());
+    }
+
+    #[test]
+    fn active_v12_initialization_adds_the_control_schema_and_records_v13() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(crate::agent_sessions::repository::AGENT_SESSION_SCHEMA).unwrap();
+        connection.execute_batch(crate::orchestration::repository::ORCHESTRATION_SCHEMA).unwrap();
+        connection.execute_batch(crate::orchestration::repository::ORCHESTRATION_INITIATION_SCHEMA).unwrap();
+        connection.pragma_update(None, "user_version", 12).unwrap();
+        initialize_active_database(&connection).unwrap();
+        assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 13);
+        assert!(connection.query_row("SELECT 1 FROM sqlite_master WHERE type='table' AND name='epic_control_actions'", [], |_| Ok(())).is_ok());
+        initialize_active_database(&connection).unwrap();
+    }
+
+    #[test]
+    fn pause_and_restart_use_only_durable_epic_membership_and_application_lifecycle_notifications() {
+        let fixture = Fixture::new();
+        let pause = fixture.service.request("epic", "pause").unwrap();
+        assert_eq!(pause.target_count, 5);
+        assert_eq!(fixture.runtime.cancellations.lock().unwrap().len(), 5);
+        assert!(!fixture.runtime.cancellations.lock().unwrap().iter().any(|id| id.as_str() == "unrelated-source"));
+        assert!(fixture.runtime.requests_with_text("pause work").is_empty());
+
+        for source in fixture.source_ids.iter().take(5) {
+            fixture.runtime.finish(source, AgentInvocationTerminalStatus::Canceled);
+        }
+        assert_eq!(fixture.runtime.requests_with_text("pause work").len(), 5);
+        let pause_rows = fixture.target_rows(&pause.action_id);
+        assert_eq!(pause_rows.len(), 5);
+        assert!(pause_rows.iter().all(|(_, _, message, failure)| message.is_some() && failure.is_none()));
+
+        for (_, _, message, _) in &pause_rows {
+            fixture.runtime.finish(message.as_deref().unwrap(), AgentInvocationTerminalStatus::Completed);
+        }
+        // A later ordinary invocation is not a reattachment point for this interrupted work.
+        fixture.sessions.send_message(SendAgentSessionMessageCommand {
+            session_id: Some(AgentSessionId::new("bootstrap-session").unwrap()),
+            submitted_text: "independent later work".into(),
+            title: None,
+            working_directory: None,
+            requested_options: None,
+        }).unwrap();
+        let restart = fixture.service.request("epic", "restart").unwrap();
+        assert_eq!(restart.target_count, 4);
+        assert_eq!(fixture.runtime.requests_with_text("continue work").len(), 4);
+        let repeated = fixture.service.request("epic", "restart").unwrap();
+        assert_ne!(repeated.action_id, restart.action_id);
+        assert_eq!(repeated.target_count, 0);
+        assert_eq!(fixture.runtime.requests_with_text("continue work").len(), 4);
+
+        let reopened = EpicPauseRestartService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        reopened.reconcile_startup().unwrap();
+        assert_eq!(fixture.runtime.requests_with_text("continue work").len(), 4);
+    }
+
+    #[test]
+    fn one_cancellation_failure_settles_partial_without_abandoning_other_correlated_targets() {
+        let fixture = Fixture::new();
+        fixture.runtime.fail_cancellations.store(1, Ordering::SeqCst);
+        let pause = fixture.service.request("epic", "pause").unwrap();
+        assert_eq!(pause.status, "partial");
+        assert_eq!(fixture.runtime.cancellations.lock().unwrap().len(), 5);
+        let rows = fixture.target_rows(&pause.action_id);
+        assert_eq!(rows.iter().filter(|(_, _, _, failure)| failure.as_deref() == Some("cancellation_failed")).count(), 1);
+    }
+
+    #[test]
+    fn persisted_but_not_launch_accepted_pause_effect_requires_attention_after_reconciliation() {
+        let fixture = Fixture::new();
+        let pause = fixture.service.request("epic", "pause").unwrap();
+        fixture.runtime.fail_launches.store(1, Ordering::SeqCst);
+        fixture.runtime.finish("bootstrap-source", AgentInvocationTerminalStatus::Canceled);
+        let initial = fixture.service.query("epic").unwrap().pause.current.unwrap();
+        assert_eq!(initial.status, "partial");
+
+        let reopened = EpicPauseRestartService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        reopened.reconcile_startup().unwrap();
+        let settled = reopened.query("epic").unwrap().pause.current.unwrap();
+        assert_eq!(settled.action_id, pause.action_id);
+        assert_eq!(settled.status, "attention");
+        assert_eq!(fixture.target_rows(&pause.action_id).iter().filter(|(_, _, _, failure)| failure.as_deref() == Some("launch_not_accepted")).count(), 1);
     }
 }
