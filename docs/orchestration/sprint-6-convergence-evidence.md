@@ -249,3 +249,22 @@ strict native-query correction `974ee2c`. The audit used this detached-worktree 
   catalog-drift replay with integration-level tests. No live provider, human, provider-compliance,
   lifecycle/outcome, reattachment, downstream Implementer, review, retry, settlement, or
   continuation claim is made.
+
+### HA-01 correction: immutable revision and coordinator proof
+
+- Handler activation no longer persists a mutable catalog JSON snapshot. New records pin the
+  application-owned immutable Harness revision ID, content digest, and local commit reference;
+  reopen verifies that exact evidence through `OrchestrationApplication`. A newer revision may be
+  used only by a future record. Missing evidence fails closed and is never replaced by the newer
+  revision. Revision ledger timestamps are normalized before both immutable manifest and SQLite
+  publication so verified reopen preserves exact evidence.
+- The production-equivalent `work_slice_planning_request_launches_one_prepared_planner_and_marks_readiness`
+  test now drives settled Work Unit materialization, a real isolated Git worktree through the
+  execution-support seam, `AgentSessionApplication`, and a deterministic recording runtime. It
+  proves one root Handler launch/acceptance/ready chain, a dependency blocked after root readiness,
+  replay and two reopened coordinators without a second launch, recovery of a persisted-but-
+  unnotified provider activity event, revision-A reuse after legitimate revision B publication,
+  and fail-closed missing A evidence without an Implementer authorization, Session, or invocation.
+- Latest focused validation: the coordinator integration test **1/1** (306 filtered), immutable
+  Harness revision suite **13/13** (294 filtered), Handler surface **1/1** (306 filtered), Cargo
+  check, diff check, and isolated native-query Vitest **17/17** plus TypeScript typecheck passed.

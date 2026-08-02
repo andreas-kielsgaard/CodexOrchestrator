@@ -4,7 +4,16 @@
 //! a Work Unit, attempt, Session, invocation, provider process, or application acceptance fact.
 
 use super::{
+    application::OrchestrationApplication,
     conversation_harness::{self, ConversationHarnessProfile, ConversationHarnessRole},
+    conversation_harness_revision::{
+        CreateHarnessRevisionCommand, CreateHarnessRevisionResult,
+        HarnessRevision, HarnessRevisionCreationProvenance, HarnessRevisionError,
+        HarnessRevisionHistoryOutcome, HarnessRevisionProvenanceKind, HarnessRevisionReadOutcome,
+    },
+    conversation_harness_working_copy::{
+        HarnessEditorKind, HarnessWorkingCopyEditor, SaveHarnessWorkingCopyCommand,
+    },
     execution_support::{
         AuthorizeExistingWorkUnitExecutionAttempt, ChangedFileManifestEntry, ExecutionSupportError, ExecutionSupportIntent,
         ExecutionSupportReference, ExecutionSupportResponse, ExecutionSupportService,
@@ -69,17 +78,139 @@ impl From<ExecutionSupportError> for WorkUnitHarnessError {
 pub(crate) struct WorkUnitExecutionHarnessService {
     execution_support: Arc<ExecutionSupportService>,
     sessions: Arc<AgentSessionApplication>,
+    orchestration: Arc<OrchestrationApplication>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PinnedHandlerHarnessRevision {
+    pub(crate) revision_id: String,
+    pub(crate) harness_key: String,
+    pub(crate) configuration_digest: String,
+    pub(crate) repository_commit_ref: String,
+    pub(crate) profile: ConversationHarnessProfile,
 }
 
 impl WorkUnitExecutionHarnessService {
     pub(crate) fn new(
         execution_support: Arc<ExecutionSupportService>,
         sessions: Arc<AgentSessionApplication>,
+        orchestration: Arc<OrchestrationApplication>,
     ) -> Self {
         Self {
             execution_support,
             sessions,
+            orchestration,
         }
+    }
+
+    /// New attempts pin exactly the latest verified application-owned revision. Existing attempts
+    /// use `load_pinned_handler_revision` and never choose a later current revision.
+    pub(crate) fn current_handler_revision(
+        &self,
+    ) -> Result<PinnedHandlerHarnessRevision, WorkUnitHarnessError> {
+        let history = self.orchestration.load_harness_revision_history("work_unit_handler");
+        let revision = match history {
+            HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions
+                .last()
+                .cloned()
+                .ok_or(WorkUnitHarnessError::Unavailable)?,
+            HarnessRevisionHistoryOutcome::Missing => self.bootstrap_initial_handler_revision()?,
+            HarnessRevisionHistoryOutcome::InvalidLocalCommitEvidence
+            | HarnessRevisionHistoryOutcome::Unavailable => return Err(WorkUnitHarnessError::Unavailable),
+        };
+        self.pinned_handler_revision_from_revision(revision)
+    }
+
+    pub(crate) fn load_pinned_handler_revision(
+        &self,
+        revision_id: &str,
+        configuration_digest: &str,
+        repository_commit_ref: &str,
+    ) -> Result<PinnedHandlerHarnessRevision, WorkUnitHarnessError> {
+        let HarnessRevisionReadOutcome::AvailableAndVerified { revision } =
+            self.orchestration.load_harness_revision(revision_id)
+        else {
+            return Err(WorkUnitHarnessError::Unavailable);
+        };
+        if revision.configuration_digest != configuration_digest
+            || revision.repository_commit_ref != repository_commit_ref
+        {
+            return Err(WorkUnitHarnessError::Denied);
+        }
+        self.pinned_handler_revision_from_revision(revision)
+    }
+
+    fn bootstrap_initial_handler_revision(&self) -> Result<HarnessRevision, WorkUnitHarnessError> {
+        let working_copy = self
+            .orchestration
+            .load_harness_working_copy("work_unit_handler")
+            .map_err(|_| WorkUnitHarnessError::Unavailable)?;
+        let draft_revision = match working_copy {
+            Some(copy) => copy.draft_revision,
+            None => match self.orchestration.save_harness_working_copy(SaveHarnessWorkingCopyCommand {
+                harness_key: "work_unit_handler".into(),
+                configuration: conversation_harness::initial_work_unit_handler_revision_configuration()
+                    .map_err(|_| WorkUnitHarnessError::Unavailable)?,
+                expected_current_revision: 0,
+                editor: HarnessWorkingCopyEditor {
+                    kind: HarnessEditorKind::ApplicationUser,
+                    reference: "work-unit-handler-activation".into(),
+                },
+                idempotency_key: "work-unit-handler-initial-working-copy".into(),
+            }) {
+                Ok(result) => match result {
+                    super::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::Stored(copy)
+                    | super::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::IdempotentReplay(copy) => copy.draft_revision,
+                },
+                Err(_) => return self.load_newly_published_handler_revision(),
+            },
+        };
+        let command = CreateHarnessRevisionCommand {
+            harness_key: "work_unit_handler".into(),
+            expected_source_draft_revision: draft_revision,
+            expected_predecessor_revision_id: None,
+            idempotency_key: format!("work-unit-handler-initial-revision-{draft_revision}"),
+            creation_provenance: HarnessRevisionCreationProvenance {
+                kind: HarnessRevisionProvenanceKind::ApplicationUser,
+                reference: "work-unit-handler-activation".into(),
+            },
+        };
+        match self.orchestration.create_harness_revision(command) {
+            Ok(CreateHarnessRevisionResult::Published(revision))
+            | Ok(CreateHarnessRevisionResult::IdempotentReplay(revision)) => Ok(revision),
+            Err(HarnessRevisionError::Conflict) => self.load_newly_published_handler_revision(),
+            Err(_) => Err(WorkUnitHarnessError::Unavailable),
+        }
+    }
+
+    fn load_newly_published_handler_revision(&self) -> Result<HarnessRevision, WorkUnitHarnessError> {
+        match self.orchestration.load_harness_revision_history("work_unit_handler") {
+            HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions
+                .last()
+                .cloned()
+                .ok_or(WorkUnitHarnessError::Unavailable),
+            _ => Err(WorkUnitHarnessError::Unavailable),
+        }
+    }
+
+    fn pinned_handler_revision_from_revision(
+        &self,
+        revision: HarnessRevision,
+    ) -> Result<PinnedHandlerHarnessRevision, WorkUnitHarnessError> {
+        let version = u16::try_from(revision.source_draft_revision)
+            .map_err(|_| WorkUnitHarnessError::Denied)?;
+        let profile = conversation_harness::profile_from_immutable_handler_revision(
+            &revision.configuration,
+            version,
+        )
+        .map_err(|_| WorkUnitHarnessError::Denied)?;
+        Ok(PinnedHandlerHarnessRevision {
+            revision_id: revision.revision_id,
+            harness_key: revision.harness_key,
+            configuration_digest: revision.configuration_digest,
+            repository_commit_ref: revision.repository_commit_ref,
+            profile,
+        })
     }
 
     pub(crate) fn construct_for_existing_authorization(

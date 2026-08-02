@@ -141,20 +141,21 @@ pub(crate) fn run() {
             app.manage(
                 crate::agent_sessions::transport::AgentSessionTauriState::new(application.clone()),
             );
+            let orchestration = Arc::new(
+                crate::orchestration::application::OrchestrationApplication::new(
+                    orchestration_repository.clone(),
+                ),
+            );
             // Composition only makes the bounded package constructible. It creates no workflow
             // Session, invocation, Work Unit, or attempt at startup.
             let work_unit_handler = Arc::new(
                 crate::orchestration::work_unit_execution_harness::WorkUnitExecutionHarnessService::new(
                     execution_support_service,
                     application.clone(),
+                    orchestration.clone(),
                 ),
             );
             app.manage(work_unit_handler.clone());
-            let orchestration = Arc::new(
-                crate::orchestration::application::OrchestrationApplication::new(
-                    orchestration_repository.clone(),
-                ),
-            );
             app.manage(
                 crate::orchestration::transport::OrchestrationTauriState::new(
                     orchestration.clone(),

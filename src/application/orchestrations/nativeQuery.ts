@@ -53,6 +53,9 @@ export interface NativeWorkUnitHandlerActivationV1 {
   readonly attemptId: string;
   readonly handlerSessionId?: string;
   readonly handlerInvocationId?: string;
+  readonly handlerHarnessRevisionId?: string;
+  readonly handlerHarnessConfigurationDigest?: string;
+  readonly handlerHarnessRepositoryCommitRef?: string;
   readonly eligibilityState?: 'blocked' | 'eligible';
   readonly blockedReason?: string;
   readonly requestedAt?: string;
@@ -1027,7 +1030,8 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
   keys(
     x,
     [
-      'attemptId', 'handlerSessionId', 'handlerInvocationId', 'eligibilityState', 'blockedReason',
+      'attemptId', 'handlerSessionId', 'handlerInvocationId', 'handlerHarnessRevisionId',
+      'handlerHarnessConfigurationDigest', 'handlerHarnessRepositoryCommitRef', 'eligibilityState', 'blockedReason',
       'requestedAt', 'authorizedAt', 'attemptCreatedAt', 'executionSupportGrantedAt',
       'isolatedWorktreeReadyAt', 'handlerSessionCreatedAt', 'handlerInvocationPreparedAt',
       'handlerHarnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt',
@@ -1055,6 +1059,15 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
       : {}),
     ...(optional('handlerInvocationId')
       ? { handlerInvocationId: optional('handlerInvocationId') }
+      : {}),
+    ...(optional('handlerHarnessRevisionId')
+      ? { handlerHarnessRevisionId: optional('handlerHarnessRevisionId') }
+      : {}),
+    ...(optional('handlerHarnessConfigurationDigest')
+      ? { handlerHarnessConfigurationDigest: optional('handlerHarnessConfigurationDigest') }
+      : {}),
+    ...(optional('handlerHarnessRepositoryCommitRef')
+      ? { handlerHarnessRepositoryCommitRef: optional('handlerHarnessRepositoryCommitRef') }
       : {}),
     ...(eligibilityState ? { eligibilityState } : {}),
     ...(blockedReason ? { blockedReason } : {}),

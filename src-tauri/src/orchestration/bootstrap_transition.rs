@@ -1775,9 +1775,12 @@ mod tests {
             repository::SqliteAgentSessionRepository,
         },
         orchestration::{
+            application::OrchestrationApplication,
             conversation_harness::{self, ConversationHarnessRole},
             domain::{InitiateEpicCommand, ProposedSprint, SaveEpicPlanProposalCommand},
+            execution_support::ProductExecutionSupportState,
             repository::{InitiatedSprintGitAuthorityWrite, SqliteOrchestrationRepository},
+            work_unit_execution_harness::WorkUnitExecutionHarnessService,
         },
     };
     use sha2::{Digest, Sha256};
@@ -4842,13 +4845,163 @@ mod tests {
         assert_eq!(native["workUnitMaterializations"].as_array().unwrap().len(), 1);
         assert_eq!(native["workUnits"].as_array().unwrap().len(), 2);
         assert_eq!(native["workUnitRelationships"].as_array().unwrap().len(), 7);
+
+        // This is the actual settled-materialization coordinator path: the root gets exactly one
+        // Handler attempt, grant, worktree, Session, prepared invocation, launch acceptance, and
+        // ready fact; the dependent remains blocked even after the root is ready.
+        let handler_repository_root = fixture._directory.path().join("handler-repository");
+        let handler_sprint_root = fixture._directory.path().join("handler-sprint-worktree");
+        fs::create_dir_all(&handler_repository_root).unwrap();
+        for arguments in [&["init"][..], &["config", "user.email", "handler@example.test"][..], &["config", "user.name", "Handler Test"][..]] {
+            assert!(std::process::Command::new("git").args(arguments).current_dir(&handler_repository_root).status().unwrap().success());
+        }
+        fs::write(handler_repository_root.join("README.md"), "handler fixture\n").unwrap();
+        assert!(std::process::Command::new("git").args(["add", "README.md"]).current_dir(&handler_repository_root).status().unwrap().success());
+        assert!(std::process::Command::new("git").args(["commit", "-m", "handler fixture"]).current_dir(&handler_repository_root).status().unwrap().success());
+        let handler_initial = String::from_utf8(std::process::Command::new("git").args(["rev-parse", "HEAD"]).current_dir(&handler_repository_root).output().unwrap().stdout).unwrap().trim().to_owned();
+        assert!(std::process::Command::new("git").args(["worktree", "add", "-b", "handler-sprint", handler_sprint_root.to_string_lossy().as_ref(), &handler_initial]).current_dir(&handler_repository_root).status().unwrap().success());
+        fs::write(handler_sprint_root.join("README.md"), "handler sprint fixture\n").unwrap();
+        assert!(std::process::Command::new("git").args(["add", "README.md"]).current_dir(&handler_sprint_root).status().unwrap().success());
+        assert!(std::process::Command::new("git").args(["commit", "-m", "handler sprint fixture"]).current_dir(&handler_sprint_root).status().unwrap().success());
+        let handler_head = String::from_utf8(std::process::Command::new("git").args(["rev-parse", "HEAD"]).current_dir(&handler_sprint_root).output().unwrap().stdout).unwrap().trim().to_owned();
+        let handler_repository_root = handler_repository_root.canonicalize().unwrap();
+        let handler_sprint_root = handler_sprint_root.canonicalize().unwrap();
+        let handler_common = handler_repository_root.join(".git").canonicalize().unwrap();
+        Connection::open(&fixture.database_path).unwrap().execute("DELETE FROM initiated_sprint_git_authorities WHERE sprint_id=?1", [&sprint_id]).unwrap();
+        SqliteOrchestrationRepository::open(&fixture.database_path).unwrap().store_initiated_sprint_git_authority(InitiatedSprintGitAuthorityWrite {
+            sprint_id: sprint_id.clone(), idempotency_key: "handler-authority".into(),
+            repository_id: "handler-repository".into(), repository_root: handler_repository_root.to_string_lossy().into_owned(),
+            repository_common_dir: handler_common.to_string_lossy().into_owned(), worktree_id: "handler-sprint-worktree".into(),
+            worktree_root: handler_sprint_root.to_string_lossy().into_owned(), baseline_object_id: handler_initial,
+            current_object_id: handler_head, runtime_instance_ref: "handler-runtime".into(), runtime_source_ref: "handler-source".into(), source_fingerprint: "d".repeat(64),
+        }).unwrap();
+        let handler_repository = Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap());
+        let handler_orchestration = Arc::new(OrchestrationApplication::new(handler_repository.clone()));
+        let handler_support = ProductExecutionSupportState::new(
+            &fixture.database_path,
+            fixture._directory.path().join("handler-workspaces"),
+            handler_repository,
+        ).unwrap();
+        let handler = Arc::new(WorkUnitExecutionHarnessService::new(
+            handler_support.service(), fixture.sessions.clone(), handler_orchestration.clone(),
+        ));
+        let handler_runner = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path, fixture.sessions.clone(),
+        ).unwrap();
+        fixture.notifier.set_sprint(&handler_runner);
+        let handler_launches_before = fixture.runtime.requests().len();
+        handler_runner.attach_work_unit_handler_activation(handler.clone()).unwrap();
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        let activations = connection.prepare("SELECT work_unit_id,attempt_id,handler_session_id,handler_invocation_id,eligibility_state,blocked_reason,handler_harness_revision_id,handler_harness_configuration_digest,handler_harness_repository_commit_ref,authorized_at,attempt_created_at,execution_support_granted_at,isolated_worktree_ready_at,handler_session_created_at,handler_invocation_prepared_at,handler_harness_bound_at,launch_requested_at,launch_accepted_at,handler_ready_at,provider_activation_observed_at FROM work_unit_handler_activations ORDER BY work_unit_id").unwrap().query_map([], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?,row.get::<_,Option<String>>(5)?,row.get::<_,Option<String>>(6)?,row.get::<_,Option<String>>(7)?,row.get::<_,Option<String>>(8)?,row.get::<_,Option<String>>(9)?,row.get::<_,Option<String>>(10)?,row.get::<_,Option<String>>(11)?,row.get::<_,Option<String>>(12)?,row.get::<_,Option<String>>(13)?,row.get::<_,Option<String>>(14)?,row.get::<_,Option<String>>(15)?,row.get::<_,Option<String>>(16)?,row.get::<_,Option<String>>(17)?,row.get::<_,Option<String>>(18)?,row.get::<_,Option<String>>(19)?))).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+        assert_eq!(activations.len(), 2);
+        let root = activations.iter().find(|row| row.4 == "eligible").unwrap();
+        assert!(root.0.starts_with("work-unit-"));
+        assert!(root.1.starts_with("work-unit-handler-attempt-"));
+        assert!(root.2.starts_with("work-unit-handler-session-"));
+        assert!(root.3.starts_with("work-unit-handler-invocation-"));
+        for timestamp in [&root.9,&root.10,&root.11,&root.12,&root.13,&root.14,&root.15,&root.16,&root.17,&root.18] { assert!(timestamp.is_some()); }
+        assert!(root.6.as_deref().is_some_and(|value| value.starts_with("harness-revision-")));
+        assert!(root.7.as_deref().is_some_and(|value| value.len() == 64));
+        assert!(root.8.as_deref().is_some_and(|value| value.contains("harness-revision-commit/v1")));
+        let dependent = activations.iter().find(|row| row.4 == "blocked").unwrap();
+        assert_eq!(dependent.5.as_deref(), Some("prerequisite_satisfaction_not_authoritative"));
+        for timestamp in [&dependent.9,&dependent.10,&dependent.11,&dependent.12,&dependent.13,&dependent.14,&dependent.15,&dependent.16,&dependent.17,&dependent.18,&dependent.19] { assert!(timestamp.is_none()); }
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_sessions WHERE id LIKE 'work-unit-handler-session-%'", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_session_invocations WHERE id LIKE 'work-unit-handler-invocation-%' AND input_provenance='application'", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM execution_support_attempt_authorizations WHERE role_kind='implementer'", [], |row| row.get(0)).unwrap(), 0);
+        drop(connection);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 1);
+        // Publish a legitimate newer Handler revision B after this activation pinned A. Reopen
+        // must keep loading A, rather than consulting the now-newer current revision.
+        let working_copy = handler_orchestration.load_harness_working_copy("work_unit_handler").unwrap().unwrap();
+        let mut newer_configuration = working_copy.configuration.clone();
+        newer_configuration.prompt_prefix.content.push_str("\nRevision B is for future activations only.");
+        let saved = handler_orchestration.save_harness_working_copy(
+            crate::orchestration::conversation_harness_working_copy::SaveHarnessWorkingCopyCommand {
+                harness_key: "work_unit_handler".into(), configuration: newer_configuration,
+                expected_current_revision: working_copy.draft_revision,
+                editor: crate::orchestration::conversation_harness_working_copy::HarnessWorkingCopyEditor {
+                    kind: crate::orchestration::conversation_harness_working_copy::HarnessEditorKind::ApplicationUser,
+                    reference: "handler-revision-test".into(),
+                }, idempotency_key: "handler-revision-b-working-copy".into(),
+            },
+        ).unwrap();
+        let saved = match saved {
+            crate::orchestration::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::Stored(copy)
+            | crate::orchestration::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::IdempotentReplay(copy) => copy,
+        };
+        let revision_b = handler_orchestration.create_harness_revision(
+            crate::orchestration::conversation_harness_revision::CreateHarnessRevisionCommand {
+                harness_key: "work_unit_handler".into(), expected_source_draft_revision: saved.draft_revision,
+                expected_predecessor_revision_id: root.6.clone(), idempotency_key: "handler-revision-b".into(),
+                creation_provenance: crate::orchestration::conversation_harness_revision::HarnessRevisionCreationProvenance {
+                    kind: crate::orchestration::conversation_harness_revision::HarnessRevisionProvenanceKind::ApplicationUser,
+                    reference: "handler-revision-test".into(),
+                },
+            },
+        ).unwrap();
+        let revision_b = match revision_b {
+            crate::orchestration::conversation_harness_revision::CreateHarnessRevisionResult::Published(revision)
+            | crate::orchestration::conversation_harness_revision::CreateHarnessRevisionResult::IdempotentReplay(revision) => revision,
+        };
+        assert_ne!(root.6.as_deref(), Some(revision_b.revision_id.as_str()));
+        // Persist provider activity without routing a notification, then recover it solely by
+        // reopening/reconciling the correlated invocation observation seam.
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "INSERT INTO agent_session_runtime_events (id,invocation_id,sequence,source,raw_payload_json,normalized_json,recorded_at) VALUES (?1,?2,0,'runtime','{}',?3,?4)",
+            params!["handler-provider-activity", root.3, r#"{"kind":"processing_started","text":null,"externalContextId":null,"usage":null,"details":null}"#, chrono::Utc::now().to_rfc3339()],
+        ).unwrap();
+        let replayed_handlers = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        replayed_handlers.attach_work_unit_handler_activation(handler.clone()).unwrap();
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 1);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<String,_,_>("SELECT handler_harness_revision_id FROM work_unit_handler_activations WHERE work_unit_id=?1", [&root.0], |row| row.get(0)).unwrap(), root.6.clone().unwrap());
+        assert!(Connection::open(&fixture.database_path).unwrap().query_row::<Option<String>,_,_>("SELECT provider_activation_observed_at FROM work_unit_handler_activations WHERE work_unit_id=?1", [&root.0], |row| row.get(0)).unwrap().is_some());
+        // Recover durable partial stages without replacing any identity or starting another
+        // runtime process: an existing prepared invocation is rebound, then launch evidence
+        // projects acceptance/readiness again from the same invocation.
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "UPDATE work_unit_handler_activations SET handler_harness_bound_at=NULL,launch_accepted_at=NULL,handler_ready_at=NULL WHERE work_unit_id=?1", [&root.0],
+        ).unwrap();
+        let partial_recovery = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        partial_recovery.attach_work_unit_handler_activation(handler.clone()).unwrap();
+        let recovered: (String,String,String,Option<String>,Option<String>,Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
+            "SELECT attempt_id,handler_session_id,handler_invocation_id,handler_harness_bound_at,launch_accepted_at,handler_ready_at FROM work_unit_handler_activations WHERE work_unit_id=?1", [&root.0],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)),
+        ).unwrap();
+        assert_eq!(recovered.0, root.1); assert_eq!(recovered.1, root.2); assert_eq!(recovered.2, root.3);
+        assert!(recovered.3.is_some() && recovered.4.is_some() && recovered.5.is_some());
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 1);
+        // Missing immutable evidence fails closed and never falls forward to newly published B.
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "UPDATE work_unit_handler_activations SET handler_harness_revision_id='harness-revision-00000000-0000-0000-0000-000000000000' WHERE work_unit_id=?1", [&root.0],
+        ).unwrap();
+        let missing_pinned = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        assert!(missing_pinned.attach_work_unit_handler_activation(handler.clone()).is_err());
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 1);
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "UPDATE work_unit_handler_activations SET handler_harness_revision_id=?2 WHERE work_unit_id=?1", params![root.0, root.6],
+        ).unwrap();
+        let concurrent_handler_services = (0..2).map(|_| {
+            let path = fixture.database_path.clone();
+            let sessions = fixture.sessions.clone();
+            let handler_repository = Arc::new(SqliteOrchestrationRepository::open(&path).unwrap());
+            let handler_orchestration = Arc::new(OrchestrationApplication::new(handler_repository.clone()));
+            let support = ProductExecutionSupportState::new(&path, fixture._directory.path().join("handler-workspaces"), handler_repository).unwrap();
+            let handler = Arc::new(WorkUnitExecutionHarnessService::new(support.service(), sessions.clone(), handler_orchestration));
+            std::thread::spawn(move || {
+                let service = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(path, sessions).unwrap();
+                service.attach_work_unit_handler_activation(handler)
+            })
+        }).collect::<Vec<_>>();
+        assert!(concurrent_handler_services.into_iter().all(|call| call.join().unwrap().is_ok()));
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 1);
         let concurrent = (0..2).map(|_| { let service = replayed.clone(); let path = fixture.database_path.clone(); let sessions = fixture.sessions.clone(); std::thread::spawn(move || { drop(service); crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(path, sessions) }) }).collect::<Vec<_>>();
         assert!(concurrent.into_iter().all(|call| call.join().unwrap().is_ok()));
         let connection = Connection::open(&fixture.database_path).unwrap();
         connection.execute("UPDATE work_slice_proposal_revisions SET is_current=0 WHERE revision_id=?1", [&materialization.2]).unwrap();
         drop(connection);
         assert!(matches!(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));
-        assert_eq!(fixture.runtime.requests().len(), launches_before_acceptance);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 1);
     }
 }
 

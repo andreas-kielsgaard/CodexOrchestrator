@@ -4,6 +4,15 @@ use crate::agent_sessions::{
     domain::{AgentRuntimeOptions, RuntimeSandboxMode},
     ports::InitialPromptPrefix,
 };
+use super::conversation_harness_working_copy::{
+    HarnessApprovalPolicy as RevisionApprovalPolicy, HarnessContextCompressionDelivery,
+    HarnessDiscoveryPolicy, HarnessEffectiveConfiguration, HarnessHookConfiguration,
+    HarnessHookStatus, HarnessIdentityConfiguration, HarnessInitialDelivery,
+    HarnessModelConstraint, HarnessModelPolicyMode, HarnessPromptPrefixConfiguration,
+    HarnessReasoningLevel, HarnessRuntimeConfiguration, HarnessSandbox,
+    HarnessSkillConfiguration, HarnessSkillPolicy, HarnessSkillsConfiguration,
+    HarnessToolsConfiguration, HarnessUpdatePolicy, HarnessVisualIdentity,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
@@ -108,6 +117,108 @@ pub(crate) struct ConversationHarnessCatalogProfile {
 
 pub(crate) fn profile(role: ConversationHarnessRole) -> Result<ConversationHarnessProfile, String> {
     catalog_profile(role).map(|catalog| catalog.profile)
+}
+
+/// The only catalog-to-revision bridge. It is used solely to bootstrap the first application-owned
+/// immutable Handler revision; later activation loads verified revision evidence, never this catalog.
+pub(crate) fn initial_work_unit_handler_revision_configuration(
+) -> Result<HarnessEffectiveConfiguration, String> {
+    let profile = profile(ConversationHarnessRole::WorkUnitHandler)?;
+    if profile.mcp.required || !profile.mcp.enabled_tools.is_empty() {
+        return Err("Work Unit Handler catalog profile exposes unsupported MCP tools".into());
+    }
+    Ok(HarnessEffectiveConfiguration {
+        identity: HarnessIdentityConfiguration {
+            name: "Work Unit Handler".into(),
+            machine_key: profile.key,
+            permitted_agent_names: None,
+            visual_identity: Some(HarnessVisualIdentity { token: "handler".into(), accent: "blue".into() }),
+        },
+        prompt_prefix: HarnessPromptPrefixConfiguration {
+            content: profile.context,
+            initial_delivery: HarnessInitialDelivery::Prepend,
+            context_compression_delivery: HarnessContextCompressionDelivery::Deferred,
+        },
+        skills: HarnessSkillsConfiguration {
+            available_discovery_policy: HarnessDiscoveryPolicy::Whitelist,
+            items: profile.skill_guidance.into_iter().map(|skill| HarnessSkillConfiguration {
+                name: skill.canonical_name,
+                path: skill.canonical_path,
+                purpose: skill.purpose,
+                use_when: skill.use_when,
+                policy: HarnessSkillPolicy::AlwaysApplicable,
+            }).collect(),
+        },
+        tools: HarnessToolsConfiguration {
+            available_discovery_policy: HarnessDiscoveryPolicy::Whitelist,
+            items: vec![],
+            schema_boundary: "No Handler-to-Implementer or other MCP action is exposed.".into(),
+        },
+        runtime: HarnessRuntimeConfiguration {
+            model_policy_mode: HarnessModelPolicyMode::RevisionOwned,
+            models: profile.runtime.model.iter().map(|model| HarnessModelConstraint {
+                model_id: model.clone(), allowed: true,
+                min_reasoning: HarnessReasoningLevel::Low, max_reasoning: HarnessReasoningLevel::Xhigh,
+            }).collect(),
+            default_model: profile.runtime.model,
+            default_reasoning: profile.runtime.reasoning_effort.as_deref().and_then(reasoning_from_catalog),
+            sandbox: sandbox_to_revision(profile.runtime.sandbox),
+            sandbox_options: vec![sandbox_to_revision(profile.runtime.sandbox)],
+            approval_policy: RevisionApprovalPolicy::Never,
+            approval_policy_options: vec![RevisionApprovalPolicy::Never],
+            authority_summary: "Read-only bounded Handler evidence; no downstream action.".into(),
+        },
+        hooks: vec![HarnessHookConfiguration {
+            name: "completion".into(), status: HarnessHookStatus::NotConnected,
+            detail: "No Handler completion, review, or settlement hook is connected.".into(),
+        }],
+        update_policy: HarnessUpdatePolicy::NotConfigured { reason: "Pinned revision is immutable.".into() },
+    })
+}
+
+pub(crate) fn profile_from_immutable_handler_revision(
+    configuration: &HarnessEffectiveConfiguration,
+    revision_version: u16,
+) -> Result<ConversationHarnessProfile, String> {
+    if configuration.identity.machine_key != "work_unit_handler"
+        || !configuration.tools.items.is_empty()
+        || configuration.runtime.approval_policy != RevisionApprovalPolicy::Never
+    {
+        return Err("immutable Handler revision is outside the bounded Handler contract".into());
+    }
+    let model = configuration.runtime.default_model.clone();
+    let reasoning_effort = configuration.runtime.default_reasoning.map(reasoning_to_catalog);
+    Ok(ConversationHarnessProfile {
+        key: configuration.identity.machine_key.clone(),
+        version: revision_version,
+        context: configuration.prompt_prefix.content.clone(),
+        skill_guidance: configuration.skills.items.iter().map(|skill| SkillGuidance {
+            canonical_name: skill.name.clone(), canonical_path: skill.path.clone(),
+            purpose: skill.purpose.clone(), use_when: skill.use_when.clone(),
+        }).collect(),
+        runtime: HarnessRuntime {
+            model, reasoning_effort, sandbox: sandbox_from_revision(configuration.runtime.sandbox)?,
+            approval_policy: HarnessApprovalPolicy::Never,
+        },
+        mcp: HarnessMcpExposure { required: false, enabled_tools: vec![] },
+        lifecycle: HarnessLifecycle {
+            context_delivery: HarnessContextDelivery::FirstQuery,
+            completion_criteria: vec!["application_observed_bounded_evidence_or_terminal_observation".into()],
+        },
+    })
+}
+
+fn reasoning_from_catalog(value: &str) -> Option<HarnessReasoningLevel> {
+    match value { "low" => Some(HarnessReasoningLevel::Low), "medium" => Some(HarnessReasoningLevel::Medium), "high" => Some(HarnessReasoningLevel::High), "xhigh" => Some(HarnessReasoningLevel::Xhigh), _ => None }
+}
+fn reasoning_to_catalog(value: HarnessReasoningLevel) -> String {
+    match value { HarnessReasoningLevel::Low => "low", HarnessReasoningLevel::Medium => "medium", HarnessReasoningLevel::High => "high", HarnessReasoningLevel::Xhigh => "xhigh" }.into()
+}
+fn sandbox_to_revision(value: RuntimeSandboxMode) -> HarnessSandbox {
+    match value { RuntimeSandboxMode::ReadOnly => HarnessSandbox::ReadOnly, RuntimeSandboxMode::WorkspaceWrite => HarnessSandbox::WorkspaceWrite, RuntimeSandboxMode::DangerFullAccess => HarnessSandbox::DangerFullAccess }
+}
+fn sandbox_from_revision(value: HarnessSandbox) -> Result<RuntimeSandboxMode, String> {
+    Ok(match value { HarnessSandbox::ReadOnly => RuntimeSandboxMode::ReadOnly, HarnessSandbox::WorkspaceWrite => RuntimeSandboxMode::WorkspaceWrite, HarnessSandbox::DangerFullAccess => RuntimeSandboxMode::DangerFullAccess })
 }
 
 /// Resolve a durable Harness binding by its recorded identity, never by a newer current profile.

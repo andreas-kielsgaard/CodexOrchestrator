@@ -235,7 +235,9 @@ CREATE TABLE IF NOT EXISTS work_unit_handler_activations (
   handler_invocation_id TEXT NOT NULL UNIQUE,
   handler_harness_key TEXT NOT NULL,
   handler_harness_version INTEGER NOT NULL,
-  handler_harness_json TEXT,
+  handler_harness_revision_id TEXT,
+  handler_harness_configuration_digest TEXT,
+  handler_harness_repository_commit_ref TEXT,
   eligibility_state TEXT NOT NULL CHECK (eligibility_state IN ('blocked','eligible')),
   blocked_reason TEXT,
   requested_at TEXT NOT NULL,
@@ -498,7 +500,11 @@ impl SprintRunnerTransitionService {
             if !exists { connection.execute_batch(&format!("ALTER TABLE work_slice_planning_requests ADD COLUMN {column}"))
                 .map_err(|e| SprintRunnerTransitionError::Unavailable(format!("migrate Work Slice planning request schema: {e}")))?; }
         }
-        let handler_columns = ["handler_harness_json TEXT"];
+        let handler_columns = [
+            "handler_harness_revision_id TEXT",
+            "handler_harness_configuration_digest TEXT",
+            "handler_harness_repository_commit_ref TEXT",
+        ];
         for column in handler_columns {
             let name = column.split_whitespace().next().expect("Handler activation migration column name");
             let exists = connection.prepare("PRAGMA table_info(work_unit_handler_activations)")
@@ -1318,8 +1324,8 @@ impl SprintRunnerTransitionService {
         Ok(())
     }
 
-    /// Reconciles only canonical settled materializations.  A dependency must already have a
-    /// durable Handler-ready fact; no lifecycle notification is trusted as the sole source.
+    /// Reconciles only canonical settled materializations. Plan dependencies remain blocked here
+    /// until a later boundary supplies an authoritative prerequisite-satisfaction fact.
     fn reconcile_work_unit_handlers(self: &Arc<Self>) -> Result<(), SprintRunnerTransitionError> {
         let Some(handler) = self.work_unit_handler.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Work Unit Handler registry is poisoned".into()))?.clone() else { return Ok(()) };
         let units = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare(
@@ -1340,11 +1346,6 @@ impl SprintRunnerTransitionService {
     ) -> Result<(), SprintRunnerTransitionError> {
         let lock = self.transition_lock(sprint_id)?;
         let _guard = lock.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Work Unit activation lock is poisoned".into()))?;
-        let desired = conversation_harness::profile(ConversationHarnessRole::WorkUnitHandler)
-            .map_err(SprintRunnerTransitionError::Unavailable)?;
-        if desired.mcp.required || !desired.mcp.enabled_tools.is_empty() {
-            return Err(SprintRunnerTransitionError::Conflict);
-        }
         let dependency_count: i64 = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
             "SELECT COUNT(*) FROM work_unit_relationships r WHERE r.materialization_id=?1 AND r.relationship_kind='depends_on' AND r.from_id=?2",
             params![materialization_id, work_unit_id], |row| row.get(0)
@@ -1360,27 +1361,36 @@ impl SprintRunnerTransitionService {
         let session_id = stable_id("work-unit-handler-session", work_unit_id);
         let invocation_id = stable_id("work-unit-handler-invocation", work_unit_id);
         let now = chrono::Utc::now().to_rfc3339();
-        let snapshot = serde_json::to_string(&desired)
-            .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
-        let inserted = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute(
-            "INSERT OR IGNORE INTO work_unit_handler_activations (work_unit_id,materialization_id,sprint_id,attempt_id,handler_session_id,handler_invocation_id,handler_harness_key,handler_harness_version,handler_harness_json,eligibility_state,blocked_reason,requested_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
-            params![work_unit_id,materialization_id,sprint_id,attempt_id,session_id,invocation_id,desired.key,desired.version,snapshot,if blocked.is_some(){"blocked"}else{"eligible"},blocked,now]
+        let existing: bool = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM work_unit_handler_activations WHERE work_unit_id=?1)", [work_unit_id], |row| row.get(0)
         ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        if inserted == 0 {
+        if existing {
             self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute(
                 "UPDATE work_unit_handler_activations SET eligibility_state=?2,blocked_reason=?3 WHERE work_unit_id=?1 AND launch_accepted_at IS NULL",
                 params![work_unit_id,if blocked.is_some(){"blocked"}else{"eligible"},blocked]
             ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        } else {
+            let desired = handler.current_handler_revision()
+                .map_err(|_| SprintRunnerTransitionError::Unavailable("load current immutable Handler revision".into()))?;
+            self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute(
+                "INSERT OR IGNORE INTO work_unit_handler_activations (work_unit_id,materialization_id,sprint_id,attempt_id,handler_session_id,handler_invocation_id,handler_harness_key,handler_harness_version,handler_harness_revision_id,handler_harness_configuration_digest,handler_harness_repository_commit_ref,eligibility_state,blocked_reason,requested_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+                params![work_unit_id,materialization_id,sprint_id,attempt_id,session_id,invocation_id,desired.harness_key,desired.profile.version,desired.revision_id,desired.configuration_digest,desired.repository_commit_ref,if blocked.is_some(){"blocked"}else{"eligible"},blocked,now]
+            ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         }
         if blocked.is_some() { return Ok(()) }
-        let (harness_key, harness_version, harness_json): (String, i64, Option<String>) = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
-            "SELECT handler_harness_key,handler_harness_version,handler_harness_json FROM work_unit_handler_activations WHERE work_unit_id=?1", [work_unit_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        let (harness_key, harness_version, revision_id, configuration_digest, repository_commit_ref): (String, i64, Option<String>, Option<String>, Option<String>) = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
+            "SELECT handler_harness_key,handler_harness_version,handler_harness_revision_id,handler_harness_configuration_digest,handler_harness_repository_commit_ref FROM work_unit_handler_activations WHERE work_unit_id=?1", [work_unit_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
         ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        let harness_version = u16::try_from(harness_version).map_err(|_| SprintRunnerTransitionError::Conflict)?;
-        let harness_json = harness_json.ok_or(SprintRunnerTransitionError::Conflict)?;
-        let harness = conversation_harness::pinned_profile_snapshot(&harness_key, harness_version, &harness_json)
-            .map_err(|_| SprintRunnerTransitionError::Conflict)?;
-        if harness.key != desired.key || harness.version != desired.version || harness.mcp.required || !harness.mcp.enabled_tools.is_empty() {
+        let revision_id = revision_id.ok_or(SprintRunnerTransitionError::Conflict)?;
+        let configuration_digest = configuration_digest.ok_or(SprintRunnerTransitionError::Conflict)?;
+        let repository_commit_ref = repository_commit_ref.ok_or(SprintRunnerTransitionError::Conflict)?;
+        let harness = handler.load_pinned_handler_revision(&revision_id, &configuration_digest, &repository_commit_ref)
+            .map_err(|error| SprintRunnerTransitionError::Unavailable(format!("pinned Handler revision evidence is invalid or unavailable: {error:?}")))?;
+        if harness.harness_key != harness_key
+            || harness.profile.version != u16::try_from(harness_version).map_err(|_| SprintRunnerTransitionError::Conflict)?
+            || harness.profile.mcp.required
+            || !harness.profile.mcp.enabled_tools.is_empty()
+        {
             return Err(SprintRunnerTransitionError::Conflict);
         }
         let authority = authority.expect("eligible activation has authority");
@@ -1388,8 +1398,8 @@ impl SprintRunnerTransitionService {
         self.mark_handler(work_unit_id, "attempt_created_at")?;
         handler.authorize_handler_attempt(&attempt_id, work_unit_id, &authority)
             .map_err(|_| SprintRunnerTransitionError::Unavailable("execution-support authorization failed".into()))?;
-        let package = handler.construct_for_pinned_profile(&attempt_id, WorkUnitHarnessRole::Handler, harness)
-            .map_err(|_| SprintRunnerTransitionError::Unavailable("Handler Harness package construction failed".into()))?;
+        let package = handler.construct_for_pinned_profile(&attempt_id, WorkUnitHarnessRole::Handler, harness.profile)
+            .map_err(|error| SprintRunnerTransitionError::Unavailable(format!("Handler Harness package construction failed: {error:?}")))?;
         self.mark_handler(work_unit_id, "execution_support_granted_at")?;
         self.mark_handler(work_unit_id, "isolated_worktree_ready_at")?;
         let session = AgentSessionId::new(session_id).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
