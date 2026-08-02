@@ -120,6 +120,21 @@ pub(crate) fn pinned_profile(
     Ok(profile)
 }
 
+/// Reopen an already-applied immutable Harness binding without consulting the current catalog.
+pub(crate) fn pinned_profile_snapshot(
+    key: &str,
+    version: u16,
+    snapshot: &str,
+) -> Result<ConversationHarnessProfile, String> {
+    let profile: ConversationHarnessProfile = serde_json::from_str(snapshot)
+        .map_err(|error| format!("invalid persisted Conversation Harness snapshot: {error}"))?;
+    validate_profile(&profile)?;
+    if profile.key != key || profile.version != version {
+        return Err("persisted Conversation Harness snapshot does not match its pinned identity".into());
+    }
+    Ok(profile)
+}
+
 pub(crate) fn catalog_profile(
     role: ConversationHarnessRole,
 ) -> Result<ConversationHarnessCatalogProfile, String> {
@@ -347,6 +362,19 @@ mod tests {
         );
         assert!(plan_builder.runtime_options().model.is_none());
         assert!(plan_builder.runtime.reasoning_effort.is_none());
+    }
+
+    #[test]
+    fn persisted_pinned_profile_reopens_without_current_catalog_and_denies_tampering() {
+        let profile = profile(ConversationHarnessRole::WorkSlicePlanner).unwrap();
+        let snapshot = serde_json::to_string(&profile).unwrap();
+        assert_eq!(
+            pinned_profile_snapshot(&profile.key, profile.version, &snapshot).unwrap(),
+            profile
+        );
+        assert!(pinned_profile_snapshot("different", profile.version, &snapshot).is_err());
+        assert!(pinned_profile_snapshot(&profile.key, profile.version + 1, &snapshot).is_err());
+        assert!(pinned_profile_snapshot(&profile.key, profile.version, "{}").is_err());
     }
 
     #[test]

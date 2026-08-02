@@ -1027,9 +1027,20 @@ impl SprintRunnerTransitionService {
         ).optional().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         let Some((point,session_id,invocation_id,route,key,version,harness_json)) = request else { return Ok(()) };
         let version = u16::try_from(version).map_err(|_| SprintRunnerTransitionError::Conflict)?;
-        let harness = conversation_harness::pinned_profile(&key, version).map_err(SprintRunnerTransitionError::Unavailable)?;
-        let serialized = serde_json::to_string(&harness).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        if harness_json.as_deref().is_some_and(|existing| existing != serialized) { return Err(SprintRunnerTransitionError::Conflict); }
+        let (harness, serialized) = match harness_json {
+            Some(snapshot) => {
+                let harness = conversation_harness::pinned_profile_snapshot(&key, version, &snapshot)
+                    .map_err(|_| SprintRunnerTransitionError::Conflict)?;
+                (harness, snapshot)
+            }
+            None => {
+                let harness = conversation_harness::pinned_profile(&key, version)
+                    .map_err(SprintRunnerTransitionError::Unavailable)?;
+                let snapshot = serde_json::to_string(&harness)
+                    .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+                (harness, snapshot)
+            }
+        };
         let session = AgentSessionId::new(session_id).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         self.sessions.create_application_session(CreateApplicationAgentSessionCommand { session_id: session.clone(), session: CreateAgentSessionCommand { title: Some("Work Slice Planner".into()), working_directory: Some(route), requested_options: harness.runtime_options() }}).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         self.mark_planner(sprint_id, "planner_session_created_at", None)?;

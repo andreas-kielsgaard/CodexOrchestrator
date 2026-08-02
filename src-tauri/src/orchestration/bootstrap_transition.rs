@@ -4191,6 +4191,40 @@ mod tests {
         assert_eq!(after_reopen.work_slice_planner_launch_accepted_at, None);
         assert_eq!(fixture.runtime.requests().len(), launches_before);
 
+        let planner_session = results[0].work_slice_planner_session_id.clone().unwrap();
+        let planner_invocation = results[0].work_slice_planner_invocation_id.clone().unwrap();
+        let snapshot: String = Connection::open(&fixture.database_path).unwrap().query_row(
+            "SELECT planner_harness_json FROM work_slice_planning_requests WHERE sprint_id=?1", [&sprint_id], |row| row.get(0),
+        ).unwrap();
+
+        // A Session-only partial effect reconstructs its reserved invocation and Harness facts.
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "DELETE FROM agent_session_invocations WHERE id=?1", [&planner_invocation],
+        ).unwrap();
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "UPDATE work_slice_planning_requests SET planner_invocation_created_at=NULL,planner_harness_applied_at=NULL,planner_harness_json=NULL WHERE sprint_id=?1", [&sprint_id],
+        ).unwrap();
+        let session_only = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        assert!(session_only.query().unwrap().transitions.into_iter().find(|status| status.sprint_id == sprint_id).unwrap().work_slice_planner_harness_applied_at.is_some());
+
+        // An invocation-without-Harness partial effect reconstructs only the missing Harness stage.
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "UPDATE work_slice_planning_requests SET planner_harness_applied_at=NULL,planner_harness_json=NULL WHERE sprint_id=?1", [&sprint_id],
+        ).unwrap();
+        let invocation_only = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        assert!(invocation_only.query().unwrap().transitions.into_iter().find(|status| status.sprint_id == sprint_id).unwrap().work_slice_planner_harness_applied_at.is_some());
+        assert_eq!(fixture.runtime.requests().len(), launches_before);
+
+        Connection::open(&fixture.database_path).unwrap().execute("UPDATE agent_sessions SET working_directory='conflict' WHERE id=?1", [&planner_session]).unwrap();
+        assert!(matches!(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Unavailable(_))));
+        Connection::open(&fixture.database_path).unwrap().execute("UPDATE agent_sessions SET working_directory=?2 WHERE id=?1", params![planner_session, worktree_root.to_string_lossy()]).unwrap();
+        Connection::open(&fixture.database_path).unwrap().execute("UPDATE agent_session_invocations SET input_provenance='user' WHERE id=?1", [&planner_invocation]).unwrap();
+        assert!(matches!(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Unavailable(_))));
+        Connection::open(&fixture.database_path).unwrap().execute("UPDATE agent_session_invocations SET input_provenance='application' WHERE id=?1", [&planner_invocation]).unwrap();
+        Connection::open(&fixture.database_path).unwrap().execute("UPDATE work_slice_planning_requests SET planner_harness_json='{}' WHERE sprint_id=?1", [&sprint_id]).unwrap();
+        assert!(matches!(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
+        Connection::open(&fixture.database_path).unwrap().execute("UPDATE work_slice_planning_requests SET planner_harness_json=?2 WHERE sprint_id=?1", params![sprint_id, snapshot]).unwrap();
+
         let mut ambiguous_authority = initial_authority.clone();
         ambiguous_authority.idempotency_key = "wsp1-route-authority-ambiguous".into();
         ambiguous_authority.runtime_instance_ref = "wsp1-runtime-ambiguous".into();
