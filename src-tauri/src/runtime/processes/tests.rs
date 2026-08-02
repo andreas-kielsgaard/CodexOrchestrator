@@ -238,6 +238,30 @@ impl Read for FailingReader {
     }
 }
 
+#[derive(Clone, Default)]
+struct BlockingReader {
+    released: Arc<(Mutex<bool>, Condvar)>,
+}
+
+impl BlockingReader {
+    fn release(&self) {
+        let (released, changed) = &*self.released;
+        *released.lock().expect("lock reader release") = true;
+        changed.notify_all();
+    }
+}
+
+impl Read for BlockingReader {
+    fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+        let (released, changed) = &*self.released;
+        let mut released = released.lock().expect("lock reader release");
+        while !*released {
+            released = changed.wait(released).expect("wait for reader release");
+        }
+        Ok(0)
+    }
+}
+
 fn session_id(value: &str) -> AgentSessionId {
     AgentSessionId::new(value).expect("session id")
 }
@@ -373,6 +397,35 @@ fn cancellation_terminates_the_child_and_emits_canceled_once() {
     );
     assert!(!supervisor.is_active(&invocation).expect("active state"));
     assert_eq!(sink.terminals.lock().expect("lock terminals").len(), 1);
+}
+
+#[test]
+fn cancellation_settles_after_direct_exit_when_an_unowned_reader_stays_open() {
+    let (factory, sink, supervisor) = fixture();
+    let child = Arc::new(FakeChild::default());
+    let stdout = BlockingReader::default();
+    factory.push_process_with_readers(
+        child,
+        Box::new(stdout.clone()),
+        Box::new(Cursor::new(Vec::<u8>::new())),
+    );
+    let invocation = invocation_id("invocation-cancellation-reader-boundary");
+    supervisor
+        .start(
+            session_id("session-cancellation-reader-boundary"),
+            invocation.clone(),
+            spec(),
+        )
+        .expect("start");
+
+    supervisor.cancel(&invocation).expect("cancel");
+
+    assert!(matches!(
+        sink.wait_for_terminal(&invocation),
+        ProcessTerminalOutcome::Canceled { .. }
+    ));
+    assert!(!supervisor.is_active(&invocation).expect("active state"));
+    stdout.release();
 }
 
 #[test]

@@ -164,8 +164,16 @@ pub(super) fn monitor_process(
         }
     };
 
-    if let Some(reader_failure) = join_readers(&process) {
-        first_reader_failure.get_or_insert(reader_failure);
+    // A Windows child can leave its inherited output handles open in an unowned descendant after
+    // the direct child has exited. Cancellation has already observed the only process boundary
+    // this supervisor owns, so do not withhold that terminal result on readers it cannot safely
+    // interrupt or reattach to. Normal exits still drain both readers before their terminal.
+    let skip_reader_join =
+        exit.is_some() && cancellation_requested(&inner, &invocation_id, &process);
+    if !skip_reader_join {
+        if let Some(reader_failure) = join_readers(&process) {
+            first_reader_failure.get_or_insert(reader_failure);
+        }
     }
 
     finalize_process(
@@ -176,6 +184,23 @@ pub(super) fn monitor_process(
         first_reader_failure,
         wait_failure,
     );
+}
+
+fn cancellation_requested(
+    inner: &Arc<SupervisorInner>,
+    invocation_id: &AgentInvocationId,
+    process: &Arc<ActiveProcess>,
+) -> bool {
+    inner.registry.lock().ok().is_some_and(|registry| {
+        let Some(entry) = registry.active.get(invocation_id) else {
+            return false;
+        };
+        entry.requested_termination == Some(RequestedTermination::Cancellation)
+            && entry
+                .process
+                .as_ref()
+                .is_some_and(|active| Arc::ptr_eq(active, process))
+    })
 }
 
 pub(super) fn join_readers(process: &ActiveProcess) -> Option<String> {
