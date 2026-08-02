@@ -7,8 +7,21 @@ describe('Epic Pause/Restart native contracts', () => {
   it('decodes only complete authoritative control state', () => {
     expect(decodeEpicPauseRestartQuery({ epicId: 'epic-1', pause: { availability: 'available', reason: 'ready', current: outcome }, restart: { availability: 'unavailable', reason: 'no interruption', current: null } })).toMatchObject({ epicId: 'epic-1', pause: { current: outcome } });
   });
-  it('rejects malformed outcomes and impossible counts', () => {
-    expect(() => decodeEpicPauseRestartOutcome({ ...outcome, extra: true })).toThrow();
-    expect(() => decodeEpicPauseRestartOutcome({ ...outcome, launchedCount: 3 })).toThrow();
+  it.each([
+    ['a non-record query', null],
+    ['a query with a missing epic id', { pause: {}, restart: {} }],
+    ['a query with an unknown field', { epicId: 'epic-1', pause: {}, restart: {}, extra: true }],
+    ['a query control with an unknown field', { epicId: 'epic-1', pause: { availability: 'available', reason: 'ready', extra: true }, restart: { availability: 'available', reason: 'ready' } }],
+  ])('rejects %s', (_label, value) => {
+    expect(() => decodeEpicPauseRestartQuery(value)).toThrow();
+  });
+  it.each([
+    ['a missing field', { ...outcome, launchedCount: undefined }],
+    ['an unknown field', { ...outcome, extra: true }],
+    ['a non-record value', []],
+    ['a negative target count', { ...outcome, targetCount: -1 }],
+    ['launched targets exceeding targets', { ...outcome, launchedCount: 3 }],
+  ])('rejects %s', (_label, value) => {
+    expect(() => decodeEpicPauseRestartOutcome(value)).toThrow();
   });
 });

@@ -26,6 +26,11 @@ describe('product application composition', () => {
       }),
     ).resolves.toMatchObject({ status: 'unsupported' });
     expect(composition.contextualFileReviewClient).toBeDefined();
+    expect(composition.epicPauseRestartController).toMatchObject({
+      load: expect.any(Function),
+      requestPause: expect.any(Function),
+      requestRestart: expect.any(Function),
+    });
   });
 
   it('keeps product startup free of development fixture authority', () => {
