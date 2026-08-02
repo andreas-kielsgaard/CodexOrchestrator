@@ -6,7 +6,7 @@ use super::conversation_harness_working_copy::{
     HarnessHookStatus, HarnessIdentityConfiguration, HarnessInitialDelivery,
     HarnessModelConstraint, HarnessModelPolicyMode, HarnessPromptPrefixConfiguration,
     HarnessReasoningLevel, HarnessRuntimeConfiguration, HarnessSandbox, HarnessSkillConfiguration,
-    HarnessSkillPolicy, HarnessSkillsConfiguration, HarnessToolsConfiguration, HarnessUpdatePolicy,
+    HarnessSkillPolicy, HarnessSkillsConfiguration, HarnessToolConfiguration, HarnessToolPolicy, HarnessToolsConfiguration, HarnessUpdatePolicy,
     HarnessVisualIdentity,
 };
 use crate::agent_sessions::{
@@ -124,7 +124,7 @@ pub(crate) fn profile(role: ConversationHarnessRole) -> Result<ConversationHarne
 pub(crate) fn initial_work_unit_handler_revision_configuration(
 ) -> Result<HarnessEffectiveConfiguration, String> {
     let profile = profile(ConversationHarnessRole::WorkUnitHandler)?;
-    if profile.mcp.required || !profile.mcp.enabled_tools.is_empty() {
+    if profile.mcp.enabled_tools != ["request_work_unit_implementer"] {
         return Err("Work Unit Handler catalog profile exposes unsupported MCP tools".into());
     }
     Ok(HarnessEffectiveConfiguration {
@@ -158,8 +158,8 @@ pub(crate) fn initial_work_unit_handler_revision_configuration(
         },
         tools: HarnessToolsConfiguration {
             available_discovery_policy: HarnessDiscoveryPolicy::Whitelist,
-            items: vec![],
-            schema_boundary: "No Handler-to-Implementer or other MCP action is exposed.".into(),
+            items: vec![HarnessToolConfiguration { name: "request_work_unit_implementer".into(), policy: HarnessToolPolicy::Available }],
+            schema_boundary: "Only the application-derived Handler-to-Implementer request is exposed.".into(),
         },
         runtime: HarnessRuntimeConfiguration {
             model_policy_mode: HarnessModelPolicyMode::RevisionOwned,
@@ -202,7 +202,7 @@ pub(crate) fn profile_from_immutable_handler_revision(
     revision_version: u16,
 ) -> Result<ConversationHarnessProfile, String> {
     if configuration.identity.machine_key != "work_unit_handler"
-        || !configuration.tools.items.is_empty()
+        || configuration.tools.items.iter().any(|tool| tool.name != "request_work_unit_implementer" || tool.policy != HarnessToolPolicy::Available)
         || configuration.runtime.approval_policy != RevisionApprovalPolicy::Never
     {
         return Err("immutable Handler revision is outside the bounded Handler contract".into());
@@ -234,8 +234,8 @@ pub(crate) fn profile_from_immutable_handler_revision(
             approval_policy: HarnessApprovalPolicy::Never,
         },
         mcp: HarnessMcpExposure {
-            required: false,
-            enabled_tools: vec![],
+            required: true,
+            enabled_tools: configuration.tools.items.iter().map(|tool| tool.name.clone()).collect(),
         },
         lifecycle: HarnessLifecycle {
             context_delivery: HarnessContextDelivery::FirstQuery,
@@ -244,6 +244,24 @@ pub(crate) fn profile_from_immutable_handler_revision(
             ],
         },
     })
+}
+
+pub(crate) fn initial_work_unit_implementer_revision_configuration() -> Result<HarnessEffectiveConfiguration, String> {
+    let profile = profile(ConversationHarnessRole::WorkUnitImplementer)?;
+    if profile.mcp.required || !profile.mcp.enabled_tools.is_empty() { return Err("Work Unit Implementer catalog profile exposes unsupported MCP tools".into()); }
+    Ok(HarnessEffectiveConfiguration {
+        identity: HarnessIdentityConfiguration { name: "Work Unit Implementer".into(), machine_key: profile.key, permitted_agent_names: None, visual_identity: Some(HarnessVisualIdentity { token: "implementer".into(), accent: "green".into() }) },
+        prompt_prefix: HarnessPromptPrefixConfiguration { content: profile.context, initial_delivery: HarnessInitialDelivery::Prepend, context_compression_delivery: HarnessContextCompressionDelivery::Deferred },
+        skills: HarnessSkillsConfiguration { available_discovery_policy: HarnessDiscoveryPolicy::Whitelist, items: profile.skill_guidance.into_iter().map(|skill| HarnessSkillConfiguration { name: skill.canonical_name, path: skill.canonical_path, purpose: skill.purpose, use_when: skill.use_when, policy: HarnessSkillPolicy::AlwaysApplicable }).collect() },
+        tools: HarnessToolsConfiguration { available_discovery_policy: HarnessDiscoveryPolicy::Whitelist, items: vec![], schema_boundary: "No Implementer MCP action is exposed.".into() },
+        runtime: HarnessRuntimeConfiguration { model_policy_mode: HarnessModelPolicyMode::RevisionOwned, models: profile.runtime.model.iter().map(|model| HarnessModelConstraint { model_id: model.clone(), allowed: true, min_reasoning: HarnessReasoningLevel::Low, max_reasoning: HarnessReasoningLevel::Xhigh }).collect(), default_model: profile.runtime.model, default_reasoning: profile.runtime.reasoning_effort.as_deref().and_then(reasoning_from_catalog), sandbox: sandbox_to_revision(profile.runtime.sandbox), sandbox_options: vec![sandbox_to_revision(profile.runtime.sandbox)], approval_policy: RevisionApprovalPolicy::Never, approval_policy_options: vec![RevisionApprovalPolicy::Never], authority_summary: "Writable only within the isolated Implementer execution workspace.".into() },
+        hooks: vec![HarnessHookConfiguration { name: "completion".into(), status: HarnessHookStatus::NotConnected, detail: "No Implementer completion, review, or settlement hook is connected.".into() }], update_policy: HarnessUpdatePolicy::NotConfigured { reason: "Pinned revision is immutable.".into() },
+    })
+}
+
+pub(crate) fn profile_from_immutable_implementer_revision(configuration: &HarnessEffectiveConfiguration, revision_version: u16) -> Result<ConversationHarnessProfile, String> {
+    if configuration.identity.machine_key != "work_unit_implementer" || !configuration.tools.items.is_empty() || configuration.runtime.sandbox != HarnessSandbox::WorkspaceWrite || configuration.runtime.approval_policy != RevisionApprovalPolicy::Never { return Err("immutable Implementer revision is outside the bounded Implementer contract".into()); }
+    Ok(ConversationHarnessProfile { key: configuration.identity.machine_key.clone(), version: revision_version, context: configuration.prompt_prefix.content.clone(), skill_guidance: configuration.skills.items.iter().map(|skill| SkillGuidance { canonical_name: skill.name.clone(), canonical_path: skill.path.clone(), purpose: skill.purpose.clone(), use_when: skill.use_when.clone() }).collect(), runtime: HarnessRuntime { model: configuration.runtime.default_model.clone(), reasoning_effort: configuration.runtime.default_reasoning.map(reasoning_to_catalog), sandbox: sandbox_from_revision(configuration.runtime.sandbox)?, approval_policy: HarnessApprovalPolicy::Never }, mcp: HarnessMcpExposure { required: false, enabled_tools: vec![] }, lifecycle: HarnessLifecycle { context_delivery: HarnessContextDelivery::FirstQuery, completion_criteria: vec!["application_observed_implementer_ready_state".into()] } })
 }
 
 fn reasoning_from_catalog(value: &str) -> Option<HarnessReasoningLevel> {
@@ -518,11 +536,13 @@ mod tests {
         assert_eq!(planner.key, "work_slice_planner");
         assert_eq!(handler.key, "work_unit_handler");
         assert_eq!(implementer.key, "work_unit_implementer");
-        assert_eq!(handler.version, 1);
-        assert_eq!(implementer.version, 1);
-        assert!(handler.mcp.enabled_tools.is_empty());
-        assert!(!handler.mcp.required);
-        assert_eq!(implementer.mcp.enabled_tools, handler.mcp.enabled_tools);
+        assert_eq!(handler.version, 2);
+        assert_eq!(implementer.version, 2);
+        assert_eq!(handler.mcp.enabled_tools, ["request_work_unit_implementer"]);
+        assert!(handler.mcp.required);
+        assert!(implementer.mcp.enabled_tools.is_empty());
+        assert!(!implementer.mcp.required);
+        assert_eq!(implementer.runtime_options().sandbox, Some(RuntimeSandboxMode::WorkspaceWrite));
         assert_eq!(
             planner.mcp.enabled_tools,
             [
@@ -562,6 +582,16 @@ mod tests {
         );
         assert!(plan_builder.runtime_options().model.is_none());
         assert!(plan_builder.runtime.reasoning_effort.is_none());
+    }
+
+    #[test]
+    fn handler_to_implementer_contract_has_one_action_and_scoped_write_runtime() {
+        let handler = profile(ConversationHarnessRole::WorkUnitHandler).unwrap();
+        let implementer = profile(ConversationHarnessRole::WorkUnitImplementer).unwrap();
+        assert_eq!(handler.mcp.enabled_tools, ["request_work_unit_implementer"]);
+        assert!(handler.mcp.required);
+        assert!(implementer.mcp.enabled_tools.is_empty());
+        assert_eq!(implementer.runtime.sandbox, RuntimeSandboxMode::WorkspaceWrite);
     }
 
     #[test]

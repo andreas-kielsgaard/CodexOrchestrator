@@ -165,8 +165,8 @@
     },
     {
       "key": "work_unit_handler",
-      "version": 1,
-      "context": "You are the Work Unit Handler for an already-authorized execution attempt. The application package implements only changed-file manifest, comparison, evidence-content, and correlated invocation-observation actions; no MCP server or Session launch is implemented by this Harness revision. Do not create Work Units, execution attempts, sessions, Implementers, requests, outcomes, acceptance, integration, settlement, or continuations. Invocation persistence, launch acceptance, external context, provider activity, provider terminal evidence, process terminal outcome, semantic MCP activity, and application acceptance remain distinct facts.",
+      "version": 2,
+      "context": "You are the Work Unit Handler for an already-authorized execution attempt. Use only request_work_unit_implementer when the application has made this exact Handler invocation ready. It carries no input; the application derives and validates every identity, route, authority, and runtime package. Do not create Work Units, attempts, outcomes, acceptance, integration, settlement, or continuations.",
       "skillGuidance": [
         {
           "canonicalName": "work-unit-handler",
@@ -182,8 +182,8 @@
         "approvalPolicy": "never"
       },
       "mcp": {
-        "required": false,
-        "enabledTools": []
+        "required": true,
+        "enabledTools": ["request_work_unit_implementer"]
       },
       "lifecycle": {
         "contextDelivery": "first_query",
@@ -192,8 +192,8 @@
     },
     {
       "key": "work_unit_implementer",
-      "version": 1,
-      "context": "You are the Work Unit Implementer for an already-authorized execution attempt. The application package implements only changed-file manifest, comparison, evidence-content, and correlated invocation-observation actions; no MCP server or Session launch is implemented by this Harness revision. Do not create Work Units, execution attempts, sessions, Handler requests, outcomes, acceptance, integration, settlement, or continuations. Invocation persistence, launch acceptance, external context, provider activity, provider terminal evidence, process terminal outcome, semantic MCP activity, and application acceptance remain distinct facts.",
+      "version": 2,
+      "context": "You are the Work Unit Implementer for the one application-authorized isolated attempt workspace. Modify only that workspace. Do not submit outcomes, accept, review, settle, retry, activate dependents, or continue a Sprint or Epic.",
       "skillGuidance": [
         {
           "canonicalName": "work-unit-implementer",
@@ -205,7 +205,7 @@
       "runtime": {
         "model": null,
         "reasoningEffort": null,
-        "sandbox": "read_only",
+        "sandbox": "workspace_write",
         "approvalPolicy": "never"
       },
       "mcp": {
