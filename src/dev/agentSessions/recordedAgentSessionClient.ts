@@ -1,5 +1,6 @@
 import type {
   AgentInvocationDto,
+  AgentInvocationObservationDto,
   AgentInvocationStatusDto,
   AgentRuntimeEventDto,
   AgentSessionClient,
@@ -79,6 +80,7 @@ export function createRecordedAgentSessionClient(
               fixture.submittedText,
               'pending',
             ),
+            observation: emptyObservation(),
             events: [],
           },
         ],
@@ -97,6 +99,7 @@ export function createRecordedAgentSessionClient(
           fixture.submittedText,
           'pending',
         ),
+        observation: emptyObservation(),
         events: [],
       });
       store.summaries.set(fixture.sessionId, summary(existing.session, existing.invocations));
@@ -181,7 +184,7 @@ export function createRecordedAgentSessionClient(
       }
       const invocationId = `recorded-invocation-${nextInvocation++}`;
       const invocation = makeInvocation(invocationId, session.id, command.submittedText, 'pending');
-      store.sessions.get(session.id)!.invocations.push({ invocation, events: [] });
+      store.sessions.get(session.id)!.invocations.push({ invocation, observation: emptyObservation(), events: [] });
       store.summaries.set(
         session.id,
         summary(session, store.sessions.get(session.id)!.invocations),
@@ -262,6 +265,9 @@ export function createRecordedAgentSessionClient(
     }
   }
   return client;
+}
+function emptyObservation(): AgentInvocationObservationDto {
+  return { launchAcceptedAt: null, externalContext: null, providerActivity: null, providerTerminal: null, processTerminal: null, mcpToolActivities: [], mcpToolActivityPartial: false };
 }
 
 function makeSession(id: string, title: string, workingDirectory: string | null): AgentSessionDto {

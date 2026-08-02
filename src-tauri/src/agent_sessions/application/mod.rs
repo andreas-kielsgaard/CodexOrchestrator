@@ -1,6 +1,7 @@
 //! Provider-neutral Agent Session use cases and persisted runtime update delivery.
 
 mod lifecycle;
+mod observation;
 mod update_sink;
 
 pub(crate) use lifecycle::{
@@ -10,6 +11,7 @@ pub(crate) use lifecycle::{
     SendAgentSessionMessageResult, SendIdempotentApplicationAgentSessionMessageCommand,
     SystemAgentSessionProviders,
 };
+pub(crate) use observation::{project_invocation_observation, AgentInvocationObservation};
 
 #[cfg(test)]
 mod tests;

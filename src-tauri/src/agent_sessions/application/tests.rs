@@ -971,6 +971,7 @@ fn context_event() -> RuntimeEventDraft {
             ),
             usage: None,
             details: None,
+            tool_activity: None,
         }),
     }
 }
@@ -985,6 +986,7 @@ fn text_event(text: &str) -> RuntimeEventDraft {
             external_context_id: None,
             usage: None,
             details: None,
+            tool_activity: None,
         }),
     }
 }
