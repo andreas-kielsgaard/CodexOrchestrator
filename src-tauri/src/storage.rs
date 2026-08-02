@@ -3,10 +3,15 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-const ACTIVE_SCHEMA_VERSION: i64 = 12;
+const ACTIVE_SCHEMA_VERSION: i64 = 13;
+pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join(ACTIVE_DATABASE_FILE_NAME)
+}
+
+pub(crate) fn harness_revision_repository_path(app_data_dir: &Path) -> PathBuf {
+    app_data_dir.join(HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME)
 }
 
 pub(crate) fn open_active_database(path: &Path) -> Result<Connection, String> {
@@ -25,7 +30,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     if current_version == ACTIVE_SCHEMA_VERSION {
         return Ok(());
     }
-    if (1..=11).contains(&current_version) {
+    if (1..=12).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -108,6 +113,11 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 format!("Unable to migrate Harness working-copy schema: {error}")
             })?;
         transaction
+            .execute_batch(
+                crate::orchestration::conversation_harness_revision::HARNESS_REVISION_SCHEMA,
+            )
+            .map_err(|error| format!("Unable to migrate Harness revision schema: {error}"))?;
+        transaction
             .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
             .map_err(|error| format!("Unable to record active schema version: {error}"))?;
         transaction
@@ -156,6 +166,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             crate::orchestration::conversation_harness_working_copy::HARNESS_WORKING_COPY_SCHEMA,
         )
         .map_err(|error| format!("Unable to initialize Harness working-copy schema: {error}"))?;
+    transaction
+        .execute_batch(crate::orchestration::conversation_harness_revision::HARNESS_REVISION_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Harness revision schema: {error}"))?;
     transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
         .map_err(|error| format!("Unable to record active schema version: {error}"))?;
@@ -272,6 +285,9 @@ mod tests {
                 "file_review_changed_files",
                 "file_review_documents",
                 "file_review_git_capture_authorizations",
+                "harness_revision_commands",
+                "harness_revision_publications",
+                "harness_revisions",
                 "harness_working_copies",
                 "harness_working_copy_commands",
                 "initiated_planning_drafts",
@@ -390,6 +406,35 @@ mod tests {
             .unwrap();
         assert!(command_columns.contains(&"payload_fingerprint".to_string()));
         assert!(command_columns.contains(&"result_digest".to_string()));
+        let revision_columns = connection
+            .prepare("PRAGMA table_info(harness_revisions)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        for column in [
+            "revision_id",
+            "configuration_digest",
+            "source_draft_revision",
+            "predecessor_revision_id",
+            "repository_commit_ref",
+            "creation_provenance_kind",
+            "creation_provenance_reference",
+            "created_at",
+        ] {
+            assert!(revision_columns.contains(&column.to_string()));
+        }
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM pragma_index_list('harness_revisions') WHERE [unique] = 1 AND name IN ('harness_revision_root_by_harness','harness_revision_unique_predecessor')",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            2
+        );
     }
 
     #[test]
@@ -443,7 +488,7 @@ mod tests {
                 .expect("preserved Batch 11 authority"),
             "capture-fingerprint-v10"
         );
-        assert_eq!(pragma_i64(&connection, "user_version"), 12);
+        assert_eq!(pragma_i64(&connection, "user_version"), 13);
         initialize_active_database(&connection).expect("reopen current schema");
     }
 
@@ -475,8 +520,64 @@ mod tests {
                 .expect("preserved predecessor row"),
             "preserved"
         );
-        assert_eq!(pragma_i64(&connection, "user_version"), 12);
-        initialize_active_database(&connection).expect("reopen v12");
+        assert_eq!(pragma_i64(&connection, "user_version"), 13);
+        initialize_active_database(&connection).expect("reopen v13");
+    }
+
+    #[test]
+    fn migrates_direct_v12_predecessor_to_revision_schema_and_reopens() {
+        let connection = Connection::open_in_memory().expect("database");
+        configure_sqlite_connection(&connection).expect("policy");
+        initialize_active_database(&connection).expect("seed current schema");
+        connection
+            .execute_batch(
+                "DROP TABLE harness_revision_commands;
+                 DROP TABLE harness_revision_publications;
+                 DROP TABLE harness_revisions;
+                 INSERT INTO epic_planning_drafts (id,title,status,created_at,updated_at) VALUES ('draft-v12','preserved','active','t','t');
+                 PRAGMA user_version=12;",
+            )
+            .expect("shape genuine v12 predecessor");
+
+        initialize_active_database(&connection).expect("migrate v12");
+
+        for table in [
+            "harness_revisions",
+            "harness_revision_publications",
+            "harness_revision_commands",
+        ] {
+            assert!(table_exists(&connection, table), "missing {table}");
+        }
+        assert!(table_exists(&connection, "harness_working_copies"));
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT title FROM epic_planning_drafts WHERE id='draft-v12'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .expect("preserved predecessor row"),
+            "preserved"
+        );
+        assert_eq!(pragma_i64(&connection, "user_version"), 13);
+        initialize_active_database(&connection).expect("reopen v13");
+    }
+
+    #[test]
+    fn composition_paths_keep_database_and_harness_repository_stable_and_separate() {
+        let app_data = Path::new("C:/application-owned-data");
+        assert_eq!(
+            active_database_path(app_data),
+            app_data.join(ACTIVE_DATABASE_FILE_NAME)
+        );
+        assert_eq!(
+            harness_revision_repository_path(app_data),
+            app_data.join(HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME)
+        );
+        assert_ne!(
+            active_database_path(app_data),
+            harness_revision_repository_path(app_data)
+        );
     }
 
     #[test]

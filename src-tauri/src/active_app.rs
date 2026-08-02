@@ -66,8 +66,9 @@ pub(crate) fn run() {
                     .map_err(|error| error.to_string())?,
             );
             let orchestration_repository = Arc::new(
-                crate::orchestration::repository::SqliteOrchestrationRepository::open(
+                crate::orchestration::repository::SqliteOrchestrationRepository::open_with_harness_revision_repository(
                     &database_path,
+                    crate::storage::harness_revision_repository_path(&app_data_dir),
                 )
                 .map_err(|error| error.to_string())?,
             );
