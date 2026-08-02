@@ -1,5 +1,6 @@
 import type {
   AgentInvocationStatusDto,
+  AgentInvocationTerminalStatusDto,
   AgentRuntimeEventDto,
   AgentSessionDetailsDto,
 } from '../../application/agentSessions';
@@ -257,12 +258,34 @@ function invocation(
       updatedAt: createdAt,
     },
     observation: {
-      launchAcceptedAt: null, externalContext: null, providerActivity: null, providerTerminal: null,
-      processTerminal: status === 'running' ? null : { status, completedAt: createdAt, exitCode: status === 'completed' ? 0 : null, signal: null },
-      mcpToolActivities: [], mcpToolActivityPartial: false,
+      launchAcceptedAt: null,
+      externalContext: null,
+      providerActivity: null,
+      providerTerminal: null,
+      processTerminal: isTerminalStatus(status)
+        ? {
+            status,
+            completedAt: createdAt,
+            exitCode: status === 'completed' ? 0 : null,
+            signal: null,
+          }
+        : null,
+      mcpToolActivities: [],
+      mcpToolActivityPartial: false,
     },
     events,
   };
+}
+
+function isTerminalStatus(
+  status: AgentInvocationStatusDto,
+): status is AgentInvocationTerminalStatusDto {
+  return (
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'canceled' ||
+    status === 'interrupted'
+  );
 }
 
 function event(

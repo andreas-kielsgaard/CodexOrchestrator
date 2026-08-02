@@ -37,6 +37,10 @@ export interface AgentSessionDto {
 
 export type AgentInvocationStatusDto =
   'pending' | 'running' | 'completed' | 'failed' | 'canceled' | 'interrupted';
+export type AgentInvocationTerminalStatusDto = Extract<
+  AgentInvocationStatusDto,
+  'completed' | 'failed' | 'canceled' | 'interrupted'
+>;
 export type AgentInvocationInputProvenanceDto = 'user' | 'application';
 
 export interface AgentRuntimeFailureDto {
@@ -133,7 +137,7 @@ export interface AgentInvocationObservationDto {
     correlation: RuntimeObservationCorrelationDto;
   } | null;
   processTerminal: {
-    status: AgentInvocationStatusDto;
+    status: AgentInvocationTerminalStatusDto;
     completedAt: IsoDateTimeDto;
     exitCode: number | null;
     signal: string | null;
@@ -200,16 +204,12 @@ function processTerminal(value: unknown): AgentInvocationObservationDto['process
   if (value === null) return null;
   const item = record(value, 'processTerminal');
   exact(item, ['status', 'completedAt', 'exitCode', 'signal'], 'processTerminal');
-  if (
-    !['pending', 'running', 'completed', 'failed', 'canceled', 'interrupted'].includes(
-      String(item.status),
-    )
-  )
+  if (!['completed', 'failed', 'canceled', 'interrupted'].includes(String(item.status)))
     throw new Error('processTerminal.status is invalid');
   return {
-    status: item.status as AgentInvocationStatusDto,
+    status: item.status as AgentInvocationTerminalStatusDto,
     completedAt: text(item.completedAt, 'processTerminal.completedAt'),
-    exitCode: nullableInteger(item.exitCode, 'processTerminal.exitCode'),
+    exitCode: nullableSignedI32(item.exitCode, 'processTerminal.exitCode'),
     signal: nullableText(item.signal, 'processTerminal.signal'),
   };
 }
@@ -275,8 +275,15 @@ function integer(value: unknown, label: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error(`${label} is invalid`);
   return value as number;
 }
-function nullableInteger(value: unknown, label: string): number | null {
-  return value === null ? null : integer(value, label);
+function nullableSignedI32(value: unknown, label: string): number | null {
+  if (value === null) return null;
+  if (
+    !Number.isSafeInteger(value) ||
+    (value as number) < -2147483648 ||
+    (value as number) > 2147483647
+  )
+    throw new Error(`${label} is invalid`);
+  return value as number;
 }
 function boolean(value: unknown, label: string): boolean {
   if (typeof value !== 'boolean') throw new Error(`${label} is invalid`);

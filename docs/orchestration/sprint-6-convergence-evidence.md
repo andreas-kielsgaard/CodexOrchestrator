@@ -26,7 +26,9 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
 - Checkpoint validation: focused Epic control Rust **7 passed**; focused observation Rust **5
   passed**. The later strict nested-observation decoder correction reran the frontend native-
   contract, Tauri transport, production-composition, and control UI at **4 files / 30 tests
-  passed**; TypeScript plus production Vite build passed. Touched Rust `rustfmt --check`,
+  passed**. The later terminal-status and signed-exit-code correction reran the same set at **4
+  files / 36 tests passed**; TypeScript plus production Vite build passed. No Rust changed in that
+  later correction, so its prior Rust evidence remains separate. Touched Rust `rustfmt --check`,
   touched-file Prettier, and `git diff --check` passed. The existing Rust dead-code warning in
   `ProcessSupervisor::system` remains a non-failure.
 

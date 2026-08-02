@@ -148,9 +148,54 @@ describe('Epic Pause/Restart native contracts', () => {
     });
   });
 
+  it('accepts a signed i32 process exit code', () => {
+    const observed = decodeEpicPauseRestartOutcome(
+      outcomeWithObservation({
+        ...fullObservation(),
+        processTerminal: { ...fullObservation().processTerminal, exitCode: -9 },
+      }),
+    );
+    expect(observed.targets[0].sourceObservation?.processTerminal?.exitCode).toBe(-9);
+  });
+
   it.each([
     ['an incomplete provider activity correlation', { ...fullObservation(), providerActivity: {} }],
     ['a scalar process terminal', { ...fullObservation(), processTerminal: 'completed' }],
+    [
+      'a running process terminal',
+      {
+        ...fullObservation(),
+        processTerminal: { ...fullObservation().processTerminal, status: 'running' },
+      },
+    ],
+    [
+      'a pending process terminal',
+      {
+        ...fullObservation(),
+        processTerminal: { ...fullObservation().processTerminal, status: 'pending' },
+      },
+    ],
+    [
+      'an out-of-range positive process exit code',
+      {
+        ...fullObservation(),
+        processTerminal: { ...fullObservation().processTerminal, exitCode: 2147483648 },
+      },
+    ],
+    [
+      'an out-of-range negative process exit code',
+      {
+        ...fullObservation(),
+        processTerminal: { ...fullObservation().processTerminal, exitCode: -2147483649 },
+      },
+    ],
+    [
+      'a fractional process exit code',
+      {
+        ...fullObservation(),
+        processTerminal: { ...fullObservation().processTerminal, exitCode: 1.5 },
+      },
+    ],
     [
       'an unknown provider terminal enum',
       {

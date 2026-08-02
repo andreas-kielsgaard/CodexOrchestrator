@@ -1,5 +1,6 @@
 import type {
   AgentInvocationStatusDto,
+  AgentInvocationTerminalStatusDto,
   AgentInvocationObservationDto,
   AgentRuntimeEventDto,
   AgentSessionDetailsDto,
@@ -71,18 +72,36 @@ export function runtimeEvent(
   };
 }
 
-export function observation(status: AgentInvocationStatusDto | null): AgentInvocationObservationDto {
+export function observation(
+  status: AgentInvocationStatusDto | null,
+): AgentInvocationObservationDto {
   return {
     launchAcceptedAt: null,
     externalContext: null,
     providerActivity: null,
     providerTerminal: null,
-    processTerminal: status && !['pending', 'running'].includes(status)
-      ? { status, completedAt: fixtureTime, exitCode: status === 'completed' ? 0 : null, signal: null }
+    processTerminal: isTerminalStatus(status)
+      ? {
+          status,
+          completedAt: fixtureTime,
+          exitCode: status === 'completed' ? 0 : null,
+          signal: null,
+        }
       : null,
     mcpToolActivities: [],
     mcpToolActivityPartial: false,
   };
+}
+
+function isTerminalStatus(
+  status: AgentInvocationStatusDto | null,
+): status is AgentInvocationTerminalStatusDto {
+  return (
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'canceled' ||
+    status === 'interrupted'
+  );
 }
 
 export function sessionSummary(active = false): AgentSessionSummaryDto {
