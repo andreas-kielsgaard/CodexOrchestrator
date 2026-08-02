@@ -166,6 +166,7 @@ export type {
   ProductReadModelsV1,
   ProductReadSelectionV1,
   ProductSourcedReadValueV1,
+  ProductWorkUnitHandlerActivationV1,
   ProductWorkUnitPresentationState,
   ReadSourceAuthorityV1,
 } from './productReadModels';

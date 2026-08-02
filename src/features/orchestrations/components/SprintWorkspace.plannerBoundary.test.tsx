@@ -174,6 +174,60 @@ describe('Work Slice Planner boundary disclosure', () => {
           requestedAt: '2026-08-02T00:01:00Z',
         },
       },
+      {
+        workUnitId: 'unit-descriptive-handler',
+        materializationId: 'materialization-1',
+        workSliceId: 'slice-1',
+        acceptedRevisionId: 'accepted-revision-1',
+        laneOrdinal: 2,
+        laneTitle: 'Handler is only descriptive text',
+        specification: 'This specification mentions Handler but has no activation.',
+      },
+      {
+        workUnitId: 'unit-eligible',
+        materializationId: 'materialization-1',
+        workSliceId: 'slice-1',
+        acceptedRevisionId: 'accepted-revision-1',
+        laneOrdinal: 3,
+        laneTitle: 'Eligible responsibility',
+        specification: 'Eligible specification.',
+        handlerActivation: {
+          attemptId: 'handler-attempt-eligible',
+          eligibilityState: 'eligible',
+          requestedAt: '2026-08-02T00:01:00Z',
+        },
+      },
+      {
+        workUnitId: 'unit-prepared',
+        materializationId: 'materialization-1',
+        workSliceId: 'slice-1',
+        acceptedRevisionId: 'accepted-revision-1',
+        laneOrdinal: 4,
+        laneTitle: 'Prepared responsibility',
+        specification: 'Prepared specification.',
+        handlerActivation: {
+          attemptId: 'handler-attempt-prepared',
+          eligibilityState: 'eligible',
+          requestedAt: '2026-08-02T00:01:00Z',
+          handlerInvocationPreparedAt: '2026-08-02T00:01:06Z',
+        },
+      },
+      {
+        workUnitId: 'unit-requested',
+        materializationId: 'materialization-1',
+        workSliceId: 'slice-1',
+        acceptedRevisionId: 'accepted-revision-1',
+        laneOrdinal: 5,
+        laneTitle: 'Launch-requested responsibility',
+        specification: 'Launch-requested specification.',
+        handlerActivation: {
+          attemptId: 'handler-attempt-requested',
+          eligibilityState: 'eligible',
+          requestedAt: '2026-08-02T00:01:00Z',
+          handlerInvocationPreparedAt: '2026-08-02T00:01:06Z',
+          launchRequestedAt: '2026-08-02T00:01:08Z',
+        },
+      },
     ];
     value.workUnitRelationships = [
       {
@@ -190,7 +244,14 @@ describe('Work Slice Planner boundary disclosure', () => {
         fromId: 'sprint-fixture',
         toId: 'slice-1',
       },
-      ...['unit-root', 'unit-dependent'].flatMap((workUnitId, ordinal) => [
+      ...[
+        'unit-root',
+        'unit-dependent',
+        'unit-descriptive-handler',
+        'unit-eligible',
+        'unit-prepared',
+        'unit-requested',
+      ].flatMap((workUnitId, ordinal) => [
         {
           relationshipId: `lane-${ordinal}`,
           materializationId: 'materialization-1',
@@ -221,11 +282,41 @@ describe('Work Slice Planner boundary disclosure', () => {
         nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(value)),
       ).epics[0]!.sprints[0]!,
     );
+    const workUnits = workspace.revisionViews[0]!.workUnits.map((workUnit) =>
+      workUnit.workUnitId === 'unit-descriptive-handler'
+        ? { ...workUnit, details: 'Handler appears only in display prose.' }
+        : workUnit,
+    );
+    expect(
+      workUnits.find(({ workUnitId }) => workUnitId === 'unit-descriptive-handler'),
+    ).not.toHaveProperty('handlerActivation');
+    expect(workUnits.find(({ workUnitId }) => workUnitId === 'unit-root')).toMatchObject({
+      handlerActivation: {
+        eligibilityState: 'eligible',
+        stage: 'handler_ready',
+        providerActivityObserved: true,
+      },
+    });
+    expect(workUnits.find(({ workUnitId }) => workUnitId === 'unit-dependent')).toMatchObject({
+      handlerActivation: {
+        eligibilityState: 'blocked',
+        blockedReason: 'prerequisite_satisfaction_not_authoritative',
+      },
+    });
+    expect(workUnits.find(({ workUnitId }) => workUnitId === 'unit-eligible')).toMatchObject({
+      handlerActivation: { eligibilityState: 'eligible', stage: 'eligible_not_prepared' },
+    });
+    expect(workUnits.find(({ workUnitId }) => workUnitId === 'unit-prepared')).toMatchObject({
+      handlerActivation: { eligibilityState: 'eligible', stage: 'invocation_prepared' },
+    });
+    expect(workUnits.find(({ workUnitId }) => workUnitId === 'unit-requested')).toMatchObject({
+      handlerActivation: { eligibilityState: 'eligible', stage: 'launch_requested' },
+    });
 
     render(
       <WorkSlicePlannerBoundary
         sprint={{ ...workspace.sprint, sprintRunnerTransition: transition }}
-        workUnits={workspace.revisionViews[0]!.workUnits}
+        workUnits={workUnits}
       />,
     );
 
@@ -239,6 +330,16 @@ describe('Work Slice Planner boundary disclosure', () => {
     expect(activity).toHaveTextContent(
       'Handler activation blocked: prerequisite_satisfaction_not_authoritative.',
     );
+    expect(activity).toHaveTextContent(
+      'Eligible responsibility: Handler activation is eligible but not yet prepared.',
+    );
+    expect(activity).toHaveTextContent(
+      'Prepared responsibility: Handler invocation prepared; launch is not yet recorded.',
+    );
+    expect(activity).toHaveTextContent(
+      'Launch-requested responsibility: Handler launch requested; acceptance is not yet recorded.',
+    );
+    expect(activity).not.toHaveTextContent('Handler is only descriptive text');
     expect(activity).not.toHaveTextContent(
       /Implementer|Handler review|implementation output|retry attempt|application acceptance|Sprint continuation/,
     );

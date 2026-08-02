@@ -2,7 +2,10 @@ import type { EpicPlanProposalSnapshot } from './epicPlanProposal';
 import { AGENT_CONTROL_CONTRACTS_V1 } from './agentControl';
 import { ARTIFACT_ACCESS_CONTRACTS_V1 } from './artifactAccess';
 import { ORCHESTRATION_EVENTS_V1 } from './orchestrationEvents';
-import type { ProductReadCompositionInputV1 } from './productReadModels';
+import type {
+  ProductReadCompositionInputV1,
+  ProductWorkUnitHandlerActivationV1,
+} from './productReadModels';
 
 export const ORCHESTRATION_NATIVE_QUERY_V2 = 'orchestration-native-query/v2' as const;
 
@@ -56,7 +59,7 @@ export interface NativeWorkUnitHandlerActivationV1 {
   readonly handlerHarnessRevisionId?: string;
   readonly handlerHarnessConfigurationDigest?: string;
   readonly handlerHarnessRepositoryCommitRef?: string;
-  readonly eligibilityState?: 'blocked' | 'eligible';
+  readonly eligibilityState: 'blocked' | 'eligible';
   readonly blockedReason?: string;
   readonly requestedAt?: string;
   readonly authorizedAt?: string;
@@ -524,6 +527,9 @@ export function nativeQueryProductCompositionInputV2(
         summary: unit.specification,
         details: `Accepted Work Slice revision ${unit.acceptedRevisionId}; lane ${unit.laneOrdinal + 1}.${handlerActivationDetail(unit.handlerActivation)}`,
         source: source(unit.materializationId),
+        ...(unit.handlerActivation
+          ? { handlerActivation: handlerActivationPresentation(unit.handlerActivation) }
+          : {}),
       })),
       gates: [],
       concerns: [],
@@ -614,6 +620,27 @@ function handlerActivationDetail(activation: NativeWorkUnitHandlerActivationV1 |
   if (activation.handlerInvocationPreparedAt)
     return ` Handler invocation prepared; launch is not yet recorded.${providerObservation}`;
   return ` Handler activation is eligible but not yet prepared.${providerObservation}`;
+}
+
+function handlerActivationPresentation(
+  activation: NativeWorkUnitHandlerActivationV1,
+): ProductWorkUnitHandlerActivationV1 {
+  if (activation.eligibilityState === 'blocked') {
+    return { eligibilityState: 'blocked', blockedReason: activation.blockedReason! };
+  }
+  return {
+    eligibilityState: 'eligible',
+    stage: activation.handlerReadyAt
+      ? 'handler_ready'
+      : activation.launchAcceptedAt
+        ? 'launch_accepted'
+        : activation.launchRequestedAt
+          ? 'launch_requested'
+          : activation.handlerInvocationPreparedAt
+            ? 'invocation_prepared'
+            : 'eligible_not_prepared',
+    providerActivityObserved: Boolean(activation.providerActivationObservedAt),
+  };
 }
 
 const draft = (value: unknown): NativePlanningDraftV1 => {
@@ -1057,11 +1084,9 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
   const optional = (key: keyof typeof x) =>
     x[key] === undefined ? undefined : string(x[key], key);
   const eligibilityState: NativeWorkUnitHandlerActivationV1['eligibilityState'] =
-    x.eligibilityState === undefined
-      ? undefined
-      : x.eligibilityState === 'blocked' || x.eligibilityState === 'eligible'
-        ? x.eligibilityState
-        : fail('invalid Handler eligibility state');
+    x.eligibilityState === 'blocked' || x.eligibilityState === 'eligible'
+      ? x.eligibilityState
+      : fail('invalid Handler eligibility state');
   const blockedReason = optional('blockedReason');
   if (eligibilityState === 'blocked' && !blockedReason)
     fail('blocked Handler activation requires a reason');
@@ -1082,7 +1107,7 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
     ...(optional('handlerHarnessRepositoryCommitRef')
       ? { handlerHarnessRepositoryCommitRef: optional('handlerHarnessRepositoryCommitRef') }
       : {}),
-    ...(eligibilityState ? { eligibilityState } : {}),
+    eligibilityState,
     ...(blockedReason ? { blockedReason } : {}),
     ...(optional('requestedAt') ? { requestedAt: optional('requestedAt') } : {}),
     ...(optional('authorizedAt') ? { authorizedAt: optional('authorizedAt') } : {}),

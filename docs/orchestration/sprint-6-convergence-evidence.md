@@ -273,9 +273,9 @@ strict native-query correction `974ee2c`. The audit used this detached-worktree 
 ### HA-01 correction: approved Work Unit activity projection
 
 - The approved `WorkSlicePlannerBoundary` now receives only the already-composed current Work Unit
-  presentation view. It renders Handler activity from those authoritative details; JSX does not
-  query Tauri or reconstruct activation state. With no activation detail it keeps the
-  materialization-only statement, “No Handler activation is recorded.”
+  presentation view. It renders Handler activity from an explicit typed activation projection;
+  JSX does not query Tauri, parse display prose, or reconstruct activation state. With no typed
+  activation it keeps the materialization-only statement, “No Handler activation is recorded.”
 - The native-query projection states Handler launch acceptance and application Handler readiness
   together, while provider activity remains a separate observation. It also keeps eligible,
   prepared, launch-requested, and dependency-blocked states distinct. A blocked dependent shows
@@ -299,3 +299,27 @@ strict native-query correction `974ee2c`. The audit used this detached-worktree 
   only). Broader mixed baseline/candidate drift was not reformatted. `git diff --check` passed.
   This evidence remains local and deterministic; no live-provider compliance, lifecycle/outcome,
   human observation, process reattachment, Implementer activity, or downstream result is claimed.
+
+### HA-01 correction: typed Handler activity state
+
+- `NativeMaterializedWorkUnitV1.handlerActivation` now maps to an explicit typed Work Unit
+  presentation field through native composition, the product read model, and the Sprint workspace
+  projection. The field represents only `blocked` with its exact durable reason, or `eligible`
+  with one of `eligible_not_prepared`, `invocation_prepared`, `launch_requested`,
+  `launch_accepted`, or `handler_ready`, plus a separate invocation-correlated provider-activity
+  observation boolean. It intentionally omits runtime routes, authority, and immutable binding
+  control values.
+- The Planner boundary uses only that typed field to decide whether activity exists and which
+  wording to render. Display `details` remains readable context but cannot create, suppress, or
+  advance Handler state. The regression carries decoded native data through composition and
+  workspace projection, then proves a no-activation Work Unit whose title, specification, and
+  display details say “Handler” renders no Handler activity. It also proves ready/provider-observed,
+  dependency-blocked, eligible, prepared, and launch-requested state wording, with no Implementer
+  or downstream claim.
+- Latest validation: isolated focused native-query plus Sprint Workspace Vitest **2 files / 22
+  tests**, TypeScript, ESLint, production frontend build, and focused Prettier all passed. `cargo
+  check --manifest-path src-tauri/Cargo.toml`, named-file `rustfmt --check`, and `git diff --check`
+  passed; Cargo check retains only the existing dead-code warnings. The prior deterministic Rust
+  coordinator and immutable-Harness regressions remain passing evidence and were not changed by
+  this TypeScript-only state projection correction. No live/provider, human, Implementer, review,
+  outcome, settlement, or continuation claim is added.

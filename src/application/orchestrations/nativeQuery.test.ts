@@ -302,8 +302,22 @@ describe('orchestration native query v1', () => {
       { acceptedRevisionId: 'accepted-revision-1', stage: 'settled' },
     ]);
     expect(sprint.revisionViews[0]!.workUnits).toMatchObject([
-      { workUnitId: 'unit-1' },
-      { workUnitId: 'unit-2', dependencies: [{ workUnitId: 'unit-1' }] },
+      {
+        workUnitId: 'unit-1',
+        handlerActivation: {
+          eligibilityState: 'eligible',
+          stage: 'handler_ready',
+          providerActivityObserved: true,
+        },
+      },
+      {
+        workUnitId: 'unit-2',
+        dependencies: [{ workUnitId: 'unit-1' }],
+        handlerActivation: {
+          eligibilityState: 'blocked',
+          blockedReason: 'prerequisite_satisfaction_not_authoritative',
+        },
+      },
     ]);
     const input = nativeQueryProductCompositionInputV2(query);
     expect(input.referenceIndex.workUnits[0]!.details).toContain(
@@ -313,6 +327,14 @@ describe('orchestration native query v1', () => {
       'Provider activity observed separately',
     );
     expect(input.referenceIndex.workUnits[1]!.details).toContain('Handler activation blocked');
+
+    const missingEligibility = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (missingEligibility.workUnits as Array<Record<string, unknown>>)[0]!.handlerActivation = {
+      attemptId: 'handler-attempt-1',
+    };
+    expect(() => decodeOrchestrationNativeQueryV2(missingEligibility)).toThrow(
+      'invalid Handler eligibility state',
+    );
 
     (value.workUnitRelationships as Array<Record<string, unknown>>).push({
       relationshipId: 'duplicate-dependency',

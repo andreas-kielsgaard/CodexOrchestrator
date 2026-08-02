@@ -554,7 +554,9 @@ export function WorkSlicePlannerBoundary({
 }) {
   const transition = sprint.sprintRunnerTransition;
   const materializations = sprint.workUnitMaterializations ?? [];
-  const handlerActivityWorkUnits = workUnits.filter(({ details }) => details.includes(' Handler '));
+  const handlerActivityWorkUnits = workUnits.filter(
+    ({ handlerActivation }) => handlerActivation !== undefined,
+  );
   const createdWorkUnits = hasCreatedWorkUnits(sprint);
   if (!transition?.workSlicePlannerRequestId) return null;
   const stage = (label: string, recorded: boolean) => (
@@ -617,7 +619,7 @@ export function WorkSlicePlannerBoundary({
               <ul>
                 {handlerActivityWorkUnits.map((workUnit) => (
                   <li key={workUnit.workUnitId}>
-                    {workUnit.title}: {workUnit.details}
+                    {workUnit.title}: {handlerActivationActivityDetail(workUnit.handlerActivation!)}
                   </li>
                 ))}
               </ul>
@@ -631,6 +633,25 @@ export function WorkSlicePlannerBoundary({
       <small>{plannerObservationSummary(transition)}</small>
     </section>
   );
+}
+
+function handlerActivationActivityDetail(
+  activation: NonNullable<
+    SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['handlerActivation']
+  >,
+) {
+  if (activation.eligibilityState === 'blocked')
+    return `Handler activation blocked: ${activation.blockedReason}.`;
+  const providerObservation = activation.providerActivityObserved
+    ? ' Provider activity observed separately; no provider lifecycle, outcome, or acceptance is implied.'
+    : ' Provider activity is unobserved.';
+  return {
+    eligible_not_prepared: `Handler activation is eligible but not yet prepared.${providerObservation}`,
+    invocation_prepared: `Handler invocation prepared; launch is not yet recorded.${providerObservation}`,
+    launch_requested: `Handler launch requested; acceptance is not yet recorded.${providerObservation}`,
+    launch_accepted: `Handler launch accepted; application Handler readiness is not yet recorded.${providerObservation}`,
+    handler_ready: `Handler launch accepted and application Handler readiness recorded.${providerObservation}`,
+  }[activation.stage];
 }
 
 export function SprintRunnerActivationObservation({

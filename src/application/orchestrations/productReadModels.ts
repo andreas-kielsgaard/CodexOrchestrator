@@ -166,6 +166,7 @@ export interface ProductReadReferenceIndexV1 {
     readonly summary: string;
     readonly details: string;
     readonly source: ReadSourceAuthorityV1;
+    readonly handlerActivation?: ProductWorkUnitHandlerActivationV1;
   }[];
   readonly gates: readonly {
     readonly gateId: string;
@@ -254,6 +255,24 @@ export type ProductWorkUnitPresentationState =
   /** Recorded deferral remains explicit; it does not imply launch or progress. */
   | 'deferred';
 
+/** Durable Handler activation state for an already materialized Work Unit. */
+export type ProductWorkUnitHandlerActivationV1 =
+  | Readonly<{
+      readonly eligibilityState: 'blocked';
+      readonly blockedReason: string;
+    }>
+  | Readonly<{
+      readonly eligibilityState: 'eligible';
+      readonly stage:
+        | 'eligible_not_prepared'
+        | 'invocation_prepared'
+        | 'launch_requested'
+        | 'launch_accepted'
+        | 'handler_ready';
+      /** Invocation-correlated observation, never provider compliance or lifecycle. */
+      readonly providerActivityObserved: boolean;
+    }>;
+
 export interface ProductContinuationReadModelV1 {
   readonly level: 'sprint' | 'epic';
   readonly policy: Readonly<{
@@ -323,6 +342,7 @@ export interface ProductSprintRevisionViewV1 {
     readonly summary: string;
     readonly details: string;
     readonly source: ReadSourceAuthorityV1;
+    readonly handlerActivation?: ProductWorkUnitHandlerActivationV1;
     readonly workUnitScopeId: string;
     readonly sprintPlanRevisionId: string;
     readonly fixedExecutionScopeIds: readonly string[];
