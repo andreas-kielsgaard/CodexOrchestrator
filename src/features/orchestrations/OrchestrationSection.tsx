@@ -8,6 +8,7 @@ import {
   type ArtifactAccessController,
   SprintAutomaticContinuationPolicyController,
   EpicAutomaticContinuationPolicyController,
+  type EpicPauseRestartController,
 } from '../../application/orchestrations';
 import './styles/orchestrationSection.css';
 import type { EpicPlanningDraftSummary } from '../../application/orchestrations';
@@ -20,6 +21,7 @@ export interface OrchestrationSectionProps {
   readonly artifactAccessController?: ArtifactAccessController;
   readonly sprintAutomaticContinuationPolicyController?: SprintAutomaticContinuationPolicyController;
   readonly epicAutomaticContinuationPolicyController?: EpicAutomaticContinuationPolicyController;
+  readonly epicPauseRestartController?: EpicPauseRestartController;
   readonly onPlanEpic?: () => void;
   readonly planningDrafts?: readonly EpicPlanningDraftSummary[];
   readonly onOpenPlanningDraft?: (draft: EpicPlanningDraftSummary) => void;
@@ -34,6 +36,7 @@ export function OrchestrationSection({
   artifactAccessController = unsupportedArtifactAccessController,
   sprintAutomaticContinuationPolicyController,
   epicAutomaticContinuationPolicyController,
+  epicPauseRestartController,
   onPlanEpic,
   planningDrafts = [],
   onOpenPlanningDraft,
@@ -52,6 +55,7 @@ export function OrchestrationSection({
         artifactAccessController={artifactAccessController}
         sprintAutomaticContinuationPolicyController={sprintAutomaticContinuationPolicyController}
         epicAutomaticContinuationPolicyController={epicAutomaticContinuationPolicyController}
+        epicPauseRestartController={epicPauseRestartController}
         selectedSprintId={workspace.sprintId}
         selectedRevisionId={workspace.selectedRevisionId}
         detailLocation={workspace.detailLocation}

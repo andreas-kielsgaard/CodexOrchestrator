@@ -62,6 +62,8 @@ pub(crate) struct BootstrapTransitionTauriState {
 pub(crate) struct SprintRunnerTransitionTauriState {
     service: Arc<SprintRunnerTransitionService>,
 }
+pub(crate) struct EpicPauseRestartTauriState { service: Arc<super::epic_pause_restart::EpicPauseRestartService> }
+impl EpicPauseRestartTauriState { pub(crate) fn new(service: Arc<super::epic_pause_restart::EpicPauseRestartService>) -> Self { Self { service } } }
 impl SprintRunnerTransitionTauriState {
     pub(crate) fn new(service: Arc<SprintRunnerTransitionService>) -> Self {
         Self { service }
@@ -359,6 +361,16 @@ pub(crate) fn load_orchestration_native_query(
 ) -> Result<NativeQueryV2, String> {
     state.application.native_query()
 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RequestEpicPauseRestartInput { epic_id: String }
+#[tauri::command]
+pub(crate) fn request_epic_pause(state: State<'_, EpicPauseRestartTauriState>, input: RequestEpicPauseRestartInput) -> Result<super::epic_pause_restart::EpicControlOutcome, String> { state.service.request(&input.epic_id, "pause") }
+#[tauri::command]
+pub(crate) fn request_epic_restart(state: State<'_, EpicPauseRestartTauriState>, input: RequestEpicPauseRestartInput) -> Result<super::epic_pause_restart::EpicControlOutcome, String> { state.service.request(&input.epic_id, "restart") }
+#[tauri::command]
+pub(crate) fn load_epic_pause_restart_query(state: State<'_, EpicPauseRestartTauriState>, input: RequestEpicPauseRestartInput) -> Result<super::epic_pause_restart::EpicControlQuery, String> { state.service.query(&input.epic_id) }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

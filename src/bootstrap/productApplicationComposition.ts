@@ -4,6 +4,7 @@ import {
   unsupportedProductSprintAutomaticContinuationPolicyController,
   unsupportedProductEpicAutomaticContinuationPolicyController,
 } from '../application/orchestrations';
+import { createTauriEpicPauseRestartController } from '../infrastructure/orchestrations/tauriEpicPauseRestart';
 import type { AppProps } from '../app/App';
 import { tauriAgentSessionClient } from '../infrastructure/agentSessions/tauriAgentSessionClient';
 import { invoke } from '@tauri-apps/api/core';
@@ -45,6 +46,7 @@ export function createProductApplicationComposition(): AppProps {
       unsupportedProductSprintAutomaticContinuationPolicyController,
     epicAutomaticContinuationPolicyController:
       unsupportedProductEpicAutomaticContinuationPolicyController,
+    epicPauseRestartController: createTauriEpicPauseRestartController(),
     epicPlanningDraftLifecycleClient: createTauriEpicPlanningDraftLifecycleClient(
       invoke,
       tauriOrchestrationNativeQueryClient,

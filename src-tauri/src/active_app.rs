@@ -18,6 +18,7 @@ struct ManagedPlanBuilderNotifier {
         >,
     >,
     sprint_transition: Arc<Mutex<Option<Weak<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>>>>,
+    epic_controls: Arc<Mutex<Option<Weak<crate::orchestration::epic_pause_restart::EpicPauseRestartService>>>>,
 }
 impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBuilderNotifier {
     fn notify(
@@ -46,12 +47,15 @@ impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBui
             .clone().and_then(|service| service.upgrade())
             .map(|service| service.on_agent_notification(&notification))
             .transpose().err().map(|error| error.to_string());
+        let epic_control_error = self.epic_controls.lock()
+            .map_err(|_| "Epic control notification registry is unavailable".to_string())?
+            .clone().and_then(|service| service.upgrade())
+            .map(|service| service.on_agent_notification(&notification))
+            .transpose().err().map(|error| error.to_string());
         let inner_error = self.inner.notify(notification).err();
-        match (transition_error, sprint_transition_error, inner_error) {
-            (None, None, None) => Ok(()),
-            (Some(error), None, None) | (None, Some(error), None) | (None, None, Some(error)) => Err(error),
-            (transition, sprint, inner) => Err([transition, sprint, inner].into_iter().flatten().collect::<Vec<_>>().join("; ")),
-        }
+        let errors = [transition_error, sprint_transition_error, epic_control_error, inner_error]
+            .into_iter().flatten().collect::<Vec<_>>();
+        if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
     }
 }
 
@@ -85,6 +89,7 @@ pub(crate) fn run() {
                 Arc::new(crate::orchestration::application::ManagedPlanBuilderRegistry::default());
             let transition_notification = Arc::new(Mutex::new(None));
             let sprint_transition_notification = Arc::new(Mutex::new(None));
+            let epic_control_notification = Arc::new(Mutex::new(None));
             let notifier: Arc<dyn crate::agent_sessions::application::AgentSessionNotifier> =
                 Arc::new(ManagedPlanBuilderNotifier {
                     inner: Arc::new(
@@ -95,6 +100,7 @@ pub(crate) fn run() {
                     registry: registry.clone(),
                     transition: transition_notification.clone(),
                     sprint_transition: sprint_transition_notification.clone(),
+                    epic_controls: epic_control_notification.clone(),
                 });
             let providers =
                 Arc::new(crate::agent_sessions::application::SystemAgentSessionProviders);
@@ -168,6 +174,12 @@ pub(crate) fn run() {
             sprint_runners
                 .reconcile_startup()
                 .map_err(|error| error.to_string())?;
+            let epic_controls = crate::orchestration::epic_pause_restart::EpicPauseRestartService::open(
+                &database_path, application.clone(),
+            )?;
+            *epic_control_notification.lock().map_err(|_| "Epic control notification registry is unavailable")? = Some(Arc::downgrade(&epic_controls));
+            epic_controls.reconcile_startup()?;
+            app.manage(crate::orchestration::transport::EpicPauseRestartTauriState::new(epic_controls));
             app.manage(
                 crate::orchestration::transport::BootstrapTransitionTauriState::new(
                     transition,
@@ -272,6 +284,9 @@ pub(crate) fn run() {
             crate::orchestration::transport::request_epic_initiation_confirmation,
             crate::orchestration::transport::resolve_epic_initiation_confirmation,
             crate::orchestration::transport::load_orchestration_native_query,
+            crate::orchestration::transport::request_epic_pause,
+            crate::orchestration::transport::request_epic_restart,
+            crate::orchestration::transport::load_epic_pause_restart_query,
             crate::orchestration::transport::load_scoped_file_review,
             crate::orchestration::transport::request_contextual_file_review,
             crate::orchestration::transport::load_epic_bootstrap_transition_query,

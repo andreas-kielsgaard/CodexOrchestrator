@@ -36,6 +36,7 @@ import {
 } from './orchestrationPresentation';
 import { useOrchestrationLoad } from './useOrchestrationLoad';
 import type { ManagedPlanBuilderSessionClient } from '../infrastructure/orchestrations/tauriManagedPlanBuilderSessionClient';
+import type { EpicPauseRestartController } from '../application/orchestrations';
 import { useEpicInitiationConfirmation } from './useEpicInitiationConfirmation';
 import { EpicInitiationConfirmationModal } from './EpicInitiationConfirmationModal';
 import type { AgentSessionProductLocation } from '../application/agentSessionNavigation';
@@ -67,6 +68,7 @@ export interface AppProps {
     draftId: string,
   ) => Promise<EpicInitiationCapability>;
   readonly epicPlanningDraftLifecycleClient?: EpicPlanningDraftLifecycleClient;
+  readonly epicPauseRestartController?: EpicPauseRestartController;
   readonly epicPlanProposalSourceForDraft?: (draftId: string) => EpicPlanProposalSource;
   readonly epicInitiationConfirmationClient?: EpicInitiationConfirmationClient;
   readonly agentSessionHarnessManagementSource?: ConversationHarnessManagementSource;
@@ -101,6 +103,7 @@ export function App({
   epicInitiationCapability = unavailableEpicInitiationCapability,
   epicInitiationCapabilityForDraft,
   epicPlanningDraftLifecycleClient,
+  epicPauseRestartController,
   epicPlanProposalSourceForDraft,
   epicInitiationConfirmationClient,
   agentSessionHarnessManagementSource,
@@ -491,6 +494,7 @@ export function App({
           artifactAccessController={artifactAccessController}
           sprintAutomaticContinuationPolicyController={sprintAutomaticContinuationPolicyController}
           epicAutomaticContinuationPolicyController={epicAutomaticContinuationPolicyController}
+          epicPauseRestartController={epicPauseRestartController}
           planningDrafts={planningDrafts}
           onOpenDraft={(draft) => {
             setSelectedDraft({
@@ -541,6 +545,7 @@ function OrchestrationSurface({
   artifactAccessController,
   sprintAutomaticContinuationPolicyController,
   epicAutomaticContinuationPolicyController,
+  epicPauseRestartController,
   onPlanEpic,
   planningDrafts,
   onOpenDraft,
@@ -554,6 +559,7 @@ function OrchestrationSurface({
   readonly artifactAccessController: ArtifactAccessController;
   readonly sprintAutomaticContinuationPolicyController?: SprintAutomaticContinuationPolicyController;
   readonly epicAutomaticContinuationPolicyController?: EpicAutomaticContinuationPolicyController;
+  readonly epicPauseRestartController?: EpicPauseRestartController;
   readonly onPlanEpic: () => void;
   readonly planningDrafts: readonly EpicPlanningDraftSummary[];
   readonly onOpenDraft: (draft: EpicPlanningDraftSummary) => void;
@@ -569,6 +575,7 @@ function OrchestrationSurface({
         artifactAccessController={artifactAccessController}
         sprintAutomaticContinuationPolicyController={sprintAutomaticContinuationPolicyController}
         epicAutomaticContinuationPolicyController={epicAutomaticContinuationPolicyController}
+        epicPauseRestartController={epicPauseRestartController}
         onPlanEpic={onPlanEpic}
         planningDrafts={planningDrafts}
         onOpenPlanningDraft={onOpenDraft}

@@ -18,6 +18,8 @@ import type {
   SprintAutomaticContinuationPolicyController,
   EpicAutomaticContinuationPolicyController,
 } from '../../../application/orchestrations';
+import type { EpicPauseRestartController } from '../../../application/orchestrations';
+import { EpicPauseRestartControl } from './EpicPauseRestartControl';
 import type { ContextualFileReviewResult } from '../../../application/contextualFileReview';
 
 export interface EpicDetailProps {
@@ -26,6 +28,7 @@ export interface EpicDetailProps {
   readonly artifactAccessController: ArtifactAccessController;
   readonly sprintAutomaticContinuationPolicyController?: SprintAutomaticContinuationPolicyController;
   readonly epicAutomaticContinuationPolicyController?: EpicAutomaticContinuationPolicyController;
+  readonly epicPauseRestartController?: EpicPauseRestartController;
   readonly selectedSprintId: string | null;
   readonly selectedRevisionId: string | null;
   readonly detailLocation: SprintWorkspaceDetailLocation;
@@ -44,6 +47,7 @@ export function EpicDetail({
   artifactAccessController,
   sprintAutomaticContinuationPolicyController,
   epicAutomaticContinuationPolicyController,
+  epicPauseRestartController,
   selectedSprintId,
   selectedRevisionId,
   detailLocation,
@@ -107,12 +111,7 @@ export function EpicDetail({
         backLabel="Back to Epics"
         onBack={onBack}
         control={
-          epic.continuation ? (
-            <ContinuationControl
-              continuation={epic.continuation}
-              controller={epicAutomaticContinuationPolicyController}
-            />
-          ) : null
+          <>{epic.continuation ? <ContinuationControl continuation={epic.continuation} controller={epicAutomaticContinuationPolicyController} /> : null}<EpicPauseRestartControl epicId={epic.id} controller={epicPauseRestartController} /></>
         }
         context={
           <>

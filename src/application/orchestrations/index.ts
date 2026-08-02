@@ -44,6 +44,7 @@ export {
   type SprintAgentControlController,
   type EpicAgentControlController,
 } from './agentControlController';
+export { decodeEpicPauseRestartQuery, unsupportedEpicPauseRestartController, type EpicControlRead, type EpicPauseRestartController, type EpicPauseRestartOutcome, type EpicPauseRestartQuery } from './epicPauseRestart';
 export {
   ARTIFACT_ACCESS_CONTRACTS_V1,
   projectArtifactAccessOutcome,
