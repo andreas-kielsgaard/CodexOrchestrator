@@ -1,166 +1,161 @@
 ---
 name: orchestration-next-work-planner
-description: Run a forked next-work planner for an active orchestration run. Use when a root orchestrator creates a planner fork after intake refresh; report readiness for the planner prompt, decide executable work, use work-slice delegation directly for a single slice or fork planner-owned delegation paths for parallel slices, track launched slices, and route ordinary batch settlement to record-root material with a callback route rather than direct root reporting.
+description: Coordinate one bounded Sprint from current evidence through accepted Work Units and closure. Use when an Epic owner supplies a Sprint objective and the task must build the complete Sprint plan, identify concerns and ambiguities, define dependencies, parallel lanes and gates, launch and review ready Work Units, revise after outcomes, audit convergence, and return the Sprint result.
 ---
 
-# Orchestration Next Work Planner
+# Sprint Runner
 
-## Role
+Coordinate one bounded Sprint. Plan and review the work; do not implement Work Units yourself.
 
-Run as a forked planner thread for the root orchestrator during an active orchestration. Decide what executable work should happen next, own delegation for accepted work without returning to the root for approval, track the planned batch, and route settled batch state into record-root material with a callback route.
+## Startup
 
-This skill does not build the high-level orchestration plan. Use `orchestration-plan-builder` for raw strategic input and problem architecture before orchestration starts.
+When bootstrapped before receiving the Sprint assignment, orient to the supplied task context, report `READY_FOR_PLANNER_PROMPT`, and end the turn.
 
-This is an ad-hoc planning role in the current Codex development workflow, not the product's future Planner or Work Unit model.
+Begin after receiving the Sprint objective, current state, authority, boundaries, sources, and return routes.
 
-Do not wait for the root to accept ordinary next-work decisions. The planner owns its batch.
+## Keep the plan truthful
 
-Directly ask the human when a concrete decision or resource is required. If the orchestration objective appears complete, report completion and stop the batch.
+At minimum distinguish:
 
-For one selected immediate slice, continue this planner thread with `work-slice-delegation` and stage one independent worker root from there. For multiple independent immediate slices, fork this planner thread once per parallel slice and prompt each fork to use `work-slice-delegation` for exactly one slice. Do not fork for a single slice.
+- a Sprint concern that must be resolved;
+- a consequential decision or evidence gate;
+- a projected Work Unit that may change before launch;
+- an actual Work Unit with a real task id;
+- an implementation, review, and correction cycle within that Work Unit; and
+- an accepted outcome that contributes evidence to Sprint completion.
 
-When needed, read the applicable files under `../_shared-skill-concepts/`: `ownership.md`, `owner-liveness.md`, `context-routing.md`, `work-route-vs-content-dependency.md`, and `reporting-flow.md`.
+Keep planned, ready, requested, active, observed, reviewed, accepted, superseded, and deferred facts distinct. A prompt or prepared handoff is not an observed launch, and accepted Work Units alone do not prove the Sprint objective is complete.
 
-Apply the shared reasoning-routing and naming concepts when starting delegation continuations, planner forks, and worker roots. Omit model overrides unless the human explicitly requested a model.
+## 1. Orient from evidence
 
-Delegation startup uses this planner thread for a single slice and planner-thread forks for parallel slices. When the needed thread action is unavailable, produce the exact `work-slice-delegation` continuation or fork prompt, mark the slice `waiting-on-tool`, and wait for a usable thread path before launch.
+Inspect the named sources, repository and worktree state, relevant code and tests, accepted decisions, prior Work Unit outcomes, blockers, and gates. Verify material claims before planning from them.
 
-## Startup Readiness
+Record the planning revision, evidence baseline, accepted assumptions, material uncertainty, and changes since any prior revision.
 
-When first bootstrapped by the root, do not begin planning from partial context. Orient to the forked thread, inherited or supplied skill context capsule, and shared concepts, then report:
+## 2. Define the Sprint frame
 
-```text
-READY_FOR_PLANNER_PROMPT
-```
+State the objective and intended movement, completion or re-evaluation condition, authority boundaries, non-goals, and invariants every Work Unit must preserve.
 
-Then wait for the root's actual planner prompt. The root should not manually probe for readiness; readiness must be reported proactively.
+Use this frame to keep adjacent later-Sprint work out of the plan.
 
-## Inputs
+## 3. Build the problem map
 
-Expect:
+Decompose the Sprint into concerns before proposing execution. For each concern capture:
 
-- current objective and project scope
-- problem map and participating repo roles
-- latest intake-refresh summary
-- active workers or branches
-- relevant roadmap or phase state
-- constraints, blockers, and human preferences
+- a stable id and title;
+- why it matters and evidence that it exists;
+- expected resolution evidence;
+- parent or coupled concerns where relevant;
+- current uncertainty; and
+- the Work Units or decisions likely to address it.
 
-If available, create or update a compact thread-relationship `sub-agent-context` record keyed by this planner thread id for compaction recovery. Do not store the planning payload, reasoning, or project context there.
+Prefer a small hierarchy of meaningful concerns over a file list, profession split, or deep taxonomy.
 
-## Next-Work Planning Rules
+## 4. Assess planning characteristics
 
-Be decisive. Return a recommended course of action, not a menu of equally weighted options.
+For each concern, assess how well the outcome is defined, implementation complexity, risk or blast radius, reversibility, available verification, and suitable work mode such as executable, design-reasoning, exploration, integration, or similar.
 
-Identify:
+Use that assessment to choose sequencing, gates, model, and reasoning for each Work Unit.
 
-- the next useful slice
-- the repo route for each next slice: change-target repo, starting cwd/worktree, read-only context repos, and repos that must not be edited
-- independent slices that can be staged in parallel
-- dependent slices that must wait
-- required review, merge, or record-maintenance steps
-- whether `phase-completion-audit` is appropriate
-- whether human intervention is needed now
+## 5. Reduce ambiguity before launch
 
-If a direction is blocked or parked, choose one:
+Identify choices that could materially change product behavior, scope, architecture, sequencing, acceptance, or expensive rework. Leave ordinary implementation judgment with the Work Unit.
 
-- give a clear alternate path and explain why it preserves the objective
-- ask the human for a concrete decision or resource
-- recommend stopping the workflow until the blocker is resolved
+For each consequential ambiguity record the question, significance, known options, evidence available now, evidence still needed, latest safe decision point, owner, and status. Classify whether it should be resolved upfront, after named evidence, through experience of produced behavior, or locally within delegated authority.
 
-Do not silently work around a blocked tool, missing access, or unresolved product decision forever.
+Batch compatible human decisions before execution. In an authorized autonomous Sprint, make reversible in-scope choices and record them; return reserved or irreversible choices through the supplied human route.
 
-## Context Propagation
+## 6. Design Work Units
 
-Route discoveries by audience using `../_shared-skill-concepts/context-routing.md`.
+Bundle work by coherent outcome and review boundary rather than file, layer, or profession.
 
-Do not send ordinary planner decisions or completion summaries directly to the root. Put slice-specific source files, repo routing, validation, constraints, and worker-facing discoveries in delegation handoff payloads and use those payloads when starting `work-slice-delegation` sub-agents. Route settled planner-batch state, sourced decisions, active slice ownership, stale-plan triggers, and future refresh cues into record-root/record-maintainer material so root can ingest them through intake refresh.
+Define for every Work Unit:
 
-When routing planner-batch settlement to the record root, include this planner thread id or notification route and request a compact record-settled callback. After sending the record update request, mark the batch `waiting-on-record-callback` and wait for the record root or maintainer to poke this planner back. Do not poll record files to decide whether maintenance finished.
+- stable id and title;
+- concerns addressed and rationale;
+- objective and expected outcome;
+- scope, deliverables, and acceptance criteria;
+- context and sources the task needs;
+- invariants, constraints, authority, and explicit non-goals;
+- risks and governing decisions;
+- dependencies and evaluation gates;
+- broad validation-placement clues;
+- planned model and reasoning; and
+- callback and result destination.
 
-## Validation Allocation
+Separate exploration from implementation when a question must produce evidence before a product choice is safe.
 
-Use `../_shared-skill-concepts/validation-scope.md` when selecting and sequencing work.
+Indicate only where validation broadly belongs in the sequence. Let the Work Unit choose its tests, commands, checks, and method. Deferring later integration validation does not defer the Work Unit's implementation, deliverables, or local acceptance criteria; name the later validation owner.
 
-Pass broad validation-placement clues to each slice and let its worker choose the validation. A validation deferral never moves implementation or acceptance scope. Name the later owner when validation is deferred.
+## 7. Map execution
 
-## Delegation And Completion Tracking
+Create:
 
-After deciding an immediate batch:
+1. a concern-to-Work-Unit map explaining what each execution is intended to resolve;
+2. a dependency map showing hard requirements, preferred sequencing, parallel lanes, evaluation gates, and convergence; and
+3. a sequence overview with Work Unit, concern, model, reasoning, dependencies, and work mode.
 
-1. Keep a concise planning decision capsule in this planner thread and, when useful, in record-root material. Do not ask root to approve ordinary next-work decisions.
-2. For a single immediate slice, continue this planner thread with `work-slice-delegation`. For multiple parallel slices, fork this planner thread once per slice, set a role/slice title when tooling supports it, and prompt each fork to use `work-slice-delegation`. Request `thinking: medium` by default or `thinking: high` when prompt scope, repo boundaries, or content dependencies are subtle.
-3. Instruct each delegation path to start the independent worker root, preserve the source planner thread id and any planner fork id, and pass a compact skill context capsule for the worker and delegation-stage path.
-4. Require each work-slice reporter to notify this planner fork when the slice is complete, blocked, signed off without merge, or abandoned, and to distinguish delivery from receiver-activation evidence.
-5. Track launched slices until all are complete, blocked, or escalated. A delegation path that merely produced a worker prompt or started a worker is still active until review, merge/sign-off, reporting, record-root handoff, and planner notification are settled.
-6. When all planned slices are settled, write or send a concise planner-batch settlement update to the root record thread/record maintainer. Include only state that affects future planning, sourced unresolved items, active ownership, and refresh cues, plus the planner callback route.
-7. Park the batch as `waiting-on-record-callback`. When the record root or maintainer callbacks with record-settled status and no slice sub-agent remains active, archive this planner fork when thread tooling supports it.
+Explain why parallel Work Units are sufficiently independent and identify shared integration surfaces. Show the first eligible packet and final convergence work explicitly.
 
-If the required continuation or planner fork is unavailable for any immediate slice, emit the complete `work-slice-delegation` prompt for that slice, keep the slice in `waiting-on-tool`, and include the missing thread action as planner-batch tracking. Resume by launching that exact prompt through the available thread path.
+## 8. Maintain the launch register
 
-Use one proactive owner notification rather than polling. A delivered callback does not prove that this planner started a turn. Keep the planner id, active owner id, and exact next stage in planner-batch tracking so the root's unattended liveness task can restart this existing route without rereading worker history or duplicating work. Escalate to interruption recovery only after a user-visible interruption or explicit request.
+End every planning revision with this operational index immediately before the concise summary:
 
-If a delegator cannot start the worker, message the worker for corrections, notify the planner, or route record-root material because tooling is unavailable in that turn, treat the slice as waiting-on-tool rather than complete. Perform the single missing mechanical action yourself when tooling is available, or record the exact missing action as record-root/recovery material. Do not replan or duplicate the worker.
+| Unit / gate | Expected work | Status | Reason |
+|---|---|---|---|
 
-When a worker or delegator reports a blocker, classify it before replanning:
+Include every projected or actual Work Unit and named gate in execution order. Keep superseded rows as history. Repair the register when it drifts from the detailed Work Unit specifications or recorded decisions.
 
-- `slice-blocking`: the needed work route is dirty/conflicting, content the slice genuinely depends on is unavailable, access is missing, validation failed, or scope is ambiguous.
-- `attention-only`: moving ref drift, remote default mismatch, stale branch label, or other state that does not prevent continuing from a clean route with the needed content.
+## 9. Produce the initial plan
 
-For `attention-only` route/ref drift, keep the existing slice owner and continue from the clean route or needed content. Do not create a duplicate slice or ask the root to re-accept the same work.
+Use this order:
 
-If a planned slice already has an active worker thread, treat that worker as the owner of the slice until it completes, is abandoned, or the planner explicitly cancels it. Do not instantiate another worker for the same slice.
+1. Sprint frame
+2. Evidence baseline and planning revision
+3. Problem map
+4. Planning-characteristic assessment
+5. Ambiguity register and upfront decision packet
+6. Concern-to-Work-Unit and dependency maps
+7. Sequence overview
+8. Parallel lanes and gates
+9. Detailed Work Unit specifications
+10. Evidence and validation map
+11. Risks and unresolved decisions
+12. Launch register
+13. Concise operational summary
 
-## Planner Fork Closure
+The summary states the objective, concern groups, execution lanes, first eligible Work Units, gates, resolved choices, and remaining decision points.
 
-Planner forks are working coordinators, not durable records. Keep them visible while they own active slices, blockers, downstream review/merge/report handoffs, record-callback waiting, or direct human-input requests. Once every launched slice is complete, blocked with human/record-root handoff, abandoned, or otherwise settled, and the record root or maintainer has sent the record-settled callback for batch settlement, archive the planner fork.
+Do not launch during the initial planning turn unless execution is already authorized.
 
-Do not archive before:
+## 10. Launch ready Work Units
 
-- active workers, review/merge/reconciliation/report stages, or record-root handoffs have settled
-- the planner has routed the batch outcome into record-root material and received the record-settled callback
-- any required human intervention has been clearly recorded or handed off
+At each launch point, recheck current evidence, dependencies, gates, baseline, and launch status. Refine the projected specification when material reality changed.
 
-If self-archiving is unavailable after callback, record that the planner is ready to archive as record-root/recovery material. Do not keep completed planner forks open as living records; the record root and slice reports own durable history.
+Create each ready Work Unit as a separate top-level task through the host harness and prompt it to use `work-unit`. Supply its fixed specification, repository or worktree route, required context, authority, boundaries, acceptance evidence, and this Sprint Runner's exact callback id. An internal collaboration subagent is not a Work Unit task.
 
-## Work Route Handoff Policy
+Launch all genuinely ready and independent units in the packet. Launch each Work Unit once. Require one proactive complete, blocked, or clarification callback; avoid polling and routine progress ingestion.
 
-Separate work route from content dependency using `../_shared-skill-concepts/work-route-vs-content-dependency.md`. In handoff payloads, name the route, any true content dependency, and whether drift is fatal or attention-only.
+## 11. Review and revise
 
-## Reasoning Guidance
+Review each returned result against its effective specification using `work-unit-review`. Inspect the cited artifacts and evidence; read the full child history only when its report is insufficient or contradictory.
 
-Use high reasoning by default. Use xhigh only when sequencing depends on tangled architecture, conflicting reports, or high-risk cross-branch decisions. Use medium only for simple next-slice selection after a clean intake.
+Accept the outcome, return a precise correction to the same Work Unit, request the reserved decision, or revise future work. Keep started Work Unit scope fixed unless an authorized correction changes its effective specification.
 
-## Output Contract
+When evidence changes the Sprint plan:
 
-Return:
+- preserve the prior planning revision and actual execution history;
+- record the triggering evidence and decision;
+- revise projected Work Units, eligibility, dependencies, models, reasoning, or gates;
+- supersede rather than erase obsolete projections; and
+- launch the next ready packet without returning ordinary in-Sprint choices to the Epic owner.
 
-- readiness report, when bootstrapped:
-  - `READY_FOR_PLANNER_PROMPT`
-- batch decision capsule:
-  - decision: proceed, wait, ask human, audit phase, review/merge, or stop
-  - rationale: brief decisive reasoning
-  - accepted assumptions to route into record-root material
-  - next accepted slice names, with parallel vs dependent marking
-  - blockers, lifecycle state, or direct human-input request
-  - stale-plan triggers
-  - continuation instruction: delegation launched, wait for human, refresh intake, audit phase, record-root update, objective complete, or stop
-- delegation handoff payloads:
-  - one payload per proposed slice
-  - source planner thread id, if known
-  - planner output reference or final-output location, if available
-  - slice title and why it matters now
-  - repo route: change-target repo, starting cwd/worktree, branch/worktree route, content dependency if any, read-only context repos, and no-edit repos
-  - route/ref drift policy: fatal gate or attention-only
-  - worker-prompt context and source materials
-  - guardrails and non-goals
-  - broad validation-placement clue and deferred-validation owner, if any
-  - context intentionally excluded from root
-- context routing:
-  - root-carry discoveries
-  - delegation-handoff discoveries
-  - worker-prompt discoveries
-  - record-root discoveries
-  - suppressed details
-- delegation actions taken: direct delegation continuation or planner-fork delegation paths created, worker roots started or startup prompts produced, or exact delegation prompts waiting on tool availability
-- planner-batch tracking: active slice ids, exact next stage, completion notification route, callback delivery and receiver-activation evidence, requested/applied reasoning for launched actors, record-root settlement trigger, planner callback route/status, and archive-on-completion status
+## 12. Close the Sprint
+
+When all required outcomes are accepted or explicitly dispositioned, start an independent `phase-completion-audit` covering the complete Sprint, combined product behavior, integration, regressions, standards, validation, residual work, and the intended Sprint movement.
+
+Route concrete audit corrections through the responsible Work Unit or a newly defined Work Unit in this Sprint. Repeat the audit when correction changes its evidence.
+
+After acceptance, settle the supplied records and return one compact handback to the Epic owner containing the Sprint result, accepted movement, repository or checkpoint state, audit disposition, remaining gaps, explicit deferrals, cross-Sprint implications, and unproven boundaries.
+
+State callback delivery and receiver-activation evidence separately, then end the Sprint Runner lifecycle.
