@@ -106,6 +106,20 @@ pub(crate) fn profile(role: ConversationHarnessRole) -> Result<ConversationHarne
     catalog_profile(role).map(|catalog| catalog.profile)
 }
 
+/// Resolve a durable Harness binding by its recorded identity, never by a newer current profile.
+pub(crate) fn pinned_profile(
+    key: &str,
+    version: u16,
+) -> Result<ConversationHarnessProfile, String> {
+    let profile = profile_from_catalog(CATALOG_JSON, key)?;
+    if profile.version != version {
+        return Err(format!(
+            "Conversation Harness configuration '{key}' revision {version} is unavailable"
+        ));
+    }
+    Ok(profile)
+}
+
 pub(crate) fn catalog_profile(
     role: ConversationHarnessRole,
 ) -> Result<ConversationHarnessCatalogProfile, String> {

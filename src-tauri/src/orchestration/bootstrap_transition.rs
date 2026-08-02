@@ -4085,7 +4085,7 @@ mod tests {
     }
 
     #[test]
-    fn work_slice_planning_request_is_identity_free_durable_and_has_no_child_effects() {
+    fn work_slice_planning_request_materializes_one_prelaunch_planner_without_runtime_effects() {
         let fixture = Fixture::new();
         let bootstrap = fixture.status();
         fixture.service.complete_bootstrap(
@@ -4154,17 +4154,19 @@ mod tests {
         assert_eq!(results[0].work_slice_planning_point_id, results[1].work_slice_planning_point_id);
         assert_eq!(results[0].work_slice_planner_session_id, results[1].work_slice_planner_session_id);
         assert_eq!(results[0].work_slice_planner_invocation_id, results[1].work_slice_planner_invocation_id);
-        assert_eq!(results[0].work_slice_planner_session_created_at, None);
-        assert_eq!(results[0].work_slice_planner_harness_applied_at, None);
+        assert!(results[0].work_slice_planner_session_created_at.is_some());
+        assert!(results[0].work_slice_planner_invocation_created_at.is_some());
+        assert!(results[0].work_slice_planner_harness_applied_at.is_some());
         assert_eq!(results[0].work_slice_planner_launch_accepted_at, None);
         assert_eq!(results[0].work_slice_planner_repository_worktree_route, Some(worktree_root.to_string_lossy().into_owned()));
-        assert_eq!(fixture.runtime.requests().len(), launches_before, "PS-WSP1 must not create or launch a Planner");
+        assert_eq!(fixture.runtime.requests().len(), launches_before, "PS-WSP2 must not launch a Planner");
 
         let connection = Connection::open(&fixture.database_path).unwrap();
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_planning_requests", [], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<String, _, _>("SELECT parent_sprint_runner_session_id FROM work_slice_planning_requests", [], |row| row.get(0)).unwrap(), sprint.sprint_runner_session_id);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_sessions WHERE id LIKE 'work-slice-planner-session-%'", [], |row| row.get(0)).unwrap(), 0);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocations WHERE id LIKE 'work-slice-planner-invocation-%'", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_sessions WHERE id LIKE 'work-slice-planner-session-%'", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<String, _, _>("SELECT working_directory FROM agent_sessions WHERE id=?1", [&results[0].work_slice_planner_session_id.clone().unwrap()], |row| row.get(0)).unwrap(), worktree_root.to_string_lossy());
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocations WHERE id LIKE 'work-slice-planner-invocation-%' AND input_provenance='application' AND status='pending'", [], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_units','work_slice_planning_points','work_unit_executions')", [], |row| row.get(0)).unwrap(), 0);
         drop(connection);
 
@@ -4183,8 +4185,9 @@ mod tests {
         reopened.reconcile_startup().unwrap();
         let after_reopen = reopened.query().unwrap().transitions.into_iter().find(|status| status.sprint_id == sprint_id).unwrap();
         assert_eq!(after_reopen.work_slice_planning_point_id, results[0].work_slice_planning_point_id);
-        assert_eq!(after_reopen.work_slice_planner_session_created_at, None);
-        assert_eq!(after_reopen.work_slice_planner_harness_applied_at, None);
+        assert_eq!(after_reopen.work_slice_planner_session_created_at, results[0].work_slice_planner_session_created_at);
+        assert_eq!(after_reopen.work_slice_planner_invocation_created_at, results[0].work_slice_planner_invocation_created_at);
+        assert_eq!(after_reopen.work_slice_planner_harness_applied_at, results[0].work_slice_planner_harness_applied_at);
         assert_eq!(after_reopen.work_slice_planner_launch_accepted_at, None);
         assert_eq!(fixture.runtime.requests().len(), launches_before);
 

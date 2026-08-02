@@ -282,6 +282,60 @@ impl AgentSessionApplication {
         self.ids.invocation_id()
     }
 
+    /// Persist an application-owned invocation without runtime preflight or a launch attempt.
+    pub(crate) fn prepare_idempotent_application_invocation(
+        &self,
+        command: SendIdempotentApplicationAgentSessionMessageCommand,
+    ) -> Result<SendAgentSessionMessageResult, AgentSessionApplicationError> {
+        if command.message.submitted_text.trim().is_empty() {
+            return Err(AgentSessionApplicationError::invalid("submitted text cannot be empty"));
+        }
+        let session_id = command.message.session_id.as_ref().ok_or_else(|| {
+            AgentSessionApplicationError::invalid("prepared application invocation requires a Session")
+        })?;
+        let session = self.repository.get_session(session_id)
+            .map_err(AgentSessionApplicationError::repository)?
+            .ok_or_else(|| AgentSessionApplicationError::not_found("Agent Session not found"))?;
+        if session.availability != AgentSessionAvailability::Available {
+            return Err(AgentSessionApplicationError::conflict(
+                "archived Agent Sessions cannot accept messages",
+            ));
+        }
+        let requested_options = command.message.requested_options.clone()
+            .unwrap_or_else(|| session.requested_options.clone());
+        if let Some(existing) = self.repository.get_invocation(&command.invocation_id)
+            .map_err(AgentSessionApplicationError::repository)? {
+            if existing.session_id != session.id
+                || existing.submitted_text != command.message.submitted_text
+                || existing.input_provenance != AgentInvocationInputProvenance::Application
+                || existing.requested_options != requested_options {
+                return Err(AgentSessionApplicationError::conflict(
+                    "application Agent Invocation identity was already used for different semantics",
+                ));
+            }
+            return Ok(SendAgentSessionMessageResult { session_id: session.id, invocation_id: existing.id });
+        }
+        let created_at = self.clock.now();
+        let invocation = self.repository.create_pending_invocation(AgentInvocation {
+            id: command.invocation_id,
+            session_id: session.id.clone(),
+            submitted_text: command.message.submitted_text,
+            input_provenance: AgentInvocationInputProvenance::Application,
+            status: AgentInvocationStatus::Pending,
+            requested_options,
+            effective_options: None,
+            started_at: None,
+            completed_at: None,
+            exit_code: None,
+            signal: None,
+            runtime_error: None,
+            diagnostics: Vec::new(),
+            created_at,
+            updated_at: created_at,
+        }).map_err(AgentSessionApplicationError::repository)?;
+        Ok(SendAgentSessionMessageResult { session_id: session.id, invocation_id: invocation.id })
+    }
+
     pub(crate) fn application_invocation_launch_evidence(
         &self,
         invocation_id: &AgentInvocationId,

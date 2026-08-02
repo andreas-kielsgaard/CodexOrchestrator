@@ -131,6 +131,10 @@ CREATE TABLE IF NOT EXISTS work_slice_planning_requests (
   planner_harness_version INTEGER NOT NULL,
   planner_session_id TEXT NOT NULL UNIQUE,
   planner_invocation_id TEXT NOT NULL UNIQUE,
+  planner_session_created_at TEXT,
+  planner_invocation_created_at TEXT,
+  planner_harness_applied_at TEXT,
+  planner_harness_json TEXT CHECK (planner_harness_json IS NULL OR json_valid(planner_harness_json)),
   UNIQUE (sprint_id, planning_episode),
   FOREIGN KEY (sprint_id) REFERENCES sprint_runner_transitions(sprint_id) ON DELETE RESTRICT
 );
@@ -217,6 +221,7 @@ pub(crate) struct SprintRunnerTransitionStatus {
     pub(crate) work_slice_planner_session_id: Option<String>,
     pub(crate) work_slice_planner_invocation_id: Option<String>,
     pub(crate) work_slice_planner_session_created_at: Option<String>,
+    pub(crate) work_slice_planner_invocation_created_at: Option<String>,
     pub(crate) work_slice_planner_harness_applied_at: Option<String>,
     pub(crate) work_slice_planner_launch_accepted_at: Option<String>,
     pub(crate) downstream_not_started: bool,
@@ -331,6 +336,8 @@ impl SprintRunnerTransitionService {
             "authority_repository_id TEXT", "authority_worktree_id TEXT",
             "authority_baseline_object_id TEXT", "authority_current_object_id TEXT",
             "authority_source_fingerprint TEXT",
+            "planner_session_created_at TEXT", "planner_invocation_created_at TEXT",
+            "planner_harness_applied_at TEXT", "planner_harness_json TEXT",
         ] {
             let name = column.split_whitespace().next().expect("planning request migration column name");
             let exists = connection.prepare("PRAGMA table_info(work_slice_planning_requests)")
@@ -342,7 +349,7 @@ impl SprintRunnerTransitionService {
         }
         let authority_repository = SqliteOrchestrationRepository::open(path)
             .map_err(|error| SprintRunnerTransitionError::Unavailable(format!("open Sprint Git authority repository: {error}")))?;
-        Ok(Arc::new(Self {
+        let service = Arc::new(Self {
             connection: Mutex::new(connection),
             authority_repository,
             sessions,
@@ -353,7 +360,9 @@ impl SprintRunnerTransitionService {
             test_reconcile_snapshot_hook: Mutex::new(None),
             #[cfg(test)]
             test_origin_snapshot_hook: Mutex::new(None),
-        }))
+        });
+        service.reconcile_work_slice_planners()?;
+        Ok(service)
     }
 
     /// Starts the one-invocation semantic boundary before the Epic Runner launch request is made.
@@ -568,7 +577,7 @@ impl SprintRunnerTransitionService {
                 "Sprint Runner transition database lock is poisoned".into(),
             )
         })?;
-        let mut statement = conn.prepare("SELECT t.sprint_id,t.epic_id,t.request_id,t.epic_runner_invocation_id,t.sprint_runner_session_id,t.sprint_runner_invocation_id,t.requested_at,t.authorized_at,t.session_created_at,t.harness_applied_at,t.launch_accepted_at,t.pre_start_semantic_outcome_recorded_at,t.pre_start_lifecycle_observed_at,t.pre_start_outcome_accepted_at,t.parent_continuation_delivery_requested_at,t.parent_continuation_delivery_persisted_at,t.epic_continuation_invocation_id,t.epic_continuation_launch_accepted_at,t.provider_receiver_activation_observed_at,t.sprint_start_authorized_at,t.sprint_start_persisted_at,t.sprint_continuation_invocation_id,t.sprint_continuation_launch_accepted_at,t.repository_branch_reevaluation_recorded_at,t.started_reevaluation_lifecycle_observed_at,t.planning_control_delivery_requested_at,t.planning_control_delivery_persisted_at,t.planning_control_invocation_id,t.planning_control_launch_accepted_at,t.planning_ready_at,p.request_fact_id,p.planning_point_id,p.repository_worktree_route,p.planner_harness_key,p.planner_harness_version,p.planner_session_id,p.planner_invocation_id FROM sprint_runner_transitions t LEFT JOIN work_slice_planning_requests p ON p.sprint_id=t.sprint_id AND p.is_current=1 ORDER BY t.requested_at,t.sprint_id").map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let mut statement = conn.prepare("SELECT t.sprint_id,t.epic_id,t.request_id,t.epic_runner_invocation_id,t.sprint_runner_session_id,t.sprint_runner_invocation_id,t.requested_at,t.authorized_at,t.session_created_at,t.harness_applied_at,t.launch_accepted_at,t.pre_start_semantic_outcome_recorded_at,t.pre_start_lifecycle_observed_at,t.pre_start_outcome_accepted_at,t.parent_continuation_delivery_requested_at,t.parent_continuation_delivery_persisted_at,t.epic_continuation_invocation_id,t.epic_continuation_launch_accepted_at,t.provider_receiver_activation_observed_at,t.sprint_start_authorized_at,t.sprint_start_persisted_at,t.sprint_continuation_invocation_id,t.sprint_continuation_launch_accepted_at,t.repository_branch_reevaluation_recorded_at,t.started_reevaluation_lifecycle_observed_at,t.planning_control_delivery_requested_at,t.planning_control_delivery_persisted_at,t.planning_control_invocation_id,t.planning_control_launch_accepted_at,t.planning_ready_at,p.request_fact_id,p.planning_point_id,p.repository_worktree_route,p.planner_harness_key,p.planner_harness_version,p.planner_session_id,p.planner_invocation_id,p.planner_session_created_at,p.planner_invocation_created_at,p.planner_harness_applied_at FROM sprint_runner_transitions t LEFT JOIN work_slice_planning_requests p ON p.sprint_id=t.sprint_id AND p.is_current=1 ORDER BY t.requested_at,t.sprint_id").map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         let transitions = statement
             .query_map([], |r| {
                 Ok(SprintRunnerTransitionStatus {
@@ -612,8 +621,9 @@ impl SprintRunnerTransitionService {
                     work_slice_planner_harness_version: r.get(34)?,
                     work_slice_planner_session_id: r.get(35)?,
                     work_slice_planner_invocation_id: r.get(36)?,
-                    work_slice_planner_session_created_at: None,
-                    work_slice_planner_harness_applied_at: None,
+                    work_slice_planner_session_created_at: r.get(37)?,
+                    work_slice_planner_invocation_created_at: r.get(38)?,
+                    work_slice_planner_harness_applied_at: r.get(39)?,
                     work_slice_planner_launch_accepted_at: None,
                     downstream_not_started: r.get::<_, Option<String>>(31)?.is_none(),
                 })
@@ -994,7 +1004,47 @@ impl SprintRunnerTransitionService {
         tx.commit().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         drop(conn);
         drop(_guard);
+        self.reconcile_work_slice_planner(&sprint_id)?;
         self.query()?.transitions.into_iter().find(|transition| transition.sprint_id == sprint_id).ok_or_else(|| SprintRunnerTransitionError::Unavailable("authorized Work Slice Planner disappeared".into()))
+    }
+
+    fn reconcile_work_slice_planners(self: &Arc<Self>) -> Result<(), SprintRunnerTransitionError> {
+        let conn = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?;
+        let mut statement = conn.prepare("SELECT sprint_id FROM work_slice_planning_requests WHERE is_current=1 ORDER BY requested_at,planning_point_id").map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let ids = statement.query_map([], |row| row.get::<_, String>(0)).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?.collect::<Result<Vec<_>, _>>().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        drop(statement);
+        drop(conn);
+        for sprint_id in ids { self.reconcile_work_slice_planner(&sprint_id)?; }
+        Ok(())
+    }
+
+    fn reconcile_work_slice_planner(self: &Arc<Self>, sprint_id: &str) -> Result<(), SprintRunnerTransitionError> {
+        let lock = self.transition_lock(sprint_id)?;
+        let _guard = lock.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint Runner transition lock is poisoned".into()))?;
+        let request: Option<(String,String,String,String,String,i64,Option<String>)> = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?.query_row(
+            "SELECT planning_point_id,planner_session_id,planner_invocation_id,repository_worktree_route,planner_harness_key,planner_harness_version,planner_harness_json FROM work_slice_planning_requests WHERE sprint_id=?1 AND is_current=1", [sprint_id],
+            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))
+        ).optional().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let Some((point,session_id,invocation_id,route,key,version,harness_json)) = request else { return Ok(()) };
+        let version = u16::try_from(version).map_err(|_| SprintRunnerTransitionError::Conflict)?;
+        let harness = conversation_harness::pinned_profile(&key, version).map_err(SprintRunnerTransitionError::Unavailable)?;
+        let serialized = serde_json::to_string(&harness).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        if harness_json.as_deref().is_some_and(|existing| existing != serialized) { return Err(SprintRunnerTransitionError::Conflict); }
+        let session = AgentSessionId::new(session_id).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        self.sessions.create_application_session(CreateApplicationAgentSessionCommand { session_id: session.clone(), session: CreateAgentSessionCommand { title: Some("Work Slice Planner".into()), working_directory: Some(route), requested_options: harness.runtime_options() }}).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        self.mark_planner(sprint_id, "planner_session_created_at", None)?;
+        let invocation = AgentInvocationId::new(invocation_id).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        self.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation, message: SendAgentSessionMessageCommand { session_id: Some(session), submitted_text: format!("Work Slice Planner pre-launch invocation. Planning point: {point}. Parent Sprint: {sprint_id}. Do not begin until the later launch boundary."), title: None, working_directory: None, requested_options: Some(harness.runtime_options()) }}).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        self.mark_planner(sprint_id, "planner_invocation_created_at", Some(serialized))?;
+        self.mark_planner(sprint_id, "planner_harness_applied_at", None)
+    }
+
+    fn mark_planner(&self, sprint_id: &str, column: &str, harness_json: Option<String>) -> Result<(), SprintRunnerTransitionError> {
+        if !["planner_session_created_at", "planner_invocation_created_at", "planner_harness_applied_at"].contains(&column) { return Err(SprintRunnerTransitionError::Unavailable("invalid Planner materialization stage".into())); }
+        let sql = if harness_json.is_some() { format!("UPDATE work_slice_planning_requests SET {column}=COALESCE({column},?2),planner_harness_json=COALESCE(planner_harness_json,?3) WHERE sprint_id=?1 AND is_current=1") } else { format!("UPDATE work_slice_planning_requests SET {column}=COALESCE({column},?2) WHERE sprint_id=?1 AND is_current=1") };
+        let conn = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?;
+        if let Some(harness_json) = harness_json { conn.execute(&sql, params![sprint_id, chrono::Utc::now().to_rfc3339(), harness_json]) } else { conn.execute(&sql, params![sprint_id, chrono::Utc::now().to_rfc3339()]) }.map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        Ok(())
     }
 
     fn mark(&self, sprint_id: &str, column: &str) -> Result<(), SprintRunnerTransitionError> {
