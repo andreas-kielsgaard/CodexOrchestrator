@@ -184,6 +184,45 @@ CREATE TABLE IF NOT EXISTS work_slice_proposal_revisions (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS work_slice_proposal_revisions_one_current
  ON work_slice_proposal_revisions(planning_point_id) WHERE is_current=1;
+
+-- Materialization is a product-owned, durable responsibility projection.  It has no execution
+-- semantics: neither these facts nor their repair can create a Session, invocation, or worktree.
+CREATE TABLE IF NOT EXISTS work_unit_materializations (
+  materialization_id TEXT PRIMARY KEY,
+  planning_point_id TEXT NOT NULL UNIQUE REFERENCES work_slice_planning_episodes(planning_point_id) ON DELETE RESTRICT,
+  accepted_revision_id TEXT NOT NULL UNIQUE REFERENCES work_slice_proposal_revisions(revision_id) ON DELETE RESTRICT,
+  epic_id TEXT NOT NULL REFERENCES epic_initiations(epic_id) ON DELETE RESTRICT,
+  sprint_id TEXT NOT NULL REFERENCES initiated_sprints(id) ON DELETE RESTRICT,
+  work_slice_id TEXT NOT NULL UNIQUE,
+  authorization_recorded_at TEXT NOT NULL,
+  attempt_recorded_at TEXT,
+  work_units_created_at TEXT,
+  relationships_completed_at TEXT,
+  settled_at TEXT,
+  CHECK ((settled_at IS NULL) OR (relationships_completed_at IS NOT NULL)),
+  CHECK ((relationships_completed_at IS NULL) OR (work_units_created_at IS NOT NULL)),
+  CHECK ((work_units_created_at IS NULL) OR (attempt_recorded_at IS NOT NULL))
+);
+CREATE TABLE IF NOT EXISTS work_units (
+  work_unit_id TEXT PRIMARY KEY,
+  materialization_id TEXT NOT NULL REFERENCES work_unit_materializations(materialization_id) ON DELETE RESTRICT,
+  work_slice_id TEXT NOT NULL,
+  accepted_revision_id TEXT NOT NULL,
+  lane_ordinal INTEGER NOT NULL CHECK (lane_ordinal >= 0),
+  lane_title TEXT NOT NULL,
+  specification TEXT NOT NULL,
+  UNIQUE(materialization_id, lane_ordinal),
+  UNIQUE(materialization_id, lane_title)
+);
+CREATE TABLE IF NOT EXISTS work_unit_relationships (
+  relationship_id TEXT PRIMARY KEY,
+  materialization_id TEXT NOT NULL REFERENCES work_unit_materializations(materialization_id) ON DELETE RESTRICT,
+  relationship_kind TEXT NOT NULL CHECK (relationship_kind IN ('planning_point','sprint','lane','order','depends_on')),
+  from_id TEXT NOT NULL,
+  to_id TEXT NOT NULL,
+  ordinal INTEGER,
+  UNIQUE(materialization_id, relationship_kind, from_id, to_id)
+);
 "#;
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -443,6 +482,7 @@ impl SprintRunnerTransitionService {
             test_origin_snapshot_hook: Mutex::new(None),
         });
         service.reconcile_work_slice_planners()?;
+        service.reconcile_materializations()?;
         Ok(service)
     }
 
@@ -1128,7 +1168,74 @@ impl SprintRunnerTransitionService {
         let record:Option<(String,String,String,String,i64)>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT p.planning_point_id,p.planner_session_id,p.planner_invocation_id,p.planner_harness_key,p.planner_harness_version FROM work_slice_planning_requests p JOIN work_slice_proposal_revisions r ON r.planning_point_id=p.planning_point_id AND r.is_current=1 WHERE p.sprint_id=?1 AND p.is_current=1 AND p.planner_ready_at IS NOT NULL AND r.validation_result='valid' AND r.refinement_requested_at IS NULL AND r.semantic_completion_invocation_id=p.planner_invocation_id AND r.semantic_completed_at IS NOT NULL",[sprint_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         let Some((point,session_id,invocation_id,key,version))=record else{return Ok(())};let desired=conversation_harness::profile(ConversationHarnessRole::WorkSlicePlanner).map_err(SprintRunnerTransitionError::Unavailable)?;if key!=desired.key || version!=i64::from(desired.version){return Ok(())}
         let session=AgentSessionId::new(session_id).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let history=self.sessions.load_session(&session).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let Some(found)=history.invocations.iter().find(|candidate|candidate.invocation.id.as_str()==invocation_id && candidate.invocation.status.is_terminal()) else{return Ok(())};let status=lifecycle_status(found.invocation.status);let now=chrono::Utc::now().to_rfc3339();
-        self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_slice_proposal_revisions SET lifecycle_observed_at=COALESCE(lifecycle_observed_at,?2),lifecycle_status=COALESCE(lifecycle_status,?3),accepted_at=CASE WHEN ?3='completed' THEN COALESCE(accepted_at,?2) ELSE accepted_at END,materialization_ready_at=CASE WHEN ?3='completed' THEN COALESCE(materialization_ready_at,?2) ELSE materialization_ready_at END WHERE planning_point_id=?1 AND is_current=1 AND validation_result='valid' AND refinement_requested_at IS NULL AND semantic_completion_invocation_id=?4 AND semantic_completed_at IS NOT NULL",params![point,now,status,invocation_id]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;Ok(())
+        self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_slice_proposal_revisions SET lifecycle_observed_at=COALESCE(lifecycle_observed_at,?2),lifecycle_status=COALESCE(lifecycle_status,?3),accepted_at=CASE WHEN ?3='completed' THEN COALESCE(accepted_at,?2) ELSE accepted_at END,materialization_ready_at=CASE WHEN ?3='completed' THEN COALESCE(materialization_ready_at,?2) ELSE materialization_ready_at END WHERE planning_point_id=?1 AND is_current=1 AND validation_result='valid' AND refinement_requested_at IS NULL AND semantic_completion_invocation_id=?4 AND semantic_completed_at IS NOT NULL",params![point,now,status,invocation_id]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        if status == "completed" { self.materialize_accepted_work_slice_plan(sprint_id)?; }
+        Ok(())
+    }
+
+    /// Product-only convergence of the exact current accepted revision. This persists planned
+    /// responsibilities and their plan relationships; it never launches downstream work.
+    fn materialize_accepted_work_slice_plan(&self, sprint_id: &str) -> Result<(), SprintRunnerTransitionError> {
+        let lock = self.transition_lock(sprint_id)?;
+        let _guard = lock.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint Runner transition lock is poisoned".into()))?;
+        let mut connection = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;
+        let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let source: Option<(String, String, String, String)> = tx.query_row(
+            "SELECT p.planning_point_id,r.revision_id,t.epic_id,p.sprint_id
+             FROM work_slice_planning_requests p
+             JOIN sprint_runner_transitions t ON t.sprint_id=p.sprint_id
+             JOIN work_slice_planning_episodes e ON e.planning_point_id=p.planning_point_id AND e.sprint_id=p.sprint_id AND e.authority_id=p.authority_id
+             JOIN work_slice_proposal_revisions r ON r.planning_point_id=p.planning_point_id
+             JOIN initiated_sprints s ON s.id=p.sprint_id AND s.epic_id=t.epic_id
+             WHERE p.sprint_id=?1 AND p.is_current=1 AND r.is_current=1
+               AND r.validation_result='valid' AND r.refinement_requested_at IS NULL
+               AND r.semantic_completion_invocation_id=p.planner_invocation_id AND r.semantic_completed_at IS NOT NULL
+               AND r.lifecycle_status='completed' AND r.accepted_at IS NOT NULL AND r.materialization_ready_at IS NOT NULL",
+            [sprint_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        ).optional().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let Some((point, revision, epic, sprint)) = source else { return Err(SprintRunnerTransitionError::Forbidden) };
+        let proposal_json: String = tx.query_row("SELECT proposal_json FROM work_slice_proposal_revisions WHERE revision_id=?1", [&revision], |row| row.get(0)).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let proposal: WorkSliceProposal = serde_json::from_str(&proposal_json).map_err(|_| SprintRunnerTransitionError::Conflict)?;
+        validate_work_slice_proposal(&proposal)?;
+        let materialization = stable_id("work-unit-materialization", &format!("{epic}:{sprint}:{point}:{revision}"));
+        let work_slice = stable_id("work-slice", &format!("{point}:{revision}"));
+        let now = chrono::Utc::now().to_rfc3339();
+        tx.execute("INSERT OR IGNORE INTO work_unit_materializations (materialization_id,planning_point_id,accepted_revision_id,epic_id,sprint_id,work_slice_id,authorization_recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7)", params![materialization,point,revision,epic,sprint,work_slice,now]).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let stored: (String,String,String,String,String) = tx.query_row("SELECT materialization_id,accepted_revision_id,epic_id,sprint_id,work_slice_id FROM work_unit_materializations WHERE planning_point_id=?1", [&point], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        if stored != (materialization.clone(), revision.clone(), epic.clone(), sprint.clone(), work_slice.clone()) { return Err(SprintRunnerTransitionError::Conflict) }
+        tx.execute("UPDATE work_unit_materializations SET attempt_recorded_at=COALESCE(attempt_recorded_at,?2) WHERE materialization_id=?1", params![materialization,now]).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let units = proposal.lanes.iter().enumerate().map(|(ordinal,lane)| (stable_id("work-unit", &format!("{materialization}:{ordinal}")), ordinal as i64, lane.title.clone(), lane.specification.clone())).collect::<Vec<_>>();
+        for (id, ordinal, title, specification) in &units {
+            tx.execute("INSERT OR IGNORE INTO work_units (work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification) VALUES (?1,?2,?3,?4,?5,?6,?7)", params![id,materialization,work_slice,revision,ordinal,title,specification]).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        }
+        let stored_units = tx.prepare("SELECT work_unit_id,lane_ordinal,lane_title,specification FROM work_units WHERE materialization_id=?1 ORDER BY lane_ordinal").map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?.query_map([&materialization], |row| Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?))).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?.collect::<Result<Vec<_>,_>>().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let expected_units = units.iter().map(|(id,ordinal,title,specification)|(id.clone(),*ordinal,title.clone(),specification.clone())).collect::<Vec<_>>();
+        if stored_units != expected_units { return Err(SprintRunnerTransitionError::Conflict) }
+        tx.execute("UPDATE work_unit_materializations SET work_units_created_at=COALESCE(work_units_created_at,?2) WHERE materialization_id=?1", params![materialization,now]).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let by_title = units.iter().map(|(id,_,title,_)|(title.as_str(),id.as_str())).collect::<std::collections::HashMap<_,_>>();
+        let mut relationships = vec![
+            (stable_id("work-unit-relationship", &format!("{materialization}:planning_point:{point}:{work_slice}")), "planning_point", point.clone(), work_slice.clone(), None),
+            (stable_id("work-unit-relationship", &format!("{materialization}:sprint:{sprint}:{work_slice}")), "sprint", sprint.clone(), work_slice.clone(), None),
+        ];
+        for (id, ordinal, title, _) in &units {
+            relationships.push((stable_id("work-unit-relationship", &format!("{materialization}:lane:{work_slice}:{id}")), "lane", work_slice.clone(), id.clone(), Some(*ordinal)));
+            relationships.push((stable_id("work-unit-relationship", &format!("{materialization}:order:{work_slice}:{id}")), "order", work_slice.clone(), id.clone(), Some(*ordinal)));
+            for dependency in &proposal.lanes[*ordinal as usize].depends_on { let dependency_id = by_title.get(dependency.as_str()).ok_or(SprintRunnerTransitionError::Conflict)?; relationships.push((stable_id("work-unit-relationship", &format!("{materialization}:depends_on:{id}:{dependency_id}")), "depends_on", id.clone(), (*dependency_id).to_owned(), None)); }
+            let _ = title;
+        }
+        for (id, kind, from, to, ordinal) in &relationships { tx.execute("INSERT OR IGNORE INTO work_unit_relationships (relationship_id,materialization_id,relationship_kind,from_id,to_id,ordinal) VALUES (?1,?2,?3,?4,?5,?6)", params![id,materialization,kind,from,to,ordinal]).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?; }
+        let stored_relationships = tx.prepare("SELECT relationship_id,relationship_kind,from_id,to_id,ordinal FROM work_unit_relationships WHERE materialization_id=?1 ORDER BY relationship_id").map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?.query_map([&materialization], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,Option<i64>>(4)?))).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?.collect::<Result<Vec<_>,_>>().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let mut expected_relationships = relationships.into_iter().map(|(id,kind,from,to,ordinal)|(id,kind.to_owned(),from,to,ordinal)).collect::<Vec<_>>(); expected_relationships.sort();
+        if stored_relationships != expected_relationships { return Err(SprintRunnerTransitionError::Conflict) }
+        tx.execute("UPDATE work_unit_materializations SET relationships_completed_at=COALESCE(relationships_completed_at,?2),settled_at=COALESCE(settled_at,?2) WHERE materialization_id=?1", params![materialization,now]).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        tx.commit().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        Ok(())
+    }
+
+    fn reconcile_materializations(&self) -> Result<(), SprintRunnerTransitionError> {
+        let sprints = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare("SELECT sprint_id FROM work_unit_materializations ORDER BY authorization_recorded_at,materialization_id").map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?.query_map([], |row| row.get::<_,String>(0)).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?.collect::<Result<Vec<_>,_>>().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        for sprint in sprints { self.materialize_accepted_work_slice_plan(&sprint)?; }
+        Ok(())
     }
 
     fn planner_point_for_invocation(&self, invocation_id: &AgentInvocationId) -> Result<(String,String), SprintRunnerTransitionError> {

@@ -1103,6 +1103,12 @@ impl SqliteOrchestrationRepository {
         for document in &mut file_review_documents {
             document.changed_files = connection.prepare("SELECT changed_file_reference_id, display_name, change_kind, previous_display_name FROM file_review_changed_files WHERE document_ref_id = ?1 ORDER BY ordinal").map_err(|e| e.to_string())?.query_map(params![document.document_ref_id], |row| Ok(FileReviewChangedFileDto { changed_file_reference_id: row.get(0)?, display_name: row.get(1)?, change_kind: row.get(2)?, previous_display_name: row.get(3)? })).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
         }
+        // The Sprint Runner owns creation of these tables.  Repository-only pre-Sprint stores
+        // remain readable as an empty materialization projection.
+        let materialization_tables = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_materializations')", [], |row| row.get::<_, bool>(0)).map_err(|e| e.to_string())?;
+        let work_unit_materializations = if materialization_tables { collect(&connection, "SELECT materialization_id,planning_point_id,accepted_revision_id,epic_id,sprint_id,work_slice_id,authorization_recorded_at,attempt_recorded_at,work_units_created_at,relationships_completed_at,settled_at FROM work_unit_materializations ORDER BY authorization_recorded_at,materialization_id", |row| Ok(WorkUnitMaterializationDto { materialization_id:row.get(0)?, planning_point_id:row.get(1)?, accepted_revision_id:row.get(2)?, epic_id:row.get(3)?, sprint_id:row.get(4)?, work_slice_id:row.get(5)?, authorization_recorded_at:row.get(6)?, attempt_recorded_at:row.get(7)?, work_units_created_at:row.get(8)?, relationships_completed_at:row.get(9)?, settled_at:row.get(10)? }))? } else { Vec::new() };
+        let work_units = if materialization_tables { collect(&connection, "SELECT work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification FROM work_units ORDER BY materialization_id,lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)? }))? } else { Vec::new() };
+        let work_unit_relationships = if materialization_tables { collect(&connection, "SELECT relationship_id,materialization_id,relationship_kind,from_id,to_id,ordinal FROM work_unit_relationships ORDER BY materialization_id,relationship_kind,from_id,to_id", |row| Ok(WorkUnitRelationshipDto { relationship_id:row.get(0)?, materialization_id:row.get(1)?, relationship_kind:row.get(2)?, from_id:row.get(3)?, to_id:row.get(4)?, ordinal:row.get(5)? }))? } else { Vec::new() };
         Ok(NativeQueryV2 {
             contract_version: NATIVE_QUERY_VERSION,
             generated_at: timestamp(generated_at),
@@ -1119,6 +1125,9 @@ impl SqliteOrchestrationRepository {
             initiated_epics,
             initiated_sprints,
             file_review_documents,
+            work_unit_materializations,
+            work_units,
+            work_unit_relationships,
         })
     }
 
@@ -2232,6 +2241,9 @@ pub(crate) struct NativeQueryV2 {
     initiated_epics: Vec<InitiatedEpicDto>,
     initiated_sprints: Vec<InitiatedSprintDto>,
     file_review_documents: Vec<FileReviewDocumentDto>,
+    work_unit_materializations: Vec<WorkUnitMaterializationDto>,
+    work_units: Vec<WorkUnitDto>,
+    work_unit_relationships: Vec<WorkUnitRelationshipDto>,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2372,6 +2384,42 @@ struct InitiatedSprintDto {
     concern_summaries: Vec<String>,
     sprint_plan_id: String,
     sprint_plan_revision_id: String,
+}
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitMaterializationDto {
+    materialization_id: String,
+    planning_point_id: String,
+    accepted_revision_id: String,
+    epic_id: String,
+    sprint_id: String,
+    work_slice_id: String,
+    authorization_recorded_at: String,
+    attempt_recorded_at: Option<String>,
+    work_units_created_at: Option<String>,
+    relationships_completed_at: Option<String>,
+    settled_at: Option<String>,
+}
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitDto {
+    work_unit_id: String,
+    materialization_id: String,
+    work_slice_id: String,
+    accepted_revision_id: String,
+    lane_ordinal: i64,
+    lane_title: String,
+    specification: String,
+}
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitRelationshipDto {
+    relationship_id: String,
+    materialization_id: String,
+    relationship_kind: String,
+    from_id: String,
+    to_id: String,
+    ordinal: Option<i64>,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]

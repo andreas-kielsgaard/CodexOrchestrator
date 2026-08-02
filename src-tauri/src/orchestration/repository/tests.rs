@@ -1665,6 +1665,9 @@ fn canonical_populated_query() -> NativeQueryV2 {
         initiated_epics: vec![],
         initiated_sprints: vec![],
         file_review_documents: vec![],
+        work_unit_materializations: vec![],
+        work_units: vec![],
+        work_unit_relationships: vec![],
     }
 }
 
@@ -1674,6 +1677,9 @@ fn current_native_fixture(value: &str) -> Result<serde_json::Value, serde_json::
         .as_object_mut()
         .unwrap()
         .insert("fileReviewDocuments".into(), serde_json::json!([]));
+    fixture.as_object_mut().unwrap().insert("workUnitMaterializations".into(), serde_json::json!([]));
+    fixture.as_object_mut().unwrap().insert("workUnits".into(), serde_json::json!([]));
+    fixture.as_object_mut().unwrap().insert("workUnitRelationships".into(), serde_json::json!([]));
     Ok(fixture)
 }
 

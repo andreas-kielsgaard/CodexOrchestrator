@@ -2526,7 +2526,7 @@ mod tests {
                 .unwrap(),
             4
         );
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_units','work_slice_planning_points','work_unit_executions')", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_slice_planning_points','work_unit_executions')", [], |row| row.get(0)).unwrap(), 0);
         drop(connection);
         // Deterministic semantic state-machine: semantic outcome, matching terminal observation,
         // delivery, sole Epic authorization, same-session continuation, and reevaluation.
@@ -2642,7 +2642,7 @@ mod tests {
         assert!(accepted.accepted);
         assert!(accepted.epic_continuation_launch_accepted_at.is_some());
         assert_eq!(fixture.runtime.requests().len(), 4);
-        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_units','work_slice_planning_points','work_unit_executions')", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_slice_planning_points','work_unit_executions')", [], |row| row.get(0)).unwrap(), 0);
     }
 
     #[test]
@@ -2779,7 +2779,7 @@ mod tests {
             Connection::open(&fixture.database_path)
                 .unwrap()
                 .query_row::<i64, _, _>(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_units','work_slice_planning_points','work_unit_executions')",
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_slice_planning_points','work_unit_executions')",
                     [],
                     |row| row.get(0),
                 )
@@ -2907,7 +2907,7 @@ mod tests {
         // No transition notifier receives this terminal. Production-equivalent reopen must recover
         // the v2 invocation from durable history and deliver the correlated outcome exactly once.
         fixture.runtime.finish(&upgrade,AgentInvocationTerminalStatus::Completed);let reopened=crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path,fixture.sessions.clone()).unwrap();reopened.reconcile_startup().unwrap();let accepted=reopened.query().unwrap().transitions[0].clone();assert!(accepted.accepted);assert_eq!(fixture.runtime.requests().len(),5);let delivery=&fixture.runtime.requests()[4];assert!(delivery.submitted_text.contains("v2 forecast"));assert!(delivery.submitted_text.contains("v2 uncertainty"));assert!(delivery.submitted_text.contains("v2 prerequisite"));reopened.reconcile_startup().unwrap();assert_eq!(fixture.runtime.requests().len(),5);
-        let continuation=accepted.epic_continuation_invocation_id.clone().unwrap();let harness=conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap();Connection::open(&fixture.database_path).unwrap().execute("UPDATE sprint_runner_transitions SET epic_continuation_harness_version=?2 WHERE sprint_id=?1",params![&sprint_id,harness.version+1]).unwrap();assert!(matches!(reopened.start_selected_sprint(&AgentInvocationId::new(continuation.clone()).unwrap()),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));Connection::open(&fixture.database_path).unwrap().execute("UPDATE sprint_runner_transitions SET epic_continuation_harness_version=?2 WHERE sprint_id=?1",params![&sprint_id,harness.version]).unwrap();let barrier=Arc::new(Barrier::new(2));let starts=(0..2).map(|_|{let service=reopened.clone();let barrier=barrier.clone();let continuation=continuation.clone();std::thread::spawn(move||{barrier.wait();service.start_selected_sprint(&AgentInvocationId::new(continuation).unwrap())})}).collect::<Vec<_>>();assert!(starts.into_iter().all(|call|call.join().unwrap().is_ok()));assert_eq!(fixture.runtime.requests().len(),6);let conn=Connection::open(&fixture.database_path).unwrap();assert_eq!(conn.query_row::<i64,_,_>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_units','work_slice_planning_points','work_unit_executions')",[],|row|row.get(0)).unwrap(),0);
+        let continuation=accepted.epic_continuation_invocation_id.clone().unwrap();let harness=conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap();Connection::open(&fixture.database_path).unwrap().execute("UPDATE sprint_runner_transitions SET epic_continuation_harness_version=?2 WHERE sprint_id=?1",params![&sprint_id,harness.version+1]).unwrap();assert!(matches!(reopened.start_selected_sprint(&AgentInvocationId::new(continuation.clone()).unwrap()),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));Connection::open(&fixture.database_path).unwrap().execute("UPDATE sprint_runner_transitions SET epic_continuation_harness_version=?2 WHERE sprint_id=?1",params![&sprint_id,harness.version]).unwrap();let barrier=Arc::new(Barrier::new(2));let starts=(0..2).map(|_|{let service=reopened.clone();let barrier=barrier.clone();let continuation=continuation.clone();std::thread::spawn(move||{barrier.wait();service.start_selected_sprint(&AgentInvocationId::new(continuation).unwrap())})}).collect::<Vec<_>>();assert!(starts.into_iter().all(|call|call.join().unwrap().is_ok()));assert_eq!(fixture.runtime.requests().len(),6);let conn=Connection::open(&fixture.database_path).unwrap();assert_eq!(conn.query_row::<i64,_,_>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_slice_planning_points','work_unit_executions')",[],|row|row.get(0)).unwrap(),0);
     }
 
     #[test]
@@ -3182,7 +3182,7 @@ mod tests {
         assert_eq!(
             connection
                 .query_row::<i64, _, _>(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_units','work_slice_planning_points','work_unit_executions')",
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_slice_planning_points','work_unit_executions')",
                     [],
                     |row| row.get(0),
                 )
@@ -3266,7 +3266,7 @@ mod tests {
             1
         );
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocation_launch_acceptances WHERE invocation_id LIKE 'sprint-runner-invocation-%'", [], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_units','work_slice_planning_points','work_unit_executions')", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_slice_planning_points','work_unit_executions')", [], |row| row.get(0)).unwrap(), 0);
     }
 
     #[test]
@@ -4525,7 +4525,7 @@ mod tests {
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_sessions WHERE id LIKE 'work-slice-planner-session-%'", [], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<String, _, _>("SELECT working_directory FROM agent_sessions WHERE id=?1", [&results[0].work_slice_planner_session_id.clone().unwrap()], |row| row.get(0)).unwrap(), worktree_root.to_string_lossy());
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocations WHERE id LIKE 'work-slice-planner-invocation-%' AND input_provenance='application' AND status='running'", [], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_units','work_slice_planning_points','work_unit_executions')", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_units", [], |row| row.get(0)).unwrap(), 0);
         drop(connection);
 
         Connection::open(&fixture.database_path).unwrap().execute(
@@ -4814,7 +4814,41 @@ mod tests {
         assert!(repaired.work_slice_materialization_ready_at.is_some());
         assert_eq!(repaired.work_slice_application_accepted_at, accepted_at);
         assert_eq!(fixture.runtime.requests().len(), launches_before_acceptance);
-        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_units','work_unit_executions','handler_sessions','implementer_sessions')", [], |row| row.get(0)).unwrap(), 0);
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        let materialization: (String,String,String,String,String,Option<String>,Option<String>,Option<String>,Option<String>) = connection.query_row(
+            "SELECT materialization_id,planning_point_id,accepted_revision_id,epic_id,sprint_id,attempt_recorded_at,work_units_created_at,relationships_completed_at,settled_at FROM work_unit_materializations", [],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?)),
+        ).unwrap();
+        assert!(materialization.5.is_some());
+        assert!(materialization.6.is_some());
+        assert!(materialization.7.is_some());
+        assert!(materialization.8.is_some());
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_units WHERE materialization_id=?1", [&materialization.0], |row| row.get(0)).unwrap(), 2);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_relationships WHERE materialization_id=?1", [&materialization.0], |row| row.get(0)).unwrap(), 7);
+        let unit_ids = connection.prepare("SELECT work_unit_id FROM work_units WHERE materialization_id=?1 ORDER BY lane_ordinal").unwrap().query_map([&materialization.0], |row| row.get::<_,String>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+        let relationship_ids = connection.prepare("SELECT relationship_id FROM work_unit_relationships WHERE materialization_id=?1 ORDER BY relationship_id").unwrap().query_map([&materialization.0], |row| row.get::<_,String>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+        connection.execute("DELETE FROM work_unit_relationships WHERE relationship_id=?1", [&relationship_ids[0]]).unwrap();
+        connection.execute("UPDATE work_unit_materializations SET relationships_completed_at=NULL,settled_at=NULL WHERE materialization_id=?1", [&materialization.0]).unwrap();
+        drop(connection);
+        let replayed = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        let repaired_unit_ids = connection.prepare("SELECT work_unit_id FROM work_units WHERE materialization_id=?1 ORDER BY lane_ordinal").unwrap().query_map([&materialization.0], |row| row.get::<_,String>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+        let repaired_relationship_ids = connection.prepare("SELECT relationship_id FROM work_unit_relationships WHERE materialization_id=?1 ORDER BY relationship_id").unwrap().query_map([&materialization.0], |row| row.get::<_,String>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+        assert_eq!(repaired_unit_ids, unit_ids);
+        assert_eq!(repaired_relationship_ids, relationship_ids);
+        assert_eq!(connection.query_row::<Option<String>, _, _>("SELECT settled_at FROM work_unit_materializations WHERE materialization_id=?1", [&materialization.0], |row| row.get(0)).unwrap().is_some(), true);
+        drop(connection);
+        let native = serde_json::to_value(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap().native_query().unwrap()).unwrap();
+        assert_eq!(native["workUnitMaterializations"].as_array().unwrap().len(), 1);
+        assert_eq!(native["workUnits"].as_array().unwrap().len(), 2);
+        assert_eq!(native["workUnitRelationships"].as_array().unwrap().len(), 7);
+        let concurrent = (0..2).map(|_| { let service = replayed.clone(); let path = fixture.database_path.clone(); let sessions = fixture.sessions.clone(); std::thread::spawn(move || { drop(service); crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(path, sessions) }) }).collect::<Vec<_>>();
+        assert!(concurrent.into_iter().all(|call| call.join().unwrap().is_ok()));
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        connection.execute("UPDATE work_slice_proposal_revisions SET is_current=0 WHERE revision_id=?1", [&materialization.2]).unwrap();
+        drop(connection);
+        assert!(matches!(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));
+        assert_eq!(fixture.runtime.requests().len(), launches_before_acceptance);
     }
 }
 
