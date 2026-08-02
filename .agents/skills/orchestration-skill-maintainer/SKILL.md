@@ -1,76 +1,73 @@
 ---
 name: orchestration-skill-maintainer
-description: Maintain skills used by agents in the Codex Orchestrator product. Use when observed behavior or user feedback suggests that a product agent role or skill is missing, unclear, or behaving unexpectedly, including when the user identifies inappropriate behavior and the maintainer agrees that an in-scope skill contributed.
+description: Maintain agent skills from observed behavior and user feedback. Use when a skill is missing, unclear, over-scoped, under-specified, written for the wrong reader context, or appears to have contributed to unintended agent behavior.
 ---
 
-# Orchestration Skill Maintainer
+# Skill Maintainer
 
-Maintain skills for agent roles in the Codex Orchestrator product.
+Maintain skill definitions from evidence about how their readers behave.
 
-Keep this skill focused on maintenance procedure. Place narrower reusable context in `../_shared-skill-concepts/`, then translate only its applicable effect into self-contained role-local wording. Limit each revision to the shared concepts and skills authorized by its scope.
+Treat possession of a skill as evidence of the reader's role. Give that reader only the information needed to perform the role inferred by the skill.
+
+Keep maintenance rationale, comparisons, migration notes, compatibility explanations, and edit history in reports rather than target skills.
 
 ## Maintain Continuously
 
 Assess observed behavior and user feedback against the relevant skill and reader context.
 
-Begin revision automatically when either:
+Begin revision when:
 
-- the user identifies behavior as inappropriate, unintended, or undesirable, and your evidence-based assessment agrees that an in-scope skill formulation contributed; or
-- your own investigation reaches that conclusion from observed behavior.
+- the user identifies behavior as inappropriate, unintended, or undesirable, and evidence indicates that an in-scope skill contributed; or
+- investigation independently reaches that conclusion.
 
-Once this conclusion is reached, re-run the revision procedure without requiring a separate instruction to edit. When evidence remains uncertain, the behavior appears appropriate, or no skill contribution is found, continue investigation or explain the assessment.
+When evidence is uncertain or the skill did not contribute, continue investigation or explain the assessment. Keep revisions proportional to the evidence and edit only clearly owned targets.
 
-Edit product-owned skills through this maintainer. Route external skills to the applicable general maintenance path. Keep the revision proportional to the observed behavior.
+## Establish The Reader
 
-## Establish the Reader Context
+Before revising, determine:
 
-Before revising a skill, identify relevant reader-context facts such as:
+- the role inferred by receiving the skill;
+- the prompt, state, tools, sandbox, workspace, model, reasoning, and lifecycle context supplied to that reader;
+- what the reader can observe, decide, change, and report;
+- the authority and boundaries that affect its actions; and
+- the output or return route needed to complete its responsibility.
 
-- the product role and agent session that consumes it;
-- how the product harness supplies the skill, prompt, state, and immediate work context;
-- the tools, sandbox, workspace, model, reasoning, output, lifecycle, ownership, return-route, and delegated-result disposition guarantees supplied by the harness;
-- which facts the session receives and which exist only in application UI or an outside observer's view;
-- and any similar harness fact that changes how the agent can interpret or follow the skill.
+Inspect relevant sessions, harness configuration, source material, and observed outputs where useful.
 
-Inspect product sources, harness configuration, and relevant Agent Sessions where useful. Treat repo-owned skills for ad-hoc development as evidence rather than product definitions or automatic edit targets.
+Assume prerequisites already established before the reader receives the skill. Exclude instructions about creating or preparing that prerequisite environment unless the reader can encounter and act on that state.
 
-Write from the consuming agent session's perspective using facts its harness supplies. Give lower roles their immediate responsibility, inputs, boundaries, tools, and return route. Include upstream structure only when it serves that role's action.
+Exclude wider structure, adjacent roles, alternate workflows, implementation history, and maintenance rationale unless one of those facts changes what this reader must do.
 
-Assign only actions the consuming agent session can perform. Treat harness-owned facts as context for those actions rather than agent responsibilities.
+Translate every retained fact into an action, boundary, decision clue, or evidence requirement meaningful from the reader's perspective. Assign only actions the reader can perform.
 
-For an ongoing user-facing role, identify which session receives and evaluates delegated results and what immediate user action can carry the primary interaction across a dispatch boundary.
-
-## Revision Procedure
+## Revise
 
 For each revision:
 
-1. Inspect observed behavior and the current role and harness contract where possible.
-2. State why the current skill, missing skill, or mismatch with the reader context likely produced the behavior.
+1. Inspect the behavior, skill, and reader context.
+2. State why the wording, omission, or reader mismatch likely produced the behavior.
 3. Propose a small revision concept.
-4. Evaluate whether it is likely to help without adding ambiguity or premature constraint.
-5. Reconsider the complete skill and integrate the revision through coherent reformulation.
-6. Apply the revision to product-owned targets within scope.
-7. Save the analysis and revision under `reports/[skill-name]`. If a skill is renamed, rename its reports folder.
-8. Report the changes.
+4. Evaluate likely improvement, ambiguity, and constraint risk.
+5. Reconsider the complete skill and reformulate it coherently rather than appending a scenario note.
+6. Apply the revision within the authorized scope.
+7. Save the current analysis and revision under `reports/[skill-name]`.
+8. Report the result and validation.
 
-When user feedback changes a revision, rewrite its report as the current account.
+When later feedback changes the revision, rewrite its report as the current account.
 
-Keep running agents unchanged; this role observes behavior and maintains product skill definitions.
+Keep running sessions unchanged. Maintain definitions; do not use a skill revision as authority to steer active work.
 
-## Creating a Skill
+## Create When Needed
 
-Create a skill when the investigation identifies a distinct product role or behavior that adjacent skills do not cover. Record:
+Create a skill when evidence identifies a distinct reader role or reusable behavior that adjacent skills do not cover. Record what triggered creation, why adjacent skills were insufficient, who reads it, what context that reader receives, and why the wording belongs in that reader's instructions.
 
-1. What triggered creation.
-2. Why adjacent skills were insufficient.
-3. Who reads the skill and what its harness supplies.
-4. How the wording fits that reader and requirement.
+## Write For The Reader
 
-## Writing Guidance
-
-- State the desired action, evidence, or boundary directly.
-- Use prohibitions when the reader's supplied context or observed behavior creates a specific risk that affirmative guidance would not address clearly.
-- Use closed lists only when evidence supports an exhaustive taxonomy. Mark illustrative lists as examples, include "or similar," or otherwise leave room for analogous unforeseen cases.
-- Prefer concise clues over rules until clues prove ineffective.
-- Prefer modest, low-risk revisions over broad rewrites that may introduce ambiguity.
-- When scope or role ownership remains unclear, produce a proposal pending resolution.
+- State desired actions, evidence, and boundaries directly.
+- Include shared material only when its operational content helps this reader act.
+- Prefer concise clues over broad explanation.
+- Use prohibitions for evidenced risks that affirmative guidance would leave ambiguous.
+- Use closed lists only for genuinely exhaustive requirements; otherwise preserve room for analogous cases.
+- Keep examples broad and label them non-exhaustive when appropriate.
+- Remove sentences that merely explain why the skill, role, name, or surrounding structure exists.
+- Produce a proposal when ownership or reader context is not clear enough for a safe edit.
