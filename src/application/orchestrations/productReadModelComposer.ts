@@ -56,6 +56,7 @@ export function composeProductOrchestrationReadModels(
           sessions,
           sprint.sprintId,
           input.selection,
+          input.workUnitMaterializations,
           input.sprintRunnerTransition?.query.transitions.find(
             (transition) => transition.sprintId === sprint.sprintId,
           ),
@@ -136,6 +137,7 @@ function composeSprint(
   sessions: readonly ProductAgentSessionReferenceReadModelV1[],
   sprintId: string,
   selection: ProductReadCompositionInputV1['selection'],
+  workUnitMaterializations: ProductReadCompositionInputV1['workUnitMaterializations'],
   sprintRunnerTransition?: import('./sprintRunnerTransition').SprintRunnerTransitionV1,
 ): ProductSprintReadModelV1 {
   const sprint = required(index.sprints, sprintId, 'Sprint reference index');
@@ -215,6 +217,9 @@ function composeSprint(
     ...(sprintRunnerTransition
       ? { sprintRunnerTransition: projectSprintRunnerTransitionStatus(sprintRunnerTransition) }
       : {}),
+    workUnitMaterializations: (workUnitMaterializations ?? []).filter(
+      (materialization) => materialization.sprintId === sprintId,
+    ),
     sprintPlan: {
       sprintPlanId: plan.sprintPlanId,
       currentSprintPlanRevisionId: current.sprintPlanRevisionId,

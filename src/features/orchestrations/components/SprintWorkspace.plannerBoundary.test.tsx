@@ -13,15 +13,19 @@ const transition: ProductSprintRunnerTransitionStatusV1 = {
   workSlicePlannerRequestedAt: '2026-08-02T00:00:00Z',
   workSlicePlannerAuthorizedAt: '2026-08-02T00:00:01Z',
 };
+const sprint = (
+  sprintRunnerTransition?: ProductSprintRunnerTransitionStatusV1,
+  workUnitMaterializations: readonly unknown[] = [],
+) => ({ sprintRunnerTransition, workUnitMaterializations }) as never;
 
 describe('Work Slice Planner boundary disclosure', () => {
   it('is absent before a durable Planner request', () => {
-    render(<WorkSlicePlannerBoundary transition={undefined} />);
+    render(<WorkSlicePlannerBoundary sprint={sprint(undefined)} />);
     expect(screen.queryByRole('region', { name: 'Work Slice Planner boundary' })).toBeNull();
   });
 
   it('is present after a durable Planner request and states the downstream stop', () => {
-    render(<WorkSlicePlannerBoundary transition={transition} />);
+    render(<WorkSlicePlannerBoundary sprint={sprint(transition)} />);
     expect(screen.getByRole('region', { name: 'Work Slice Planner boundary' })).toHaveTextContent(
       'Proposal facts remain distinct from every later Work Unit or downstream action.',
     );
@@ -36,7 +40,7 @@ describe('Work Slice Planner boundary disclosure', () => {
   it('labels proposal lifecycle stages separately without exposing materialization control', () => {
     render(
       <WorkSlicePlannerBoundary
-        transition={{
+        sprint={sprint({
           ...transition,
           workSliceProposalSubmittedAt: '2026-08-02T00:00:02Z',
           workSliceProposalValidationResult: 'valid',
@@ -45,7 +49,7 @@ describe('Work Slice Planner boundary disclosure', () => {
           workSliceTerminalLifecycleObservedAt: undefined,
           workSliceApplicationAcceptedAt: undefined,
           workSliceMaterializationReadyAt: undefined,
-        }}
+        })}
       />,
     );
     const region = screen.getByRole('region', { name: 'Work Slice Planner boundary' });
@@ -56,5 +60,29 @@ describe('Work Slice Planner boundary disclosure', () => {
     expect(region).toHaveTextContent('Application acceptance (not recorded)');
     expect(region.querySelector('button')).toBeNull();
     expect(region).not.toHaveTextContent('Materialize Work Units');
+  });
+
+  it('labels a partial materialization without claiming settled Work Units', () => {
+    render(
+      <WorkSlicePlannerBoundary
+        sprint={sprint(transition, [
+          {
+            materializationId: 'materialization-1',
+            planningPointId: 'point-1',
+            acceptedRevisionId: 'accepted-revision-1',
+            stage: 'work_units_created',
+            source: {
+              status: 'available',
+              sourceKind: 'application_interpretation',
+              sourceReferences: ['materialization-1'],
+            },
+          },
+        ])}
+      />,
+    );
+    const region = screen.getByRole('region', { name: 'Work Slice Planner boundary' });
+    expect(region).toHaveTextContent('Accepted revision accepted-revision-1');
+    expect(region).toHaveTextContent('Work Units created; relationships not complete');
+    expect(region).toHaveTextContent('No Handler activation or execution is shown.');
   });
 });

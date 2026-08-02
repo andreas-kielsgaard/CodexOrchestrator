@@ -284,65 +284,64 @@ export function SprintWorkspace({
           <p>{workspace.sprint.summary}</p>
           {workspace.sprint.sprintRunnerTransition ? (
             <section
-                className="sprint-context__runner-transition"
-                aria-label="Sprint Runner activation"
-              >
-                <h2>Sprint Runner activation</h2>
-                <p>{workspace.sprint.sprintRunnerTransition.label}</p>
-                <ul>
-                  <li>Requested and authorized</li>
-                  {workspace.sprint.sprintRunnerTransition.sessionCreatedAt ? (
-                    <li>Session created</li>
-                  ) : null}
-                  {workspace.sprint.sprintRunnerTransition.harnessAppliedAt ? (
-                    <li>Harness applied</li>
-                  ) : null}
-                  {workspace.sprint.sprintRunnerTransition.launchAcceptedAt ? (
-                    <li>Launch accepted; pre-start ready</li>
-                  ) : null}
-                  {workspace.sprint.sprintRunnerTransition.preStartSemanticOutcomeRecordedAt ? (
-                    <li>Pre-start outcome recorded</li>
-                  ) : null}
-                  {workspace.sprint.sprintRunnerTransition.preStartLifecycleObservedAt ? (
-                    <li>Matching pre-start lifecycle observed</li>
-                  ) : null}
-                  {workspace.sprint.sprintRunnerTransition.preStartOutcomeAcceptedAt ? (
-                    <li>Pre-start outcome accepted</li>
-                  ) : null}
-                  {workspace.sprint.sprintRunnerTransition.parentContinuationDeliveryRequestedAt ? (
-                    <li>Epic continuation delivery requested</li>
-                  ) : null}
-                  {workspace.sprint.sprintRunnerTransition.parentContinuationDeliveryPersistedAt ? (
-                    <li>Epic continuation invocation persisted</li>
-                  ) : null}
-                  {workspace.sprint.sprintRunnerTransition.epicContinuationLaunchAcceptedAt ? (
-                    <li>Epic continuation launch accepted; awaiting Epic authorization</li>
-                  ) : null}
-                  {workspace.sprint.sprintRunnerTransition.sprintStartPersistedAt ? (
-                    <li>Sprint start authorized and persisted</li>
-                  ) : null}
-                  {workspace.sprint.sprintRunnerTransition.sprintContinuationLaunchAcceptedAt ? (
-                    <li>Started Sprint continuation launch accepted</li>
-                  ) : null}
-                  {workspace.sprint.sprintRunnerTransition
-                    .repositoryBranchReevaluationRecordedAt ? (
-                    <li>Repository and branch reevaluation recorded</li>
-                  ) : null}
-                  {workspace.sprint.sprintRunnerTransition.planningReadyAt ? (
-                    <li>Planning-ready; downstream has not started</li>
-                  ) : null}
-                </ul>
-                <small>
-                  {workspace.sprint.sprintRunnerTransition.providerReceiverActivationObservedAt
-                    ? 'Provider/receiver activation has been observed.'
-                    : 'Provider/receiver activation has not been observed.'}{' '}
-                  {workspace.sprint.sprintRunnerTransition.downstreamNotStarted
-                    ? 'No Work Slice or Work Unit has been created.'
-                    : ''}
-                </small>
+              className="sprint-context__runner-transition"
+              aria-label="Sprint Runner activation"
+            >
+              <h2>Sprint Runner activation</h2>
+              <p>{workspace.sprint.sprintRunnerTransition.label}</p>
+              <ul>
+                <li>Requested and authorized</li>
+                {workspace.sprint.sprintRunnerTransition.sessionCreatedAt ? (
+                  <li>Session created</li>
+                ) : null}
+                {workspace.sprint.sprintRunnerTransition.harnessAppliedAt ? (
+                  <li>Harness applied</li>
+                ) : null}
+                {workspace.sprint.sprintRunnerTransition.launchAcceptedAt ? (
+                  <li>Launch accepted; pre-start ready</li>
+                ) : null}
+                {workspace.sprint.sprintRunnerTransition.preStartSemanticOutcomeRecordedAt ? (
+                  <li>Pre-start outcome recorded</li>
+                ) : null}
+                {workspace.sprint.sprintRunnerTransition.preStartLifecycleObservedAt ? (
+                  <li>Matching pre-start lifecycle observed</li>
+                ) : null}
+                {workspace.sprint.sprintRunnerTransition.preStartOutcomeAcceptedAt ? (
+                  <li>Pre-start outcome accepted</li>
+                ) : null}
+                {workspace.sprint.sprintRunnerTransition.parentContinuationDeliveryRequestedAt ? (
+                  <li>Epic continuation delivery requested</li>
+                ) : null}
+                {workspace.sprint.sprintRunnerTransition.parentContinuationDeliveryPersistedAt ? (
+                  <li>Epic continuation invocation persisted</li>
+                ) : null}
+                {workspace.sprint.sprintRunnerTransition.epicContinuationLaunchAcceptedAt ? (
+                  <li>Epic continuation launch accepted; awaiting Epic authorization</li>
+                ) : null}
+                {workspace.sprint.sprintRunnerTransition.sprintStartPersistedAt ? (
+                  <li>Sprint start authorized and persisted</li>
+                ) : null}
+                {workspace.sprint.sprintRunnerTransition.sprintContinuationLaunchAcceptedAt ? (
+                  <li>Started Sprint continuation launch accepted</li>
+                ) : null}
+                {workspace.sprint.sprintRunnerTransition.repositoryBranchReevaluationRecordedAt ? (
+                  <li>Repository and branch reevaluation recorded</li>
+                ) : null}
+                {workspace.sprint.sprintRunnerTransition.planningReadyAt ? (
+                  <li>Planning-ready; downstream has not started</li>
+                ) : null}
+              </ul>
+              <small>
+                {workspace.sprint.sprintRunnerTransition.providerReceiverActivationObservedAt
+                  ? 'Provider/receiver activation has been observed.'
+                  : 'Provider/receiver activation has not been observed.'}{' '}
+                {workspace.sprint.sprintRunnerTransition.downstreamNotStarted
+                  ? 'No Work Slice or Work Unit has been created.'
+                  : ''}
+              </small>
             </section>
           ) : null}
-          <WorkSlicePlannerBoundary transition={workspace.sprint.sprintRunnerTransition} />
+          <WorkSlicePlannerBoundary sprint={workspace.sprint} />
           <section className="sprint-context__objectives" aria-label="Epic Runner objectives">
             <h2>Epic Runner objectives</h2>
             {workspace.epicRunnerObjectives.length > 0 ? (
@@ -551,10 +550,12 @@ export function SprintWorkspace({
 }
 
 export function WorkSlicePlannerBoundary({
-  transition,
+  sprint,
 }: {
-  readonly transition: SprintWorkspacePresentationV1['sprint']['sprintRunnerTransition'];
+  readonly sprint: SprintWorkspacePresentationV1['sprint'];
 }) {
+  const transition = sprint.sprintRunnerTransition;
+  const materializations = sprint.workUnitMaterializations ?? [];
   if (!transition?.workSlicePlannerRequestId) return null;
   const stage = (label: string, recorded: boolean) => (
     <li key={label}>{recorded ? label : `${label} (not recorded)`}</li>
@@ -562,9 +563,7 @@ export function WorkSlicePlannerBoundary({
   return (
     <section className="sprint-context__runner-transition" aria-label="Work Slice Planner boundary">
       <h2>Work Slice Planner boundary</h2>
-      <p>
-        This Sprint currently stops at the application-owned Work Slice Planner boundary.
-      </p>
+      <p>This Sprint currently stops at the application-owned Work Slice Planner boundary.</p>
       <ul>
         {stage('Planner request', Boolean(transition.workSlicePlannerRequestedAt))}
         {stage('Planner authorization', Boolean(transition.workSlicePlannerAuthorizedAt))}
@@ -589,16 +588,47 @@ export function WorkSlicePlannerBoundary({
         )}
         {stage('Refinement requested', Boolean(transition.workSliceRefinementRequestedAt))}
         {stage('Semantic completion', Boolean(transition.workSliceSemanticCompletedAt))}
-        {stage('Terminal lifecycle observed', Boolean(transition.workSliceTerminalLifecycleObservedAt))}
+        {stage(
+          'Terminal lifecycle observed',
+          Boolean(transition.workSliceTerminalLifecycleObservedAt),
+        )}
         {stage('Application acceptance', Boolean(transition.workSliceApplicationAcceptedAt))}
         {stage('Materialization readiness', Boolean(transition.workSliceMaterializationReadyAt))}
       </ul>
-      <p>
-        Proposal facts remain distinct from every later Work Unit or downstream action.
-      </p>
+      <p>Proposal facts remain distinct from every later Work Unit or downstream action.</p>
+      {materializations.length ? (
+        <section aria-label="Durable Work Unit materialization">
+          <h3>Durable planned responsibilities</h3>
+          <ul>
+            {materializations.map((materialization) => (
+              <li key={materialization.materializationId}>
+                Accepted revision {materialization.acceptedRevisionId}:{' '}
+                {materializationLabel(materialization.stage)}.
+              </li>
+            ))}
+          </ul>
+          <p>
+            These are planned responsibilities only. No Handler activation or execution is shown.
+          </p>
+        </section>
+      ) : null}
       <small>{plannerObservationSummary(transition)}</small>
     </section>
   );
+}
+
+function materializationLabel(
+  stage: NonNullable<
+    SprintWorkspacePresentationV1['sprint']['workUnitMaterializations']
+  >[number]['stage'],
+) {
+  return {
+    authorized: 'authorized',
+    attempt_recorded: 'attempt recorded',
+    work_units_created: 'Work Units created; relationships not complete',
+    relationships_complete: 'relationships complete; settlement not recorded',
+    settled: 'Work Units and relationships settled',
+  }[stage];
 }
 
 function plannerObservationSummary(
@@ -608,7 +638,8 @@ function plannerObservationSummary(
   const lifecycle = Boolean(transition.workSlicePlannerLifecycleObservedAt);
   if (provider && lifecycle) return 'Provider activation and lifecycle observations are recorded.';
   if (provider) return 'Provider activation observation is recorded; lifecycle remains unobserved.';
-  if (lifecycle) return 'Lifecycle observation is recorded; provider activation remains unobserved.';
+  if (lifecycle)
+    return 'Lifecycle observation is recorded; provider activation remains unobserved.';
   return 'Provider activation and lifecycle remain unobserved unless durable source facts are recorded.';
 }
 

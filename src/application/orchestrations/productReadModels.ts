@@ -219,6 +219,19 @@ export interface ProductReadCompositionInputV1 {
   readonly agentControl: import('./agentControl').AgentControlContractsV1;
   readonly artifactAccess: import('./artifactAccess').ArtifactAccessContractsV1;
   readonly referenceIndex: ProductReadReferenceIndexV1;
+  readonly workUnitMaterializations?: readonly {
+    readonly materializationId: string;
+    readonly planningPointId: string;
+    readonly acceptedRevisionId: string;
+    readonly sprintId: string;
+    readonly stage:
+      | 'authorized'
+      | 'attempt_recorded'
+      | 'work_units_created'
+      | 'relationships_complete'
+      | 'settled';
+    readonly source: ReadSourceAuthorityV1;
+  }[];
   readonly selection?: ProductReadSelectionV1;
   readonly bootstrapTransition?: Readonly<{
     readonly query: import('./epicBootstrapTransition').EpicBootstrapTransitionQueryV2;
@@ -364,6 +377,19 @@ export interface ProductSprintReadModelV1 {
   readonly lifecycle?: ProductSourcedReadValueV1<'completed' | 'in_progress' | 'not_started'>;
   readonly planningState: ProductSourcedReadValueV1<ProductSprintPlanningStateV1>;
   readonly sprintRunnerTransition?: import('./sprintRunnerTransition').ProductSprintRunnerTransitionStatusV1;
+  /** Durable materialization progress; this remains separate from execution or Handler activation. */
+  readonly workUnitMaterializations?: readonly {
+    readonly materializationId: string;
+    readonly planningPointId: string;
+    readonly acceptedRevisionId: string;
+    readonly stage:
+      | 'authorized'
+      | 'attempt_recorded'
+      | 'work_units_created'
+      | 'relationships_complete'
+      | 'settled';
+    readonly source: ReadSourceAuthorityV1;
+  }[];
   readonly sprintPlan: {
     readonly sprintPlanId: string;
     readonly currentSprintPlanRevisionId: string;

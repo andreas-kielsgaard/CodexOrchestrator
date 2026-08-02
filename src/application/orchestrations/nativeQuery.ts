@@ -22,6 +22,39 @@ export interface OrchestrationNativeQueryV2 {
   readonly initiatedEpics: readonly NativeInitiatedEpicV2[];
   readonly initiatedSprints: readonly NativeInitiatedSprintV2[];
   readonly fileReviewDocuments: readonly NativeFileReviewDocumentV1[];
+  readonly workUnitMaterializations: readonly NativeWorkUnitMaterializationV1[];
+  readonly workUnits: readonly NativeMaterializedWorkUnitV1[];
+  readonly workUnitRelationships: readonly NativeWorkUnitRelationshipV1[];
+}
+export interface NativeWorkUnitMaterializationV1 {
+  readonly materializationId: string;
+  readonly planningPointId: string;
+  readonly acceptedRevisionId: string;
+  readonly epicId: string;
+  readonly sprintId: string;
+  readonly workSliceId: string;
+  readonly authorizationRecordedAt: string;
+  readonly attemptRecordedAt?: string;
+  readonly workUnitsCreatedAt?: string;
+  readonly relationshipsCompletedAt?: string;
+  readonly settledAt?: string;
+}
+export interface NativeMaterializedWorkUnitV1 {
+  readonly workUnitId: string;
+  readonly materializationId: string;
+  readonly workSliceId: string;
+  readonly acceptedRevisionId: string;
+  readonly laneOrdinal: number;
+  readonly laneTitle: string;
+  readonly specification: string;
+}
+export interface NativeWorkUnitRelationshipV1 {
+  readonly relationshipId: string;
+  readonly materializationId: string;
+  readonly relationshipKind: 'planning_point' | 'sprint' | 'lane' | 'order' | 'depends_on';
+  readonly fromId: string;
+  readonly toId: string;
+  readonly ordinal?: number;
 }
 export interface NativeFileReviewDocumentV1 {
   readonly documentRefId: string;
@@ -173,6 +206,9 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
       'initiatedEpics',
       'initiatedSprints',
       'fileReviewDocuments',
+      'workUnitMaterializations',
+      'workUnits',
+      'workUnitRelationships',
     ],
     'native query',
   );
@@ -200,6 +236,20 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
       root.fileReviewDocuments === undefined
         ? []
         : array(root.fileReviewDocuments, 'fileReviewDocuments').map(fileReviewDocument),
+    workUnitMaterializations:
+      root.workUnitMaterializations === undefined
+        ? []
+        : array(root.workUnitMaterializations, 'workUnitMaterializations').map(
+            workUnitMaterialization,
+          ),
+    workUnits:
+      root.workUnits === undefined
+        ? []
+        : array(root.workUnits, 'workUnits').map(materializedWorkUnit),
+    workUnitRelationships:
+      root.workUnitRelationships === undefined
+        ? []
+        : array(root.workUnitRelationships, 'workUnitRelationships').map(workUnitRelationship),
   };
   validate(query);
   return query;
@@ -262,6 +312,22 @@ export function nativeQueryProductCompositionInputV2(
     sourceKind: 'application_interpretation' as const,
     sourceReferences: [id],
   });
+  const settledMaterializations = query.workUnitMaterializations.filter(
+    (materialization) => materialization.settledAt !== undefined,
+  );
+  const materializedUnits = settledMaterializations.flatMap((materialization) =>
+    query.workUnits
+      .filter((unit) => unit.materializationId === materialization.materializationId)
+      .sort((left, right) => left.laneOrdinal - right.laneOrdinal),
+  );
+  const scopeId = (unit: NativeMaterializedWorkUnitV1) =>
+    `materialized-work-unit-scope:${unit.materializationId}:${unit.workUnitId}`;
+  const materializationById = new Map(
+    query.workUnitMaterializations.map((materialization) => [
+      materialization.materializationId,
+      materialization,
+    ]),
+  );
   const events = {
     version: ORCHESTRATION_EVENTS_V1,
     epics: initiated.map((x) => ({ epicId: x.epicId })),
@@ -275,9 +341,35 @@ export function nativeQueryProductCompositionInputV2(
       sprintPlanId: x.sprintPlanId,
       revision: 1,
     })),
-    workUnits: [],
-    workUnitScopes: [],
-    workSlicePlanningPoints: [],
+    workUnits: materializedUnits.map((unit) => ({ workUnitId: unit.workUnitId })),
+    workUnitScopes: materializedUnits.map((unit) => ({
+      workUnitScopeId: scopeId(unit),
+      sprintPlanRevisionId: query.initiatedSprints.find(
+        (sprint) => sprint.sprintId === materializationById.get(unit.materializationId)?.sprintId,
+      )!.sprintPlanRevisionId,
+      workUnitId: unit.workUnitId,
+      dependsOnWorkUnitScopeIds: query.workUnitRelationships
+        .filter(
+          (relationship) =>
+            relationship.materializationId === unit.materializationId &&
+            relationship.relationshipKind === 'depends_on' &&
+            relationship.fromId === unit.workUnitId,
+        )
+        .map((relationship) =>
+          scopeId(query.workUnits.find((candidate) => candidate.workUnitId === relationship.toId)!),
+        ),
+      gateIds: [],
+    })),
+    workSlicePlanningPoints: settledMaterializations.map((materialization) => ({
+      workSlicePlanningPointId: materialization.planningPointId,
+      sprintPlanId: query.initiatedSprints.find(
+        (sprint) => sprint.sprintId === materialization.sprintId,
+      )!.sprintPlanId,
+      assessedSprintPlanRevisionIds: [
+        query.initiatedSprints.find((sprint) => sprint.sprintId === materialization.sprintId)!
+          .sprintPlanRevisionId,
+      ],
+    })),
     workUnitExecutions: [],
     attempts: [],
     agentSessions: uniquePlanBuilderSessions.map(({ association }) => ({
@@ -308,12 +400,20 @@ export function nativeQueryProductCompositionInputV2(
       artifactIds: [x.artifactId],
       provenanceId: x.provenanceId,
     })),
-    provenance: initiated.map((x) => ({
-      provenanceId: x.provenanceId,
-      sourceKind: 'application' as const,
-      recordedAt: x.recordedAt,
-      causalFactIds: [x.epicId],
-    })),
+    provenance: [
+      ...initiated.map((x) => ({
+        provenanceId: x.provenanceId,
+        sourceKind: 'application' as const,
+        recordedAt: x.recordedAt,
+        causalFactIds: [x.epicId],
+      })),
+      ...query.workUnitMaterializations.map((materialization) => ({
+        provenanceId: materialization.materializationId,
+        sourceKind: 'application' as const,
+        recordedAt: materialization.authorizationRecordedAt,
+        causalFactIds: [materialization.sprintId],
+      })),
+    ],
   };
   return {
     events,
@@ -389,8 +489,19 @@ export function nativeQueryProductCompositionInputV2(
         summary: 'Preparatory initial Sprint Plan revision.',
         source: source(initiated.find((e) => e.epicId === x.epicId)!.provenanceId),
       })),
-      workSlicePlanningPoints: [],
-      workUnits: [],
+      workSlicePlanningPoints: settledMaterializations.map((materialization) => ({
+        workSlicePlanningPointId: materialization.planningPointId,
+        title: 'Accepted Work Slice',
+        purpose: `Accepted immutable revision ${materialization.acceptedRevisionId}.`,
+        source: source(materialization.materializationId),
+      })),
+      workUnits: materializedUnits.map((unit) => ({
+        workUnitId: unit.workUnitId,
+        title: unit.laneTitle,
+        summary: unit.specification,
+        details: `Accepted Work Slice revision ${unit.acceptedRevisionId}; lane ${unit.laneOrdinal + 1}.`,
+        source: source(unit.materializationId),
+      })),
       gates: [],
       concerns: [],
       agentSessions: uniquePlanBuilderSessions.map(({ epic, association, draft }) => ({
@@ -409,7 +520,17 @@ export function nativeQueryProductCompositionInputV2(
         source: source(x.provenanceId),
       })),
       sprintWorkspacePresentation: {
-        workSlicePlanningPointMembership: [],
+        workSlicePlanningPointMembership: settledMaterializations.map((materialization) => ({
+          workSlicePlanningPointId: materialization.planningPointId,
+          sprintPlanRevisionId: query.initiatedSprints.find(
+            (sprint) => sprint.sprintId === materialization.sprintId,
+          )!.sprintPlanRevisionId,
+          workUnitScopeIds: query.workUnits
+            .filter((unit) => unit.materializationId === materialization.materializationId)
+            .sort((left, right) => left.laneOrdinal - right.laneOrdinal)
+            .map(scopeId),
+          source: source(materialization.materializationId),
+        })),
         gates: [],
         documents: query.fileReviewDocuments.map((x) => ({
           documentRefId: x.documentRefId,
@@ -424,6 +545,14 @@ export function nativeQueryProductCompositionInputV2(
         })),
       },
     },
+    workUnitMaterializations: query.workUnitMaterializations.map((materialization) => ({
+      materializationId: materialization.materializationId,
+      planningPointId: materialization.planningPointId,
+      acceptedRevisionId: materialization.acceptedRevisionId,
+      sprintId: materialization.sprintId,
+      stage: materializationStage(materialization),
+      source: source(materialization.materializationId),
+    })),
     ...(transitionQuery
       ? {
           bootstrapTransition: {
@@ -438,6 +567,14 @@ export function nativeQueryProductCompositionInputV2(
       ? { sprintRunnerTransition: { query: sprintRunnerTransitionQuery } }
       : {}),
   };
+}
+
+function materializationStage(materialization: NativeWorkUnitMaterializationV1) {
+  if (materialization.settledAt) return 'settled' as const;
+  if (materialization.relationshipsCompletedAt) return 'relationships_complete' as const;
+  if (materialization.workUnitsCreatedAt) return 'work_units_created' as const;
+  if (materialization.attemptRecordedAt) return 'attempt_recorded' as const;
+  return 'authorized' as const;
 }
 
 const draft = (value: unknown): NativePlanningDraftV1 => {
@@ -778,6 +915,98 @@ const initiatedSprint = (value: unknown): NativeInitiatedSprintV2 => {
     sprintPlanRevisionId: string(x.sprintPlanRevisionId, 'sprintPlanRevisionId'),
   };
 };
+const workUnitMaterialization = (value: unknown): NativeWorkUnitMaterializationV1 => {
+  const x = object(value, 'Work Unit materialization');
+  keys(
+    x,
+    [
+      'materializationId',
+      'planningPointId',
+      'acceptedRevisionId',
+      'epicId',
+      'sprintId',
+      'workSliceId',
+      'authorizationRecordedAt',
+      'attemptRecordedAt',
+      'workUnitsCreatedAt',
+      'relationshipsCompletedAt',
+      'settledAt',
+    ],
+    'Work Unit materialization',
+  );
+  const optionalTime = (key: keyof typeof x) =>
+    x[key] === undefined ? undefined : string(x[key], key);
+  return {
+    materializationId: string(x.materializationId, 'materializationId'),
+    planningPointId: string(x.planningPointId, 'planningPointId'),
+    acceptedRevisionId: string(x.acceptedRevisionId, 'acceptedRevisionId'),
+    epicId: string(x.epicId, 'epicId'),
+    sprintId: string(x.sprintId, 'sprintId'),
+    workSliceId: string(x.workSliceId, 'workSliceId'),
+    authorizationRecordedAt: string(x.authorizationRecordedAt, 'authorizationRecordedAt'),
+    ...(optionalTime('attemptRecordedAt')
+      ? { attemptRecordedAt: optionalTime('attemptRecordedAt') }
+      : {}),
+    ...(optionalTime('workUnitsCreatedAt')
+      ? { workUnitsCreatedAt: optionalTime('workUnitsCreatedAt') }
+      : {}),
+    ...(optionalTime('relationshipsCompletedAt')
+      ? { relationshipsCompletedAt: optionalTime('relationshipsCompletedAt') }
+      : {}),
+    ...(optionalTime('settledAt') ? { settledAt: optionalTime('settledAt') } : {}),
+  };
+};
+const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
+  const x = object(value, 'materialized Work Unit');
+  keys(
+    x,
+    [
+      'workUnitId',
+      'materializationId',
+      'workSliceId',
+      'acceptedRevisionId',
+      'laneOrdinal',
+      'laneTitle',
+      'specification',
+    ],
+    'materialized Work Unit',
+  );
+  if (!Number.isSafeInteger(x.laneOrdinal) || (x.laneOrdinal as number) < 0)
+    fail('invalid Work Unit lane ordinal');
+  return {
+    workUnitId: string(x.workUnitId, 'workUnitId'),
+    materializationId: string(x.materializationId, 'materializationId'),
+    workSliceId: string(x.workSliceId, 'workSliceId'),
+    acceptedRevisionId: string(x.acceptedRevisionId, 'acceptedRevisionId'),
+    laneOrdinal: x.laneOrdinal as number,
+    laneTitle: boundedString(x.laneTitle, 240, 'laneTitle'),
+    specification: boundedString(x.specification, 4000, 'specification'),
+  };
+};
+const workUnitRelationship = (value: unknown): NativeWorkUnitRelationshipV1 => {
+  const x = object(value, 'Work Unit relationship');
+  keys(
+    x,
+    ['relationshipId', 'materializationId', 'relationshipKind', 'fromId', 'toId', 'ordinal'],
+    'Work Unit relationship',
+  );
+  if (
+    !['planning_point', 'sprint', 'lane', 'order', 'depends_on'].includes(
+      x.relationshipKind as string,
+    )
+  )
+    fail('invalid Work Unit relationship kind');
+  if (x.ordinal !== undefined && (!Number.isSafeInteger(x.ordinal) || (x.ordinal as number) < 0))
+    fail('invalid Work Unit relationship ordinal');
+  return {
+    relationshipId: string(x.relationshipId, 'relationshipId'),
+    materializationId: string(x.materializationId, 'materializationId'),
+    relationshipKind: x.relationshipKind as NativeWorkUnitRelationshipV1['relationshipKind'],
+    fromId: string(x.fromId, 'fromId'),
+    toId: string(x.toId, 'toId'),
+    ...(x.ordinal === undefined ? {} : { ordinal: x.ordinal as number }),
+  };
+};
 const fileReviewDocument = (value: unknown): NativeFileReviewDocumentV1 => {
   const x = object(value, 'file review document');
   keys(
@@ -1020,6 +1249,125 @@ function validate(query: OrchestrationNativeQueryV2) {
     (item) => item.materialSnapshotId,
     'initiation material snapshot',
   );
+  unique(
+    query.workUnitMaterializations,
+    (x) => x.materializationId,
+    'Work Unit materialization ID',
+  );
+  unique(
+    query.workUnitMaterializations,
+    (x) => x.planningPointId,
+    'Work Unit materialization planning point',
+  );
+  unique(query.workUnits, (x) => x.workUnitId, 'materialized Work Unit ID');
+  unique(query.workUnitRelationships, (x) => x.relationshipId, 'Work Unit relationship ID');
+  const materializations = new Map(
+    query.workUnitMaterializations.map((x) => [x.materializationId, x]),
+  );
+  query.workUnitMaterializations.forEach((materialization) => {
+    if (!query.initiatedEpics.some((epic) => epic.epicId === materialization.epicId))
+      fail('Work Unit materialization references unknown Epic');
+    if (
+      !query.initiatedSprints.some(
+        (sprint) =>
+          sprint.sprintId === materialization.sprintId && sprint.epicId === materialization.epicId,
+      )
+    )
+      fail('Work Unit materialization references unknown Sprint');
+    if (materialization.attemptRecordedAt && !materialization.authorizationRecordedAt)
+      fail('Work Unit materialization attempt requires authorization');
+    if (materialization.workUnitsCreatedAt && !materialization.attemptRecordedAt)
+      fail('Work Unit materialization Work Units require an attempt');
+    if (materialization.relationshipsCompletedAt && !materialization.workUnitsCreatedAt)
+      fail('Work Unit materialization relationships require Work Units');
+    if (materialization.settledAt && !materialization.relationshipsCompletedAt)
+      fail('Work Unit materialization settlement requires relationships');
+    const units = query.workUnits.filter(
+      (unit) => unit.materializationId === materialization.materializationId,
+    );
+    const relationships = query.workUnitRelationships.filter(
+      (item) => item.materializationId === materialization.materializationId,
+    );
+    if (!materialization.workUnitsCreatedAt && units.length)
+      fail('Work Units exist before their materialization stage');
+    if (!materialization.relationshipsCompletedAt && relationships.length)
+      fail('relationships exist before their materialization stage');
+    if (materialization.workUnitsCreatedAt && !units.length)
+      fail('Work Unit materialization created stage has no Work Units');
+    if (materialization.relationshipsCompletedAt)
+      validateMaterializationRelationships(materialization, units, relationships);
+    units.forEach((unit) => {
+      if (
+        unit.workSliceId !== materialization.workSliceId ||
+        unit.acceptedRevisionId !== materialization.acceptedRevisionId
+      )
+        fail('materialized Work Unit does not match its materialization');
+    });
+  });
+  if (query.workUnits.some((unit) => !materializations.has(unit.materializationId)))
+    fail('materialized Work Unit references unknown materialization');
+  if (query.workUnitRelationships.some((item) => !materializations.has(item.materializationId)))
+    fail('Work Unit relationship references unknown materialization');
+}
+function validateMaterializationRelationships(
+  materialization: NativeWorkUnitMaterializationV1,
+  units: readonly NativeMaterializedWorkUnitV1[],
+  relationships: readonly NativeWorkUnitRelationshipV1[],
+) {
+  unique(
+    units,
+    (unit) => `${unit.materializationId}:${unit.laneOrdinal}`,
+    'materialized Work Unit lane ordinal',
+  );
+  const unitIds = new Set(units.map((unit) => unit.workUnitId));
+  const exact = (
+    kind: NativeWorkUnitRelationshipV1['relationshipKind'],
+    fromId: string,
+    toId: string,
+    ordinal?: number,
+  ) =>
+    relationships.filter(
+      (item) =>
+        item.relationshipKind === kind &&
+        item.fromId === fromId &&
+        item.toId === toId &&
+        item.ordinal === ordinal,
+    );
+  if (
+    exact('planning_point', materialization.planningPointId, materialization.workSliceId).length !==
+    1
+  )
+    fail('materialization requires exactly one planning-point relationship');
+  if (exact('sprint', materialization.sprintId, materialization.workSliceId).length !== 1)
+    fail('materialization requires exactly one Sprint relationship');
+  for (const unit of units) {
+    if (
+      exact('lane', materialization.workSliceId, unit.workUnitId, unit.laneOrdinal).length !== 1 ||
+      exact('order', materialization.workSliceId, unit.workUnitId, unit.laneOrdinal).length !== 1
+    )
+      fail('materialization Work Unit requires matching lane and order relationships');
+  }
+  for (const relationship of relationships) {
+    if (
+      (relationship.relationshipKind === 'lane' || relationship.relationshipKind === 'order') &&
+      (!unitIds.has(relationship.toId) || relationship.fromId !== materialization.workSliceId)
+    )
+      fail('materialization lane/order relationship is incoherent');
+    if (
+      relationship.relationshipKind === 'depends_on' &&
+      (!unitIds.has(relationship.fromId) ||
+        !unitIds.has(relationship.toId) ||
+        relationship.fromId === relationship.toId ||
+        relationship.ordinal !== undefined)
+    )
+      fail('materialization dependency relationship is incoherent');
+    if (
+      (relationship.relationshipKind === 'planning_point' ||
+        relationship.relationshipKind === 'sprint') &&
+      relationship.ordinal !== undefined
+    )
+      fail('materialization ownership relationship cannot have an ordinal');
+  }
 }
 function requireConsumed<T>(
   items: readonly T[],

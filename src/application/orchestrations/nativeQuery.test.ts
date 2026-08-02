@@ -57,12 +57,34 @@ describe('orchestration native query v1', () => {
 
   it('projects durable File Review ownership and rejects an unknown owner Sprint', () => {
     const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
-    value.fileReviewDocuments = [{ documentRefId: 'review-doc', epicId: 'epic-fixture', sprintId: 'sprint-fixture', provenanceId: 'init-provenance-fixture', title: 'Changed files', artifactId: 'review-artifact', changedFiles: [{ changedFileReferenceId: 'changed-1', displayName: 'src/a.ts', changeKind: 'modified' }] }];
+    value.fileReviewDocuments = [
+      {
+        documentRefId: 'review-doc',
+        epicId: 'epic-fixture',
+        sprintId: 'sprint-fixture',
+        provenanceId: 'init-provenance-fixture',
+        title: 'Changed files',
+        artifactId: 'review-artifact',
+        changedFiles: [
+          { changedFileReferenceId: 'changed-1', displayName: 'src/a.ts', changeKind: 'modified' },
+        ],
+      },
+    ];
     const query = decodeOrchestrationNativeQueryV2(value);
-    const models = composeProductOrchestrationReadModels(nativeQueryProductCompositionInputV2(query));
-    expect(models.epics[0].sprints[0].documents[0]).toMatchObject({ documentRefId: 'review-doc', artifactIds: ['review-artifact'], changedFileReferenceIds: ['changed-1'] });
+    const models = composeProductOrchestrationReadModels(
+      nativeQueryProductCompositionInputV2(query),
+    );
+    expect(models.epics[0].sprints[0].documents[0]).toMatchObject({
+      documentRefId: 'review-doc',
+      artifactIds: ['review-artifact'],
+      changedFileReferenceIds: ['changed-1'],
+    });
     (value.fileReviewDocuments as Array<Record<string, unknown>>)[0].sprintId = 'missing-sprint';
-    expect(() => composeProductOrchestrationReadModels(nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(value)))).toThrow('artifact ownership references an unknown Sprint');
+    expect(() =>
+      composeProductOrchestrationReadModels(
+        nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(value)),
+      ),
+    ).toThrow('artifact ownership references an unknown Sprint');
   });
 
   it('projects only a correlated initiated Epic with ordered preparatory Sprints and no Work Units', () => {
@@ -155,6 +177,140 @@ describe('orchestration native query v1', () => {
     expect(input.events.reviews).toEqual([]);
     expect(input.events.agentSessionReferences).toEqual([]);
     expect(read.epics[0]?.agentSessionReferences).toEqual([]);
+  });
+
+  it('projects only settled materialized responsibilities with their accepted revision and dependencies', () => {
+    const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
+    value.workUnitMaterializations = [
+      {
+        materializationId: 'materialization-1',
+        planningPointId: 'point-1',
+        acceptedRevisionId: 'accepted-revision-1',
+        epicId: 'epic-fixture',
+        sprintId: 'sprint-fixture',
+        workSliceId: 'slice-1',
+        authorizationRecordedAt: '2026-08-02T00:00:00Z',
+        attemptRecordedAt: '2026-08-02T00:00:01Z',
+        workUnitsCreatedAt: '2026-08-02T00:00:02Z',
+        relationshipsCompletedAt: '2026-08-02T00:00:03Z',
+        settledAt: '2026-08-02T00:00:04Z',
+      },
+    ];
+    value.workUnits = [
+      {
+        workUnitId: 'unit-1',
+        materializationId: 'materialization-1',
+        workSliceId: 'slice-1',
+        acceptedRevisionId: 'accepted-revision-1',
+        laneOrdinal: 0,
+        laneTitle: 'First responsibility',
+        specification: 'First specification.',
+      },
+      {
+        workUnitId: 'unit-2',
+        materializationId: 'materialization-1',
+        workSliceId: 'slice-1',
+        acceptedRevisionId: 'accepted-revision-1',
+        laneOrdinal: 1,
+        laneTitle: 'Second responsibility',
+        specification: 'Second specification.',
+      },
+    ];
+    value.workUnitRelationships = [
+      {
+        relationshipId: 'point',
+        materializationId: 'materialization-1',
+        relationshipKind: 'planning_point',
+        fromId: 'point-1',
+        toId: 'slice-1',
+      },
+      {
+        relationshipId: 'sprint',
+        materializationId: 'materialization-1',
+        relationshipKind: 'sprint',
+        fromId: 'sprint-fixture',
+        toId: 'slice-1',
+      },
+      {
+        relationshipId: 'lane-1',
+        materializationId: 'materialization-1',
+        relationshipKind: 'lane',
+        fromId: 'slice-1',
+        toId: 'unit-1',
+        ordinal: 0,
+      },
+      {
+        relationshipId: 'order-1',
+        materializationId: 'materialization-1',
+        relationshipKind: 'order',
+        fromId: 'slice-1',
+        toId: 'unit-1',
+        ordinal: 0,
+      },
+      {
+        relationshipId: 'lane-2',
+        materializationId: 'materialization-1',
+        relationshipKind: 'lane',
+        fromId: 'slice-1',
+        toId: 'unit-2',
+        ordinal: 1,
+      },
+      {
+        relationshipId: 'order-2',
+        materializationId: 'materialization-1',
+        relationshipKind: 'order',
+        fromId: 'slice-1',
+        toId: 'unit-2',
+        ordinal: 1,
+      },
+      {
+        relationshipId: 'dependency',
+        materializationId: 'materialization-1',
+        relationshipKind: 'depends_on',
+        fromId: 'unit-2',
+        toId: 'unit-1',
+      },
+    ];
+    const query = decodeOrchestrationNativeQueryV2(value);
+    const read = composeProductOrchestrationReadModels(nativeQueryProductCompositionInputV2(query));
+    const sprint = read.epics[0]!.sprints[0]!;
+    expect(sprint.workUnitMaterializations).toMatchObject([
+      { acceptedRevisionId: 'accepted-revision-1', stage: 'settled' },
+    ]);
+    expect(sprint.revisionViews[0]!.workUnits).toMatchObject([
+      { workUnitId: 'unit-1' },
+      { workUnitId: 'unit-2', dependencies: [{ workUnitId: 'unit-1' }] },
+    ]);
+
+    (value.workUnitRelationships as Array<Record<string, unknown>>)[2]!.toId = 'missing-unit';
+    expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow(
+      'requires matching lane and order relationships',
+    );
+  });
+
+  it('keeps partial materialization stages separate from Work Unit production truth', () => {
+    const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
+    value.workUnitMaterializations = [
+      {
+        materializationId: 'materialization-1',
+        planningPointId: 'point-1',
+        acceptedRevisionId: 'accepted-revision-1',
+        epicId: 'epic-fixture',
+        sprintId: 'sprint-fixture',
+        workSliceId: 'slice-1',
+        authorizationRecordedAt: '2026-08-02T00:00:00Z',
+        attemptRecordedAt: '2026-08-02T00:00:01Z',
+      },
+    ];
+    value.workUnits = [];
+    value.workUnitRelationships = [];
+    const read = composeProductOrchestrationReadModels(
+      nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(value)),
+    );
+    expect(read.epics[0]!.sprints[0]!.workUnitMaterializations).toMatchObject([
+      { stage: 'attempt_recorded' },
+    ]);
+    expect(read.epics[0]!.sprints[0]!.revisionViews[0]!.workUnits).toEqual([]);
   });
 
   it('reports blocked and ready initiation from the selected durable draft without caller-owned retry keys', () => {
