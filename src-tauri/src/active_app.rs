@@ -77,11 +77,11 @@ pub(crate) fn run() {
                 )
                 .map_err(|error| error.to_string())?,
             );
-            // This is the product-native seam for a later authorized Harness action. It is
-            // deliberately unavailable until application-owned workspace authority is composed.
+            // This product-native seam resolves only durable application-owned attempt authority.
             app.manage(
-                crate::orchestration::execution_support::ProductExecutionSupportState::unavailable(
+                crate::orchestration::execution_support::ProductExecutionSupportState::new(
                     &database_path,
+                    orchestration_repository.clone(),
                 )
                 .map_err(|error| error.to_string())?,
             );

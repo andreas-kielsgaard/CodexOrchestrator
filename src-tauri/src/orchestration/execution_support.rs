@@ -1,18 +1,35 @@
-//! Narrow, attempt-scoped execution support for a later authorized Harness action.
+//! Attempt-scoped execution support for a later authorized Harness action.
 //!
-//! The consumer receives an opaque capability reference and evidence references only. Repository,
-//! workspace, Git, path, and role-routing identities stay inside application/native authority.
+//! Harness-facing calls carry an opaque capability and semantic intents only. Application-owned
+//! durable authority retains all Epic, Sprint, Work Unit, role, repository, workspace, and Git
+//! routing facts.
 
+use super::{
+    file_review_git_producer::{produce_file_review_from_git, ProduceFileReviewFromGit},
+    repository::{
+        FileReviewGitCaptureAuthorizationWrite, InitiatedSprintGitAuthority, ScopedFileReviewLoad,
+        SqliteOrchestrationRepository,
+    },
+};
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::{
     error::Error,
     fmt,
-    path::Path,
+    path::{Path, PathBuf},
+    process::Command,
     sync::{Arc, Mutex},
 };
 
 pub(crate) const EXECUTION_SUPPORT_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS execution_support_attempt_authorizations (
+  attempt_id TEXT PRIMARY KEY,
+  work_unit_id TEXT NOT NULL,
+  role_kind TEXT NOT NULL CHECK(role_kind IN ('work_unit_handler','work_unit_implementer')),
+  sprint_git_authority_id TEXT NOT NULL UNIQUE,
+  recorded_at TEXT NOT NULL,
+  FOREIGN KEY(sprint_git_authority_id) REFERENCES initiated_sprint_git_authorities(authority_id) ON DELETE RESTRICT
+);
 CREATE TABLE IF NOT EXISTS execution_support_grants (
   attempt_id TEXT PRIMARY KEY,
   capability_ref TEXT NOT NULL UNIQUE,
@@ -26,76 +43,32 @@ CREATE TABLE IF NOT EXISTS execution_support_grants (
   correlation_fingerprint TEXT NOT NULL,
   recorded_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS execution_support_evidence (
-  capability_ref TEXT NOT NULL,
-  evidence_ref TEXT NOT NULL,
-  display_name TEXT NOT NULL,
-  change_kind TEXT NOT NULL CHECK(change_kind IN ('added','modified','deleted','renamed')),
-  content BLOB NOT NULL,
-  PRIMARY KEY(capability_ref,evidence_ref),
-  FOREIGN KEY(capability_ref) REFERENCES execution_support_grants(capability_ref) ON DELETE RESTRICT
-);
 "#;
 
-/// This context is assembled by application-owned lifecycle code, never by a Harness consumer.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ApplicationOwnedExecutionAttempt {
-    pub(crate) epic_id: String,
-    pub(crate) sprint_id: String,
-    pub(crate) work_unit_id: String,
-    pub(crate) attempt_id: String,
-    pub(crate) repository_id: String,
-    pub(crate) role_id: String,
+struct AuthorizedExecutionAttempt {
+    attempt_id: String,
+    work_unit_id: String,
+    role_kind: String,
+    authority: InitiatedSprintGitAuthority,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ExecutionWorkspaceBinding {
-    repository_id: String,
+struct ExecutionWorkspaceBinding {
     workspace_id: String,
     workspace_fingerprint: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct VerifiedExecutionEvidence {
-    pub(crate) evidence_ref: String,
-    pub(crate) display_name: String,
-    pub(crate) change_kind: String,
-    pub(crate) content: Vec<u8>,
+struct CapturedInspection {
+    manifest: Vec<ChangedFileManifestEntry>,
+    comparison: Option<Vec<u8>>,
 }
 
-/// Private native result; workspace routing data is deliberately absent from the consumer API.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct VerifiedExecutionWorkspace {
-    pub(crate) binding: ExecutionWorkspaceBinding,
-    pub(crate) evidence: Vec<VerifiedExecutionEvidence>,
-}
-
-/// The productive adapter may create/recover an isolated workspace, but receives only app context.
-pub(crate) trait ExecutionWorkspaceResolver: Send + Sync {
-    fn resolve_or_create(
-        &self,
-        attempt: &ApplicationOwnedExecutionAttempt,
-        existing: Option<&ExecutionWorkspaceBinding>,
-    ) -> Result<VerifiedExecutionWorkspace, ExecutionSupportError>;
-}
-
-/// Honest production fallback until a live application-owned workspace authority is composed.
-pub(crate) struct UnavailableExecutionWorkspaceResolver;
-
-impl ExecutionWorkspaceResolver for UnavailableExecutionWorkspaceResolver {
-    fn resolve_or_create(
-        &self,
-        _attempt: &ApplicationOwnedExecutionAttempt,
-        _existing: Option<&ExecutionWorkspaceBinding>,
-    ) -> Result<VerifiedExecutionWorkspace, ExecutionSupportError> {
-        Err(ExecutionSupportError::Unavailable)
-    }
-}
-
+/// The only reference a later Harness action may retain for this capability.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ExecutionSupportReference {
     pub(crate) capability_ref: String,
-    pub(crate) available: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -105,16 +78,18 @@ pub(crate) struct ChangedFileManifestEntry {
     pub(crate) change_kind: String,
 }
 
-/// A future Harness can issue only these semantic intents; there is no path, ref, or shell intent.
+/// No path, repository, Git ref/object, workspace, or role identity is accepted here.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ExecutionSupportIntent {
     ChangedFileManifest,
+    Comparison,
     EvidenceContent { evidence_ref: String },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ExecutionSupportResponse {
     ChangedFileManifest(Vec<ChangedFileManifestEntry>),
+    Comparison(Vec<u8>),
     EvidenceContent(Vec<u8>),
 }
 
@@ -132,20 +107,170 @@ impl fmt::Display for ExecutionSupportError {
         f.write_str(match self {
             Self::Invalid => "the execution-support request is invalid",
             Self::Denied => "the requested execution-support scope is not authorized",
-            Self::Unavailable => "execution support is unavailable because its workspace authority cannot be verified",
-            Self::CorrelationMismatch => "the durable execution-support correlation no longer matches the live workspace",
+            Self::Unavailable => {
+                "execution support is unavailable because its live workspace cannot be verified"
+            }
+            Self::CorrelationMismatch => {
+                "the durable execution-support correlation no longer matches the live workspace"
+            }
             Self::Conflict => "the execution-support grant conflicts with durable state",
         })
     }
 }
 impl Error for ExecutionSupportError {}
 
+/// Narrow native adapter: it uses the durable initiated-Sprint Git authority and canonical File
+/// Review producer, never a human launcher, debug controller, or caller-provided filesystem/Git route.
+trait ExecutionWorkspaceResolver: Send + Sync {
+    fn resolve(
+        &self,
+        attempt: &AuthorizedExecutionAttempt,
+        existing: Option<&ExecutionWorkspaceBinding>,
+    ) -> Result<ExecutionWorkspaceBinding, ExecutionSupportError>;
+    fn inspect(
+        &self,
+        attempt: &AuthorizedExecutionAttempt,
+        binding: &ExecutionWorkspaceBinding,
+        capability_ref: &str,
+    ) -> Result<CapturedInspection, ExecutionSupportError>;
+}
+
+pub(crate) struct ProductExecutionWorkspaceResolver {
+    repository: Arc<SqliteOrchestrationRepository>,
+}
+
+impl ProductExecutionWorkspaceResolver {
+    pub(crate) fn new(repository: Arc<SqliteOrchestrationRepository>) -> Self {
+        Self { repository }
+    }
+
+    fn verified_workspace(
+        &self,
+        attempt: &AuthorizedExecutionAttempt,
+        existing: Option<&ExecutionWorkspaceBinding>,
+    ) -> Result<(PathBuf, String), ExecutionSupportError> {
+        let authority = &attempt.authority;
+        let root = canonical_authorized_root(&authority.worktree_root)?;
+        let repository = canonical_authorized_root(&authority.repository_root)?;
+        let common = git_path(&root, &["rev-parse", "--git-common-dir"])?;
+        if common != canonical_authorized_root(&authority.repository_common_dir)?
+            || git_path(&repository, &["rev-parse", "--git-common-dir"])? != common
+            || git_text(
+                &root,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    &format!("{}^{{commit}}", authority.baseline_object_id),
+                ],
+            )? != authority.baseline_object_id
+        {
+            return Err(ExecutionSupportError::CorrelationMismatch);
+        }
+        let head = git_text(&root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+        if existing.is_none()
+            && (head != authority.current_object_id
+                || !git_text(&root, &["status", "--porcelain"])?.is_empty())
+        {
+            return Err(ExecutionSupportError::Unavailable);
+        }
+        Ok((root, head))
+    }
+}
+
+impl ExecutionWorkspaceResolver for ProductExecutionWorkspaceResolver {
+    fn resolve(
+        &self,
+        attempt: &AuthorizedExecutionAttempt,
+        existing: Option<&ExecutionWorkspaceBinding>,
+    ) -> Result<ExecutionWorkspaceBinding, ExecutionSupportError> {
+        let (root, _) = self.verified_workspace(attempt, existing)?;
+        let binding = ExecutionWorkspaceBinding {
+            workspace_id: attempt.authority.worktree_id.clone(),
+            workspace_fingerprint: workspace_fingerprint(&attempt.authority, &root),
+        };
+        if existing.is_some_and(|existing| existing != &binding) {
+            return Err(ExecutionSupportError::CorrelationMismatch);
+        }
+        Ok(binding)
+    }
+
+    fn inspect(
+        &self,
+        attempt: &AuthorizedExecutionAttempt,
+        binding: &ExecutionWorkspaceBinding,
+        capability_ref: &str,
+    ) -> Result<CapturedInspection, ExecutionSupportError> {
+        let (_, current_object_id) = self.verified_workspace(attempt, Some(binding))?;
+        if current_object_id == attempt.authority.baseline_object_id {
+            return Ok(CapturedInspection {
+                manifest: vec![],
+                comparison: None,
+            });
+        }
+        let snapshot = stable_id(
+            "execution-support-snapshot",
+            &format!("{capability_ref}:{current_object_id}"),
+        );
+        self.repository
+            .store_file_review_git_capture_authorization(FileReviewGitCaptureAuthorizationWrite {
+                capture_authorization_id: snapshot.clone(),
+                idempotency_key: stable_id("execution-support-capture", &snapshot),
+                epic_id: attempt.authority.epic_id.clone(),
+                sprint_id: attempt.authority.sprint_id.clone(),
+                provenance_id: attempt.authority.provenance_id.clone(),
+                repository_id: attempt.authority.repository_id.clone(),
+                repository_root: attempt.authority.repository_root.clone(),
+                worktree_id: attempt.authority.worktree_id.clone(),
+                worktree_root: attempt.authority.worktree_root.clone(),
+                baseline_object_id: attempt.authority.baseline_object_id.clone(),
+                current_object_id,
+            })
+            .map_err(|_| ExecutionSupportError::CorrelationMismatch)?;
+        let produced = produce_file_review_from_git(
+            &self.repository,
+            ProduceFileReviewFromGit {
+                capture_authorization_id: snapshot,
+            },
+        )
+        .map_err(|_| ExecutionSupportError::Unavailable)?;
+        let document = match self
+            .repository
+            .load_scoped_file_review(&produced.opaque_reference)
+        {
+            Ok(ScopedFileReviewLoad::Available { document }) => document,
+            _ => return Err(ExecutionSupportError::Unavailable),
+        };
+        let manifest = document
+            .changed_files
+            .into_iter()
+            .map(|file| {
+                if !safe_display_path(&file.display_name) {
+                    return Err(ExecutionSupportError::CorrelationMismatch);
+                }
+                Ok(ChangedFileManifestEntry {
+                    evidence_ref: file.changed_file_reference_id,
+                    display_name: file.display_name,
+                    change_kind: file.change_kind,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(CapturedInspection {
+            manifest,
+            comparison: Some(document.payload),
+        })
+    }
+}
+
 pub(crate) struct SqliteExecutionSupportRepository {
     connection: Mutex<Connection>,
+    orchestration: Arc<SqliteOrchestrationRepository>,
 }
 
 impl SqliteExecutionSupportRepository {
-    pub(crate) fn open(path: &Path) -> Result<Self, ExecutionSupportError> {
+    fn open(
+        path: &Path,
+        orchestration: Arc<SqliteOrchestrationRepository>,
+    ) -> Result<Self, ExecutionSupportError> {
         let connection = Connection::open(path).map_err(|_| ExecutionSupportError::Unavailable)?;
         crate::storage::configure_sqlite_connection(&connection)
             .map_err(|_| ExecutionSupportError::Unavailable)?;
@@ -154,17 +279,8 @@ impl SqliteExecutionSupportRepository {
             .map_err(|_| ExecutionSupportError::Unavailable)?;
         Ok(Self {
             connection: Mutex::new(connection),
+            orchestration,
         })
-    }
-
-    #[cfg(test)]
-    fn memory() -> Self {
-        let connection = Connection::open_in_memory().unwrap();
-        crate::storage::configure_sqlite_connection(&connection).unwrap();
-        connection.execute_batch(EXECUTION_SUPPORT_SCHEMA).unwrap();
-        Self {
-            connection: Mutex::new(connection),
-        }
     }
 }
 
@@ -174,7 +290,7 @@ pub(crate) struct ExecutionSupportService {
 }
 
 impl ExecutionSupportService {
-    pub(crate) fn new(
+    fn new(
         repository: Arc<SqliteExecutionSupportRepository>,
         resolver: Arc<dyn ExecutionWorkspaceResolver>,
     ) -> Self {
@@ -184,62 +300,37 @@ impl ExecutionSupportService {
         }
     }
 
-    /// Grants/replays one attempt-scoped reference. The lock covers first resolution and write,
-    /// making duplicate callers observe one durable workspace binding.
+    /// This application-only operation accepts an opaque existing attempt reference. Its context
+    /// is re-derived from durable authority; it does not create a Work Unit or execution attempt.
     pub(crate) fn grant(
         &self,
-        attempt: ApplicationOwnedExecutionAttempt,
+        attempt_id: &str,
     ) -> Result<ExecutionSupportReference, ExecutionSupportError> {
-        validate_attempt(&attempt)?;
-        let mut connection = self
+        let attempt = self.authorized_attempt(attempt_id)?;
+        let connection = self
             .repository
             .connection
             .lock()
             .map_err(|_| ExecutionSupportError::Unavailable)?;
-        let existing = load_grant(&connection, &attempt.attempt_id)?;
-        let workspace = self
+        let existing = load_grant(&connection, attempt_id)?;
+        let binding = self
             .resolver
-            .resolve_or_create(&attempt, existing.as_ref().map(|grant| &grant.binding))?;
-        validate_workspace(&attempt, &workspace)?;
+            .resolve(&attempt, existing.as_ref().map(|grant| &grant.binding))?;
         if let Some(existing) = existing {
-            if existing.context != attempt || existing.binding != workspace.binding {
+            if existing.correlation != correlation_fingerprint(&attempt, &binding) {
                 return Err(ExecutionSupportError::CorrelationMismatch);
             }
             return Ok(ExecutionSupportReference {
                 capability_ref: existing.capability_ref,
-                available: true,
             });
         }
-        let capability_ref = stable_id("execution-support", &attempt.attempt_id);
-        let correlation = correlation_fingerprint(&attempt, &workspace.binding);
-        let transaction = connection
-            .unchecked_transaction()
-            .map_err(|_| ExecutionSupportError::Unavailable)?;
-        transaction.execute(
+        let capability_ref = stable_id("execution-support", attempt_id);
+        let correlation = correlation_fingerprint(&attempt, &binding);
+        connection.execute(
             "INSERT INTO execution_support_grants (attempt_id,capability_ref,epic_id,sprint_id,work_unit_id,repository_id,role_id,workspace_id,workspace_fingerprint,correlation_fingerprint,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,datetime('now'))",
-            params![attempt.attempt_id, capability_ref, attempt.epic_id, attempt.sprint_id, attempt.work_unit_id, attempt.repository_id, attempt.role_id, workspace.binding.workspace_id, workspace.binding.workspace_fingerprint, correlation],
+            params![attempt.attempt_id, capability_ref, attempt.authority.epic_id, attempt.authority.sprint_id, attempt.work_unit_id, attempt.authority.repository_id, attempt.role_kind, binding.workspace_id, binding.workspace_fingerprint, correlation],
         ).map_err(|_| ExecutionSupportError::Conflict)?;
-        for evidence in &workspace.evidence {
-            transaction.execute(
-                "INSERT INTO execution_support_evidence (capability_ref,evidence_ref,display_name,change_kind,content) VALUES (?1,?2,?3,?4,?5)",
-                params![capability_ref, evidence.evidence_ref, evidence.display_name, evidence.change_kind, evidence.content],
-            ).map_err(|_| ExecutionSupportError::Conflict)?;
-        }
-        transaction
-            .commit()
-            .map_err(|_| ExecutionSupportError::Unavailable)?;
-        Ok(ExecutionSupportReference {
-            capability_ref,
-            available: true,
-        })
-    }
-
-    /// Rechecks durable correlation against the live resolver; it never turns stale state into availability.
-    pub(crate) fn recover(
-        &self,
-        attempt: ApplicationOwnedExecutionAttempt,
-    ) -> Result<ExecutionSupportReference, ExecutionSupportError> {
-        self.grant(attempt)
+        Ok(ExecutionSupportReference { capability_ref })
     }
 
     pub(crate) fn consume(
@@ -247,64 +338,95 @@ impl ExecutionSupportService {
         capability_ref: &str,
         intent: ExecutionSupportIntent,
     ) -> Result<ExecutionSupportResponse, ExecutionSupportError> {
-        if !bounded(capability_ref) {
+        if !bounded_id(capability_ref) {
             return Err(ExecutionSupportError::Denied);
         }
-        let connection = self
-            .repository
-            .connection
-            .lock()
-            .map_err(|_| ExecutionSupportError::Unavailable)?;
-        let exists: bool = connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM execution_support_grants WHERE capability_ref=?1)",
-                [capability_ref],
-                |row| row.get(0),
-            )
-            .map_err(|_| ExecutionSupportError::Unavailable)?;
-        if !exists {
-            return Err(ExecutionSupportError::Denied);
+        let grant = {
+            let connection = self
+                .repository
+                .connection
+                .lock()
+                .map_err(|_| ExecutionSupportError::Unavailable)?;
+            load_grant_for_capability(&connection, capability_ref)?
         }
+        .ok_or(ExecutionSupportError::Denied)?;
+        let attempt = self.authorized_attempt(&grant.attempt_id)?;
+        let binding = self.resolver.resolve(&attempt, Some(&grant.binding))?;
+        if grant.correlation != correlation_fingerprint(&attempt, &binding) {
+            return Err(ExecutionSupportError::CorrelationMismatch);
+        }
+        let inspection = self.resolver.inspect(&attempt, &binding, capability_ref)?;
         match intent {
-            ExecutionSupportIntent::ChangedFileManifest => {
-                let mut statement = connection.prepare("SELECT evidence_ref,display_name,change_kind FROM execution_support_evidence WHERE capability_ref=?1 ORDER BY evidence_ref").map_err(|_| ExecutionSupportError::Unavailable)?;
-                let rows = statement
-                    .query_map([capability_ref], |row| {
-                        Ok(ChangedFileManifestEntry {
-                            evidence_ref: row.get(0)?,
-                            display_name: row.get(1)?,
-                            change_kind: row.get(2)?,
-                        })
-                    })
-                    .map_err(|_| ExecutionSupportError::Unavailable)?;
-                Ok(ExecutionSupportResponse::ChangedFileManifest(
-                    rows.collect::<Result<Vec<_>, _>>()
-                        .map_err(|_| ExecutionSupportError::Unavailable)?,
-                ))
-            }
+            ExecutionSupportIntent::ChangedFileManifest => Ok(
+                ExecutionSupportResponse::ChangedFileManifest(inspection.manifest),
+            ),
+            ExecutionSupportIntent::Comparison => inspection
+                .comparison
+                .map(ExecutionSupportResponse::Comparison)
+                .ok_or(ExecutionSupportError::Denied),
             ExecutionSupportIntent::EvidenceContent { evidence_ref } => {
-                if !bounded(&evidence_ref) {
-                    return Err(ExecutionSupportError::Denied);
-                }
-                let content = connection.query_row("SELECT content FROM execution_support_evidence WHERE capability_ref=?1 AND evidence_ref=?2", params![capability_ref, evidence_ref], |row| row.get(0)).optional().map_err(|_| ExecutionSupportError::Unavailable)?;
-                content
-                    .map(ExecutionSupportResponse::EvidenceContent)
-                    .ok_or(ExecutionSupportError::Denied)
+                evidence_from_canonical_comparison(
+                    inspection.comparison.as_deref(),
+                    &inspection.manifest,
+                    &evidence_ref,
+                )
+                .map(ExecutionSupportResponse::EvidenceContent)
             }
         }
     }
+
+    fn authorized_attempt(
+        &self,
+        attempt_id: &str,
+    ) -> Result<AuthorizedExecutionAttempt, ExecutionSupportError> {
+        if !bounded_id(attempt_id) {
+            return Err(ExecutionSupportError::Denied);
+        }
+        let (work_unit_id, role_kind, authority_id): (String, String, String) = self.repository.connection.lock().map_err(|_| ExecutionSupportError::Unavailable)?.query_row(
+            "SELECT work_unit_id,role_kind,sprint_git_authority_id FROM execution_support_attempt_authorizations WHERE attempt_id=?1",
+            [attempt_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).optional().map_err(|_| ExecutionSupportError::Unavailable)?.ok_or(ExecutionSupportError::Denied)?;
+        if !bounded_id(&work_unit_id)
+            || !matches!(
+                role_kind.as_str(),
+                "work_unit_handler" | "work_unit_implementer"
+            )
+        {
+            return Err(ExecutionSupportError::Denied);
+        }
+        let authority = self
+            .repository
+            .orchestration
+            .load_initiated_sprint_git_authority(&authority_id)
+            .map_err(|_| ExecutionSupportError::Unavailable)?
+            .ok_or(ExecutionSupportError::Denied)?;
+        Ok(AuthorizedExecutionAttempt {
+            attempt_id: attempt_id.into(),
+            work_unit_id,
+            role_kind,
+            authority,
+        })
+    }
 }
 
-/// Native product composition owns this state. No recorded/development resolver is substituted.
+/// Product boot composes the real narrow adapter. It can have no current attempt while still being
+/// implemented; a missing durable authorization is reported only when an application later asks.
 pub(crate) struct ProductExecutionSupportState {
     service: Arc<ExecutionSupportService>,
 }
 impl ProductExecutionSupportState {
-    pub(crate) fn unavailable(database_path: &Path) -> Result<Self, ExecutionSupportError> {
+    pub(crate) fn new(
+        database_path: &Path,
+        orchestration: Arc<SqliteOrchestrationRepository>,
+    ) -> Result<Self, ExecutionSupportError> {
+        let repository = Arc::new(SqliteExecutionSupportRepository::open(
+            database_path,
+            orchestration.clone(),
+        )?);
         Ok(Self {
             service: Arc::new(ExecutionSupportService::new(
-                Arc::new(SqliteExecutionSupportRepository::open(database_path)?),
-                Arc::new(UnavailableExecutionWorkspaceResolver),
+                repository,
+                Arc::new(ProductExecutionWorkspaceResolver::new(orchestration)),
             )),
         })
     }
@@ -315,87 +437,126 @@ impl ProductExecutionSupportState {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StoredGrant {
+    attempt_id: String,
     capability_ref: String,
-    context: ApplicationOwnedExecutionAttempt,
     binding: ExecutionWorkspaceBinding,
+    correlation: String,
 }
 
 fn load_grant(
     connection: &Connection,
     attempt_id: &str,
 ) -> Result<Option<StoredGrant>, ExecutionSupportError> {
-    connection.query_row(
-        "SELECT capability_ref,epic_id,sprint_id,work_unit_id,repository_id,role_id,workspace_id,workspace_fingerprint,correlation_fingerprint FROM execution_support_grants WHERE attempt_id=?1",
-        [attempt_id],
-        |row| Ok((row.get::<_, String>(0)?, ApplicationOwnedExecutionAttempt { epic_id: row.get(1)?, sprint_id: row.get(2)?, work_unit_id: row.get(3)?, attempt_id: attempt_id.into(), repository_id: row.get(4)?, role_id: row.get(5)? }, ExecutionWorkspaceBinding { repository_id: row.get(4)?, workspace_id: row.get(6)?, workspace_fingerprint: row.get(7)? }, row.get::<_, String>(8)?)),
-    ).optional().map_err(|_| ExecutionSupportError::Unavailable)?.map(|(capability_ref, context, binding, correlation)| {
-        (correlation == correlation_fingerprint(&context, &binding)).then_some(StoredGrant { capability_ref, context, binding }).ok_or(ExecutionSupportError::CorrelationMismatch)
-    }).transpose()
+    load_grant_where(connection, "attempt_id", attempt_id)
+}
+fn load_grant_for_capability(
+    connection: &Connection,
+    capability_ref: &str,
+) -> Result<Option<StoredGrant>, ExecutionSupportError> {
+    load_grant_where(connection, "capability_ref", capability_ref)
+}
+fn load_grant_where(
+    connection: &Connection,
+    field: &str,
+    value: &str,
+) -> Result<Option<StoredGrant>, ExecutionSupportError> {
+    let query = format!("SELECT attempt_id,capability_ref,workspace_id,workspace_fingerprint,correlation_fingerprint FROM execution_support_grants WHERE {field}=?1");
+    connection
+        .query_row(&query, [value], |row| {
+            Ok(StoredGrant {
+                attempt_id: row.get(0)?,
+                capability_ref: row.get(1)?,
+                binding: ExecutionWorkspaceBinding {
+                    workspace_id: row.get(2)?,
+                    workspace_fingerprint: row.get(3)?,
+                },
+                correlation: row.get(4)?,
+            })
+        })
+        .optional()
+        .map_err(|_| ExecutionSupportError::Unavailable)
 }
 
-fn validate_attempt(value: &ApplicationOwnedExecutionAttempt) -> Result<(), ExecutionSupportError> {
-    [
-        &value.epic_id,
-        &value.sprint_id,
-        &value.work_unit_id,
-        &value.attempt_id,
-        &value.repository_id,
-        &value.role_id,
-    ]
-    .iter()
-    .all(|value| bounded(value))
-    .then_some(())
-    .ok_or(ExecutionSupportError::Invalid)
-}
-fn validate_workspace(
-    attempt: &ApplicationOwnedExecutionAttempt,
-    value: &VerifiedExecutionWorkspace,
-) -> Result<(), ExecutionSupportError> {
-    if value.binding.repository_id != attempt.repository_id
-        || !bounded(&value.binding.workspace_id)
-        || !fingerprint(&value.binding.workspace_fingerprint)
-        || value.evidence.is_empty()
+fn evidence_from_canonical_comparison(
+    comparison: Option<&[u8]>,
+    manifest: &[ChangedFileManifestEntry],
+    evidence_ref: &str,
+) -> Result<Vec<u8>, ExecutionSupportError> {
+    if !manifest
+        .iter()
+        .any(|entry| entry.evidence_ref == evidence_ref)
     {
+        return Err(ExecutionSupportError::Denied);
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(comparison.ok_or(ExecutionSupportError::Denied)?)
+            .map_err(|_| ExecutionSupportError::Unavailable)?;
+    let file = value
+        .get("files")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|files| {
+            files.iter().find(|file| {
+                file.get("changedFileReferenceId")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(evidence_ref)
+            })
+        })
+        .ok_or(ExecutionSupportError::Denied)?;
+    serde_json::to_vec(file).map_err(|_| ExecutionSupportError::Unavailable)
+}
+
+fn canonical_authorized_root(value: &str) -> Result<PathBuf, ExecutionSupportError> {
+    let root = PathBuf::from(value)
+        .canonicalize()
+        .map_err(|_| ExecutionSupportError::Unavailable)?;
+    if root.to_string_lossy() != value {
         return Err(ExecutionSupportError::CorrelationMismatch);
     }
-    let mut refs = std::collections::HashSet::new();
-    for evidence in &value.evidence {
-        if !bounded(&evidence.evidence_ref)
-            || !safe_relative_path(&evidence.display_name)
-            || !matches!(
-                evidence.change_kind.as_str(),
-                "added" | "modified" | "deleted" | "renamed"
-            )
-            || evidence.content.len() > 1_000_000
-            || !refs.insert(&evidence.evidence_ref)
-        {
-            return Err(ExecutionSupportError::Invalid);
-        }
-    }
-    Ok(())
+    Ok(root)
 }
-fn bounded(value: &str) -> bool {
+fn git_text(root: &Path, args: &[&str]) -> Result<String, ExecutionSupportError> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .map_err(|_| ExecutionSupportError::Unavailable)?;
+    if !output.status.success() || output.stdout.len() > 256_000 {
+        return Err(ExecutionSupportError::Unavailable);
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|_| ExecutionSupportError::Unavailable)
+        .map(|value| value.trim().to_owned())
+}
+fn git_path(root: &Path, args: &[&str]) -> Result<PathBuf, ExecutionSupportError> {
+    let path = PathBuf::from(git_text(root, args)?);
+    (if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    })
+    .canonicalize()
+    .map_err(|_| ExecutionSupportError::Unavailable)
+}
+fn bounded_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
-fn fingerprint(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-}
-fn safe_relative_path(value: &str) -> bool {
+fn safe_display_path(value: &str) -> bool {
     !value.is_empty()
-        && value.len() <= 4096
+        && value.len() <= 4_096
+        && !value.chars().any(|character| character.is_control())
         && !value.starts_with('/')
         && !value.starts_with('\\')
+        && !value.starts_with("\\\\")
         && !value.contains('\\')
+        && !value.as_bytes().get(1).is_some_and(|byte| *byte == b':')
         && !value
             .split('/')
-            .any(|part| part.is_empty() || part == "." || part == "..")
+            .any(|part| part.is_empty() || matches!(part, "." | ".."))
 }
 fn stable_id(prefix: &str, value: &str) -> String {
     format!(
@@ -403,21 +564,35 @@ fn stable_id(prefix: &str, value: &str) -> String {
         &format!("{:x}", Sha256::digest(value.as_bytes()))[..24]
     )
 }
+fn workspace_fingerprint(authority: &InitiatedSprintGitAuthority, root: &Path) -> String {
+    fingerprint(&[
+        &authority.authority_id,
+        &authority.repository_id,
+        &authority.worktree_id,
+        &authority.baseline_object_id,
+        &authority.source_fingerprint,
+        root.to_string_lossy().as_ref(),
+    ])
+}
 fn correlation_fingerprint(
-    context: &ApplicationOwnedExecutionAttempt,
+    attempt: &AuthorizedExecutionAttempt,
     binding: &ExecutionWorkspaceBinding,
 ) -> String {
-    let mut hash = Sha256::new();
-    for value in [
-        &context.epic_id,
-        &context.sprint_id,
-        &context.work_unit_id,
-        &context.attempt_id,
-        &context.repository_id,
-        &context.role_id,
+    fingerprint(&[
+        &attempt.attempt_id,
+        &attempt.work_unit_id,
+        &attempt.role_kind,
+        &attempt.authority.authority_id,
+        &attempt.authority.epic_id,
+        &attempt.authority.sprint_id,
+        &attempt.authority.repository_id,
         &binding.workspace_id,
         &binding.workspace_fingerprint,
-    ] {
+    ])
+}
+fn fingerprint(values: &[&str]) -> String {
+    let mut hash = Sha256::new();
+    for value in values {
         hash.update((value.len() as u64).to_be_bytes());
         hash.update(value.as_bytes());
     }
@@ -427,180 +602,169 @@ fn correlation_fingerprint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        sync::atomic::{AtomicUsize, Ordering},
-        thread,
-    };
+    use std::{fs, process::Command};
 
-    struct Resolver {
-        workspace: Mutex<Result<VerifiedExecutionWorkspace, ExecutionSupportError>>,
-        first_resolutions: AtomicUsize,
+    #[test]
+    fn canonical_evidence_requires_manifest_membership() {
+        let manifest = vec![ChangedFileManifestEntry {
+            evidence_ref: "file-1".into(),
+            display_name: "src/lib.rs".into(),
+            change_kind: "modified".into(),
+        }];
+        let comparison =
+            br#"{"files":[{"changedFileReferenceId":"file-1","content":{"encoding":"utf-8"}}]}"#;
+        assert!(evidence_from_canonical_comparison(Some(comparison), &manifest, "file-1").is_ok());
+        assert_eq!(
+            evidence_from_canonical_comparison(Some(comparison), &manifest, "C:/secret"),
+            Err(ExecutionSupportError::Denied)
+        );
+        assert!(!safe_display_path("C:/secret"));
+        assert!(!safe_display_path("//server/share"));
+        assert!(!safe_display_path("../escape"));
     }
-    impl ExecutionWorkspaceResolver for Resolver {
-        fn resolve_or_create(
-            &self,
-            _attempt: &ApplicationOwnedExecutionAttempt,
-            existing: Option<&ExecutionWorkspaceBinding>,
-        ) -> Result<VerifiedExecutionWorkspace, ExecutionSupportError> {
-            if existing.is_none() {
-                self.first_resolutions.fetch_add(1, Ordering::SeqCst);
-            }
-            self.workspace.lock().unwrap().clone()
-        }
-    }
-    fn attempt(id: &str) -> ApplicationOwnedExecutionAttempt {
-        ApplicationOwnedExecutionAttempt {
+
+    #[test]
+    fn productive_adapter_rejects_replaced_or_unclean_workspace() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("repo");
+        fs::create_dir(&root).unwrap();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(&root)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{:?}", output);
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        git(&["init"]);
+        git(&["config", "user.email", "test@example.invalid"]);
+        git(&["config", "user.name", "Test"]);
+        fs::write(root.join("file.txt"), "base\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "base"]);
+        let baseline = git(&["rev-parse", "HEAD"]);
+        fs::write(root.join("file.txt"), "next\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "next"]);
+        let head = git(&["rev-parse", "HEAD"]);
+        let common = git_path(&root, &["rev-parse", "--git-common-dir"]).unwrap();
+        let canonical_root = root.canonicalize().unwrap();
+        let authority = InitiatedSprintGitAuthority {
+            authority_id: "authority-1".into(),
             epic_id: "epic-1".into(),
             sprint_id: "sprint-1".into(),
-            work_unit_id: "work-unit-1".into(),
-            attempt_id: id.into(),
+            provenance_id: "provenance-1".into(),
             repository_id: "repository-1".into(),
-            role_id: "implementer-1".into(),
-        }
-    }
-    fn workspace() -> VerifiedExecutionWorkspace {
-        VerifiedExecutionWorkspace {
-            binding: ExecutionWorkspaceBinding {
-                repository_id: "repository-1".into(),
-                workspace_id: "workspace-1".into(),
-                workspace_fingerprint: "a".repeat(64),
-            },
-            evidence: vec![VerifiedExecutionEvidence {
-                evidence_ref: "evidence-1".into(),
-                display_name: "src/lib.rs".into(),
-                change_kind: "modified".into(),
-                content: b"changed".to_vec(),
-            }],
-        }
-    }
-    fn service(resolver: Arc<Resolver>) -> Arc<ExecutionSupportService> {
-        Arc::new(ExecutionSupportService::new(
-            Arc::new(SqliteExecutionSupportRepository::memory()),
-            resolver,
-        ))
-    }
-
-    #[test]
-    fn concurrent_grants_create_one_workspace_binding_and_scope_evidence() {
-        let resolver = Arc::new(Resolver {
-            workspace: Mutex::new(Ok(workspace())),
-            first_resolutions: AtomicUsize::new(0),
-        });
-        let service = service(resolver.clone());
-        let joins = (0..4)
-            .map(|_| {
-                let service = service.clone();
-                thread::spawn(move || service.grant(attempt("attempt-1")).unwrap())
-            })
-            .collect::<Vec<_>>();
-        let references = joins
-            .into_iter()
-            .map(|join| join.join().unwrap().capability_ref)
-            .collect::<Vec<_>>();
-        assert!(references
-            .iter()
-            .all(|reference| reference == &references[0]));
-        assert_eq!(resolver.first_resolutions.load(Ordering::SeqCst), 1);
-        assert_eq!(
-            service
-                .consume(&references[0], ExecutionSupportIntent::ChangedFileManifest)
-                .unwrap(),
-            ExecutionSupportResponse::ChangedFileManifest(vec![ChangedFileManifestEntry {
-                evidence_ref: "evidence-1".into(),
-                display_name: "src/lib.rs".into(),
-                change_kind: "modified".into()
-            }])
-        );
-        assert_eq!(
-            service
-                .consume(
-                    &references[0],
-                    ExecutionSupportIntent::EvidenceContent {
-                        evidence_ref: "evidence-1".into()
-                    }
-                )
-                .unwrap(),
-            ExecutionSupportResponse::EvidenceContent(b"changed".to_vec())
-        );
+            repository_root: canonical_root.to_string_lossy().into_owned(),
+            repository_common_dir: common.to_string_lossy().into_owned(),
+            worktree_id: "worktree-1".into(),
+            worktree_root: canonical_root.to_string_lossy().into_owned(),
+            baseline_object_id: baseline,
+            current_object_id: head,
+            runtime_instance_ref: "runtime-1".into(),
+            runtime_source_ref: "source-1".into(),
+            source_fingerprint: "a".repeat(64),
+        };
+        let attempt = AuthorizedExecutionAttempt {
+            attempt_id: "attempt-1".into(),
+            work_unit_id: "work-unit-1".into(),
+            role_kind: "work_unit_implementer".into(),
+            authority,
+        };
+        let database = temp.path().join("db.sqlite");
+        let connection = Connection::open(&database).unwrap();
+        crate::storage::configure_sqlite_connection(&connection).unwrap();
+        crate::storage::initialize_active_database(&connection).unwrap();
+        drop(connection);
+        let orchestration = Arc::new(SqliteOrchestrationRepository::open(&database).unwrap());
+        let resolver = ProductExecutionWorkspaceResolver::new(orchestration);
+        let binding = resolver.resolve(&attempt, None).unwrap();
+        fs::write(root.join("dirty.txt"), "dirty\n").unwrap();
+        assert!(resolver.resolve(&attempt, None).is_err());
+        assert_eq!(resolver.resolve(&attempt, Some(&binding)).unwrap(), binding);
     }
 
     #[test]
-    fn denies_cross_attempt_unknown_evidence_and_path_like_manifest_entries() {
-        let resolver = Arc::new(Resolver {
-            workspace: Mutex::new(Ok(workspace())),
-            first_resolutions: AtomicUsize::new(0),
-        });
-        let service = service(resolver.clone());
-        let reference = service.grant(attempt("attempt-1")).unwrap();
-        assert_eq!(
-            service.consume(
-                "execution-support-other",
-                ExecutionSupportIntent::ChangedFileManifest
+    fn restart_reopens_durable_authority_and_refreshes_canonical_comparison() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("repo");
+        fs::create_dir(&root).unwrap();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(&root)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{:?}", output);
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        git(&["init"]);
+        git(&["config", "user.email", "test@example.invalid"]);
+        git(&["config", "user.name", "Test"]);
+        fs::write(root.join("file.txt"), "base\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "base"]);
+        let baseline = git(&["rev-parse", "HEAD"]);
+        fs::write(root.join("file.txt"), "next\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "next"]);
+        let current = git(&["rev-parse", "HEAD"]);
+        let canonical_root = root.canonicalize().unwrap();
+        let common = git_path(&root, &["rev-parse", "--git-common-dir"]).unwrap();
+        let database = temp.path().join("db.sqlite");
+        let connection = Connection::open(&database).unwrap();
+        crate::storage::configure_sqlite_connection(&connection).unwrap();
+        crate::storage::initialize_active_database(&connection).unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .unwrap();
+        connection.execute_batch("INSERT INTO epic_initiation_provenance (id,command_id,result_id,event_id,recorded_at) VALUES ('provenance-1','command-1','result-1','event-1','t'); INSERT INTO epic_initiations (id,command_id,result_id,event_id,provenance_id,draft_id,proposal_revision_id,material_snapshot_id,epic_id,recorded_at) VALUES ('initiation-1','command-1','result-1','event-1','provenance-1','draft-1','revision-1','snapshot-1','epic-1','t'); INSERT INTO initiated_sprints (id,epic_id,ordinal,title,intended_movement,concern_summaries_json,sprint_plan_id,sprint_plan_revision_id) VALUES ('sprint-1','epic-1',0,'Sprint','Move','[]','plan-1','plan-revision-1');").unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", true)
+            .unwrap();
+        drop(connection);
+        let orchestration = Arc::new(SqliteOrchestrationRepository::open(&database).unwrap());
+        let authority_id = match orchestration.store_initiated_sprint_git_authority(super::super::repository::InitiatedSprintGitAuthorityWrite {
+            sprint_id: "sprint-1".into(), idempotency_key: "execution-attempt-authority".into(), repository_id: "repository-1".into(), repository_root: canonical_root.to_string_lossy().into_owned(), repository_common_dir: common.to_string_lossy().into_owned(), worktree_id: "worktree-1".into(), worktree_root: canonical_root.to_string_lossy().into_owned(), baseline_object_id: baseline, current_object_id: current, runtime_instance_ref: "runtime-1".into(), runtime_source_ref: "source-1".into(), source_fingerprint: "a".repeat(64),
+        }).unwrap() { super::super::repository::StoreInitiatedSprintGitAuthorityResult::Stored { authority_id } | super::super::repository::StoreInitiatedSprintGitAuthorityResult::IdempotentReplay { authority_id } => authority_id };
+        let connection = Connection::open(&database).unwrap();
+        connection.execute("INSERT INTO execution_support_attempt_authorizations (attempt_id,work_unit_id,role_kind,sprint_git_authority_id,recorded_at) VALUES ('attempt-1','work-unit-1','work_unit_implementer',?1,'t')", [&authority_id]).unwrap();
+        drop(connection);
+        let service = ExecutionSupportService::new(
+            Arc::new(
+                SqliteExecutionSupportRepository::open(&database, orchestration.clone()).unwrap(),
             ),
-            Err(ExecutionSupportError::Denied)
+            Arc::new(ProductExecutionWorkspaceResolver::new(orchestration)),
         );
-        assert_eq!(
-            service.consume(
+        let reference = service.grant("attempt-1").unwrap();
+        drop(service);
+        let reopened_orchestration =
+            Arc::new(SqliteOrchestrationRepository::open(&database).unwrap());
+        let reopened = ExecutionSupportService::new(
+            Arc::new(
+                SqliteExecutionSupportRepository::open(&database, reopened_orchestration.clone())
+                    .unwrap(),
+            ),
+            Arc::new(ProductExecutionWorkspaceResolver::new(
+                reopened_orchestration,
+            )),
+        );
+        let manifest = reopened
+            .consume(
                 &reference.capability_ref,
-                ExecutionSupportIntent::EvidenceContent {
-                    evidence_ref: "other-file".into()
-                }
+                ExecutionSupportIntent::ChangedFileManifest,
+            )
+            .unwrap();
+        assert!(
+            matches!(manifest, ExecutionSupportResponse::ChangedFileManifest(ref files) if files.len() == 1)
+        );
+        assert!(matches!(
+            reopened.consume(
+                &reference.capability_ref,
+                ExecutionSupportIntent::Comparison
             ),
-            Err(ExecutionSupportError::Denied)
-        );
-        resolver
-            .workspace
-            .lock()
-            .unwrap()
-            .as_mut()
-            .unwrap()
-            .evidence[0]
-            .display_name = "../escape.rs".into();
-        assert_eq!(
-            service.grant(attempt("attempt-2")),
-            Err(ExecutionSupportError::Invalid)
-        );
-    }
-
-    #[test]
-    fn restart_revalidates_and_fails_closed_on_workspace_drift() {
-        let resolver = Arc::new(Resolver {
-            workspace: Mutex::new(Ok(workspace())),
-            first_resolutions: AtomicUsize::new(0),
-        });
-        let service = service(resolver.clone());
-        let reference = service.grant(attempt("attempt-1")).unwrap();
-        resolver
-            .workspace
-            .lock()
-            .unwrap()
-            .as_mut()
-            .unwrap()
-            .binding
-            .workspace_fingerprint = "b".repeat(64);
-        assert_eq!(
-            service.recover(attempt("attempt-1")),
-            Err(ExecutionSupportError::CorrelationMismatch)
-        );
-        assert_eq!(
-            service
-                .consume(
-                    &reference.capability_ref,
-                    ExecutionSupportIntent::EvidenceContent {
-                        evidence_ref: "evidence-1".into()
-                    }
-                )
-                .unwrap(),
-            ExecutionSupportResponse::EvidenceContent(b"changed".to_vec())
-        );
-    }
-
-    #[test]
-    fn production_adapter_is_truthfully_unavailable_without_live_workspace_authority() {
-        let resolver = UnavailableExecutionWorkspaceResolver;
-        assert_eq!(
-            resolver.resolve_or_create(&attempt("attempt-1"), None),
-            Err(ExecutionSupportError::Unavailable)
-        );
+            Ok(ExecutionSupportResponse::Comparison(_))
+        ));
     }
 }
