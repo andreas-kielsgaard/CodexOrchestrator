@@ -135,6 +135,11 @@ CREATE TABLE IF NOT EXISTS work_slice_planning_requests (
   planner_invocation_created_at TEXT,
   planner_harness_applied_at TEXT,
   planner_harness_json TEXT CHECK (planner_harness_json IS NULL OR json_valid(planner_harness_json)),
+  planner_launch_requested_at TEXT,
+  planner_launch_accepted_at TEXT,
+  planner_ready_at TEXT,
+  planner_provider_activation_observed_at TEXT,
+  planner_lifecycle_observed_at TEXT,
   UNIQUE (sprint_id, planning_episode),
   FOREIGN KEY (sprint_id) REFERENCES sprint_runner_transitions(sprint_id) ON DELETE RESTRICT
 );
@@ -223,7 +228,11 @@ pub(crate) struct SprintRunnerTransitionStatus {
     pub(crate) work_slice_planner_session_created_at: Option<String>,
     pub(crate) work_slice_planner_invocation_created_at: Option<String>,
     pub(crate) work_slice_planner_harness_applied_at: Option<String>,
+    pub(crate) work_slice_planner_launch_requested_at: Option<String>,
     pub(crate) work_slice_planner_launch_accepted_at: Option<String>,
+    pub(crate) work_slice_planner_ready_at: Option<String>,
+    pub(crate) work_slice_planner_provider_activation_observed_at: Option<String>,
+    pub(crate) work_slice_planner_lifecycle_observed_at: Option<String>,
     pub(crate) downstream_not_started: bool,
 }
 
@@ -338,6 +347,9 @@ impl SprintRunnerTransitionService {
             "authority_source_fingerprint TEXT",
             "planner_session_created_at TEXT", "planner_invocation_created_at TEXT",
             "planner_harness_applied_at TEXT", "planner_harness_json TEXT",
+            "planner_launch_requested_at TEXT", "planner_launch_accepted_at TEXT",
+            "planner_ready_at TEXT", "planner_provider_activation_observed_at TEXT",
+            "planner_lifecycle_observed_at TEXT",
         ] {
             let name = column.split_whitespace().next().expect("planning request migration column name");
             let exists = connection.prepare("PRAGMA table_info(work_slice_planning_requests)")
@@ -577,7 +589,7 @@ impl SprintRunnerTransitionService {
                 "Sprint Runner transition database lock is poisoned".into(),
             )
         })?;
-        let mut statement = conn.prepare("SELECT t.sprint_id,t.epic_id,t.request_id,t.epic_runner_invocation_id,t.sprint_runner_session_id,t.sprint_runner_invocation_id,t.requested_at,t.authorized_at,t.session_created_at,t.harness_applied_at,t.launch_accepted_at,t.pre_start_semantic_outcome_recorded_at,t.pre_start_lifecycle_observed_at,t.pre_start_outcome_accepted_at,t.parent_continuation_delivery_requested_at,t.parent_continuation_delivery_persisted_at,t.epic_continuation_invocation_id,t.epic_continuation_launch_accepted_at,t.provider_receiver_activation_observed_at,t.sprint_start_authorized_at,t.sprint_start_persisted_at,t.sprint_continuation_invocation_id,t.sprint_continuation_launch_accepted_at,t.repository_branch_reevaluation_recorded_at,t.started_reevaluation_lifecycle_observed_at,t.planning_control_delivery_requested_at,t.planning_control_delivery_persisted_at,t.planning_control_invocation_id,t.planning_control_launch_accepted_at,t.planning_ready_at,p.request_fact_id,p.planning_point_id,p.repository_worktree_route,p.planner_harness_key,p.planner_harness_version,p.planner_session_id,p.planner_invocation_id,p.planner_session_created_at,p.planner_invocation_created_at,p.planner_harness_applied_at FROM sprint_runner_transitions t LEFT JOIN work_slice_planning_requests p ON p.sprint_id=t.sprint_id AND p.is_current=1 ORDER BY t.requested_at,t.sprint_id").map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let mut statement = conn.prepare("SELECT t.sprint_id,t.epic_id,t.request_id,t.epic_runner_invocation_id,t.sprint_runner_session_id,t.sprint_runner_invocation_id,t.requested_at,t.authorized_at,t.session_created_at,t.harness_applied_at,t.launch_accepted_at,t.pre_start_semantic_outcome_recorded_at,t.pre_start_lifecycle_observed_at,t.pre_start_outcome_accepted_at,t.parent_continuation_delivery_requested_at,t.parent_continuation_delivery_persisted_at,t.epic_continuation_invocation_id,t.epic_continuation_launch_accepted_at,t.provider_receiver_activation_observed_at,t.sprint_start_authorized_at,t.sprint_start_persisted_at,t.sprint_continuation_invocation_id,t.sprint_continuation_launch_accepted_at,t.repository_branch_reevaluation_recorded_at,t.started_reevaluation_lifecycle_observed_at,t.planning_control_delivery_requested_at,t.planning_control_delivery_persisted_at,t.planning_control_invocation_id,t.planning_control_launch_accepted_at,t.planning_ready_at,p.request_fact_id,p.planning_point_id,p.repository_worktree_route,p.planner_harness_key,p.planner_harness_version,p.planner_session_id,p.planner_invocation_id,p.planner_session_created_at,p.planner_invocation_created_at,p.planner_harness_applied_at,p.planner_launch_requested_at,p.planner_launch_accepted_at,p.planner_ready_at,p.planner_provider_activation_observed_at,p.planner_lifecycle_observed_at FROM sprint_runner_transitions t LEFT JOIN work_slice_planning_requests p ON p.sprint_id=t.sprint_id AND p.is_current=1 ORDER BY t.requested_at,t.sprint_id").map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         let transitions = statement
             .query_map([], |r| {
                 Ok(SprintRunnerTransitionStatus {
@@ -624,7 +636,11 @@ impl SprintRunnerTransitionService {
                     work_slice_planner_session_created_at: r.get(37)?,
                     work_slice_planner_invocation_created_at: r.get(38)?,
                     work_slice_planner_harness_applied_at: r.get(39)?,
-                    work_slice_planner_launch_accepted_at: None,
+                    work_slice_planner_launch_requested_at: r.get(40)?,
+                    work_slice_planner_launch_accepted_at: r.get(41)?,
+                    work_slice_planner_ready_at: r.get(42)?,
+                    work_slice_planner_provider_activation_observed_at: r.get(43)?,
+                    work_slice_planner_lifecycle_observed_at: r.get(44)?,
                     downstream_not_started: r.get::<_, Option<String>>(31)?.is_none(),
                 })
             })
@@ -1042,16 +1058,72 @@ impl SprintRunnerTransitionService {
             }
         };
         let session = AgentSessionId::new(session_id).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        self.sessions.create_application_session(CreateApplicationAgentSessionCommand { session_id: session.clone(), session: CreateAgentSessionCommand { title: Some("Work Slice Planner".into()), working_directory: Some(route), requested_options: harness.runtime_options() }}).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        self.sessions.create_application_session(CreateApplicationAgentSessionCommand { session_id: session.clone(), session: CreateAgentSessionCommand { title: Some("Work Slice Planner".into()), working_directory: Some(route.clone()), requested_options: harness.runtime_options() }}).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         self.mark_planner(sprint_id, "planner_session_created_at", None)?;
         let invocation = AgentInvocationId::new(invocation_id).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        self.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation, message: SendAgentSessionMessageCommand { session_id: Some(session), submitted_text: format!("Work Slice Planner pre-launch invocation. Planning point: {point}. Parent Sprint: {sprint_id}. Do not begin until the later launch boundary."), title: None, working_directory: None, requested_options: Some(harness.runtime_options()) }}).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        self.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: format!("Work Slice Planner pre-launch invocation. Planning point: {point}. Parent Sprint: {sprint_id}. Do not begin until the later launch boundary."), title: None, working_directory: None, requested_options: Some(harness.runtime_options()) }}).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         self.mark_planner(sprint_id, "planner_invocation_created_at", Some(serialized))?;
-        self.mark_planner(sprint_id, "planner_harness_applied_at", None)
+        self.mark_planner(sprint_id, "planner_harness_applied_at", None)?;
+        self.reconcile_productive_work_slice_planner(sprint_id, &point, session, invocation, route, harness)
+    }
+
+    fn reconcile_productive_work_slice_planner(
+        &self,
+        sprint_id: &str,
+        point: &str,
+        session: AgentSessionId,
+        invocation: AgentInvocationId,
+        route: String,
+        harness: conversation_harness::ConversationHarnessProfile,
+    ) -> Result<(), SprintRunnerTransitionError> {
+        if harness.mcp.required || !harness.mcp.enabled_tools.is_empty() {
+            return Err(SprintRunnerTransitionError::Conflict);
+        }
+        match self
+            .sessions
+            .application_invocation_launch_evidence(&invocation, &session)
+            .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?
+        {
+            ApplicationInvocationLaunchEvidence::LaunchAccepted => {
+                self.mark_planner(sprint_id, "planner_launch_accepted_at", None)?;
+                self.mark_planner(sprint_id, "planner_ready_at", None)
+            }
+            ApplicationInvocationLaunchEvidence::PersistedNotAccepted => {
+                self.mark_planner(sprint_id, "planner_launch_requested_at", None)?;
+                let launch = self
+                    .sessions
+                    .launch_prepared_application_invocation_with_launch_observation(
+                        SendIdempotentApplicationAgentSessionMessageCommand {
+                            invocation_id: invocation,
+                            message: SendAgentSessionMessageCommand {
+                                session_id: Some(session),
+                                submitted_text: format!("Work Slice Planner pre-launch invocation. Planning point: {point}. Parent Sprint: {sprint_id}. Do not begin until the later launch boundary."),
+                                title: None,
+                                working_directory: Some(route),
+                                requested_options: Some(harness.runtime_options()),
+                            },
+                        },
+                        Some(RuntimeLaunchExtension {
+                            additional_args: harness.runtime_configuration_args(),
+                            environment: Vec::new(),
+                            initial_prompt_prefix: Some(harness.initial_prompt_prefix()),
+                        }),
+                    )
+                    .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+                if launch.launch_accepted {
+                    self.mark_planner(sprint_id, "planner_launch_accepted_at", None)?;
+                    self.mark_planner(sprint_id, "planner_ready_at", None)?;
+                }
+                Ok(())
+            }
+            ApplicationInvocationLaunchEvidence::NeverPersisted => {
+                Err(SprintRunnerTransitionError::Conflict)
+            }
+        }
     }
 
     fn mark_planner(&self, sprint_id: &str, column: &str, harness_json: Option<String>) -> Result<(), SprintRunnerTransitionError> {
-        if !["planner_session_created_at", "planner_invocation_created_at", "planner_harness_applied_at"].contains(&column) { return Err(SprintRunnerTransitionError::Unavailable("invalid Planner materialization stage".into())); }
+        if !["planner_session_created_at", "planner_invocation_created_at", "planner_harness_applied_at", "planner_launch_requested_at", "planner_launch_accepted_at", "planner_ready_at"].contains(&column) { return Err(SprintRunnerTransitionError::Unavailable("invalid Planner materialization stage".into())); }
         let sql = if harness_json.is_some() { format!("UPDATE work_slice_planning_requests SET {column}=COALESCE({column},?2),planner_harness_json=COALESCE(planner_harness_json,?3) WHERE sprint_id=?1 AND is_current=1") } else { format!("UPDATE work_slice_planning_requests SET {column}=COALESCE({column},?2) WHERE sprint_id=?1 AND is_current=1") };
         let conn = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?;
         if let Some(harness_json) = harness_json { conn.execute(&sql, params![sprint_id, chrono::Utc::now().to_rfc3339(), harness_json]) } else { conn.execute(&sql, params![sprint_id, chrono::Utc::now().to_rfc3339()]) }.map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
@@ -1245,7 +1317,7 @@ struct SprintPlanningControlMcp { service: Arc<SprintRunnerTransitionService>, i
 impl SprintPlanningControlMcp { fn new(service: Arc<SprintRunnerTransitionService>,invocation_id:AgentInvocationId)->Self{Self{service,invocation_id,tool_router:Self::tool_router()}} }
 #[tool_router] impl SprintPlanningControlMcp {
     #[tool(description="Request exactly one Work Slice Planner for the current temporal planning decision. Input is ONLY {}. The application derives Sprint, planning point, parent Session/invocation, repository route, child identities, and launch authority.")]
-    fn request_work_slice_planner(&self, Parameters(input):Parameters<WorkSlicePlannerRequest>)->CallToolResult { match self.service.request_work_slice_planner(&self.invocation_id,input){Ok(status)=>CallToolResult::success(vec![ContentBlock::text(serde_json::json!({"status":if status.work_slice_planner_launch_accepted_at.is_some(){"work_slice_planner_launch_accepted"}else{"work_slice_planner_authorized"},"planningPointId":status.work_slice_planning_point_id,"workSlicePlannerSessionId":status.work_slice_planner_session_id,"workSlicePlannerInvocationId":status.work_slice_planner_invocation_id,"guidance":"Launch acceptance is not provider activation, a Planner result, Work Unit creation, or downstream acceptance."}).to_string())]),Err(SprintRunnerTransitionError::Forbidden)=>CallToolResult::success(vec![ContentBlock::text("{\"status\":\"rejected\",\"code\":\"forbidden\"}")]),Err(SprintRunnerTransitionError::Conflict)=>CallToolResult::success(vec![ContentBlock::text("{\"status\":\"rejected\",\"code\":\"idempotency_conflict\"}")]),Err(_)=>CallToolResult::success(vec![ContentBlock::text("{\"status\":\"rejected\",\"code\":\"unavailable\"}")] )} }
+    fn request_work_slice_planner(&self, Parameters(input):Parameters<WorkSlicePlannerRequest>)->CallToolResult { match self.service.request_work_slice_planner(&self.invocation_id,input){Ok(status)=>CallToolResult::success(vec![ContentBlock::text(serde_json::json!({"status":if status.work_slice_planner_ready_at.is_some(){"work_slice_planner_ready"}else if status.work_slice_planner_launch_accepted_at.is_some(){"work_slice_planner_launch_accepted"}else{"work_slice_planner_authorized"},"planningPointId":status.work_slice_planning_point_id,"workSlicePlannerSessionId":status.work_slice_planner_session_id,"workSlicePlannerInvocationId":status.work_slice_planner_invocation_id,"plannerReady":status.work_slice_planner_ready_at.is_some(),"providerActivationObserved":status.work_slice_planner_provider_activation_observed_at.is_some(),"lifecycleObserved":status.work_slice_planner_lifecycle_observed_at.is_some(),"guidance":"Planner readiness follows durable prelaunch facts and runtime launch acceptance only; it is not provider activation, lifecycle, a Planner result, Work Unit creation, or downstream acceptance."}).to_string())]),Err(SprintRunnerTransitionError::Forbidden)=>CallToolResult::success(vec![ContentBlock::text("{\"status\":\"rejected\",\"code\":\"forbidden\"}")]),Err(SprintRunnerTransitionError::Conflict)=>CallToolResult::success(vec![ContentBlock::text("{\"status\":\"rejected\",\"code\":\"idempotency_conflict\"}")]),Err(_)=>CallToolResult::success(vec![ContentBlock::text("{\"status\":\"rejected\",\"code\":\"unavailable\"}")] )} }
 }
 #[tool_handler(router=self.tool_router)] impl ServerHandler for SprintPlanningControlMcp { fn get_info(&self)->ServerInfo{ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions("Use only request_work_slice_planner. Do not create or accept Work Units, Handlers, Implementers, or Planner results.")} }
 

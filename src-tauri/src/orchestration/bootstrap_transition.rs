@@ -4085,7 +4085,7 @@ mod tests {
     }
 
     #[test]
-    fn work_slice_planning_request_materializes_one_prelaunch_planner_without_runtime_effects() {
+    fn work_slice_planning_request_launches_one_prepared_planner_and_marks_readiness() {
         let fixture = Fixture::new();
         let bootstrap = fixture.status();
         fixture.service.complete_bootstrap(
@@ -4157,16 +4157,28 @@ mod tests {
         assert!(results[0].work_slice_planner_session_created_at.is_some());
         assert!(results[0].work_slice_planner_invocation_created_at.is_some());
         assert!(results[0].work_slice_planner_harness_applied_at.is_some());
-        assert_eq!(results[0].work_slice_planner_launch_accepted_at, None);
+        assert!(results[0].work_slice_planner_launch_requested_at.is_some());
+        assert!(results[0].work_slice_planner_launch_accepted_at.is_some());
+        assert!(results[0].work_slice_planner_ready_at.is_some());
+        assert_eq!(results[0].work_slice_planner_provider_activation_observed_at, None);
+        assert_eq!(results[0].work_slice_planner_lifecycle_observed_at, None);
         assert_eq!(results[0].work_slice_planner_repository_worktree_route, Some(worktree_root.to_string_lossy().into_owned()));
-        assert_eq!(fixture.runtime.requests().len(), launches_before, "PS-WSP2 must not launch a Planner");
+        let launches = fixture.runtime.requests();
+        assert_eq!(launches.len(), launches_before + 1);
+        let launch = &launches[launches_before];
+        assert_eq!(launch.session_id.as_str(), results[0].work_slice_planner_session_id.as_deref().unwrap());
+        assert_eq!(launch.invocation_id.as_str(), results[0].work_slice_planner_invocation_id.as_deref().unwrap());
+        assert_eq!(launch.working_directory.as_deref(), Some(worktree_root.to_string_lossy().as_ref()));
+        assert!(launch.submitted_text.contains("product_initial_prompt_prefix"));
+        assert_eq!(launch.launch_extension.as_ref().unwrap().additional_args, vec!["-c", "approval_policy=\"never\""]);
+        assert!(launch.launch_extension.as_ref().unwrap().environment.is_empty());
 
         let connection = Connection::open(&fixture.database_path).unwrap();
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_planning_requests", [], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<String, _, _>("SELECT parent_sprint_runner_session_id FROM work_slice_planning_requests", [], |row| row.get(0)).unwrap(), sprint.sprint_runner_session_id);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_sessions WHERE id LIKE 'work-slice-planner-session-%'", [], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<String, _, _>("SELECT working_directory FROM agent_sessions WHERE id=?1", [&results[0].work_slice_planner_session_id.clone().unwrap()], |row| row.get(0)).unwrap(), worktree_root.to_string_lossy());
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocations WHERE id LIKE 'work-slice-planner-invocation-%' AND input_provenance='application' AND status='pending'", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocations WHERE id LIKE 'work-slice-planner-invocation-%' AND input_provenance='application' AND status='running'", [], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_units','work_slice_planning_points','work_unit_executions')", [], |row| row.get(0)).unwrap(), 0);
         drop(connection);
 
@@ -4188,8 +4200,24 @@ mod tests {
         assert_eq!(after_reopen.work_slice_planner_session_created_at, results[0].work_slice_planner_session_created_at);
         assert_eq!(after_reopen.work_slice_planner_invocation_created_at, results[0].work_slice_planner_invocation_created_at);
         assert_eq!(after_reopen.work_slice_planner_harness_applied_at, results[0].work_slice_planner_harness_applied_at);
-        assert_eq!(after_reopen.work_slice_planner_launch_accepted_at, None);
-        assert_eq!(fixture.runtime.requests().len(), launches_before);
+        assert_eq!(after_reopen.work_slice_planner_launch_requested_at, results[0].work_slice_planner_launch_requested_at);
+        assert_eq!(after_reopen.work_slice_planner_launch_accepted_at, results[0].work_slice_planner_launch_accepted_at);
+        assert_eq!(after_reopen.work_slice_planner_ready_at, results[0].work_slice_planner_ready_at);
+        assert_eq!(after_reopen.work_slice_planner_provider_activation_observed_at, None);
+        assert_eq!(after_reopen.work_slice_planner_lifecycle_observed_at, None);
+        assert_eq!(fixture.runtime.requests().len(), launches_before + 1);
+
+        // Runtime acceptance can be durable before the Planner projection transaction. Reopen
+        // records the missing product facts without starting a second process.
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "UPDATE work_slice_planning_requests SET planner_launch_accepted_at=NULL,planner_ready_at=NULL WHERE sprint_id=?1",
+            [&sprint_id],
+        ).unwrap();
+        let accepted_before_projection = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        let accepted_before_projection = accepted_before_projection.query().unwrap().transitions.into_iter().find(|status| status.sprint_id == sprint_id).unwrap();
+        assert!(accepted_before_projection.work_slice_planner_launch_accepted_at.is_some());
+        assert!(accepted_before_projection.work_slice_planner_ready_at.is_some());
+        assert_eq!(fixture.runtime.requests().len(), launches_before + 1);
 
         let planner_session = results[0].work_slice_planner_session_id.clone().unwrap();
         let planner_invocation = results[0].work_slice_planner_invocation_id.clone().unwrap();
@@ -4213,7 +4241,7 @@ mod tests {
         ).unwrap();
         let invocation_only = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
         assert!(invocation_only.query().unwrap().transitions.into_iter().find(|status| status.sprint_id == sprint_id).unwrap().work_slice_planner_harness_applied_at.is_some());
-        assert_eq!(fixture.runtime.requests().len(), launches_before);
+        assert_eq!(fixture.runtime.requests().len(), launches_before + 2);
 
         Connection::open(&fixture.database_path).unwrap().execute("UPDATE agent_sessions SET working_directory='conflict' WHERE id=?1", [&planner_session]).unwrap();
         assert!(matches!(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Unavailable(_))));

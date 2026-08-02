@@ -248,6 +248,7 @@ impl AgentSessionApplication {
             launch_extension,
             AgentInvocationInputProvenance::User,
             None,
+            false,
         )
         .map(|result| result.acknowledgement)
     }
@@ -262,6 +263,36 @@ impl AgentSessionApplication {
             launch_extension,
             AgentInvocationInputProvenance::Application,
             Some(command.invocation_id),
+            false,
+        )
+    }
+
+    /// Launches only an already-persisted pending application invocation. It never allocates a
+    /// replacement invocation or claims that an existing process can be reattached.
+    pub(crate) fn launch_prepared_application_invocation_with_launch_observation(
+        &self,
+        command: SendIdempotentApplicationAgentSessionMessageCommand,
+        launch_extension: Option<RuntimeLaunchExtension>,
+    ) -> Result<SendAgentSessionMessageLaunchResult, AgentSessionApplicationError> {
+        let session_id = command.message.session_id.as_ref().ok_or_else(|| {
+            AgentSessionApplicationError::invalid("prepared application invocation requires a Session")
+        })?;
+        let session = self
+            .repository
+            .get_session(session_id)
+            .map_err(AgentSessionApplicationError::repository)?
+            .ok_or_else(|| AgentSessionApplicationError::not_found("Agent Session not found"))?;
+        if session.working_directory != normalize_optional(command.message.working_directory.clone()) {
+            return Err(AgentSessionApplicationError::conflict(
+                "prepared application invocation working directory does not match its Session",
+            ));
+        }
+        self.send_message_with_provenance(
+            command.message,
+            launch_extension,
+            AgentInvocationInputProvenance::Application,
+            Some(command.invocation_id),
+            true,
         )
     }
 
@@ -275,6 +306,7 @@ impl AgentSessionApplication {
             launch_extension,
             AgentInvocationInputProvenance::User,
             Some(command.invocation_id),
+            false,
         )
     }
 
@@ -400,6 +432,7 @@ impl AgentSessionApplication {
         launch_extension: Option<RuntimeLaunchExtension>,
         input_provenance: AgentInvocationInputProvenance,
         requested_invocation_id: Option<AgentInvocationId>,
+        launch_existing_prepared: bool,
     ) -> Result<SendAgentSessionMessageLaunchResult, AgentSessionApplicationError> {
         if command.submitted_text.trim().is_empty() {
             return Err(AgentSessionApplicationError::invalid(
@@ -435,7 +468,7 @@ impl AgentSessionApplication {
             .requested_options
             .clone()
             .unwrap_or_else(|| session.requested_options.clone());
-        if let Some(invocation_id) = requested_invocation_id.as_ref() {
+        let existing_invocation = if let Some(invocation_id) = requested_invocation_id.as_ref() {
             if let Some(existing) = self
                 .repository
                 .get_invocation(invocation_id)
@@ -455,36 +488,55 @@ impl AgentSessionApplication {
                     .invocation_launch_accepted_at(invocation_id)
                     .map_err(AgentSessionApplicationError::repository)?
                     .is_some();
-                return Ok(SendAgentSessionMessageLaunchResult {
-                    acknowledgement: SendAgentSessionMessageResult {
-                        session_id: session.id,
-                        invocation_id: existing.id,
-                    },
-                    launch_accepted,
-                });
+                if launch_accepted
+                    || !launch_existing_prepared
+                    || existing.status != AgentInvocationStatus::Pending
+                {
+                    return Ok(SendAgentSessionMessageLaunchResult {
+                        acknowledgement: SendAgentSessionMessageResult {
+                            session_id: session.id,
+                            invocation_id: existing.id,
+                        },
+                        launch_accepted,
+                    });
+                }
+                Some(existing)
+            } else {
+                None
             }
+        } else {
+            None
+        };
+        if launch_existing_prepared && existing_invocation.is_none() {
+            return Err(AgentSessionApplicationError::not_found(
+                "prepared application invocation not found",
+            ));
         }
-        let created_at = self.clock.now();
-        let invocation = self
-            .repository
-            .create_pending_invocation(AgentInvocation {
-                id: requested_invocation_id.unwrap_or_else(|| self.ids.invocation_id()),
-                session_id: session.id.clone(),
-                submitted_text: command.submitted_text.clone(),
-                input_provenance,
-                status: AgentInvocationStatus::Pending,
-                requested_options: requested_options.clone(),
-                effective_options: None,
-                started_at: None,
-                completed_at: None,
-                exit_code: None,
-                signal: None,
-                runtime_error: None,
-                diagnostics: Vec::new(),
-                created_at,
-                updated_at: created_at,
-            })
-            .map_err(AgentSessionApplicationError::repository)?;
+        let invocation = match existing_invocation {
+            Some(existing) => existing,
+            None => {
+                let created_at = self.clock.now();
+                self.repository
+                    .create_pending_invocation(AgentInvocation {
+                        id: requested_invocation_id.unwrap_or_else(|| self.ids.invocation_id()),
+                        session_id: session.id.clone(),
+                        submitted_text: command.submitted_text.clone(),
+                        input_provenance,
+                        status: AgentInvocationStatus::Pending,
+                        requested_options: requested_options.clone(),
+                        effective_options: None,
+                        started_at: None,
+                        completed_at: None,
+                        exit_code: None,
+                        signal: None,
+                        runtime_error: None,
+                        diagnostics: Vec::new(),
+                        created_at,
+                        updated_at: created_at,
+                    })
+                    .map_err(AgentSessionApplicationError::repository)?
+            }
+        };
         let acknowledgement = SendAgentSessionMessageResult {
             session_id: session.id.clone(),
             invocation_id: invocation.id.clone(),

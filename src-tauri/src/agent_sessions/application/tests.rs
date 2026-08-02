@@ -317,6 +317,87 @@ fn runtime_ok_records_durable_application_launch_acceptance() {
 }
 
 #[test]
+fn prepared_application_invocation_launches_once_without_allocating_a_replacement() {
+    let harness = Harness::new(RuntimeBehavior::StayRunning);
+    let session = harness.create_session();
+    let invocation_id = harness.application.allocate_application_invocation_id();
+    let mut prepared_message = message(&session.id, "Prepared application launch");
+    prepared_message.working_directory = session.working_directory.clone();
+    let command = SendIdempotentApplicationAgentSessionMessageCommand {
+        invocation_id: invocation_id.clone(),
+        message: prepared_message,
+    };
+
+    harness
+        .application
+        .prepare_idempotent_application_invocation(command.clone())
+        .expect("prepare one invocation");
+    let first = harness
+        .application
+        .launch_prepared_application_invocation_with_launch_observation(command.clone(), None)
+        .expect("launch prepared invocation");
+    let second = harness
+        .application
+        .launch_prepared_application_invocation_with_launch_observation(command, None)
+        .expect("idempotent accepted launch");
+
+    assert!(first.launch_accepted);
+    assert!(second.launch_accepted);
+    assert_eq!(
+        harness
+            .repository
+            .list_invocations(&session.id)
+            .expect("invocations")
+            .len(),
+        1
+    );
+    assert_eq!(
+        harness
+            .runtime
+            .calls
+            .lock()
+            .expect("runtime calls")
+            .iter()
+            .filter(|call| matches!(call, RuntimeCall::Start(request) if request.invocation_id == invocation_id))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn prepared_launch_refuses_to_allocate_a_missing_invocation() {
+    let harness = Harness::new(RuntimeBehavior::StayRunning);
+    let session = harness.create_session();
+    let invocation_id = harness.application.allocate_application_invocation_id();
+    let mut missing_message = message(&session.id, "Missing prepared invocation");
+    missing_message.working_directory = session.working_directory.clone();
+
+    let result = harness
+        .application
+        .launch_prepared_application_invocation_with_launch_observation(
+            SendIdempotentApplicationAgentSessionMessageCommand {
+                invocation_id: invocation_id.clone(),
+                message: missing_message,
+            },
+            None,
+        );
+    let error = match result {
+        Ok(_) => panic!("missing invocation must not be created at launch time"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("prepared application invocation not found"));
+    assert_eq!(
+        harness
+            .repository
+            .get_invocation(&invocation_id)
+            .expect("invocation lookup"),
+        None
+    );
+    assert!(harness.runtime.calls.lock().expect("runtime calls").is_empty());
+}
+
+#[test]
 fn launch_acceptance_persistence_failure_does_not_invent_durable_acceptance() {
     let connection = Connection::open_in_memory().expect("memory database");
     connection
