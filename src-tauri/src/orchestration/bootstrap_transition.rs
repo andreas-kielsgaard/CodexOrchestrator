@@ -4170,6 +4170,11 @@ mod tests {
         assert_eq!(launch.invocation_id.as_str(), results[0].work_slice_planner_invocation_id.as_deref().unwrap());
         assert_eq!(launch.working_directory.as_deref(), Some(worktree_root.to_string_lossy().as_ref()));
         assert!(launch.submitted_text.contains("product_initial_prompt_prefix"));
+        assert!(launch.submitted_text.contains("Review current Sprint reality and become ready to plan"));
+        assert!(!launch.submitted_text.contains("Do not begin until the later launch boundary"));
+        assert!(launch.submitted_text.contains("Do not submit or accept a Planner result or proposal"));
+        assert!(launch.submitted_text.contains("create Work Units, Handler or Implementer Sessions"));
+        assert!(launch.submitted_text.contains("settle the Sprint, or advance to a later planning point"));
         assert_eq!(launch.launch_extension.as_ref().unwrap().additional_args, vec!["-c", "approval_policy=\"never\""]);
         assert!(launch.launch_extension.as_ref().unwrap().environment.is_empty());
 

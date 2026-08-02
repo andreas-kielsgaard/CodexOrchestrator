@@ -1061,7 +1061,7 @@ impl SprintRunnerTransitionService {
         self.sessions.create_application_session(CreateApplicationAgentSessionCommand { session_id: session.clone(), session: CreateAgentSessionCommand { title: Some("Work Slice Planner".into()), working_directory: Some(route.clone()), requested_options: harness.runtime_options() }}).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         self.mark_planner(sprint_id, "planner_session_created_at", None)?;
         let invocation = AgentInvocationId::new(invocation_id).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        self.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: format!("Work Slice Planner pre-launch invocation. Planning point: {point}. Parent Sprint: {sprint_id}. Do not begin until the later launch boundary."), title: None, working_directory: None, requested_options: Some(harness.runtime_options()) }}).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        self.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: format!("Work Slice Planner launch boundary. Planning point: {point}. Parent Sprint: {sprint_id}. Review current Sprint reality and become ready to plan within this bounded episode. Do not submit or accept a Planner result or proposal, create Work Units, Handler or Implementer Sessions, settle the Sprint, or advance to a later planning point."), title: None, working_directory: None, requested_options: Some(harness.runtime_options()) }}).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         self.mark_planner(sprint_id, "planner_invocation_created_at", Some(serialized))?;
         self.mark_planner(sprint_id, "planner_harness_applied_at", None)?;
         self.reconcile_productive_work_slice_planner(sprint_id, &point, session, invocation, route, harness)
@@ -1097,7 +1097,7 @@ impl SprintRunnerTransitionService {
                             invocation_id: invocation,
                             message: SendAgentSessionMessageCommand {
                                 session_id: Some(session),
-                                submitted_text: format!("Work Slice Planner pre-launch invocation. Planning point: {point}. Parent Sprint: {sprint_id}. Do not begin until the later launch boundary."),
+                                submitted_text: format!("Work Slice Planner launch boundary. Planning point: {point}. Parent Sprint: {sprint_id}. Review current Sprint reality and become ready to plan within this bounded episode. Do not submit or accept a Planner result or proposal, create Work Units, Handler or Implementer Sessions, settle the Sprint, or advance to a later planning point."),
                                 title: None,
                                 working_directory: Some(route),
                                 requested_options: Some(harness.runtime_options()),
