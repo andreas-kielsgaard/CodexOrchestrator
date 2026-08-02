@@ -696,7 +696,7 @@ fn restart_targets(
     transaction: &rusqlite::Transaction<'_>,
     epic_id: &str,
 ) -> Result<Vec<(String, String, String)>, String> {
-    let mut statement=transaction.prepare("WITH membership(session_id) AS (SELECT bootstrap_session_id FROM epic_bootstrap_transitions WHERE epic_id=?1 UNION SELECT runner_session_id FROM epic_bootstrap_transitions WHERE epic_id=?1 UNION SELECT epic_runner_session_id FROM sprint_runner_transitions WHERE epic_id=?1 UNION SELECT sprint_runner_session_id FROM sprint_runner_transitions WHERE epic_id=?1 UNION SELECT p.planner_session_id FROM work_slice_planner_transitions p JOIN sprint_runner_transitions s ON s.sprint_id=p.sprint_id WHERE s.epic_id=?1), eligible(session_id,source_invocation_id,interruption_status) AS (SELECT target.session_id,target.source_invocation_id,target.interruption_status FROM epic_control_targets target JOIN epic_control_actions action ON action.id=target.action_id JOIN agent_session_invocations pause_message ON pause_message.id=target.message_invocation_id WHERE action.epic_id=?1 AND action.kind='pause' AND target.interruption_status IN ('canceled','interrupted') AND target.launch_accepted_at IS NOT NULL AND pause_message.status NOT IN ('pending','running') AND NOT EXISTS(SELECT 1 FROM agent_session_invocations later WHERE later.session_id=target.session_id AND later.created_at > pause_message.created_at AND later.id NOT IN (SELECT message_invocation_id FROM epic_control_targets WHERE message_invocation_id IS NOT NULL)) UNION SELECT m.session_id,i.id,i.status FROM membership m JOIN agent_session_invocations i ON i.session_id=m.session_id WHERE i.status IN ('failed','interrupted') AND NOT EXISTS(SELECT 1 FROM agent_session_invocations later WHERE later.session_id=i.session_id AND later.created_at > i.created_at AND later.id NOT IN (SELECT message_invocation_id FROM epic_control_targets WHERE message_invocation_id IS NOT NULL))) SELECT DISTINCT session_id,source_invocation_id,interruption_status FROM eligible WHERE NOT EXISTS(SELECT 1 FROM epic_control_targets prior JOIN epic_control_actions prior_action ON prior_action.id=prior.action_id WHERE prior_action.kind='restart' AND prior.source_invocation_id=eligible.source_invocation_id)").map_err(|e|e.to_string())?;
+    let mut statement=transaction.prepare("WITH membership(session_id) AS (SELECT bootstrap_session_id FROM epic_bootstrap_transitions WHERE epic_id=?1 UNION SELECT runner_session_id FROM epic_bootstrap_transitions WHERE epic_id=?1 UNION SELECT epic_runner_session_id FROM sprint_runner_transitions WHERE epic_id=?1 UNION SELECT sprint_runner_session_id FROM sprint_runner_transitions WHERE epic_id=?1 UNION SELECT p.planner_session_id FROM work_slice_planner_transitions p JOIN sprint_runner_transitions s ON s.sprint_id=p.sprint_id WHERE s.epic_id=?1), eligible(session_id,source_invocation_id,interruption_status) AS (SELECT target.session_id,target.source_invocation_id,target.interruption_status FROM epic_control_targets target JOIN epic_control_actions action ON action.id=target.action_id JOIN agent_session_invocations pause_message ON pause_message.id=target.message_invocation_id WHERE action.epic_id=?1 AND action.kind='pause' AND target.interruption_status IN ('canceled','interrupted') AND target.launch_accepted_at IS NOT NULL AND pause_message.status NOT IN ('pending','running') AND NOT EXISTS(SELECT 1 FROM agent_session_invocations later WHERE later.session_id=target.session_id AND later.created_at > pause_message.created_at AND later.id NOT IN (SELECT message_invocation_id FROM epic_control_targets WHERE message_invocation_id IS NOT NULL)) UNION SELECT m.session_id,i.id,i.status FROM membership m JOIN agent_session_invocations i ON i.session_id=m.session_id WHERE i.status IN ('failed','interrupted') AND NOT EXISTS(SELECT 1 FROM epic_control_targets control WHERE control.message_invocation_id=i.id) AND NOT EXISTS(SELECT 1 FROM agent_session_invocations later WHERE later.session_id=i.session_id AND later.created_at > i.created_at AND later.id NOT IN (SELECT message_invocation_id FROM epic_control_targets WHERE message_invocation_id IS NOT NULL))) SELECT DISTINCT session_id,source_invocation_id,interruption_status FROM eligible WHERE NOT EXISTS(SELECT 1 FROM epic_control_targets prior JOIN epic_control_actions prior_action ON prior_action.id=prior.action_id WHERE prior_action.kind='restart' AND prior.source_invocation_id=eligible.source_invocation_id)").map_err(|e|e.to_string())?;
     let targets = statement
         .query_map([epic_id], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get::<_, String>(2)?))
@@ -729,15 +729,20 @@ mod tests {
             },
             repository::SqliteAgentSessionRepository,
         },
+        runtime::codex::CodexCliRuntime,
         storage::{initialize_active_database, open_active_database},
     };
     use rusqlite::Connection;
     use std::{
         collections::HashMap,
+        env, fs,
+        path::PathBuf,
         sync::{
             atomic::{AtomicUsize, Ordering},
             Weak,
         },
+        thread,
+        time::{Duration, Instant},
     };
 
     #[derive(Default)]
@@ -1004,6 +1009,300 @@ mod tests {
         }
     }
 
+    const LIVE_EPIC_PAUSE_RESTART_OPT_IN_ENV: &str = "CODEX_EPIC_PAUSE_RESTART_LIVE";
+    const LIVE_EPIC_PAUSE_RESTART_ROOT_ENV: &str = "CODEX_EPIC_PAUSE_RESTART_LIVE_ROOT";
+    const LIVE_EPIC_PAUSE_RESTART_TIMEOUT_ENV: &str = "CODEX_EPIC_PAUSE_RESTART_LIVE_TIMEOUT_SECS";
+
+    struct LiveFixture {
+        root: PathBuf,
+        database_path: PathBuf,
+        session_id: AgentSessionId,
+        source_id: AgentInvocationId,
+        application: Arc<AgentSessionApplication>,
+        runtime: Arc<CodexCliRuntime>,
+        service: Arc<EpicPauseRestartService>,
+        timeout: Duration,
+    }
+
+    impl LiveFixture {
+        fn new() -> Result<Self, String> {
+            if !matches!(
+                env::var(LIVE_EPIC_PAUSE_RESTART_OPT_IN_ENV).as_deref(),
+                Ok("true")
+            ) {
+                return Err(format!(
+                    "refusing live Epic Pause/Restart proof: set {LIVE_EPIC_PAUSE_RESTART_OPT_IN_ENV}=true"
+                ));
+            }
+            let root = PathBuf::from(env::var(LIVE_EPIC_PAUSE_RESTART_ROOT_ENV).map_err(|_| {
+                format!(
+                    "{LIVE_EPIC_PAUSE_RESTART_ROOT_ENV} must name an isolated test-owned directory"
+                )
+            })?);
+            if !root.is_absolute() || !root.to_string_lossy().contains("worktree-runtime") {
+                return Err(
+                    "live Epic Pause/Restart root must be an absolute worktree-runtime path".into(),
+                );
+            }
+            fs::create_dir_all(&root)
+                .map_err(|error| format!("create live proof root: {error}"))?;
+            let database_path = root.join("codex-orchestrator-active-v3.sqlite");
+            if database_path.exists() {
+                return Err(
+                    "live Epic Pause/Restart database already exists; choose a fresh isolated root"
+                        .into(),
+                );
+            }
+            let workspace = root.join("workspace");
+            fs::create_dir(&workspace)
+                .map_err(|error| format!("create live proof workspace: {error}"))?;
+            open_active_database(&database_path)?;
+
+            let notifier = Arc::new(ControlNotifier::default());
+            let runtime = Arc::new(CodexCliRuntime::system("codex", None));
+            let providers = Arc::new(SystemAgentSessionProviders);
+            let application = Arc::new(AgentSessionApplication::new(
+                Arc::new(
+                    SqliteAgentSessionRepository::open(&database_path)
+                        .map_err(|e| e.to_string())?,
+                ),
+                runtime.clone(),
+                notifier.clone(),
+                providers.clone(),
+                providers,
+                None,
+            ));
+            let session_id =
+                AgentSessionId::new("cl1-bootstrap-session").map_err(|e| e.to_string())?;
+            let source_id = AgentInvocationId::new("cl1-source").map_err(|e| e.to_string())?;
+            application
+                .create_application_session(CreateApplicationAgentSessionCommand {
+                    session_id: session_id.clone(),
+                    session: CreateAgentSessionCommand {
+                        title: Some("CL-1 controlled live bootstrap".into()),
+                        working_directory: Some(workspace.to_string_lossy().into_owned()),
+                        requested_options: AgentRuntimeOptions::default(),
+                    },
+                })
+                .map_err(|e| e.to_string())?;
+            let connection = Connection::open(&database_path).map_err(|e| e.to_string())?;
+            connection
+                .pragma_update(None, "foreign_keys", false)
+                .map_err(|e| e.to_string())?;
+            connection.execute_batch("INSERT INTO epic_initiations (id,command_id,result_id,event_id,provenance_id,draft_id,proposal_revision_id,material_snapshot_id,epic_id,recorded_at) VALUES ('cl1-initiation','command','result','event','provenance','draft','revision','snapshot','cl1-epic','controlled-live'); INSERT INTO epic_bootstrap_transitions (initiation_id,epic_id,proposal_revision_id,material_snapshot_hash,proposal_json,preparation_id,prepared_root,approved_plan_path,manifest_path,overview_path,runner_brief_path,bootstrap_session_id,bootstrap_invocation_id,runner_session_id,runner_invocation_id,created_at,updated_at) VALUES ('cl1-initiation','cl1-epic','revision','hash','{}','preparation','root','plan','manifest','overview','brief','cl1-bootstrap-session','cl1-source','runner-session','runner-source','controlled-live','controlled-live');").map_err(|e| e.to_string())?;
+            connection
+                .pragma_update(None, "foreign_keys", true)
+                .map_err(|e| e.to_string())?;
+            drop(connection);
+            // Production startup opens this sibling transition service before Epic controls; it
+            // owns the optional downstream-membership schema queried by the authoritative control
+            // read model. No Sprint transition is requested here.
+            let _sprint_runners =
+                crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                    &database_path,
+                    application.clone(),
+                )
+                .map_err(|e| e.to_string())?;
+            let service = EpicPauseRestartService::open(&database_path, application.clone())?;
+            notifier.set(&service);
+            let seconds = env::var(LIVE_EPIC_PAUSE_RESTART_TIMEOUT_ENV)
+                .ok()
+                .map(|value| {
+                    value.parse::<u64>().map_err(|_| {
+                        "live Epic Pause/Restart timeout must be an integer".to_string()
+                    })
+                })
+                .transpose()?
+                .unwrap_or(180);
+            if !(1..=300).contains(&seconds) {
+                return Err(
+                    "live Epic Pause/Restart timeout must be between 1 and 300 seconds".into(),
+                );
+            }
+            Ok(Self {
+                root,
+                database_path,
+                session_id,
+                source_id,
+                application,
+                runtime,
+                service,
+                timeout: Duration::from_secs(seconds),
+            })
+        }
+
+        fn wait_for(
+            &self,
+            invocation_id: &AgentInvocationId,
+            predicate: impl Fn(&crate::agent_sessions::ports::AgentInvocationHistory) -> bool,
+        ) -> Result<crate::agent_sessions::ports::AgentInvocationHistory, String> {
+            let deadline = Instant::now() + self.timeout;
+            loop {
+                let history = self
+                    .application
+                    .load_session(&self.session_id)
+                    .map_err(|e| e.to_string())?;
+                if let Some(invocation) = history
+                    .invocations
+                    .into_iter()
+                    .find(|item| item.invocation.id == *invocation_id)
+                {
+                    if predicate(&invocation) {
+                        return Ok(invocation);
+                    }
+                    if invocation.invocation.status.is_terminal() {
+                        return Err(format!(
+                            "{invocation_id} became terminal before the required live observation"
+                        ));
+                    }
+                }
+                if Instant::now() >= deadline {
+                    return Err(format!(
+                        "timed out after {}s waiting for {invocation_id}",
+                        self.timeout.as_secs()
+                    ));
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
+
+        fn snapshot(&self, invocation_id: &AgentInvocationId) -> Result<serde_json::Value, String> {
+            let history = self
+                .application
+                .load_session(&self.session_id)
+                .map_err(|e| e.to_string())?
+                .invocations
+                .into_iter()
+                .find(|item| item.invocation.id == *invocation_id)
+                .ok_or_else(|| format!("missing durable invocation {invocation_id}"))?;
+            let observation = project_invocation_observation(&history);
+            Ok(serde_json::json!({
+                "durableStatus": format!("{:?}", history.invocation.status).to_ascii_lowercase(),
+                "launchAccepted": observation.launch_accepted_at.is_some(),
+                "externalContextObserved": observation.external_context.is_some(),
+                "providerActivityObserved": observation.provider_activity.is_some(),
+                "providerTerminalObserved": observation.provider_terminal.is_some(),
+                "processTerminalObserved": observation.process_terminal.is_some(),
+                "eventCount": history.events.len(),
+            }))
+        }
+
+        fn close(&self) -> Result<usize, String> {
+            self.application
+                .shutdown_runtime()
+                .map_err(|e| e.to_string())?;
+            self.runtime
+                .active_direct_child_count()
+                .map_err(|e| e.to_string())
+        }
+    }
+
+    #[test]
+    #[ignore = "requires CODEX_EPIC_PAUSE_RESTART_LIVE=true and launches three real Codex invocations"]
+    fn controlled_live_epic_pause_restart_exchange() {
+        let fixture = LiveFixture::new().expect("create isolated controlled-live fixture");
+        let result = (|| -> Result<serde_json::Value, String> {
+            let source = fixture.application.send_idempotent_application_message_with_launch_observation(
+                SendIdempotentApplicationAgentSessionMessageCommand {
+                    invocation_id: fixture.source_id.clone(),
+                    message: SendAgentSessionMessageCommand {
+                        session_id: Some(fixture.session_id.clone()),
+                        submitted_text: "This is a controlled pause/restart proof. Use PowerShell to wait for 45 seconds before replying with exactly CL1_SOURCE_DONE.".into(),
+                        title: None, working_directory: None, requested_options: None,
+                    },
+                }, None,
+            ).map_err(|e| e.to_string())?;
+            if !source.launch_accepted {
+                return Err("source invocation persisted without launch acceptance".into());
+            }
+            fixture.wait_for(&fixture.source_id, |history| {
+                history.invocation.status.is_active()
+                    && project_invocation_observation(history)
+                        .external_context
+                        .is_some()
+            })?;
+            let before_pause = fixture.service.query("cl1-epic")?;
+            if before_pause.pause.availability != "available" {
+                return Err(format!(
+                    "Pause was not available: {}",
+                    before_pause.pause.reason
+                ));
+            }
+            let pause = fixture.service.request("cl1-epic", "pause")?;
+            if pause.target_count != 1 {
+                return Err(format!(
+                    "Pause selected {} targets, expected one",
+                    pause.target_count
+                ));
+            }
+            let source_terminal = fixture.wait_for(&fixture.source_id, |history| {
+                history.invocation.status.is_terminal()
+            })?;
+            if !matches!(
+                source_terminal.invocation.status,
+                AgentInvocationStatus::Canceled | AgentInvocationStatus::Interrupted
+            ) {
+                return Err(format!(
+                    "Pause source terminal status was {:?}",
+                    source_terminal.invocation.status
+                ));
+            }
+            let pause_message_id =
+                AgentInvocationId::new(format!("{}-{}", pause.action_id, fixture.source_id))
+                    .map_err(|e| e.to_string())?;
+            fixture.wait_for(&pause_message_id, |history| {
+                history.invocation.status.is_terminal()
+            })?;
+            let pause_query = fixture.service.query("cl1-epic")?;
+            let restart = fixture.service.request("cl1-epic", "restart")?;
+            if restart.target_count != 1
+                || !restart.targets[0]
+                    .control_invocation
+                    .as_ref()
+                    .is_some_and(|control| control.launch_accepted_at.is_some())
+            {
+                return Err("Restart did not select the launch-accepted paused source".into());
+            }
+            let restart_message_id =
+                AgentInvocationId::new(format!("{}-{}", restart.action_id, fixture.source_id))
+                    .map_err(|e| e.to_string())?;
+            fixture.wait_for(&restart_message_id, |history| {
+                history.invocation.status.is_terminal()
+            })?;
+            let restart_query = fixture.service.query("cl1-epic")?;
+            let direct_children = fixture.close()?;
+            if direct_children != 0 {
+                return Err(format!(
+                    "shutdown left {direct_children} direct Codex children"
+                ));
+            }
+            let reopened =
+                EpicPauseRestartService::open(&fixture.database_path, fixture.application.clone())?;
+            let reconstructed = reopened.query("cl1-epic")?;
+            Ok(serde_json::json!({
+                "scenario": "CL-1 controlled live Epic Pause/Restart",
+                "source": fixture.snapshot(&fixture.source_id)?,
+                "pause": { "status": pause_query.pause.current.as_ref().map(|value| &value.status), "targetCount": pause_query.pause.current.as_ref().map(|value| value.target_count), "control": fixture.snapshot(&pause_message_id)? },
+                "restart": { "status": restart_query.restart.current.as_ref().map(|value| &value.status), "targetCount": restart_query.restart.current.as_ref().map(|value| value.target_count), "control": fixture.snapshot(&restart_message_id)? },
+                "reopen": { "pauseAvailable": reconstructed.pause.availability, "restartAvailable": reconstructed.restart.availability, "pauseActionReconstructed": reconstructed.pause.current.is_some(), "restartActionReconstructed": reconstructed.restart.current.is_some() },
+                "directChildrenAfterShutdown": direct_children,
+            }))
+        })();
+        let evidence = match result {
+            Ok(value) => serde_json::json!({ "outcome": "passed", "evidence": value }),
+            Err(error) => serde_json::json!({ "outcome": "failed", "error": error }),
+        };
+        let path = fixture.root.join("cl1-epic-pause-restart-evidence.json");
+        fs::write(&path, serde_json::to_string_pretty(&evidence).unwrap())
+            .expect("write controlled-live evidence");
+        assert_eq!(
+            evidence["outcome"],
+            "passed",
+            "controlled-live evidence: {}",
+            path.display()
+        );
+    }
+
     #[test]
     fn control_schema_is_idempotent_for_fresh_and_reopened_databases() {
         let connection = Connection::open_in_memory().expect("open database");
@@ -1129,6 +1428,29 @@ mod tests {
                 .unwrap();
         reopened.reconcile_startup().unwrap();
         assert_eq!(fixture.runtime.requests_with_text("continue work").len(), 4);
+    }
+
+    #[test]
+    fn restart_does_not_retarget_a_failed_pause_control_message() {
+        let fixture = Fixture::new();
+        let pause = fixture.service.request("epic", "pause").unwrap();
+        fixture
+            .runtime
+            .finish("bootstrap-source", AgentInvocationTerminalStatus::Canceled);
+        let pause_message = fixture
+            .target_rows(&pause.action_id)
+            .into_iter()
+            .find(|(_, source, _, _)| source == "bootstrap-source")
+            .and_then(|(_, _, message, _)| message)
+            .unwrap();
+        fixture
+            .runtime
+            .finish(&pause_message, AgentInvocationTerminalStatus::Failed);
+
+        let restart = fixture.service.request("epic", "restart").unwrap();
+        assert_eq!(restart.target_count, 1);
+        assert_eq!(restart.targets[0].source_invocation_id, "bootstrap-source");
+        assert_eq!(fixture.runtime.requests_with_text("continue work").len(), 1);
     }
 
     #[test]

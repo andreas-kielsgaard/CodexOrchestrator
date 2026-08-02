@@ -23,6 +23,35 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
 - This checkpoint has deterministic local fake-runtime and strict native-contract/UI coverage.
   It does not prove a live provider received either control message, suspended/resumed work,
   restored a provider connection, or produced a product outcome.
+- **CL-1 controlled-live exchange, 2026-08-02:** one real Codex source invocation ran through
+  the product Agent Session application, an isolated active-v3 SQLite database, the production
+  Sprint Runner schema owner, and the Epic Pause/Restart service. The final bounded run used
+  `C:\Users\user\.codex\worktrees\b435\Codex Orchestrator\.dev\worktree-runtime\cl1-pause-restart\controlled-live-20260802-1930`
+  for the database, workspace, evidence, build target, app data, ports `10120/50115`, and a
+  copied test-owned credential home. Its durable artifact is
+  `cl1-epic-pause-restart-evidence.json` in that directory; it records `failed` with
+  `timed out after 180s waiting for cl1-source`.
+
+  | Stage                                                                                                                          | Durable result                                                                                   |
+  | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+  | Application source request and launch acceptance                                                                               | observed: one application-origin source invocation persisted and launch-accepted                 |
+  | Epic correlation and Pause target selection                                                                                    | observed: one initiated Epic membership, one Pause action, and one exact source target persisted |
+  | Cancellation request                                                                                                           | observed: `cancel_requested_at` persisted                                                        |
+  | Source process/provider terminal, external context, provider activity                                                          | unproven: no normalized event or terminal record arrived before the 180-second bound             |
+  | Pause message/invocation persistence and launch acceptance                                                                     | unavailable in the final run because source cancellation never settled                           |
+  | Restart target, message/invocation persistence, and launch acceptance                                                          | unavailable in the final run because Pause did not settle                                        |
+  | Instruction receipt/compliance, actual suspension, continuation acceptance, resumed work, useful progress, consumer acceptance | unproven; none is inferred from request/acknowledgement state                                    |
+  | Reopen reconstruction                                                                                                          | unproven in the final run; no settled control exchange existed to reconstruct                    |
+
+  The prior same-isolated attempt reached Pause and Restart message launch acceptance, then found
+  a product defect: a failed Pause control invocation was also treated as failed source work for
+  Restart, creating a second target in the same session. Restart now excludes every prior control
+  message from its failed/interrupted source candidate set. The deterministic regression covers
+  that exact failed-Pause shape. The final run did not retry provider work after its single
+  bounded exchange; the owned test binary was stopped after it wrote the failure artifact because
+  no direct-child terminal callback arrived under the WindowsApps CLI activation. This is not
+  evidence of provider suspension, process reattachment, or resumed work.
+
 - Checkpoint validation: focused Epic control Rust **7 passed**; focused observation Rust **5
   passed**. The later strict nested-observation decoder correction reran the frontend native-
   contract, Tauri transport, production-composition, and control UI at **4 files / 30 tests
