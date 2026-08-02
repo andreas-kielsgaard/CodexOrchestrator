@@ -9,6 +9,14 @@ export {
 } from './orchestrationEvents';
 export { decodeOrchestrationEventsV1 } from './orchestrationEventsDecoder';
 export {
+  ORCHESTRATION_ROLE_REPORTS_V1,
+  type OrchestrationRoleReportContractsV1,
+  type OrchestrationRoleReportV1,
+  type WorkDependencyKindV1,
+  type WorkDependencyReportV1,
+} from './orchestrationRoleReports';
+export { decodeOrchestrationRoleReportContractsV1 } from './orchestrationRoleReportsDecoder';
+export {
   projectContinuationEligibility,
   projectIdempotency,
   projectAgentControlOutcome,
