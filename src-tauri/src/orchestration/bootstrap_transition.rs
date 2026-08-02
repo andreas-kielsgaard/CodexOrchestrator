@@ -1777,7 +1777,7 @@ mod tests {
         orchestration::{
             conversation_harness::{self, ConversationHarnessRole},
             domain::{InitiateEpicCommand, ProposedSprint, SaveEpicPlanProposalCommand},
-            repository::SqliteOrchestrationRepository,
+            repository::{InitiatedSprintGitAuthorityWrite, SqliteOrchestrationRepository},
         },
     };
     use sha2::{Digest, Sha256};
@@ -4111,6 +4111,24 @@ mod tests {
             params![sprint_id, control.as_str(), control_harness.key, control_harness.version, "2026-08-02T00:00:00Z"],
         ).unwrap();
 
+        assert!(matches!(
+            service.request_work_slice_planner(&control, crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {}),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        let repository_root = fixture._directory.path().join("sprint-repository");
+        let worktree_root = repository_root.join("worktree");
+        fs::create_dir_all(&worktree_root).unwrap();
+        let initial_authority = InitiatedSprintGitAuthorityWrite {
+                sprint_id: sprint_id.clone(), idempotency_key: "wsp1-route-authority".into(),
+                repository_id: "wsp1-repository".into(), repository_root: repository_root.to_string_lossy().into_owned(),
+                repository_common_dir: repository_root.to_string_lossy().into_owned(), worktree_id: "wsp1-worktree".into(),
+                worktree_root: worktree_root.to_string_lossy().into_owned(), baseline_object_id: "a".repeat(40),
+                current_object_id: "b".repeat(40), runtime_instance_ref: "wsp1-runtime".into(),
+                runtime_source_ref: "wsp1-source".into(), source_fingerprint: "c".repeat(64),
+            };
+        let authority_repository = SqliteOrchestrationRepository::open(&fixture.database_path).unwrap();
+        authority_repository.store_initiated_sprint_git_authority(initial_authority.clone()).unwrap();
+
         assert!(serde_json::from_value::<crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest>(serde_json::json!({"sprintId":"forged"})).is_err());
         assert!(matches!(
             service.request_work_slice_planner(&AgentInvocationId::new("foreign-planning-control").unwrap(), crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {}),
@@ -4139,7 +4157,7 @@ mod tests {
         assert_eq!(results[0].work_slice_planner_session_created_at, None);
         assert_eq!(results[0].work_slice_planner_harness_applied_at, None);
         assert_eq!(results[0].work_slice_planner_launch_accepted_at, None);
-        assert_eq!(results[0].work_slice_planner_repository_worktree_route, Some(conversation_harness::role_discovery_root(ConversationHarnessRole::WorkSlicePlanner).unwrap()));
+        assert_eq!(results[0].work_slice_planner_repository_worktree_route, Some(worktree_root.to_string_lossy().into_owned()));
         assert_eq!(fixture.runtime.requests().len(), launches_before, "PS-WSP1 must not create or launch a Planner");
 
         let connection = Connection::open(&fixture.database_path).unwrap();
@@ -4169,6 +4187,33 @@ mod tests {
         assert_eq!(after_reopen.work_slice_planner_harness_applied_at, None);
         assert_eq!(after_reopen.work_slice_planner_launch_accepted_at, None);
         assert_eq!(fixture.runtime.requests().len(), launches_before);
+
+        let mut ambiguous_authority = initial_authority.clone();
+        ambiguous_authority.idempotency_key = "wsp1-route-authority-ambiguous".into();
+        ambiguous_authority.runtime_instance_ref = "wsp1-runtime-ambiguous".into();
+        ambiguous_authority.runtime_source_ref = "wsp1-source-ambiguous".into();
+        authority_repository.store_initiated_sprint_git_authority(ambiguous_authority).unwrap();
+        assert!(matches!(
+            reopened.request_work_slice_planner(&control, crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {}),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)
+        ));
+
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "DELETE FROM initiated_sprint_git_authorities WHERE sprint_id=?1", [&sprint_id],
+        ).unwrap();
+        let alternative_worktree = repository_root.join("alternative-worktree");
+        fs::create_dir_all(&alternative_worktree).unwrap();
+        let mut conflicting_authority = initial_authority;
+        conflicting_authority.idempotency_key = "wsp1-route-authority-conflict".into();
+        conflicting_authority.worktree_id = "wsp1-worktree-conflict".into();
+        conflicting_authority.worktree_root = alternative_worktree.to_string_lossy().into_owned();
+        conflicting_authority.runtime_instance_ref = "wsp1-runtime-conflict".into();
+        conflicting_authority.runtime_source_ref = "wsp1-source-conflict".into();
+        authority_repository.store_initiated_sprint_git_authority(conflicting_authority).unwrap();
+        assert!(matches!(
+            reopened.request_work_slice_planner(&control, crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {}),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)
+        ));
     }
 }
 

@@ -2,6 +2,7 @@
 
 use super::conversation_harness::{self, ConversationHarnessRole};
 use super::mcp::CodexMcpInjection;
+use super::repository::{InitiatedSprintGitAuthority, InitiatedSprintGitAuthorityError, SqliteOrchestrationRepository};
 use crate::agent_sessions::{
     application::{
         AgentSessionApplication, ApplicationInvocationLaunchEvidence, CreateAgentSessionCommand,
@@ -115,6 +116,14 @@ CREATE TABLE IF NOT EXISTS work_slice_planning_requests (
   request_fact_id TEXT NOT NULL UNIQUE,
   parent_sprint_runner_session_id TEXT NOT NULL,
   parent_planning_control_invocation_id TEXT NOT NULL UNIQUE,
+  authority_id TEXT NOT NULL,
+  authority_epic_id TEXT NOT NULL,
+  authority_provenance_id TEXT NOT NULL,
+  authority_repository_id TEXT NOT NULL,
+  authority_worktree_id TEXT NOT NULL,
+  authority_baseline_object_id TEXT NOT NULL,
+  authority_current_object_id TEXT NOT NULL,
+  authority_source_fingerprint TEXT NOT NULL,
   repository_worktree_route TEXT NOT NULL,
   requested_at TEXT NOT NULL,
   authorized_at TEXT NOT NULL,
@@ -231,8 +240,30 @@ impl std::fmt::Display for SprintRunnerTransitionError {
     }
 }
 
+#[derive(Eq, PartialEq)]
+struct CurrentPlanningRequest {
+    planning_point_id: String,
+    request_fact_id: String,
+    parent_sprint_runner_session_id: String,
+    parent_planning_control_invocation_id: String,
+    authority_id: String,
+    authority_epic_id: String,
+    authority_provenance_id: String,
+    authority_repository_id: String,
+    authority_worktree_id: String,
+    authority_baseline_object_id: String,
+    authority_current_object_id: String,
+    authority_source_fingerprint: String,
+    repository_worktree_route: String,
+    planner_harness_key: String,
+    planner_harness_version: i64,
+    planner_session_id: String,
+    planner_invocation_id: String,
+}
+
 pub(crate) struct SprintRunnerTransitionService {
     connection: Mutex<Connection>,
+    authority_repository: SqliteOrchestrationRepository,
     sessions: Arc<AgentSessionApplication>,
     mcp: Mutex<HashMap<AgentInvocationId, ManagedEpicRunnerAction>>,
     transition_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
@@ -248,6 +279,7 @@ impl SprintRunnerTransitionService {
         path: impl AsRef<Path>,
         sessions: Arc<AgentSessionApplication>,
     ) -> Result<Arc<Self>, SprintRunnerTransitionError> {
+        let path = path.as_ref();
         let connection = Connection::open(path).map_err(|e| {
             SprintRunnerTransitionError::Unavailable(format!(
                 "open Sprint Runner transition database: {e}"
@@ -294,8 +326,25 @@ impl SprintRunnerTransitionService {
             if !exists { connection.execute_batch(&format!("ALTER TABLE sprint_runner_transitions ADD COLUMN {column}"))
                 .map_err(|e| SprintRunnerTransitionError::Unavailable(format!("migrate Sprint Runner transition schema: {e}")))?; }
         }
+        for column in [
+            "authority_id TEXT", "authority_epic_id TEXT", "authority_provenance_id TEXT",
+            "authority_repository_id TEXT", "authority_worktree_id TEXT",
+            "authority_baseline_object_id TEXT", "authority_current_object_id TEXT",
+            "authority_source_fingerprint TEXT",
+        ] {
+            let name = column.split_whitespace().next().expect("planning request migration column name");
+            let exists = connection.prepare("PRAGMA table_info(work_slice_planning_requests)")
+                .and_then(|mut statement| statement.query_map([], |row| row.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>())
+                .map_err(|e| SprintRunnerTransitionError::Unavailable(format!("inspect Work Slice planning request schema: {e}")))?
+                .iter().any(|existing| existing == name);
+            if !exists { connection.execute_batch(&format!("ALTER TABLE work_slice_planning_requests ADD COLUMN {column}"))
+                .map_err(|e| SprintRunnerTransitionError::Unavailable(format!("migrate Work Slice planning request schema: {e}")))?; }
+        }
+        let authority_repository = SqliteOrchestrationRepository::open(path)
+            .map_err(|error| SprintRunnerTransitionError::Unavailable(format!("open Sprint Git authority repository: {error}")))?;
         Ok(Arc::new(Self {
             connection: Mutex::new(connection),
+            authority_repository,
             sessions,
             mcp: Mutex::new(HashMap::new()),
             transition_locks: Mutex::new(HashMap::new()),
@@ -721,6 +770,20 @@ impl SprintRunnerTransitionService {
         }
     }
 
+    /// Loads one private, self-validating Sprint Git authority. The authority repository
+    /// rechecks its Sprint/Epic/provenance chain and fingerprint before exposing a route.
+    fn planning_route_authority(
+        &self,
+        sprint_id: &str,
+    ) -> Result<InitiatedSprintGitAuthority, SprintRunnerTransitionError> {
+        match self.authority_repository.load_initiated_sprint_git_authority_for_sprint(sprint_id) {
+            Ok(Some(authority)) => Ok(authority),
+            Ok(None) | Err(InitiatedSprintGitAuthorityError::Invalid) | Err(InitiatedSprintGitAuthorityError::Forbidden) => Err(SprintRunnerTransitionError::Forbidden),
+            Err(InitiatedSprintGitAuthorityError::Conflict) => Err(SprintRunnerTransitionError::Conflict),
+            Err(InitiatedSprintGitAuthorityError::Unavailable) => Err(SprintRunnerTransitionError::Unavailable("load Sprint Git authority".into())),
+        }
+    }
+
     /// Lossless nonblocking drain. Every caller advances the generation before deciding whether
     /// it owns the pass. A notifier re-entry therefore returns immediately, while the current
     /// owner observes the newer generation and drains a further durable snapshot before release.
@@ -898,7 +961,7 @@ impl SprintRunnerTransitionService {
         let Some(sprint_id) = sprint_id else { return Err(SprintRunnerTransitionError::Forbidden) };
         let planning_control = conversation_harness::profile(ConversationHarnessRole::SprintRunnerPlanningControl).map_err(SprintRunnerTransitionError::Unavailable)?;
         let planner_harness = conversation_harness::profile(ConversationHarnessRole::WorkSlicePlanner).map_err(SprintRunnerTransitionError::Unavailable)?;
-        let route = conversation_harness::role_discovery_root(ConversationHarnessRole::WorkSlicePlanner).map_err(SprintRunnerTransitionError::Unavailable)?;
+        let authority = self.planning_route_authority(&sprint_id)?;
         let point = stable_id("work-slice-planning-point", &sprint_id);
         let request = stable_id("work-slice-planner-request", &sprint_id);
         let planner_session = stable_id("work-slice-planner-session", &point);
@@ -913,19 +976,19 @@ impl SprintRunnerTransitionService {
             |r| r.get(0),
         ).optional().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         let Some(session_id) = session_id else { return Err(SprintRunnerTransitionError::Forbidden) };
-        let existing: Option<(String, String, String, String, String, String, i64, String, String)> = tx.query_row(
-            "SELECT planning_point_id,request_fact_id,parent_sprint_runner_session_id,parent_planning_control_invocation_id,repository_worktree_route,planner_harness_key,planner_harness_version,planner_session_id,planner_invocation_id FROM work_slice_planning_requests WHERE sprint_id=?1 AND is_current=1",
+        let existing: Option<CurrentPlanningRequest> = tx.query_row(
+            "SELECT planning_point_id,request_fact_id,parent_sprint_runner_session_id,parent_planning_control_invocation_id,authority_id,authority_epic_id,authority_provenance_id,authority_repository_id,authority_worktree_id,authority_baseline_object_id,authority_current_object_id,authority_source_fingerprint,repository_worktree_route,planner_harness_key,planner_harness_version,planner_session_id,planner_invocation_id FROM work_slice_planning_requests WHERE sprint_id=?1 AND is_current=1",
             [&sprint_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)),
+            |r| Ok(CurrentPlanningRequest { planning_point_id:r.get(0)?, request_fact_id:r.get(1)?, parent_sprint_runner_session_id:r.get(2)?, parent_planning_control_invocation_id:r.get(3)?, authority_id:r.get(4)?, authority_epic_id:r.get(5)?, authority_provenance_id:r.get(6)?, authority_repository_id:r.get(7)?, authority_worktree_id:r.get(8)?, authority_baseline_object_id:r.get(9)?, authority_current_object_id:r.get(10)?, authority_source_fingerprint:r.get(11)?, repository_worktree_route:r.get(12)?, planner_harness_key:r.get(13)?, planner_harness_version:r.get(14)?, planner_session_id:r.get(15)?, planner_invocation_id:r.get(16)? }),
         ).optional().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         if let Some(existing) = existing {
-            let expected = (point.clone(), request.clone(), session_id.clone(), invocation_id.as_str().to_owned(), route.clone(), planner_harness.key.clone(), i64::from(planner_harness.version), planner_session.clone(), planner_invocation.clone());
+            let expected = CurrentPlanningRequest { planning_point_id:point.clone(), request_fact_id:request.clone(), parent_sprint_runner_session_id:session_id.clone(), parent_planning_control_invocation_id:invocation_id.as_str().to_owned(), authority_id:authority.authority_id.clone(), authority_epic_id:authority.epic_id.clone(), authority_provenance_id:authority.provenance_id.clone(), authority_repository_id:authority.repository_id.clone(), authority_worktree_id:authority.worktree_id.clone(), authority_baseline_object_id:authority.baseline_object_id.clone(), authority_current_object_id:authority.current_object_id.clone(), authority_source_fingerprint:authority.source_fingerprint.clone(), repository_worktree_route:authority.worktree_root.clone(), planner_harness_key:planner_harness.key.clone(), planner_harness_version:i64::from(planner_harness.version), planner_session_id:planner_session.clone(), planner_invocation_id:planner_invocation.clone() };
             if existing != expected { return Err(SprintRunnerTransitionError::Conflict); }
         } else {
             let now = chrono::Utc::now().to_rfc3339();
             tx.execute(
-                "INSERT INTO work_slice_planning_requests (planning_point_id,sprint_id,planning_episode,is_current,request_fact_id,parent_sprint_runner_session_id,parent_planning_control_invocation_id,repository_worktree_route,requested_at,authorized_at,planner_harness_key,planner_harness_version,planner_session_id,planner_invocation_id) VALUES (?1,?2,1,1,?3,?4,?5,?6,?7,?7,?8,?9,?10,?11)",
-                params![point, sprint_id, request, session_id, invocation_id.as_str(), route, now, planner_harness.key, planner_harness.version, planner_session, planner_invocation],
+                "INSERT INTO work_slice_planning_requests (planning_point_id,sprint_id,planning_episode,is_current,request_fact_id,parent_sprint_runner_session_id,parent_planning_control_invocation_id,authority_id,authority_epic_id,authority_provenance_id,authority_repository_id,authority_worktree_id,authority_baseline_object_id,authority_current_object_id,authority_source_fingerprint,repository_worktree_route,requested_at,authorized_at,planner_harness_key,planner_harness_version,planner_session_id,planner_invocation_id) VALUES (?1,?2,1,1,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?15,?16,?17,?18,?19)",
+                params![point, sprint_id, request, session_id, invocation_id.as_str(), authority.authority_id, authority.epic_id, authority.provenance_id, authority.repository_id, authority.worktree_id, authority.baseline_object_id, authority.current_object_id, authority.source_fingerprint, authority.worktree_root, now, planner_harness.key, planner_harness.version, planner_session, planner_invocation],
             ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         }
         tx.commit().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
