@@ -323,3 +323,18 @@ strict native-query correction `974ee2c`. The audit used this detached-worktree 
   coordinator and immutable-Harness regressions remain passing evidence and were not changed by
   this TypeScript-only state projection correction. No live/provider, human, Implementer, review,
   outcome, settlement, or continuation claim is added.
+
+### HA-01 correction: launch acceptance before Handler readiness
+
+- Native display detail now recognizes `launchAcceptedAt` before `launchRequestedAt` when
+  `handlerReadyAt` is absent. The resulting copy is “Handler launch accepted; application Handler
+  readiness is not yet recorded.” Provider activity remains a separate observation and the copy
+  makes no provider lifecycle, outcome, compliance, or application-acceptance claim.
+- A focused regression decodes the native query, composes the product read model, projects the
+  Sprint workspace, and renders `WorkUnitDetailWorkspace`. It proves the typed stage is
+  `launch_accepted`, the detail shows the accepted/not-ready boundary, and the false “acceptance is
+  not yet recorded” wording is absent. Existing typed Planner-boundary coverage remains intact.
+- Validation: isolated focused Vitest **3 files / 23 tests**, TypeScript, ESLint, production
+  frontend build, and focused Prettier passed. `git diff --check` passed. This TypeScript-only
+  correction changed no Rust source, so no Rust suite was rerun. No live/provider, human,
+  Implementer, review, outcome, settlement, or continuation claim is added.

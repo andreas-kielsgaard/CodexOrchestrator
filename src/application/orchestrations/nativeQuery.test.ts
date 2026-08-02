@@ -328,6 +328,21 @@ describe('orchestration native query v1', () => {
     );
     expect(input.referenceIndex.workUnits[1]!.details).toContain('Handler activation blocked');
 
+    const launchAcceptedNotReady = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    const acceptedActivation = (
+      launchAcceptedNotReady.workUnits as Array<Record<string, unknown>>
+    )[0]!.handlerActivation as Record<string, unknown>;
+    delete acceptedActivation.handlerReadyAt;
+    const acceptedNotReadyInput = nativeQueryProductCompositionInputV2(
+      decodeOrchestrationNativeQueryV2(launchAcceptedNotReady),
+    );
+    expect(acceptedNotReadyInput.referenceIndex.workUnits[0]!.details).toContain(
+      'Handler launch accepted; application Handler readiness is not yet recorded.',
+    );
+    expect(acceptedNotReadyInput.referenceIndex.workUnits[0]!.details).not.toContain(
+      'acceptance is not yet recorded',
+    );
+
     const missingEligibility = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
     (missingEligibility.workUnits as Array<Record<string, unknown>>)[0]!.handlerActivation = {
       attemptId: 'handler-attempt-1',

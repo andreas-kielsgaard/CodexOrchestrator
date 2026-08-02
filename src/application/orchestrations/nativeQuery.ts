@@ -615,6 +615,8 @@ function handlerActivationDetail(activation: NativeWorkUnitHandlerActivationV1 |
     : ' Provider activity is unobserved.';
   if (activation.handlerReadyAt)
     return ` Handler launch accepted and application Handler readiness recorded.${providerObservation}`;
+  if (activation.launchAcceptedAt)
+    return ` Handler launch accepted; application Handler readiness is not yet recorded.${providerObservation}`;
   if (activation.launchRequestedAt)
     return ` Handler launch requested; acceptance is not yet recorded.${providerObservation}`;
   if (activation.handlerInvocationPreparedAt)
