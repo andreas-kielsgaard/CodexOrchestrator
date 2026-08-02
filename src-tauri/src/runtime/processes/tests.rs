@@ -1,3 +1,4 @@
+use super::supervisor::TestQuarantineExclusive;
 use super::*;
 use crate::agent_sessions::domain::AgentSessionId;
 use std::{
@@ -401,6 +402,7 @@ fn cancellation_terminates_the_child_and_emits_canceled_once() {
 
 #[test]
 fn cancellation_settles_after_direct_exit_when_an_unowned_reader_stays_open() {
+    let _quarantine = TestQuarantineExclusive::acquire();
     let (factory, sink, supervisor) = fixture();
     let child = Arc::new(FakeChild::default());
     let stdout = BlockingReader::default();
@@ -448,6 +450,7 @@ fn cancellation_settles_after_direct_exit_when_an_unowned_reader_stays_open() {
 
 #[test]
 fn cancellation_refuses_to_exceed_retained_reader_capacity() {
+    let _quarantine = TestQuarantineExclusive::acquire();
     let (factory, sink, supervisor) = fixture();
     let mut readers = Vec::new();
     for index in 0..4 {
@@ -519,6 +522,7 @@ fn cancellation_refuses_to_exceed_retained_reader_capacity() {
 
 #[test]
 fn dropping_a_supervisor_keeps_retained_readers_in_the_process_quarantine() {
+    let _quarantine = TestQuarantineExclusive::acquire();
     let (factory, sink, supervisor) = fixture();
     let child = Arc::new(FakeChild::default());
     let reader = BlockingReader::default();
@@ -574,6 +578,8 @@ fn dropping_a_supervisor_keeps_retained_readers_in_the_process_quarantine() {
     supervisor
         .shutdown()
         .expect("shutdown after process quarantine cleanup");
+    assert!(supervisor.retain_drop_cleanup_fallback_for_test());
+    assert!(!supervisor.retain_drop_cleanup_fallback_for_test());
 }
 
 #[test]

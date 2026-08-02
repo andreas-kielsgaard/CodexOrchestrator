@@ -55,7 +55,9 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
   cancellation while that bounded capacity is exhausted, and reports an incomplete retained-reader
   cleanup at shutdown. Dropping an individual supervisor neither waits indefinitely nor discards
   tracked readers: it starts nonblocking background cleanup while the process-exit quarantine
-  retains unresolved handles.
+  retains unresolved handles. If that cleanup worker cannot start, one process-exit supervisor
+  record is retained; a full or poisoned fallback aborts rather than detaching more state. Drop
+  does not claim a durable shutdown report.
   It neither kills nor reattaches to descendants. Normal exits still drain readers before terminal
   delivery. This retains no process-tree claim, provider-terminal claim, or provider-compliance
   claim. The earlier failed-Pause Restart correction remains: Restart excludes every prior control
@@ -66,7 +68,9 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
   retained-reader correction adds focused process coverage for bounded retention, reaping,
   cancellation refusal, and shutdown behavior; its first count was invalidated by independent
   review and is superseded by the correction commit's deterministic **17 passed** result. Agent
-  Session application cancellation/diagnostic coverage is **16 passed**. The later
+  Session application cancellation/diagnostic coverage is **16 passed**. The ordinary parallel
+  `cargo test runtime::processes::tests --lib` command passed **17/17** three times; only the
+  three global-quarantine regressions coordinate with one another. The later
   strict nested-observation decoder correction reran the frontend native-
   contract, Tauri transport, production-composition, and control UI at **4 files / 30 tests
   passed**. The later terminal-status and signed-exit-code correction reran the same set at **4

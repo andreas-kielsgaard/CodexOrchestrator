@@ -44,6 +44,7 @@ pub(super) struct SupervisorInner {
 }
 
 const PROCESS_RETAINED_READER_THREAD_LIMIT: usize = 8;
+const SHUTDOWN_READER_REAP_GRACE: Duration = Duration::from_millis(50);
 
 #[derive(Default)]
 struct ReaderQuarantine {
@@ -55,6 +56,7 @@ struct ReaderQuarantine {
 // unresolved reader handles until a later reap or process exit, so dropping a supervisor never
 // silently detaches handles that an unowned descendant may still keep open.
 static PROCESS_EXIT_READER_QUARANTINE: OnceLock<Mutex<ReaderQuarantine>> = OnceLock::new();
+const PROCESS_EXIT_SUPERVISOR_QUARANTINE_LIMIT: usize = 1;
 static PROCESS_EXIT_SUPERVISOR_QUARANTINE: OnceLock<Mutex<Vec<Arc<SupervisorInner>>>> =
     OnceLock::new();
 
@@ -66,34 +68,97 @@ fn supervisor_quarantine() -> &'static Mutex<Vec<Arc<SupervisorInner>>> {
     PROCESS_EXIT_SUPERVISOR_QUARANTINE.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-#[cfg(test)]
-static TEST_PRODUCT_LEASE: OnceLock<(Mutex<bool>, Condvar)> = OnceLock::new();
+fn retain_drop_cleanup_fallback(inner: Arc<SupervisorInner>) -> bool {
+    let Ok(mut quarantine) = supervisor_quarantine().lock() else {
+        return false;
+    };
+    if quarantine.len() >= PROCESS_EXIT_SUPERVISOR_QUARANTINE_LIMIT {
+        return false;
+    }
+    quarantine.push(inner);
+    true
+}
 
 #[cfg(test)]
-struct TestProductLease;
+static TEST_QUARANTINE_COORDINATOR: OnceLock<(Mutex<TestQuarantineState>, Condvar)> =
+    OnceLock::new();
 
 #[cfg(test)]
-impl TestProductLease {
-    fn acquire() -> Self {
-        let (active, changed) =
-            TEST_PRODUCT_LEASE.get_or_init(|| (Mutex::new(false), Condvar::new()));
-        let mut active = active.lock().expect("test product lease lock");
-        while *active {
-            active = changed.wait(active).expect("test product lease wait");
+#[derive(Default)]
+struct TestQuarantineState {
+    active_supervisors: usize,
+    exclusive_owner: Option<thread::ThreadId>,
+}
+
+#[cfg(test)]
+struct TestQuarantineLease;
+
+#[cfg(test)]
+impl TestQuarantineLease {
+    fn acquire() -> Option<Self> {
+        let owner = thread::current().id();
+        let (state, changed) = TEST_QUARANTINE_COORDINATOR
+            .get_or_init(|| (Mutex::new(TestQuarantineState::default()), Condvar::new()));
+        let mut state = state.lock().expect("test quarantine coordinator lock");
+        while state.exclusive_owner.is_some() && state.exclusive_owner != Some(owner) {
+            state = changed
+                .wait(state)
+                .expect("test quarantine coordinator wait");
         }
-        *active = true;
-        Self
+        if state.exclusive_owner == Some(owner) {
+            None
+        } else {
+            state.active_supervisors += 1;
+            Some(Self)
+        }
     }
 }
 
 #[cfg(test)]
-impl Drop for TestProductLease {
+impl Drop for TestQuarantineLease {
     fn drop(&mut self) {
-        let (active, changed) = TEST_PRODUCT_LEASE
+        let (state, changed) = TEST_QUARANTINE_COORDINATOR
             .get()
-            .expect("test product lease initialized");
-        *active.lock().expect("test product lease lock") = false;
-        changed.notify_one();
+            .expect("test quarantine coordinator initialized");
+        let mut state = state.lock().expect("test quarantine coordinator lock");
+        state.active_supervisors = state.active_supervisors.saturating_sub(1);
+        changed.notify_all();
+    }
+}
+
+#[cfg(test)]
+pub(super) struct TestQuarantineExclusive {
+    owner: thread::ThreadId,
+}
+
+#[cfg(test)]
+impl TestQuarantineExclusive {
+    pub(super) fn acquire() -> Self {
+        let owner = thread::current().id();
+        let (state, changed) = TEST_QUARANTINE_COORDINATOR
+            .get_or_init(|| (Mutex::new(TestQuarantineState::default()), Condvar::new()));
+        let mut state = state.lock().expect("test quarantine coordinator lock");
+        while state.exclusive_owner.is_some() || state.active_supervisors != 0 {
+            state = changed
+                .wait(state)
+                .expect("test quarantine coordinator wait");
+        }
+        state.exclusive_owner = Some(owner);
+        Self { owner }
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestQuarantineExclusive {
+    fn drop(&mut self) {
+        let (state, changed) = TEST_QUARANTINE_COORDINATOR
+            .get()
+            .expect("test quarantine coordinator initialized");
+        let mut state = state.lock().expect("test quarantine coordinator lock");
+        if state.exclusive_owner == Some(self.owner) {
+            state.exclusive_owner = None;
+            changed.notify_all();
+        }
     }
 }
 
@@ -102,7 +167,7 @@ pub(crate) struct ProcessSupervisor {
     inner: Arc<SupervisorInner>,
     shutdown_on_drop: bool,
     #[cfg(test)]
-    _test_product_lease: Option<TestProductLease>,
+    _test_quarantine_lease: Option<TestQuarantineLease>,
 }
 
 impl ProcessSupervisor {
@@ -123,7 +188,7 @@ impl ProcessSupervisor {
             }),
             shutdown_on_drop: true,
             #[cfg(test)]
-            _test_product_lease: Some(TestProductLease::acquire()),
+            _test_quarantine_lease: TestQuarantineLease::acquire(),
         }
     }
 
@@ -365,8 +430,7 @@ impl ProcessSupervisor {
         }
 
         drop(registry);
-        self.reap_retained_reader_threads();
-        let retained = self.retained_reader_count_inner()?;
+        let retained = self.wait_for_retained_reader_cleanup(SHUTDOWN_READER_REAP_GRACE)?;
         if !termination_failures.is_empty() {
             Err(SupervisorError::new(
                 SupervisorErrorKind::CancellationFailed,
@@ -403,6 +467,11 @@ impl ProcessSupervisor {
         self.retained_reader_count_inner()
     }
 
+    #[cfg(test)]
+    pub(crate) fn retain_drop_cleanup_fallback_for_test(&self) -> bool {
+        retain_drop_cleanup_fallback(self.inner.clone())
+    }
+
     fn retained_reader_count_inner(&self) -> Result<usize, SupervisorError> {
         self.reap_retained_reader_threads();
         reader_quarantine()
@@ -414,6 +483,20 @@ impl ProcessSupervisor {
                     "retained output-reader quarantine lock was poisoned",
                 )
             })
+    }
+
+    fn wait_for_retained_reader_cleanup(
+        &self,
+        grace_period: Duration,
+    ) -> Result<usize, SupervisorError> {
+        let deadline = Instant::now() + grace_period;
+        loop {
+            let retained = self.retained_reader_count_inner()?;
+            if retained == 0 || Instant::now() >= deadline {
+                return Ok(retained);
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
     }
 
     fn reap_retained_reader_threads(&self) {
@@ -662,19 +745,16 @@ impl Drop for ProcessSupervisor {
                     inner,
                     shutdown_on_drop: false,
                     #[cfg(test)]
-                    _test_product_lease: None,
+                    _test_quarantine_lease: None,
                 };
                 let _ = supervisor.shutdown();
             });
         if let Err(error) = cleanup {
-            let retained = if let Ok(mut quarantine) = supervisor_quarantine().lock() {
-                quarantine.push(fallback);
-                true
-            } else {
-                false
-            };
-            if !retained {
-                std::mem::forget(self.inner.clone());
+            if !retain_drop_cleanup_fallback(fallback) {
+                eprintln!(
+                    "process-supervisor drop cleanup cannot retain more state; aborting to avoid detaching supervised handles"
+                );
+                std::process::abort();
             }
             eprintln!(
                 "process-supervisor drop cleanup worker could not start; process-exit quarantine retains supervised state: {error}"
