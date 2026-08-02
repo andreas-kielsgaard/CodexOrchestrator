@@ -23,7 +23,7 @@ describe('Work Slice Planner boundary disclosure', () => {
   it('is present after a durable Planner request and states the downstream stop', () => {
     render(<WorkSlicePlannerBoundary transition={transition} />);
     expect(screen.getByRole('region', { name: 'Work Slice Planner boundary' })).toHaveTextContent(
-      'No Planner proposal or result, Work Unit, Handler, Implementer, settlement, or later planning point is recorded here.',
+      'Proposal facts remain distinct from every later Work Unit or downstream action.',
     );
     expect(screen.getByRole('region', { name: 'Work Slice Planner boundary' })).toHaveTextContent(
       'Planner request',
@@ -31,5 +31,30 @@ describe('Work Slice Planner boundary disclosure', () => {
     expect(screen.getByRole('region', { name: 'Work Slice Planner boundary' })).toHaveTextContent(
       'Planner authorization',
     );
+  });
+
+  it('labels proposal lifecycle stages separately without exposing materialization control', () => {
+    render(
+      <WorkSlicePlannerBoundary
+        transition={{
+          ...transition,
+          workSliceProposalSubmittedAt: '2026-08-02T00:00:02Z',
+          workSliceProposalValidationResult: 'valid',
+          workSliceRefinementRequestedAt: '2026-08-02T00:00:03Z',
+          workSliceSemanticCompletedAt: undefined,
+          workSliceTerminalLifecycleObservedAt: undefined,
+          workSliceApplicationAcceptedAt: undefined,
+          workSliceMaterializationReadyAt: undefined,
+        }}
+      />,
+    );
+    const region = screen.getByRole('region', { name: 'Work Slice Planner boundary' });
+    expect(region).toHaveTextContent('Proposal submitted');
+    expect(region).toHaveTextContent('Validation accepted');
+    expect(region).toHaveTextContent('Refinement requested');
+    expect(region).toHaveTextContent('Semantic completion (not recorded)');
+    expect(region).toHaveTextContent('Application acceptance (not recorded)');
+    expect(region.querySelector('button')).toBeNull();
+    expect(region).not.toHaveTextContent('Materialize Work Units');
   });
 });

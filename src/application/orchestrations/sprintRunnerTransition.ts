@@ -51,6 +51,13 @@ export interface SprintRunnerTransitionV1 {
   readonly workSlicePlannerReadyAt?: string;
   readonly workSlicePlannerProviderActivationObservedAt?: string;
   readonly workSlicePlannerLifecycleObservedAt?: string;
+  readonly workSliceProposalSubmittedAt?: string;
+  readonly workSliceProposalValidationResult?: 'valid' | 'invalid';
+  readonly workSliceRefinementRequestedAt?: string;
+  readonly workSliceSemanticCompletedAt?: string;
+  readonly workSliceTerminalLifecycleObservedAt?: string;
+  readonly workSliceApplicationAcceptedAt?: string;
+  readonly workSliceMaterializationReadyAt?: string;
   readonly downstreamNotStarted?: boolean;
 }
 
@@ -103,6 +110,13 @@ export interface ProductSprintRunnerTransitionStatusV1 {
   readonly workSlicePlannerReadyAt?: string;
   readonly workSlicePlannerProviderActivationObservedAt?: string;
   readonly workSlicePlannerLifecycleObservedAt?: string;
+  readonly workSliceProposalSubmittedAt?: string;
+  readonly workSliceProposalValidationResult?: 'valid' | 'invalid';
+  readonly workSliceRefinementRequestedAt?: string;
+  readonly workSliceSemanticCompletedAt?: string;
+  readonly workSliceTerminalLifecycleObservedAt?: string;
+  readonly workSliceApplicationAcceptedAt?: string;
+  readonly workSliceMaterializationReadyAt?: string;
   readonly downstreamNotStarted?: boolean;
 }
 
@@ -198,6 +212,13 @@ export function projectSprintRunnerTransitionStatus(
     ...optionalProjection(transition, 'workSlicePlannerReadyAt'),
     ...optionalProjection(transition, 'workSlicePlannerProviderActivationObservedAt'),
     ...optionalProjection(transition, 'workSlicePlannerLifecycleObservedAt'),
+    ...optionalProjection(transition, 'workSliceProposalSubmittedAt'),
+    ...optionalProjection(transition, 'workSliceProposalValidationResult'),
+    ...optionalProjection(transition, 'workSliceRefinementRequestedAt'),
+    ...optionalProjection(transition, 'workSliceSemanticCompletedAt'),
+    ...optionalProjection(transition, 'workSliceTerminalLifecycleObservedAt'),
+    ...optionalProjection(transition, 'workSliceApplicationAcceptedAt'),
+    ...optionalProjection(transition, 'workSliceMaterializationReadyAt'),
     downstreamNotStarted: transition.downstreamNotStarted,
   };
 }
@@ -283,6 +304,7 @@ function decodeTransition(value: unknown): SprintRunnerTransitionV1 {
       'workSlicePlannerReadyAt',
       'workSlicePlannerProviderActivationObservedAt',
       'workSlicePlannerLifecycleObservedAt',
+      'workSliceProposalSubmittedAt','workSliceProposalValidationResult','workSliceRefinementRequestedAt','workSliceSemanticCompletedAt','workSliceTerminalLifecycleObservedAt','workSliceApplicationAcceptedAt','workSliceMaterializationReadyAt',
       'downstreamNotStarted',
     ],
     'Sprint Runner transition',
@@ -338,6 +360,13 @@ function decodeTransition(value: unknown): SprintRunnerTransitionV1 {
     ...optionalText(item, 'workSlicePlannerReadyAt'),
     ...optionalText(item, 'workSlicePlannerProviderActivationObservedAt'),
     ...optionalText(item, 'workSlicePlannerLifecycleObservedAt'),
+    ...optionalText(item, 'workSliceProposalSubmittedAt'),
+    ...optionalValidation(item),
+    ...optionalText(item, 'workSliceRefinementRequestedAt'),
+    ...optionalText(item, 'workSliceSemanticCompletedAt'),
+    ...optionalText(item, 'workSliceTerminalLifecycleObservedAt'),
+    ...optionalText(item, 'workSliceApplicationAcceptedAt'),
+    ...optionalText(item, 'workSliceMaterializationReadyAt'),
     downstreamNotStarted: bool(item.downstreamNotStarted, 'downstreamNotStarted'),
   } as SprintRunnerTransitionV1;
   if (transition.workSlicePlannerRequestedAt && !transition.workSlicePlannerRequestId)
@@ -400,7 +429,39 @@ function decodeTransition(value: unknown): SprintRunnerTransitionV1 {
     invalid('Planner launch acceptance requires an authorized applied-Harness planning point');
   if (!transition.downstreamNotStarted && !transition.workSlicePlanningPointId)
     invalid('Sprint Runner transition must not imply downstream work');
+  if (transition.workSliceProposalSubmittedAt && !transition.workSlicePlanningPointId)
+    invalid('proposal requires a planning point');
+  if (transition.workSliceProposalValidationResult && !transition.workSliceProposalSubmittedAt)
+    invalid('proposal validation requires submission');
+  if (transition.workSliceRefinementRequestedAt && !transition.workSliceProposalValidationResult)
+    invalid('refinement requires authoritative validation');
+  if (
+    transition.workSliceRefinementRequestedAt &&
+    transition.workSliceProposalValidationResult !== 'valid'
+  )
+    invalid('refinement requires a valid proposal');
+  if (transition.workSliceSemanticCompletedAt &&
+      (transition.workSliceProposalValidationResult !== 'valid' || transition.workSliceRefinementRequestedAt))
+    invalid('semantic completion requires current valid unrefined proposal');
+  if (transition.workSliceTerminalLifecycleObservedAt && !transition.workSliceSemanticCompletedAt)
+    invalid('proposal lifecycle observation requires semantic completion');
+  if (
+    transition.workSliceApplicationAcceptedAt &&
+    (!transition.workSliceTerminalLifecycleObservedAt ||
+      transition.workSliceProposalValidationResult !== 'valid' ||
+      !transition.workSliceSemanticCompletedAt ||
+      Boolean(transition.workSliceRefinementRequestedAt))
+  )
+    invalid('application acceptance requires a current valid completed proposal');
+  if (transition.workSliceMaterializationReadyAt && !transition.workSliceApplicationAcceptedAt)
+    invalid('materialization readiness requires application acceptance');
   return transition;
+}
+function optionalValidation(value: Record<string, unknown>): Record<string, 'valid' | 'invalid'> {
+  if (value.workSliceProposalValidationResult == null) return {};
+  if (value.workSliceProposalValidationResult !== 'valid' && value.workSliceProposalValidationResult !== 'invalid')
+    invalid('workSliceProposalValidationResult must be valid or invalid');
+  return { workSliceProposalValidationResult: value.workSliceProposalValidationResult };
 }
 function object(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))

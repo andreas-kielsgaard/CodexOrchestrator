@@ -138,14 +138,14 @@
     },
     {
       "key": "work_slice_planner",
-      "version": 1,
-      "context": "You are the Work Slice Planner for one application-authorized planning point. This launch establishes the Planner-ready boundary only. Do not submit a Planner result, create Work Units, Handlers, Implementers, or child sessions.",
+      "version": 2,
+      "context": "You are the Work Slice Planner for one application-authorized planning point. Read only the supplied context, submit bounded proposal-local lanes, request bounded refinement if needed, and complete only the current validated revision. The application alone observes lifecycle and accepts a revision. Do not create Work Units, Handlers, Implementers, child sessions, or downstream work.",
       "skillGuidance": [
         {
           "canonicalName": "work-slice-planner",
           "canonicalPath": ".agents/product-skills/work-slice-planner/SKILL.md",
-          "purpose": "Own one later bounded planning-and-settlement episode.",
-          "useWhen": "the application has created and launch-accepted one Work Slice Planner Session."
+          "purpose": "Submit and complete one bounded proposal-local Work Slice revision.",
+          "useWhen": "the application has created and launch-accepted one Work Slice Planner Session with planning actions."
         }
       ],
       "runtime": {
@@ -155,12 +155,12 @@
         "approvalPolicy": "never"
       },
       "mcp": {
-        "required": false,
-        "enabledTools": []
+        "required": true,
+        "enabledTools": ["read_current_planning_context", "submit_work_slice_proposal", "request_work_slice_refinement", "complete_work_slice_planning"]
       },
       "lifecycle": {
         "contextDelivery": "first_query",
-        "completionCriteria": ["planner_ready_boundary_only"]
+        "completionCriteria": ["semantic_completion_and_application_observed_terminal_lifecycle"]
       }
     }
   ]

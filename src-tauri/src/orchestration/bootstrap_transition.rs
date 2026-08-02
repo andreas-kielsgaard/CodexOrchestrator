@@ -2168,6 +2168,95 @@ mod tests {
             self.service.query().unwrap().transitions[0].clone()
         }
 
+        fn prepare_work_slice_planner(&self) -> (
+            Arc<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>,
+            AgentInvocationId,
+            String,
+        ) {
+            let bootstrap = self.status();
+            let bootstrap_invocation = AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap();
+            self.service
+                .complete_bootstrap(
+                    &bootstrap_invocation,
+                    Self::materials(),
+                )
+                .unwrap();
+            self.runtime
+                .finish(&bootstrap.bootstrap_invocation_id, AgentInvocationTerminalStatus::Completed);
+            let runner = self.status();
+            let sprint_id: String = Connection::open(&self.database_path)
+                .unwrap()
+                .query_row(
+                    "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let service = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &self.database_path,
+                self.sessions.clone(),
+            )
+            .unwrap();
+            service
+                .request_next_sprint_runner(
+                    &AgentInvocationId::new(runner.runner_invocation_id).unwrap(),
+                    crate::orchestration::sprint_runner_transition::SprintRunnerSelection {
+                        sprint_id: sprint_id.clone(),
+                    },
+                )
+                .unwrap();
+            let control = AgentInvocationId::new("planning-control-http-invocation").unwrap();
+            let control_harness = conversation_harness::profile(
+                ConversationHarnessRole::SprintRunnerPlanningControl,
+            )
+            .unwrap();
+            Connection::open(&self.database_path)
+                .unwrap()
+                .execute(
+                    "UPDATE sprint_runner_transitions SET planning_control_invocation_id=?2,planning_control_harness_key=?3,planning_control_harness_version=?4,planning_control_harness_applied_at=?5,planning_control_launch_accepted_at=?5,planning_ready_at=?5 WHERE sprint_id=?1",
+                    params![
+                        sprint_id,
+                        control.as_str(),
+                        control_harness.key,
+                        control_harness.version,
+                        "2026-08-02T00:00:00Z"
+                    ],
+                )
+                .unwrap();
+            let repository_root = self._directory.path().join("http-sprint-repository");
+            let worktree_root = repository_root.join("worktree");
+            fs::create_dir_all(&worktree_root).unwrap();
+            SqliteOrchestrationRepository::open(&self.database_path)
+                .unwrap()
+                .store_initiated_sprint_git_authority(InitiatedSprintGitAuthorityWrite {
+                    sprint_id: sprint_id.clone(),
+                    idempotency_key: "wsp-http-route-authority".into(),
+                    repository_id: "wsp-http-repository".into(),
+                    repository_root: repository_root.to_string_lossy().into_owned(),
+                    repository_common_dir: repository_root.to_string_lossy().into_owned(),
+                    worktree_id: "wsp-http-worktree".into(),
+                    worktree_root: worktree_root.to_string_lossy().into_owned(),
+                    baseline_object_id: "a".repeat(40),
+                    current_object_id: "b".repeat(40),
+                    runtime_instance_ref: "wsp-http-runtime".into(),
+                    runtime_source_ref: "wsp-http-source".into(),
+                    source_fingerprint: "c".repeat(64),
+                })
+                .unwrap();
+            let status = service
+                .request_work_slice_planner(
+                    &control,
+                    crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {},
+                )
+                .unwrap();
+            let planner_invocation = AgentInvocationId::new(
+                status.work_slice_planner_invocation_id.unwrap(),
+            )
+            .unwrap();
+            self.notifier.set_sprint(&service);
+            (service, planner_invocation, sprint_id)
+        }
+
         fn materials() -> BootstrapMaterialInput {
             BootstrapMaterialInput {
                 epic_overview_markdown:
@@ -4073,6 +4162,249 @@ mod tests {
         server.stop();
     }
 
+    #[tokio::test]
+    async fn work_slice_planner_scoped_mcp_is_identity_free_and_transport_bound() {
+        let fixture = Fixture::new();
+        let (service, invocation, _sprint_id) = fixture.prepare_work_slice_planner();
+        let server = crate::orchestration::sprint_runner_transition::start_work_slice_planner_test_server(
+            service.clone(),
+            invocation.clone(),
+            "planner-bearer".into(),
+            vec!["tauri://localhost".into()],
+        )
+        .unwrap();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let initialize = || {
+            serde_json::json!({
+                "jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                    "protocolVersion":"2025-11-25","capabilities":{},
+                    "clientInfo":{"name":"test","version":"1"}
+                }
+            })
+            .to_string()
+        };
+        assert_eq!(
+            client
+                .post(server.url())
+                .header("content-type", "application/json")
+                .header("accept", "application/json, text/event-stream")
+                .header("authorization", "Bearer wrong")
+                .body(initialize())
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            client
+                .post(server.url())
+                .header("content-type", "application/json")
+                .header("accept", "application/json, text/event-stream")
+                .header("authorization", "Bearer planner-bearer")
+                .header("origin", "https://evil.example")
+                .body(initialize())
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            client
+                .post(server.url())
+                .header("content-type", "application/json")
+                .header("accept", "application/json, text/event-stream")
+                .header("authorization", "Bearer planner-bearer")
+                .header("host", "evil.example")
+                .body(initialize())
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::FORBIDDEN
+        );
+        let initialized = client
+            .post(server.url())
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", "Bearer planner-bearer")
+            .body(initialize())
+            .send()
+            .await
+            .unwrap();
+        let session = initialized
+            .headers()
+            .get("mcp-session-id")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let request = |id: u32, method: &str, params: serde_json::Value| {
+            serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}).to_string()
+        };
+        client
+            .post(server.url())
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", "Bearer planner-bearer")
+            .header("mcp-session-id", &session)
+            .body(serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}).to_string())
+            .send()
+            .await
+            .unwrap();
+        let listed = client
+            .post(server.url())
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", "Bearer planner-bearer")
+            .header("mcp-session-id", &session)
+            .body(request(2, "tools/list", serde_json::json!({})))
+            .send()
+            .await
+            .unwrap();
+        let listed = mcp_response_json(listed).await;
+        let tools = listed["result"]["tools"].as_array().unwrap();
+        assert_eq!(
+            tools.iter().map(|tool| tool["name"].as_str().unwrap()).collect::<Vec<_>>(),
+            [
+                "complete_work_slice_planning",
+                "read_current_planning_context",
+                "request_work_slice_refinement",
+                "submit_work_slice_proposal",
+            ]
+        );
+        for tool in tools {
+            let schema = &tool["inputSchema"];
+            assert_ne!(schema["additionalProperties"], true);
+            let mut property_names = schema["properties"]
+                .as_object()
+                .map(|properties| properties.keys().cloned().collect::<Vec<_>>())
+                .unwrap_or_default();
+            property_names.sort();
+            let expected_properties = match tool["name"].as_str().unwrap() {
+                "read_current_planning_context" | "complete_work_slice_planning" => Vec::new(),
+                "request_work_slice_refinement" => vec!["reason".to_string()],
+                "submit_work_slice_proposal" => vec!["lanes".to_string(), "objective".to_string()],
+                name => panic!("unexpected Work Slice Planner tool {name}"),
+            };
+            assert_eq!(property_names, expected_properties);
+            let schema_text = schema.to_string().to_ascii_lowercase();
+            for forbidden in ["session", "invocation", "sprint", "point", "route", "repository", "idempotency", "revision", "token", "acceptance", "authority"] {
+                assert!(!schema_text.contains(forbidden), "Planner schema leaked {forbidden}: {schema_text}");
+            }
+        }
+        let proposal_args = serde_json::json!({
+            "objective":"Verify the scoped Planner exchange.",
+            "lanes":[{"title":"Inspect","specification":"Inspect the exchange.","dependsOn":[]}]
+        });
+        let malformed = client
+            .post(server.url())
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", "Bearer planner-bearer")
+            .header("mcp-session-id", &session)
+            .body(request(3, "tools/call", serde_json::json!({
+                "name":"submit_work_slice_proposal",
+                "arguments": {"objective":"x","lanes":[],"revisionToken":"forged","route":"forged","accepted":true}
+            })))
+            .send()
+            .await
+            .unwrap();
+        let malformed = mcp_response_json(malformed).await;
+        assert_eq!(malformed["result"]["isError"], true);
+        let submitted = client
+            .post(server.url())
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", "Bearer planner-bearer")
+            .header("mcp-session-id", &session)
+            .body(request(4, "tools/call", serde_json::json!({"name":"submit_work_slice_proposal","arguments":proposal_args.clone()})))
+            .send()
+            .await
+            .unwrap();
+        let submitted = mcp_response_json(submitted).await;
+        assert_eq!(submitted["result"]["isError"], false);
+        let submitted_text = submitted["result"]["content"][0]["text"].as_str().unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(submitted_text).unwrap(),
+            serde_json::json!({"status":"proposal_validated","accepted":false,"materializationReady":false})
+        );
+        for forbidden in ["revision", "fingerprint", "command", "idempotency", "route", "token", "authority"] {
+            assert!(!submitted_text.to_ascii_lowercase().contains(forbidden));
+        }
+        let replay = client
+            .post(server.url())
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", "Bearer planner-bearer")
+            .header("mcp-session-id", &session)
+            .body(request(5, "tools/call", serde_json::json!({"name":"submit_work_slice_proposal","arguments":proposal_args})))
+            .send()
+            .await
+            .unwrap();
+        let replay = mcp_response_json(replay).await;
+        let replay_text = replay["result"]["content"][0]["text"].as_str().unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(replay_text).unwrap(),
+            serde_json::json!({"status":"proposal_replayed","accepted":false,"materializationReady":false})
+        );
+        let foreign = crate::orchestration::sprint_runner_transition::start_work_slice_planner_test_server(
+            service,
+            AgentInvocationId::new("foreign-planner-invocation").unwrap(),
+            "foreign-bearer".into(),
+            vec!["tauri://localhost".into()],
+        )
+        .unwrap();
+        let foreign_initialized = client
+            .post(foreign.url())
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", "Bearer foreign-bearer")
+            .body(initialize())
+            .send()
+            .await
+            .unwrap();
+        let foreign_session = foreign_initialized
+            .headers()
+            .get("mcp-session-id")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        client
+            .post(foreign.url())
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", "Bearer foreign-bearer")
+            .header("mcp-session-id", &foreign_session)
+            .body(serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}).to_string())
+            .send()
+            .await
+            .unwrap();
+        let foreign_call = client
+            .post(foreign.url())
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", "Bearer foreign-bearer")
+            .header("mcp-session-id", &foreign_session)
+            .body(request(6, "tools/call", serde_json::json!({"name":"read_current_planning_context","arguments":{}})))
+            .send()
+            .await
+            .unwrap();
+        let foreign_call = mcp_response_json(foreign_call).await;
+        assert_eq!(foreign_call["result"]["isError"], false);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(foreign_call["result"]["content"][0]["text"].as_str().unwrap()).unwrap(),
+            serde_json::json!({"status":"rejected","code":"forbidden"})
+        );
+        foreign.stop();
+        server.stop();
+    }
+
     async fn mcp_response_json(response: reqwest::Response) -> serde_json::Value {
         let text = response.text().await.unwrap();
         let json = text
@@ -4176,13 +4508,16 @@ mod tests {
         assert_eq!(launch.invocation_id.as_str(), results[0].work_slice_planner_invocation_id.as_deref().unwrap());
         assert_eq!(launch.working_directory.as_deref(), Some(worktree_root.to_string_lossy().as_ref()));
         assert!(launch.submitted_text.contains("product_initial_prompt_prefix"));
-        assert!(launch.submitted_text.contains("Review current Sprint reality and become ready to plan"));
-        assert!(!launch.submitted_text.contains("Do not begin until the later launch boundary"));
-        assert!(launch.submitted_text.contains("Do not submit or accept a Planner result or proposal"));
+        assert!(launch.submitted_text.contains("Submit only proposal-local lanes through the supplied actions"));
+        assert!(!launch.submitted_text.contains("Review current Sprint reality and become ready to plan"));
+        assert!(launch.submitted_text.contains("Do not accept a proposal"));
         assert!(launch.submitted_text.contains("create Work Units, Handler or Implementer Sessions"));
         assert!(launch.submitted_text.contains("settle the Sprint, or advance to a later planning point"));
-        assert_eq!(launch.launch_extension.as_ref().unwrap().additional_args, vec!["-c", "approval_policy=\"never\""]);
-        assert!(launch.launch_extension.as_ref().unwrap().environment.is_empty());
+        let extension = launch.launch_extension.as_ref().unwrap();
+        assert_eq!(&extension.additional_args[..2], &["-c", "approval_policy=\"never\""]);
+        assert!(extension.additional_args.iter().any(|value| value.contains("mcp_servers.work_slice_planner_")));
+        assert_eq!(extension.environment.len(), 1);
+        assert!(extension.environment[0].0.starts_with("CODEX_ORCHESTRATOR_MCP_"));
 
         let connection = Connection::open(&fixture.database_path).unwrap();
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_planning_requests", [], |row| row.get(0)).unwrap(), 1);
@@ -4292,6 +4627,194 @@ mod tests {
             reopened.request_work_slice_planner(&control, crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {}),
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)
         ));
+
+        // The application-owned Planner exchange is identity-free at the tool boundary but
+        // remains bound to the exact current invocation, Harness, and durable revision.
+        fixture.notifier.set_sprint(&reopened);
+        let planner_invocation = AgentInvocationId::new(
+            Connection::open(&fixture.database_path).unwrap().query_row(
+                "SELECT planner_invocation_id FROM work_slice_planning_requests WHERE sprint_id=?1 AND is_current=1",
+                [&sprint_id],
+                |row| row.get::<_, String>(0),
+            ).unwrap(),
+        ).unwrap();
+        assert_eq!(
+            reopened.read_work_slice_planning_context(&planner_invocation).unwrap()["hasCurrentRevision"],
+            false,
+        );
+        assert!(matches!(
+            reopened.read_work_slice_planning_context(&AgentInvocationId::new("foreign-planner").unwrap()),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "UPDATE work_slice_planning_requests SET planner_harness_version=planner_harness_version+1 WHERE sprint_id=?1",
+            [&sprint_id],
+        ).unwrap();
+        assert!(matches!(
+            reopened.read_work_slice_planning_context(&planner_invocation),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        let planner_harness = conversation_harness::profile(ConversationHarnessRole::WorkSlicePlanner).unwrap();
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "UPDATE work_slice_planning_requests SET planner_harness_version=?2 WHERE sprint_id=?1",
+            params![sprint_id, planner_harness.version],
+        ).unwrap();
+
+        let lane = |title: &str, depends_on: Vec<&str>| crate::orchestration::sprint_runner_transition::WorkSliceLane {
+            title: title.into(), specification: format!("Bounded specification for {title}."),
+            depends_on: depends_on.into_iter().map(str::to_owned).collect(),
+        };
+        let proposal = crate::orchestration::sprint_runner_transition::WorkSliceProposal {
+            objective: "Harden the current planning exchange.".into(),
+            lanes: vec![lane("Inspect", vec![]), lane("Verify", vec!["Inspect"])],
+        };
+        let invalid = |lanes| crate::orchestration::sprint_runner_transition::WorkSliceProposal {
+            objective: "Invalid proposal".into(), lanes,
+        };
+        for candidate in [
+            invalid(vec![]),
+            invalid(vec![lane("Duplicate", vec![]), lane("Duplicate", vec![])]),
+            invalid(vec![lane("Missing", vec!["Unknown"])]),
+            invalid(vec![lane("Cycle A", vec!["Cycle B"]), lane("Cycle B", vec!["Cycle A"])]),
+        ] {
+            assert!(matches!(
+                reopened.submit_work_slice_proposal(&planner_invocation, candidate),
+                Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Invalid)
+            ));
+        }
+        let mut oversized = proposal.clone();
+        oversized.objective = "x".repeat(20_001);
+        assert!(matches!(
+            reopened.submit_work_slice_proposal(&planner_invocation, oversized),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Invalid)
+        ));
+        assert!(matches!(
+            reopened.complete_work_slice_planning(&planner_invocation, crate::orchestration::sprint_runner_transition::WorkSliceCompletion {}),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        let assert_public_result = |result: &serde_json::Value, status: &str| {
+            assert_eq!(
+                result,
+                &serde_json::json!({
+                    "status": status,
+                    "accepted": false,
+                    "materializationReady": false,
+                })
+            );
+            let payload = result.to_string();
+            for forbidden in ["revision", "fingerprint", "command", "idempotency", "route", "token", "authority"] {
+                assert!(!payload.to_ascii_lowercase().contains(forbidden), "Planner payload leaked {forbidden}: {payload}");
+            }
+        };
+        let barrier = Arc::new(Barrier::new(2));
+        let exact_calls = (0..2).map(|_| {
+            let service = reopened.clone();
+            let barrier = barrier.clone();
+            let invocation = planner_invocation.clone();
+            let proposal = proposal.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                service.submit_work_slice_proposal(&invocation, proposal)
+            })
+        }).collect::<Vec<_>>();
+        let exact_results = exact_calls.into_iter().map(|call| call.join().unwrap().unwrap()).collect::<Vec<_>>();
+        assert_eq!(exact_results.iter().filter(|result| result["status"] == "proposal_validated").count(), 1);
+        assert_eq!(exact_results.iter().filter(|result| result["status"] == "proposal_replayed").count(), 1);
+        assert_public_result(exact_results.iter().find(|result| result["status"] == "proposal_validated").unwrap(), "proposal_validated");
+        assert_public_result(exact_results.iter().find(|result| result["status"] == "proposal_replayed").unwrap(), "proposal_replayed");
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_proposal_revisions", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_proposal_revisions WHERE is_current=1", [], |row| row.get(0)).unwrap(), 1);
+        drop(connection);
+        let mut divergent = proposal.clone();
+        divergent.objective = "Divergent objective.".into();
+        reopened.request_work_slice_refinement(
+            &planner_invocation,
+            crate::orchestration::sprint_runner_transition::WorkSliceRefinement { reason: "Verify one boundary more carefully.".into() },
+        ).unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+        let refinement_calls = (0..2).map(|_| {
+            let service = reopened.clone();
+            let barrier = barrier.clone();
+            let invocation = planner_invocation.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                service.request_work_slice_refinement(
+                    &invocation,
+                    crate::orchestration::sprint_runner_transition::WorkSliceRefinement { reason: "Verify one boundary more carefully.".into() },
+                )
+            })
+        }).collect::<Vec<_>>();
+        assert!(refinement_calls.into_iter().all(|call| call.join().unwrap().is_ok()));
+        assert!(matches!(
+            reopened.request_work_slice_refinement(
+                &planner_invocation,
+                crate::orchestration::sprint_runner_transition::WorkSliceRefinement { reason: "A different refinement.".into() },
+            ),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)
+        ));
+        assert!(matches!(
+            reopened.complete_work_slice_planning(&planner_invocation, crate::orchestration::sprint_runner_transition::WorkSliceCompletion {}),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        let mut alternate = proposal.clone();
+        alternate.objective = "Alternate divergent objective.".into();
+        let barrier = Arc::new(Barrier::new(2));
+        let divergent_calls = [divergent.clone(), alternate.clone()].into_iter().map(|candidate| {
+            let service = reopened.clone();
+            let barrier = barrier.clone();
+            let invocation = planner_invocation.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                let result = service.submit_work_slice_proposal(&invocation, candidate.clone());
+                (candidate, result)
+            })
+        }).collect::<Vec<_>>();
+        let divergent_results = divergent_calls.into_iter().map(|call| call.join().unwrap()).collect::<Vec<_>>();
+        assert_eq!(divergent_results.iter().filter(|(_, result)| result.is_ok()).count(), 1);
+        assert_eq!(divergent_results.iter().filter(|(_, result)| matches!(result, Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict))).count(), 1);
+        let successor = divergent_results.into_iter().find_map(|(candidate, result)| result.ok().map(|result| (candidate, result))).unwrap();
+        assert_public_result(&successor.1, "proposal_validated");
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_planning_episodes", [], |row| row.get(0)).unwrap(), 1);
+        let revisions = connection.prepare(
+            "SELECT revision_id,revision_number,is_current,parent_revision_id,refinement_requested_at,semantic_completed_at,accepted_at FROM work_slice_proposal_revisions ORDER BY revision_number",
+        ).unwrap().query_map([], |row| Ok((row.get::<_, String>(0)?,row.get::<_, i64>(1)?,row.get::<_, i64>(2)?,row.get::<_, Option<String>>(3)?,row.get::<_, Option<String>>(4)?,row.get::<_, Option<String>>(5)?,row.get::<_, Option<String>>(6)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_eq!(revisions.len(), 2);
+        assert_eq!(revisions[0].1, 1);
+        assert_eq!(revisions[0].2, 0);
+        assert!(revisions[0].3.is_none());
+        assert!(revisions[0].4.is_some());
+        assert!(revisions[0].5.is_none());
+        assert_eq!(revisions[1].1, 2);
+        assert_eq!(revisions[1].2, 1);
+        assert_eq!(revisions[1].3.as_deref(), Some(revisions[0].0.as_str()));
+        drop(connection);
+        reopened.complete_work_slice_planning(&planner_invocation, crate::orchestration::sprint_runner_transition::WorkSliceCompletion {}).unwrap();
+        let before_terminal = reopened.query().unwrap().transitions.into_iter().find(|item| item.sprint_id == sprint_id).unwrap();
+        assert!(before_terminal.work_slice_semantic_completed_at.is_some());
+        assert!(before_terminal.work_slice_terminal_lifecycle_observed_at.is_none());
+        assert!(before_terminal.work_slice_application_accepted_at.is_none());
+        assert!(before_terminal.work_slice_materialization_ready_at.is_none());
+        let launches_before_acceptance = fixture.runtime.requests().len();
+        fixture.runtime.finish(planner_invocation.as_str(), AgentInvocationTerminalStatus::Completed);
+        let accepted = reopened.query().unwrap().transitions.into_iter().find(|item| item.sprint_id == sprint_id).unwrap();
+        assert!(accepted.work_slice_terminal_lifecycle_observed_at.is_some());
+        assert!(accepted.work_slice_application_accepted_at.is_some());
+        assert!(accepted.work_slice_materialization_ready_at.is_some());
+        assert_eq!(fixture.runtime.requests().len(), launches_before_acceptance);
+        let accepted_at = accepted.work_slice_application_accepted_at.clone();
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "UPDATE work_slice_proposal_revisions SET materialization_ready_at=NULL WHERE is_current=1",
+            [],
+        ).unwrap();
+        let repaired = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        let repaired = repaired.query().unwrap().transitions.into_iter().find(|item| item.sprint_id == sprint_id).unwrap();
+        assert!(repaired.work_slice_application_accepted_at.is_some());
+        assert!(repaired.work_slice_materialization_ready_at.is_some());
+        assert_eq!(repaired.work_slice_application_accepted_at, accepted_at);
+        assert_eq!(fixture.runtime.requests().len(), launches_before_acceptance);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_units','work_unit_executions','handler_sessions','implementer_sessions')", [], |row| row.get(0)).unwrap(), 0);
     }
 }
 

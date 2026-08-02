@@ -288,4 +288,48 @@ describe('Sprint Runner transition query', () => {
       'readiness requires accepted launch',
     );
   });
+
+  it('rejects acceptance or readiness for invalid, incomplete, or refinement-pending revisions', () => {
+    const proposal = (fields: Record<string, unknown>) => {
+      const value = query();
+      Object.assign(value.transitions[0]!, {
+        startedReevaluationLifecycleObservedAt: '2026-08-02T00:00:10Z',
+        planningControlLaunchAcceptedAt: '2026-08-02T00:00:11Z',
+        workSlicePlannerRequestId: 'planner-request-1',
+        workSlicePlannerRequestedAt: '2026-08-02T00:00:11Z',
+        workSlicePlannerAuthorizedAt: '2026-08-02T00:00:11Z',
+        workSlicePlanningPointId: 'planning-point-1',
+        workSlicePlannerSessionId: 'planner-session-1',
+        workSlicePlannerInvocationId: 'planner-invocation-1',
+        workSlicePlannerHarnessAppliedAt: '2026-08-02T00:00:12Z',
+        workSlicePlannerLaunchRequestedAt: '2026-08-02T00:00:13Z',
+        workSlicePlannerLaunchAcceptedAt: '2026-08-02T00:00:14Z',
+        workSlicePlannerReadyAt: '2026-08-02T00:00:15Z',
+        workSliceProposalSubmittedAt: '2026-08-02T00:00:16Z',
+        ...fields,
+      });
+      return value;
+    };
+    expect(() => decodeSprintRunnerTransitionQueryV1(proposal({
+      workSliceProposalValidationResult: 'invalid',
+      workSliceRefinementRequestedAt: '2026-08-02T00:00:17Z',
+    }))).toThrow('refinement requires a valid proposal');
+    expect(() => decodeSprintRunnerTransitionQueryV1(proposal({
+      workSliceProposalValidationResult: 'valid',
+      workSliceTerminalLifecycleObservedAt: '2026-08-02T00:00:18Z',
+      workSliceApplicationAcceptedAt: '2026-08-02T00:00:19Z',
+    }))).toThrow('proposal lifecycle observation requires semantic completion');
+    expect(() => decodeSprintRunnerTransitionQueryV1(proposal({
+      workSliceProposalValidationResult: 'invalid',
+      workSliceSemanticCompletedAt: '2026-08-02T00:00:17Z',
+    }))).toThrow('semantic completion requires current valid unrefined proposal');
+    const coherent = decodeSprintRunnerTransitionQueryV1(proposal({
+      workSliceProposalValidationResult: 'valid',
+      workSliceSemanticCompletedAt: '2026-08-02T00:00:17Z',
+      workSliceTerminalLifecycleObservedAt: '2026-08-02T00:00:18Z',
+      workSliceApplicationAcceptedAt: '2026-08-02T00:00:19Z',
+      workSliceMaterializationReadyAt: '2026-08-02T00:00:20Z',
+    }));
+    expect(projectSprintRunnerTransitionStatus(coherent.transitions[0]!).accepted).toBe(false);
+  });
 });

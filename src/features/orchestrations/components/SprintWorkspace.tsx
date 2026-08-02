@@ -580,10 +580,21 @@ export function WorkSlicePlannerBoundary({
           Boolean(transition.workSlicePlannerProviderActivationObservedAt),
         )}
         {stage('Lifecycle observed', Boolean(transition.workSlicePlannerLifecycleObservedAt))}
+        {stage('Proposal submitted', Boolean(transition.workSliceProposalSubmittedAt))}
+        {stage(
+          transition.workSliceProposalValidationResult === 'invalid'
+            ? 'Validation rejected'
+            : 'Validation accepted',
+          Boolean(transition.workSliceProposalValidationResult),
+        )}
+        {stage('Refinement requested', Boolean(transition.workSliceRefinementRequestedAt))}
+        {stage('Semantic completion', Boolean(transition.workSliceSemanticCompletedAt))}
+        {stage('Terminal lifecycle observed', Boolean(transition.workSliceTerminalLifecycleObservedAt))}
+        {stage('Application acceptance', Boolean(transition.workSliceApplicationAcceptedAt))}
+        {stage('Materialization readiness', Boolean(transition.workSliceMaterializationReadyAt))}
       </ul>
       <p>
-        No Planner proposal or result, Work Unit, Handler, Implementer, settlement, or later
-        planning point is recorded here.
+        Proposal facts remain distinct from every later Work Unit or downstream action.
       </p>
       <small>{plannerObservationSummary(transition)}</small>
     </section>

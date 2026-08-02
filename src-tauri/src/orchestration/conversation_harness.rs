@@ -334,6 +334,16 @@ mod tests {
         assert!(planning_control.mcp.required);
         assert_eq!(planner.key, "work_slice_planner");
         assert_eq!(
+            planner.mcp.enabled_tools,
+            [
+                "read_current_planning_context",
+                "submit_work_slice_proposal",
+                "request_work_slice_refinement",
+                "complete_work_slice_planning",
+            ]
+        );
+        assert!(planner.mcp.required);
+        assert_eq!(
             plan_builder.runtime_options().sandbox,
             Some(RuntimeSandboxMode::ReadOnly)
         );
