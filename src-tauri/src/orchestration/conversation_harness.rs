@@ -233,8 +233,10 @@ pub(crate) fn profile_from_immutable_handler_revision(
             sandbox: sandbox_from_revision(configuration.runtime.sandbox)?,
             approval_policy: HarnessApprovalPolicy::Never,
         },
+        // An empty historical revision is an immutable v1 read-only Handler.  Do not infer the
+        // later action merely because the current catalog now exposes it.
         mcp: HarnessMcpExposure {
-            required: true,
+            required: !configuration.tools.items.is_empty(),
             enabled_tools: configuration.tools.items.iter().map(|tool| tool.name.clone()).collect(),
         },
         lifecycle: HarnessLifecycle {
@@ -592,6 +594,15 @@ mod tests {
         assert!(handler.mcp.required);
         assert!(implementer.mcp.enabled_tools.is_empty());
         assert_eq!(implementer.runtime.sandbox, RuntimeSandboxMode::WorkspaceWrite);
+    }
+
+    #[test]
+    fn old_immutable_handler_revision_remains_actionless() {
+        let mut old = initial_work_unit_handler_revision_configuration().unwrap();
+        old.tools.items.clear();
+        let reopened = profile_from_immutable_handler_revision(&old, 1).unwrap();
+        assert!(reopened.mcp.enabled_tools.is_empty());
+        assert!(!reopened.mcp.required);
     }
 
     #[test]
