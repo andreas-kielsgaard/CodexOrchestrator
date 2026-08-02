@@ -47,6 +47,26 @@ export interface NativeMaterializedWorkUnitV1 {
   readonly laneOrdinal: number;
   readonly laneTitle: string;
   readonly specification: string;
+  readonly handlerActivation?: NativeWorkUnitHandlerActivationV1;
+}
+export interface NativeWorkUnitHandlerActivationV1 {
+  readonly attemptId: string;
+  readonly handlerSessionId?: string;
+  readonly handlerInvocationId?: string;
+  readonly eligibilityState?: 'blocked' | 'eligible';
+  readonly blockedReason?: string;
+  readonly requestedAt?: string;
+  readonly authorizedAt?: string;
+  readonly attemptCreatedAt?: string;
+  readonly executionSupportGrantedAt?: string;
+  readonly isolatedWorktreeReadyAt?: string;
+  readonly handlerSessionCreatedAt?: string;
+  readonly handlerInvocationPreparedAt?: string;
+  readonly handlerHarnessBoundAt?: string;
+  readonly launchRequestedAt?: string;
+  readonly launchAcceptedAt?: string;
+  readonly providerActivationObservedAt?: string;
+  readonly handlerReadyAt?: string;
 }
 export interface NativeWorkUnitRelationshipV1 {
   readonly relationshipId: string;
@@ -499,7 +519,7 @@ export function nativeQueryProductCompositionInputV2(
         workUnitId: unit.workUnitId,
         title: unit.laneTitle,
         summary: unit.specification,
-        details: `Accepted Work Slice revision ${unit.acceptedRevisionId}; lane ${unit.laneOrdinal + 1}.`,
+        details: `Accepted Work Slice revision ${unit.acceptedRevisionId}; lane ${unit.laneOrdinal + 1}.${handlerActivationDetail(unit.handlerActivation)}`,
         source: source(unit.materializationId),
       })),
       gates: [],
@@ -575,6 +595,19 @@ function materializationStage(materialization: NativeWorkUnitMaterializationV1) 
   if (materialization.workUnitsCreatedAt) return 'work_units_created' as const;
   if (materialization.attemptRecordedAt) return 'attempt_recorded' as const;
   return 'authorized' as const;
+}
+
+function handlerActivationDetail(activation: NativeWorkUnitHandlerActivationV1 | undefined) {
+  if (!activation) return '';
+  if (activation.handlerReadyAt)
+    return ' Handler launch accepted and ready; provider activation is unobserved.';
+  if (activation.eligibilityState === 'blocked')
+    return ` Handler activation blocked: ${activation.blockedReason}.`;
+  if (activation.launchRequestedAt)
+    return ' Handler launch requested; acceptance is not yet recorded.';
+  if (activation.handlerInvocationPreparedAt)
+    return ' Handler invocation prepared; launch is not yet recorded.';
+  return ' Handler activation is eligible but not yet prepared.';
 }
 
 const draft = (value: unknown): NativePlanningDraftV1 => {
@@ -968,6 +1001,7 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
       'laneOrdinal',
       'laneTitle',
       'specification',
+      'handlerActivation',
     ],
     'materialized Work Unit',
   );
@@ -981,7 +1015,75 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
     laneOrdinal: x.laneOrdinal as number,
     laneTitle: boundedString(x.laneTitle, 240, 'laneTitle'),
     specification: boundedString(x.specification, 4000, 'specification'),
+    ...(x.handlerActivation === undefined
+      ? {}
+      : { handlerActivation: workUnitHandlerActivation(x.handlerActivation) }),
   };
+};
+const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivationV1 => {
+  const x = object(value, 'Work Unit Handler activation');
+  keys(
+    x,
+    [
+      'attemptId', 'handlerSessionId', 'handlerInvocationId', 'eligibilityState', 'blockedReason',
+      'requestedAt', 'authorizedAt', 'attemptCreatedAt', 'executionSupportGrantedAt',
+      'isolatedWorktreeReadyAt', 'handlerSessionCreatedAt', 'handlerInvocationPreparedAt',
+      'handlerHarnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt',
+      'providerActivationObservedAt', 'handlerReadyAt',
+    ],
+    'Work Unit Handler activation',
+  );
+  const optional = (key: keyof typeof x) =>
+    x[key] === undefined ? undefined : string(x[key], key);
+  const eligibilityState =
+    x.eligibilityState === undefined
+      ? undefined
+      : (literal(x.eligibilityState, ['blocked', 'eligible'], 'Handler eligibility state') as
+          | 'blocked'
+          | 'eligible');
+  const blockedReason = optional('blockedReason');
+  if (eligibilityState === 'blocked' && !blockedReason)
+    fail('blocked Handler activation requires a reason');
+  if (eligibilityState === 'eligible' && blockedReason)
+    fail('eligible Handler activation cannot have a blocked reason');
+  const result = {
+    attemptId: string(x.attemptId, 'attemptId'),
+    ...(optional('handlerSessionId')
+      ? { handlerSessionId: optional('handlerSessionId') }
+      : {}),
+    ...(optional('handlerInvocationId')
+      ? { handlerInvocationId: optional('handlerInvocationId') }
+      : {}),
+    ...(eligibilityState ? { eligibilityState } : {}),
+    ...(blockedReason ? { blockedReason } : {}),
+    ...(optional('requestedAt') ? { requestedAt: optional('requestedAt') } : {}),
+    ...(optional('authorizedAt') ? { authorizedAt: optional('authorizedAt') } : {}),
+    ...(optional('attemptCreatedAt') ? { attemptCreatedAt: optional('attemptCreatedAt') } : {}),
+    ...(optional('executionSupportGrantedAt')
+      ? { executionSupportGrantedAt: optional('executionSupportGrantedAt') }
+      : {}),
+    ...(optional('isolatedWorktreeReadyAt')
+      ? { isolatedWorktreeReadyAt: optional('isolatedWorktreeReadyAt') }
+      : {}),
+    ...(optional('handlerSessionCreatedAt')
+      ? { handlerSessionCreatedAt: optional('handlerSessionCreatedAt') }
+      : {}),
+    ...(optional('handlerInvocationPreparedAt')
+      ? { handlerInvocationPreparedAt: optional('handlerInvocationPreparedAt') }
+      : {}),
+    ...(optional('handlerHarnessBoundAt')
+      ? { handlerHarnessBoundAt: optional('handlerHarnessBoundAt') }
+      : {}),
+    ...(optional('launchRequestedAt') ? { launchRequestedAt: optional('launchRequestedAt') } : {}),
+    ...(optional('launchAcceptedAt') ? { launchAcceptedAt: optional('launchAcceptedAt') } : {}),
+    ...(optional('providerActivationObservedAt')
+      ? { providerActivationObservedAt: optional('providerActivationObservedAt') }
+      : {}),
+    ...(optional('handlerReadyAt') ? { handlerReadyAt: optional('handlerReadyAt') } : {}),
+  };
+  if (result.handlerReadyAt && !result.launchAcceptedAt)
+    fail('Handler readiness requires launch acceptance');
+  return result;
 };
 const workUnitRelationship = (value: unknown): NativeWorkUnitRelationshipV1 => {
   const x = object(value, 'Work Unit relationship');

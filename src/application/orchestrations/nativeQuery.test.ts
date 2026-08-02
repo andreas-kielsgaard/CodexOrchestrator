@@ -205,6 +205,23 @@ describe('orchestration native query v1', () => {
         laneOrdinal: 0,
         laneTitle: 'First responsibility',
         specification: 'First specification.',
+        handlerActivation: {
+          attemptId: 'handler-attempt-1',
+          handlerSessionId: 'handler-session-1',
+          handlerInvocationId: 'handler-invocation-1',
+          eligibilityState: 'eligible',
+          requestedAt: '2026-08-02T00:01:00Z',
+          authorizedAt: '2026-08-02T00:01:01Z',
+          attemptCreatedAt: '2026-08-02T00:01:02Z',
+          executionSupportGrantedAt: '2026-08-02T00:01:03Z',
+          isolatedWorktreeReadyAt: '2026-08-02T00:01:04Z',
+          handlerSessionCreatedAt: '2026-08-02T00:01:05Z',
+          handlerInvocationPreparedAt: '2026-08-02T00:01:06Z',
+          handlerHarnessBoundAt: '2026-08-02T00:01:07Z',
+          launchRequestedAt: '2026-08-02T00:01:08Z',
+          launchAcceptedAt: '2026-08-02T00:01:09Z',
+          handlerReadyAt: '2026-08-02T00:01:10Z',
+        },
       },
       {
         workUnitId: 'unit-2',
@@ -281,6 +298,7 @@ describe('orchestration native query v1', () => {
       { workUnitId: 'unit-1' },
       { workUnitId: 'unit-2', dependencies: [{ workUnitId: 'unit-1' }] },
     ]);
+    expect(sprint.workUnits[0]!.details).toContain('Handler launch accepted and ready');
 
     (value.workUnitRelationships as Array<Record<string, unknown>>).push({
       relationshipId: 'duplicate-dependency',

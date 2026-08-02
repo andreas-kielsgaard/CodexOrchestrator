@@ -6,7 +6,7 @@
 use super::{
     conversation_harness::{self, ConversationHarnessProfile, ConversationHarnessRole},
     execution_support::{
-        ChangedFileManifestEntry, ExecutionSupportError, ExecutionSupportIntent,
+        AuthorizeExistingWorkUnitExecutionAttempt, ChangedFileManifestEntry, ExecutionSupportError, ExecutionSupportIntent,
         ExecutionSupportReference, ExecutionSupportResponse, ExecutionSupportService,
         WorkUnitExecutionRole,
     },
@@ -105,6 +105,25 @@ impl WorkUnitExecutionHarnessService {
             sessions: self.sessions.clone(),
             correlation: Mutex::new(None),
         })
+    }
+
+    /// The activation coordinator supplies only durable application-owned identities.  This is
+    /// deliberately not a Harness action and cannot authorize an Implementer route.
+    pub(crate) fn authorize_handler_attempt(
+        &self,
+        attempt_id: &str,
+        work_unit_id: &str,
+        sprint_git_authority_id: &str,
+    ) -> Result<(), WorkUnitHarnessError> {
+        self.execution_support.authorize_existing_attempt(
+            AuthorizeExistingWorkUnitExecutionAttempt {
+                attempt_id: attempt_id.into(),
+                work_unit_id: work_unit_id.into(),
+                role: WorkUnitExecutionRole::Handler,
+                sprint_git_authority_id: sprint_git_authority_id.into(),
+            },
+        )?;
+        Ok(())
     }
 }
 

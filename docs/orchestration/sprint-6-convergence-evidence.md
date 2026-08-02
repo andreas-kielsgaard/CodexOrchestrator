@@ -207,3 +207,30 @@ strict native-query correction `974ee2c`. The audit used this detached-worktree 
   review, Work Slice settlement, Sprint/Epic continuation, pause/restart,
   or reattachment was added. This is deterministic local evidence only; live provider,
   human-in-the-loop, and later activation/execution boundaries remain unproven.
+
+## HA-01: Durable initial Work Unit Handler activation
+
+- Requested execution profile: Terra with high reasoning. Harness-confirmed profile: not exposed
+  by this task harness; no runtime setting is claimed from the request alone.
+- Product composition attaches an application-owned Handler activation coordinator only after the
+  existing Agent Session and execution-support seams exist. It derives candidates from settled
+  materialized Work Units and direct `depends_on` relationships. A missing dependency readiness
+  fact or initiated-Sprint Git authority remains durable `blocked` state with a reason; it does
+  not create a Session, invocation, worktree, or provider launch.
+- Each eligible Work Unit has stable application-derived ordinal-0 attempt, Handler Session, and
+  invocation identifiers. The coordinator records request, authorization, attempt creation,
+  execution-support/worktree preparation, Session creation, invocation preparation, Harness
+  binding, launch request, launch acceptance, and Handler readiness independently. Reopen and
+  replay reuse those identities and only retry launch of the already-persisted pending invocation.
+- The Handler package remains read-only and has no MCP tools or Implementer-request action. No
+  Implementer identity, output acceptance, review, retry, settlement, continuation, pause/restart,
+  provider compliance, process reattachment, or user acceptance is created or claimed.
+- The productive native query includes the durable Handler activation stages on each materialized
+  Work Unit. The approved Work Unit activity details distinguish blocked, prepared, requested,
+  launch-accepted/ready, and unobserved provider activity states. Recorded fixtures remain
+  development data and are not production proof.
+- Current local validation: `cargo check --manifest-path src-tauri/Cargo.toml` passed; the
+  focused Handler Harness surface test passed **1/1** (304 filtered). TypeScript typecheck, lint,
+  frontend tests, and build remain unproven in this host-created clean worktree: it has no
+  installed project `node_modules`, and no dependency installation was performed. The repository-
+  wide Rustfmt check reports pre-existing formatting drift outside this patch and was not applied.

@@ -143,12 +143,13 @@ pub(crate) fn run() {
             );
             // Composition only makes the bounded package constructible. It creates no workflow
             // Session, invocation, Work Unit, or attempt at startup.
-            app.manage(
+            let work_unit_handler = Arc::new(
                 crate::orchestration::work_unit_execution_harness::WorkUnitExecutionHarnessService::new(
                     execution_support_service,
                     application.clone(),
                 ),
             );
+            app.manage(work_unit_handler.clone());
             let orchestration = Arc::new(
                 crate::orchestration::application::OrchestrationApplication::new(
                     orchestration_repository.clone(),
@@ -185,6 +186,9 @@ pub(crate) fn run() {
                 application.clone(),
             )
             .map_err(|error| error.to_string())?;
+            sprint_runners
+                .attach_work_unit_handler_activation(work_unit_handler)
+                .map_err(|error| error.to_string())?;
             *sprint_transition_notification.lock().map_err(|_| "Sprint Runner notification registry is unavailable")? = Some(Arc::downgrade(&sprint_runners));
             transition
                 .attach_sprint_runner_transition(sprint_runners.clone())
