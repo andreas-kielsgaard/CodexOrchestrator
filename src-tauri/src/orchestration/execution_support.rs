@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS execution_support_attempt_authorizations (
   work_unit_id TEXT NOT NULL,
   role_kind TEXT NOT NULL CHECK(role_kind IN ('work_unit_handler','work_unit_implementer')),
   sprint_git_authority_id TEXT NOT NULL UNIQUE,
+  baseline_object_id TEXT NOT NULL,
   recorded_at TEXT NOT NULL,
   FOREIGN KEY(sprint_git_authority_id) REFERENCES initiated_sprint_git_authorities(authority_id) ON DELETE RESTRICT
 );
@@ -44,12 +45,15 @@ CREATE TABLE IF NOT EXISTS execution_support_grants (
   recorded_at TEXT NOT NULL
 );
 "#;
+pub(crate) const EXECUTION_SUPPORT_BASELINE_MIGRATION: &str =
+    "ALTER TABLE execution_support_attempt_authorizations ADD COLUMN baseline_object_id TEXT NOT NULL DEFAULT '';";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct AuthorizedExecutionAttempt {
     attempt_id: String,
     work_unit_id: String,
     role_kind: String,
+    baseline_object_id: String,
     authority: InitiatedSprintGitAuthority,
 }
 
@@ -160,15 +164,15 @@ impl ProductExecutionWorkspaceResolver {
                 &[
                     "rev-parse",
                     "--verify",
-                    &format!("{}^{{commit}}", authority.baseline_object_id),
+                    &format!("{}^{{commit}}", attempt.baseline_object_id),
                 ],
-            )? != authority.baseline_object_id
+            )? != attempt.baseline_object_id
         {
             return Err(ExecutionSupportError::CorrelationMismatch);
         }
         let head = git_text(&root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
         if existing.is_none()
-            && (head != authority.current_object_id
+            && (head != attempt.baseline_object_id
                 || !git_text(&root, &["status", "--porcelain"])?.is_empty())
         {
             return Err(ExecutionSupportError::Unavailable);
@@ -201,7 +205,7 @@ impl ExecutionWorkspaceResolver for ProductExecutionWorkspaceResolver {
         capability_ref: &str,
     ) -> Result<CapturedInspection, ExecutionSupportError> {
         let (_, current_object_id) = self.verified_workspace(attempt, Some(binding))?;
-        if current_object_id == attempt.authority.baseline_object_id {
+        if current_object_id == attempt.baseline_object_id {
             return Ok(CapturedInspection {
                 manifest: vec![],
                 comparison: None,
@@ -222,7 +226,7 @@ impl ExecutionWorkspaceResolver for ProductExecutionWorkspaceResolver {
                 repository_root: attempt.authority.repository_root.clone(),
                 worktree_id: attempt.authority.worktree_id.clone(),
                 worktree_root: attempt.authority.worktree_root.clone(),
-                baseline_object_id: attempt.authority.baseline_object_id.clone(),
+                baseline_object_id: attempt.baseline_object_id.clone(),
                 current_object_id,
             })
             .map_err(|_| ExecutionSupportError::CorrelationMismatch)?;
@@ -382,15 +386,16 @@ impl ExecutionSupportService {
         if !bounded_id(attempt_id) {
             return Err(ExecutionSupportError::Denied);
         }
-        let (work_unit_id, role_kind, authority_id): (String, String, String) = self.repository.connection.lock().map_err(|_| ExecutionSupportError::Unavailable)?.query_row(
-            "SELECT work_unit_id,role_kind,sprint_git_authority_id FROM execution_support_attempt_authorizations WHERE attempt_id=?1",
-            [attempt_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        let (work_unit_id, role_kind, authority_id, baseline_object_id): (String, String, String, String) = self.repository.connection.lock().map_err(|_| ExecutionSupportError::Unavailable)?.query_row(
+            "SELECT work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id FROM execution_support_attempt_authorizations WHERE attempt_id=?1",
+            [attempt_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         ).optional().map_err(|_| ExecutionSupportError::Unavailable)?.ok_or(ExecutionSupportError::Denied)?;
         if !bounded_id(&work_unit_id)
             || !matches!(
                 role_kind.as_str(),
                 "work_unit_handler" | "work_unit_implementer"
             )
+            || !git_object_id(&baseline_object_id)
         {
             return Err(ExecutionSupportError::Denied);
         }
@@ -404,6 +409,7 @@ impl ExecutionSupportService {
             attempt_id: attempt_id.into(),
             work_unit_id,
             role_kind,
+            baseline_object_id,
             authority,
         })
     }
@@ -569,7 +575,6 @@ fn workspace_fingerprint(authority: &InitiatedSprintGitAuthority, root: &Path) -
         &authority.authority_id,
         &authority.repository_id,
         &authority.worktree_id,
-        &authority.baseline_object_id,
         &authority.source_fingerprint,
         root.to_string_lossy().as_ref(),
     ])
@@ -582,6 +587,7 @@ fn correlation_fingerprint(
         &attempt.attempt_id,
         &attempt.work_unit_id,
         &attempt.role_kind,
+        &attempt.baseline_object_id,
         &attempt.authority.authority_id,
         &attempt.authority.epic_id,
         &attempt.authority.sprint_id,
@@ -589,6 +595,9 @@ fn correlation_fingerprint(
         &binding.workspace_id,
         &binding.workspace_fingerprint,
     ])
+}
+fn git_object_id(value: &str) -> bool {
+    (value.len() == 40 || value.len() == 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 fn fingerprint(values: &[&str]) -> String {
     let mut hash = Sha256::new();
@@ -661,7 +670,7 @@ mod tests {
             worktree_id: "worktree-1".into(),
             worktree_root: canonical_root.to_string_lossy().into_owned(),
             baseline_object_id: baseline,
-            current_object_id: head,
+            current_object_id: head.clone(),
             runtime_instance_ref: "runtime-1".into(),
             runtime_source_ref: "source-1".into(),
             source_fingerprint: "a".repeat(64),
@@ -670,6 +679,7 @@ mod tests {
             attempt_id: "attempt-1".into(),
             work_unit_id: "work-unit-1".into(),
             role_kind: "work_unit_implementer".into(),
+            baseline_object_id: head.clone(),
             authority,
         };
         let database = temp.path().join("db.sqlite");
@@ -726,10 +736,10 @@ mod tests {
         drop(connection);
         let orchestration = Arc::new(SqliteOrchestrationRepository::open(&database).unwrap());
         let authority_id = match orchestration.store_initiated_sprint_git_authority(super::super::repository::InitiatedSprintGitAuthorityWrite {
-            sprint_id: "sprint-1".into(), idempotency_key: "execution-attempt-authority".into(), repository_id: "repository-1".into(), repository_root: canonical_root.to_string_lossy().into_owned(), repository_common_dir: common.to_string_lossy().into_owned(), worktree_id: "worktree-1".into(), worktree_root: canonical_root.to_string_lossy().into_owned(), baseline_object_id: baseline, current_object_id: current, runtime_instance_ref: "runtime-1".into(), runtime_source_ref: "source-1".into(), source_fingerprint: "a".repeat(64),
+            sprint_id: "sprint-1".into(), idempotency_key: "execution-attempt-authority".into(), repository_id: "repository-1".into(), repository_root: canonical_root.to_string_lossy().into_owned(), repository_common_dir: common.to_string_lossy().into_owned(), worktree_id: "worktree-1".into(), worktree_root: canonical_root.to_string_lossy().into_owned(), baseline_object_id: baseline, current_object_id: current.clone(), runtime_instance_ref: "runtime-1".into(), runtime_source_ref: "source-1".into(), source_fingerprint: "a".repeat(64),
         }).unwrap() { super::super::repository::StoreInitiatedSprintGitAuthorityResult::Stored { authority_id } | super::super::repository::StoreInitiatedSprintGitAuthorityResult::IdempotentReplay { authority_id } => authority_id };
         let connection = Connection::open(&database).unwrap();
-        connection.execute("INSERT INTO execution_support_attempt_authorizations (attempt_id,work_unit_id,role_kind,sprint_git_authority_id,recorded_at) VALUES ('attempt-1','work-unit-1','work_unit_implementer',?1,'t')", [&authority_id]).unwrap();
+        connection.execute("INSERT INTO execution_support_attempt_authorizations (attempt_id,work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id,recorded_at) VALUES ('attempt-1','work-unit-1','work_unit_implementer',?1,?2,'t')", params![authority_id, current]).unwrap();
         drop(connection);
         let service = ExecutionSupportService::new(
             Arc::new(
@@ -750,6 +760,12 @@ mod tests {
                 reopened_orchestration,
             )),
         );
+        assert!(
+            matches!(reopened.consume(&reference.capability_ref, ExecutionSupportIntent::ChangedFileManifest), Ok(ExecutionSupportResponse::ChangedFileManifest(ref files)) if files.is_empty())
+        );
+        fs::write(root.join("file.txt"), "later\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "later"]);
         let manifest = reopened
             .consume(
                 &reference.capability_ref,
