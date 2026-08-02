@@ -119,3 +119,61 @@ process reattachment or atomic external-provider-processing claim is made.
 - The checked-in current profiles are `epic_runner` v3 and `sprint_runner` v2. A persisted
   historical Epic Runner v2 request binding remains v2 and is not relabelled; fresh continuation
   context binds v3.
+
+## PS-WSP5: Started Sprint to one Work Slice Planner boundary
+
+This Plan Step converges and verifies the final application-owned boundary on the required
+product route `codex/operational-spine-ps-r1-wsp2-recovery`, from parent
+`a1fd69bdfcc2c19d77a936eb2c8244188dfa88ac`. The accepted checkpoint sequence is:
+
+`fe409510efd1e0de2634c635c50ae6abfaaa5d0d` → `88d536490011869e0d2be5edcec5fd4ca4d3b0e2` →
+`b964509f2d979eb26e1181c796ac88c95f485647` → `8e414e4067c943e394ffaf537db93c4e452aafe9` →
+`729312e12149bb43c8c67b2d1d77ad0d6d26e901` → `adf4a520d5577f3e522d0282ef225b534f4abaa6` →
+`51fedb894353230ebb72f4e1c965efa643dc77cd` → `a3126c0be175fe7cf839bf5d21c9e2fed2ba923e` →
+`ce16bad8f172eaa6ca813ac0c0e6947b851dcf6a` → `a1fd69bdfcc2c19d77a936eb2c8244188dfa88ac` →
+one PS-WSP5 descendant.
+
+The narrow correction is in `src-tauri/src/orchestration/sprint_runner_transition.rs`,
+`src/application/orchestrations/sprintRunnerTransition.ts`, and the existing Sprint boundary in
+`src/features/orchestrations/components/SprintWorkspace.tsx`. SQLite already persisted
+`work_slice_planning_requests.requested_at` and `authorized_at`; the native transition query now
+serializes them as `workSlicePlannerRequestedAt` and `workSlicePlannerAuthorizedAt`. The decoder
+rejects a timestamp without its request, authorization without request, and planning-point
+creation without durable authorization. The UI presents separate Planner request and Planner
+authorization stages before the planning point, reserved correlations, Session/invocation,
+Harness, launch, runtime acceptance, readiness, provider observation, and lifecycle observation.
+No schema redesign or provider/agent identity was added.
+
+Validation evidence:
+
+- Productive Rust library path: `cargo test --manifest-path src-tauri/Cargo.toml --lib
+  orchestration::bootstrap_transition::tests:: -- --test-threads=1` produced **27 passed, 1
+  ignored, 1 failed**. The one failure is the unchanged accepted baseline
+  `launch_accepted_epic_runner_authorizes_one_ready_sprint_runner_without_downstream_effects`,
+  which still asserts `planning_ready` before required lifecycle reconciliation. The WSP1
+  concurrency/reopen/no-child paths and WSP3 prepared launch/readiness/no-downstream path passed;
+  the WSP2 restart/partial-effect assertions passed.
+- Deterministic TypeScript/UI path: focused Vitest files passed **3 files / 9 tests** for the
+  strict decoder/projection, Planner boundary UI, and Tauri transition client. TypeScript
+  `tsc --noEmit` passed with exit 0.
+- Frontend validation reused the saved checkout's already-installed `node_modules` only through
+  isolated temporary validation roots. Product and saved `package.json` and lockfile hashes were
+  identical. No package was installed, updated, or written; the temporary roots were validation
+  plumbing only and are removed after validation.
+- Production composition remains the real native path: `tauriOrchestrationNativeQuery` consumes
+  the real native query plus `createTauriSprintRunnerTransitionClient`, which invokes
+  `load_sprint_runner_transition_query`. Recorded/development composition remains explicit and
+  separate; it was not used as production proof.
+
+The evidence distinguishes eligibility/request availability, Planner request, durable Planner
+authorization, planning point, reserved child correlations, Session creation, invocation
+creation, Harness application, launch requested, runtime launch accepted, readiness, provider
+activation observation, and lifecycle observation. Delivery and receiver activation remain
+separate facts. The fake runtime and local SQLite/reopen assertions are deterministic evidence;
+the transition query and UI are productive code paths; recorded/development data is not
+productive evidence. No provider activation, provider lifecycle, provider MCP use, live or paid
+provider behavior, human UI observation, product launch acceptance, or Slice acceptance is
+claimed. The Planner Harness exposes zero MCP tools. No Planner proposal/result/settlement, Work
+Unit, Handler, Implementer Session, later planning point, Sprint settlement, or downstream effect
+is created or accepted. The quarantined `operational-spine-ps-r1` route and saved checkout remain
+untouched; the formerly protected `8bb8` worktree remains absent and unregistered.

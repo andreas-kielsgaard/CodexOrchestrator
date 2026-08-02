@@ -10,6 +10,8 @@ const transition: ProductSprintRunnerTransitionStatusV1 = {
   lifecycleObserved: false,
   accepted: false,
   workSlicePlannerRequestId: 'planner-request-1',
+  workSlicePlannerRequestedAt: '2026-08-02T00:00:00Z',
+  workSlicePlannerAuthorizedAt: '2026-08-02T00:00:01Z',
 };
 
 describe('Work Slice Planner boundary disclosure', () => {
@@ -22,6 +24,12 @@ describe('Work Slice Planner boundary disclosure', () => {
     render(<WorkSlicePlannerBoundary transition={transition} />);
     expect(screen.getByRole('region', { name: 'Work Slice Planner boundary' })).toHaveTextContent(
       'No Planner proposal or result, Work Unit, Handler, Implementer, settlement, or later planning point is recorded here.',
+    );
+    expect(screen.getByRole('region', { name: 'Work Slice Planner boundary' })).toHaveTextContent(
+      'Planner request',
+    );
+    expect(screen.getByRole('region', { name: 'Work Slice Planner boundary' })).toHaveTextContent(
+      'Planner authorization',
     );
   });
 });

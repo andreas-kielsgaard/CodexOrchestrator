@@ -35,6 +35,8 @@ export interface SprintRunnerTransitionV1 {
   readonly planningControlLaunchAcceptedAt?: string;
   readonly planningReadyAt?: string;
   readonly workSlicePlannerRequestId?: string;
+  readonly workSlicePlannerRequestedAt?: string;
+  readonly workSlicePlannerAuthorizedAt?: string;
   readonly workSlicePlanningPointId?: string;
   readonly workSlicePlannerRepositoryWorktreeRoute?: string;
   readonly workSlicePlannerHarnessKey?: string;
@@ -85,6 +87,8 @@ export interface ProductSprintRunnerTransitionStatusV1 {
   readonly planningControlLaunchAcceptedAt?: string;
   readonly planningReadyAt?: string;
   readonly workSlicePlannerRequestId?: string;
+  readonly workSlicePlannerRequestedAt?: string;
+  readonly workSlicePlannerAuthorizedAt?: string;
   readonly workSlicePlanningPointId?: string;
   readonly workSlicePlannerRepositoryWorktreeRoute?: string;
   readonly workSlicePlannerHarnessKey?: string;
@@ -119,32 +123,39 @@ export function projectSprintRunnerTransitionStatus(
               : transition.workSlicePlannerSessionCreatedAt
                 ? 'Work Slice Planner Session created; invocation pending'
                 : transition.workSlicePlanningPointId
-                  ? 'Work Slice Planner planning point authorized; Session pending'
-                  : transition.workSlicePlannerRequestId
-                    ? 'Work Slice Planner request authorized; planning point pending'
-      : transition.planningControlLaunchAcceptedAt
-        ? 'Sprint planning control launch accepted; Planner request available'
-      : transition.startedReevaluationLifecycleObservedAt
-        ? 'Started reevaluation completed; planning control delivery pending'
-      : transition.planningReadyAt
-      ? 'Sprint planning control ready; downstream not started'
-      : transition.sprintStartPersistedAt
-        ? 'Sprint start authorized; repository reevaluation pending'
-        : transition.preStartSemanticOutcomeRecordedAt && !transition.preStartOutcomeAcceptedAt
-          ? 'Pre-start outcome recorded; matching lifecycle pending'
-        : transition.preStartOutcomeAcceptedAt && !transition.parentContinuationDeliveryPersistedAt
-          ? 'Pre-start outcome accepted; Epic continuation delivery pending'
-          : transition.parentContinuationDeliveryPersistedAt && !transition.epicContinuationLaunchAcceptedAt
-            ? 'Epic continuation invocation persisted; launch acceptance pending'
-        : transition.epicContinuationLaunchAcceptedAt
-          ? 'Waiting for Epic Runner start authorization'
-          : transition.launchAcceptedAt
-      ? 'Sprint Runner launch accepted — pre-start ready'
-      : transition.harnessAppliedAt
-        ? 'Sprint Runner launch acceptance pending'
-        : transition.sessionCreatedAt
-          ? 'Sprint Runner session created; applying Harness'
-          : 'Sprint Runner request authorized',
+                  ? 'Work Slice Planner planning point created; Session pending'
+                  : transition.workSlicePlannerAuthorizedAt
+                    ? 'Work Slice Planner authorization recorded; planning point pending'
+                    : transition.workSlicePlannerRequestedAt
+                      ? 'Work Slice Planner request recorded; authorization pending'
+                      : transition.workSlicePlannerRequestId
+                        ? 'Work Slice Planner request correlation reserved; request pending'
+                        : transition.planningReadyAt
+                          ? 'Sprint planning-ready; downstream not started'
+                          : transition.startedReevaluationLifecycleObservedAt
+                            ? 'Started reevaluation completed; planning control delivery pending'
+                            : transition.planningControlLaunchAcceptedAt
+                              ? 'Sprint planning control launch accepted; Planner request available'
+                              : transition.sprintStartPersistedAt
+                                ? 'Sprint start authorized; repository reevaluation pending'
+                                : transition.preStartSemanticOutcomeRecordedAt &&
+                                    !transition.preStartOutcomeAcceptedAt
+                                  ? 'Pre-start outcome recorded; matching lifecycle pending'
+                                  : transition.preStartOutcomeAcceptedAt &&
+                                      !transition.parentContinuationDeliveryPersistedAt
+                                    ? 'Pre-start outcome accepted; Epic continuation delivery pending'
+                                    : transition.parentContinuationDeliveryPersistedAt &&
+                                        !transition.epicContinuationLaunchAcceptedAt
+                                      ? 'Epic continuation invocation persisted; launch acceptance pending'
+                                      : transition.epicContinuationLaunchAcceptedAt
+                                        ? 'Waiting for Epic Runner start authorization'
+                                        : transition.launchAcceptedAt
+                                          ? 'Sprint Runner launch accepted — pre-start ready'
+                                          : transition.harnessAppliedAt
+                                            ? 'Sprint Runner launch acceptance pending'
+                                            : transition.sessionCreatedAt
+                                              ? 'Sprint Runner session created; applying Harness'
+                                              : 'Sprint Runner request authorized',
     requestedAt: transition.requestedAt,
     authorizedAt: transition.authorizedAt,
     ...(transition.sessionCreatedAt ? { sessionCreatedAt: transition.sessionCreatedAt } : {}),
@@ -171,6 +182,8 @@ export function projectSprintRunnerTransitionStatus(
     ...optionalProjection(transition, 'planningControlLaunchAcceptedAt'),
     ...optionalProjection(transition, 'planningReadyAt'),
     ...optionalProjection(transition, 'workSlicePlannerRequestId'),
+    ...optionalProjection(transition, 'workSlicePlannerRequestedAt'),
+    ...optionalProjection(transition, 'workSlicePlannerAuthorizedAt'),
     ...optionalProjection(transition, 'workSlicePlanningPointId'),
     ...optionalProjection(transition, 'workSlicePlannerRepositoryWorktreeRoute'),
     ...optionalProjection(transition, 'workSlicePlannerHarnessKey'),
@@ -192,7 +205,8 @@ export function projectSprintRunnerTransitionStatus(
 function plannerReadyLabel(transition: SprintRunnerTransitionV1): string {
   const provider = Boolean(transition.workSlicePlannerProviderActivationObservedAt);
   const lifecycle = Boolean(transition.workSlicePlannerLifecycleObservedAt);
-  if (provider && lifecycle) return 'Work Slice Planner ready; provider and lifecycle observations recorded';
+  if (provider && lifecycle)
+    return 'Work Slice Planner ready; provider and lifecycle observations recorded';
   if (provider) return 'Work Slice Planner ready; provider observed; lifecycle observation pending';
   if (lifecycle) return 'Work Slice Planner ready; lifecycle observed; provider activation pending';
   return 'Work Slice Planner ready; provider and lifecycle observation pending';
@@ -233,25 +247,42 @@ function decodeTransition(value: unknown): SprintRunnerTransitionV1 {
       'preStartReady',
       'lifecycleObserved',
       'accepted',
-      'preStartSemanticOutcomeRecordedAt', 'preStartLifecycleObservedAt',
-      'preStartOutcomeAcceptedAt', 'parentContinuationDeliveryRequestedAt',
+      'preStartSemanticOutcomeRecordedAt',
+      'preStartLifecycleObservedAt',
+      'preStartOutcomeAcceptedAt',
+      'parentContinuationDeliveryRequestedAt',
       'parentContinuationDeliveryPersistedAt',
-      'epicContinuationInvocationId', 'epicContinuationLaunchAcceptedAt',
-      'providerReceiverActivationObservedAt', 'sprintStartAuthorizedAt',
-      'sprintStartPersistedAt', 'sprintContinuationInvocationId',
-       'sprintContinuationLaunchAcceptedAt', 'repositoryBranchReevaluationRecordedAt',
-       'startedReevaluationLifecycleObservedAt', 'planningControlDeliveryRequestedAt',
-       'planningControlDeliveryPersistedAt', 'planningControlInvocationId',
-       'planningControlLaunchAcceptedAt',
-       'planningReadyAt',
-       'workSlicePlannerRequestId', 'workSlicePlanningPointId',
-       'workSlicePlannerRepositoryWorktreeRoute', 'workSlicePlannerHarnessKey',
-       'workSlicePlannerHarnessVersion', 'workSlicePlannerSessionId',
-       'workSlicePlannerInvocationId', 'workSlicePlannerSessionCreatedAt',
-       'workSlicePlannerInvocationCreatedAt', 'workSlicePlannerHarnessAppliedAt',
-       'workSlicePlannerLaunchRequestedAt', 'workSlicePlannerLaunchAcceptedAt',
-       'workSlicePlannerReadyAt', 'workSlicePlannerProviderActivationObservedAt',
-       'workSlicePlannerLifecycleObservedAt',
+      'epicContinuationInvocationId',
+      'epicContinuationLaunchAcceptedAt',
+      'providerReceiverActivationObservedAt',
+      'sprintStartAuthorizedAt',
+      'sprintStartPersistedAt',
+      'sprintContinuationInvocationId',
+      'sprintContinuationLaunchAcceptedAt',
+      'repositoryBranchReevaluationRecordedAt',
+      'startedReevaluationLifecycleObservedAt',
+      'planningControlDeliveryRequestedAt',
+      'planningControlDeliveryPersistedAt',
+      'planningControlInvocationId',
+      'planningControlLaunchAcceptedAt',
+      'planningReadyAt',
+      'workSlicePlannerRequestId',
+      'workSlicePlannerRequestedAt',
+      'workSlicePlannerAuthorizedAt',
+      'workSlicePlanningPointId',
+      'workSlicePlannerRepositoryWorktreeRoute',
+      'workSlicePlannerHarnessKey',
+      'workSlicePlannerHarnessVersion',
+      'workSlicePlannerSessionId',
+      'workSlicePlannerInvocationId',
+      'workSlicePlannerSessionCreatedAt',
+      'workSlicePlannerInvocationCreatedAt',
+      'workSlicePlannerHarnessAppliedAt',
+      'workSlicePlannerLaunchRequestedAt',
+      'workSlicePlannerLaunchAcceptedAt',
+      'workSlicePlannerReadyAt',
+      'workSlicePlannerProviderActivationObservedAt',
+      'workSlicePlannerLifecycleObservedAt',
       'downstreamNotStarted',
     ],
     'Sprint Runner transition',
@@ -291,6 +322,8 @@ function decodeTransition(value: unknown): SprintRunnerTransitionV1 {
     ...optionalText(item, 'planningControlLaunchAcceptedAt'),
     ...optionalText(item, 'planningReadyAt'),
     ...optionalText(item, 'workSlicePlannerRequestId'),
+    ...optionalText(item, 'workSlicePlannerRequestedAt'),
+    ...optionalText(item, 'workSlicePlannerAuthorizedAt'),
     ...optionalText(item, 'workSlicePlanningPointId'),
     ...optionalText(item, 'workSlicePlannerRepositoryWorktreeRoute'),
     ...optionalText(item, 'workSlicePlannerHarnessKey'),
@@ -307,6 +340,14 @@ function decodeTransition(value: unknown): SprintRunnerTransitionV1 {
     ...optionalText(item, 'workSlicePlannerLifecycleObservedAt'),
     downstreamNotStarted: bool(item.downstreamNotStarted, 'downstreamNotStarted'),
   } as SprintRunnerTransitionV1;
+  if (transition.workSlicePlannerRequestedAt && !transition.workSlicePlannerRequestId)
+    invalid('Work Slice Planner request timestamp requires its request');
+  if (transition.workSlicePlannerRequestId && !transition.workSlicePlannerRequestedAt)
+    invalid('Work Slice Planner request requires its request timestamp');
+  if (transition.workSlicePlannerAuthorizedAt && !transition.workSlicePlannerRequestedAt)
+    invalid('Work Slice Planner authorization requires its request');
+  if (transition.workSlicePlanningPointId && !transition.workSlicePlannerAuthorizedAt)
+    invalid('Work Slice Planner planning point requires durable authorization');
   if (transition.workSlicePlanningPointId && !transition.workSlicePlannerRequestId)
     invalid('Work Slice Planner planning point requires its request');
   if (transition.workSlicePlannerSessionId && !transition.workSlicePlanningPointId)
@@ -331,19 +372,31 @@ function decodeTransition(value: unknown): SprintRunnerTransitionV1 {
     !transition.workSlicePlannerReadyAt
   )
     invalid('Work Slice Planner observation requires readiness');
-  if (
-    transition.preStartReady !== Boolean(transition.launchAcceptedAt)
-  )
+  if (transition.preStartReady !== Boolean(transition.launchAcceptedAt))
     invalid('Sprint Runner transition evidence is inconsistent');
-  if (transition.accepted && (!transition.preStartSemanticOutcomeRecordedAt || !transition.preStartLifecycleObservedAt))
+  if (
+    transition.accepted &&
+    (!transition.preStartSemanticOutcomeRecordedAt || !transition.preStartLifecycleObservedAt)
+  )
     invalid('accepted pre-start outcome requires both semantic and lifecycle evidence');
-  if (transition.planningReadyAt && (!transition.sprintStartPersistedAt || !transition.repositoryBranchReevaluationRecordedAt || !transition.startedReevaluationLifecycleObservedAt))
+  if (
+    transition.planningReadyAt &&
+    (!transition.sprintStartPersistedAt ||
+      !transition.repositoryBranchReevaluationRecordedAt ||
+      !transition.startedReevaluationLifecycleObservedAt)
+  )
     invalid('planning-ready requires started repository/branch evidence');
-  if (transition.planningControlLaunchAcceptedAt && !transition.startedReevaluationLifecycleObservedAt)
+  if (
+    transition.planningControlLaunchAcceptedAt &&
+    !transition.startedReevaluationLifecycleObservedAt
+  )
     invalid('planning control requires completed started reevaluation observation');
   if (transition.workSlicePlanningPointId && !transition.planningControlLaunchAcceptedAt)
     invalid('Work Slice Planner request requires launch-accepted planning control');
-  if (transition.workSlicePlannerLaunchAcceptedAt && (!transition.workSlicePlanningPointId || !transition.workSlicePlannerHarnessAppliedAt))
+  if (
+    transition.workSlicePlannerLaunchAcceptedAt &&
+    (!transition.workSlicePlanningPointId || !transition.workSlicePlannerHarnessAppliedAt)
+  )
     invalid('Planner launch acceptance requires an authorized applied-Harness planning point');
   if (!transition.downstreamNotStarted && !transition.workSlicePlanningPointId)
     invalid('Sprint Runner transition must not imply downstream work');

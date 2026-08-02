@@ -219,6 +219,8 @@ pub(crate) struct SprintRunnerTransitionStatus {
     pub(crate) planning_control_launch_accepted_at: Option<String>,
     pub(crate) planning_ready_at: Option<String>,
     pub(crate) work_slice_planner_request_id: Option<String>,
+    pub(crate) work_slice_planner_requested_at: Option<String>,
+    pub(crate) work_slice_planner_authorized_at: Option<String>,
     pub(crate) work_slice_planning_point_id: Option<String>,
     pub(crate) work_slice_planner_repository_worktree_route: Option<String>,
     pub(crate) work_slice_planner_harness_key: Option<String>,
@@ -589,7 +591,7 @@ impl SprintRunnerTransitionService {
                 "Sprint Runner transition database lock is poisoned".into(),
             )
         })?;
-        let mut statement = conn.prepare("SELECT t.sprint_id,t.epic_id,t.request_id,t.epic_runner_invocation_id,t.sprint_runner_session_id,t.sprint_runner_invocation_id,t.requested_at,t.authorized_at,t.session_created_at,t.harness_applied_at,t.launch_accepted_at,t.pre_start_semantic_outcome_recorded_at,t.pre_start_lifecycle_observed_at,t.pre_start_outcome_accepted_at,t.parent_continuation_delivery_requested_at,t.parent_continuation_delivery_persisted_at,t.epic_continuation_invocation_id,t.epic_continuation_launch_accepted_at,t.provider_receiver_activation_observed_at,t.sprint_start_authorized_at,t.sprint_start_persisted_at,t.sprint_continuation_invocation_id,t.sprint_continuation_launch_accepted_at,t.repository_branch_reevaluation_recorded_at,t.started_reevaluation_lifecycle_observed_at,t.planning_control_delivery_requested_at,t.planning_control_delivery_persisted_at,t.planning_control_invocation_id,t.planning_control_launch_accepted_at,t.planning_ready_at,p.request_fact_id,p.planning_point_id,p.repository_worktree_route,p.planner_harness_key,p.planner_harness_version,p.planner_session_id,p.planner_invocation_id,p.planner_session_created_at,p.planner_invocation_created_at,p.planner_harness_applied_at,p.planner_launch_requested_at,p.planner_launch_accepted_at,p.planner_ready_at,p.planner_provider_activation_observed_at,p.planner_lifecycle_observed_at FROM sprint_runner_transitions t LEFT JOIN work_slice_planning_requests p ON p.sprint_id=t.sprint_id AND p.is_current=1 ORDER BY t.requested_at,t.sprint_id").map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let mut statement = conn.prepare("SELECT t.sprint_id,t.epic_id,t.request_id,t.epic_runner_invocation_id,t.sprint_runner_session_id,t.sprint_runner_invocation_id,t.requested_at,t.authorized_at,t.session_created_at,t.harness_applied_at,t.launch_accepted_at,t.pre_start_semantic_outcome_recorded_at,t.pre_start_lifecycle_observed_at,t.pre_start_outcome_accepted_at,t.parent_continuation_delivery_requested_at,t.parent_continuation_delivery_persisted_at,t.epic_continuation_invocation_id,t.epic_continuation_launch_accepted_at,t.provider_receiver_activation_observed_at,t.sprint_start_authorized_at,t.sprint_start_persisted_at,t.sprint_continuation_invocation_id,t.sprint_continuation_launch_accepted_at,t.repository_branch_reevaluation_recorded_at,t.started_reevaluation_lifecycle_observed_at,t.planning_control_delivery_requested_at,t.planning_control_delivery_persisted_at,t.planning_control_invocation_id,t.planning_control_launch_accepted_at,t.planning_ready_at,p.request_fact_id,p.requested_at,p.authorized_at,p.planning_point_id,p.repository_worktree_route,p.planner_harness_key,p.planner_harness_version,p.planner_session_id,p.planner_invocation_id,p.planner_session_created_at,p.planner_invocation_created_at,p.planner_harness_applied_at,p.planner_launch_requested_at,p.planner_launch_accepted_at,p.planner_ready_at,p.planner_provider_activation_observed_at,p.planner_lifecycle_observed_at FROM sprint_runner_transitions t LEFT JOIN work_slice_planning_requests p ON p.sprint_id=t.sprint_id AND p.is_current=1 ORDER BY t.requested_at,t.sprint_id").map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         let transitions = statement
             .query_map([], |r| {
                 Ok(SprintRunnerTransitionStatus {
@@ -627,21 +629,23 @@ impl SprintRunnerTransitionService {
                     planning_control_launch_accepted_at: r.get(28)?,
                     planning_ready_at: r.get(29)?,
                     work_slice_planner_request_id: r.get(30)?,
-                    work_slice_planning_point_id: r.get(31)?,
-                    work_slice_planner_repository_worktree_route: r.get(32)?,
-                    work_slice_planner_harness_key: r.get(33)?,
-                    work_slice_planner_harness_version: r.get(34)?,
-                    work_slice_planner_session_id: r.get(35)?,
-                    work_slice_planner_invocation_id: r.get(36)?,
-                    work_slice_planner_session_created_at: r.get(37)?,
-                    work_slice_planner_invocation_created_at: r.get(38)?,
-                    work_slice_planner_harness_applied_at: r.get(39)?,
-                    work_slice_planner_launch_requested_at: r.get(40)?,
-                    work_slice_planner_launch_accepted_at: r.get(41)?,
-                    work_slice_planner_ready_at: r.get(42)?,
-                    work_slice_planner_provider_activation_observed_at: r.get(43)?,
-                    work_slice_planner_lifecycle_observed_at: r.get(44)?,
-                    downstream_not_started: r.get::<_, Option<String>>(31)?.is_none(),
+                    work_slice_planner_requested_at: r.get(31)?,
+                    work_slice_planner_authorized_at: r.get(32)?,
+                    work_slice_planning_point_id: r.get(33)?,
+                    work_slice_planner_repository_worktree_route: r.get(34)?,
+                    work_slice_planner_harness_key: r.get(35)?,
+                    work_slice_planner_harness_version: r.get(36)?,
+                    work_slice_planner_session_id: r.get(37)?,
+                    work_slice_planner_invocation_id: r.get(38)?,
+                    work_slice_planner_session_created_at: r.get(39)?,
+                    work_slice_planner_invocation_created_at: r.get(40)?,
+                    work_slice_planner_harness_applied_at: r.get(41)?,
+                    work_slice_planner_launch_requested_at: r.get(42)?,
+                    work_slice_planner_launch_accepted_at: r.get(43)?,
+                    work_slice_planner_ready_at: r.get(44)?,
+                    work_slice_planner_provider_activation_observed_at: r.get(45)?,
+                    work_slice_planner_lifecycle_observed_at: r.get(46)?,
+                    downstream_not_started: r.get::<_, Option<String>>(33)?.is_none(),
                 })
             })
             .map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?

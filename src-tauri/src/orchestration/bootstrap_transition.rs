@@ -4151,6 +4151,12 @@ mod tests {
         }).collect::<Vec<_>>();
         let results = calls.into_iter().map(|call| call.join().unwrap().unwrap()).collect::<Vec<_>>();
         assert_eq!(results[0].work_slice_planner_request_id, results[1].work_slice_planner_request_id);
+        assert!(results[0].work_slice_planner_requested_at.is_some());
+        assert!(results[0].work_slice_planner_authorized_at.is_some());
+        assert!(
+            results[0].work_slice_planner_requested_at.as_ref()
+                <= results[0].work_slice_planner_authorized_at.as_ref()
+        );
         assert_eq!(results[0].work_slice_planning_point_id, results[1].work_slice_planning_point_id);
         assert_eq!(results[0].work_slice_planner_session_id, results[1].work_slice_planner_session_id);
         assert_eq!(results[0].work_slice_planner_invocation_id, results[1].work_slice_planner_invocation_id);
@@ -4202,6 +4208,8 @@ mod tests {
         reopened.reconcile_startup().unwrap();
         let after_reopen = reopened.query().unwrap().transitions.into_iter().find(|status| status.sprint_id == sprint_id).unwrap();
         assert_eq!(after_reopen.work_slice_planning_point_id, results[0].work_slice_planning_point_id);
+        assert_eq!(after_reopen.work_slice_planner_requested_at, results[0].work_slice_planner_requested_at);
+        assert_eq!(after_reopen.work_slice_planner_authorized_at, results[0].work_slice_planner_authorized_at);
         assert_eq!(after_reopen.work_slice_planner_session_created_at, results[0].work_slice_planner_session_created_at);
         assert_eq!(after_reopen.work_slice_planner_invocation_created_at, results[0].work_slice_planner_invocation_created_at);
         assert_eq!(after_reopen.work_slice_planner_harness_applied_at, results[0].work_slice_planner_harness_applied_at);

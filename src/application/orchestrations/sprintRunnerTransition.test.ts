@@ -117,6 +117,7 @@ describe('Sprint Runner transition query', () => {
     const ready = phase({
       sprintStartPersistedAt: '2026-08-02T00:00:12Z',
       repositoryBranchReevaluationRecordedAt: '2026-08-02T00:00:13Z',
+      startedReevaluationLifecycleObservedAt: '2026-08-02T00:00:13Z',
       planningReadyAt: '2026-08-02T00:00:14Z',
       providerReceiverActivationObservedAt: '2026-08-02T00:00:15Z',
     });
@@ -129,6 +130,10 @@ describe('Sprint Runner transition query', () => {
     const value = query();
     Object.assign(value.transitions[0]!, {
       workSlicePlannerRequestId: 'planner-request-1',
+      workSlicePlannerRequestedAt: '2026-08-02T00:00:15Z',
+      workSlicePlannerAuthorizedAt: '2026-08-02T00:00:15Z',
+      startedReevaluationLifecycleObservedAt: '2026-08-02T00:00:14Z',
+      planningControlLaunchAcceptedAt: '2026-08-02T00:00:14Z',
       workSlicePlanningPointId: 'planning-point-1',
       workSlicePlannerRepositoryWorktreeRoute: 'C:/authority/worktree',
       workSlicePlannerHarnessKey: 'planner-harness',
@@ -162,6 +167,8 @@ describe('Sprint Runner transition query', () => {
         startedReevaluationLifecycleObservedAt: '2026-08-02T00:00:10Z',
         planningControlLaunchAcceptedAt: '2026-08-02T00:00:11Z',
         workSlicePlannerRequestId: 'planner-request-1',
+        workSlicePlannerRequestedAt: '2026-08-02T00:00:11Z',
+        workSlicePlannerAuthorizedAt: '2026-08-02T00:00:11Z',
         workSlicePlanningPointId: 'planning-point-1',
         workSlicePlannerSessionId: 'reserved-session-1',
         workSlicePlannerInvocationId: 'reserved-invocation-1',
@@ -171,8 +178,29 @@ describe('Sprint Runner transition query', () => {
         decodeSprintRunnerTransitionQueryV1(value).transitions[0]!,
       );
     };
-    expect(planner({}).label).toBe(
-      'Work Slice Planner planning point authorized; Session pending',
+    expect(planner({}).label).toBe('Work Slice Planner planning point created; Session pending');
+    const requestOnly = query();
+    Object.assign(requestOnly.transitions[0]!, {
+      startedReevaluationLifecycleObservedAt: '2026-08-02T00:00:10Z',
+      planningControlLaunchAcceptedAt: '2026-08-02T00:00:11Z',
+      workSlicePlannerRequestId: 'planner-request-1',
+      workSlicePlannerRequestedAt: '2026-08-02T00:00:12Z',
+    });
+    expect(
+      projectSprintRunnerTransitionStatus(
+        decodeSprintRunnerTransitionQueryV1(requestOnly).transitions[0]!,
+      ).label,
+    ).toBe('Work Slice Planner request recorded; authorization pending');
+    const skippedAuthorization = query();
+    Object.assign(skippedAuthorization.transitions[0]!, {
+      startedReevaluationLifecycleObservedAt: '2026-08-02T00:00:10Z',
+      planningControlLaunchAcceptedAt: '2026-08-02T00:00:11Z',
+      workSlicePlannerRequestId: 'planner-request-1',
+      workSlicePlannerRequestedAt: '2026-08-02T00:00:12Z',
+      workSlicePlanningPointId: 'planning-point-1',
+    });
+    expect(() => decodeSprintRunnerTransitionQueryV1(skippedAuthorization)).toThrow(
+      'requires durable authorization',
     );
     expect(planner({ workSlicePlannerSessionCreatedAt: '2026-08-02T00:00:12Z' }).label).toBe(
       'Work Slice Planner Session created; invocation pending',

@@ -284,64 +284,65 @@ export function SprintWorkspace({
           <p>{workspace.sprint.summary}</p>
           {workspace.sprint.sprintRunnerTransition ? (
             <section
-              className="sprint-context__runner-transition"
-              aria-label="Sprint Runner activation"
-            >
-              <h2>Sprint Runner activation</h2>
-              <p>{workspace.sprint.sprintRunnerTransition.label}</p>
-              <ul>
-                <li>Requested and authorized</li>
-                {workspace.sprint.sprintRunnerTransition.sessionCreatedAt ? (
-                  <li>Session created</li>
-                ) : null}
-                {workspace.sprint.sprintRunnerTransition.harnessAppliedAt ? (
-                  <li>Harness applied</li>
-                ) : null}
-                {workspace.sprint.sprintRunnerTransition.launchAcceptedAt ? (
-                  <li>Launch accepted; pre-start ready</li>
-                ) : null}
-                {workspace.sprint.sprintRunnerTransition.preStartSemanticOutcomeRecordedAt ? (
-                  <li>Pre-start outcome recorded</li>
-                ) : null}
-                {workspace.sprint.sprintRunnerTransition.preStartLifecycleObservedAt ? (
-                  <li>Matching pre-start lifecycle observed</li>
-                ) : null}
-                {workspace.sprint.sprintRunnerTransition.preStartOutcomeAcceptedAt ? (
-                  <li>Pre-start outcome accepted</li>
-                ) : null}
-                {workspace.sprint.sprintRunnerTransition.parentContinuationDeliveryRequestedAt ? (
-                  <li>Epic continuation delivery requested</li>
-                ) : null}
-                {workspace.sprint.sprintRunnerTransition.parentContinuationDeliveryPersistedAt ? (
-                  <li>Epic continuation invocation persisted</li>
-                ) : null}
-                {workspace.sprint.sprintRunnerTransition.epicContinuationLaunchAcceptedAt ? (
-                  <li>Epic continuation launch accepted; awaiting Epic authorization</li>
-                ) : null}
-                {workspace.sprint.sprintRunnerTransition.sprintStartPersistedAt ? (
-                  <li>Sprint start authorized and persisted</li>
-                ) : null}
-                {workspace.sprint.sprintRunnerTransition.sprintContinuationLaunchAcceptedAt ? (
-                  <li>Started Sprint continuation launch accepted</li>
-                ) : null}
-                {workspace.sprint.sprintRunnerTransition.repositoryBranchReevaluationRecordedAt ? (
-                  <li>Repository and branch reevaluation recorded</li>
-                ) : null}
-                {workspace.sprint.sprintRunnerTransition.planningReadyAt ? (
-                  <li>Planning-ready; downstream has not started</li>
-                ) : null}
-              </ul>
-              <small>
-                {workspace.sprint.sprintRunnerTransition.providerReceiverActivationObservedAt
-                  ? 'Provider/receiver activation has been observed.'
-                  : 'Provider/receiver activation has not been observed.'}{' '}
-                {workspace.sprint.sprintRunnerTransition.downstreamNotStarted
-                  ? 'No Work Slice or Work Unit has been created.'
-                  : ''}
-              </small>
+                className="sprint-context__runner-transition"
+                aria-label="Sprint Runner activation"
+              >
+                <h2>Sprint Runner activation</h2>
+                <p>{workspace.sprint.sprintRunnerTransition.label}</p>
+                <ul>
+                  <li>Requested and authorized</li>
+                  {workspace.sprint.sprintRunnerTransition.sessionCreatedAt ? (
+                    <li>Session created</li>
+                  ) : null}
+                  {workspace.sprint.sprintRunnerTransition.harnessAppliedAt ? (
+                    <li>Harness applied</li>
+                  ) : null}
+                  {workspace.sprint.sprintRunnerTransition.launchAcceptedAt ? (
+                    <li>Launch accepted; pre-start ready</li>
+                  ) : null}
+                  {workspace.sprint.sprintRunnerTransition.preStartSemanticOutcomeRecordedAt ? (
+                    <li>Pre-start outcome recorded</li>
+                  ) : null}
+                  {workspace.sprint.sprintRunnerTransition.preStartLifecycleObservedAt ? (
+                    <li>Matching pre-start lifecycle observed</li>
+                  ) : null}
+                  {workspace.sprint.sprintRunnerTransition.preStartOutcomeAcceptedAt ? (
+                    <li>Pre-start outcome accepted</li>
+                  ) : null}
+                  {workspace.sprint.sprintRunnerTransition.parentContinuationDeliveryRequestedAt ? (
+                    <li>Epic continuation delivery requested</li>
+                  ) : null}
+                  {workspace.sprint.sprintRunnerTransition.parentContinuationDeliveryPersistedAt ? (
+                    <li>Epic continuation invocation persisted</li>
+                  ) : null}
+                  {workspace.sprint.sprintRunnerTransition.epicContinuationLaunchAcceptedAt ? (
+                    <li>Epic continuation launch accepted; awaiting Epic authorization</li>
+                  ) : null}
+                  {workspace.sprint.sprintRunnerTransition.sprintStartPersistedAt ? (
+                    <li>Sprint start authorized and persisted</li>
+                  ) : null}
+                  {workspace.sprint.sprintRunnerTransition.sprintContinuationLaunchAcceptedAt ? (
+                    <li>Started Sprint continuation launch accepted</li>
+                  ) : null}
+                  {workspace.sprint.sprintRunnerTransition
+                    .repositoryBranchReevaluationRecordedAt ? (
+                    <li>Repository and branch reevaluation recorded</li>
+                  ) : null}
+                  {workspace.sprint.sprintRunnerTransition.planningReadyAt ? (
+                    <li>Planning-ready; downstream has not started</li>
+                  ) : null}
+                </ul>
+                <small>
+                  {workspace.sprint.sprintRunnerTransition.providerReceiverActivationObservedAt
+                    ? 'Provider/receiver activation has been observed.'
+                    : 'Provider/receiver activation has not been observed.'}{' '}
+                  {workspace.sprint.sprintRunnerTransition.downstreamNotStarted
+                    ? 'No Work Slice or Work Unit has been created.'
+                    : ''}
+                </small>
             </section>
-            <WorkSlicePlannerBoundary transition={workspace.sprint.sprintRunnerTransition} />
           ) : null}
+          <WorkSlicePlannerBoundary transition={workspace.sprint.sprintRunnerTransition} />
           <section className="sprint-context__objectives" aria-label="Epic Runner objectives">
             <h2>Epic Runner objectives</h2>
             {workspace.epicRunnerObjectives.length > 0 ? (
@@ -565,7 +566,8 @@ export function WorkSlicePlannerBoundary({
         This Sprint currently stops at the application-owned Work Slice Planner boundary.
       </p>
       <ul>
-        {stage('Request and authorization', Boolean(transition.workSlicePlannerRequestId))}
+        {stage('Planner request', Boolean(transition.workSlicePlannerRequestedAt))}
+        {stage('Planner authorization', Boolean(transition.workSlicePlannerAuthorizedAt))}
         {stage('Work Slice planning point', Boolean(transition.workSlicePlanningPointId))}
         {stage('Planner Session', Boolean(transition.workSlicePlannerSessionCreatedAt))}
         {stage('Planner invocation', Boolean(transition.workSlicePlannerInvocationCreatedAt))}
