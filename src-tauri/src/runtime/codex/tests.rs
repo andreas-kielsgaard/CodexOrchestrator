@@ -10,6 +10,7 @@ use crate::{
         domain::{
             AgentInvocationId, AgentInvocationTerminalStatus, AgentRuntimeOptions, AgentSessionId,
             ExternalRuntimeContextId, NormalizedRuntimeEventKind, RuntimeSandboxMode,
+            ToolActivityPhase, ToolResultClassification,
         },
         ports::{
             AgentAccessCapabilities, AgentAccessCapabilityDiscovery, AgentAccessCapabilitySnapshot,
@@ -39,6 +40,36 @@ use std::{
 const FIRST_TURN: &str = include_str!("fixtures/codex-cli-0.144.0/first-turn.jsonl");
 const RESUME: &str = include_str!("fixtures/codex-cli-0.144.0/resume.jsonl");
 const MALFORMED: &str = include_str!("fixtures/codex-cli-0.144.0/malformed-and-unknown.jsonl");
+const MCP_TOOL_EVENTS: &str = include_str!("fixtures/codex-cli-0.144.0/mcp-tool-events.jsonl");
+
+#[test]
+fn normalizes_mcp_started_and_completed_without_requiring_raw_payload_parsing() {
+    let mut protocol = CodexJsonlProtocol::default();
+    let outputs = protocol.push(MCP_TOOL_EVENTS.as_bytes());
+    let activities = outputs
+        .into_iter()
+        .flat_map(|output| output.events)
+        .map(|event| {
+            event
+                .normalized
+                .expect("normalized")
+                .tool_activity
+                .expect("MCP semantic activity")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(activities.len(), 2);
+    assert_eq!(activities[0].phase, ToolActivityPhase::Started);
+    assert_eq!(activities[0].server.as_deref(), Some("orchestration"));
+    assert_eq!(
+        activities[0].tool.as_deref(),
+        Some("submit_epic_plan_proposal")
+    );
+    assert_eq!(activities[1].phase, ToolActivityPhase::Completed);
+    assert_eq!(
+        activities[1].result_classification,
+        ToolResultClassification::Succeeded
+    );
+}
 
 fn capabilities() -> CodexCliCapabilities {
     CodexCliCapabilities {

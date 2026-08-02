@@ -113,6 +113,7 @@ impl ProcessEventSink for RuntimeCoordinator {
                             external_context_id: None,
                             usage: None,
                             details: None,
+                            tool_activity: None,
                         }),
                     });
                 }
