@@ -81,6 +81,7 @@ pub(crate) fn run() {
             app.manage(
                 crate::orchestration::execution_support::ProductExecutionSupportState::new(
                     &database_path,
+                    app_data_dir.join("execution-workspaces"),
                     orchestration_repository.clone(),
                 )
                 .map_err(|error| error.to_string())?,
