@@ -11,11 +11,11 @@ use super::{
         SqliteOrchestrationRepository,
     },
 };
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
 use std::{
     error::Error,
-    fmt,
+    fmt, fs,
     path::{Path, PathBuf},
     process::Command,
     sync::{Arc, Mutex},
@@ -26,11 +26,14 @@ CREATE TABLE IF NOT EXISTS execution_support_attempt_authorizations (
   attempt_id TEXT PRIMARY KEY,
   work_unit_id TEXT NOT NULL,
   role_kind TEXT NOT NULL CHECK(role_kind IN ('work_unit_handler','work_unit_implementer')),
-  sprint_git_authority_id TEXT NOT NULL UNIQUE,
+  sprint_git_authority_id TEXT NOT NULL,
   baseline_object_id TEXT NOT NULL,
+  authorization_fingerprint TEXT NOT NULL,
   recorded_at TEXT NOT NULL,
   FOREIGN KEY(sprint_git_authority_id) REFERENCES initiated_sprint_git_authorities(authority_id) ON DELETE RESTRICT
 );
+CREATE INDEX IF NOT EXISTS execution_support_attempt_authorizations_sprint_authority
+  ON execution_support_attempt_authorizations(sprint_git_authority_id);
 CREATE TABLE IF NOT EXISTS execution_support_grants (
   attempt_id TEXT PRIMARY KEY,
   capability_ref TEXT NOT NULL UNIQUE,
@@ -47,6 +50,26 @@ CREATE TABLE IF NOT EXISTS execution_support_grants (
 "#;
 pub(crate) const EXECUTION_SUPPORT_BASELINE_MIGRATION: &str =
     "ALTER TABLE execution_support_attempt_authorizations ADD COLUMN baseline_object_id TEXT NOT NULL DEFAULT '';";
+pub(crate) const EXECUTION_SUPPORT_ATTEMPT_AUTHORIZATION_MIGRATION: &str = r#"
+CREATE TABLE execution_support_attempt_authorizations_v2 (
+  attempt_id TEXT PRIMARY KEY,
+  work_unit_id TEXT NOT NULL,
+  role_kind TEXT NOT NULL CHECK(role_kind IN ('work_unit_handler','work_unit_implementer')),
+  sprint_git_authority_id TEXT NOT NULL,
+  baseline_object_id TEXT NOT NULL,
+  authorization_fingerprint TEXT NOT NULL DEFAULT '',
+  recorded_at TEXT NOT NULL,
+  FOREIGN KEY(sprint_git_authority_id) REFERENCES initiated_sprint_git_authorities(authority_id) ON DELETE RESTRICT
+);
+INSERT INTO execution_support_attempt_authorizations_v2
+  (attempt_id,work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id,authorization_fingerprint,recorded_at)
+  SELECT attempt_id,work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id,'',recorded_at
+  FROM execution_support_attempt_authorizations;
+DROP TABLE execution_support_attempt_authorizations;
+ALTER TABLE execution_support_attempt_authorizations_v2 RENAME TO execution_support_attempt_authorizations;
+CREATE INDEX execution_support_attempt_authorizations_sprint_authority
+  ON execution_support_attempt_authorizations(sprint_git_authority_id);
+"#;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct AuthorizedExecutionAttempt {
@@ -97,6 +120,36 @@ pub(crate) enum ExecutionSupportResponse {
     EvidenceContent(Vec<u8>),
 }
 
+/// The only roles the application can authorize for a future execution attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WorkUnitExecutionRole {
+    Handler,
+    Implementer,
+}
+impl WorkUnitExecutionRole {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Handler => "work_unit_handler",
+            Self::Implementer => "work_unit_implementer",
+        }
+    }
+}
+
+/// Application-only lifecycle input. It contains no filesystem, worktree, ref, or object route.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AuthorizeExistingWorkUnitExecutionAttempt {
+    pub(crate) attempt_id: String,
+    pub(crate) work_unit_id: String,
+    pub(crate) role: WorkUnitExecutionRole,
+    pub(crate) sprint_git_authority_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum AuthorizeExistingWorkUnitExecutionAttemptResult {
+    Authorized { baseline_object_id: String },
+    IdempotentReplay { baseline_object_id: String },
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ExecutionSupportError {
     Invalid,
@@ -141,26 +194,86 @@ trait ExecutionWorkspaceResolver: Send + Sync {
 
 pub(crate) struct ProductExecutionWorkspaceResolver {
     repository: Arc<SqliteOrchestrationRepository>,
+    workspace_parent: PathBuf,
 }
 
 impl ProductExecutionWorkspaceResolver {
-    pub(crate) fn new(repository: Arc<SqliteOrchestrationRepository>) -> Self {
-        Self { repository }
+    pub(crate) fn new(
+        repository: Arc<SqliteOrchestrationRepository>,
+        workspace_parent: PathBuf,
+    ) -> Self {
+        Self {
+            repository,
+            workspace_parent,
+        }
     }
 
-    fn verified_workspace(
+    fn workspace_id(&self, attempt: &AuthorizedExecutionAttempt) -> String {
+        stable_id(
+            "execution-workspace",
+            &format!("{}:{}", attempt.authority.authority_id, attempt.attempt_id),
+        )
+    }
+
+    fn workspace_root(
         &self,
         attempt: &AuthorizedExecutionAttempt,
-        existing: Option<&ExecutionWorkspaceBinding>,
+        create_parent: bool,
+    ) -> Result<PathBuf, ExecutionSupportError> {
+        if create_parent {
+            fs::create_dir_all(&self.workspace_parent)
+                .map_err(|_| ExecutionSupportError::Unavailable)?;
+        }
+        let metadata = fs::symlink_metadata(&self.workspace_parent)
+            .map_err(|_| ExecutionSupportError::Unavailable)?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(ExecutionSupportError::CorrelationMismatch);
+        }
+        let parent = self
+            .workspace_parent
+            .canonicalize()
+            .map_err(|_| ExecutionSupportError::Unavailable)?;
+        let root = parent.join(self.workspace_id(attempt));
+        if root.parent() != Some(parent.as_path()) {
+            return Err(ExecutionSupportError::CorrelationMismatch);
+        }
+        Ok(root)
+    }
+
+    fn validate_attempt_workspace(
+        &self,
+        attempt: &AuthorizedExecutionAttempt,
+        binding: &ExecutionWorkspaceBinding,
     ) -> Result<(PathBuf, String), ExecutionSupportError> {
+        let expected_id = self.workspace_id(attempt);
+        if binding.workspace_id != expected_id {
+            return Err(ExecutionSupportError::CorrelationMismatch);
+        }
+        let root = self.workspace_root(attempt, false)?;
+        let metadata =
+            fs::symlink_metadata(&root).map_err(|_| ExecutionSupportError::Unavailable)?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(ExecutionSupportError::CorrelationMismatch);
+        }
+        let canonical_root = root
+            .canonicalize()
+            .map_err(|_| ExecutionSupportError::Unavailable)?;
+        if canonical_root != root {
+            return Err(ExecutionSupportError::CorrelationMismatch);
+        }
         let authority = &attempt.authority;
-        let root = canonical_authorized_root(&authority.worktree_root)?;
-        let repository = canonical_authorized_root(&authority.repository_root)?;
-        let common = git_path(&root, &["rev-parse", "--git-common-dir"])?;
-        if common != canonical_authorized_root(&authority.repository_common_dir)?
-            || git_path(&repository, &["rev-parse", "--git-common-dir"])? != common
+        let repository_root = canonical_authorized_root(&authority.repository_root)?;
+        let authority_root = canonical_authorized_root(&authority.worktree_root)?;
+        if canonical_root == repository_root || canonical_root == authority_root {
+            return Err(ExecutionSupportError::CorrelationMismatch);
+        }
+        let expected_common = canonical_authorized_root(&authority.repository_common_dir)?;
+        if git_path(&repository_root, &["rev-parse", "--git-common-dir"])? != expected_common
+            || git_path(&canonical_root, &["rev-parse", "--git-common-dir"])? != expected_common
+            || git_path(&canonical_root, &["rev-parse", "--show-toplevel"])? != canonical_root
+            || !registered_worktree(&repository_root, &canonical_root)?
             || git_text(
-                &root,
+                &canonical_root,
                 &[
                     "rev-parse",
                     "--verify",
@@ -170,14 +283,55 @@ impl ProductExecutionWorkspaceResolver {
         {
             return Err(ExecutionSupportError::CorrelationMismatch);
         }
-        let head = git_text(&root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
-        if existing.is_none()
-            && (head != attempt.baseline_object_id
-                || !git_text(&root, &["status", "--porcelain"])?.is_empty())
+        let fingerprint = workspace_fingerprint(attempt, &canonical_root);
+        if binding.workspace_fingerprint != fingerprint {
+            return Err(ExecutionSupportError::CorrelationMismatch);
+        }
+        Ok((
+            canonical_root.clone(),
+            git_text(&canonical_root, &["rev-parse", "--verify", "HEAD^{commit}"])?,
+        ))
+    }
+
+    fn create_attempt_workspace(
+        &self,
+        attempt: &AuthorizedExecutionAttempt,
+    ) -> Result<ExecutionWorkspaceBinding, ExecutionSupportError> {
+        let root = self.workspace_root(attempt, true)?;
+        if root.exists() || fs::symlink_metadata(&root).is_ok() {
+            return Err(ExecutionSupportError::Unavailable);
+        }
+        let authority = &attempt.authority;
+        let repository_root = canonical_authorized_root(&authority.repository_root)?;
+        let authority_root = canonical_authorized_root(&authority.worktree_root)?;
+        if !git_text(&authority_root, &["status", "--porcelain"])?.is_empty()
+            || git_text(&authority_root, &["rev-parse", "--verify", "HEAD^{commit}"])?
+                != attempt.baseline_object_id
         {
             return Err(ExecutionSupportError::Unavailable);
         }
-        Ok((root, head))
+        git_success(
+            &repository_root,
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                git_argument_path(&root).as_str(),
+                &attempt.baseline_object_id,
+            ],
+        )?;
+        let binding = ExecutionWorkspaceBinding {
+            workspace_id: self.workspace_id(attempt),
+            workspace_fingerprint: workspace_fingerprint(attempt, &root),
+        };
+        let (verified, head) = self.validate_attempt_workspace(attempt, &binding)?;
+        if verified != root
+            || head != attempt.baseline_object_id
+            || !git_text(&root, &["status", "--porcelain"])?.is_empty()
+        {
+            return Err(ExecutionSupportError::CorrelationMismatch);
+        }
+        Ok(binding)
     }
 }
 
@@ -187,15 +341,11 @@ impl ExecutionWorkspaceResolver for ProductExecutionWorkspaceResolver {
         attempt: &AuthorizedExecutionAttempt,
         existing: Option<&ExecutionWorkspaceBinding>,
     ) -> Result<ExecutionWorkspaceBinding, ExecutionSupportError> {
-        let (root, _) = self.verified_workspace(attempt, existing)?;
-        let binding = ExecutionWorkspaceBinding {
-            workspace_id: attempt.authority.worktree_id.clone(),
-            workspace_fingerprint: workspace_fingerprint(&attempt.authority, &root),
-        };
-        if existing.is_some_and(|existing| existing != &binding) {
-            return Err(ExecutionSupportError::CorrelationMismatch);
+        if let Some(existing) = existing {
+            self.validate_attempt_workspace(attempt, existing)?;
+            return Ok(existing.clone());
         }
-        Ok(binding)
+        self.create_attempt_workspace(attempt)
     }
 
     fn inspect(
@@ -204,7 +354,7 @@ impl ExecutionWorkspaceResolver for ProductExecutionWorkspaceResolver {
         binding: &ExecutionWorkspaceBinding,
         capability_ref: &str,
     ) -> Result<CapturedInspection, ExecutionSupportError> {
-        let (root, current_object_id) = self.verified_workspace(attempt, Some(binding))?;
+        let (root, current_object_id) = self.validate_attempt_workspace(attempt, binding)?;
         if !git_text(&root, &["status", "--porcelain"])?.is_empty() {
             return Err(ExecutionSupportError::Unavailable);
         }
@@ -227,8 +377,8 @@ impl ExecutionWorkspaceResolver for ProductExecutionWorkspaceResolver {
                 provenance_id: attempt.authority.provenance_id.clone(),
                 repository_id: attempt.authority.repository_id.clone(),
                 repository_root: attempt.authority.repository_root.clone(),
-                worktree_id: attempt.authority.worktree_id.clone(),
-                worktree_root: attempt.authority.worktree_root.clone(),
+                worktree_id: binding.workspace_id.clone(),
+                worktree_root: root.to_string_lossy().into_owned(),
                 baseline_object_id: attempt.baseline_object_id.clone(),
                 current_object_id,
             })
@@ -289,6 +439,128 @@ impl SqliteExecutionSupportRepository {
             orchestration,
         })
     }
+
+    fn authorize_existing_attempt(
+        &self,
+        request: &AuthorizeExistingWorkUnitExecutionAttempt,
+    ) -> Result<AuthorizeExistingWorkUnitExecutionAttemptResult, ExecutionSupportError> {
+        if !bounded_id(&request.attempt_id)
+            || !bounded_id(&request.work_unit_id)
+            || !bounded_id(&request.sprint_git_authority_id)
+        {
+            return Err(ExecutionSupportError::Denied);
+        }
+        let authority = self
+            .orchestration
+            .load_initiated_sprint_git_authority(&request.sprint_git_authority_id)
+            .map_err(|_| ExecutionSupportError::Unavailable)?
+            .ok_or(ExecutionSupportError::Denied)?;
+        if !git_object_id(&authority.current_object_id) {
+            return Err(ExecutionSupportError::CorrelationMismatch);
+        }
+        let baseline = authority.current_object_id;
+        let role_kind = request.role.as_str();
+        let fingerprint = authorization_fingerprint(
+            &request.attempt_id,
+            &request.work_unit_id,
+            role_kind,
+            &request.sprint_git_authority_id,
+            &baseline,
+        );
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| ExecutionSupportError::Unavailable)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| ExecutionSupportError::Unavailable)?;
+        let existing: Option<(String, String)> = transaction
+            .query_row(
+                "SELECT baseline_object_id,authorization_fingerprint FROM execution_support_attempt_authorizations WHERE attempt_id=?1",
+                [&request.attempt_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|_| ExecutionSupportError::Unavailable)?;
+        if let Some((stored_baseline, stored_fingerprint)) = existing {
+            if stored_baseline != baseline || stored_fingerprint != fingerprint {
+                return Err(ExecutionSupportError::Conflict);
+            }
+            transaction
+                .commit()
+                .map_err(|_| ExecutionSupportError::Unavailable)?;
+            return Ok(
+                AuthorizeExistingWorkUnitExecutionAttemptResult::IdempotentReplay {
+                    baseline_object_id: baseline,
+                },
+            );
+        }
+        transaction
+            .execute(
+                "INSERT INTO execution_support_attempt_authorizations (attempt_id,work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id,authorization_fingerprint,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,datetime('now'))",
+                params![request.attempt_id, request.work_unit_id, role_kind, request.sprint_git_authority_id, baseline, fingerprint],
+            )
+            .map_err(|_| ExecutionSupportError::Conflict)?;
+        transaction
+            .commit()
+            .map_err(|_| ExecutionSupportError::Unavailable)?;
+        Ok(
+            AuthorizeExistingWorkUnitExecutionAttemptResult::Authorized {
+                baseline_object_id: baseline,
+            },
+        )
+    }
+
+    fn load_authorized_attempt(
+        &self,
+        attempt_id: &str,
+    ) -> Result<AuthorizedExecutionAttempt, ExecutionSupportError> {
+        let (work_unit_id, role_kind, authority_id, baseline_object_id, stored_fingerprint):
+            (String, String, String, String, String) = self
+            .connection
+            .lock()
+            .map_err(|_| ExecutionSupportError::Unavailable)?
+            .query_row(
+                "SELECT work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id,authorization_fingerprint FROM execution_support_attempt_authorizations WHERE attempt_id=?1",
+                [attempt_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .optional()
+            .map_err(|_| ExecutionSupportError::Unavailable)?
+            .ok_or(ExecutionSupportError::Denied)?;
+        if !bounded_id(&work_unit_id)
+            || !matches!(
+                role_kind.as_str(),
+                "work_unit_handler" | "work_unit_implementer"
+            )
+            || !git_object_id(&baseline_object_id)
+            || stored_fingerprint
+                != authorization_fingerprint(
+                    attempt_id,
+                    &work_unit_id,
+                    &role_kind,
+                    &authority_id,
+                    &baseline_object_id,
+                )
+        {
+            return Err(ExecutionSupportError::Denied);
+        }
+        let authority = self
+            .orchestration
+            .load_initiated_sprint_git_authority(&authority_id)
+            .map_err(|_| ExecutionSupportError::Unavailable)?
+            .ok_or(ExecutionSupportError::Denied)?;
+        if authority.current_object_id != baseline_object_id {
+            return Err(ExecutionSupportError::CorrelationMismatch);
+        }
+        Ok(AuthorizedExecutionAttempt {
+            attempt_id: attempt_id.into(),
+            work_unit_id,
+            role_kind,
+            baseline_object_id,
+            authority,
+        })
+    }
 }
 
 pub(crate) struct ExecutionSupportService {
@@ -307,19 +579,34 @@ impl ExecutionSupportService {
         }
     }
 
+    /// Control-side lifecycle seam. It records authority for an already-existing attempt only.
+    /// There is intentionally no Tauri command or Harness input for this operation.
+    pub(crate) fn authorize_existing_attempt(
+        &self,
+        request: AuthorizeExistingWorkUnitExecutionAttempt,
+    ) -> Result<AuthorizeExistingWorkUnitExecutionAttemptResult, ExecutionSupportError> {
+        self.repository.authorize_existing_attempt(&request)
+    }
+
     /// This application-only operation accepts an opaque existing attempt reference. Its context
     /// is re-derived from durable authority; it does not create a Work Unit or execution attempt.
     pub(crate) fn grant(
         &self,
         attempt_id: &str,
     ) -> Result<ExecutionSupportReference, ExecutionSupportError> {
-        let attempt = self.authorized_attempt(attempt_id)?;
-        let connection = self
+        if !bounded_id(attempt_id) {
+            return Err(ExecutionSupportError::Denied);
+        }
+        let attempt = self.repository.load_authorized_attempt(attempt_id)?;
+        let mut connection = self
             .repository
             .connection
             .lock()
             .map_err(|_| ExecutionSupportError::Unavailable)?;
-        let existing = load_grant(&connection, attempt_id)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| ExecutionSupportError::Unavailable)?;
+        let existing = load_grant(&transaction, attempt_id)?;
         let binding = self
             .resolver
             .resolve(&attempt, existing.as_ref().map(|grant| &grant.binding))?;
@@ -327,16 +614,22 @@ impl ExecutionSupportService {
             if existing.correlation != correlation_fingerprint(&attempt, &binding) {
                 return Err(ExecutionSupportError::CorrelationMismatch);
             }
+            transaction
+                .commit()
+                .map_err(|_| ExecutionSupportError::Unavailable)?;
             return Ok(ExecutionSupportReference {
                 capability_ref: existing.capability_ref,
             });
         }
         let capability_ref = stable_id("execution-support", attempt_id);
         let correlation = correlation_fingerprint(&attempt, &binding);
-        connection.execute(
+        transaction.execute(
             "INSERT INTO execution_support_grants (attempt_id,capability_ref,epic_id,sprint_id,work_unit_id,repository_id,role_id,workspace_id,workspace_fingerprint,correlation_fingerprint,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,datetime('now'))",
             params![attempt.attempt_id, capability_ref, attempt.authority.epic_id, attempt.authority.sprint_id, attempt.work_unit_id, attempt.authority.repository_id, attempt.role_kind, binding.workspace_id, binding.workspace_fingerprint, correlation],
         ).map_err(|_| ExecutionSupportError::Conflict)?;
+        transaction
+            .commit()
+            .map_err(|_| ExecutionSupportError::Unavailable)?;
         Ok(ExecutionSupportReference { capability_ref })
     }
 
@@ -357,7 +650,7 @@ impl ExecutionSupportService {
             load_grant_for_capability(&connection, capability_ref)?
         }
         .ok_or(ExecutionSupportError::Denied)?;
-        let attempt = self.authorized_attempt(&grant.attempt_id)?;
+        let attempt = self.repository.load_authorized_attempt(&grant.attempt_id)?;
         let binding = self.resolver.resolve(&attempt, Some(&grant.binding))?;
         if grant.correlation != correlation_fingerprint(&attempt, &binding) {
             return Err(ExecutionSupportError::CorrelationMismatch);
@@ -381,51 +674,17 @@ impl ExecutionSupportService {
             }
         }
     }
-
-    fn authorized_attempt(
-        &self,
-        attempt_id: &str,
-    ) -> Result<AuthorizedExecutionAttempt, ExecutionSupportError> {
-        if !bounded_id(attempt_id) {
-            return Err(ExecutionSupportError::Denied);
-        }
-        let (work_unit_id, role_kind, authority_id, baseline_object_id): (String, String, String, String) = self.repository.connection.lock().map_err(|_| ExecutionSupportError::Unavailable)?.query_row(
-            "SELECT work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id FROM execution_support_attempt_authorizations WHERE attempt_id=?1",
-            [attempt_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        ).optional().map_err(|_| ExecutionSupportError::Unavailable)?.ok_or(ExecutionSupportError::Denied)?;
-        if !bounded_id(&work_unit_id)
-            || !matches!(
-                role_kind.as_str(),
-                "work_unit_handler" | "work_unit_implementer"
-            )
-            || !git_object_id(&baseline_object_id)
-        {
-            return Err(ExecutionSupportError::Denied);
-        }
-        let authority = self
-            .repository
-            .orchestration
-            .load_initiated_sprint_git_authority(&authority_id)
-            .map_err(|_| ExecutionSupportError::Unavailable)?
-            .ok_or(ExecutionSupportError::Denied)?;
-        Ok(AuthorizedExecutionAttempt {
-            attempt_id: attempt_id.into(),
-            work_unit_id,
-            role_kind,
-            baseline_object_id,
-            authority,
-        })
-    }
 }
 
 /// Product boot composes the real narrow adapter. It can have no current attempt while still being
-/// implemented; a missing durable authorization is reported only when an application later asks.
+/// implemented; startup itself only retains a private parent path and never creates a worktree.
 pub(crate) struct ProductExecutionSupportState {
     service: Arc<ExecutionSupportService>,
 }
 impl ProductExecutionSupportState {
     pub(crate) fn new(
         database_path: &Path,
+        workspace_parent: PathBuf,
         orchestration: Arc<SqliteOrchestrationRepository>,
     ) -> Result<Self, ExecutionSupportError> {
         let repository = Arc::new(SqliteExecutionSupportRepository::open(
@@ -435,7 +694,10 @@ impl ProductExecutionSupportState {
         Ok(Self {
             service: Arc::new(ExecutionSupportService::new(
                 repository,
-                Arc::new(ProductExecutionWorkspaceResolver::new(orchestration)),
+                Arc::new(ProductExecutionWorkspaceResolver::new(
+                    orchestration,
+                    workspace_parent,
+                )),
             )),
         })
     }
@@ -523,6 +785,19 @@ fn canonical_authorized_root(value: &str) -> Result<PathBuf, ExecutionSupportErr
     }
     Ok(root)
 }
+fn git_success(root: &Path, args: &[&str]) -> Result<(), ExecutionSupportError> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .map_err(|_| ExecutionSupportError::Unavailable)?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(ExecutionSupportError::Unavailable)
+    }
+}
 fn git_text(root: &Path, args: &[&str]) -> Result<String, ExecutionSupportError> {
     let output = Command::new("git")
         .args(args)
@@ -546,6 +821,25 @@ fn git_path(root: &Path, args: &[&str]) -> Result<PathBuf, ExecutionSupportError
     })
     .canonicalize()
     .map_err(|_| ExecutionSupportError::Unavailable)
+}
+fn git_argument_path(path: &Path) -> String {
+    let value = path.to_string_lossy();
+    value
+        .strip_prefix(r"\\?\")
+        .unwrap_or(value.as_ref())
+        .to_owned()
+}
+fn registered_worktree(repository_root: &Path, root: &Path) -> Result<bool, ExecutionSupportError> {
+    let listing = git_text(repository_root, &["worktree", "list", "--porcelain"])?;
+    Ok(listing
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .any(|value| {
+            PathBuf::from(value)
+                .canonicalize()
+                .map(|candidate| candidate == root)
+                .unwrap_or(false)
+        }))
 }
 fn bounded_id(value: &str) -> bool {
     !value.is_empty()
@@ -573,13 +867,27 @@ fn stable_id(prefix: &str, value: &str) -> String {
         &format!("{:x}", Sha256::digest(value.as_bytes()))[..24]
     )
 }
-fn workspace_fingerprint(authority: &InitiatedSprintGitAuthority, root: &Path) -> String {
+fn workspace_fingerprint(attempt: &AuthorizedExecutionAttempt, root: &Path) -> String {
     fingerprint(&[
-        &authority.authority_id,
-        &authority.repository_id,
-        &authority.worktree_id,
-        &authority.source_fingerprint,
+        &attempt.authority.authority_id,
+        &attempt.attempt_id,
+        &attempt.baseline_object_id,
         root.to_string_lossy().as_ref(),
+    ])
+}
+fn authorization_fingerprint(
+    attempt_id: &str,
+    work_unit_id: &str,
+    role_kind: &str,
+    authority_id: &str,
+    baseline_object_id: &str,
+) -> String {
+    fingerprint(&[
+        attempt_id,
+        work_unit_id,
+        role_kind,
+        authority_id,
+        baseline_object_id,
     ])
 }
 fn correlation_fingerprint(
@@ -613,11 +921,171 @@ fn fingerprint(values: &[&str]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::repository::{
+        InitiatedSprintGitAuthorityWrite, StoreInitiatedSprintGitAuthorityResult,
+    };
     use super::*;
-    use std::{fs, process::Command};
+
+    struct Fixture {
+        _temp: tempfile::TempDir,
+        database: PathBuf,
+        repository_root: PathBuf,
+        sprint_root: PathBuf,
+        workspace_parent: PathBuf,
+        authority_id: String,
+        baseline: String,
+    }
+
+    impl Fixture {
+        fn git(&self, root: &Path, args: &[&str]) -> String {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{:?}", output);
+            String::from_utf8(output.stdout).unwrap().trim().into()
+        }
+
+        fn service(&self) -> ExecutionSupportService {
+            let orchestration =
+                Arc::new(SqliteOrchestrationRepository::open(&self.database).unwrap());
+            ExecutionSupportService::new(
+                Arc::new(
+                    SqliteExecutionSupportRepository::open(&self.database, orchestration.clone())
+                        .unwrap(),
+                ),
+                Arc::new(ProductExecutionWorkspaceResolver::new(
+                    orchestration,
+                    self.workspace_parent.clone(),
+                )),
+            )
+        }
+
+        fn authorize(
+            &self,
+            service: &ExecutionSupportService,
+            attempt_id: &str,
+            work_unit_id: &str,
+        ) {
+            assert!(matches!(
+                service.authorize_existing_attempt(AuthorizeExistingWorkUnitExecutionAttempt {
+                    attempt_id: attempt_id.into(),
+                    work_unit_id: work_unit_id.into(),
+                    role: WorkUnitExecutionRole::Implementer,
+                    sprint_git_authority_id: self.authority_id.clone(),
+                }).unwrap(),
+                AuthorizeExistingWorkUnitExecutionAttemptResult::Authorized { ref baseline_object_id } if baseline_object_id == &self.baseline
+            ));
+        }
+
+        fn attempt_root(&self, attempt_id: &str) -> PathBuf {
+            self.workspace_parent.join(stable_id(
+                "execution-workspace",
+                &format!("{}:{attempt_id}", self.authority_id),
+            ))
+        }
+    }
+
+    fn fixture() -> Fixture {
+        let temp = tempfile::tempdir().unwrap();
+        let repository_root = temp.path().join("repository");
+        let sprint_root = temp.path().join("sprint-worktree");
+        fs::create_dir(&repository_root).unwrap();
+        let git = |root: &Path, args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{:?}", output);
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        git(&repository_root, &["init"]);
+        git(
+            &repository_root,
+            &["config", "user.email", "test@example.invalid"],
+        );
+        git(&repository_root, &["config", "user.name", "Test"]);
+        fs::write(repository_root.join("file.txt"), "base\n").unwrap();
+        git(&repository_root, &["add", "."]);
+        git(&repository_root, &["commit", "-m", "base"]);
+        let initial = git(&repository_root, &["rev-parse", "HEAD"]);
+        git(
+            &repository_root,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "sprint-source",
+                sprint_root.to_string_lossy().as_ref(),
+                &initial,
+            ],
+        );
+        fs::write(sprint_root.join("file.txt"), "sprint\n").unwrap();
+        git(&sprint_root, &["add", "."]);
+        git(&sprint_root, &["commit", "-m", "sprint"]);
+        let baseline = git(&sprint_root, &["rev-parse", "HEAD"]);
+        let database = temp.path().join("db.sqlite");
+        let connection = Connection::open(&database).unwrap();
+        crate::storage::configure_sqlite_connection(&connection).unwrap();
+        crate::storage::initialize_active_database(&connection).unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .unwrap();
+        connection.execute_batch("INSERT INTO epic_initiation_provenance (id,command_id,result_id,event_id,recorded_at) VALUES ('provenance-1','command-1','result-1','event-1','t'); INSERT INTO epic_initiations (id,command_id,result_id,event_id,provenance_id,draft_id,proposal_revision_id,material_snapshot_id,epic_id,recorded_at) VALUES ('initiation-1','command-1','result-1','event-1','provenance-1','draft-1','revision-1','snapshot-1','epic-1','t'); INSERT INTO initiated_sprints (id,epic_id,ordinal,title,intended_movement,concern_summaries_json,sprint_plan_id,sprint_plan_revision_id) VALUES ('sprint-1','epic-1',0,'Sprint','Move','[]','plan-1','plan-revision-1');").unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", true)
+            .unwrap();
+        drop(connection);
+        let orchestration = Arc::new(SqliteOrchestrationRepository::open(&database).unwrap());
+        let repository_root = repository_root.canonicalize().unwrap();
+        let sprint_root = sprint_root.canonicalize().unwrap();
+        let authority_id = match orchestration
+            .store_initiated_sprint_git_authority(InitiatedSprintGitAuthorityWrite {
+                sprint_id: "sprint-1".into(),
+                idempotency_key: "execution-attempt-authority".into(),
+                repository_id: "repository-1".into(),
+                repository_root: repository_root.to_string_lossy().into_owned(),
+                repository_common_dir: git_path(
+                    &repository_root,
+                    &["rev-parse", "--git-common-dir"],
+                )
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+                worktree_id: "sprint-worktree-1".into(),
+                worktree_root: sprint_root.to_string_lossy().into_owned(),
+                baseline_object_id: initial,
+                current_object_id: baseline.clone(),
+                runtime_instance_ref: "runtime-1".into(),
+                runtime_source_ref: "source-1".into(),
+                source_fingerprint: "a".repeat(64),
+            })
+            .unwrap()
+        {
+            StoreInitiatedSprintGitAuthorityResult::Stored { authority_id }
+            | StoreInitiatedSprintGitAuthorityResult::IdempotentReplay { authority_id } => {
+                authority_id
+            }
+        };
+        let workspace_parent = temp
+            .path()
+            .join("product-data")
+            .join("execution-workspaces");
+        Fixture {
+            _temp: temp,
+            database,
+            repository_root,
+            sprint_root,
+            workspace_parent,
+            authority_id,
+            baseline,
+        }
+    }
 
     #[test]
-    fn canonical_evidence_requires_manifest_membership() {
+    fn canonical_evidence_requires_manifest_membership_and_path_denial() {
         let manifest = vec![ChangedFileManifestEntry {
             evidence_ref: "file-1".into(),
             display_name: "src/lib.rs".into(),
@@ -636,158 +1104,148 @@ mod tests {
     }
 
     #[test]
-    fn productive_adapter_rejects_replaced_or_unclean_workspace() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("repo");
-        fs::create_dir(&root).unwrap();
-        let git = |args: &[&str]| {
-            let output = Command::new("git")
-                .args(args)
-                .current_dir(&root)
-                .output()
-                .unwrap();
-            assert!(output.status.success(), "{:?}", output);
-            String::from_utf8(output.stdout).unwrap().trim().to_owned()
-        };
-        git(&["init"]);
-        git(&["config", "user.email", "test@example.invalid"]);
-        git(&["config", "user.name", "Test"]);
-        fs::write(root.join("file.txt"), "base\n").unwrap();
-        git(&["add", "."]);
-        git(&["commit", "-m", "base"]);
-        let baseline = git(&["rev-parse", "HEAD"]);
-        fs::write(root.join("file.txt"), "next\n").unwrap();
-        git(&["add", "."]);
-        git(&["commit", "-m", "next"]);
-        let head = git(&["rev-parse", "HEAD"]);
-        let common = git_path(&root, &["rev-parse", "--git-common-dir"]).unwrap();
-        let canonical_root = root.canonicalize().unwrap();
-        let authority = InitiatedSprintGitAuthority {
-            authority_id: "authority-1".into(),
-            epic_id: "epic-1".into(),
-            sprint_id: "sprint-1".into(),
-            provenance_id: "provenance-1".into(),
-            repository_id: "repository-1".into(),
-            repository_root: canonical_root.to_string_lossy().into_owned(),
-            repository_common_dir: common.to_string_lossy().into_owned(),
-            worktree_id: "worktree-1".into(),
-            worktree_root: canonical_root.to_string_lossy().into_owned(),
-            baseline_object_id: baseline,
-            current_object_id: head.clone(),
-            runtime_instance_ref: "runtime-1".into(),
-            runtime_source_ref: "source-1".into(),
-            source_fingerprint: "a".repeat(64),
-        };
-        let attempt = AuthorizedExecutionAttempt {
-            attempt_id: "attempt-1".into(),
-            work_unit_id: "work-unit-1".into(),
-            role_kind: "work_unit_implementer".into(),
-            baseline_object_id: head.clone(),
-            authority,
-        };
-        let database = temp.path().join("db.sqlite");
-        let connection = Connection::open(&database).unwrap();
-        crate::storage::configure_sqlite_connection(&connection).unwrap();
-        crate::storage::initialize_active_database(&connection).unwrap();
-        drop(connection);
-        let orchestration = Arc::new(SqliteOrchestrationRepository::open(&database).unwrap());
-        let resolver = ProductExecutionWorkspaceResolver::new(orchestration);
-        let binding = resolver.resolve(&attempt, None).unwrap();
-        fs::write(root.join("dirty.txt"), "dirty\n").unwrap();
-        assert!(resolver.resolve(&attempt, None).is_err());
-        assert_eq!(resolver.resolve(&attempt, Some(&binding)).unwrap(), binding);
+    fn application_authorization_creates_one_distinct_attempt_workspace_and_reopens_it() {
+        let fixture = fixture();
+        let service = fixture.service();
+        assert!(!fixture.workspace_parent.exists());
+        fixture.authorize(&service, "attempt-1", "work-unit-1");
+        let reference = service.grant("attempt-1").unwrap();
+        let root = fixture.attempt_root("attempt-1");
+        assert!(root.is_dir());
+        assert_ne!(root, fixture.repository_root);
+        assert_ne!(root, fixture.sprint_root);
+        assert_eq!(fixture.git(&root, &["rev-parse", "HEAD"]), fixture.baseline);
+        assert!(fixture
+            .git(&fixture.repository_root, &["status", "--porcelain"])
+            .is_empty());
+        assert!(fixture
+            .git(&fixture.sprint_root, &["status", "--porcelain"])
+            .is_empty());
+        assert_eq!(service.grant("attempt-1").unwrap(), reference);
+        drop(service);
+        let reopened = fixture.service();
+        assert_eq!(reopened.grant("attempt-1").unwrap(), reference);
+        assert!(
+            matches!(reopened.consume(&reference.capability_ref, ExecutionSupportIntent::ChangedFileManifest), Ok(ExecutionSupportResponse::ChangedFileManifest(files)) if files.is_empty())
+        );
+    }
+
+    #[test]
+    fn two_attempts_share_sprint_authority_but_not_workspaces_or_evidence() {
+        let fixture = fixture();
+        let service = fixture.service();
+        fixture.authorize(&service, "attempt-1", "work-unit-1");
+        fixture.authorize(&service, "attempt-2", "work-unit-2");
+        let first = service.grant("attempt-1").unwrap();
+        let second = service.grant("attempt-2").unwrap();
+        let first_root = fixture.attempt_root("attempt-1");
+        let second_root = fixture.attempt_root("attempt-2");
+        assert_ne!(first, second);
+        assert_ne!(first_root, second_root);
+        fs::write(first_root.join("only-first.txt"), "first\n").unwrap();
+        fixture.git(&first_root, &["add", "."]);
+        fixture.git(&first_root, &["commit", "-m", "first attempt"]);
+        assert!(
+            matches!(service.consume(&first.capability_ref, ExecutionSupportIntent::ChangedFileManifest), Ok(ExecutionSupportResponse::ChangedFileManifest(files)) if files.len() == 1 && files[0].display_name == "only-first.txt")
+        );
+        assert!(
+            matches!(service.consume(&second.capability_ref, ExecutionSupportIntent::ChangedFileManifest), Ok(ExecutionSupportResponse::ChangedFileManifest(files)) if files.is_empty())
+        );
+        assert_eq!(
+            service.consume(
+                &second.capability_ref,
+                ExecutionSupportIntent::EvidenceContent {
+                    evidence_ref: "unknown".into()
+                }
+            ),
+            Err(ExecutionSupportError::Denied)
+        );
+    }
+
+    #[test]
+    fn occupied_and_drifted_attempt_routes_fail_closed() {
+        let fixture = fixture();
+        let service = fixture.service();
+        fixture.authorize(&service, "attempt-occupied", "work-unit-1");
+        fs::create_dir_all(fixture.attempt_root("attempt-occupied")).unwrap();
+        fs::write(
+            fixture
+                .attempt_root("attempt-occupied")
+                .join("not-a-worktree"),
+            "x",
+        )
+        .unwrap();
         assert!(matches!(
-            resolver.inspect(&attempt, &binding, "capability-1"),
+            service.grant("attempt-occupied"),
             Err(ExecutionSupportError::Unavailable)
+        ));
+        fixture.authorize(&service, "attempt-drift", "work-unit-2");
+        let reference = service.grant("attempt-drift").unwrap();
+        let root = fixture.attempt_root("attempt-drift");
+        fs::write(root.join("dirty.txt"), "dirty\n").unwrap();
+        assert!(matches!(
+            service.consume(
+                &reference.capability_ref,
+                ExecutionSupportIntent::ChangedFileManifest
+            ),
+            Err(ExecutionSupportError::Unavailable)
+        ));
+        fixture.authorize(&service, "attempt-replaced", "work-unit-3");
+        let replaced = service.grant("attempt-replaced").unwrap();
+        let root = fixture.attempt_root("attempt-replaced");
+        fs::rename(&root, fixture.workspace_parent.join("replaced-worktree")).unwrap();
+        fs::create_dir(&root).unwrap();
+        assert!(matches!(
+            service.consume(
+                &replaced.capability_ref,
+                ExecutionSupportIntent::ChangedFileManifest
+            ),
+            Err(ExecutionSupportError::Unavailable | ExecutionSupportError::CorrelationMismatch)
         ));
     }
 
     #[test]
-    fn restart_reopens_durable_authority_and_refreshes_canonical_comparison() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("repo");
-        fs::create_dir(&root).unwrap();
-        let git = |args: &[&str]| {
-            let output = Command::new("git")
-                .args(args)
-                .current_dir(&root)
-                .output()
-                .unwrap();
-            assert!(output.status.success(), "{:?}", output);
-            String::from_utf8(output.stdout).unwrap().trim().to_owned()
-        };
-        git(&["init"]);
-        git(&["config", "user.email", "test@example.invalid"]);
-        git(&["config", "user.name", "Test"]);
-        fs::write(root.join("file.txt"), "base\n").unwrap();
-        git(&["add", "."]);
-        git(&["commit", "-m", "base"]);
-        let baseline = git(&["rev-parse", "HEAD"]);
-        fs::write(root.join("file.txt"), "next\n").unwrap();
-        git(&["add", "."]);
-        git(&["commit", "-m", "next"]);
-        let current = git(&["rev-parse", "HEAD"]);
-        let canonical_root = root.canonicalize().unwrap();
-        let common = git_path(&root, &["rev-parse", "--git-common-dir"]).unwrap();
-        let database = temp.path().join("db.sqlite");
-        let connection = Connection::open(&database).unwrap();
-        crate::storage::configure_sqlite_connection(&connection).unwrap();
-        crate::storage::initialize_active_database(&connection).unwrap();
-        connection
-            .pragma_update(None, "foreign_keys", false)
-            .unwrap();
-        connection.execute_batch("INSERT INTO epic_initiation_provenance (id,command_id,result_id,event_id,recorded_at) VALUES ('provenance-1','command-1','result-1','event-1','t'); INSERT INTO epic_initiations (id,command_id,result_id,event_id,provenance_id,draft_id,proposal_revision_id,material_snapshot_id,epic_id,recorded_at) VALUES ('initiation-1','command-1','result-1','event-1','provenance-1','draft-1','revision-1','snapshot-1','epic-1','t'); INSERT INTO initiated_sprints (id,epic_id,ordinal,title,intended_movement,concern_summaries_json,sprint_plan_id,sprint_plan_revision_id) VALUES ('sprint-1','epic-1',0,'Sprint','Move','[]','plan-1','plan-revision-1');").unwrap();
-        connection
-            .pragma_update(None, "foreign_keys", true)
-            .unwrap();
-        drop(connection);
-        let orchestration = Arc::new(SqliteOrchestrationRepository::open(&database).unwrap());
-        let authority_id = match orchestration.store_initiated_sprint_git_authority(super::super::repository::InitiatedSprintGitAuthorityWrite {
-            sprint_id: "sprint-1".into(), idempotency_key: "execution-attempt-authority".into(), repository_id: "repository-1".into(), repository_root: canonical_root.to_string_lossy().into_owned(), repository_common_dir: common.to_string_lossy().into_owned(), worktree_id: "worktree-1".into(), worktree_root: canonical_root.to_string_lossy().into_owned(), baseline_object_id: baseline, current_object_id: current.clone(), runtime_instance_ref: "runtime-1".into(), runtime_source_ref: "source-1".into(), source_fingerprint: "a".repeat(64),
-        }).unwrap() { super::super::repository::StoreInitiatedSprintGitAuthorityResult::Stored { authority_id } | super::super::repository::StoreInitiatedSprintGitAuthorityResult::IdempotentReplay { authority_id } => authority_id };
-        let connection = Connection::open(&database).unwrap();
-        connection.execute("INSERT INTO execution_support_attempt_authorizations (attempt_id,work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id,recorded_at) VALUES ('attempt-1','work-unit-1','work_unit_implementer',?1,?2,'t')", params![authority_id, current]).unwrap();
-        drop(connection);
-        let service = ExecutionSupportService::new(
-            Arc::new(
-                SqliteExecutionSupportRepository::open(&database, orchestration.clone()).unwrap(),
-            ),
-            Arc::new(ProductExecutionWorkspaceResolver::new(orchestration)),
-        );
+    fn file_review_compares_only_the_attempt_workspace() {
+        let fixture = fixture();
+        let service = fixture.service();
+        fixture.authorize(&service, "attempt-1", "work-unit-1");
         let reference = service.grant("attempt-1").unwrap();
-        drop(service);
-        let reopened_orchestration =
-            Arc::new(SqliteOrchestrationRepository::open(&database).unwrap());
-        let reopened = ExecutionSupportService::new(
-            Arc::new(
-                SqliteExecutionSupportRepository::open(&database, reopened_orchestration.clone())
-                    .unwrap(),
-            ),
-            Arc::new(ProductExecutionWorkspaceResolver::new(
-                reopened_orchestration,
-            )),
-        );
-        assert!(
-            matches!(reopened.consume(&reference.capability_ref, ExecutionSupportIntent::ChangedFileManifest), Ok(ExecutionSupportResponse::ChangedFileManifest(ref files)) if files.is_empty())
-        );
-        fs::write(root.join("file.txt"), "later\n").unwrap();
-        git(&["add", "."]);
-        git(&["commit", "-m", "later"]);
-        let manifest = reopened
+        let root = fixture.attempt_root("attempt-1");
+        fs::write(root.join("attempt-only.txt"), "attempt\n").unwrap();
+        fixture.git(&root, &["add", "."]);
+        fixture.git(&root, &["commit", "-m", "attempt change"]);
+        let manifest = service
             .consume(
                 &reference.capability_ref,
                 ExecutionSupportIntent::ChangedFileManifest,
             )
             .unwrap();
-        assert!(
-            matches!(manifest, ExecutionSupportResponse::ChangedFileManifest(ref files) if files.len() == 1)
-        );
+        let evidence = match manifest {
+            ExecutionSupportResponse::ChangedFileManifest(files) => {
+                assert_eq!(files.len(), 1);
+                assert_eq!(files[0].display_name, "attempt-only.txt");
+                files[0].evidence_ref.clone()
+            }
+            _ => panic!("expected manifest"),
+        };
         assert!(matches!(
-            reopened.consume(
+            service.consume(
                 &reference.capability_ref,
                 ExecutionSupportIntent::Comparison
             ),
             Ok(ExecutionSupportResponse::Comparison(_))
         ));
+        assert!(matches!(
+            service.consume(
+                &reference.capability_ref,
+                ExecutionSupportIntent::EvidenceContent {
+                    evidence_ref: evidence
+                }
+            ),
+            Ok(ExecutionSupportResponse::EvidenceContent(_))
+        ));
+        assert!(fixture
+            .git(&fixture.sprint_root, &["status", "--porcelain"])
+            .is_empty());
     }
 }

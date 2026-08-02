@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-const ACTIVE_SCHEMA_VERSION: i64 = 15;
+const ACTIVE_SCHEMA_VERSION: i64 = 16;
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join(ACTIVE_DATABASE_FILE_NAME)
@@ -25,7 +25,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     if current_version == ACTIVE_SCHEMA_VERSION {
         return Ok(());
     }
-    if (1..=14).contains(&current_version) {
+    if (1..=15).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -117,6 +117,17 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 )
                 .map_err(|error| {
                     format!("Unable to migrate execution-support attempt baseline: {error}")
+                })?;
+        }
+        if (14..=15).contains(&current_version) {
+            transaction
+                .execute_batch(
+                    crate::orchestration::execution_support::EXECUTION_SUPPORT_ATTEMPT_AUTHORIZATION_MIGRATION,
+                )
+                .map_err(|error| {
+                    format!(
+                        "Unable to migrate execution-support attempt authorization authority: {error}"
+                    )
                 })?;
         }
         transaction
@@ -460,7 +471,7 @@ mod tests {
                 .expect("preserved Batch 11 authority"),
             "capture-fingerprint-v10"
         );
-        assert_eq!(pragma_i64(&connection, "user_version"), 15);
+        assert_eq!(pragma_i64(&connection, "user_version"), 16);
         initialize_active_database(&connection).expect("reopen current schema");
     }
 
@@ -492,8 +503,50 @@ mod tests {
                 .expect("preserved predecessor row"),
             "preserved"
         );
-        assert_eq!(pragma_i64(&connection, "user_version"), 15);
-        initialize_active_database(&connection).expect("reopen v15");
+        assert_eq!(pragma_i64(&connection, "user_version"), 16);
+        initialize_active_database(&connection).expect("reopen v16");
+    }
+
+    #[test]
+    fn migrates_v15_execution_authorizations_to_allow_multiple_attempts_per_sprint_authority() {
+        let connection = Connection::open_in_memory().expect("database");
+        configure_sqlite_connection(&connection).expect("policy");
+        initialize_active_database(&connection).expect("seed current schema");
+        connection
+            .execute_batch(
+                "DROP TABLE execution_support_attempt_authorizations;
+                 CREATE TABLE execution_support_attempt_authorizations (
+                   attempt_id TEXT PRIMARY KEY,
+                   work_unit_id TEXT NOT NULL,
+                   role_kind TEXT NOT NULL,
+                   sprint_git_authority_id TEXT NOT NULL UNIQUE,
+                   baseline_object_id TEXT NOT NULL,
+                   recorded_at TEXT NOT NULL
+                 );
+                 PRAGMA user_version=15;",
+            )
+            .expect("seed v15 execution authorization schema");
+
+        initialize_active_database(&connection).expect("migrate v15");
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .expect("temporarily bypass unrelated authority fixtures");
+        connection
+            .execute(
+                "INSERT INTO execution_support_attempt_authorizations (attempt_id,work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id,authorization_fingerprint,recorded_at) VALUES ('attempt-1','work-unit-1','work_unit_implementer','authority-1','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','fingerprint-1','t')",
+                [],
+            )
+            .expect("first attempt");
+        connection
+            .execute(
+                "INSERT INTO execution_support_attempt_authorizations (attempt_id,work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id,authorization_fingerprint,recorded_at) VALUES ('attempt-2','work-unit-2','work_unit_handler','authority-1','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','fingerprint-2','t')",
+                [],
+            )
+            .expect("second attempt sharing Sprint authority");
+        connection
+            .pragma_update(None, "foreign_keys", true)
+            .expect("restore foreign keys");
+        assert_eq!(pragma_i64(&connection, "user_version"), 16);
     }
 
     #[test]
