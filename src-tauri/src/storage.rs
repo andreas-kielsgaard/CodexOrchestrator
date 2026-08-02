@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-const ACTIVE_SCHEMA_VERSION: i64 = 12;
+const ACTIVE_SCHEMA_VERSION: i64 = 13;
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join(ACTIVE_DATABASE_FILE_NAME)
@@ -25,7 +25,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     if current_version == ACTIVE_SCHEMA_VERSION {
         return Ok(());
     }
-    if (1..=11).contains(&current_version) {
+    if (1..=12).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -108,6 +108,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 format!("Unable to migrate Harness working-copy schema: {error}")
             })?;
         transaction
+            .execute_batch(crate::orchestration::execution_support::EXECUTION_SUPPORT_SCHEMA)
+            .map_err(|error| format!("Unable to migrate execution-support schema: {error}"))?;
+        transaction
             .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
             .map_err(|error| format!("Unable to record active schema version: {error}"))?;
         transaction
@@ -156,6 +159,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             crate::orchestration::conversation_harness_working_copy::HARNESS_WORKING_COPY_SCHEMA,
         )
         .map_err(|error| format!("Unable to initialize Harness working-copy schema: {error}"))?;
+    transaction
+        .execute_batch(crate::orchestration::execution_support::EXECUTION_SUPPORT_SCHEMA)
+        .map_err(|error| format!("Unable to initialize execution-support schema: {error}"))?;
     transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
         .map_err(|error| format!("Unable to record active schema version: {error}"))?;
@@ -269,6 +275,8 @@ mod tests {
                 "epic_initiation_results",
                 "epic_initiations",
                 "epic_planning_drafts",
+                "execution_support_evidence",
+                "execution_support_grants",
                 "file_review_changed_files",
                 "file_review_documents",
                 "file_review_git_capture_authorizations",
@@ -443,7 +451,7 @@ mod tests {
                 .expect("preserved Batch 11 authority"),
             "capture-fingerprint-v10"
         );
-        assert_eq!(pragma_i64(&connection, "user_version"), 12);
+        assert_eq!(pragma_i64(&connection, "user_version"), 13);
         initialize_active_database(&connection).expect("reopen current schema");
     }
 
@@ -475,8 +483,8 @@ mod tests {
                 .expect("preserved predecessor row"),
             "preserved"
         );
-        assert_eq!(pragma_i64(&connection, "user_version"), 12);
-        initialize_active_database(&connection).expect("reopen v12");
+        assert_eq!(pragma_i64(&connection, "user_version"), 13);
+        initialize_active_database(&connection).expect("reopen v13");
     }
 
     #[test]
