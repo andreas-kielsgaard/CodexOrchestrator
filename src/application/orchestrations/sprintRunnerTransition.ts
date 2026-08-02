@@ -34,12 +34,21 @@ export interface SprintRunnerTransitionV1 {
   readonly planningControlInvocationId?: string;
   readonly planningControlLaunchAcceptedAt?: string;
   readonly planningReadyAt?: string;
+  readonly workSlicePlannerRequestId?: string;
   readonly workSlicePlanningPointId?: string;
+  readonly workSlicePlannerRepositoryWorktreeRoute?: string;
+  readonly workSlicePlannerHarnessKey?: string;
+  readonly workSlicePlannerHarnessVersion?: number;
   readonly workSlicePlannerSessionId?: string;
   readonly workSlicePlannerInvocationId?: string;
   readonly workSlicePlannerSessionCreatedAt?: string;
+  readonly workSlicePlannerInvocationCreatedAt?: string;
   readonly workSlicePlannerHarnessAppliedAt?: string;
+  readonly workSlicePlannerLaunchRequestedAt?: string;
   readonly workSlicePlannerLaunchAcceptedAt?: string;
+  readonly workSlicePlannerReadyAt?: string;
+  readonly workSlicePlannerProviderActivationObservedAt?: string;
+  readonly workSlicePlannerLifecycleObservedAt?: string;
   readonly downstreamNotStarted?: boolean;
 }
 
@@ -75,12 +84,21 @@ export interface ProductSprintRunnerTransitionStatusV1 {
   readonly planningControlInvocationId?: string;
   readonly planningControlLaunchAcceptedAt?: string;
   readonly planningReadyAt?: string;
+  readonly workSlicePlannerRequestId?: string;
   readonly workSlicePlanningPointId?: string;
+  readonly workSlicePlannerRepositoryWorktreeRoute?: string;
+  readonly workSlicePlannerHarnessKey?: string;
+  readonly workSlicePlannerHarnessVersion?: number;
   readonly workSlicePlannerSessionId?: string;
   readonly workSlicePlannerInvocationId?: string;
   readonly workSlicePlannerSessionCreatedAt?: string;
+  readonly workSlicePlannerInvocationCreatedAt?: string;
   readonly workSlicePlannerHarnessAppliedAt?: string;
+  readonly workSlicePlannerLaunchRequestedAt?: string;
   readonly workSlicePlannerLaunchAcceptedAt?: string;
+  readonly workSlicePlannerReadyAt?: string;
+  readonly workSlicePlannerProviderActivationObservedAt?: string;
+  readonly workSlicePlannerLifecycleObservedAt?: string;
   readonly downstreamNotStarted?: boolean;
 }
 
@@ -140,12 +158,21 @@ export function projectSprintRunnerTransitionStatus(
     ...optionalProjection(transition, 'planningControlInvocationId'),
     ...optionalProjection(transition, 'planningControlLaunchAcceptedAt'),
     ...optionalProjection(transition, 'planningReadyAt'),
+    ...optionalProjection(transition, 'workSlicePlannerRequestId'),
     ...optionalProjection(transition, 'workSlicePlanningPointId'),
+    ...optionalProjection(transition, 'workSlicePlannerRepositoryWorktreeRoute'),
+    ...optionalProjection(transition, 'workSlicePlannerHarnessKey'),
+    ...optionalProjection(transition, 'workSlicePlannerHarnessVersion'),
     ...optionalProjection(transition, 'workSlicePlannerSessionId'),
     ...optionalProjection(transition, 'workSlicePlannerInvocationId'),
     ...optionalProjection(transition, 'workSlicePlannerSessionCreatedAt'),
+    ...optionalProjection(transition, 'workSlicePlannerInvocationCreatedAt'),
     ...optionalProjection(transition, 'workSlicePlannerHarnessAppliedAt'),
+    ...optionalProjection(transition, 'workSlicePlannerLaunchRequestedAt'),
     ...optionalProjection(transition, 'workSlicePlannerLaunchAcceptedAt'),
+    ...optionalProjection(transition, 'workSlicePlannerReadyAt'),
+    ...optionalProjection(transition, 'workSlicePlannerProviderActivationObservedAt'),
+    ...optionalProjection(transition, 'workSlicePlannerLifecycleObservedAt'),
     downstreamNotStarted: transition.downstreamNotStarted,
   };
 }
@@ -196,9 +223,14 @@ function decodeTransition(value: unknown): SprintRunnerTransitionV1 {
        'planningControlDeliveryPersistedAt', 'planningControlInvocationId',
        'planningControlLaunchAcceptedAt',
        'planningReadyAt',
-       'workSlicePlanningPointId', 'workSlicePlannerSessionId', 'workSlicePlannerInvocationId',
-       'workSlicePlannerSessionCreatedAt', 'workSlicePlannerHarnessAppliedAt',
-       'workSlicePlannerLaunchAcceptedAt',
+       'workSlicePlannerRequestId', 'workSlicePlanningPointId',
+       'workSlicePlannerRepositoryWorktreeRoute', 'workSlicePlannerHarnessKey',
+       'workSlicePlannerHarnessVersion', 'workSlicePlannerSessionId',
+       'workSlicePlannerInvocationId', 'workSlicePlannerSessionCreatedAt',
+       'workSlicePlannerInvocationCreatedAt', 'workSlicePlannerHarnessAppliedAt',
+       'workSlicePlannerLaunchRequestedAt', 'workSlicePlannerLaunchAcceptedAt',
+       'workSlicePlannerReadyAt', 'workSlicePlannerProviderActivationObservedAt',
+       'workSlicePlannerLifecycleObservedAt',
       'downstreamNotStarted',
     ],
     'Sprint Runner transition',
@@ -237,12 +269,21 @@ function decodeTransition(value: unknown): SprintRunnerTransitionV1 {
     ...optionalText(item, 'planningControlInvocationId'),
     ...optionalText(item, 'planningControlLaunchAcceptedAt'),
     ...optionalText(item, 'planningReadyAt'),
+    ...optionalText(item, 'workSlicePlannerRequestId'),
     ...optionalText(item, 'workSlicePlanningPointId'),
+    ...optionalText(item, 'workSlicePlannerRepositoryWorktreeRoute'),
+    ...optionalText(item, 'workSlicePlannerHarnessKey'),
+    ...optionalNumber(item, 'workSlicePlannerHarnessVersion'),
     ...optionalText(item, 'workSlicePlannerSessionId'),
     ...optionalText(item, 'workSlicePlannerInvocationId'),
     ...optionalText(item, 'workSlicePlannerSessionCreatedAt'),
+    ...optionalText(item, 'workSlicePlannerInvocationCreatedAt'),
     ...optionalText(item, 'workSlicePlannerHarnessAppliedAt'),
+    ...optionalText(item, 'workSlicePlannerLaunchRequestedAt'),
     ...optionalText(item, 'workSlicePlannerLaunchAcceptedAt'),
+    ...optionalText(item, 'workSlicePlannerReadyAt'),
+    ...optionalText(item, 'workSlicePlannerProviderActivationObservedAt'),
+    ...optionalText(item, 'workSlicePlannerLifecycleObservedAt'),
     downstreamNotStarted: bool(item.downstreamNotStarted, 'downstreamNotStarted'),
   } as SprintRunnerTransitionV1;
   if (
@@ -279,6 +320,12 @@ function text(value: unknown, label: string): string {
 function optionalText(value: Record<string, unknown>, key: string): Record<string, string> {
   if (value[key] == null) return {};
   return { [key]: text(value[key], key) };
+}
+function optionalNumber(value: Record<string, unknown>, key: string): Record<string, number> {
+  if (value[key] == null) return {};
+  if (typeof value[key] !== 'number' || !Number.isInteger(value[key]))
+    invalid(`${key} must be an integer`);
+  return { [key]: value[key] };
 }
 function bool(value: unknown, label: string): boolean {
   if (typeof value !== 'boolean') invalid(`${label} must be boolean`);

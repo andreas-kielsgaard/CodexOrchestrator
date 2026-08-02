@@ -124,4 +124,34 @@ describe('Sprint Runner transition query', () => {
     expect(ready.downstreamNotStarted).toBe(true);
     expect(ready.providerReceiverActivationObservedAt).toBe('2026-08-02T00:00:15Z');
   });
+
+  it('maps the durable Work Slice Planner boundary and keeps later observations absent', () => {
+    const value = query();
+    Object.assign(value.transitions[0]!, {
+      workSlicePlannerRequestId: 'planner-request-1',
+      workSlicePlanningPointId: 'planning-point-1',
+      workSlicePlannerRepositoryWorktreeRoute: 'C:/authority/worktree',
+      workSlicePlannerHarnessKey: 'planner-harness',
+      workSlicePlannerHarnessVersion: 3,
+      workSlicePlannerSessionId: 'planner-session-1',
+      workSlicePlannerInvocationId: 'planner-invocation-1',
+      workSlicePlannerSessionCreatedAt: '2026-08-02T00:00:16Z',
+      workSlicePlannerInvocationCreatedAt: '2026-08-02T00:00:17Z',
+      workSlicePlannerHarnessAppliedAt: '2026-08-02T00:00:18Z',
+      workSlicePlannerLaunchRequestedAt: '2026-08-02T00:00:19Z',
+      workSlicePlannerLaunchAcceptedAt: '2026-08-02T00:00:20Z',
+      workSlicePlannerReadyAt: '2026-08-02T00:00:21Z',
+      workSlicePlannerProviderActivationObservedAt: null,
+      workSlicePlannerLifecycleObservedAt: null,
+    });
+    const transition = decodeSprintRunnerTransitionQueryV1(value).transitions[0]!;
+    expect(projectSprintRunnerTransitionStatus(transition)).toMatchObject({
+      workSlicePlannerRequestId: 'planner-request-1',
+      workSlicePlannerHarnessVersion: 3,
+      workSlicePlannerLaunchAcceptedAt: '2026-08-02T00:00:20Z',
+      workSlicePlannerReadyAt: '2026-08-02T00:00:21Z',
+    });
+    expect(transition.workSlicePlannerProviderActivationObservedAt).toBeUndefined();
+    expect(transition.workSlicePlannerLifecycleObservedAt).toBeUndefined();
+  });
 });

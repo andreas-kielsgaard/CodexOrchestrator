@@ -340,6 +340,7 @@ export function SprintWorkspace({
                   : ''}
               </small>
             </section>
+            <WorkSlicePlannerBoundary transition={workspace.sprint.sprintRunnerTransition} />
           ) : null}
           <section className="sprint-context__objectives" aria-label="Epic Runner objectives">
             <h2>Epic Runner objectives</h2>
@@ -545,6 +546,47 @@ export function SprintWorkspace({
         ) : undefined
       }
     />
+  );
+}
+
+function WorkSlicePlannerBoundary({
+  transition,
+}: {
+  readonly transition: NonNullable<SprintWorkspacePresentationV1['sprint']['sprintRunnerTransition']>;
+}) {
+  const stage = (label: string, recorded: boolean) => (
+    <li key={label}>{recorded ? label : `${label} (not recorded)`}</li>
+  );
+  return (
+    <section className="sprint-context__runner-transition" aria-label="Work Slice Planner boundary">
+      <h2>Work Slice Planner boundary</h2>
+      <p>
+        This Sprint currently stops at the application-owned Work Slice Planner launch boundary.
+      </p>
+      <ul>
+        {stage('Request and authorization', Boolean(transition.workSlicePlannerRequestId))}
+        {stage('Work Slice planning point', Boolean(transition.workSlicePlanningPointId))}
+        {stage('Planner Session', Boolean(transition.workSlicePlannerSessionId))}
+        {stage('Planner invocation', Boolean(transition.workSlicePlannerInvocationId))}
+        {stage('Harness application', Boolean(transition.workSlicePlannerHarnessAppliedAt))}
+        {stage('Launch requested', Boolean(transition.workSlicePlannerLaunchRequestedAt))}
+        {stage('Runtime launch accepted', Boolean(transition.workSlicePlannerLaunchAcceptedAt))}
+        {stage('Planner readiness', Boolean(transition.workSlicePlannerReadyAt))}
+        {stage(
+          'Provider activation observed',
+          Boolean(transition.workSlicePlannerProviderActivationObservedAt),
+        )}
+        {stage('Lifecycle observed', Boolean(transition.workSlicePlannerLifecycleObservedAt))}
+      </ul>
+      <p>
+        No Planner proposal or result, Work Unit, Handler, Implementer, settlement, or later
+        planning point is recorded here.
+      </p>
+      <small>
+        Provider activation and lifecycle remain unobserved unless their durable source facts are
+        recorded.
+      </small>
+    </section>
   );
 }
 
