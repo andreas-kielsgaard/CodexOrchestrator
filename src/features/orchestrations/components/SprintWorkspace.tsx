@@ -56,14 +56,14 @@ export function SprintWorkspace({
 }: SprintWorkspaceProps) {
   const [selectedTab, setSelectedTab] = useState<SprintWorkspaceTab>('flow');
   const [selectedConcernId, setSelectedConcernId] = useState<string | null>(null);
-  const [highlightedSprintRunnerConcernId, setHighlightedSprintRunnerConcernId] = useState<
-    string | null
-  >(null);
+  const [highlightedManagedObjectiveId, setHighlightedManagedObjectiveId] = useState<string | null>(
+    null,
+  );
   const [hoveredGraphElement, setHoveredGraphElement] = useState<{
     readonly kind: 'work_slice_planning_point' | 'work_unit' | 'gate';
     readonly id: string;
   } | null>(null);
-  const sprintRunnerConcernFocusIndexRef = useRef(new Map<string, number>());
+  const managedObjectiveFocusIndexRef = useRef(new Map<string, number>());
   const sprintRestoreRef = useRef<{
     kind: 'work_slice_planning_point' | 'work_unit';
     id: string;
@@ -75,6 +75,14 @@ export function SprintWorkspace({
       : undefined;
   const hasStartedPlan = planningValue?.kind === 'started_plan';
   const hasPreStartForecast = planningValue?.kind === 'pre_start_forecast';
+  const instantiatedWorkSlicePlanningPointIds = new Set(
+    workspace.agentSessionReferences
+      .filter(
+        ({ targetKind, semanticRole }) =>
+          targetKind === 'work_slice_planning_point' && semanticRole === 'work_slice_planner',
+      )
+      .map(({ targetId }) => targetId),
+  );
   const planningUnavailableReason =
     workspace.sprint.planningState.source.status === 'available'
       ? 'The planning state is not available.'
@@ -136,6 +144,7 @@ export function SprintWorkspace({
             ? 'Back to Concern'
             : 'Back to Work Slice planning point'
         }
+        initialLifecycleEntryId={detailLocation.lifecycleEntryId}
         onBack={() => {
           if (detailLocation.origin === 'concern') {
             concernRestoreWorkUnitRef.current = detailLocation.workUnitId;
@@ -153,7 +162,11 @@ export function SprintWorkspace({
     );
   }
 
-  if (hasStartedPlan && detailLocation.kind === 'work_slice_planning_point') {
+  if (
+    hasStartedPlan &&
+    detailLocation.kind === 'work_slice_planning_point' &&
+    instantiatedWorkSlicePlanningPointIds.has(detailLocation.workSlicePlanningPointId)
+  ) {
     const view = workspace.revisionViews.find(
       ({ sprintPlanRevisionId }) => sprintPlanRevisionId === detailLocation.revisionId,
     )!;
@@ -177,18 +190,27 @@ export function SprintWorkspace({
           adjunct,
         )}
         agentSessionComposition={agentSessionComposition}
-        workflow={adjunct?.workSlicePlanningPointWorkflows.find(
-          ({ workSlicePlanningPointId }) =>
-            workSlicePlanningPointId === workSlicePlanningPointGroup.workSlicePlanningPointId,
+        plannerReport={workspace.roleReports.find(
+          (
+            report,
+          ): report is Extract<
+            (typeof workspace.roleReports)[number],
+            { toolName: 'record_work_slice_plan' }
+          > =>
+            report.toolName === 'record_work_slice_plan' &&
+            report.workSlicePlanningPointId ===
+              workSlicePlanningPointGroup.workSlicePlanningPointId &&
+            report.sprintPlanRevisionId === view.sprintPlanRevisionId,
         )}
         onBack={() => onDetailLocationChange({ kind: 'sprint' })}
-        onOpenWorkUnit={(workUnitId) => {
+        onOpenWorkUnit={(workUnitId, lifecycleEntryId) => {
           onDetailLocationChange({
             kind: 'work_unit',
             revisionId: view.sprintPlanRevisionId,
             workSlicePlanningPointId: workSlicePlanningPointGroup.workSlicePlanningPointId,
             workUnitId,
             origin: 'work_slice_planning_point',
+            ...(lifecycleEntryId ? { lifecycleEntryId } : {}),
           });
         }}
         onOpenAgentSession={onOpenAgentSession}
@@ -239,76 +261,79 @@ export function SprintWorkspace({
             {sprintLifecycleLabel(workspace.sprint.lifecycle)}
           </span>
           <p>{workspace.sprint.summary}</p>
-          <section className="sprint-context__objectives" aria-label="Epic Runner objectives">
-            <h2>Epic Runner objectives</h2>
-            {workspace.epicRunnerObjectives.length > 0 ? (
-              <ul>
-                {workspace.epicRunnerObjectives.map((objective) => (
-                  <li key={objective.objectiveId}>{objective.title}</li>
-                ))}
-              </ul>
-            ) : (
-              <p>No recorded Epic Runner Sprint objectives.</p>
-            )}
-          </section>
-          {hasStartedPlan && workspace.sprintRunnerConcerns.length > 0 ? (
-            <section
-              className="sprint-context__runner-concerns"
-              aria-label="Sprint Runner concerns"
-            >
-              <h2>Sprint Runner concerns</h2>
-              <ul>
-                {workspace.sprintRunnerConcerns.map((sprintRunnerConcern) => {
+          <details className="sprint-context__plan" open>
+            <summary>Sprint plan</summary>
+            <p className="sprint-context__plan-authority">
+              Epic Runner proposal input · Sprint Runner managed plan
+            </p>
+            {workspace.managedObjectives.length > 0 ? (
+              <ul aria-label="Managed Sprint objectives">
+                {workspace.managedObjectives.map((objective) => {
+                  const graphReferences = managedObjectiveGraphReferences(objective);
                   const relatedToHover = hoveredGraphElement
-                    ? sprintRunnerConcern.graphElementRefs.some(
+                    ? graphReferences.some(
                         (reference) =>
                           reference.kind === hoveredGraphElement.kind &&
                           reference.id === hoveredGraphElement.id,
                       )
                     : false;
+                  const objectiveConcerns = objective.associations
+                    .filter(({ kind }) => kind === 'concern')
+                    .map(({ targetId }) =>
+                      workspace.concerns.find(({ concernId }) => concernId === targetId),
+                    )
+                    .filter((concern): concern is NonNullable<typeof concern> => Boolean(concern));
                   return (
-                    <li key={sprintRunnerConcern.sprintRunnerConcernId}>
+                    <li key={objective.objectiveId}>
                       <button
                         type="button"
                         className={
-                          highlightedSprintRunnerConcernId ===
-                            sprintRunnerConcern.sprintRunnerConcernId || relatedToHover
+                          highlightedManagedObjectiveId === objective.objectiveId || relatedToHover
                             ? 'is-highlighted'
                             : undefined
                         }
-                        aria-pressed={
-                          highlightedSprintRunnerConcernId ===
-                          sprintRunnerConcern.sprintRunnerConcernId
-                        }
+                        aria-pressed={highlightedManagedObjectiveId === objective.objectiveId}
                         onPointerEnter={() =>
-                          setHighlightedSprintRunnerConcernId(
-                            sprintRunnerConcern.sprintRunnerConcernId,
-                          )
+                          setHighlightedManagedObjectiveId(objective.objectiveId)
                         }
-                        onPointerLeave={() => setHighlightedSprintRunnerConcernId(null)}
-                        onFocus={() =>
-                          setHighlightedSprintRunnerConcernId(
-                            sprintRunnerConcern.sprintRunnerConcernId,
-                          )
-                        }
-                        onBlur={() => setHighlightedSprintRunnerConcernId(null)}
+                        onPointerLeave={() => setHighlightedManagedObjectiveId(null)}
+                        onFocus={() => setHighlightedManagedObjectiveId(objective.objectiveId)}
+                        onBlur={() => setHighlightedManagedObjectiveId(null)}
                         onClick={() => {
+                          if (!hasStartedPlan) return;
                           setSelectedTab('flow');
-                          focusNextSprintRunnerConcernGraphElement(
-                            sprintRunnerConcern,
+                          focusNextManagedObjectiveGraphElement(
+                            objective,
                             selectedView,
-                            sprintRunnerConcernFocusIndexRef.current,
+                            managedObjectiveFocusIndexRef.current,
                           );
                         }}
                       >
-                        {sprintRunnerConcern.title}
+                        <strong>{objective.title}</strong>
+                        <small>
+                          {objective.state === 'concretized' ? 'Concretized' : 'Proposed'} ·{' '}
+                          {objective.oversight.status === 'pending'
+                            ? 'Oversight pending'
+                            : objective.oversight.status === 'accepted'
+                              ? 'Epic Runner accepted'
+                              : 'Correction requested'}
+                        </small>
                       </button>
+                      {objectiveConcerns.length ? (
+                        <ul aria-label={`${objective.title} concerns`}>
+                          {objectiveConcerns.map((concern) => (
+                            <li key={concern.concernId}>{concern.title}</li>
+                          ))}
+                        </ul>
+                      ) : null}
                     </li>
                   );
                 })}
               </ul>
-            </section>
-          ) : null}
+            ) : (
+              <p>No sourced managed Sprint objectives are available.</p>
+            )}
+          </details>
         </div>
       }
       primary={
@@ -333,6 +358,16 @@ export function SprintWorkspace({
               ) : (
                 <p>No sourced pre-start concerns are available.</p>
               )}
+              {workspace.forecastTasks.length > 0 ? (
+                <section aria-label="Forecast task breakdown">
+                  <h3>Proposed task breakdown</h3>
+                  <ul>
+                    {workspace.forecastTasks.map((task) => (
+                      <li key={task.forecastTaskId}>{task.title}</li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
             </section>
           ) : !hasStartedPlan ? (
             <section className="sprint-forecast" aria-label="Sprint planning unavailable">
@@ -360,7 +395,8 @@ export function SprintWorkspace({
                   workspace={workspace}
                   selectedRevisionId={selectedRevisionId}
                   onSelectedRevisionChange={onSelectedRevisionChange}
-                  highlightedSprintRunnerConcernId={highlightedSprintRunnerConcernId}
+                  instantiatedWorkSlicePlanningPointIds={instantiatedWorkSlicePlanningPointIds}
+                  highlightedManagedObjectiveId={highlightedManagedObjectiveId}
                   hoveredGraphElement={hoveredGraphElement}
                   onHoveredGraphElementChange={setHoveredGraphElement}
                   onOpenWorkSlicePlanningPointGroup={(workSlicePlanningPointId) => {
@@ -459,12 +495,13 @@ function sprintLifecycleLabel(lifecycle: SprintWorkspacePresentationV1['sprint']
   }[value];
 }
 
-function focusNextSprintRunnerConcernGraphElement(
-  sprintRunnerConcern: SprintWorkspacePresentationV1['sprintRunnerConcerns'][number],
+function focusNextManagedObjectiveGraphElement(
+  objective: SprintWorkspacePresentationV1['managedObjectives'][number],
   view: SprintWorkspacePresentationV1['revisionViews'][number],
   focusIndexes: Map<string, number>,
 ) {
-  const priority = (reference: (typeof sprintRunnerConcern.graphElementRefs)[number]) => {
+  const references = managedObjectiveGraphReferences(objective);
+  const priority = (reference: (typeof references)[number]) => {
     if (reference.kind === 'work_unit') {
       const state = view.workUnits.find(
         ({ workUnitId }) => workUnitId === reference.id,
@@ -494,15 +531,15 @@ function focusNextSprintRunnerConcernGraphElement(
     }
     return 2;
   };
-  const ordered = [...sprintRunnerConcern.graphElementRefs].sort(
+  const ordered = [...references].sort(
     (left, right) =>
       priority(left) - priority(right) ||
       `${left.kind}:${left.id}`.localeCompare(`${right.kind}:${right.id}`),
   );
   if (!ordered.length) return;
-  const index = focusIndexes.get(sprintRunnerConcern.sprintRunnerConcernId) ?? 0;
+  const index = focusIndexes.get(objective.objectiveId) ?? 0;
   const next = ordered[index % ordered.length];
-  focusIndexes.set(sprintRunnerConcern.sprintRunnerConcernId, (index + 1) % ordered.length);
+  focusIndexes.set(objective.objectiveId, (index + 1) % ordered.length);
   requestAnimationFrame(() => {
     const element = Array.from(
       document.querySelectorAll<HTMLElement>('[data-flow-element-kind][data-flow-element-id]'),
@@ -513,6 +550,23 @@ function focusNextSprintRunnerConcernGraphElement(
     );
     element?.focus();
     element?.scrollIntoView?.({ block: 'center', inline: 'center' });
+  });
+}
+
+function managedObjectiveGraphReferences(
+  objective: SprintWorkspacePresentationV1['managedObjectives'][number],
+): readonly {
+  readonly kind: 'work_slice_planning_point' | 'work_unit' | 'gate';
+  readonly id: string;
+}[] {
+  return objective.associations.flatMap<{
+    readonly kind: 'work_slice_planning_point' | 'work_unit' | 'gate';
+    readonly id: string;
+  }>(({ kind, targetId }) => {
+    if (kind === 'work_slice_planning_point' || kind === 'work_unit')
+      return [{ kind, id: targetId } as const];
+    if (kind === 'approval') return [{ kind: 'gate' as const, id: targetId }];
+    return [];
   });
 }
 
@@ -534,6 +588,7 @@ function workSlicePlanningPointSession(
     .map((reference) => ({
       sessionId: reference.agentSessionId,
       title: reference.title,
+      identity: reference.identity,
       transcript: adjunctById.get(reference.agentSessionId)?.transcript,
     }));
   return sessions.length === 1 ? sessions[0] : undefined;
@@ -572,10 +627,33 @@ function planningPointWorkUnitRelationships(
         `Work Slice planning point ${group.workSlicePlanningPointId} references missing scope ${workUnitScopeId}`,
       );
     const sessions = workUnitSessions(workspace, workUnit, adjunct);
+    const executionIds = new Set(
+      workUnit.attempts.map(({ workUnitExecutionId }) => workUnitExecutionId),
+    );
     return {
       workUnit,
       handlers: sessions.filter(({ role }) => role === 'handler'),
       implementers: sessions.filter(({ role }) => role === 'implementer'),
+      handlerActivity: workspace.roleReports.find(
+        (
+          report,
+        ): report is Extract<
+          (typeof workspace.roleReports)[number],
+          { toolName: 'report_handler_activity' }
+        > =>
+          report.toolName === 'report_handler_activity' &&
+          executionIds.has(report.workUnitExecutionId),
+      ),
+      workerActivity: workspace.roleReports.find(
+        (
+          report,
+        ): report is Extract<
+          (typeof workspace.roleReports)[number],
+          { toolName: 'report_worker_activity' }
+        > =>
+          report.toolName === 'report_worker_activity' &&
+          executionIds.has(report.workUnitExecutionId),
+      ),
     };
   });
 }
@@ -612,6 +690,7 @@ function workUnitSessions(
           work_unit_implementer: 'implementer',
         } as const
       )[reference.semanticRole as 'work_unit_handler' | 'work_unit_implementer'],
+      identity: reference.identity,
       transcript: adjunctById.get(reference.agentSessionId)?.transcript,
     }));
   const view = workspace.revisionViews.find(
@@ -633,6 +712,7 @@ function workUnitSessions(
           title: reference.title,
           workUnitId: unit.workUnitId,
           role: 'work_slice_planner',
+          identity: reference.identity,
           transcript: adjunctById.get(reference.agentSessionId)?.transcript,
         }))
     : [];

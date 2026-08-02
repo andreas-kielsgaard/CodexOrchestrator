@@ -25,7 +25,8 @@ export interface SprintFlowMapProps {
     opener: HTMLButtonElement,
   ) => void;
   readonly onOpenWorkUnit?: (workUnitId: string, opener: HTMLButtonElement) => void;
-  readonly highlightedSprintRunnerConcernId?: string | null;
+  readonly instantiatedWorkSlicePlanningPointIds?: ReadonlySet<string>;
+  readonly highlightedManagedObjectiveId?: string | null;
   readonly hoveredGraphElement?: {
     readonly kind: 'work_slice_planning_point' | 'work_unit' | 'gate';
     readonly id: string;
@@ -44,7 +45,8 @@ export function SprintFlowMap({
   onSelectedRevisionChange,
   onOpenWorkSlicePlanningPointGroup,
   onOpenWorkUnit,
-  highlightedSprintRunnerConcernId,
+  instantiatedWorkSlicePlanningPointIds,
+  highlightedManagedObjectiveId,
   hoveredGraphElement,
   onHoveredGraphElementChange,
 }: SprintFlowMapProps) {
@@ -65,11 +67,14 @@ export function SprintFlowMap({
     ({ presentationRole }) => presentationRole.kind === 'accepted_review_marker',
   );
   const highlightedRefs = new Set(
-    workspace.sprintRunnerConcerns
-      .find(
-        ({ sprintRunnerConcernId }) => sprintRunnerConcernId === highlightedSprintRunnerConcernId,
-      )
-      ?.graphElementRefs.map(({ kind, id }) => `${kind}:${id}`) ?? [],
+    workspace.managedObjectives
+      .find(({ objectiveId }) => objectiveId === highlightedManagedObjectiveId)
+      ?.associations.flatMap(({ kind, targetId }) => {
+        if (kind === 'work_slice_planning_point' || kind === 'work_unit')
+          return [`${kind}:${targetId}`];
+        if (kind === 'approval') return [`gate:${targetId}`];
+        return [];
+      }) ?? [],
   );
   const priorRevision = workspace.revisionViews
     .filter(({ revision }) => revision < selectedView.revision)
@@ -124,13 +129,15 @@ export function SprintFlowMap({
 
           {selectedView.workSlicePlanningPointGroups.map((group) => {
             const box = workSlicePlanningPointGroupPositions.get(group.workSlicePlanningPointId);
+            const plannerInstantiated =
+              instantiatedWorkSlicePlanningPointIds?.has(group.workSlicePlanningPointId) ?? true;
             if (!box) return null;
             return (
               <section
                 key={group.workSlicePlanningPointId}
                 className={`sprint-plan-region${
                   highlightedRefs.has(`work_slice_planning_point:${group.workSlicePlanningPointId}`)
-                    ? ' is-runner-concern-highlighted'
+                    ? ' is-managed-objective-highlighted'
                     : ''
                 }${
                   hoveredGraphElement?.kind === 'work_slice_planning_point' &&
@@ -170,25 +177,30 @@ export function SprintFlowMap({
                       />
                     ))}
                 </svg>
-                <button
-                  type="button"
-                  className="sprint-plan-region__open"
-                  data-work-slice-planning-point-id={group.workSlicePlanningPointId}
-                  data-flow-element-kind="work_slice_planning_point"
-                  data-flow-element-id={group.workSlicePlanningPointId}
-                  aria-label={`Open Work Slice planning point: ${group.title}`}
-                  onClick={(event) =>
-                    onOpenWorkSlicePlanningPointGroup?.(
-                      group.workSlicePlanningPointId,
-                      event.currentTarget,
-                    )
-                  }
-                />
                 <header>
-                  <div className="sprint-plan-region__title">
+                  <button
+                    type="button"
+                    className="sprint-plan-region__open sprint-plan-region__title"
+                    data-work-slice-planning-point-id={group.workSlicePlanningPointId}
+                    data-flow-element-kind="work_slice_planning_point"
+                    data-flow-element-id={group.workSlicePlanningPointId}
+                    aria-label={`Open Work Slice planning point: ${group.title}`}
+                    disabled={!plannerInstantiated}
+                    title={
+                      plannerInstantiated
+                        ? `Open ${group.title}`
+                        : 'No instantiated Work Slice Planner is recorded for this planning point.'
+                    }
+                    onClick={(event) =>
+                      onOpenWorkSlicePlanningPointGroup?.(
+                        group.workSlicePlanningPointId,
+                        event.currentTarget,
+                      )
+                    }
+                  >
                     <span>Work Slice planning point</span>
                     <strong>{group.title}</strong>
-                  </div>
+                  </button>
                   {selectedView.gates.some(
                     ({ gateId, presentationRole }) =>
                       presentationRole.kind === 'accepted_review_marker' &&
@@ -221,7 +233,7 @@ export function SprintFlowMap({
                             : ''
                         }${
                           highlightedRefs.has(`work_unit:${unit.workUnitId}`)
-                            ? ' is-runner-concern-highlighted'
+                            ? ' is-managed-objective-highlighted'
                             : ''
                         }${
                           hoveredGraphElement?.kind === 'work_unit' &&

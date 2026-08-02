@@ -152,19 +152,16 @@
   gap: 6px;
   min-height: 48px;
   padding: 7px 10px;
-  pointer-events: none;
 }
 
 .sprint-plan-region__open {
-  position: absolute;
-  z-index: 1;
-  inset: 0;
-  width: 100%;
-  padding: 0;
   border: 0;
-  border-radius: inherit;
   background: transparent;
   cursor: pointer;
+}
+
+.sprint-plan-region__open:disabled {
+  cursor: default;
 }
 
 .sprint-plan-region:hover {
@@ -172,7 +169,7 @@
   background: rgb(249 252 253 / 92%);
 }
 
-.sprint-plan-region.is-runner-concern-highlighted,
+.sprint-plan-region.is-managed-objective-highlighted,
 .sprint-plan-region.is-hovered {
   border-color: #9f6ab7;
   box-shadow:
@@ -316,7 +313,7 @@
     0 3px 9px rgb(37 57 68 / 10%);
 }
 
-.sprint-work-unit.is-runner-concern-highlighted,
+.sprint-work-unit.is-managed-objective-highlighted,
 .sprint-work-unit.is-hovered,
 .sprint-work-unit:hover {
   z-index: 9;

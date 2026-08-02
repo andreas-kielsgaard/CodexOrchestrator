@@ -4,6 +4,10 @@ import type {
   AgentSessionSemanticRole,
   OrchestrationEventsV1,
 } from './orchestrationEvents';
+import type {
+  OrchestrationRoleReportContractsV1,
+  OrchestrationRoleReportV1,
+} from './orchestrationRoleReports';
 
 export type ReadSourceAuthorityV1 =
   | {
@@ -79,23 +83,43 @@ export interface ProductSprintWorkspacePresentationMetadataV1 {
     readonly workSlicePlanningPointIds: readonly string[];
     readonly workUnitScopeIds: readonly string[];
   }[];
-  /** Epic Runner-authored Sprint objectives. Global Epic goals are not substituted here. */
-  readonly epicRunnerObjectives?: readonly {
+  /** One application-managed Sprint objective, proposed by Epic Runner and owned by Sprint Runner. */
+  readonly managedObjectives?: readonly {
     readonly objectiveId: string;
+    readonly epicId: string;
     readonly sprintId: string;
     readonly title: string;
+    readonly proposalInputProvenanceId: string;
+    readonly sprintRunnerAgentSessionRefId?: string;
+    readonly state: 'proposed' | 'concretized';
+    readonly oversight:
+      | { readonly status: 'pending' }
+      | {
+          readonly status: 'accepted' | 'needs_correction';
+          readonly epicRunnerAgentSessionRefId: string;
+          readonly provenanceId: string;
+        };
+    readonly associations: readonly {
+      readonly kind:
+        | 'epic'
+        | 'sprint'
+        | 'concern'
+        | 'work_slice_planning_point'
+        | 'work_unit'
+        | 'work_unit_handler'
+        | 'approval';
+      readonly targetId: string;
+    }[];
     readonly source: ReadSourceAuthorityV1;
   }[];
-  /** Explicit Sprint Runner concern-to-graph links. Transcript prose is never parsed for these. */
-  readonly sprintRunnerConcerns?: readonly {
-    readonly sprintRunnerConcernId: string;
+  /** Forecast-only decomposition. These records are never projected as actual Work Units. */
+  readonly forecastTasks?: readonly {
+    readonly forecastTaskId: string;
     readonly sprintId: string;
     readonly title: string;
+    readonly objectiveIds: readonly string[];
+    readonly concernIds: readonly string[];
     readonly source: ReadSourceAuthorityV1;
-    readonly graphElementRefs: readonly {
-      readonly kind: 'work_slice_planning_point' | 'work_unit' | 'gate';
-      readonly id: string;
-    }[];
   }[];
   /** Recorded navigation metadata only; runtime lifecycle support is not implied. */
   readonly workUnitLifecycle?: readonly {
@@ -192,6 +216,13 @@ export interface ProductReadReferenceIndexV1 {
   readonly agentSessions: readonly {
     readonly agentSessionId: string;
     readonly title: string;
+    readonly identity?: Readonly<{
+      readonly agentName: string;
+      readonly visualIdentity: Readonly<{
+        readonly token: string;
+        readonly accentColor: string;
+      }>;
+    }>;
     readonly source: ReadSourceAuthorityV1;
   }[];
   /** Explicit product association; events alone intentionally do not infer artifact ownership. */
@@ -220,6 +251,8 @@ export interface ProductReadCompositionInputV1 {
   readonly artifactAccess: import('./artifactAccess').ArtifactAccessContractsV1;
   readonly referenceIndex: ProductReadReferenceIndexV1;
   readonly selection?: ProductReadSelectionV1;
+  /** Structured MCP effects after application validation; absent means the production seam is unavailable. */
+  readonly roleReports?: OrchestrationRoleReportContractsV1;
   readonly bootstrapTransition?: Readonly<{
     readonly query: import('./epicBootstrapTransition').EpicBootstrapTransitionQueryV2;
     readonly initiationIdsByEpic: Readonly<Record<string, string>>;
@@ -276,6 +309,7 @@ export interface ProductAgentSessionReferenceReadModelV1 {
   readonly targetKind: AgentSessionAssociationTargetKind;
   readonly targetId: string;
   readonly semanticRole: AgentSessionSemanticRole;
+  readonly identity?: ProductReadReferenceIndexV1['agentSessions'][number]['identity'];
   readonly otherTargetType?: string;
 }
 
@@ -434,8 +468,9 @@ export interface ProductSprintReadModelV1 {
     readonly workSlicePlanningPointMembership: ProductSprintWorkspacePresentationMetadataV1['workSlicePlanningPointMembership'];
     readonly gates: ProductSprintWorkspacePresentationMetadataV1['gates'];
     readonly documents: ProductSprintWorkspacePresentationMetadataV1['documents'];
-    readonly epicRunnerObjectives?: ProductSprintWorkspacePresentationMetadataV1['epicRunnerObjectives'];
-    readonly sprintRunnerConcerns?: ProductSprintWorkspacePresentationMetadataV1['sprintRunnerConcerns'];
+    readonly managedObjectives?: ProductSprintWorkspacePresentationMetadataV1['managedObjectives'];
+    readonly forecastTasks?: ProductSprintWorkspacePresentationMetadataV1['forecastTasks'];
+    readonly roleReports?: readonly OrchestrationRoleReportV1[];
     readonly workUnitLifecycle?: ProductSprintWorkspacePresentationMetadataV1['workUnitLifecycle'];
     readonly narratives?: ProductSprintWorkspaceNarrativesV1;
   }>;

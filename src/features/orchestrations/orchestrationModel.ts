@@ -47,6 +47,7 @@ export type SprintWorkspaceDetailLocation =
       readonly workSlicePlanningPointId: string;
       readonly workUnitId: string;
       readonly origin: 'work_slice_planning_point' | 'concern';
+      readonly lifecycleEntryId?: string;
     };
 
 export interface EpicBlocker {
@@ -59,6 +60,13 @@ export interface EpicBlocker {
 export interface AgentSessionReferencePresentation {
   readonly sessionId: string;
   readonly title: string;
+  readonly identity?: Readonly<{
+    readonly agentName: string;
+    readonly visualIdentity: Readonly<{
+      readonly token: string;
+      readonly accentColor: string;
+    }>;
+  }>;
 }
 
 export interface SprintAgentSessionPresentation extends AgentSessionReferencePresentation {

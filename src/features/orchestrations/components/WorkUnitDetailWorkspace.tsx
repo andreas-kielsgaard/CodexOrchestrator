@@ -14,6 +14,7 @@ export interface WorkUnitDetailWorkspaceProps {
   readonly sessions: readonly WorkUnitAgentSessionPresentation[];
   readonly agentSessionComposition?: EmbeddedAgentSessionComposition;
   readonly backLabel?: string;
+  readonly initialLifecycleEntryId?: string;
   readonly onBack: () => void;
   readonly onOpenAgentSession?: (sessionId: string) => void;
 }
@@ -31,6 +32,7 @@ export function WorkUnitDetailWorkspace({
   sessions,
   agentSessionComposition,
   backLabel = 'Back to Work Slice planning point',
+  initialLifecycleEntryId,
   onBack,
   onOpenAgentSession,
 }: WorkUnitDetailWorkspaceProps) {
@@ -44,16 +46,36 @@ export function WorkUnitDetailWorkspace({
   const implementer = sessions.find(
     (session) => session.workUnitId === workUnitId && session.role === 'implementer',
   );
-  const [primarySessionId, setPrimarySessionId] = useState(
-    handler?.sessionId ?? workSlicePlanner?.sessionId ?? '',
+  const initialLifecycleEntry = lifecycleEntries.find(
+    ({ entryId }) => entryId === initialLifecycleEntryId,
   );
-  const [focusTarget, setFocusTarget] = useState<SessionFocusTarget | null>(null);
+  const [primarySessionId, setPrimarySessionId] = useState(
+    initialLifecycleEntry &&
+      [handler?.sessionId, workSlicePlanner?.sessionId].includes(
+        initialLifecycleEntry.agentSessionId,
+      )
+      ? initialLifecycleEntry.agentSessionId
+      : (handler?.sessionId ?? workSlicePlanner?.sessionId ?? ''),
+  );
+  const [focusTarget, setFocusTarget] = useState<SessionFocusTarget | null>(
+    initialLifecycleEntry
+      ? {
+          sessionId: initialLifecycleEntry.agentSessionId,
+          invocationId: initialLifecycleEntry.invocationId,
+          request: 1,
+        }
+      : null,
+  );
+  const [selectedLifecycleEntryId, setSelectedLifecycleEntryId] = useState(
+    initialLifecycleEntry?.entryId ?? null,
+  );
   const primarySession =
     sessions.find(({ sessionId }) => sessionId === primarySessionId) ?? handler ?? workSlicePlanner;
 
   const navigateToLifecycleTurn = (
     entry: SprintWorkspacePresentationV1['workUnitLifecycle'][number],
   ) => {
+    setSelectedLifecycleEntryId(entry.entryId);
     if ([handler?.sessionId, workSlicePlanner?.sessionId].includes(entry.agentSessionId))
       setPrimarySessionId(entry.agentSessionId);
     setFocusTarget((current) => ({
@@ -99,6 +121,9 @@ export function WorkUnitDetailWorkspace({
                         type="button"
                         onClick={() => navigateToLifecycleTurn(entry)}
                         disabled={!session}
+                        aria-current={
+                          selectedLifecycleEntryId === entry.entryId ? 'step' : undefined
+                        }
                       >
                         <span
                           className={`work-unit-lifecycle__identity work-unit-lifecycle__identity--${entry.agentRole}`}

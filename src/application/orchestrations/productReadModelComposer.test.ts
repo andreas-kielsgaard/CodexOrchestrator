@@ -3,6 +3,7 @@ import {
   ARTIFACT_ACCESS_CONTRACTS_V1,
   composeProductOrchestrationReadModels,
   ORCHESTRATION_EVENTS_V1,
+  ORCHESTRATION_ROLE_REPORTS_V1,
   type ProductReadCompositionInputV1,
   type ProductSprintWorkspacePresentationMetadataV1,
 } from './index';
@@ -390,30 +391,17 @@ describe('product read-model composer', () => {
         progress: { source: { status: 'pending', reason: 'awaiting review evidence' } },
       },
     ];
-    input.referenceIndex.sprintWorkspacePresentation!.sprintRunnerConcerns = [
+    input.referenceIndex.sprintWorkspacePresentation!.managedObjectives = [
+      objective('objective-1', 'sprint-1', 'Preserve the planned Sprint task.'),
       {
-        sprintRunnerConcernId: 'sprintRunnerConcern-1',
-        sprintId: 'sprint-1',
-        title: 'Keep the relationship explicit.',
-        source: source(),
-        graphElementRefs: [
-          { kind: 'work_slice_planning_point', id: 'activity-1' },
-          { kind: 'work_unit', id: 'work-unit-1' },
+        ...objective('objective-2', 'sprint-1', 'Make the review relationship explicit.'),
+        associations: [
+          { kind: 'epic', targetId: 'epic-1' },
+          { kind: 'sprint', targetId: 'sprint-1' },
+          { kind: 'concern', targetId: 'concern-1' },
+          { kind: 'work_slice_planning_point', targetId: 'activity-1' },
+          { kind: 'work_unit', targetId: 'work-unit-1' },
         ],
-      },
-    ];
-    input.referenceIndex.sprintWorkspacePresentation!.epicRunnerObjectives = [
-      {
-        objectiveId: 'objective-1',
-        sprintId: 'sprint-1',
-        title: 'Preserve the planned Sprint task.',
-        source: source(),
-      },
-      {
-        objectiveId: 'objective-2',
-        sprintId: 'sprint-1',
-        title: 'Make the review relationship explicit.',
-        source: source(),
       },
     ];
     input.referenceIndex.sprintWorkspacePresentation!.workUnitLifecycle = [
@@ -443,11 +431,13 @@ describe('product read-model composer', () => {
       source: { status: 'pending', reason: 'awaiting review evidence' },
     });
     expect(presentation.narratives?.progress).not.toHaveProperty('value');
-    expect(presentation.sprintRunnerConcerns?.[0].graphElementRefs).toEqual([
-      { kind: 'work_slice_planning_point', id: 'activity-1' },
-      { kind: 'work_unit', id: 'work-unit-1' },
-    ]);
-    expect(presentation.epicRunnerObjectives?.map(({ title }) => title)).toEqual([
+    expect(presentation.managedObjectives?.[1].associations).toEqual(
+      expect.arrayContaining([
+        { kind: 'work_slice_planning_point', targetId: 'activity-1' },
+        { kind: 'work_unit', targetId: 'work-unit-1' },
+      ]),
+    );
+    expect(presentation.managedObjectives?.map(({ title }) => title)).toEqual([
       'Preserve the planned Sprint task.',
       'Make the review relationship explicit.',
     ]);
@@ -457,31 +447,58 @@ describe('product read-model composer', () => {
     });
   });
 
-  it('projects Epic Runner objectives only to their owning Sprint', () => {
+  it('projects managed objectives only to their owning Sprint', () => {
     const input = productInput();
     addSecondSprint(input);
-    input.referenceIndex.sprintWorkspacePresentation!.epicRunnerObjectives = [
-      {
-        objectiveId: 'objective-1',
-        sprintId: 'sprint-1',
-        title: 'First Sprint task.',
-        source: source(),
-      },
-      {
-        objectiveId: 'objective-2',
-        sprintId: 'sprint-2',
-        title: 'Second Sprint task.',
-        source: source(),
-      },
+    input.referenceIndex.sprintWorkspacePresentation!.managedObjectives = [
+      objective('objective-1', 'sprint-1', 'First Sprint task.'),
+      objective('objective-2', 'sprint-2', 'Second Sprint task.'),
     ];
 
     const sprints = compose(input).epics[0].sprints;
     expect(
-      sprints[0].workspacePresentation.epicRunnerObjectives?.map(({ objectiveId }) => objectiveId),
+      sprints[0].workspacePresentation.managedObjectives?.map(({ objectiveId }) => objectiveId),
     ).toEqual(['objective-1']);
     expect(
-      sprints[1].workspacePresentation.epicRunnerObjectives?.map(({ objectiveId }) => objectiveId),
+      sprints[1].workspacePresentation.managedObjectives?.map(({ objectiveId }) => objectiveId),
     ).toEqual(['objective-2']);
+  });
+
+  it('admits Work Slice Planner reports only through typed membership and Session authority', () => {
+    const input = productInput();
+    input.roleReports = {
+      version: ORCHESTRATION_ROLE_REPORTS_V1,
+      reports: [
+        {
+          reportId: 'planner-report',
+          toolName: 'record_work_slice_plan',
+          agentRole: 'work_slice_planner',
+          agentSessionRefId: 'session-ref-planner',
+          workSlicePlanningPointId: 'activity-1',
+          sprintPlanRevisionId: 'revision-1',
+          analysisItems: [
+            {
+              analysisItemId: 'analysis-1',
+              text: 'Keep the recorded scope explicit.',
+              linkedWorkUnitScopeIds: ['scope-1'],
+            },
+          ],
+          workUnitScopeIds: ['scope-1'],
+          dependencies: [],
+          provenanceId: 'provenance-1',
+        },
+      ],
+    };
+
+    expect(compose(input).epics[0].sprints[0].workspacePresentation.roleReports).toMatchObject([
+      { toolName: 'record_work_slice_plan', workSlicePlanningPointId: 'activity-1' },
+    ]);
+
+    const plannerReport = input.roleReports.reports[0];
+    if (plannerReport.toolName !== 'record_work_slice_plan')
+      throw new Error('expected Planner report');
+    plannerReport.workUnitScopeIds = [];
+    expect(() => compose(input)).toThrow('must match typed planning-point membership');
   });
 
   it.each([
@@ -527,43 +544,36 @@ describe('product read-model composer', () => {
       'Document Sprint',
     ],
     [
-      'Epic Runner objective without an identity',
+      'managed objective without an identity',
       (input: Mutable<ProductReadCompositionInputV1>) =>
-        (input.referenceIndex.sprintWorkspacePresentation!.epicRunnerObjectives = [
-          { objectiveId: ' ', sprintId: 'sprint-1', title: 'Task', source: source() },
+        (input.referenceIndex.sprintWorkspacePresentation!.managedObjectives = [
+          { ...objective('objective-1', 'sprint-1', 'Task'), objectiveId: ' ' },
         ]),
       'requires an identity',
     ],
     [
-      'Epic Runner objective owned by an unknown Sprint',
+      'managed objective owned by an unknown Sprint',
       (input: Mutable<ProductReadCompositionInputV1>) =>
-        (input.referenceIndex.sprintWorkspacePresentation!.epicRunnerObjectives = [
-          {
-            objectiveId: 'objective-1',
-            sprintId: 'sprint-missing',
-            title: 'Task',
-            source: source(),
-          },
+        (input.referenceIndex.sprintWorkspacePresentation!.managedObjectives = [
+          objective('objective-1', 'sprint-missing', 'Task'),
         ]),
       'unknown Sprint',
     ],
     [
-      'duplicate Epic Runner objective identity',
+      'duplicate managed objective identity',
       (input: Mutable<ProductReadCompositionInputV1>) =>
-        (input.referenceIndex.sprintWorkspacePresentation!.epicRunnerObjectives = [
-          { objectiveId: 'objective-1', sprintId: 'sprint-1', title: 'First', source: source() },
-          { objectiveId: 'objective-1', sprintId: 'sprint-1', title: 'Second', source: source() },
+        (input.referenceIndex.sprintWorkspacePresentation!.managedObjectives = [
+          objective('objective-1', 'sprint-1', 'First'),
+          objective('objective-1', 'sprint-1', 'Second'),
         ]),
       'cannot repeat an objective identity',
     ],
     [
-      'Epic Runner objective without sourced authority',
+      'managed objective without sourced authority',
       (input: Mutable<ProductReadCompositionInputV1>) =>
-        (input.referenceIndex.sprintWorkspacePresentation!.epicRunnerObjectives = [
+        (input.referenceIndex.sprintWorkspacePresentation!.managedObjectives = [
           {
-            objectiveId: 'objective-1',
-            sprintId: 'sprint-1',
-            title: 'Task',
+            ...objective('objective-1', 'sprint-1', 'Task'),
             source: { ...source(), sourceReferences: ['missing-provenance'] },
           },
         ]),
@@ -695,6 +705,22 @@ function source() {
     status: 'available' as const,
     sourceKind: 'orchestration_event' as const,
     sourceReferences: ['provenance-1'],
+  };
+}
+function objective(objectiveId: string, sprintId: string, title: string) {
+  return {
+    objectiveId,
+    epicId: 'epic-1',
+    sprintId,
+    title,
+    proposalInputProvenanceId: 'provenance-1',
+    state: 'proposed' as const,
+    oversight: { status: 'pending' as const },
+    associations: [
+      { kind: 'epic' as const, targetId: 'epic-1' },
+      { kind: 'sprint' as const, targetId: sprintId },
+    ],
+    source: source(),
   };
 }
 type LifecycleEntry = Mutable<

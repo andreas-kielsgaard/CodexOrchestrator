@@ -70,18 +70,13 @@ describe('Sprint workspace presentation projector', () => {
     expect(presentation.narratives?.progress).toEqual({
       source: { status: 'unavailable', reason: 'not recorded' },
     });
-    expect(presentation.epicRunnerObjectives.map(({ title }) => title)).toEqual([
+    expect(presentation.managedObjectives.map(({ title }) => title)).toEqual([
       'Preserve the Sprint task.',
       'Make the plan reviewable.',
     ]);
-    expect(presentation.sprintRunnerConcerns).toEqual([
-      expect.objectContaining({
-        sprintRunnerConcernId: 'sprintRunnerConcern-1',
-        graphElementRefs: [
-          { kind: 'work_slice_planning_point', id: 'activity-a' },
-          { kind: 'work_unit', id: 'work-unit-1' },
-        ],
-      }),
+    expect(presentation.managedObjectives[0].associations).toEqual([
+      { kind: 'work_slice_planning_point', targetId: 'activity-a' },
+      { kind: 'work_unit', targetId: 'work-unit-1' },
     ]);
     expect(presentation.workUnitLifecycle.map(({ entryId }) => entryId)).toEqual([
       'lifecycle-1',
@@ -413,32 +408,35 @@ function sprintReadModel(): ProductSprintReadModelV1 {
           workUnitScopeIds: [],
         },
       ],
-      epicRunnerObjectives: [
+      managedObjectives: [
         {
           objectiveId: 'objective-1',
+          epicId: 'epic-1',
           sprintId: 'sprint-1',
           title: 'Preserve the Sprint task.',
+          proposalInputProvenanceId: 'provenance-1',
+          state: 'proposed',
+          oversight: { status: 'pending' },
+          associations: [
+            { kind: 'work_slice_planning_point', targetId: 'activity-a' },
+            { kind: 'work_unit', targetId: 'work-unit-1' },
+          ],
           source: source(),
         },
         {
           objectiveId: 'objective-2',
+          epicId: 'epic-1',
           sprintId: 'sprint-1',
           title: 'Make the plan reviewable.',
+          proposalInputProvenanceId: 'provenance-1',
+          state: 'proposed',
+          oversight: { status: 'pending' },
+          associations: [],
           source: source(),
         },
       ],
-      sprintRunnerConcerns: [
-        {
-          sprintRunnerConcernId: 'sprintRunnerConcern-1',
-          sprintId: 'sprint-1',
-          title: 'Connect the Plan and Work Unit.',
-          source: source(),
-          graphElementRefs: [
-            { kind: 'work_slice_planning_point', id: 'activity-a' },
-            { kind: 'work_unit', id: 'work-unit-1' },
-          ],
-        },
-      ],
+      forecastTasks: [],
+      roleReports: [],
       workUnitLifecycle: [
         {
           entryId: 'lifecycle-2',

@@ -6,6 +6,7 @@ import {
   AGENT_CONTROL_CONTRACTS_V1,
   ARTIFACT_ACCESS_CONTRACTS_V1,
   ORCHESTRATION_EVENTS_V1,
+  ORCHESTRATION_ROLE_REPORTS_V1,
   type ProductReadCompositionInputV1,
 } from '../../application/orchestrations';
 
@@ -124,7 +125,7 @@ const reviewRevisionUnits = {
 } as const;
 const reviewDependencies: Readonly<Record<string, readonly string[]>> = {
   'WU-RD1': [],
-  'WU-RD2': [],
+  'WU-RD2': ['WU-RD1'],
   'WU-RD3': ['WU-RD1'],
   'WU-RD4': ['WU-RD2', 'WU-RD3'],
   'WU-RD5': ['WU-RD1'],
@@ -186,6 +187,74 @@ const simpleRevisions = simpleSprints.map(([id]) => ({
   sprintPlanId: `plan-${id}`,
   revision: 1,
 }));
+
+function managedObjective({
+  objectiveId,
+  sprintId,
+  title,
+  concernId,
+  workUnitIds,
+  handlerRefId,
+}: {
+  objectiveId: string;
+  sprintId: string;
+  title: string;
+  concernId: string;
+  workUnitIds: readonly string[];
+  handlerRefId?: string;
+}) {
+  return {
+    objectiveId,
+    epicId,
+    sprintId,
+    title,
+    proposalInputProvenanceId: provenanceId,
+    sprintRunnerAgentSessionRefId: 'session-ref-parallel-review',
+    state: 'concretized' as const,
+    oversight: {
+      status: 'accepted' as const,
+      epicRunnerAgentSessionRefId: 'session-ref-epic-runner',
+      provenanceId,
+    },
+    associations: [
+      { kind: 'epic' as const, targetId: epicId },
+      { kind: 'sprint' as const, targetId: sprintId },
+      { kind: 'concern' as const, targetId: concernId },
+      { kind: 'work_slice_planning_point' as const, targetId: 'planner-rd-r2-relationships' },
+      ...workUnitIds.map((targetId) => ({ kind: 'work_unit' as const, targetId })),
+      ...(handlerRefId ? [{ kind: 'work_unit_handler' as const, targetId: handlerRefId }] : []),
+    ],
+    source: source(),
+  };
+}
+
+function proposedObjective({
+  objectiveId,
+  sprintId,
+  title,
+  concernId,
+}: {
+  objectiveId: string;
+  sprintId: string;
+  title: string;
+  concernId: string;
+}) {
+  return {
+    objectiveId,
+    epicId,
+    sprintId,
+    title,
+    proposalInputProvenanceId: provenanceId,
+    state: 'proposed' as const,
+    oversight: { status: 'pending' as const },
+    associations: [
+      { kind: 'epic' as const, targetId: epicId },
+      { kind: 'sprint' as const, targetId: sprintId },
+      { kind: 'concern' as const, targetId: concernId },
+    ],
+    source: source(),
+  };
+}
 
 /** Complete, ordered canonical input used by the recorded development client. */
 export const recordedProductReadCompositionInput = {
@@ -274,7 +343,7 @@ export const recordedProductReadCompositionInput = {
         sprintPlanId: 'plan-parallel-review',
         assessedSprintPlanRevisionIds: ['RD-R1'],
       },
-      ...['relationships', 'interaction', 'convergence'].map((group) => ({
+      ...['relationships', 'convergence'].map((group) => ({
         workSlicePlanningPointId: `planner-rd-r2-${group}`,
         sprintPlanId: 'plan-parallel-review',
         assessedSprintPlanRevisionIds: ['RD-R2'],
@@ -762,6 +831,155 @@ export const recordedProductReadCompositionInput = {
     requests: [],
     results: [],
   },
+  roleReports: {
+    version: ORCHESTRATION_ROLE_REPORTS_V1,
+    reports: [
+      {
+        reportId: 'report-rd-r2-sprint-plan',
+        toolName: 'record_sprint_plan',
+        agentRole: 'sprint_runner',
+        agentSessionRefId: 'session-ref-parallel-review',
+        sprintId: reviewSprintId,
+        sprintPlanRevisionId: 'RD-R2',
+        managedObjectiveIds: [
+          'objective-review-relationships',
+          'objective-review-flow',
+          'objective-review-evidence',
+        ],
+        concernIds: [
+          'concern-review-relationships',
+          'concern-review-lifecycle',
+          'concern-review-documents',
+        ],
+        refinementSummary:
+          'The Sprint Runner concretized the Epic proposal against the recorded repository assessment.',
+        provenanceId,
+      },
+      {
+        reportId: 'report-rd-r2-epic-oversight',
+        toolName: 'record_sprint_oversight',
+        agentRole: 'epic_runner',
+        agentSessionRefId: 'session-ref-epic-runner',
+        sprintId: reviewSprintId,
+        sprintPlanRevisionId: 'RD-R2',
+        decision: 'accepted',
+        summary: 'The Epic Runner accepted the concretized Sprint plan for recorded review.',
+        provenanceId,
+      },
+      {
+        reportId: 'report-rd-r2-relationships-plan',
+        toolName: 'record_work_slice_plan',
+        agentRole: 'work_slice_planner',
+        agentSessionRefId: 'session-ref-planner-rd-r2',
+        workSlicePlanningPointId: 'planner-rd-r2-relationships',
+        sprintPlanRevisionId: 'RD-R2',
+        analysisItems: [
+          {
+            analysisItemId: 'analysis-rd-contracts',
+            text: 'Stabilize typed relationships before lifecycle and document convergence.',
+            linkedWorkUnitScopeIds: ['WU-RD1', 'WU-RD3', 'WU-RD5'].map((unit) =>
+              scoped('RD-R2', unit),
+            ),
+          },
+          {
+            analysisItemId: 'analysis-rd-parallel',
+            text: 'Run split-surface work in parallel with the relationship foundation.',
+            linkedWorkUnitScopeIds: ['WU-RD1', 'WU-RD2'].map((unit) => scoped('RD-R2', unit)),
+          },
+          {
+            analysisItemId: 'analysis-rd-join',
+            text: 'Join independently completed prerequisites without implying a merged output where none exists.',
+            linkedWorkUnitScopeIds: ['WU-RD2', 'WU-RD3', 'WU-RD4'].map((unit) =>
+              scoped('RD-R2', unit),
+            ),
+          },
+        ],
+        workUnitScopeIds: ['WU-RD1', 'WU-RD2', 'WU-RD3', 'WU-RD4', 'WU-RD5'].map((unit) =>
+          scoped('RD-R2', unit),
+        ),
+        dependencies: [
+          {
+            dependencyId: 'dependency-rd1-rd3-output',
+            fromWorkUnitScopeId: scoped('RD-R2', 'WU-RD1'),
+            toWorkUnitScopeId: scoped('RD-R2', 'WU-RD3'),
+            kind: 'functional_output',
+            label: 'typed lifecycle contract',
+          },
+          {
+            dependencyId: 'dependency-rd1-rd2-workspace',
+            fromWorkUnitScopeId: scoped('RD-R2', 'WU-RD1'),
+            toWorkUnitScopeId: scoped('RD-R2', 'WU-RD2'),
+            kind: 'shared_resource_exclusion',
+            label: 'shared detail files',
+            sharedResourceKey: 'sprint-detail-workspace',
+          },
+          {
+            dependencyId: 'dependency-rd2-rd3-rd4-prerequisites',
+            inputWorkUnitScopeIds: ['WU-RD2', 'WU-RD3'].map((unit) => scoped('RD-R2', unit)),
+            toWorkUnitScopeId: scoped('RD-R2', 'WU-RD4'),
+            kind: 'merge_join',
+            label: 'responsive prerequisites',
+            joinSemantics: 'independent_prerequisites',
+          },
+          {
+            dependencyId: 'dependency-rd1-rd5-merge',
+            fromWorkUnitScopeId: scoped('RD-R2', 'WU-RD1'),
+            toWorkUnitScopeId: scoped('RD-R2', 'WU-RD5'),
+            kind: 'merge_join',
+            label: 'merged relationship result',
+            joinSemantics: 'merged_result',
+          },
+        ],
+        provenanceId,
+      },
+      {
+        reportId: 'report-rd1-handler-current',
+        toolName: 'report_handler_activity',
+        agentRole: 'work_unit_handler',
+        agentSessionRefId: 'session-ref-handler-WU-RD1',
+        workUnitExecutionId: 'execution-WU-RD1',
+        activity: 'approved',
+        summary: 'Approved and integrated the corrected relationship model.',
+        lifecycleEntryId: 'rd1-completion',
+        provenanceId,
+      },
+      {
+        reportId: 'report-rd1-worker-current',
+        toolName: 'report_worker_activity',
+        agentRole: 'work_unit_implementer',
+        agentSessionRefId: 'session-ref-implementer-WU-RD1',
+        workUnitExecutionId: 'execution-WU-RD1',
+        activity: 'completed',
+        summary: 'Completed the corrected typed relationship implementation.',
+        outcome: 'Accepted relationship model',
+        lifecycleEntryId: 'rd1-renewed-work',
+        provenanceId,
+      },
+      {
+        reportId: 'report-rd2-worker-current',
+        toolName: 'report_worker_activity',
+        agentRole: 'work_unit_implementer',
+        agentSessionRefId: 'session-ref-implementer-WU-RD2',
+        workUnitExecutionId: 'execution-WU-RD2',
+        activity: 'implementing',
+        summary: 'Implementing the draggable split surfaces.',
+        lifecycleEntryId: 'rd2-work',
+        provenanceId,
+      },
+      {
+        reportId: 'report-rd3-worker-current',
+        toolName: 'report_worker_activity',
+        agentRole: 'work_unit_implementer',
+        agentSessionRefId: 'session-ref-implementer-WU-RD3',
+        workUnitExecutionId: 'execution-WU-RD3',
+        activity: 'returned',
+        summary: 'Returned lifecycle navigation for Handler review.',
+        outcome: 'Awaiting typed review',
+        lifecycleEntryId: 'rd3-work',
+        provenanceId,
+      },
+    ],
+  },
   referenceIndex: {
     epics: [
       {
@@ -875,13 +1093,8 @@ export const recordedProductReadCompositionInput = {
       {
         workSlicePlanningPointId: 'planner-rd-r2-relationships',
         title: 'Relationship foundation',
-        purpose: 'Model explicit review relationships and document boundaries.',
-        source: source(),
-      },
-      {
-        workSlicePlanningPointId: 'planner-rd-r2-interaction',
-        title: 'Parallel interaction work',
-        purpose: 'Run split-surface and lifecycle interaction work in parallel.',
+        purpose:
+          'Run the typed relationship, interaction, lifecycle, and document lanes in parallel.',
         source: source(),
       },
       {
@@ -1020,26 +1233,49 @@ export const recordedProductReadCompositionInput = {
       {
         agentSessionId: 'recorded-sprint-parallel-review',
         title: 'Recorded parallel review Sprint',
+        identity: {
+          agentName: 'Soren',
+          visualIdentity: { token: 'SR', accentColor: '#376f8d' },
+        },
         source: source(),
       },
       {
         agentSessionId: 'recorded-planner-rd-r2',
         title: 'Recorded review Work Slice Planner',
+        identity: {
+          agentName: 'Priya',
+          visualIdentity: { token: 'P', accentColor: '#7562a9' },
+        },
         source: source(),
       },
       {
         agentSessionId: 'recorded-handler-WU-RD1',
         title: 'Relationship Work Unit Handler',
+        identity: {
+          agentName: 'Rowan',
+          visualIdentity: { token: 'R', accentColor: '#9a5e35' },
+        },
         source: source(),
       },
       {
         agentSessionId: 'recorded-implementer-WU-RD1',
         title: 'Relationship Work Unit Implementer',
+        identity: {
+          agentName: 'Mina',
+          visualIdentity: { token: 'M', accentColor: '#2d8067' },
+        },
         source: source(),
       },
-      ...(['WU-RD2', 'WU-RD3'] as const).map((workUnitId) => ({
+      ...(['WU-RD2', 'WU-RD3'] as const).map((workUnitId, index) => ({
         agentSessionId: `recorded-implementer-${workUnitId}`,
         title: `${reviewWorkUnitText[workUnitId][0]} Work Unit Implementer`,
+        identity: {
+          agentName: index === 0 ? 'Theo' : 'June',
+          visualIdentity: {
+            token: index === 0 ? 'T' : 'J',
+            accentColor: index === 0 ? '#3b719f' : '#8a5e9d',
+          },
+        },
         source: source(),
       })),
     ],
@@ -1094,13 +1330,9 @@ export const recordedProductReadCompositionInput = {
         {
           workSlicePlanningPointId: 'planner-rd-r2-relationships',
           sprintPlanRevisionId: 'RD-R2',
-          workUnitScopeIds: ['WU-RD1', 'WU-RD5'].map((unit) => scoped('RD-R2', unit)),
-          source: source(),
-        },
-        {
-          workSlicePlanningPointId: 'planner-rd-r2-interaction',
-          sprintPlanRevisionId: 'RD-R2',
-          workUnitScopeIds: ['WU-RD2', 'WU-RD3', 'WU-RD4'].map((unit) => scoped('RD-R2', unit)),
+          workUnitScopeIds: ['WU-RD1', 'WU-RD2', 'WU-RD3', 'WU-RD4', 'WU-RD5'].map((unit) =>
+            scoped('RD-R2', unit),
+          ),
           source: source(),
         },
         {
@@ -1162,67 +1394,58 @@ export const recordedProductReadCompositionInput = {
           workUnitScopeIds: [scoped('ECS-R4', 'WU-ECS2E')],
         },
       ],
-      epicRunnerObjectives: [
-        {
+      managedObjectives: [
+        managedObjective({
           objectiveId: 'objective-review-relationships',
           sprintId: reviewSprintId,
-          title: 'Model explicit relationships between Sprint Runner concerns and planned work.',
-          source: source(),
-        },
-        {
+          title: 'Make typed product relationships directly reviewable.',
+          concernId: 'concern-review-relationships',
+          workUnitIds: ['WU-RD1', 'WU-RD2'],
+          handlerRefId: 'session-ref-handler-WU-RD1',
+        }),
+        managedObjective({
           objectiveId: 'objective-review-flow',
           sprintId: reviewSprintId,
           title: 'Make the parallel mixed-state workflow directly reviewable.',
-          source: source(),
-        },
-        {
-          objectiveId: 'objective-review-lifecycle',
+          concernId: 'concern-review-lifecycle',
+          workUnitIds: ['WU-RD3', 'WU-RD4'],
+        }),
+        managedObjective({
+          objectiveId: 'objective-review-evidence',
           sprintId: reviewSprintId,
-          title: 'Keep Work Unit correction history connected to recorded Agent Session turns.',
-          source: source(),
-        },
-        {
-          objectiveId: 'objective-review-documents',
-          sprintId: reviewSprintId,
-          title: 'Open complete Sprint documents with a truthful Sprint-start comparison.',
-          source: source(),
-        },
+          title: 'Keep lifecycle and document evidence connected to managed work.',
+          concernId: 'concern-review-documents',
+          workUnitIds: ['WU-RD5', 'WU-RD6'],
+        }),
+        proposedObjective({
+          objectiveId: 'objective-prestart-planner-interaction',
+          sprintId: 'sprint-planner-work-unit',
+          title: 'Clarify temporal planning and parallel implementation concerns.',
+          concernId: 'concern-planner-interaction-forecast',
+        }),
+        proposedObjective({
+          objectiveId: 'objective-prestart-plan-builder',
+          sprintId: 'sprint-plan-builder',
+          title: 'Clarify the Epic planning interaction before Sprint start.',
+          concernId: 'concern-plan-builder-forecast',
+        }),
       ],
-      sprintRunnerConcerns: [
+      forecastTasks: [
         {
-          sprintRunnerConcernId: 'sprintRunnerConcern-review-context',
-          sprintId: reviewSprintId,
-          title: 'Keep Epic Runner Sprint objectives while adding Sprint Runner concerns.',
+          forecastTaskId: 'forecast-planner-interaction-relationships',
+          sprintId: 'sprint-planner-work-unit',
+          title: 'Explore planner-to-parallel-work relationship boundaries.',
+          objectiveIds: ['objective-prestart-planner-interaction'],
+          concernIds: ['concern-planner-interaction-forecast'],
           source: source(),
-          graphElementRefs: [
-            { kind: 'work_slice_planning_point', id: 'planner-rd-r2-relationships' },
-            { kind: 'work_unit', id: 'WU-RD1' },
-            { kind: 'work_unit', id: 'WU-RD2' },
-          ],
         },
         {
-          sprintRunnerConcernId: 'sprintRunnerConcern-review-interaction',
-          sprintId: reviewSprintId,
-          title: 'Make the mixed-state flow and sessions directly explorable.',
+          forecastTaskId: 'forecast-plan-builder-conversation',
+          sprintId: 'sprint-plan-builder',
+          title: 'Explore proposal and revision interaction.',
+          objectiveIds: ['objective-prestart-plan-builder'],
+          concernIds: ['concern-plan-builder-forecast'],
           source: source(),
-          graphElementRefs: [
-            { kind: 'work_slice_planning_point', id: 'planner-rd-r2-interaction' },
-            { kind: 'work_unit', id: 'WU-RD2' },
-            { kind: 'work_unit', id: 'WU-RD3' },
-            { kind: 'work_unit', id: 'WU-RD4' },
-          ],
-        },
-        {
-          sprintRunnerConcernId: 'sprintRunnerConcern-review-evidence',
-          sprintId: reviewSprintId,
-          title: 'Keep Documents and later divergent evidence truthful.',
-          source: source(),
-          graphElementRefs: [
-            { kind: 'work_slice_planning_point', id: 'planner-rd-r2-convergence' },
-            { kind: 'work_unit', id: 'WU-RD3' },
-            { kind: 'work_unit', id: 'WU-RD5' },
-            { kind: 'work_unit', id: 'WU-RD6' },
-          ],
         },
       ],
       workUnitLifecycle: [
@@ -1420,6 +1643,32 @@ export const recordedProductReadCompositionInput = {
           agentSessionId: 'recorded-handler-WU-RD1',
           agentRole: 'work_unit_handler',
           invocationId: 'recorded-handler-WU-RD1-completion',
+          source: source(),
+        },
+        {
+          entryId: 'rd2-work',
+          sprintId: reviewSprintId,
+          workUnitId: 'WU-RD2',
+          sequence: 0,
+          kind: 'work',
+          title: 'Implementation',
+          summary: 'The Work Unit Implementer is building the draggable split surfaces.',
+          agentSessionId: 'recorded-implementer-WU-RD2',
+          agentRole: 'work_unit_implementer',
+          invocationId: 'recorded-implementer-WU-RD2-work',
+          source: source(),
+        },
+        {
+          entryId: 'rd3-work',
+          sprintId: reviewSprintId,
+          workUnitId: 'WU-RD3',
+          sequence: 0,
+          kind: 'work',
+          title: 'Returned work',
+          summary: 'The Work Unit Implementer returned the lifecycle navigation change.',
+          agentSessionId: 'recorded-implementer-WU-RD3',
+          agentRole: 'work_unit_implementer',
+          invocationId: 'recorded-implementer-WU-RD3-work',
           source: source(),
         },
       ],

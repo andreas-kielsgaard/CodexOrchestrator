@@ -93,8 +93,15 @@ describe('OrchestrationSection', () => {
     expect(screen.getByLabelText('Sprint Runner pre-start forecast')).toHaveTextContent(
       'Concerns before Sprint start',
     );
+    expect(screen.getByLabelText('Managed Sprint objectives')).toHaveTextContent(
+      'Clarify temporal planning and parallel implementation concerns.',
+    );
+    expect(screen.getByLabelText('Forecast task breakdown')).toHaveTextContent(
+      'Explore planner-to-parallel-work relationship boundaries.',
+    );
     expect(screen.queryByRole('tablist', { name: 'Sprint information' })).toBeNull();
     expect(screen.queryByRole('button', { name: /Open Work Unit/ })).toBeNull();
+    expect(screen.queryByLabelText('Work Slice causal timeline')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Back to Epic' }));
 
     fireEvent.click(
@@ -195,13 +202,10 @@ describe('OrchestrationSection', () => {
         name: 'Work Slice planning point detail: Integrated detail surfaces',
       }),
     ).toBeVisible();
-    const workflow = screen.getByLabelText(
-      'Work Slice planning point actor and conversation workflow',
-    );
-    expect(workflow).toHaveTextContent('Recorded review');
-    expect(workflow).toHaveTextContent(
-      'Handler: Work Unit Handler · Implementer: Work Unit Implementer',
-    );
+    const workflow = screen.getByLabelText('Work Slice causal timeline');
+    expect(workflow).toHaveTextContent('Parallel Work Unit flow');
+    expect(workflow).toHaveTextContent('Handler: Recorded WU-ECS2E Work Unit Handler');
+    expect(workflow).toHaveTextContent('Worker: Recorded WU-ECS2E Work Unit Implementer');
     expect(screen.queryByLabelText('Recorded Plan lifecycle')).toBeNull();
     expect(screen.queryByLabelText(/Integrated detail surfaces flow/)).toBeNull();
     expect(screen.queryByLabelText('Sprint feedback plan change')).toBeNull();
@@ -283,7 +287,6 @@ describe('OrchestrationSection', () => {
         name: 'Work Slice Planner Agent Session conversation surface',
       }),
     ).toBeVisible();
-    fireEvent.click(within(planner).getByRole('button', { name: 'Open Agent Session' }));
     expect(await within(planner).findByRole('textbox', { name: 'Message' })).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Back to Sprint' }));
@@ -311,22 +314,11 @@ describe('OrchestrationSection', () => {
 
     const revision = screen.getByRole('combobox', { name: 'Plan revision' });
     fireEvent.change(revision, { target: { value: 'ECS-R1' } });
-    fireEvent.click(
+    expect(
       screen.getByRole('button', {
         name: 'Open Work Slice planning point: Planning point ECS-R1',
       }),
-    );
-    expect(
-      screen.getByRole('main', {
-        name: 'Work Slice planning point detail: Planning point ECS-R1',
-      }),
-    ).toBeVisible();
-    expect(screen.getByLabelText('Detailed workflow unavailable')).toHaveTextContent(
-      'No detailed turn sequence is recorded for this Work Slice planning point.',
-    );
-    expect(screen.queryByText(/historical Plan/)).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Back to Sprint' }));
+    ).toBeDisabled();
     expect(screen.getByRole('combobox', { name: 'Plan revision' })).toHaveValue('ECS-R1');
     fireEvent.click(screen.getByRole('button', { name: /Open Work Unit WU-ECS2:/ }));
     expect(screen.getByRole('main', { name: 'Work Unit detail: WU-ECS2' })).toBeVisible();
@@ -337,11 +329,7 @@ describe('OrchestrationSection', () => {
     expect(screen.getByLabelText('Work Unit Implementer unavailable')).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Back to Work Slice planning point' }));
-    expect(
-      screen.getByRole('main', {
-        name: 'Work Slice planning point detail: Planning point ECS-R1',
-      }),
-    ).toBeVisible();
+    expect(screen.getByRole('main', { name: 'Sprint detail' })).toBeVisible();
   });
 
   it('renders the actual current planning point from typed Work Units and Session references', () => {
@@ -363,40 +351,47 @@ describe('OrchestrationSection', () => {
         name: 'Work Slice planning point detail: Relationship foundation',
       }),
     ).toBeVisible();
-    const relationships = screen.getByLabelText('Work Slice planning point relationships');
+    const relationships = screen.getByLabelText('Work Slice causal timeline');
+    expect(screen.getByLabelText('Work Slice Planner origin')).toHaveTextContent('Priya');
+    expect(within(relationships).getByRole('article', { name: /Work Unit WU-RD1:/ })).toBeVisible();
+    expect(within(relationships).getByRole('article', { name: /Work Unit WU-RD5:/ })).toBeVisible();
+    expect(within(relationships).getAllByRole('article')).toHaveLength(5);
+    const rd1 = within(relationships).getByRole('article', { name: /Work Unit WU-RD1:/ });
     expect(
-      within(relationships).getByLabelText('Work Slice Planner relationship'),
-    ).toHaveTextContent('Recorded review Work Slice Planner');
+      within(rd1).getByRole('button', { name: /Open WU-RD1 Handler lifecycle/ }),
+    ).toHaveTextContent('Handler: RowanApproved and integrated');
     expect(
-      within(relationships).getByRole('listitem', { name: /Work Unit WU-RD1:/ }),
-    ).toBeVisible();
+      within(rd1).getByRole('button', { name: /Open WU-RD1 Worker lifecycle/ }),
+    ).toHaveTextContent('Worker: MinaCompleted');
+    expect(within(relationships).getByLabelText('WU-RD5 Handler unavailable')).toBeVisible();
+    expect(within(relationships).getByLabelText('WU-RD5 Worker unavailable')).toBeVisible();
+    const independentPrerequisites = relationships.querySelector(
+      'svg g[data-join-semantics="independent_prerequisites"]',
+    );
+    expect(independentPrerequisites).toHaveAttribute(
+      'data-input-scope-ids',
+      'RD-R2:WU-RD2 RD-R2:WU-RD3',
+    );
+    expect(independentPrerequisites?.querySelectorAll('[data-prerequisite-input]')).toHaveLength(2);
     expect(
-      within(relationships).getByRole('listitem', { name: /Work Unit WU-RD5:/ }),
-    ).toBeVisible();
+      independentPrerequisites?.querySelector('[data-prerequisite-input="RD-R2:WU-RD1"]'),
+    ).toBeNull();
     expect(
-      within(relationships).getByRole('button', { name: /Open Work Unit WU-RD5:/ }),
-    ).toBeVisible();
-    expect(
-      within(relationships).getByLabelText('WU-RD1 Work Unit Handler relationship'),
-    ).toHaveTextContent('Relationship Work Unit Handler');
-    expect(
-      within(relationships).getByLabelText('WU-RD1 Work Unit Implementer relationship'),
-    ).toHaveTextContent('Relationship Work Unit Implementer');
-    expect(
-      within(relationships).getByLabelText('WU-RD5 Work Unit Handler unavailable'),
-    ).toBeVisible();
-    expect(
-      within(relationships).getByLabelText('WU-RD5 Work Unit Implementer unavailable'),
-    ).toBeVisible();
-    expect(screen.getByLabelText('Detailed workflow unavailable')).toBeVisible();
+      relationships.querySelector(
+        'svg g[data-join-semantics="merged_result"] [data-geometry="merged-output"]',
+      ),
+    ).toHaveAttribute('marker-end', 'url(#merged-output-arrow)');
+    expect(screen.queryByLabelText('Detailed workflow unavailable')).toBeNull();
     expect(screen.queryByText(/historical Plan/)).toBeNull();
 
     fireEvent.click(
-      within(relationships).getByRole('button', {
-        name: 'Open Work Unit WU-RD1: Model review relationships',
-      }),
+      within(rd1).getByRole('button', { name: /Open WU-RD1 Handler lifecycle at approved/ }),
     );
     expect(screen.getByRole('main', { name: 'Work Unit detail: WU-RD1' })).toBeVisible();
+    expect(screen.getByRole('button', { name: /Completion/ })).toHaveAttribute(
+      'aria-current',
+      'step',
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Work Slice Planner' }));
     expect(screen.getByRole('region', { name: 'Work Slice Planner Agent Session' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Work Unit Handler' }));
@@ -737,7 +732,7 @@ describe('OrchestrationSection', () => {
     expect(sprintDetail.querySelector('.detail-workspace__main-column')?.children).toHaveLength(1);
     expect(screen.getByLabelText('Sprint context')).toHaveTextContent('Completed');
     expect(screen.getByLabelText('Sprint context')).toHaveTextContent(
-      'No recorded Epic Runner Sprint objectives.',
+      'No sourced managed Sprint objectives are available.',
     );
     expect(screen.getByLabelText('Sprint context')).not.toHaveTextContent(
       'Develop Codex Epic Runner',
@@ -771,7 +766,7 @@ describe('OrchestrationSection', () => {
     expect(detail).toHaveTextContent('Completed');
   });
 
-  it('presents the in-progress parallel review Sprint and cycles sprintRunnerConcern focus by state', async () => {
+  it('presents the managed in-progress Sprint plan and cycles objective focus', async () => {
     render(<OrchestrationSection view={canonicalRecordedView} />);
     fireEvent.click(
       screen.getByRole('button', { name: 'Open Codex Epic Runner workspace development' }),
@@ -786,19 +781,13 @@ describe('OrchestrationSection', () => {
     expect(context).toHaveAttribute('tabindex', '0');
     context.focus();
     expect(context).toHaveFocus();
-    expect(
-      within(context).getByLabelText('Epic Runner objectives').querySelectorAll('li'),
-    ).toHaveLength(4);
-    expect(within(context).getByLabelText('Epic Runner objectives')).toHaveTextContent(
-      'Model explicit relationships between Sprint Runner concerns and planned work.',
-    );
-    expect(within(context).getByLabelText('Epic Runner objectives')).toHaveTextContent(
-      'Open complete Sprint documents with a truthful Sprint-start comparison.',
+    const objectives = within(context).getByLabelText('Managed Sprint objectives');
+    expect(within(objectives).getAllByRole('button')).toHaveLength(3);
+    expect(objectives).toHaveTextContent('Make typed product relationships directly reviewable.');
+    expect(objectives).toHaveTextContent(
+      'Keep lifecycle and document evidence connected to managed work.',
     );
     expect(context).not.toHaveTextContent('Develop Codex Epic Runner');
-    const sprintRunnerConcerns = within(context).getByLabelText('Sprint Runner concerns');
-    expect(sprintRunnerConcerns).toBeVisible();
-    expect(sprintRunnerConcerns.querySelectorAll('li')).toHaveLength(3);
     expect(screen.getByRole('button', { name: /WU-RD1.*Completed/ })).toBeVisible();
     expect(screen.getByRole('button', { name: /WU-RD2.*Working/ })).toBeVisible();
     expect(screen.getByRole('button', { name: /WU-RD3.*Under review/ })).toBeVisible();
@@ -809,30 +798,30 @@ describe('OrchestrationSection', () => {
       'sprint-work-unit--divergent',
     );
 
-    const sprintRunnerConcern = within(context).getByRole('button', {
-      name: 'Keep Epic Runner Sprint objectives while adding Sprint Runner concerns.',
+    const managedObjective = within(context).getByRole('button', {
+      name: /Make typed product relationships directly reviewable/,
     });
     const processingNode = screen.getByRole('button', { name: /WU-RD2.*Working/ });
     fireEvent.pointerEnter(processingNode);
-    expect(sprintRunnerConcern).toHaveClass('is-highlighted');
+    expect(managedObjective).toHaveClass('is-highlighted');
     fireEvent.pointerLeave(processingNode);
-    fireEvent.pointerEnter(sprintRunnerConcern);
-    expect(processingNode.closest('article')).toHaveClass('is-runner-concern-highlighted');
-    fireEvent.pointerLeave(sprintRunnerConcern);
+    fireEvent.pointerEnter(managedObjective);
+    expect(processingNode.closest('article')).toHaveClass('is-managed-objective-highlighted');
+    fireEvent.pointerLeave(managedObjective);
 
-    fireEvent.click(sprintRunnerConcern);
-    await waitFor(() => expect(processingNode).toHaveFocus());
-    fireEvent.click(sprintRunnerConcern);
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /WU-RD1.*Completed/ })).toHaveFocus(),
-    );
-    fireEvent.click(sprintRunnerConcern);
+    fireEvent.click(managedObjective);
     await waitFor(() =>
       expect(
         screen.getByRole('button', {
           name: 'Open Work Slice planning point: Relationship foundation',
         }),
       ).toHaveFocus(),
+    );
+    fireEvent.click(managedObjective);
+    await waitFor(() => expect(processingNode).toHaveFocus());
+    fireEvent.click(managedObjective);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /WU-RD1.*Completed/ })).toHaveFocus(),
     );
 
     fireEvent.click(screen.getByRole('tab', { name: 'Documents' }));

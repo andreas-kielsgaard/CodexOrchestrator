@@ -34,12 +34,25 @@
   color: #287044;
 }
 
-.sprint-context__objectives,
-.sprint-context__runner-concerns {
+.sprint-context__plan {
   display: grid;
   gap: 6px;
   padding-top: 9px;
   border-top: 1px solid #d4dde1;
+}
+
+.sprint-context__plan summary {
+  color: #52656f;
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.sprint-context__plan-authority {
+  color: #6c7c84;
+  font-size: 0.62rem;
 }
 
 .sprint-context h2 {
@@ -59,7 +72,9 @@
   line-height: 1.35;
 }
 
-.sprint-context__runner-concerns button {
+.sprint-context__plan button {
+  display: grid;
+  gap: 2px;
   width: 100%;
   padding: 5px 6px;
   border: 1px solid transparent;
@@ -72,9 +87,14 @@
   cursor: pointer;
 }
 
-.sprint-context__runner-concerns button:hover,
-.sprint-context__runner-concerns button.is-highlighted,
-.sprint-context__runner-concerns button:focus-visible {
+.sprint-context__plan button small {
+  color: #71818a;
+  font-size: 0.6rem;
+}
+
+.sprint-context__plan button:hover,
+.sprint-context__plan button.is-highlighted,
+.sprint-context__plan button:focus-visible {
   border-color: #b38bc4;
   background: #f7f0fa;
   outline: none;

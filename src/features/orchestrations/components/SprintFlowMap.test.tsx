@@ -59,6 +59,7 @@ describe('SprintFlowMap', () => {
       name: 'Open Work Slice planning point: Integrated detail surfaces',
     });
     expect(planButton).toHaveClass('sprint-plan-region__open');
+    expect(planButton.closest('header')).not.toBeNull();
     fireEvent.click(planButton);
     expect(onOpenWorkSlicePlanningPointGroup).toHaveBeenCalledTimes(1);
     expect(onOpenWorkSlicePlanningPointGroup).toHaveBeenCalledWith(

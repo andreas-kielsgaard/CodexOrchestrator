@@ -37,11 +37,14 @@ export interface SprintWorkspacePresentationV1 {
   readonly selectedSprintPlanRevisionId: string;
   readonly revisionViews: readonly ProductSprintRevisionViewV1[];
   readonly concerns: readonly Concern[];
-  readonly epicRunnerObjectives: NonNullable<
-    ProductSprintReadModelV1['workspacePresentation']['epicRunnerObjectives']
+  readonly managedObjectives: NonNullable<
+    ProductSprintReadModelV1['workspacePresentation']['managedObjectives']
   >;
-  readonly sprintRunnerConcerns: NonNullable<
-    ProductSprintReadModelV1['workspacePresentation']['sprintRunnerConcerns']
+  readonly forecastTasks: NonNullable<
+    ProductSprintReadModelV1['workspacePresentation']['forecastTasks']
+  >;
+  readonly roleReports: NonNullable<
+    ProductSprintReadModelV1['workspacePresentation']['roleReports']
   >;
   readonly workUnitLifecycle: NonNullable<
     ProductSprintReadModelV1['workspacePresentation']['workUnitLifecycle']
@@ -103,17 +106,11 @@ export function projectSprintWorkspacePresentation(
       reviews: view.reviews.map((review) => ({ ...review })),
     })),
     concerns: sprint.concerns.map((concern) => ({ ...concern })),
-    epicRunnerObjectives: (sprint.workspacePresentation.epicRunnerObjectives ?? []).map(
-      (objective) => ({ ...objective }),
-    ),
-    sprintRunnerConcerns: (sprint.workspacePresentation.sprintRunnerConcerns ?? []).map(
-      (sprintRunnerConcern) => ({
-        ...sprintRunnerConcern,
-        graphElementRefs: sprintRunnerConcern.graphElementRefs.map((reference) => ({
-          ...reference,
-        })),
-      }),
-    ),
+    managedObjectives: (sprint.workspacePresentation.managedObjectives ?? []).map((objective) => ({
+      ...objective,
+    })),
+    forecastTasks: (sprint.workspacePresentation.forecastTasks ?? []).map((task) => ({ ...task })),
+    roleReports: (sprint.workspacePresentation.roleReports ?? []).map((report) => ({ ...report })),
     workUnitLifecycle: [...(sprint.workspacePresentation.workUnitLifecycle ?? [])]
       .map((entry) => ({ ...entry }))
       .sort(

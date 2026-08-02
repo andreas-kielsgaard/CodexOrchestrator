@@ -461,6 +461,366 @@
   text-align: center;
 }
 
+.planning-point-context__planner {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 1px 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid #bfccd2;
+  border-radius: 8px;
+  background: #f7fafb;
+}
+
+.planning-point-context__planner > span {
+  display: grid;
+  grid-row: 1 / span 2;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 50%;
+  background: #315f78;
+  color: #fff;
+  font-size: 0.58rem;
+  font-weight: 900;
+}
+
+.planning-point-context__planner strong {
+  color: #314b58;
+  font-size: 0.72rem;
+}
+
+.planning-point-context__planner small {
+  color: #6d7d85;
+  font-size: 0.63rem;
+}
+
+.planning-point-context section {
+  display: grid;
+  gap: 6px;
+}
+
+.planning-point-context section h2 {
+  color: #60727c;
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.planning-point-context section ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.planning-point-context section button {
+  width: 100%;
+  padding: 6px 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #40545f;
+  font: inherit;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+}
+
+.planning-point-context section button:is(:hover, :focus-visible, .is-highlighted) {
+  border-color: #7daabd;
+  background: #eaf4f8;
+  outline: none;
+}
+
+.work-slice-planning-point-detail {
+  grid-template-rows: minmax(300px, 1fr) minmax(250px, 38%);
+  align-content: stretch;
+  gap: 8px;
+  padding: 8px;
+  overflow: hidden;
+}
+
+.planning-point-timeline {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #c8d3d8;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.planning-point-timeline > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #d6e0e4;
+  background: #f7fafb;
+}
+
+.planning-point-timeline > header h2 {
+  color: #344c58;
+  font-size: 0.82rem;
+}
+
+.planning-point-timeline > header ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  margin: 0;
+  padding: 0;
+  color: #60717a;
+  font-size: 0.59rem;
+  list-style: none;
+}
+
+.planning-point-timeline > header li::before {
+  display: inline-block;
+  width: 14px;
+  height: 2px;
+  margin: 0 5px 2px 0;
+  background: #5e7d8c;
+  content: '';
+}
+
+.planning-point-timeline > header li[data-dependency-kind='shared_resource_exclusion']::before {
+  height: 0;
+  border-top: 2px dashed #a56c2b;
+  background: transparent;
+}
+
+.planning-point-timeline > header li[data-join-semantics='independent_prerequisites']::before {
+  width: 9px;
+  height: 9px;
+  margin-bottom: -2px;
+  border: 2px solid #76558f;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.planning-point-timeline > header li[data-join-semantics='merged_result']::before {
+  height: 4px;
+  background: #76558f;
+}
+
+.planning-point-timeline__viewport {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: none;
+  background-color: #f7f9fa;
+  background-image: radial-gradient(#d6dfe3 0.7px, transparent 0.7px);
+  background-size: 16px 16px;
+}
+
+.planning-point-timeline__canvas {
+  position: relative;
+  min-width: 100%;
+  min-height: 100%;
+}
+
+.planning-point-timeline__canvas > svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.planning-point-timeline__canvas > svg marker path {
+  fill: #5e7d8c;
+}
+
+.planning-point-timeline__canvas > svg marker#merged-output-arrow path {
+  fill: #76558f;
+}
+
+.planning-point-timeline__canvas > svg marker#prerequisite-completion-arrow path {
+  fill: none;
+  stroke: #76558f;
+  stroke-width: 2;
+}
+
+.planning-point-timeline__canvas > svg g > path {
+  fill: none;
+  stroke: #5e7d8c;
+  stroke-width: 2;
+}
+
+.planning-point-timeline__canvas > svg g[data-dependency-kind='shared_resource_exclusion'] > path {
+  stroke: #a56c2b;
+  stroke-dasharray: 6 4;
+}
+
+.planning-point-timeline__canvas
+  > svg
+  g[data-join-semantics='merged_result']
+  > path[data-geometry='merged-output'] {
+  stroke: #76558f;
+  stroke-width: 4;
+}
+
+.planning-point-timeline__canvas
+  > svg
+  g[data-join-semantics='independent_prerequisites']
+  > .planning-point-dependency__prerequisite-leg {
+  stroke: #76558f;
+  stroke-width: 2;
+  stroke-dasharray: 5 5;
+}
+
+.planning-point-timeline__canvas
+  > svg
+  g[data-join-semantics='independent_prerequisites']
+  > .planning-point-dependency__completion-gate {
+  fill: #fff;
+  stroke: #76558f;
+  stroke-width: 3;
+}
+
+.planning-point-timeline__canvas
+  > svg
+  g[data-join-semantics='independent_prerequisites']
+  > .planning-point-dependency__completion-path {
+  stroke: #76558f;
+  stroke-width: 2;
+  stroke-dasharray: 2 4;
+}
+
+.planning-point-timeline__canvas > svg g.is-highlighted > path {
+  stroke: #0781b2;
+  stroke-width: 4;
+}
+
+.planning-point-timeline__canvas > svg g.is-highlighted > circle {
+  stroke: #0781b2;
+  stroke-width: 4;
+}
+
+.planning-point-timeline__canvas > svg text {
+  fill: #4d6470;
+  font-size: 10px;
+  font-weight: 750;
+  paint-order: stroke;
+  stroke: #f7f9fa;
+  stroke-width: 4px;
+}
+
+.planning-point-timeline__planner {
+  position: absolute;
+  display: grid;
+  width: 150px;
+  gap: 3px;
+  padding: 9px;
+  border: 1px solid #7896a5;
+  border-radius: 999px;
+  background: #edf5f8;
+  color: #31576a;
+  text-align: center;
+}
+
+.planning-point-timeline__planner > span {
+  font-size: 0.56rem;
+  font-weight: 900;
+}
+
+.planning-point-timeline__planner strong {
+  font-size: 0.67rem;
+}
+
+.planning-point-timeline__planner small {
+  overflow: hidden;
+  font-size: 0.58rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planning-point-timeline .planning-point-work-unit {
+  position: absolute;
+  width: 248px;
+  min-height: 194px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgb(32 55 66 / 9%);
+}
+
+.planning-point-timeline .planning-point-work-unit:is(:hover, :focus, .is-highlighted) {
+  border-color: #3886a7;
+  box-shadow: 0 0 0 2px rgb(56 134 167 / 18%);
+  outline: none;
+}
+
+.planning-point-timeline .planning-point-work-unit > h3 {
+  color: #314954;
+  font-size: 0.8rem;
+  line-height: 1.3;
+}
+
+.planning-point-work-unit__agent-activity {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 5px;
+  border: 1px solid #d7e0e4;
+  border-radius: 6px;
+  background: #f8fafb;
+  color: #40545f;
+  font: inherit;
+  text-align: left;
+}
+
+.planning-point-work-unit__agent-activity:is(button) {
+  cursor: pointer;
+}
+
+.planning-point-work-unit__agent-activity > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.planning-point-work-unit__agent-activity strong {
+  overflow: hidden;
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planning-point-work-unit__agent-activity small,
+.planning-point-work-unit__agent-activity > span {
+  color: #6a7b84;
+  font-size: 0.57rem;
+  line-height: 1.25;
+}
+
+.planning-point-work-unit__identity {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border: 2px solid #78909b;
+  border-radius: 50%;
+  background: #fff;
+  color: #40545f;
+  font-size: 0.55rem;
+  font-weight: 900;
+}
+
+.work-slice-planning-point-detail .plan-agent-sessions {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #c8d3d8;
+  border-radius: 10px;
+  background: #fff;
+}
+
 .work-unit-sessions {
   height: 100%;
   min-width: 0;

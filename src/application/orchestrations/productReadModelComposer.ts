@@ -2,6 +2,8 @@
 import { decodeAgentControlContractsV1 } from './agentControlDecoder';
 import { decodeArtifactAccessContractsV1 } from './artifactAccessDecoder';
 import { decodeOrchestrationEventsV1 } from './orchestrationEventsDecoder';
+import { decodeOrchestrationRoleReportContractsV1 } from './orchestrationRoleReportsDecoder';
+import type { OrchestrationRoleReportV1 } from './orchestrationRoleReports';
 import type {
   ProductContinuationReadModelV1,
   ProductAgentSessionReferenceReadModelV1,
@@ -27,8 +29,12 @@ export function composeProductOrchestrationReadModels(
   const events = decodeOrchestrationEventsV1(input.events);
   const agentControl = decodeAgentControlContractsV1(input.agentControl);
   const artifactAccess = decodeArtifactAccessContractsV1(input.artifactAccess);
+  const roleReports = input.roleReports
+    ? decodeOrchestrationRoleReportContractsV1(input.roleReports)
+    : undefined;
   const facts = eventFacts(events);
   validateReferenceIndex(input.referenceIndex, events, facts);
+  validateRoleReports(input.referenceIndex, events, roleReports?.reports ?? []);
   validateCrossContractReferences(events, agentControl, artifactAccess, facts);
   validateBootstrapTransitions(
     input,
@@ -52,6 +58,7 @@ export function composeProductOrchestrationReadModels(
           artifactAccess,
           index,
           sessions,
+          roleReports?.reports ?? [],
           sprint.sprintId,
           input.selection,
         ),
@@ -112,6 +119,7 @@ function composeSprint(
   artifacts: ReturnType<typeof decodeArtifactAccessContractsV1>,
   index: ReturnType<typeof indexReferenceData>,
   sessions: readonly ProductAgentSessionReferenceReadModelV1[],
+  roleReports: readonly OrchestrationRoleReportV1[],
   sprintId: string,
   selection: ProductReadCompositionInputV1['selection'],
 ): ProductSprintReadModelV1 {
@@ -153,6 +161,7 @@ function composeSprint(
     events,
     sprintId,
     documentIds,
+    roleReports,
   );
   const revisionViews = orderedRevisions.map((revision) =>
     composeRevisionView(
@@ -275,8 +284,14 @@ function composeWorkspacePresentation(
   events: ReturnType<typeof decodeOrchestrationEventsV1>,
   sprintId: string,
   documentIds: ReadonlySet<string>,
+  roleReports: readonly OrchestrationRoleReportV1[],
 ) {
-  const empty = { workSlicePlanningPointMembership: [], gates: [], documents: [] } as const;
+  const empty = {
+    workSlicePlanningPointMembership: [],
+    gates: [],
+    documents: [],
+    roleReports: [],
+  } as const;
   if (!metadata) return empty;
   const revisionIds = new Set(
     events.sprintPlanRevisions
@@ -299,16 +314,19 @@ function composeWorkspacePresentation(
     documents: metadata.documents.filter((presentation) =>
       documentIds.has(presentation.documentRefId),
     ),
-    ...(metadata.epicRunnerObjectives
+    roleReports: roleReports.filter((report) =>
+      roleReportBelongsToSprint(report, sprintId, events),
+    ),
+    ...(metadata.managedObjectives
       ? {
-          epicRunnerObjectives: metadata.epicRunnerObjectives.filter(
+          managedObjectives: metadata.managedObjectives.filter(
             ({ sprintId: candidate }) => candidate === sprintId,
           ),
         }
       : {}),
-    ...(metadata.sprintRunnerConcerns
+    ...(metadata.forecastTasks
       ? {
-          sprintRunnerConcerns: metadata.sprintRunnerConcerns.filter(
+          forecastTasks: metadata.forecastTasks.filter(
             ({ sprintId: candidate }) => candidate === sprintId,
           ),
         }
@@ -328,6 +346,36 @@ function composeWorkspacePresentation(
         }
       : {}),
   };
+}
+
+function roleReportBelongsToSprint(
+  report: OrchestrationRoleReportV1,
+  sprintId: string,
+  events: ReturnType<typeof decodeOrchestrationEventsV1>,
+) {
+  if ('sprintId' in report) return report.sprintId === sprintId;
+  if ('workSlicePlanningPointId' in report) {
+    const point = events.workSlicePlanningPoints.find(
+      ({ workSlicePlanningPointId }) =>
+        workSlicePlanningPointId === report.workSlicePlanningPointId,
+    );
+    return events.sprintPlans.some(
+      (plan) => plan.sprintPlanId === point?.sprintPlanId && plan.sprintId === sprintId,
+    );
+  }
+  if ('workUnitExecutionId' in report) {
+    return executionBelongsToSprint(events, report.workUnitExecutionId, sprintId);
+  }
+  if (report.subjectKind === 'sprint') return report.subjectId === sprintId;
+  if (report.subjectKind === 'work_slice_planning_point') {
+    const point = events.workSlicePlanningPoints.find(
+      ({ workSlicePlanningPointId }) => workSlicePlanningPointId === report.subjectId,
+    );
+    return events.sprintPlans.some(
+      (plan) => plan.sprintPlanId === point?.sprintPlanId && plan.sprintId === sprintId,
+    );
+  }
+  return executionBelongsToSprint(events, report.subjectId, sprintId);
 }
 
 function composeRevisionView(
@@ -697,6 +745,200 @@ function validateCrossContractReferences(
     fail('Document contracts must represent every Orchestration Event Document');
 }
 
+function validateRoleReports(
+  index: ProductReadReferenceIndexV1,
+  events: ReturnType<typeof decodeOrchestrationEventsV1>,
+  reports: readonly OrchestrationRoleReportV1[],
+) {
+  const metadata = index.sprintWorkspacePresentation;
+  const objectiveById = new Map(
+    (metadata?.managedObjectives ?? []).map((objective) => [objective.objectiveId, objective]),
+  );
+  const concernById = new Map(index.concerns.map((concern) => [concern.concernId, concern]));
+  const scopeById = new Map(events.workUnitScopes.map((scope) => [scope.workUnitScopeId, scope]));
+  const executionById = new Map(
+    events.workUnitExecutions.map((execution) => [execution.workUnitExecutionId, execution]),
+  );
+  const lifecycleById = new Map(
+    (metadata?.workUnitLifecycle ?? []).map((entry) => [entry.entryId, entry]),
+  );
+  const seenPlanReports = new Set<string>();
+  for (const report of reports) {
+    if (!events.provenance.some(({ provenanceId }) => provenanceId === report.provenanceId))
+      fail('role report requires Event provenance');
+    const reference = events.agentSessionReferences.find(
+      ({ agentSessionRefId }) => agentSessionRefId === report.agentSessionRefId,
+    );
+    if (!reference || reference.semanticRole !== report.agentRole)
+      fail('role report Agent Session reference must match its five-role owner');
+    if (report.toolName === 'record_sprint_plan') {
+      if (reference.targetKind !== 'sprint' || reference.targetId !== report.sprintId)
+        fail('Sprint Runner plan must use its typed Sprint binding');
+      validateSprintRevision(events, report.sprintId, report.sprintPlanRevisionId);
+      report.managedObjectiveIds.forEach((objectiveId) => {
+        if (objectiveById.get(objectiveId)?.sprintId !== report.sprintId)
+          fail('Sprint Runner plan objective must belong to its Sprint');
+      });
+      report.concernIds.forEach((concernId) => {
+        if (concernById.get(concernId)?.sprintId !== report.sprintId)
+          fail('Sprint Runner plan concern must belong to its Sprint');
+      });
+    } else if (report.toolName === 'record_sprint_oversight') {
+      validateSprintRevision(events, report.sprintId, report.sprintPlanRevisionId);
+      const sprint = events.sprints.find(({ sprintId }) => sprintId === report.sprintId);
+      if (
+        !sprint ||
+        reference.targetKind !== 'epic' ||
+        reference.targetId !== sprint.epicId ||
+        ![...objectiveById.values()].some(
+          (objective) =>
+            objective.sprintId === report.sprintId &&
+            objective.oversight.status === report.decision &&
+            objective.oversight.epicRunnerAgentSessionRefId === report.agentSessionRefId &&
+            objective.oversight.provenanceId === report.provenanceId,
+        )
+      )
+        fail('Epic Runner oversight must match typed managed objective oversight');
+    } else if (report.toolName === 'record_work_slice_plan') {
+      if (
+        reference.targetKind !== 'work_slice_planning_point' ||
+        reference.targetId !== report.workSlicePlanningPointId
+      )
+        fail('Work Slice Planner report must use its typed planning-point binding');
+      const key = `${report.workSlicePlanningPointId}:${report.sprintPlanRevisionId}`;
+      if (seenPlanReports.has(key))
+        fail('a Work Slice planning point revision may have only one accepted Planner report');
+      seenPlanReports.add(key);
+      const membership = metadata?.workSlicePlanningPointMembership.find(
+        (candidate) =>
+          candidate.workSlicePlanningPointId === report.workSlicePlanningPointId &&
+          candidate.sprintPlanRevisionId === report.sprintPlanRevisionId,
+      );
+      if (!membership || !sameMembers(membership.workUnitScopeIds, report.workUnitScopeIds))
+        fail('Work Slice Planner forecast must match typed planning-point membership');
+      report.analysisItems.forEach((item) =>
+        item.linkedWorkUnitScopeIds.forEach((scopeId) => {
+          if (!report.workUnitScopeIds.includes(scopeId))
+            fail('Planner analysis may link only to its scoped Work Units');
+        }),
+      );
+      const dependencyIds = new Set<string>();
+      report.dependencies.forEach((dependency) => {
+        if (dependencyIds.has(dependency.dependencyId))
+          fail('Planner dependency identities must be unique');
+        dependencyIds.add(dependency.dependencyId);
+        const target = scopeById.get(dependency.toWorkUnitScopeId);
+        const sourceScopeIds =
+          dependency.kind === 'merge_join' &&
+          dependency.joinSemantics === 'independent_prerequisites'
+            ? dependency.inputWorkUnitScopeIds
+            : [dependency.fromWorkUnitScopeId];
+        if (
+          !report.workUnitScopeIds.includes(dependency.toWorkUnitScopeId) ||
+          sourceScopeIds.some(
+            (scopeId) =>
+              !report.workUnitScopeIds.includes(scopeId) ||
+              !target?.dependsOnWorkUnitScopeIds.includes(scopeId),
+          )
+        )
+          fail('Planner dependency must match a declared scoped Work Unit dependency');
+      });
+    } else if (
+      report.toolName === 'report_handler_activity' ||
+      report.toolName === 'report_worker_activity'
+    ) {
+      const execution = executionById.get(report.workUnitExecutionId);
+      if (
+        !execution ||
+        reference.targetKind !== 'work_unit_execution' ||
+        reference.targetId !== report.workUnitExecutionId
+      )
+        fail('Work Unit activity must use its typed execution Agent Session binding');
+      const lifecycle = lifecycleById.get(report.lifecycleEntryId);
+      if (
+        !lifecycle ||
+        lifecycle.workUnitId !== execution.workUnitId ||
+        lifecycle.agentSessionId !== reference.agentSessionId
+      )
+        fail('Work Unit activity lifecycle link must match its Work Unit and Agent Session');
+    } else {
+      validateLifecycleTransition(report, reference, events, lifecycleById);
+    }
+  }
+}
+
+function validateSprintRevision(
+  events: ReturnType<typeof decodeOrchestrationEventsV1>,
+  sprintId: string,
+  revisionId: string,
+) {
+  const revision = events.sprintPlanRevisions.find(
+    ({ sprintPlanRevisionId }) => sprintPlanRevisionId === revisionId,
+  );
+  if (
+    !revision ||
+    !events.sprintPlans.some(
+      (plan) => plan.sprintPlanId === revision.sprintPlanId && plan.sprintId === sprintId,
+    )
+  )
+    fail('role report Sprint Plan revision must belong to its Sprint');
+}
+
+function validateLifecycleTransition(
+  report: Extract<OrchestrationRoleReportV1, { toolName: 'record_lifecycle_transition' }>,
+  reference: ReturnType<typeof decodeOrchestrationEventsV1>['agentSessionReferences'][number],
+  events: ReturnType<typeof decodeOrchestrationEventsV1>,
+  lifecycleById: ReadonlyMap<
+    string,
+    NonNullable<
+      NonNullable<ProductReadReferenceIndexV1['sprintWorkspacePresentation']>['workUnitLifecycle']
+    >[number]
+  >,
+) {
+  const targetMatches =
+    (report.subjectKind === 'sprint' &&
+      reference.targetKind === 'sprint' &&
+      reference.targetId === report.subjectId) ||
+    (report.subjectKind === 'work_slice_planning_point' &&
+      reference.targetKind === 'work_slice_planning_point' &&
+      reference.targetId === report.subjectId) ||
+    (report.subjectKind === 'work_unit_execution' &&
+      reference.targetKind === 'work_unit_execution' &&
+      reference.targetId === report.subjectId);
+  if (!targetMatches) fail('lifecycle transition must use its typed product binding');
+  if (report.lifecycleEntryId) {
+    const entry = lifecycleById.get(report.lifecycleEntryId);
+    const execution = events.workUnitExecutions.find(
+      ({ workUnitExecutionId }) => workUnitExecutionId === report.subjectId,
+    );
+    if (
+      !entry ||
+      entry.agentSessionId !== reference.agentSessionId ||
+      entry.workUnitId !== execution?.workUnitId
+    )
+      fail('lifecycle transition entry must match its Agent Session and Work Unit');
+  }
+}
+
+function executionBelongsToSprint(
+  events: ReturnType<typeof decodeOrchestrationEventsV1>,
+  executionId: string,
+  sprintId: string,
+) {
+  const execution = events.workUnitExecutions.find(
+    ({ workUnitExecutionId }) => workUnitExecutionId === executionId,
+  );
+  const scope = events.workUnitScopes.find(
+    ({ workUnitScopeId }) => workUnitScopeId === execution?.fixedWorkUnitScopeId,
+  );
+  const revision = events.sprintPlanRevisions.find(
+    ({ sprintPlanRevisionId }) => sprintPlanRevisionId === scope?.sprintPlanRevisionId,
+  );
+  return events.sprintPlans.some(
+    (plan) => plan.sprintPlanId === revision?.sprintPlanId && plan.sprintId === sprintId,
+  );
+}
+
 function validateReferenceIndex(
   index: ProductReadReferenceIndexV1,
   events: ReturnType<typeof decodeOrchestrationEventsV1>,
@@ -1002,54 +1244,72 @@ function validateWorkspacePresentation(
     });
   });
   const objectiveIds = new Set<string>();
-  (metadata.epicRunnerObjectives ?? []).forEach((objective) => {
-    if (!objective.objectiveId.trim()) fail('Epic Runner Sprint objective requires an identity');
+  (metadata.managedObjectives ?? []).forEach((objective) => {
+    if (!objective.objectiveId.trim()) fail('managed Sprint objective requires an identity');
     if (objectiveIds.has(objective.objectiveId))
-      fail('Epic Runner Sprint objectives cannot repeat an objective identity');
+      fail('managed Sprint objectives cannot repeat an objective identity');
     objectiveIds.add(objective.objectiveId);
-    if (!objective.title.trim()) fail('Epic Runner Sprint objective requires a title');
-    validateAvailableSource(objective.source, facts, 'Epic Runner Sprint objective');
-    if (!events.sprints.some(({ sprintId }) => sprintId === objective.sprintId))
-      fail('Epic Runner Sprint objective references an unknown Sprint');
+    if (!objective.title.trim()) fail('managed Sprint objective requires a title');
+    validateAvailableSource(objective.source, facts, 'managed Sprint objective');
+    const sprint = events.sprints.find(({ sprintId }) => sprintId === objective.sprintId);
+    if (!sprint) fail('managed Sprint objective references an unknown Sprint');
+    if (sprint.epicId !== objective.epicId)
+      fail('managed Sprint objective Epic must own its Sprint');
+    if (
+      !events.provenance.some(
+        ({ provenanceId }) => provenanceId === objective.proposalInputProvenanceId,
+      )
+    )
+      fail('managed Sprint objective proposal input requires durable provenance');
+    if (objective.state === 'concretized' && !objective.sprintRunnerAgentSessionRefId)
+      fail('concretized managed Sprint objective requires its Sprint Runner');
+    if (objective.sprintRunnerAgentSessionRefId)
+      validateObjectiveAgentRole(
+        events,
+        objective.sprintRunnerAgentSessionRefId,
+        'sprint_runner',
+        objective.sprintId,
+      );
+    const oversight = objective.oversight;
+    if (oversight.status !== 'pending') {
+      validateObjectiveAgentRole(
+        events,
+        oversight.epicRunnerAgentSessionRefId,
+        'epic_runner',
+        objective.epicId,
+      );
+      if (!events.provenance.some(({ provenanceId }) => provenanceId === oversight.provenanceId))
+        fail('managed Sprint objective oversight requires durable provenance');
+    }
+    const uniqueAssociations = new Set(
+      objective.associations.map(({ kind, targetId }) => `${kind}:${targetId}`),
+    );
+    if (uniqueAssociations.size !== objective.associations.length)
+      fail('managed Sprint objective associations must be unique');
+    for (const association of objective.associations)
+      validateObjectiveAssociation(association, objective, events, index, planById, revisionById);
   });
-  const sprintRunnerConcernIds = new Set<string>();
-  (metadata.sprintRunnerConcerns ?? []).forEach((sprintRunnerConcern) => {
-    if (sprintRunnerConcernIds.has(sprintRunnerConcern.sprintRunnerConcernId))
-      fail('workspace Sprint Runner concerns cannot repeat a concern identity');
-    sprintRunnerConcernIds.add(sprintRunnerConcern.sprintRunnerConcernId);
-    validateAvailableSource(sprintRunnerConcern.source, facts, 'workspace sprintRunnerConcern');
-    if (!events.sprints.some(({ sprintId }) => sprintId === sprintRunnerConcern.sprintId))
-      fail('workspace sprintRunnerConcern references an unknown Sprint');
-    if (!sprintRunnerConcern.graphElementRefs.length)
-      fail('workspace sprintRunnerConcern must link to at least one graph element');
-    sprintRunnerConcern.graphElementRefs.forEach((reference) => {
-      const sprintIds =
-        reference.kind === 'work_unit'
-          ? events.workUnitScopes
-              .filter(({ workUnitId }) => workUnitId === reference.id)
-              .map(
-                ({ sprintPlanRevisionId }) =>
-                  planById.get(
-                    required(revisionById, sprintPlanRevisionId, 'revision').sprintPlanId,
-                  )?.sprintId,
-              )
-          : reference.kind === 'gate'
-            ? events.gates
-                .filter(({ gateId }) => gateId === reference.id)
-                .map(
-                  ({ sprintPlanRevisionId }) =>
-                    planById.get(
-                      required(revisionById, sprintPlanRevisionId, 'revision').sprintPlanId,
-                    )?.sprintId,
-                )
-            : events.workSlicePlanningPoints
-                .filter(({ workSlicePlanningPointId }) => workSlicePlanningPointId === reference.id)
-                .map(({ sprintPlanId }) => planById.get(sprintPlanId)?.sprintId);
-      if (!sprintIds.length)
-        fail('workspace sprintRunnerConcern references an unknown graph element');
-      if (!sprintIds.includes(sprintRunnerConcern.sprintId))
-        fail('workspace sprintRunnerConcern graph element must belong to the same Sprint');
+  const forecastTaskIds = new Set<string>();
+  (metadata.forecastTasks ?? []).forEach((task) => {
+    if (!task.forecastTaskId.trim() || forecastTaskIds.has(task.forecastTaskId))
+      fail('forecast tasks require unique identities');
+    forecastTaskIds.add(task.forecastTaskId);
+    if (!events.sprints.some(({ sprintId }) => sprintId === task.sprintId))
+      fail('forecast task references an unknown Sprint');
+    if (!task.title.trim()) fail('forecast task requires a title');
+    task.objectiveIds.forEach((objectiveId) => {
+      const objective = metadata.managedObjectives?.find(
+        (candidate) => candidate.objectiveId === objectiveId,
+      );
+      if (!objective || objective.sprintId !== task.sprintId)
+        fail('forecast task objective must belong to the same Sprint');
     });
+    task.concernIds.forEach((concernId) => {
+      const concern = index.concerns.find((candidate) => candidate.concernId === concernId);
+      if (!concern || concern.sprintId !== task.sprintId)
+        fail('forecast task concern must belong to the same Sprint');
+    });
+    validateAvailableSource(task.source, facts, 'forecast task');
   });
   const lifecycleIds = new Set<string>();
   const lifecycleSequences = new Set<string>();
@@ -1078,6 +1338,7 @@ function validateWorkspacePresentation(
     const sessionAssociatedWithWorkUnit = events.agentSessionReferences.some((reference) => {
       if (
         reference.agentSessionId !== entry.agentSessionId ||
+        reference.semanticRole !== entry.agentRole ||
         reference.targetKind !== 'work_unit_execution'
       )
         return false;
@@ -1093,6 +1354,7 @@ function validateWorkspacePresentation(
       (reference) => {
         if (
           reference.agentSessionId !== entry.agentSessionId ||
+          reference.semanticRole !== entry.agentRole ||
           reference.targetKind !== 'work_slice_planning_point'
         )
           return false;
@@ -1129,6 +1391,102 @@ function validateWorkspacePresentation(
     if (narrative.attention)
       validateSourcedReadValue(narrative.attention, facts, 'attention narrative');
   });
+}
+
+function validateObjectiveAgentRole(
+  events: ReturnType<typeof decodeOrchestrationEventsV1>,
+  agentSessionRefId: string,
+  role: 'epic_runner' | 'sprint_runner',
+  targetId: string,
+) {
+  const reference = events.agentSessionReferences.find(
+    (candidate) => candidate.agentSessionRefId === agentSessionRefId,
+  );
+  if (
+    !reference ||
+    reference.semanticRole !== role ||
+    reference.targetKind !== (role === 'epic_runner' ? 'epic' : 'sprint') ||
+    reference.targetId !== targetId
+  )
+    fail('managed Sprint objective role owner must use its typed product binding');
+}
+
+function validateObjectiveAssociation(
+  association: NonNullable<
+    NonNullable<
+      NonNullable<ProductReadReferenceIndexV1['sprintWorkspacePresentation']>['managedObjectives']
+    >[number]['associations']
+  >[number],
+  objective: NonNullable<
+    NonNullable<ProductReadReferenceIndexV1['sprintWorkspacePresentation']>['managedObjectives']
+  >[number],
+  events: ReturnType<typeof decodeOrchestrationEventsV1>,
+  index: ProductReadReferenceIndexV1,
+  planById: ReadonlyMap<
+    string,
+    ReturnType<typeof decodeOrchestrationEventsV1>['sprintPlans'][number]
+  >,
+  revisionById: ReadonlyMap<
+    string,
+    ReturnType<typeof decodeOrchestrationEventsV1>['sprintPlanRevisions'][number]
+  >,
+) {
+  if (association.kind === 'epic') {
+    if (association.targetId !== objective.epicId)
+      fail('managed objective Epic association must match its owner');
+    return;
+  }
+  if (association.kind === 'sprint') {
+    if (association.targetId !== objective.sprintId)
+      fail('managed objective Sprint association must match its owner');
+    return;
+  }
+  if (association.kind === 'concern') {
+    if (
+      !index.concerns.some(
+        (concern) =>
+          concern.concernId === association.targetId && concern.sprintId === objective.sprintId,
+      )
+    )
+      fail('managed objective concern must belong to its Sprint');
+    return;
+  }
+  if (association.kind === 'work_slice_planning_point') {
+    const point = events.workSlicePlanningPoints.find(
+      ({ workSlicePlanningPointId }) => workSlicePlanningPointId === association.targetId,
+    );
+    if (planById.get(point?.sprintPlanId ?? '')?.sprintId !== objective.sprintId)
+      fail('managed objective planning point must belong to its Sprint');
+    return;
+  }
+  if (association.kind === 'work_unit') {
+    const belongs = events.workUnitScopes.some((scope) => {
+      const revision = revisionById.get(scope.sprintPlanRevisionId);
+      return (
+        scope.workUnitId === association.targetId &&
+        planById.get(revision?.sprintPlanId ?? '')?.sprintId === objective.sprintId
+      );
+    });
+    if (!belongs) fail('managed objective Work Unit must belong to its Sprint');
+    return;
+  }
+  if (association.kind === 'approval') {
+    const gate = events.gates.find(({ gateId }) => gateId === association.targetId);
+    const revision = revisionById.get(gate?.sprintPlanRevisionId ?? '');
+    if (planById.get(revision?.sprintPlanId ?? '')?.sprintId !== objective.sprintId)
+      fail('managed objective approval must belong to its Sprint');
+    return;
+  }
+  const handler = events.agentSessionReferences.find(
+    ({ agentSessionRefId }) => agentSessionRefId === association.targetId,
+  );
+  if (
+    !handler ||
+    handler.semanticRole !== 'work_unit_handler' ||
+    handler.targetKind !== 'work_unit_execution' ||
+    !executionBelongsToSprint(events, handler.targetId, objective.sprintId)
+  )
+    fail('managed objective Handler must use a typed Work Unit binding in its Sprint');
 }
 
 function eventFacts(events: ReturnType<typeof decodeOrchestrationEventsV1>) {
