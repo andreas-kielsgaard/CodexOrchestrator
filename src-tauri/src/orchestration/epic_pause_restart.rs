@@ -568,3 +568,46 @@ fn restart_targets(
         .map_err(|e| e.to_string())?;
     Ok(targets)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::EPIC_PAUSE_RESTART_SCHEMA;
+    use rusqlite::Connection;
+
+    #[test]
+    fn control_schema_is_idempotent_for_fresh_and_reopened_databases() {
+        let connection = Connection::open_in_memory().expect("open database");
+        connection
+            .execute_batch(EPIC_PAUSE_RESTART_SCHEMA)
+            .expect("fresh schema");
+        connection
+            .execute_batch(EPIC_PAUSE_RESTART_SCHEMA)
+            .expect("reopen schema");
+        for table in ["epic_control_actions", "epic_control_targets"] {
+            assert!(connection
+                .query_row(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |_| Ok(())
+                )
+                .is_ok());
+        }
+    }
+
+    #[test]
+    fn control_target_keeps_one_effect_per_action_and_source_interruption() {
+        let connection = Connection::open_in_memory().expect("open database");
+        connection
+            .execute_batch("CREATE TABLE agent_sessions (id TEXT PRIMARY KEY);")
+            .unwrap();
+        connection
+            .execute_batch(EPIC_PAUSE_RESTART_SCHEMA)
+            .expect("schema");
+        connection
+            .execute("INSERT INTO agent_sessions VALUES ('session-1')", [])
+            .unwrap();
+        connection.execute("INSERT INTO epic_control_actions VALUES ('action-1','epic-1','pause','pending','now',NULL)", []).unwrap();
+        connection.execute("INSERT INTO epic_control_targets(action_id,session_id,source_invocation_id,interruption_status) VALUES ('action-1','session-1','source-1','awaiting_cancel')", []).unwrap();
+        assert!(connection.execute("INSERT INTO epic_control_targets(action_id,session_id,source_invocation_id,interruption_status) VALUES ('action-1','session-1','source-1','awaiting_cancel')", []).is_err());
+    }
+}
