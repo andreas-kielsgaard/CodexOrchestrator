@@ -549,11 +549,12 @@ export function SprintWorkspace({
   );
 }
 
-function WorkSlicePlannerBoundary({
+export function WorkSlicePlannerBoundary({
   transition,
 }: {
-  readonly transition: NonNullable<SprintWorkspacePresentationV1['sprint']['sprintRunnerTransition']>;
+  readonly transition: SprintWorkspacePresentationV1['sprint']['sprintRunnerTransition'];
 }) {
+  if (!transition?.workSlicePlannerRequestId) return null;
   const stage = (label: string, recorded: boolean) => (
     <li key={label}>{recorded ? label : `${label} (not recorded)`}</li>
   );
@@ -561,7 +562,7 @@ function WorkSlicePlannerBoundary({
     <section className="sprint-context__runner-transition" aria-label="Work Slice Planner boundary">
       <h2>Work Slice Planner boundary</h2>
       <p>
-        This Sprint currently stops at the application-owned Work Slice Planner launch boundary.
+        This Sprint currently stops at the application-owned Work Slice Planner boundary.
       </p>
       <ul>
         {stage('Request and authorization', Boolean(transition.workSlicePlannerRequestId))}

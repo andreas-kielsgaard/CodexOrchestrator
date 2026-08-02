@@ -106,10 +106,22 @@ export function projectSprintRunnerTransitionStatus(
   transition: SprintRunnerTransitionV1,
 ): ProductSprintRunnerTransitionStatusV1 {
   return {
-    label: transition.workSlicePlannerLaunchAcceptedAt
-      ? 'Work Slice Planner launch accepted; planning point ready'
-      : transition.workSlicePlanningPointId
-        ? 'Work Slice Planner authorized; launch acceptance pending'
+    label: transition.workSlicePlannerReadyAt
+      ? 'Work Slice Planner ready; provider and lifecycle observation pending'
+      : transition.workSlicePlannerLaunchAcceptedAt
+        ? 'Work Slice Planner runtime launch accepted; readiness pending'
+        : transition.workSlicePlannerLaunchRequestedAt
+          ? 'Work Slice Planner launch requested; runtime acceptance pending'
+          : transition.workSlicePlannerHarnessAppliedAt
+            ? 'Work Slice Planner Harness applied; launch request pending'
+            : transition.workSlicePlannerInvocationId
+              ? 'Work Slice Planner invocation prepared; Harness application pending'
+              : transition.workSlicePlannerSessionId
+                ? 'Work Slice Planner Session created; invocation pending'
+                : transition.workSlicePlanningPointId
+                  ? 'Work Slice Planner planning point authorized; Session pending'
+                  : transition.workSlicePlannerRequestId
+                    ? 'Work Slice Planner request authorized; planning point pending'
       : transition.planningControlLaunchAcceptedAt
         ? 'Sprint planning control launch accepted; Planner request available'
       : transition.startedReevaluationLifecycleObservedAt
@@ -286,6 +298,30 @@ function decodeTransition(value: unknown): SprintRunnerTransitionV1 {
     ...optionalText(item, 'workSlicePlannerLifecycleObservedAt'),
     downstreamNotStarted: bool(item.downstreamNotStarted, 'downstreamNotStarted'),
   } as SprintRunnerTransitionV1;
+  if (transition.workSlicePlanningPointId && !transition.workSlicePlannerRequestId)
+    invalid('Work Slice Planner planning point requires its request');
+  if (transition.workSlicePlannerSessionId && !transition.workSlicePlanningPointId)
+    invalid('Work Slice Planner Session requires its planning point');
+  if (transition.workSlicePlannerInvocationId && !transition.workSlicePlannerSessionId)
+    invalid('Work Slice Planner invocation requires its Session');
+  if (transition.workSlicePlannerSessionCreatedAt && !transition.workSlicePlannerSessionId)
+    invalid('Work Slice Planner Session creation requires its Session');
+  if (transition.workSlicePlannerInvocationCreatedAt && !transition.workSlicePlannerInvocationId)
+    invalid('Work Slice Planner invocation creation requires its invocation');
+  if (transition.workSlicePlannerHarnessAppliedAt && !transition.workSlicePlannerInvocationId)
+    invalid('Work Slice Planner Harness application requires its invocation');
+  if (transition.workSlicePlannerLaunchRequestedAt && !transition.workSlicePlannerHarnessAppliedAt)
+    invalid('Work Slice Planner launch request requires applied Harness');
+  if (transition.workSlicePlannerLaunchAcceptedAt && !transition.workSlicePlannerLaunchRequestedAt)
+    invalid('Work Slice Planner launch acceptance requires requested launch');
+  if (transition.workSlicePlannerReadyAt && !transition.workSlicePlannerLaunchAcceptedAt)
+    invalid('Work Slice Planner readiness requires accepted launch');
+  if (
+    (transition.workSlicePlannerProviderActivationObservedAt ||
+      transition.workSlicePlannerLifecycleObservedAt) &&
+    !transition.workSlicePlannerReadyAt
+  )
+    invalid('Work Slice Planner observation requires readiness');
   if (
     transition.preStartReady !== Boolean(transition.launchAcceptedAt)
   )
