@@ -471,6 +471,41 @@ fn cancellation_uses_runtime_and_terminal_persistence_remains_in_update_sink() {
 }
 
 #[test]
+fn cancellation_runtime_failure_is_diagnosed_without_terminalizing_the_invocation() {
+    let harness = Harness::new(RuntimeBehavior::CancellationFailure);
+    let session = harness.create_session();
+    let sent = harness
+        .application
+        .send_message(message(&session.id, "Keep running"))
+        .expect("send");
+
+    let error = harness
+        .application
+        .cancel_invocation(CancelAgentInvocationCommand {
+            invocation_id: sent.invocation_id.clone(),
+        })
+        .expect_err("runtime cancellation failure");
+    assert!(error.to_string().contains("retained reader capacity"));
+
+    let invocation = harness
+        .repository
+        .get_invocation(&sent.invocation_id)
+        .expect("invocation")
+        .expect("present");
+    assert_eq!(invocation.status, AgentInvocationStatus::Running);
+    assert!(invocation.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "runtime_cancellation_failed"
+            && diagnostic.message == "retained reader capacity exhausted"
+            && diagnostic
+                .details
+                .as_ref()
+                .and_then(|details| details.get("kind"))
+                .and_then(serde_json::Value::as_str)
+                == Some("cancellation_failed")
+    }));
+}
+
+#[test]
 fn startup_reconciliation_interrupts_pending_and_running_once() {
     let harness = Harness::new(RuntimeBehavior::StayRunning);
     let running_session = harness.create_session();
@@ -757,6 +792,7 @@ enum RuntimeBehavior {
     DuplicateCompletion,
     LateEventAfterCompletion,
     StayRunning,
+    CancellationFailure,
     PreflightFailure,
 }
 
@@ -863,7 +899,7 @@ impl FakeRuntime {
                 );
                 Ok(())
             }
-            RuntimeBehavior::StayRunning => {
+            RuntimeBehavior::StayRunning | RuntimeBehavior::CancellationFailure => {
                 *self.active.lock().expect("active runtime") = Some((request.invocation_id, sink));
                 Ok(())
             }
@@ -928,6 +964,12 @@ impl AgentRuntime for FakeRuntime {
             .lock()
             .expect("calls")
             .push(RuntimeCall::Cancel(invocation_id.clone()));
+        if matches!(self.behavior, RuntimeBehavior::CancellationFailure) {
+            return Err(RuntimePortError::new(
+                RuntimePortErrorKind::CancellationFailed,
+                "retained reader capacity exhausted",
+            ));
+        }
         let active = self.active.lock().expect("active runtime").take();
         let (_, sink) = active
             .ok_or_else(|| RuntimePortError::new(RuntimePortErrorKind::NotActive, "not active"))?;

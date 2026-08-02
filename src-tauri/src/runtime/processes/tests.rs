@@ -404,11 +404,7 @@ fn cancellation_settles_after_direct_exit_when_an_unowned_reader_stays_open() {
     let (factory, sink, supervisor) = fixture();
     let child = Arc::new(FakeChild::default());
     let stdout = BlockingReader::default();
-    factory.push_process_with_readers(
-        child,
-        Box::new(stdout.clone()),
-        Box::new(Cursor::new(Vec::<u8>::new())),
-    );
+    factory.push_process_with_readers(child, Box::new(stdout.clone()), Box::new(stdout.clone()));
     let invocation = invocation_id("invocation-cancellation-reader-boundary");
     supervisor
         .start(
@@ -429,7 +425,7 @@ fn cancellation_settles_after_direct_exit_when_an_unowned_reader_stays_open() {
         supervisor
             .retained_reader_count()
             .expect("retained reader count"),
-        1
+        2
     );
     let shutdown = supervisor
         .shutdown()
@@ -453,23 +449,29 @@ fn cancellation_settles_after_direct_exit_when_an_unowned_reader_stays_open() {
 #[test]
 fn cancellation_refuses_to_exceed_retained_reader_capacity() {
     let (factory, sink, supervisor) = fixture();
-    let first_child = Arc::new(FakeChild::default());
-    let first_reader = BlockingReader::default();
-    factory.push_process_with_readers(
-        first_child,
-        Box::new(first_reader.clone()),
-        Box::new(Cursor::new(Vec::<u8>::new())),
-    );
-    let first = invocation_id("invocation-reader-capacity-first");
-    supervisor
-        .start(
-            session_id("session-reader-capacity-first"),
-            first.clone(),
-            spec(),
-        )
-        .expect("start first");
-    supervisor.cancel(&first).expect("cancel first");
-    sink.wait_for_terminal(&first);
+    let mut readers = Vec::new();
+    for index in 0..4 {
+        let child = Arc::new(FakeChild::default());
+        let reader = BlockingReader::default();
+        factory.push_process_with_readers(
+            child,
+            Box::new(reader.clone()),
+            Box::new(reader.clone()),
+        );
+        let invocation = invocation_id(&format!("invocation-reader-capacity-{index}"));
+        supervisor
+            .start(
+                session_id(&format!("session-reader-capacity-{index}")),
+                invocation.clone(),
+                spec(),
+            )
+            .expect("start retained reader invocation");
+        supervisor
+            .cancel(&invocation)
+            .expect("cancel retained reader invocation");
+        sink.wait_for_terminal(&invocation);
+        readers.push(reader);
+    }
 
     let second_child = Arc::new(FakeChild::default());
     factory.push_process(second_child.clone());
@@ -486,10 +488,21 @@ fn cancellation_refuses_to_exceed_retained_reader_capacity() {
         .expect_err("capacity must refuse another cancellation");
     assert_eq!(error.kind, SupervisorErrorKind::CancellationFailed);
     assert!(error.message.contains("cleanup capacity"));
+    assert!(supervisor
+        .is_active(&second)
+        .expect("capacity refusal leaves invocation active"));
     second_child.complete(0);
-    sink.wait_for_terminal(&second);
+    assert_eq!(
+        sink.wait_for_terminal(&second),
+        ProcessTerminalOutcome::Exited(ProcessExit {
+            exit_code: Some(0),
+            signal: None,
+        })
+    );
 
-    first_reader.release();
+    for reader in readers {
+        reader.release();
+    }
     let deadline = Instant::now() + Duration::from_secs(2);
     while supervisor
         .retained_reader_count()
@@ -502,6 +515,65 @@ fn cancellation_refuses_to_exceed_retained_reader_capacity() {
     supervisor
         .shutdown()
         .expect("shutdown after retained cleanup");
+}
+
+#[test]
+fn dropping_a_supervisor_keeps_retained_readers_in_the_process_quarantine() {
+    let (factory, sink, supervisor) = fixture();
+    let child = Arc::new(FakeChild::default());
+    let reader = BlockingReader::default();
+    factory.push_process_with_readers(child, Box::new(reader.clone()), Box::new(reader.clone()));
+    let first = invocation_id("invocation-drop-reader-quarantine-first");
+    supervisor
+        .start(
+            session_id("session-drop-reader-quarantine-first"),
+            first.clone(),
+            spec(),
+        )
+        .expect("start first");
+    supervisor.cancel(&first).expect("cancel first");
+    sink.wait_for_terminal(&first);
+    drop(supervisor);
+
+    let (factory, sink, supervisor) = fixture();
+    let child = Arc::new(FakeChild::default());
+    factory.push_process(child.clone());
+    let second = invocation_id("invocation-drop-reader-quarantine-second");
+    supervisor
+        .start(
+            session_id("session-drop-reader-quarantine-second"),
+            second.clone(),
+            spec(),
+        )
+        .expect("start second");
+    assert_eq!(
+        supervisor
+            .retained_reader_count()
+            .expect("process quarantine reader count"),
+        2
+    );
+    child.complete(0);
+    assert!(matches!(
+        sink.wait_for_terminal(&second),
+        ProcessTerminalOutcome::Exited(_)
+    ));
+
+    reader.release();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while supervisor
+        .retained_reader_count()
+        .expect("retained reader count")
+        != 0
+    {
+        assert!(
+            Instant::now() < deadline,
+            "quarantined readers did not finish"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    supervisor
+        .shutdown()
+        .expect("shutdown after process quarantine cleanup");
 }
 
 #[test]

@@ -8,7 +8,7 @@ use crate::agent_sessions::domain::{AgentInvocationId, AgentSessionId};
 use std::{
     collections::HashMap,
     io,
-    sync::{Arc, Condvar, Mutex, MutexGuard},
+    sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock},
     thread,
     time::{Duration, Instant},
 };
@@ -34,8 +34,6 @@ pub(super) struct Registry {
     pub(super) sessions: HashMap<AgentSessionId, AgentInvocationId>,
     pub(super) shutting_down: bool,
     pub(super) terminal_callbacks_in_progress: usize,
-    pub(super) retained_reader_threads: Vec<thread::JoinHandle<ReaderResult>>,
-    pub(super) reserved_reader_cleanup_slots: usize,
 }
 
 pub(super) struct SupervisorInner {
@@ -45,11 +43,66 @@ pub(super) struct SupervisorInner {
     pub(super) changed: Condvar,
 }
 
-const RETAINED_READER_THREAD_LIMIT: usize = 2;
+const PROCESS_RETAINED_READER_THREAD_LIMIT: usize = 8;
+
+#[derive(Default)]
+struct ReaderQuarantine {
+    reader_threads: Vec<thread::JoinHandle<ReaderResult>>,
+    reserved_slots: usize,
+}
+
+// This process-wide, bounded quarantine outlives an individual supervisor. It deliberately keeps
+// unresolved reader handles until a later reap or process exit, so dropping a supervisor never
+// silently detaches handles that an unowned descendant may still keep open.
+static PROCESS_EXIT_READER_QUARANTINE: OnceLock<Mutex<ReaderQuarantine>> = OnceLock::new();
+static PROCESS_EXIT_SUPERVISOR_QUARANTINE: OnceLock<Mutex<Vec<Arc<SupervisorInner>>>> =
+    OnceLock::new();
+
+fn reader_quarantine() -> &'static Mutex<ReaderQuarantine> {
+    PROCESS_EXIT_READER_QUARANTINE.get_or_init(|| Mutex::new(ReaderQuarantine::default()))
+}
+
+fn supervisor_quarantine() -> &'static Mutex<Vec<Arc<SupervisorInner>>> {
+    PROCESS_EXIT_SUPERVISOR_QUARANTINE.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+#[cfg(test)]
+static TEST_PRODUCT_LEASE: OnceLock<(Mutex<bool>, Condvar)> = OnceLock::new();
+
+#[cfg(test)]
+struct TestProductLease;
+
+#[cfg(test)]
+impl TestProductLease {
+    fn acquire() -> Self {
+        let (active, changed) =
+            TEST_PRODUCT_LEASE.get_or_init(|| (Mutex::new(false), Condvar::new()));
+        let mut active = active.lock().expect("test product lease lock");
+        while *active {
+            active = changed.wait(active).expect("test product lease wait");
+        }
+        *active = true;
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestProductLease {
+    fn drop(&mut self) {
+        let (active, changed) = TEST_PRODUCT_LEASE
+            .get()
+            .expect("test product lease initialized");
+        *active.lock().expect("test product lease lock") = false;
+        changed.notify_one();
+    }
+}
 
 /// Owns each direct child through reap and bounds retained reader threads after cancellation.
 pub(crate) struct ProcessSupervisor {
     inner: Arc<SupervisorInner>,
+    shutdown_on_drop: bool,
+    #[cfg(test)]
+    _test_product_lease: Option<TestProductLease>,
 }
 
 impl ProcessSupervisor {
@@ -68,6 +121,9 @@ impl ProcessSupervisor {
                 registry: Mutex::new(Registry::default()),
                 changed: Condvar::new(),
             }),
+            shutdown_on_drop: true,
+            #[cfg(test)]
+            _test_product_lease: Some(TestProductLease::acquire()),
         }
     }
 
@@ -198,10 +254,14 @@ impl ProcessSupervisor {
             if already_canceling {
                 return Ok(());
             }
-            if registry.retained_reader_threads.len()
-                + registry.reserved_reader_cleanup_slots
-                + RETAINED_READER_THREAD_LIMIT
-                > RETAINED_READER_THREAD_LIMIT
+            let mut quarantine = reader_quarantine().lock().map_err(|_| {
+                SupervisorError::new(
+                    SupervisorErrorKind::Internal,
+                    "retained output-reader quarantine lock was poisoned",
+                )
+            })?;
+            if quarantine.reader_threads.len() + quarantine.reserved_slots + 2
+                > PROCESS_RETAINED_READER_THREAD_LIMIT
             {
                 return Err(SupervisorError::new(
                     SupervisorErrorKind::CancellationFailed,
@@ -216,14 +276,14 @@ impl ProcessSupervisor {
                     )
                 })?;
                 entry.requested_termination = Some(RequestedTermination::Cancellation);
-                entry.reader_cleanup_slots = RETAINED_READER_THREAD_LIMIT;
+                entry.reader_cleanup_slots = 2;
                 let process = entry.process.clone();
                 if process.is_some() {
                     entry.termination_operations += 1;
                 }
                 process
             };
-            registry.reserved_reader_cleanup_slots += RETAINED_READER_THREAD_LIMIT;
+            quarantine.reserved_slots += 2;
             process
         };
 
@@ -306,7 +366,7 @@ impl ProcessSupervisor {
 
         drop(registry);
         self.reap_retained_reader_threads();
-        let retained = self.lock_registry()?.retained_reader_threads.len();
+        let retained = self.retained_reader_count_inner()?;
         if !termination_failures.is_empty() {
             Err(SupervisorError::new(
                 SupervisorErrorKind::CancellationFailed,
@@ -340,25 +400,37 @@ impl ProcessSupervisor {
 
     #[cfg(test)]
     pub(crate) fn retained_reader_count(&self) -> Result<usize, SupervisorError> {
+        self.retained_reader_count_inner()
+    }
+
+    fn retained_reader_count_inner(&self) -> Result<usize, SupervisorError> {
         self.reap_retained_reader_threads();
-        Ok(self.lock_registry()?.retained_reader_threads.len())
+        reader_quarantine()
+            .lock()
+            .map(|quarantine| quarantine.reader_threads.len())
+            .map_err(|_| {
+                SupervisorError::new(
+                    SupervisorErrorKind::Internal,
+                    "retained output-reader quarantine lock was poisoned",
+                )
+            })
     }
 
     fn reap_retained_reader_threads(&self) {
         let completed = {
-            let Ok(mut registry) = self.inner.registry.lock() else {
+            let Ok(mut quarantine) = reader_quarantine().lock() else {
                 return;
             };
             let mut completed = Vec::new();
             let mut retained = Vec::new();
-            for handle in registry.retained_reader_threads.drain(..) {
+            for handle in quarantine.reader_threads.drain(..) {
                 if handle.is_finished() {
                     completed.push(handle);
                 } else {
                     retained.push(handle);
                 }
             }
-            registry.retained_reader_threads = retained;
+            quarantine.reader_threads = retained;
             completed
         };
         for handle in completed {
@@ -538,11 +610,6 @@ pub(super) fn retain_cancellation_readers(
     invocation_id: &AgentInvocationId,
     process: &Arc<ActiveProcess>,
 ) -> bool {
-    let Ok(mut readers) = process.reader_threads.lock() else {
-        return false;
-    };
-    let retained = readers.drain(..).collect::<Vec<_>>();
-    drop(readers);
     let Ok(mut registry) = inner.registry.lock() else {
         return false;
     };
@@ -556,17 +623,62 @@ pub(super) fn retain_cancellation_readers(
     {
         return false;
     }
+    let Ok(mut quarantine) = reader_quarantine().lock() else {
+        return false;
+    };
+    let Ok(mut readers) = process.reader_threads.lock() else {
+        return false;
+    };
+    let retained = readers.drain(..).collect::<Vec<_>>();
     let slots = entry.reader_cleanup_slots;
     entry.reader_cleanup_slots = 0;
-    registry.reserved_reader_cleanup_slots =
-        registry.reserved_reader_cleanup_slots.saturating_sub(slots);
-    registry.retained_reader_threads.extend(retained);
+    quarantine.reserved_slots = quarantine.reserved_slots.saturating_sub(slots);
+    quarantine.reader_threads.extend(retained);
     inner.changed.notify_all();
     true
 }
 
+pub(super) fn release_reader_cleanup_slots(slots: usize) {
+    if slots == 0 {
+        return;
+    }
+    if let Ok(mut quarantine) = reader_quarantine().lock() {
+        quarantine.reserved_slots = quarantine.reserved_slots.saturating_sub(slots);
+    }
+}
+
 impl Drop for ProcessSupervisor {
     fn drop(&mut self) {
-        let _ = self.shutdown();
+        self.reap_retained_reader_threads();
+        if !self.shutdown_on_drop {
+            return;
+        }
+        let inner = self.inner.clone();
+        let fallback = inner.clone();
+        let cleanup = thread::Builder::new()
+            .name("agent-process-supervisor-drop-cleanup".to_string())
+            .spawn(move || {
+                let supervisor = Self {
+                    inner,
+                    shutdown_on_drop: false,
+                    #[cfg(test)]
+                    _test_product_lease: None,
+                };
+                let _ = supervisor.shutdown();
+            });
+        if let Err(error) = cleanup {
+            let retained = if let Ok(mut quarantine) = supervisor_quarantine().lock() {
+                quarantine.push(fallback);
+                true
+            } else {
+                false
+            };
+            if !retained {
+                std::mem::forget(self.inner.clone());
+            }
+            eprintln!(
+                "process-supervisor drop cleanup worker could not start; process-exit quarantine retains supervised state: {error}"
+            );
+        }
     }
 }

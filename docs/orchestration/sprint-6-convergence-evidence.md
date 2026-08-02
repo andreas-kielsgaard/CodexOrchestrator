@@ -49,10 +49,13 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
   direct-child exit; inherited handles in an unowned Windows descendant are a supported mechanism
   or hypothesis, not a causal claim about the installed Codex invocation. The live runs prove the
   former missing-terminal symptom and post-change source settlement with Pause progression, not
-  that mechanism. After cancellation/direct-child exit, the supervisor retains at most two reader
-  handles, reaps finished readers before a later cancellation and at shutdown, refuses a later
+  that mechanism. After cancellation/direct-child exit, the product process reserves up to two
+  reader slots per invocation and retains at most eight reader handles in a process-wide quarantine.
+  It reaps finished readers before a later cancellation and at shutdown, refuses a later
   cancellation while that bounded capacity is exhausted, and reports an incomplete retained-reader
-  cleanup at shutdown.
+  cleanup at shutdown. Dropping an individual supervisor neither waits indefinitely nor discards
+  tracked readers: it starts nonblocking background cleanup while the process-exit quarantine
+  retains unresolved handles.
   It neither kills nor reattaches to descendants. Normal exits still drain readers before terminal
   delivery. This retains no process-tree claim, provider-terminal claim, or provider-compliance
   claim. The earlier failed-Pause Restart correction remains: Restart excludes every prior control
@@ -61,7 +64,9 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
 - Checkpoint validation: WCT-1 process supervision Rust **15 passed**; focused Epic control Rust
   **8 passed, 1 live ignored**, plus the isolated controlled-live exchange **1 passed**. The
   retained-reader correction adds focused process coverage for bounded retention, reaping,
-  cancellation refusal, and shutdown behavior (**16 passed**). The later
+  cancellation refusal, and shutdown behavior; its first count was invalidated by independent
+  review and is superseded by the correction commit's deterministic **17 passed** result. Agent
+  Session application cancellation/diagnostic coverage is **16 passed**. The later
   strict nested-observation decoder correction reran the frontend native-
   contract, Tauri transport, production-composition, and control UI at **4 files / 30 tests
   passed**. The later terminal-status and signed-exit-code correction reran the same set at **4

@@ -262,9 +262,7 @@ fn finalize_process(
             .active
             .remove(invocation_id)
             .expect("active process was checked before removal");
-        registry.reserved_reader_cleanup_slots = registry
-            .reserved_reader_cleanup_slots
-            .saturating_sub(entry.reader_cleanup_slots);
+        super::supervisor::release_reader_cleanup_slots(entry.reader_cleanup_slots);
         if registry.sessions.get(&entry.session_id) == Some(invocation_id) {
             registry.sessions.remove(&entry.session_id);
         }
