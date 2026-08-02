@@ -32,25 +32,27 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
   `cl1-epic-pause-restart-evidence.json` in that directory; it records `failed` with
   `timed out after 180s waiting for cl1-source`.
 
-  | Stage                                                                                                                          | Durable result                                                                                   |
-  | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-  | Application source request and launch acceptance                                                                               | observed: one application-origin source invocation persisted and launch-accepted                 |
-  | Epic correlation and Pause target selection                                                                                    | observed: one initiated Epic membership, one Pause action, and one exact source target persisted |
-  | Cancellation request                                                                                                           | observed: `cancel_requested_at` persisted                                                        |
-  | Source process/provider terminal, external context, provider activity                                                          | unproven: no normalized event or terminal record arrived before the 180-second bound             |
-  | Pause message/invocation persistence and launch acceptance                                                                     | unavailable in the final run because source cancellation never settled                           |
-  | Restart target, message/invocation persistence, and launch acceptance                                                          | unavailable in the final run because Pause did not settle                                        |
-  | Instruction receipt/compliance, actual suspension, continuation acceptance, resumed work, useful progress, consumer acceptance | unproven; none is inferred from request/acknowledgement state                                    |
-  | Reopen reconstruction                                                                                                          | unproven in the final run; no settled control exchange existed to reconstruct                    |
+  | Stage | Durable result |
+  | --- | --- |
+  | Application source request and launch acceptance | observed: one application-origin source invocation persisted and launch-accepted |
+  | Epic correlation and Pause target selection | observed: one initiated Epic membership, one Pause action, and one exact source target persisted |
+  | External context | observed: one normalized `runtime_context_established` event persisted the Codex thread id; the live driver waited for that observation before requesting Pause |
+  | Cancellation request | observed: `cancel_requested_at` persisted |
+  | Provider activity/tool activity, provider terminal, and process/source-cancellation terminal | unproven: no provider/process terminal record arrived before the 180-second bound |
+  | Pause message/invocation persistence and launch acceptance | unavailable in the final run because source cancellation never settled |
+  | Restart target, message/invocation persistence, and launch acceptance | unavailable in the final run because Pause did not settle |
+  | Instruction receipt/compliance, actual suspension, continuation acceptance, resumed work, useful progress, consumer acceptance | unproven; none is inferred from request/acknowledgement state |
+  | Reopen reconstruction | unproven in the final run; no settled control exchange existed to reconstruct |
 
   The prior same-isolated attempt reached Pause and Restart message launch acceptance, then found
   a product defect: a failed Pause control invocation was also treated as failed source work for
   Restart, creating a second target in the same session. Restart now excludes every prior control
   message from its failed/interrupted source candidate set. The deterministic regression covers
   that exact failed-Pause shape. The final run did not retry provider work after its single
-  bounded exchange; the owned test binary was stopped after it wrote the failure artifact because
-  no direct-child terminal callback arrived under the WindowsApps CLI activation. This is not
-  evidence of provider suspension, process reattachment, or resumed work.
+  bounded exchange. The run report separately records that the owned test binary was stopped after
+  it wrote the failure artifact and that the command route used WindowsApps CLI activation; neither
+  operational fact is SQLite/JSON evidence for the missing terminal state. This is not evidence of
+  provider suspension, process reattachment, or resumed work.
 
 - Checkpoint validation: focused Epic control Rust **7 passed**; focused observation Rust **5
   passed**. The later strict nested-observation decoder correction reran the frontend native-
