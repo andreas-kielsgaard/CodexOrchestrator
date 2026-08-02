@@ -1,0 +1,4 @@
+interface:
+  display_name: "Product Work Unit Handler"
+  short_description: "Own a product Work Unit through integration"
+  default_prompt: "Use $work-unit-handler to instantiate, review, and integrate this Work Unit."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Overall Plan"
+  short_description: "Own an ad-hoc Initiative across Plan Slices"
+  default_prompt: "Use $run-overall-plan to own this ad-hoc Initiative and select the appropriate Overall Plan operations."

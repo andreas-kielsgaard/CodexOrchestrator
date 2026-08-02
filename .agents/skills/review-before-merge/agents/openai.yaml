@@ -1,4 +1,0 @@
-interface:
-  display_name: "Work Slice Review"
-  short_description: "Review one already-open work slice"
-  default_prompt: "Use $review-before-merge to review this existing work slice and return its disposition."

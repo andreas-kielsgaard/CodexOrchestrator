@@ -1,4 +1,0 @@
-interface:
-  display_name: "Orchestration Worker"
-  short_description: "Finish an already-open worker slice"
-  default_prompt: "Use $orchestration-worker to finish or correct this existing worker assignment."

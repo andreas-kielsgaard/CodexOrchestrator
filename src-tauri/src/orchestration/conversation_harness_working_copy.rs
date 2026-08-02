@@ -564,7 +564,7 @@ mod tests {
                 available_discovery_policy: HarnessDiscoveryPolicy::Whitelist,
                 items: vec![HarnessSkillConfiguration {
                     name: "epic-plan-builder".into(),
-                    path: ".agents/skills/epic-plan-builder/SKILL.md".into(),
+                    path: ".agents/product-skills/epic-plan-builder/SKILL.md".into(),
                     purpose: "Build one Epic proposal.".into(),
                     use_when: "The product owns an Epic planning Session.".into(),
                     policy: HarnessSkillPolicy::AlwaysApplicable,

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Plan Step"
+  short_description: "Own one bounded ad-hoc Plan Step task"
+  default_prompt: "Use $run-plan-step to own this assigned Plan Step through execution and return."

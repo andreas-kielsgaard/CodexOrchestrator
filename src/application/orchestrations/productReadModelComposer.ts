@@ -14,6 +14,7 @@ import type {
   ProductWorkUnitPresentationState,
 } from './productReadModels';
 import { projectBootstrapTransitionStatus } from './epicBootstrapTransition';
+import { projectSprintRunnerTransitionStatus } from './sprintRunnerTransition';
 
 /**
  * Composition envelope rule: one decoded event root plus one decoded control/artifact root and a
@@ -34,6 +35,7 @@ export function composeProductOrchestrationReadModels(
     input,
     events.epics.map((epic) => epic.epicId),
   );
+  validateSprintRunnerTransitions(input, events);
 
   const index = indexReferenceData(input.referenceIndex);
   const sessions = events.agentSessionReferences.map((reference) => ({
@@ -54,6 +56,9 @@ export function composeProductOrchestrationReadModels(
           sessions,
           sprint.sprintId,
           input.selection,
+          input.sprintRunnerTransition?.query.transitions.find(
+            (transition) => transition.sprintId === sprint.sprintId,
+          ),
         ),
       );
     return {
@@ -89,6 +94,23 @@ export function composeProductOrchestrationReadModels(
   };
 }
 
+function validateSprintRunnerTransitions(
+  input: ProductReadCompositionInputV1,
+  events: ReturnType<typeof decodeOrchestrationEventsV1>,
+) {
+  if (!input.sprintRunnerTransition) return;
+  for (const transition of input.sprintRunnerTransition.query.transitions) {
+    const sprint = events.sprints.find((candidate) => candidate.sprintId === transition.sprintId);
+    if (!sprint || sprint.epicId !== transition.epicId)
+      fail('Sprint Runner transition does not match a native initiated Sprint');
+    const bootstrap = input.bootstrapTransition?.query.transitions.find(
+      (candidate) => candidate.epicId === transition.epicId,
+    );
+    if (!bootstrap || bootstrap.runnerInvocationId !== transition.epicRunnerInvocationId)
+      fail('Sprint Runner transition does not match the launch-authorized Epic Runner');
+  }
+}
+
 function validateBootstrapTransitions(
   input: ProductReadCompositionInputV1,
   epicIds: readonly string[],
@@ -114,6 +136,7 @@ function composeSprint(
   sessions: readonly ProductAgentSessionReferenceReadModelV1[],
   sprintId: string,
   selection: ProductReadCompositionInputV1['selection'],
+  sprintRunnerTransition?: import('./sprintRunnerTransition').SprintRunnerTransitionV1,
 ): ProductSprintReadModelV1 {
   const sprint = required(index.sprints, sprintId, 'Sprint reference index');
   const plan = events.sprintPlans.find((candidate) => candidate.sprintId === sprintId);
@@ -189,6 +212,9 @@ function composeSprint(
             'No application-owned Sprint start and repository reevaluation record is available.',
         },
       } as const),
+    ...(sprintRunnerTransition
+      ? { sprintRunnerTransition: projectSprintRunnerTransitionStatus(sprintRunnerTransition) }
+      : {}),
     sprintPlan: {
       sprintPlanId: plan.sprintPlanId,
       currentSprintPlanRevisionId: current.sprintPlanRevisionId,

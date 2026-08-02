@@ -1,4 +1,0 @@
-interface:
-  display_name: "Orchestration Record Root"
-  short_description: "Run the root record-keeping thread."
-  default_prompt: "Use $orchestration-record-root to run the orchestration record root thread."

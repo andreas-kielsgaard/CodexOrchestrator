@@ -1979,7 +1979,7 @@ mod tests {
         assert!(requests[0]
             .submitted_text
             .starts_with("<application_context provenance=\"product_initial_prompt_prefix\" source=\"epic_plan_builder\" version=\"4\">")
-            && requests[0].submitted_text.contains("canonical repository source: .agents/skills/epic-plan-builder/SKILL.md")
+            && requests[0].submitted_text.contains("canonical repository source: .agents/product-skills/epic-plan-builder/SKILL.md")
             && requests[0].submitted_text.contains("Request initiation only through request_epic_initiation")
             && requests[0].submitted_text.ends_with("<user_query>\nDiscuss goals, ambiguity, and risks.\n</user_query>"));
         assert_eq!(requests[1].submitted_text, "Build and structure the plan.");

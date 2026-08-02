@@ -1,4 +1,0 @@
-interface:
-  display_name: "Work Slice Settlement"
-  short_description: "Settle an already-open work-slice route"
-  default_prompt: "Use $work-slice-delegation to settle this already-running work-slice route."

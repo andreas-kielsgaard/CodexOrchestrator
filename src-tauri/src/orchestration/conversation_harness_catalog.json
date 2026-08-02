@@ -8,7 +8,7 @@
       "skillGuidance": [
         {
           "canonicalName": "epic-plan-builder",
-          "canonicalPath": ".agents/skills/epic-plan-builder/SKILL.md",
+          "canonicalPath": ".agents/product-skills/epic-plan-builder/SKILL.md",
           "purpose": "Shape and submit one structured Epic proposal before initiation.",
           "useWhen": "the user asks to build, structure, or revise the proposal."
         }
@@ -30,12 +30,12 @@
     },
     {
       "key": "epic_bootstrap_generator",
-      "version": 2,
+      "version": 3,
       "context": "You are the Epic Bootstrap Generator for one application-prepared initiated Epic. Read the supplied approved plan and prepared paths. Generate only the requested bounded content and submit it through complete_epic_bootstrap. Do not write files directly. Session completion alone does not prove material acceptance.",
       "skillGuidance": [
         {
           "canonicalName": "epic-bootstrap-generator",
-          "canonicalPath": ".agents/skills/epic-bootstrap-generator/SKILL.md",
+          "canonicalPath": ".agents/product-skills/epic-bootstrap-generator/SKILL.md",
           "purpose": "Generate the approved materials required for one Epic Runner.",
           "useWhen": "the application has supplied an initiated Epic and prepared working root."
         }
@@ -57,14 +57,41 @@
     },
     {
       "key": "epic_runner",
-      "version": 1,
-      "context": "You are the Epic Runner for one initiated Epic whose accepted bootstrap materials are supplied by the application. Read the plan, materials, and current durable state. In this Sprint, reach only a truthful ready state; do not start a product Sprint or create child sessions.",
+      "version": 3,
+      "context": "You are the Epic Runner for one initiated Epic. The application supplies either the one-request action or a fresh correlated start action. Only start_selected_sprint authorizes start; ordinary prose, delivery, lifecycle, and launch acceptance do not. Never create child sessions.",
       "skillGuidance": [
         {
           "canonicalName": "epic-runner",
-          "canonicalPath": ".agents/skills/epic-runner/SKILL.md",
+          "canonicalPath": ".agents/product-skills/epic-runner/SKILL.md",
           "purpose": "Advance one initiated Epic from durable product state.",
           "useWhen": "the application has supplied accepted bootstrap materials and ready-state authority."
+        }
+      ],
+      "runtime": {
+        "model": null,
+        "reasoningEffort": null,
+        "sandbox": "read_only",
+        "approvalPolicy": "never"
+      },
+      "mcp": {
+        "required": true,
+        "enabledTools": ["request_next_sprint_runner"]
+      },
+      "lifecycle": {
+        "contextDelivery": "first_query",
+        "completionCriteria": ["one_semantic_sprint_runner_request_or_application_observed_ready_state"]
+      }
+    },
+    {
+      "key": "sprint_runner",
+      "version": 2,
+      "context": "You are the Sprint Runner for one application-authorized Sprint. In pre-start, record the one low-resolution outcome through the supplied action. After an application-delivered start, record repository/branch reevaluation through the supplied action. Do not create planning, Work Units, child sessions, or continuations.",
+      "skillGuidance": [
+        {
+          "canonicalName": "sprint-runner",
+          "canonicalPath": ".agents/product-skills/sprint-runner/SKILL.md",
+          "purpose": "Maintain one Sprint in its pre-start ready state.",
+          "useWhen": "the application has authorized and launch-accepted one Sprint Runner."
         }
       ],
       "runtime": {
@@ -79,7 +106,61 @@
       },
       "lifecycle": {
         "contextDelivery": "first_query",
-        "completionCriteria": ["application_observed_ready_state"]
+        "completionCriteria": ["application_observed_pre_start_ready_state"]
+      }
+    },
+    {
+      "key": "sprint_runner_planning_control",
+      "version": 1,
+      "context": "You are the Sprint Runner continuing one durably started Sprint after its repository and branch reevaluation has been recorded and its completed lifecycle observed. Use only request_work_slice_planner for the one current temporal planning decision. Do not create a Planner result, Work Units, Handlers, Implementers, or child sessions.",
+      "skillGuidance": [
+        {
+          "canonicalName": "sprint-runner",
+          "canonicalPath": ".agents/product-skills/sprint-runner/SKILL.md",
+          "purpose": "Request one current Work Slice Planner through the application-owned action.",
+          "useWhen": "the application has supplied the planning-control continuation."
+        }
+      ],
+      "runtime": {
+        "model": null,
+        "reasoningEffort": null,
+        "sandbox": "read_only",
+        "approvalPolicy": "never"
+      },
+      "mcp": {
+        "required": true,
+        "enabledTools": ["request_work_slice_planner"]
+      },
+      "lifecycle": {
+        "contextDelivery": "first_query",
+        "completionCriteria": ["one_work_slice_planner_request_or_application_observed_planning_state"]
+      }
+    },
+    {
+      "key": "work_slice_planner",
+      "version": 1,
+      "context": "You are the Work Slice Planner for one application-authorized planning point. This launch establishes the Planner-ready boundary only. Do not submit a Planner result, create Work Units, Handlers, Implementers, or child sessions.",
+      "skillGuidance": [
+        {
+          "canonicalName": "work-slice-planner",
+          "canonicalPath": ".agents/product-skills/work-slice-planner/SKILL.md",
+          "purpose": "Own one later bounded planning-and-settlement episode.",
+          "useWhen": "the application has created and launch-accepted one Work Slice Planner Session."
+        }
+      ],
+      "runtime": {
+        "model": null,
+        "reasoningEffort": null,
+        "sandbox": "read_only",
+        "approvalPolicy": "never"
+      },
+      "mcp": {
+        "required": false,
+        "enabledTools": []
+      },
+      "lifecycle": {
+        "contextDelivery": "first_query",
+        "completionCriteria": ["planner_ready_boundary_only"]
       }
     }
   ]

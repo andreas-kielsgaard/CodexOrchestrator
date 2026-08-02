@@ -69,6 +69,10 @@ CREATE TABLE IF NOT EXISTS epic_bootstrap_transitions (
   semantic_completed_at TEXT,
   material_accepted_at TEXT,
   runner_session_created_at TEXT,
+  runner_harness_key TEXT,
+  runner_harness_version INTEGER,
+  runner_harness_requested_at TEXT,
+  runner_harness_applied_at TEXT,
   runner_launched_at TEXT,
   runner_lifecycle_status TEXT,
   runner_lifecycle_observed_at TEXT,
@@ -104,6 +108,13 @@ CREATE TABLE IF NOT EXISTS epic_bootstrap_completion_facts (
   FOREIGN KEY (command_id) REFERENCES epic_bootstrap_completion_commands(id) ON DELETE RESTRICT,
   FOREIGN KEY (result_id) REFERENCES epic_bootstrap_completion_results(id) ON DELETE RESTRICT
 );
+"#;
+
+const POST_CONFIRMATION_RUNNER_HARNESS_SCHEMA: &str = r#"
+ALTER TABLE epic_bootstrap_transitions ADD COLUMN runner_harness_key TEXT;
+ALTER TABLE epic_bootstrap_transitions ADD COLUMN runner_harness_version INTEGER;
+ALTER TABLE epic_bootstrap_transitions ADD COLUMN runner_harness_requested_at TEXT;
+ALTER TABLE epic_bootstrap_transitions ADD COLUMN runner_harness_applied_at TEXT;
 "#;
 
 pub(crate) const POST_CONFIRMATION_ATTEMPT_SCHEMA: &str = r#"
@@ -310,6 +321,10 @@ struct TransitionRecord {
     semantic_completion_fact_id: Option<String>,
     material_accepted_at: Option<String>,
     runner_session_created_at: Option<String>,
+    runner_harness_key: Option<String>,
+    runner_harness_version: Option<u16>,
+    runner_harness_requested_at: Option<String>,
+    runner_harness_applied_at: Option<String>,
     runner_launched_at: Option<String>,
 }
 
@@ -378,6 +393,21 @@ impl SqliteBootstrapTransitionRepository {
                     "initialize bootstrap attempt schema: {error}"
                 ))
             })?;
+        for statement in POST_CONFIRMATION_RUNNER_HARNESS_SCHEMA.split(';') {
+            let statement = statement.trim();
+            if statement.is_empty() {
+                continue;
+            }
+            match connection.execute(statement, []) {
+                Ok(_) => {}
+                Err(error) if error.to_string().contains("duplicate column name") => {}
+                Err(error) => {
+                    return Err(TransitionError::Unavailable(format!(
+                        "initialize Epic Runner Harness binding schema: {error}"
+                    )))
+                }
+            }
+        }
         Ok(Self {
             connection: Mutex::new(connection),
             clock,
@@ -491,6 +521,7 @@ impl SqliteBootstrapTransitionRepository {
             "bootstrap_launched_at",
             "material_accepted_at",
             "runner_session_created_at",
+            "runner_harness_applied_at",
             "runner_launched_at",
         ];
         if !allowed.contains(&column) {
@@ -506,6 +537,27 @@ impl SqliteBootstrapTransitionRepository {
                 params![initiation_id, now],
             )
             .map_err(sql_unavailable("record transition stage"))?;
+        Ok(())
+    }
+
+    fn record_runner_harness_binding(
+        &self,
+        initiation_id: &str,
+        key: &str,
+        version: u16,
+    ) -> Result<(), TransitionError> {
+        let now = self.timestamp();
+        let connection = self.lock()?;
+        let changed = connection.execute(
+            "UPDATE epic_bootstrap_transitions SET runner_harness_key=COALESCE(runner_harness_key,?2),runner_harness_version=COALESCE(runner_harness_version,?3),runner_harness_requested_at=COALESCE(runner_harness_requested_at,?4),updated_at=?4 WHERE initiation_id=?1 AND (runner_harness_key IS NULL OR (runner_harness_key=?2 AND runner_harness_version=?3))",
+            params![initiation_id,key,version,now],
+        ).map_err(sql_unavailable("record applied Epic Runner Harness binding"))?;
+        if changed != 1 {
+            return Err(TransitionError::IdentityMismatch(
+                "Epic Runner Harness binding conflicts with the applied invocation configuration"
+                    .into(),
+            ));
+        }
         Ok(())
     }
 
@@ -986,6 +1038,8 @@ pub(crate) struct PostConfirmationTransitionService {
     material_root: PathBuf,
     factory: Arc<dyn BootstrapInvocationFactory>,
     registry: BootstrapInvocationRegistry,
+    sprint_runners:
+        Mutex<Option<Arc<super::sprint_runner_transition::SprintRunnerTransitionService>>>,
 }
 
 impl PostConfirmationTransitionService {
@@ -1000,6 +1054,7 @@ impl PostConfirmationTransitionService {
             material_root,
             factory: Arc::new(ProductionBootstrapInvocationFactory),
             registry: BootstrapInvocationRegistry::default(),
+            sprint_runners: Mutex::new(None),
         })
     }
 
@@ -1016,6 +1071,7 @@ impl PostConfirmationTransitionService {
             material_root,
             factory,
             registry: BootstrapInvocationRegistry::default(),
+            sprint_runners: Mutex::new(None),
         })
     }
 
@@ -1055,6 +1111,11 @@ impl PostConfirmationTransitionService {
                 .record_lifecycle(invocation.id.as_str(), status, false)?
         {
             self.registry.remove(&invocation.id);
+            if let Ok(slot) = self.sprint_runners.lock() {
+                if let Some(service) = slot.as_ref() {
+                    service.on_epic_runner_terminal(&invocation.id);
+                }
+            }
             self.reconcile(&initiation_id)?;
         }
         Ok(())
@@ -1097,6 +1158,29 @@ impl PostConfirmationTransitionService {
 
     pub(crate) fn shutdown(&self) {
         self.registry.shutdown();
+        if let Ok(slot) = self.sprint_runners.lock() {
+            if let Some(service) = slot.as_ref() {
+                service.shutdown();
+            }
+        }
+    }
+
+    pub(crate) fn attach_sprint_runner_transition(
+        &self,
+        service: Arc<super::sprint_runner_transition::SprintRunnerTransitionService>,
+    ) -> Result<(), TransitionError> {
+        let mut slot = self.sprint_runners.lock().map_err(|_| {
+            TransitionError::Unavailable(
+                "Sprint Runner transition attachment is unavailable".into(),
+            )
+        })?;
+        if slot.is_some() {
+            return Err(TransitionError::Unavailable(
+                "Sprint Runner transition is already attached".into(),
+            ));
+        }
+        *slot = Some(service);
+        Ok(())
     }
 
     pub(crate) fn persisted_initiation_observer(
@@ -1281,12 +1365,41 @@ impl PostConfirmationTransitionService {
                 ApplicationInvocationLaunchEvidence::LaunchAccepted => true,
                 ApplicationInvocationLaunchEvidence::PersistedNotAccepted => false,
                 ApplicationInvocationLaunchEvidence::NeverPersisted => {
+                    let sprint_runners = self
+                        .sprint_runners
+                        .lock()
+                        .map_err(|_| {
+                            TransitionError::Unavailable(
+                                "Sprint Runner transition attachment is unavailable".into(),
+                            )
+                        })?
+                        .clone()
+                        .ok_or_else(|| {
+                            TransitionError::Unavailable(
+                                "Sprint Runner application action is unavailable".into(),
+                            )
+                        })?;
+                    let injection = sprint_runners
+                        .prepare_epic_runner_action(
+                            invocation_id.clone(),
+                            &harness.mcp.enabled_tools,
+                            harness.mcp.required,
+                        )
+                        .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
+                    self.repository.record_runner_harness_binding(
+                        &record.initiation_id,
+                        &harness.key,
+                        harness.version,
+                    )?;
+                    let mut additional_args = harness.runtime_configuration_args();
+                    additional_args.extend(injection.configuration_args);
                     let extension = RuntimeLaunchExtension {
-                        additional_args: harness.runtime_configuration_args(),
-                        environment: Vec::new(),
+                        additional_args,
+                        environment: vec![injection.environment],
                         initial_prompt_prefix: Some(harness.initial_prompt_prefix()),
                     };
-                    self.sessions
+                    let launch = self
+                        .sessions
                         .send_idempotent_application_message_with_launch_observation(
                             SendIdempotentApplicationAgentSessionMessageCommand {
                                 invocation_id,
@@ -1301,8 +1414,10 @@ impl PostConfirmationTransitionService {
                             },
                             Some(extension),
                         )
-                        .map_err(|error| TransitionError::Unavailable(error.to_string()))?
-                        .launch_accepted
+                        .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
+                    self.repository
+                        .record_stage(&record.initiation_id, "runner_harness_applied_at")?;
+                    launch.launch_accepted
                 }
             };
             if launch_accepted {
@@ -1660,13 +1775,15 @@ mod tests {
             repository::SqliteAgentSessionRepository,
         },
         orchestration::{
+            conversation_harness::{self, ConversationHarnessRole},
             domain::{InitiateEpicCommand, ProposedSprint, SaveEpicPlanProposalCommand},
             repository::SqliteOrchestrationRepository,
         },
     };
+    use sha2::{Digest, Sha256};
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
-        Weak,
+        Barrier, Weak,
     };
 
     #[derive(Default)]
@@ -1674,6 +1791,7 @@ mod tests {
         requests: Mutex<Vec<RuntimeInvocationRequest>>,
         sinks: Mutex<HashMap<AgentInvocationId, Arc<dyn AgentRuntimeUpdateSink>>>,
         fail_next_launch: AtomicUsize,
+        terminal_on_next_start: AtomicUsize,
     }
 
     impl RecordedRuntime {
@@ -1683,6 +1801,12 @@ mod tests {
 
         fn fail_next_launch(&self) {
             self.fail_next_launch.store(1, Ordering::SeqCst);
+        }
+
+        /// Deliberately emits through the production AgentSession notifier before `start_invocation`
+        /// returns. This exercises notifier re-entry rather than calling transition methods directly.
+        fn terminal_on_next_start(&self) {
+            self.terminal_on_next_start.store(1, Ordering::SeqCst);
         }
 
         fn finish(&self, invocation_id: &str, status: AgentInvocationTerminalStatus) {
@@ -1739,6 +1863,12 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(request.invocation_id.clone(), sink);
+            if self.terminal_on_next_start.swap(0, Ordering::SeqCst) == 1 {
+                self.finish_result(
+                    request.invocation_id.as_str(),
+                    AgentInvocationTerminalStatus::Completed,
+                )?;
+            }
             Ok(())
         }
 
@@ -1765,11 +1895,19 @@ mod tests {
     #[derive(Default)]
     struct TransitionNotifier {
         service: Mutex<Option<Weak<PostConfirmationTransitionService>>>,
+        sprint: Mutex<Option<Weak<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>>>,
     }
 
     impl TransitionNotifier {
         fn set(&self, service: &Arc<PostConfirmationTransitionService>) {
             *self.service.lock().unwrap() = Some(Arc::downgrade(service));
+        }
+
+        fn set_sprint(
+            &self,
+            service: &Arc<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>,
+        ) {
+            *self.sprint.lock().unwrap() = Some(Arc::downgrade(service));
         }
     }
 
@@ -1779,6 +1917,17 @@ mod tests {
                 .service
                 .lock()
                 .map_err(|_| "test notification registry unavailable".to_string())?
+                .as_ref()
+                .and_then(Weak::upgrade)
+            {
+                service
+                    .on_agent_notification(&notification)
+                    .map_err(|error| error.to_string())?;
+            }
+            if let Some(service) = self
+                .sprint
+                .lock()
+                .map_err(|_| "test Sprint notification registry unavailable".to_string())?
                 .as_ref()
                 .and_then(Weak::upgrade)
             {
@@ -1991,6 +2140,15 @@ mod tests {
                 material_root.clone(),
                 factory.clone(),
             );
+            service
+                .attach_sprint_runner_transition(
+                    crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                        &database_path,
+                        sessions.clone(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
             notifier.set(&service);
             Self {
                 _directory: directory,
@@ -2029,6 +2187,7 @@ mod tests {
                 self.material_root.clone(),
                 factory.clone(),
             );
+            service.attach_sprint_runner_transition(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&self.database_path, self.sessions.clone()).unwrap()).unwrap();
             self.notifier.set(&service);
             service.reconcile_startup().unwrap();
             self.service = service;
@@ -2061,6 +2220,7 @@ mod tests {
                 self.material_root.clone(),
                 factory.clone(),
             );
+            service.attach_sprint_runner_transition(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&self.database_path, sessions.clone()).unwrap()).unwrap();
             notifier.set(&service);
             service.reconcile_startup().unwrap();
             self.service = service;
@@ -2156,12 +2316,12 @@ mod tests {
         assert!(runner_request
             .submitted_text
             .contains("Do not create or start a product Sprint"));
-        assert!(runner_request
-            .launch_extension
-            .as_ref()
-            .unwrap()
-            .environment
-            .is_empty());
+        let runner_extension = runner_request.launch_extension.as_ref().unwrap();
+        assert_eq!(runner_extension.environment.len(), 1);
+        assert!(runner_extension
+            .additional_args
+            .iter()
+            .any(|value| value.contains("request_next_sprint_runner")));
 
         fixture.service.reconcile_startup().unwrap();
         fixture.service.reconcile_startup().unwrap();
@@ -2183,6 +2343,841 @@ mod tests {
                 .unwrap();
             assert_eq!(count, expected, "unexpected durable count for {table}");
         }
+    }
+
+    #[test]
+    fn launch_accepted_epic_runner_authorizes_one_ready_sprint_runner_without_downstream_effects() {
+        let fixture = Fixture::new();
+        let bootstrap = fixture.status();
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        fixture.runtime.finish(
+            &bootstrap.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let runner = fixture.status();
+        assert!(runner.runner_launched_at.is_some());
+        let sprint_id: String = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let service =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        let request = service
+            .request_next_sprint_runner(
+                &AgentInvocationId::new(runner.runner_invocation_id.clone()).unwrap(),
+                crate::orchestration::sprint_runner_transition::SprintRunnerSelection {
+                    sprint_id: sprint_id.clone(),
+                },
+            )
+            .unwrap();
+        assert!(request.pre_start_ready);
+        assert!(!request.lifecycle_observed);
+        assert!(!request.accepted);
+        assert_eq!(fixture.runtime.requests().len(), 3);
+        let replay = service
+            .request_next_sprint_runner(
+                &AgentInvocationId::new(runner.runner_invocation_id.clone()).unwrap(),
+                crate::orchestration::sprint_runner_transition::SprintRunnerSelection {
+                    sprint_id: sprint_id.clone(),
+                },
+            )
+            .unwrap();
+        assert_eq!(replay.request_id, request.request_id);
+        assert_eq!(fixture.runtime.requests().len(), 3);
+        assert!(matches!(
+            service.request_next_sprint_runner(
+                &AgentInvocationId::new("wrong-runner").unwrap(),
+                crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id: sprint_id.clone() },
+            ),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        assert!(matches!(
+            service.request_next_sprint_runner(
+                &AgentInvocationId::new(bootstrap.runner_invocation_id.clone()).unwrap(),
+                crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id: "unknown-sprint".into() },
+            ),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        let reopened =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        assert_eq!(reopened.reconcile_startup().unwrap(), 1);
+        assert_eq!(fixture.runtime.requests().len(), 3);
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sprint_runner_transitions",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_sessions", [], |row| row.get(0))
+                .unwrap(),
+            4
+        );
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_units','work_slice_planning_points','work_unit_executions')", [], |row| row.get(0)).unwrap(), 0);
+        drop(connection);
+        // Deterministic semantic state-machine: semantic outcome, matching terminal observation,
+        // delivery, sole Epic authorization, same-session continuation, and reevaluation.
+        fixture.runtime.finish(&runner.runner_invocation_id, AgentInvocationTerminalStatus::Completed);
+        let outcome = crate::orchestration::sprint_runner_transition::PreStartOutcome { forecast_and_concerns: "forecast A".into(), material_uncertainty: "uncertainty A".into(), application_owned_prerequisite: "Epic authorization".into() };
+        service.record_pre_start_outcome(&AgentInvocationId::new(request.sprint_runner_invocation_id.clone()).unwrap(), outcome.clone()).unwrap();
+        assert!(matches!(service.record_pre_start_outcome(&AgentInvocationId::new(request.sprint_runner_invocation_id.clone()).unwrap(), crate::orchestration::sprint_runner_transition::PreStartOutcome { forecast_and_concerns: "different".into(), material_uncertainty: "uncertainty A".into(), application_owned_prerequisite: "Epic authorization".into() }), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
+        fixture.runtime.finish(&request.sprint_runner_invocation_id, AgentInvocationTerminalStatus::Completed);
+        service.reconcile_startup().unwrap();
+        let accepted=service.query().unwrap().transitions.into_iter().next().unwrap();
+        assert!(accepted.accepted, "{accepted:?}");
+        assert_eq!(fixture.runtime.requests().len(),4);
+        let delivery=&fixture.runtime.requests()[3];assert!(delivery.submitted_text.contains("forecast A"));assert!(delivery.submitted_text.contains("uncertainty A"));assert!(delivery.submitted_text.contains("Epic authorization"));
+        assert!(matches!(service.start_selected_sprint(&AgentInvocationId::new("wrong-epic-continuation").unwrap()),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));
+        let barrier=Arc::new(Barrier::new(2));let start_calls=(0..2).map(|_|{let service=service.clone();let barrier=barrier.clone();let invocation=accepted.epic_continuation_invocation_id.clone().unwrap();std::thread::spawn(move||{barrier.wait();service.start_selected_sprint(&AgentInvocationId::new(invocation).unwrap())})}).collect::<Vec<_>>();let start_results=start_calls.into_iter().map(|call|call.join().unwrap()).collect::<Vec<_>>();assert!(start_results.iter().all(Result::is_ok),"{start_results:?}");
+        let started=service.query().unwrap().transitions.into_iter().next().unwrap();assert_eq!(started.sprint_runner_session_id,request.sprint_runner_session_id);assert!(started.sprint_continuation_launch_accepted_at.is_some());assert_eq!(fixture.runtime.requests().len(),5);
+        let reevaluation=crate::orchestration::sprint_runner_transition::StartedReevaluation{repository_branch_evaluation:"branch is clean".into(),started_forecast_and_concerns:"started concern".into()};service.record_started_reevaluation(&AgentInvocationId::new(started.sprint_continuation_invocation_id.clone().unwrap()).unwrap(),reevaluation.clone()).unwrap();assert!(matches!(service.record_started_reevaluation(&AgentInvocationId::new(started.sprint_continuation_invocation_id.unwrap()).unwrap(),crate::orchestration::sprint_runner_transition::StartedReevaluation{repository_branch_evaluation:"different branch".into(),started_forecast_and_concerns:"started concern".into()}),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));let final_state=service.query().unwrap().transitions.into_iter().next().unwrap();assert!(final_state.planning_ready_at.is_some());assert!(final_state.downstream_not_started);
+    }
+
+    #[test]
+    fn historical_epic_runner_v2_binding_is_not_relabelled_when_it_uses_its_existing_request_route() {
+        let fixture = Fixture::new();
+        let bootstrap = fixture.status();
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        fixture.runtime.finish(
+            &bootstrap.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let runner = fixture.status();
+        let sprint_id: String = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        Connection::open(&fixture.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE epic_bootstrap_transitions SET runner_harness_version=2 WHERE initiation_id=?1",
+                [&bootstrap.initiation_id],
+            )
+            .unwrap();
+        let sprint = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+        )
+        .unwrap();
+        sprint
+            .request_next_sprint_runner(
+                &AgentInvocationId::new(runner.runner_invocation_id).unwrap(),
+                crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id },
+            )
+            .unwrap();
+        assert_eq!(
+            Connection::open(&fixture.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT runner_harness_version FROM epic_bootstrap_transitions WHERE initiation_id=?1",
+                    [&bootstrap.initiation_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            2,
+        );
+        assert_eq!(
+            crate::orchestration::conversation_harness::profile(
+                crate::orchestration::conversation_harness::ConversationHarnessRole::EpicRunner,
+            )
+            .unwrap()
+            .version,
+            3,
+        );
+    }
+
+    #[test]
+    fn reconciliation_drain_accepts_semantic_lifecycle_overlap_without_manual_replay() {
+        let fixture = Fixture::new();
+        let bootstrap = fixture.status();
+        fixture.service.complete_bootstrap(&AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(), Fixture::materials()).unwrap();
+        fixture.runtime.finish(&bootstrap.bootstrap_invocation_id, AgentInvocationTerminalStatus::Completed);
+        let runner = fixture.status();
+        let sprint_id: String = Connection::open(&fixture.database_path).unwrap().query_row("SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1", [], |row| row.get(0)).unwrap();
+        let sprint = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        fixture.notifier.set_sprint(&sprint);
+        let request = sprint.request_next_sprint_runner(&AgentInvocationId::new(runner.runner_invocation_id.clone()).unwrap(), crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id }).unwrap();
+        // A continuation is legal for this overlap; only the Sprint semantic/lifecycle facts race.
+        fixture.runtime.finish(&runner.runner_invocation_id, AgentInvocationTerminalStatus::Completed);
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let used = Arc::new(AtomicUsize::new(0));
+        sprint.set_test_reconcile_snapshot_hook(Arc::new({
+            let entered = entered.clone(); let release = release.clone(); let used = used.clone();
+            move || if used.fetch_add(1, Ordering::SeqCst) == 0 { entered.wait(); release.wait(); }
+        }));
+        let outcome_service = sprint.clone();
+        let outcome_id = request.sprint_runner_invocation_id.clone();
+        let outcome = std::thread::spawn(move || outcome_service.record_pre_start_outcome(&AgentInvocationId::new(outcome_id).unwrap(), crate::orchestration::sprint_runner_transition::PreStartOutcome { forecast_and_concerns: "overlap forecast".into(), material_uncertainty: "overlap uncertainty".into(), application_owned_prerequisite: "overlap prerequisite".into() }));
+        entered.wait();
+        // This terminal travels through AgentSessionApplication's notifier while the elected
+        // semantic pass still holds its stale snapshot. It must set a drain generation, not drop.
+        fixture.runtime.finish(&request.sprint_runner_invocation_id, AgentInvocationTerminalStatus::Completed);
+        release.wait();
+        outcome.join().unwrap().unwrap();
+        let accepted = sprint.query().unwrap().transitions.remove(0);
+        assert!(accepted.accepted);
+        assert!(accepted.epic_continuation_launch_accepted_at.is_some());
+        assert_eq!(fixture.runtime.requests().len(), 4);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_units','work_slice_planning_points','work_unit_executions')", [], |row| row.get(0)).unwrap(), 0);
+    }
+
+    #[test]
+    fn reconciliation_drain_unblocks_origin_terminal_overlap_without_manual_replay() {
+        let fixture = Fixture::new();
+        let bootstrap = fixture.status();
+        fixture.service.complete_bootstrap(&AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(), Fixture::materials()).unwrap();
+        fixture.runtime.finish(&bootstrap.bootstrap_invocation_id, AgentInvocationTerminalStatus::Completed);
+        let runner = fixture.status();
+        let sprint_id: String = Connection::open(&fixture.database_path).unwrap().query_row("SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1", [], |row| row.get(0)).unwrap();
+        let sprint = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        fixture.notifier.set_sprint(&sprint);
+        let request = sprint.request_next_sprint_runner(&AgentInvocationId::new(runner.runner_invocation_id.clone()).unwrap(), crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id }).unwrap();
+        let input = crate::orchestration::sprint_runner_transition::PreStartOutcome { forecast_and_concerns: "origin overlap forecast".into(), material_uncertainty: "origin overlap uncertainty".into(), application_owned_prerequisite: "origin overlap prerequisite".into() };
+        sprint.record_pre_start_outcome(&AgentInvocationId::new(request.sprint_runner_invocation_id.clone()).unwrap(), input.clone()).unwrap();
+        fixture.runtime.finish(&request.sprint_runner_invocation_id, AgentInvocationTerminalStatus::Completed);
+        assert!(sprint.query().unwrap().transitions[0].accepted);
+        assert_eq!(fixture.runtime.requests().len(), 3);
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let used = Arc::new(AtomicUsize::new(0));
+        sprint.set_test_origin_snapshot_hook(Arc::new({
+            let entered = entered.clone(); let release = release.clone(); let used = used.clone();
+            move || if used.fetch_add(1, Ordering::SeqCst) == 0 { entered.wait(); release.wait(); }
+        }));
+        // A duplicate semantic action elects the first reconciliation pass and pauses after it
+        // snapshots origin-active. The origin terminal notifier must make that pass drain again.
+        let replay_service = sprint.clone();
+        let replay_id = request.sprint_runner_invocation_id.clone();
+        let replay = std::thread::spawn(move || replay_service.record_pre_start_outcome(&AgentInvocationId::new(replay_id).unwrap(), input));
+        entered.wait();
+        fixture.runtime.finish(&runner.runner_invocation_id, AgentInvocationTerminalStatus::Completed);
+        release.wait();
+        replay.join().unwrap().unwrap();
+        let launched = sprint.query().unwrap().transitions.remove(0);
+        assert!(launched.epic_continuation_launch_accepted_at.is_some());
+        assert_eq!(fixture.runtime.requests().len(), 4);
+        sprint.reconcile_startup().unwrap();
+        assert_eq!(fixture.runtime.requests().len(), 4);
+    }
+
+    #[test]
+    fn accepted_outcome_defers_epic_continuation_until_origin_terminal_notifier_and_restart_recovery() {
+        let fixture = Fixture::new();
+        let bootstrap = fixture.status();
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        fixture.runtime.finish(
+            &bootstrap.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let runner = fixture.status();
+        let sprint_id: String = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let sprint = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+        )
+        .unwrap();
+        fixture.notifier.set_sprint(&sprint);
+        let request = sprint
+            .request_next_sprint_runner(
+                &AgentInvocationId::new(runner.runner_invocation_id.clone()).unwrap(),
+                crate::orchestration::sprint_runner_transition::SprintRunnerSelection {
+                    sprint_id: sprint_id.clone(),
+                },
+            )
+            .unwrap();
+        sprint
+            .record_pre_start_outcome(
+                &AgentInvocationId::new(request.sprint_runner_invocation_id.clone()).unwrap(),
+                crate::orchestration::sprint_runner_transition::PreStartOutcome {
+                    forecast_and_concerns: "deferred forecast".into(),
+                    material_uncertainty: "deferred uncertainty".into(),
+                    application_owned_prerequisite: "deferred prerequisite".into(),
+                },
+            )
+            .unwrap();
+        // The productive notifier observes the matching Sprint terminal while the original Epic
+        // Runner is still active. Acceptance and intent persist, but no illegal second Session
+        // invocation is attempted.
+        fixture.runtime.finish(
+            &request.sprint_runner_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let deferred = sprint.query().unwrap().transitions.remove(0);
+        assert!(deferred.accepted);
+        assert!(deferred.parent_continuation_delivery_requested_at.is_some());
+        assert!(deferred.parent_continuation_delivery_persisted_at.is_none());
+        assert!(deferred.epic_continuation_launch_accepted_at.is_none());
+        assert_eq!(fixture.runtime.requests().len(), 3);
+
+        // Production-equivalent reopen before the origin terminal retains only the durable
+        // deferred state. The next terminal arrives through AgentSessionApplication's notifier.
+        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+        )
+        .unwrap();
+        fixture.notifier.set_sprint(&reopened);
+        reopened.reconcile_startup().unwrap();
+        assert_eq!(fixture.runtime.requests().len(), 3);
+        fixture.runtime.finish(
+            &runner.runner_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let delivered = reopened.query().unwrap().transitions.remove(0);
+        assert!(delivered.epic_continuation_launch_accepted_at.is_some());
+        assert_eq!(fixture.runtime.requests().len(), 4);
+        let continuation = &fixture.runtime.requests()[3];
+        assert!(continuation.submitted_text.contains("deferred forecast"));
+        assert!(continuation.submitted_text.contains("deferred uncertainty"));
+        assert!(continuation.submitted_text.contains("deferred prerequisite"));
+        reopened.reconcile_startup().unwrap();
+        let after_terminal = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+        )
+        .unwrap();
+        after_terminal.reconcile_startup().unwrap();
+        assert_eq!(fixture.runtime.requests().len(), 4);
+        assert_eq!(
+            Connection::open(&fixture.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_units','work_slice_planning_points','work_unit_executions')",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            0,
+        );
+    }
+
+    #[test]
+    fn synchronous_agent_session_notifier_reentry_is_safe_for_each_sprint_transition_launch() {
+        let fixture = Fixture::new();
+        let bootstrap = fixture.status();
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        fixture.runtime.finish(
+            &bootstrap.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let runner = fixture.status();
+        let sprint_id: String = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let sprint = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+        )
+        .unwrap();
+        fixture.notifier.set_sprint(&sprint);
+
+        // The fresh v2 pre-start invocation terminal is synchronously persisted and routed back
+        // through AgentSessionApplication before its launch call returns. No semantic outcome yet.
+        fixture.runtime.terminal_on_next_start();
+        let request = sprint
+            .request_next_sprint_runner(
+                &AgentInvocationId::new(runner.runner_invocation_id.clone()).unwrap(),
+                crate::orchestration::sprint_runner_transition::SprintRunnerSelection {
+                    sprint_id: sprint_id.clone(),
+                },
+            )
+            .unwrap();
+        let outcome_only = sprint.query().unwrap().transitions.remove(0);
+        assert!(outcome_only.pre_start_lifecycle_observed_at.is_some());
+        assert!(!outcome_only.accepted);
+        assert_eq!(fixture.runtime.requests().len(), 3);
+        // The originating Epic invocation is terminal before its fresh continuation is sent.
+        fixture.runtime.finish(
+            &runner.runner_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+
+        // The accepted-outcome delivery also completes synchronously through the real notifier.
+        fixture.runtime.terminal_on_next_start();
+        sprint
+            .record_pre_start_outcome(
+                &AgentInvocationId::new(request.sprint_runner_invocation_id.clone()).unwrap(),
+                crate::orchestration::sprint_runner_transition::PreStartOutcome {
+                    forecast_and_concerns: "notifier forecast".into(),
+                    material_uncertainty: "notifier uncertainty".into(),
+                    application_owned_prerequisite: "notifier prerequisite".into(),
+                },
+            )
+            .unwrap();
+        let accepted = sprint.query().unwrap().transitions.remove(0);
+        assert!(accepted.accepted);
+        let epic = accepted.epic_continuation_invocation_id.clone().unwrap();
+        assert!(accepted.epic_continuation_launch_accepted_at.is_some());
+        assert_eq!(fixture.runtime.requests().len(), 4);
+
+        // The same path is re-entered for the started Sprint continuation/reevaluation invocation.
+        fixture.runtime.terminal_on_next_start();
+        sprint
+            .start_selected_sprint(&AgentInvocationId::new(epic.clone()).unwrap())
+            .unwrap();
+        let started = sprint.query().unwrap().transitions.remove(0);
+        let continuation = started.sprint_continuation_invocation_id.clone().unwrap();
+        assert!(started.sprint_start_persisted_at.is_some());
+        assert!(started.sprint_continuation_launch_accepted_at.is_some());
+        assert_eq!(fixture.runtime.requests().len(), 5);
+
+        // All three terminals were observed through the notifier and reopen/replay creates no
+        // new message or invocation. Stable IDs remain the recorded values.
+        let sprint_session = AgentSessionId::new(request.sprint_runner_session_id).unwrap();
+        let history = fixture.sessions.load_session(&sprint_session).unwrap();
+        for id in [&request.sprint_runner_invocation_id, &continuation] {
+            assert!(history
+                .invocations
+                .iter()
+                .find(|candidate| candidate.invocation.id.as_str() == id)
+                .is_some_and(|candidate| candidate.invocation.status.is_terminal()));
+        }
+        let epic_session = AgentSessionId::new(runner.runner_session_id).unwrap();
+        assert!(fixture
+            .sessions
+            .load_session(&epic_session)
+            .unwrap()
+            .invocations
+            .iter()
+            .find(|candidate| candidate.invocation.id.as_str() == epic)
+            .is_some_and(|candidate| candidate.invocation.status.is_terminal()));
+        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+        )
+        .unwrap();
+        reopened.reconcile_startup().unwrap();
+        assert_eq!(fixture.runtime.requests().len(), 5);
+    }
+
+    #[test]
+    fn v1_pre_start_upgrade_recovers_only_matching_v2_terminal_and_starts_once() {
+        let fixture=Fixture::new();let bootstrap=fixture.status();fixture.service.complete_bootstrap(&AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),Fixture::materials()).unwrap();fixture.runtime.finish(&bootstrap.bootstrap_invocation_id,AgentInvocationTerminalStatus::Completed);let runner=fixture.status();let sprint_id:String=Connection::open(&fixture.database_path).unwrap().query_row("SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",[],|row|row.get(0)).unwrap();let service=crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path,fixture.sessions.clone()).unwrap();let initial=service.request_next_sprint_runner(&AgentInvocationId::new(runner.runner_invocation_id.clone()).unwrap(),crate::orchestration::sprint_runner_transition::SprintRunnerSelection{sprint_id:sprint_id.clone()}).unwrap();assert_eq!(fixture.runtime.requests().len(),3);
+        // Simulate a persisted historical v1 record. Its identity is retained after terminal.
+        Connection::open(&fixture.database_path).unwrap().execute("UPDATE sprint_runner_transitions SET sprint_runner_harness_version=1 WHERE sprint_id=?1",[&sprint_id]).unwrap();fixture.runtime.finish(&runner.runner_invocation_id,AgentInvocationTerminalStatus::Completed);fixture.runtime.finish(&initial.sprint_runner_invocation_id,AgentInvocationTerminalStatus::Completed);service.reconcile_startup().unwrap();let connection=Connection::open(&fixture.database_path).unwrap();let upgrade:String=connection.query_row("SELECT pre_start_upgrade_invocation_id FROM sprint_runner_transitions WHERE sprint_id=?1",[&sprint_id],|row|row.get(0)).unwrap();assert_eq!(connection.query_row::<u16,_,_>("SELECT sprint_runner_harness_version FROM sprint_runner_transitions WHERE sprint_id=?1",[&sprint_id],|row|row.get(0)).unwrap(),1);drop(connection);assert_eq!(fixture.runtime.requests().len(),4);
+        service.record_pre_start_outcome(&AgentInvocationId::new(upgrade.clone()).unwrap(),crate::orchestration::sprint_runner_transition::PreStartOutcome{forecast_and_concerns:"v2 forecast".into(),material_uncertainty:"v2 uncertainty".into(),application_owned_prerequisite:"v2 prerequisite".into()}).unwrap();assert!(!service.query().unwrap().transitions[0].accepted);assert_eq!(fixture.runtime.requests().len(),4);
+        // No transition notifier receives this terminal. Production-equivalent reopen must recover
+        // the v2 invocation from durable history and deliver the correlated outcome exactly once.
+        fixture.runtime.finish(&upgrade,AgentInvocationTerminalStatus::Completed);let reopened=crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path,fixture.sessions.clone()).unwrap();reopened.reconcile_startup().unwrap();let accepted=reopened.query().unwrap().transitions[0].clone();assert!(accepted.accepted);assert_eq!(fixture.runtime.requests().len(),5);let delivery=&fixture.runtime.requests()[4];assert!(delivery.submitted_text.contains("v2 forecast"));assert!(delivery.submitted_text.contains("v2 uncertainty"));assert!(delivery.submitted_text.contains("v2 prerequisite"));reopened.reconcile_startup().unwrap();assert_eq!(fixture.runtime.requests().len(),5);
+        let continuation=accepted.epic_continuation_invocation_id.clone().unwrap();let harness=conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap();Connection::open(&fixture.database_path).unwrap().execute("UPDATE sprint_runner_transitions SET epic_continuation_harness_version=?2 WHERE sprint_id=?1",params![&sprint_id,harness.version+1]).unwrap();assert!(matches!(reopened.start_selected_sprint(&AgentInvocationId::new(continuation.clone()).unwrap()),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));Connection::open(&fixture.database_path).unwrap().execute("UPDATE sprint_runner_transitions SET epic_continuation_harness_version=?2 WHERE sprint_id=?1",params![&sprint_id,harness.version]).unwrap();let barrier=Arc::new(Barrier::new(2));let starts=(0..2).map(|_|{let service=reopened.clone();let barrier=barrier.clone();let continuation=continuation.clone();std::thread::spawn(move||{barrier.wait();service.start_selected_sprint(&AgentInvocationId::new(continuation).unwrap())})}).collect::<Vec<_>>();assert!(starts.into_iter().all(|call|call.join().unwrap().is_ok()));assert_eq!(fixture.runtime.requests().len(),6);let conn=Connection::open(&fixture.database_path).unwrap();assert_eq!(conn.query_row::<i64,_,_>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_units','work_slice_planning_points','work_unit_executions')",[],|row|row.get(0)).unwrap(),0);
+    }
+
+    #[test]
+    fn sprint_runner_launch_non_acceptance_stays_unready_and_does_not_relaunch_on_restart() {
+        let fixture = Fixture::new();
+        let bootstrap = fixture.status();
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        fixture.runtime.finish(
+            &bootstrap.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let sprint_id: String = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let service =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        fixture.runtime.fail_next_launch();
+        let status = service
+            .request_next_sprint_runner(
+                &AgentInvocationId::new(bootstrap.runner_invocation_id).unwrap(),
+                crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id },
+            )
+            .unwrap();
+        assert!(status.harness_applied_at.is_some());
+        assert!(status.launch_accepted_at.is_none());
+        assert!(!status.pre_start_ready);
+        assert_eq!(fixture.runtime.requests().len(), 3);
+        let reopened =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        assert_eq!(reopened.reconcile_startup().unwrap(), 1);
+        assert_eq!(fixture.runtime.requests().len(), 3);
+    }
+
+    #[test]
+    fn reopened_production_sequence_recovers_authorized_sprint_runner_once() {
+        let fixture = Fixture::new();
+        let bootstrap = fixture.status();
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        fixture.runtime.finish(
+            &bootstrap.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let runner = fixture.status();
+        assert!(runner.runner_launched_at.is_some());
+
+        let (sprint_id, later_sprint_id): (String, String) = {
+            let connection = Connection::open(&fixture.database_path).unwrap();
+            let mut statement = connection
+                .prepare("SELECT id FROM initiated_sprints ORDER BY ordinal")
+                .unwrap();
+            let mut sprints = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .unwrap();
+            (
+                sprints.next().unwrap().unwrap(),
+                sprints.next().unwrap().unwrap(),
+            )
+        };
+        let stable_id = |prefix: &str| {
+            let mut hash = Sha256::new();
+            hash.update(prefix.as_bytes());
+            hash.update([0]);
+            hash.update(sprint_id.as_bytes());
+            format!("{prefix}-{:x}", hash.finalize())
+        };
+        let request_id = stable_id("sprint-runner-request");
+        let session_id = stable_id("sprint-runner-session");
+        let invocation_id = stable_id("sprint-runner-invocation");
+        let epic_harness =
+            conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap();
+        let sprint_harness =
+            conversation_harness::profile(ConversationHarnessRole::SprintRunner).unwrap();
+        let now = Utc::now().to_rfc3339();
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        connection.execute(
+            "INSERT INTO sprint_runner_transitions (sprint_id,epic_id,request_id,epic_runner_session_id,epic_runner_invocation_id,epic_runner_harness_key,epic_runner_harness_version,sprint_runner_harness_key,sprint_runner_harness_version,sprint_runner_session_id,sprint_runner_invocation_id,requested_at,authorized_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?12)",
+            params![&sprint_id, runner.epic_id, &request_id, runner.runner_session_id, runner.runner_invocation_id, epic_harness.key, epic_harness.version, sprint_harness.key, sprint_harness.version, &session_id, &invocation_id, now],
+        )
+        .unwrap();
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM agent_sessions WHERE id=?1",
+                    [&session_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1",
+                    [&invocation_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1",
+                    [&invocation_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            0
+        );
+        drop(connection);
+
+        fixture.service.shutdown();
+        let agent_repository = Arc::new(
+            SqliteAgentSessionRepository::new(Connection::open(&fixture.database_path).unwrap())
+                .unwrap(),
+        );
+        let runtime = Arc::new(RecordedRuntime::default());
+        let notifier = Arc::new(TransitionNotifier::default());
+        let sessions = Arc::new(AgentSessionApplication::new(
+            agent_repository,
+            runtime.clone(),
+            notifier.clone(),
+            Arc::new(SystemAgentSessionProviders),
+            Arc::new(SystemAgentSessionProviders),
+            Some("recorded-runtime".into()),
+        ));
+        sessions.reconcile_startup().unwrap();
+        let transition_repository =
+            Arc::new(SqliteBootstrapTransitionRepository::open(&fixture.database_path).unwrap());
+        let bootstrap = PostConfirmationTransitionService::with_factory(
+            transition_repository,
+            sessions.clone(),
+            fixture.material_root.clone(),
+            Arc::new(RecordedBootstrapFactory::default()),
+        );
+        let sprint_runners =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                sessions,
+            )
+            .unwrap();
+        bootstrap
+            .attach_sprint_runner_transition(sprint_runners.clone())
+            .unwrap();
+        notifier.set(&bootstrap);
+
+        bootstrap.reconcile_startup().unwrap();
+        assert_eq!(sprint_runners.reconcile_startup().unwrap(), 1);
+        let recovered = sprint_runners.query().unwrap().transitions;
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].sprint_id, sprint_id);
+        assert_eq!(recovered[0].sprint_runner_session_id, session_id);
+        assert_eq!(recovered[0].sprint_runner_invocation_id, invocation_id);
+        assert!(recovered[0].pre_start_ready);
+        assert!(!recovered[0].lifecycle_observed);
+        assert!(!recovered[0].accepted);
+        assert_eq!(runtime.requests().len(), 1);
+        let request = &runtime.requests()[0];
+        assert_eq!(request.options, sprint_harness.runtime_options());
+        assert!(request
+            .submitted_text
+            .contains("Sprint Runner for one application-authorized Sprint"));
+        assert!(request
+            .launch_extension
+            .as_ref()
+            .unwrap()
+            .additional_args
+            .iter()
+            .any(|argument| argument == "approval_policy=\"never\""));
+
+        bootstrap.reconcile_startup().unwrap();
+        assert_eq!(sprint_runners.reconcile_startup().unwrap(), 1);
+        assert_eq!(runtime.requests().len(), 1);
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM agent_sessions WHERE id=?1",
+                    [&session_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1",
+                    [&invocation_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1",
+                    [&invocation_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row::<String, _, _>(
+                    "SELECT sprint_runner_harness_key FROM sprint_runner_transitions WHERE sprint_id=?1",
+                    [&sprint_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            sprint_harness.key
+        );
+        assert_eq!(
+            connection
+                .query_row::<u16, _, _>(
+                    "SELECT sprint_runner_harness_version FROM sprint_runner_transitions WHERE sprint_id=?1",
+                    [&sprint_id],
+                    |row| row.get::<_, u16>(0),
+                )
+                .unwrap(),
+            sprint_harness.version
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sprint_runner_transitions WHERE sprint_id=?1",
+                    [&later_sprint_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            0
+        );
+        // A pre-existing v1 record is never relabelled. Startup advances it through a fresh v2
+        // invocation in the same Session and records that new applied Harness separately.
+        connection.execute("UPDATE sprint_runner_transitions SET sprint_runner_harness_version=1 WHERE sprint_id=?1", [&sprint_id]).unwrap();
+        drop(connection);
+        runtime.finish(&invocation_id, AgentInvocationTerminalStatus::Completed);
+        let upgraded = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, bootstrap.sessions.clone()).unwrap();
+        assert_eq!(upgraded.reconcile_startup().unwrap(), 1);
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(connection.query_row::<u16,_,_>("SELECT sprint_runner_harness_version FROM sprint_runner_transitions WHERE sprint_id=?1",[&sprint_id],|row|row.get(0)).unwrap(),1);
+        assert_eq!(connection.query_row::<u16,_,_>("SELECT pre_start_upgrade_harness_version FROM sprint_runner_transitions WHERE sprint_id=?1",[&sprint_id],|row|row.get(0)).unwrap(),sprint_harness.version);
+        assert_eq!(connection.query_row::<String,_,_>("SELECT sprint_runner_session_id FROM sprint_runner_transitions WHERE sprint_id=?1",[&sprint_id],|row|row.get(0)).unwrap(),session_id);
+        assert_eq!(runtime.requests().len(),2);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_units','work_slice_planning_points','work_unit_executions')",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn concurrent_sprint_runner_requests_replay_one_durable_route_and_launch() {
+        let fixture = Fixture::new();
+        let bootstrap = fixture.status();
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        fixture.runtime.finish(
+            &bootstrap.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let runner = fixture.status();
+        let sprint_id: String = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let service =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+        let calls = (0..2)
+            .map(|_| {
+                let service = service.clone();
+                let barrier = barrier.clone();
+                let sprint_id = sprint_id.clone();
+                let runner = runner.runner_invocation_id.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.request_next_sprint_runner(
+                        &AgentInvocationId::new(runner).unwrap(),
+                        crate::orchestration::sprint_runner_transition::SprintRunnerSelection {
+                            sprint_id,
+                        },
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = calls
+            .into_iter()
+            .map(|call| call.join().unwrap().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(results[0].request_id, results[1].request_id);
+        assert_eq!(
+            results[0].sprint_runner_session_id,
+            results[1].sprint_runner_session_id
+        );
+        assert_eq!(
+            results[0].sprint_runner_invocation_id,
+            results[1].sprint_runner_invocation_id
+        );
+        assert!(results.iter().all(|result| result.pre_start_ready), "{results:?}");
+        assert_eq!(fixture.runtime.requests().len(), 3);
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sprint_runner_transitions",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocation_launch_acceptances WHERE invocation_id LIKE 'sprint-runner-invocation-%'", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_units','work_slice_planning_points','work_unit_executions')", [], |row| row.get(0)).unwrap(), 0);
     }
 
     #[test]
@@ -3096,7 +4091,7 @@ fn read_transition(
 ) -> Result<TransitionRecord, TransitionError> {
     connection
         .query_row(
-            "SELECT initiation_id,epic_id,proposal_revision_id,material_snapshot_hash,proposal_json,preparation_id,prepared_root,approved_plan_path,manifest_path,overview_path,runner_brief_path,bootstrap_session_id,bootstrap_invocation_id,runner_session_id,runner_invocation_id,prepared_at,bootstrap_session_created_at,bootstrap_launched_at,bootstrap_lifecycle_status,semantic_completion_fact_id,material_accepted_at,runner_session_created_at,runner_launched_at FROM epic_bootstrap_transitions WHERE initiation_id=?1",
+            "SELECT initiation_id,epic_id,proposal_revision_id,material_snapshot_hash,proposal_json,preparation_id,prepared_root,approved_plan_path,manifest_path,overview_path,runner_brief_path,bootstrap_session_id,bootstrap_invocation_id,runner_session_id,runner_invocation_id,prepared_at,bootstrap_session_created_at,bootstrap_launched_at,bootstrap_lifecycle_status,semantic_completion_fact_id,material_accepted_at,runner_session_created_at,runner_harness_key,runner_harness_version,runner_harness_requested_at,runner_harness_applied_at,runner_launched_at FROM epic_bootstrap_transitions WHERE initiation_id=?1",
             params![initiation_id],
             |row| {
                 let proposal_json: String = row.get(4)?;
@@ -3109,7 +4104,7 @@ fn read_transition(
                     manifest_path: row.get(8)?, overview_path: row.get(9)?, runner_brief_path: row.get(10)?, bootstrap_session_id: row.get(11)?,
                     bootstrap_invocation_id: row.get(12)?, runner_session_id: row.get(13)?, runner_invocation_id: row.get(14)?, prepared_at: row.get(15)?,
                     bootstrap_session_created_at: row.get(16)?, bootstrap_launched_at: row.get(17)?, bootstrap_lifecycle_status: row.get(18)?,
-                    semantic_completion_fact_id: row.get(19)?, material_accepted_at: row.get(20)?, runner_session_created_at: row.get(21)?, runner_launched_at: row.get(22)?,
+                    semantic_completion_fact_id: row.get(19)?, material_accepted_at: row.get(20)?, runner_session_created_at: row.get(21)?, runner_harness_key: row.get(22)?, runner_harness_version: row.get(23)?, runner_harness_requested_at: row.get(24)?, runner_harness_applied_at: row.get(25)?, runner_launched_at: row.get(26)?,
                 })
             },
         )

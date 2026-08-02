@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evaluate Plan Slice"
+  short_description: "Judge a Plan Slice's Initiative-level result"
+  default_prompt: "Use $evaluate-plan-slice to assess this returned slice and decide the Initiative's next movement."

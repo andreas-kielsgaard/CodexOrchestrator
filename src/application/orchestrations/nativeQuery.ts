@@ -235,6 +235,7 @@ export function projectEpicPlanProposal(
 export function nativeQueryProductCompositionInputV2(
   query: OrchestrationNativeQueryV2,
   transitionQuery?: import('./epicBootstrapTransition').EpicBootstrapTransitionQueryV2,
+  sprintRunnerTransitionQuery?: import('./sprintRunnerTransition').SprintRunnerTransitionQueryV1,
 ): ProductReadCompositionInputV1 {
   const initiated = query.initiatedEpics;
   const initiatedPlanBuilders = initiated.map((epic) => {
@@ -432,6 +433,9 @@ export function nativeQueryProductCompositionInputV2(
             ),
           },
         }
+      : {}),
+    ...(sprintRunnerTransitionQuery
+      ? { sprintRunnerTransition: { query: sprintRunnerTransitionQuery } }
       : {}),
   };
 }

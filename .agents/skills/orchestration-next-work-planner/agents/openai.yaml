@@ -1,4 +1,0 @@
-interface:
-  display_name: "Sprint Runner"
-  short_description: "Plan and run one Sprint through Work Units"
-  default_prompt: "Use $orchestration-next-work-planner to plan and run this Sprint through its audited handback."

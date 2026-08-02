@@ -1,4 +1,0 @@
-interface:
-  display_name: "Start Orchestration Root Threads"
-  short_description: "Start root orchestration threads."
-  default_prompt: "Use $start-orchestration-root-threads to start root orchestration threads from an instantiated package."

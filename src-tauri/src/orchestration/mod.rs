@@ -11,4 +11,5 @@ pub(crate) mod file_review_originating_entry;
 pub(crate) mod initiated_sprint_git_authority;
 pub(crate) mod mcp;
 pub(crate) mod repository;
+pub(crate) mod sprint_runner_transition;
 pub(crate) mod transport;

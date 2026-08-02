@@ -142,6 +142,14 @@ export {
   managedPlanBuilderSessionConfiguration,
   type ManagedPlanBuilderSessionConfiguration,
 } from './managedPlanBuilderSession';
+export {
+  decodeSprintRunnerTransitionQueryV1,
+  projectSprintRunnerTransitionStatus,
+  SPRINT_RUNNER_TRANSITION_CONTRACT,
+  type ProductSprintRunnerTransitionStatusV1,
+  type SprintRunnerTransitionQueryV1,
+  type SprintRunnerTransitionV1,
+} from './sprintRunnerTransition';
 export type {
   ProductAgentSessionReferenceReadModelV1,
   ProductContinuationReadModelV1,

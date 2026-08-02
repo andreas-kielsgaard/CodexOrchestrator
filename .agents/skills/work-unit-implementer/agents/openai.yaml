@@ -1,4 +1,0 @@
-interface:
-  display_name: "Work Unit Implementer"
-  short_description: "Implement one assigned Work Unit"
-  default_prompt: "Use $work-unit-implementer to implement this assigned Work Unit and return evidence to its Handler."

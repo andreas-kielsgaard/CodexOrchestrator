@@ -1,4 +1,0 @@
-interface:
-  display_name: "Sprint Completion Audit"
-  short_description: "Audit a whole Sprint before Epic handback"
-  default_prompt: "Use $phase-completion-audit to audit this completed Sprint before its Epic Runner handback."

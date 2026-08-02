@@ -1,0 +1,4 @@
+interface:
+  display_name: "Start Plan Steps"
+  short_description: "Launch the ready packet of ad-hoc Plan Steps"
+  default_prompt: "Use $start-plan-steps to launch the currently ready Plan Steps as separate top-level tasks."

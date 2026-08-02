@@ -16,6 +16,7 @@ import {
 import { createTauriEpicPlanningDraftLifecycleClient } from '../infrastructure/orchestrations/tauriEpicPlanningDraftLifecycle';
 import { createTauriEpicInitiationConfirmationClient } from '../infrastructure/orchestrations/tauriEpicInitiationConfirmation';
 import { tauriEpicBootstrapTransitionClient } from '../infrastructure/orchestrations/tauriEpicBootstrapTransition';
+import { tauriSprintRunnerTransitionClient } from '../infrastructure/orchestrations/tauriSprintRunnerTransition';
 import { createTauriConversationHarnessInspectorSource } from '../infrastructure/conversationHarnesses/tauriConversationHarnessInspectorSource';
 import { createTauriContextualFileReviewClient } from '../infrastructure/fileReview/tauriContextualFileReview';
 
@@ -32,6 +33,7 @@ export function createProductApplicationComposition(): AppProps {
     orchestrationClient: createNativeQueryOrchestrationClient(
       tauriOrchestrationNativeQueryClient,
       tauriEpicBootstrapTransitionClient,
+      tauriSprintRunnerTransitionClient,
     ),
     epicInitiationConfirmationClient: createTauriEpicInitiationConfirmationClient(
       tauriOrchestrationNativeQueryClient,

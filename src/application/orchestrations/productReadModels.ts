@@ -224,6 +224,9 @@ export interface ProductReadCompositionInputV1 {
     readonly query: import('./epicBootstrapTransition').EpicBootstrapTransitionQueryV2;
     readonly initiationIdsByEpic: Readonly<Record<string, string>>;
   }>;
+  readonly sprintRunnerTransition?: Readonly<{
+    readonly query: import('./sprintRunnerTransition').SprintRunnerTransitionQueryV1;
+  }>;
 }
 
 export type ProductWorkUnitPresentationState =
@@ -360,6 +363,7 @@ export interface ProductSprintReadModelV1 {
   readonly source: ReadSourceAuthorityV1;
   readonly lifecycle?: ProductSourcedReadValueV1<'completed' | 'in_progress' | 'not_started'>;
   readonly planningState: ProductSourcedReadValueV1<ProductSprintPlanningStateV1>;
+  readonly sprintRunnerTransition?: import('./sprintRunnerTransition').ProductSprintRunnerTransitionStatusV1;
   readonly sprintPlan: {
     readonly sprintPlanId: string;
     readonly currentSprintPlanRevisionId: string;

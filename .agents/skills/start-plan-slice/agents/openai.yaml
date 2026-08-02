@@ -1,0 +1,4 @@
+interface:
+  display_name: "Start Plan Slice"
+  short_description: "Open the next bounded ad-hoc Plan Slice"
+  default_prompt: "Use $start-plan-slice to start the selected Plan Slice as a separate top-level task."

@@ -1,4 +1,0 @@
-interface:
-  display_name: 'Epic Planner'
-  short_description: 'Plan vertical Sprints for a development Epic'
-  default_prompt: 'Use $epic-planner to choose and prepare the next vertically complete Sprint for this Epic.'

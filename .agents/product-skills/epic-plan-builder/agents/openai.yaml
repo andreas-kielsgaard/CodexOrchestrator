@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Product Epic Plan Builder'
+  short_description: 'Build a product-owned Epic proposal'
+  default_prompt: 'Use $epic-plan-builder to discuss and build this Epic proposal in the Plan Builder context.'

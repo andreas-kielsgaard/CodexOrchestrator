@@ -22,6 +22,7 @@ export interface SprintWorkspacePresentationV1 {
     readonly source: ReadSourceAuthorityV1;
     readonly lifecycle?: ProductSprintReadModelV1['lifecycle'];
     readonly planningState: ProductSprintReadModelV1['planningState'];
+    readonly sprintRunnerTransition?: ProductSprintReadModelV1['sprintRunnerTransition'];
   }>;
   readonly revisions: readonly Readonly<{
     readonly sprintPlanRevisionId: string;
@@ -82,6 +83,9 @@ export function projectSprintWorkspacePresentation(
       source: sprint.source,
       ...(sprint.lifecycle ? { lifecycle: sprint.lifecycle } : {}),
       planningState: sprint.planningState,
+      ...(sprint.sprintRunnerTransition
+        ? { sprintRunnerTransition: sprint.sprintRunnerTransition }
+        : {}),
     },
     revisions: sprint.sprintPlan.revisions.map((revision) => ({ ...revision })),
     activeSprintPlanRevisionId: sprint.sprintPlan.currentSprintPlanRevisionId,

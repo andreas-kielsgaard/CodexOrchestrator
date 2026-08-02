@@ -14,6 +14,9 @@ pub(crate) enum ConversationHarnessRole {
     EpicPlanBuilder,
     EpicBootstrapGenerator,
     EpicRunner,
+    SprintRunner,
+    SprintRunnerPlanningControl,
+    WorkSlicePlanner,
 }
 
 impl ConversationHarnessRole {
@@ -22,6 +25,9 @@ impl ConversationHarnessRole {
             Self::EpicPlanBuilder => "epic_plan_builder",
             Self::EpicBootstrapGenerator => "epic_bootstrap_generator",
             Self::EpicRunner => "epic_runner",
+            Self::SprintRunner => "sprint_runner",
+            Self::SprintRunnerPlanningControl => "sprint_runner_planning_control",
+            Self::WorkSlicePlanner => "work_slice_planner",
         }
     }
 }
@@ -232,6 +238,9 @@ pub(crate) fn role_discovery_root(role: ConversationHarnessRole) -> Result<Strin
         ConversationHarnessRole::EpicPlanBuilder => "epic-plan-builder",
         ConversationHarnessRole::EpicBootstrapGenerator => "epic-bootstrap-generator",
         ConversationHarnessRole::EpicRunner => "epic-runner",
+        ConversationHarnessRole::SprintRunner => "sprint-runner",
+        ConversationHarnessRole::SprintRunnerPlanningControl => "sprint-runner",
+        ConversationHarnessRole::WorkSlicePlanner => "work-slice-planner",
     };
     let skill = profile
         .skill_guidance
@@ -279,12 +288,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn three_profiles_validate_with_truthful_enforceable_settings() {
+    fn four_profiles_validate_with_truthful_enforceable_settings() {
         let plan_builder = profile(ConversationHarnessRole::EpicPlanBuilder).unwrap();
         let bootstrap = profile(ConversationHarnessRole::EpicBootstrapGenerator).unwrap();
         let runner = profile(ConversationHarnessRole::EpicRunner).unwrap();
+        let sprint_runner = profile(ConversationHarnessRole::SprintRunner).unwrap();
+        let planning_control = profile(ConversationHarnessRole::SprintRunnerPlanningControl).unwrap();
+        let planner = profile(ConversationHarnessRole::WorkSlicePlanner).unwrap();
 
         assert_eq!(plan_builder.version, 4);
+        assert_eq!(runner.key, "epic_runner");
+        assert_eq!(runner.version, 3);
+        assert_eq!(sprint_runner.key, "sprint_runner");
+        assert_eq!(sprint_runner.version, 2);
+        assert_eq!(planning_control.mcp.enabled_tools, ["request_work_slice_planner"]);
+        assert!(planning_control.mcp.required);
+        assert_eq!(planner.key, "work_slice_planner");
         assert_eq!(
             plan_builder.runtime_options().sandbox,
             Some(RuntimeSandboxMode::ReadOnly)
@@ -304,7 +323,10 @@ mod tests {
             runner.runtime_options().sandbox,
             Some(RuntimeSandboxMode::ReadOnly)
         );
-        assert!(runner.mcp.enabled_tools.is_empty());
+        assert_eq!(runner.mcp.enabled_tools, ["request_next_sprint_runner"]);
+        assert!(runner.mcp.required);
+        assert_eq!(sprint_runner.mcp.enabled_tools, Vec::<String>::new());
+        assert!(!sprint_runner.mcp.required);
         assert_eq!(
             plan_builder.runtime_configuration_args(),
             ["-c", "approval_policy=\"never\""]
@@ -325,7 +347,7 @@ mod tests {
         );
         let root = PathBuf::from(epic_plan_builder_discovery_root().unwrap());
         assert!(root
-            .join(".agents/skills/epic-plan-builder/SKILL.md")
+            .join(".agents/product-skills/epic-plan-builder/SKILL.md")
             .is_file());
     }
 

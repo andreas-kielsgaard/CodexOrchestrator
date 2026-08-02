@@ -5,6 +5,7 @@ use super::{
         FileReviewOriginatingEntryError, FileReviewOriginatingEntryService,
     },
     repository::NativeQueryV2,
+    sprint_runner_transition::{SprintRunnerTransitionQueryV1, SprintRunnerTransitionService},
 };
 use crate::agent_sessions::{
     application::SendAgentSessionMessageResult,
@@ -56,6 +57,15 @@ pub(crate) struct InitiationConfirmationTauriState {
 
 pub(crate) struct BootstrapTransitionTauriState {
     service: Arc<PostConfirmationTransitionService>,
+}
+
+pub(crate) struct SprintRunnerTransitionTauriState {
+    service: Arc<SprintRunnerTransitionService>,
+}
+impl SprintRunnerTransitionTauriState {
+    pub(crate) fn new(service: Arc<SprintRunnerTransitionService>) -> Self {
+        Self { service }
+    }
 }
 
 impl BootstrapTransitionTauriState {
@@ -454,6 +464,13 @@ fn contextual_file_review_reason(error: FileReviewOriginatingEntryError) -> &'st
 pub(crate) fn load_epic_bootstrap_transition_query(
     state: State<'_, BootstrapTransitionTauriState>,
 ) -> Result<BootstrapTransitionQueryV2, String> {
+    state.service.query().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn load_sprint_runner_transition_query(
+    state: State<'_, SprintRunnerTransitionTauriState>,
+) -> Result<SprintRunnerTransitionQueryV1, String> {
     state.service.query().map_err(|error| error.to_string())
 }
 

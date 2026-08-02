@@ -17,6 +17,7 @@ struct ManagedPlanBuilderNotifier {
             >,
         >,
     >,
+    sprint_transition: Arc<Mutex<Option<Weak<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>>>>,
 }
 impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBuilderNotifier {
     fn notify(
@@ -40,11 +41,16 @@ impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBui
             .transpose()
             .err()
             .map(|error| error.to_string());
+        let sprint_transition_error = self.sprint_transition.lock()
+            .map_err(|_| "Sprint Runner notification registry is unavailable".to_string())?
+            .clone().and_then(|service| service.upgrade())
+            .map(|service| service.on_agent_notification(&notification))
+            .transpose().err().map(|error| error.to_string());
         let inner_error = self.inner.notify(notification).err();
-        match (transition_error, inner_error) {
-            (None, None) => Ok(()),
-            (Some(error), None) | (None, Some(error)) => Err(error),
-            (Some(transition), Some(inner)) => Err(format!("{transition}; {inner}")),
+        match (transition_error, sprint_transition_error, inner_error) {
+            (None, None, None) => Ok(()),
+            (Some(error), None, None) | (None, Some(error), None) | (None, None, Some(error)) => Err(error),
+            (transition, sprint, inner) => Err([transition, sprint, inner].into_iter().flatten().collect::<Vec<_>>().join("; ")),
         }
     }
 }
@@ -78,6 +84,7 @@ pub(crate) fn run() {
             let registry =
                 Arc::new(crate::orchestration::application::ManagedPlanBuilderRegistry::default());
             let transition_notification = Arc::new(Mutex::new(None));
+            let sprint_transition_notification = Arc::new(Mutex::new(None));
             let notifier: Arc<dyn crate::agent_sessions::application::AgentSessionNotifier> =
                 Arc::new(ManagedPlanBuilderNotifier {
                     inner: Arc::new(
@@ -87,6 +94,7 @@ pub(crate) fn run() {
                     ),
                     registry: registry.clone(),
                     transition: transition_notification.clone(),
+                    sprint_transition: sprint_transition_notification.clone(),
                 });
             let providers =
                 Arc::new(crate::agent_sessions::application::SystemAgentSessionProviders);
@@ -137,6 +145,15 @@ pub(crate) fn run() {
                     application.clone(),
                     app_data_dir.join("orchestration-materials"),
                 );
+            let sprint_runners = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &database_path,
+                application.clone(),
+            )
+            .map_err(|error| error.to_string())?;
+            *sprint_transition_notification.lock().map_err(|_| "Sprint Runner notification registry is unavailable")? = Some(Arc::downgrade(&sprint_runners));
+            transition
+                .attach_sprint_runner_transition(sprint_runners.clone())
+                .map_err(|error| error.to_string())?;
             *transition_notification
                 .lock()
                 .map_err(|_| "post-confirmation notification registry is unavailable")? =
@@ -148,9 +165,17 @@ pub(crate) fn run() {
             transition
                 .reconcile_startup()
                 .map_err(|error| error.to_string())?;
+            sprint_runners
+                .reconcile_startup()
+                .map_err(|error| error.to_string())?;
             app.manage(
                 crate::orchestration::transport::BootstrapTransitionTauriState::new(
                     transition,
+                ),
+            );
+            app.manage(
+                crate::orchestration::transport::SprintRunnerTransitionTauriState::new(
+                    sprint_runners,
                 ),
             );
             app.manage(
@@ -250,6 +275,7 @@ pub(crate) fn run() {
             crate::orchestration::transport::load_scoped_file_review,
             crate::orchestration::transport::request_contextual_file_review,
             crate::orchestration::transport::load_epic_bootstrap_transition_query,
+            crate::orchestration::transport::load_sprint_runner_transition_query,
             #[cfg(debug_assertions)]
             crate::worktree_review::transport::list_human_review_worktrees,
             #[cfg(debug_assertions)]
