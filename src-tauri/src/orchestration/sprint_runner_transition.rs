@@ -107,23 +107,27 @@ CREATE TABLE IF NOT EXISTS sprint_runner_transitions (
   FOREIGN KEY (sprint_id) REFERENCES initiated_sprints(id) ON DELETE RESTRICT
 );
 
-CREATE TABLE IF NOT EXISTS work_slice_planner_transitions (
-  sprint_id TEXT PRIMARY KEY,
-  planning_point_id TEXT NOT NULL UNIQUE,
+CREATE TABLE IF NOT EXISTS work_slice_planning_requests (
+  planning_point_id TEXT PRIMARY KEY,
+  sprint_id TEXT NOT NULL,
+  planning_episode INTEGER NOT NULL,
+  is_current INTEGER NOT NULL CHECK (is_current IN (0, 1)),
   request_fact_id TEXT NOT NULL UNIQUE,
   parent_sprint_runner_session_id TEXT NOT NULL,
   parent_planning_control_invocation_id TEXT NOT NULL UNIQUE,
+  repository_worktree_route TEXT NOT NULL,
   requested_at TEXT NOT NULL,
   authorized_at TEXT NOT NULL,
   planner_harness_key TEXT NOT NULL,
   planner_harness_version INTEGER NOT NULL,
   planner_session_id TEXT NOT NULL UNIQUE,
   planner_invocation_id TEXT NOT NULL UNIQUE,
-  session_created_at TEXT,
-  harness_applied_at TEXT,
-  launch_accepted_at TEXT,
+  UNIQUE (sprint_id, planning_episode),
   FOREIGN KEY (sprint_id) REFERENCES sprint_runner_transitions(sprint_id) ON DELETE RESTRICT
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS work_slice_planning_requests_one_current
+  ON work_slice_planning_requests(sprint_id) WHERE is_current = 1;
 "#;
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -196,7 +200,11 @@ pub(crate) struct SprintRunnerTransitionStatus {
     pub(crate) planning_control_invocation_id: Option<String>,
     pub(crate) planning_control_launch_accepted_at: Option<String>,
     pub(crate) planning_ready_at: Option<String>,
+    pub(crate) work_slice_planner_request_id: Option<String>,
     pub(crate) work_slice_planning_point_id: Option<String>,
+    pub(crate) work_slice_planner_repository_worktree_route: Option<String>,
+    pub(crate) work_slice_planner_harness_key: Option<String>,
+    pub(crate) work_slice_planner_harness_version: Option<u16>,
     pub(crate) work_slice_planner_session_id: Option<String>,
     pub(crate) work_slice_planner_invocation_id: Option<String>,
     pub(crate) work_slice_planner_session_created_at: Option<String>,
@@ -489,7 +497,6 @@ impl SprintRunnerTransitionService {
             self.observe_existing_terminals(id)?;
             drop(_transition_guard);
             self.reconcile_sprint(id)?;
-            self.reconcile_work_slice_planner(id)?;
         }
         Ok(ids.len())
     }
@@ -512,7 +519,7 @@ impl SprintRunnerTransitionService {
                 "Sprint Runner transition database lock is poisoned".into(),
             )
         })?;
-        let mut statement = conn.prepare("SELECT t.sprint_id,t.epic_id,t.request_id,t.epic_runner_invocation_id,t.sprint_runner_session_id,t.sprint_runner_invocation_id,t.requested_at,t.authorized_at,t.session_created_at,t.harness_applied_at,t.launch_accepted_at,t.pre_start_semantic_outcome_recorded_at,t.pre_start_lifecycle_observed_at,t.pre_start_outcome_accepted_at,t.parent_continuation_delivery_requested_at,t.parent_continuation_delivery_persisted_at,t.epic_continuation_invocation_id,t.epic_continuation_launch_accepted_at,t.provider_receiver_activation_observed_at,t.sprint_start_authorized_at,t.sprint_start_persisted_at,t.sprint_continuation_invocation_id,t.sprint_continuation_launch_accepted_at,t.repository_branch_reevaluation_recorded_at,t.started_reevaluation_lifecycle_observed_at,t.planning_control_delivery_requested_at,t.planning_control_delivery_persisted_at,t.planning_control_invocation_id,t.planning_control_launch_accepted_at,t.planning_ready_at,p.planning_point_id,p.planner_session_id,p.planner_invocation_id,p.session_created_at,p.harness_applied_at,p.launch_accepted_at FROM sprint_runner_transitions t LEFT JOIN work_slice_planner_transitions p ON p.sprint_id=t.sprint_id ORDER BY t.requested_at,t.sprint_id").map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let mut statement = conn.prepare("SELECT t.sprint_id,t.epic_id,t.request_id,t.epic_runner_invocation_id,t.sprint_runner_session_id,t.sprint_runner_invocation_id,t.requested_at,t.authorized_at,t.session_created_at,t.harness_applied_at,t.launch_accepted_at,t.pre_start_semantic_outcome_recorded_at,t.pre_start_lifecycle_observed_at,t.pre_start_outcome_accepted_at,t.parent_continuation_delivery_requested_at,t.parent_continuation_delivery_persisted_at,t.epic_continuation_invocation_id,t.epic_continuation_launch_accepted_at,t.provider_receiver_activation_observed_at,t.sprint_start_authorized_at,t.sprint_start_persisted_at,t.sprint_continuation_invocation_id,t.sprint_continuation_launch_accepted_at,t.repository_branch_reevaluation_recorded_at,t.started_reevaluation_lifecycle_observed_at,t.planning_control_delivery_requested_at,t.planning_control_delivery_persisted_at,t.planning_control_invocation_id,t.planning_control_launch_accepted_at,t.planning_ready_at,p.request_fact_id,p.planning_point_id,p.repository_worktree_route,p.planner_harness_key,p.planner_harness_version,p.planner_session_id,p.planner_invocation_id FROM sprint_runner_transitions t LEFT JOIN work_slice_planning_requests p ON p.sprint_id=t.sprint_id AND p.is_current=1 ORDER BY t.requested_at,t.sprint_id").map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         let transitions = statement
             .query_map([], |r| {
                 Ok(SprintRunnerTransitionStatus {
@@ -549,13 +556,17 @@ impl SprintRunnerTransitionService {
                     planning_control_invocation_id: r.get(27)?,
                     planning_control_launch_accepted_at: r.get(28)?,
                     planning_ready_at: r.get(29)?,
-                    work_slice_planning_point_id: r.get(30)?,
-                    work_slice_planner_session_id: r.get(31)?,
-                    work_slice_planner_invocation_id: r.get(32)?,
-                    work_slice_planner_session_created_at: r.get(33)?,
-                    work_slice_planner_harness_applied_at: r.get(34)?,
-                    work_slice_planner_launch_accepted_at: r.get(35)?,
-                    downstream_not_started: r.get::<_, Option<String>>(30)?.is_none(),
+                    work_slice_planner_request_id: r.get(30)?,
+                    work_slice_planning_point_id: r.get(31)?,
+                    work_slice_planner_repository_worktree_route: r.get(32)?,
+                    work_slice_planner_harness_key: r.get(33)?,
+                    work_slice_planner_harness_version: r.get(34)?,
+                    work_slice_planner_session_id: r.get(35)?,
+                    work_slice_planner_invocation_id: r.get(36)?,
+                    work_slice_planner_session_created_at: None,
+                    work_slice_planner_harness_applied_at: None,
+                    work_slice_planner_launch_accepted_at: None,
+                    downstream_not_started: r.get::<_, Option<String>>(31)?.is_none(),
                 })
             })
             .map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?
@@ -879,31 +890,49 @@ impl SprintRunnerTransitionService {
         Ok(())
     }
 
-    /// Accept exactly one identity-free request from the launch-accepted planning-control invocation.
+    /// Accept exactly one identity-free request from the exact applied, launch-accepted planning
+    /// control. This persists intent only; child Session creation, Harness application, and launch
+    /// reconciliation are deliberately owned by later steps.
     pub(crate) fn request_work_slice_planner(self: &Arc<Self>, invocation_id: &AgentInvocationId, _input: WorkSlicePlannerRequest) -> Result<SprintRunnerTransitionStatus, SprintRunnerTransitionError> {
-        let sprint_id: Option<String>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?.query_row("SELECT sprint_id FROM sprint_runner_transitions WHERE planning_control_invocation_id=?1",[invocation_id.as_str()],|r|r.get(0)).optional().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        let Some(sprint_id)=sprint_id else{return Err(SprintRunnerTransitionError::Forbidden)};
-        let lock=self.transition_lock(&sprint_id)?; let _guard=lock.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("Sprint Runner transition lock is poisoned".into()))?;
-        let (session_id, ready, applied, accepted):(String,Option<String>,Option<String>,Option<String>)=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?.query_row("SELECT sprint_runner_session_id,planning_ready_at,planning_control_harness_applied_at,planning_control_launch_accepted_at FROM sprint_runner_transitions WHERE sprint_id=?1 AND planning_control_invocation_id=?2",params![sprint_id,invocation_id.as_str()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        if ready.is_none() || applied.is_none() || accepted.is_none() { return Err(SprintRunnerTransitionError::Forbidden); }
-        let harness=conversation_harness::profile(ConversationHarnessRole::WorkSlicePlanner).map_err(SprintRunnerTransitionError::Unavailable)?;
-        let point=stable_id("work-slice-planning-point",&sprint_id); let request=stable_id("work-slice-planner-request",&sprint_id); let planner_session=stable_id("work-slice-planner-session",&sprint_id); let planner_invocation=stable_id("work-slice-planner-invocation",&sprint_id);
-        let conn=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?;
-        let existing:Option<(String,String,String)>=conn.query_row("SELECT planning_point_id,parent_planning_control_invocation_id,planner_session_id FROM work_slice_planner_transitions WHERE sprint_id=?1",[&sprint_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        if let Some(existing)=existing { if existing.0 != point || existing.1 != invocation_id.as_str() || existing.2 != planner_session { return Err(SprintRunnerTransitionError::Conflict); } } else { let now=chrono::Utc::now().to_rfc3339(); conn.execute("INSERT INTO work_slice_planner_transitions (sprint_id,planning_point_id,request_fact_id,parent_sprint_runner_session_id,parent_planning_control_invocation_id,requested_at,authorized_at,planner_harness_key,planner_harness_version,planner_session_id,planner_invocation_id) VALUES (?1,?2,?3,?4,?5,?6,?6,?7,?8,?9,?10)",params![sprint_id,point,request,session_id,invocation_id.as_str(),now,harness.key,harness.version,planner_session,planner_invocation]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?; }
-        drop(conn); drop(_guard); self.reconcile_work_slice_planner(&sprint_id)?;
-        self.query()?.transitions.into_iter().find(|transition|transition.sprint_id==sprint_id).ok_or_else(||SprintRunnerTransitionError::Unavailable("authorized Work Slice Planner disappeared".into()))
+        let sprint_id: Option<String> = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?.query_row("SELECT sprint_id FROM sprint_runner_transitions WHERE planning_control_invocation_id=?1", [invocation_id.as_str()], |r| r.get(0)).optional().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let Some(sprint_id) = sprint_id else { return Err(SprintRunnerTransitionError::Forbidden) };
+        let planning_control = conversation_harness::profile(ConversationHarnessRole::SprintRunnerPlanningControl).map_err(SprintRunnerTransitionError::Unavailable)?;
+        let planner_harness = conversation_harness::profile(ConversationHarnessRole::WorkSlicePlanner).map_err(SprintRunnerTransitionError::Unavailable)?;
+        let route = conversation_harness::role_discovery_root(ConversationHarnessRole::WorkSlicePlanner).map_err(SprintRunnerTransitionError::Unavailable)?;
+        let point = stable_id("work-slice-planning-point", &sprint_id);
+        let request = stable_id("work-slice-planner-request", &sprint_id);
+        let planner_session = stable_id("work-slice-planner-session", &point);
+        let planner_invocation = stable_id("work-slice-planner-invocation", &point);
+        let lock = self.transition_lock(&sprint_id)?;
+        let _guard = lock.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint Runner transition lock is poisoned".into()))?;
+        let mut conn = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let session_id: Option<String> = tx.query_row(
+            "SELECT sprint_runner_session_id FROM sprint_runner_transitions WHERE sprint_id=?1 AND planning_control_invocation_id=?2 AND planning_ready_at IS NOT NULL AND planning_control_harness_key=?3 AND planning_control_harness_version=?4 AND planning_control_harness_applied_at IS NOT NULL AND planning_control_launch_accepted_at IS NOT NULL",
+            params![sprint_id, invocation_id.as_str(), planning_control.key, planning_control.version],
+            |r| r.get(0),
+        ).optional().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let Some(session_id) = session_id else { return Err(SprintRunnerTransitionError::Forbidden) };
+        let existing: Option<(String, String, String, String, String, String, i64, String, String)> = tx.query_row(
+            "SELECT planning_point_id,request_fact_id,parent_sprint_runner_session_id,parent_planning_control_invocation_id,repository_worktree_route,planner_harness_key,planner_harness_version,planner_session_id,planner_invocation_id FROM work_slice_planning_requests WHERE sprint_id=?1 AND is_current=1",
+            [&sprint_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)),
+        ).optional().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        if let Some(existing) = existing {
+            let expected = (point.clone(), request.clone(), session_id.clone(), invocation_id.as_str().to_owned(), route.clone(), planner_harness.key.clone(), i64::from(planner_harness.version), planner_session.clone(), planner_invocation.clone());
+            if existing != expected { return Err(SprintRunnerTransitionError::Conflict); }
+        } else {
+            let now = chrono::Utc::now().to_rfc3339();
+            tx.execute(
+                "INSERT INTO work_slice_planning_requests (planning_point_id,sprint_id,planning_episode,is_current,request_fact_id,parent_sprint_runner_session_id,parent_planning_control_invocation_id,repository_worktree_route,requested_at,authorized_at,planner_harness_key,planner_harness_version,planner_session_id,planner_invocation_id) VALUES (?1,?2,1,1,?3,?4,?5,?6,?7,?7,?8,?9,?10,?11)",
+                params![point, sprint_id, request, session_id, invocation_id.as_str(), route, now, planner_harness.key, planner_harness.version, planner_session, planner_invocation],
+            ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        }
+        tx.commit().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        drop(conn);
+        drop(_guard);
+        self.query()?.transitions.into_iter().find(|transition| transition.sprint_id == sprint_id).ok_or_else(|| SprintRunnerTransitionError::Unavailable("authorized Work Slice Planner disappeared".into()))
     }
-
-    fn reconcile_work_slice_planner(self: &Arc<Self>, sprint_id: &str) -> Result<(), SprintRunnerTransitionError> {
-        let record:Option<(String,String,String,String,Option<String>,Option<String>)>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?.query_row("SELECT planner_session_id,planner_invocation_id,planning_point_id,planner_harness_key,session_created_at,launch_accepted_at FROM work_slice_planner_transitions WHERE sprint_id=?1",[sprint_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?; let Some((session_id,invocation_id,point,harness_key,created,accepted))=record else{return Ok(())};
-        let harness=conversation_harness::profile(ConversationHarnessRole::WorkSlicePlanner).map_err(SprintRunnerTransitionError::Unavailable)?; if harness_key != harness.key{return Err(SprintRunnerTransitionError::Conflict)};
-        let session=AgentSessionId::new(session_id).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?; if created.is_none(){self.sessions.create_application_session(CreateApplicationAgentSessionCommand{session_id:session.clone(),session:CreateAgentSessionCommand{title:Some(format!("Work Slice Planner: {sprint_id}")),working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::WorkSlicePlanner).map_err(SprintRunnerTransitionError::Unavailable)?),requested_options:harness.runtime_options()}}).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?.execute("UPDATE work_slice_planner_transitions SET session_created_at=COALESCE(session_created_at,?2) WHERE sprint_id=?1",params![sprint_id,chrono::Utc::now().to_rfc3339()]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;}
-        if accepted.is_none(){let invocation=AgentInvocationId::new(invocation_id).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;match self.sessions.application_invocation_launch_evidence(&invocation,&session).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?{ApplicationInvocationLaunchEvidence::LaunchAccepted=>self.mark_planner(sprint_id,"launch_accepted_at")?,ApplicationInvocationLaunchEvidence::PersistedNotAccepted=>{},ApplicationInvocationLaunchEvidence::NeverPersisted=>{let launch=self.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:invocation,message:SendAgentSessionMessageCommand{session_id:Some(session),submitted_text:format!("You own one bounded planning point already authorized by the application. Review current Sprint reality and stop before proposing results, Work Units, Handlers, or Implementers; those are out of scope.\n\nSprint ID: {sprint_id}\nPlanning point: {point}"),title:None,working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::WorkSlicePlanner).map_err(SprintRunnerTransitionError::Unavailable)?),requested_options:Some(harness.runtime_options())}},Some(RuntimeLaunchExtension{additional_args:harness.runtime_configuration_args(),environment:vec![],initial_prompt_prefix:Some(harness.initial_prompt_prefix())})).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;self.mark_planner(sprint_id,"harness_applied_at")?;if launch.launch_accepted{self.mark_planner(sprint_id,"launch_accepted_at")?;}}}}
-        Ok(())
-    }
-
-    fn mark_planner(&self,sprint_id:&str,column:&str)->Result<(),SprintRunnerTransitionError>{if !["harness_applied_at","launch_accepted_at"].contains(&column){return Err(SprintRunnerTransitionError::Unavailable("invalid Work Slice Planner transition stage".into()))}self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?.execute(&format!("UPDATE work_slice_planner_transitions SET {column}=COALESCE({column},?2) WHERE sprint_id=?1"),params![sprint_id,chrono::Utc::now().to_rfc3339()]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;Ok(())}
 
     fn mark(&self, sprint_id: &str, column: &str) -> Result<(), SprintRunnerTransitionError> {
         if ![

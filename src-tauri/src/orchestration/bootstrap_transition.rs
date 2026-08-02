@@ -4083,6 +4083,93 @@ mod tests {
         serde_json::from_str(json)
             .unwrap_or_else(|error| panic!("invalid MCP response {text:?}: {error}"))
     }
+
+    #[test]
+    fn work_slice_planning_request_is_identity_free_durable_and_has_no_child_effects() {
+        let fixture = Fixture::new();
+        let bootstrap = fixture.status();
+        fixture.service.complete_bootstrap(
+            &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
+            Fixture::materials(),
+        ).unwrap();
+        fixture.runtime.finish(&bootstrap.bootstrap_invocation_id, AgentInvocationTerminalStatus::Completed);
+        let runner = fixture.status();
+        let sprint_id: String = Connection::open(&fixture.database_path).unwrap().query_row(
+            "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1", [], |row| row.get(0),
+        ).unwrap();
+        let service = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path, fixture.sessions.clone(),
+        ).unwrap();
+        let sprint = service.request_next_sprint_runner(
+            &AgentInvocationId::new(runner.runner_invocation_id).unwrap(),
+            crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id: sprint_id.clone() },
+        ).unwrap();
+        let control = AgentInvocationId::new("planning-control-invocation").unwrap();
+        let control_harness = conversation_harness::profile(ConversationHarnessRole::SprintRunnerPlanningControl).unwrap();
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "UPDATE sprint_runner_transitions SET planning_control_invocation_id=?2,planning_control_harness_key=?3,planning_control_harness_version=?4,planning_control_harness_applied_at=?5,planning_control_launch_accepted_at=?5,planning_ready_at=?5 WHERE sprint_id=?1",
+            params![sprint_id, control.as_str(), control_harness.key, control_harness.version, "2026-08-02T00:00:00Z"],
+        ).unwrap();
+
+        assert!(serde_json::from_value::<crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest>(serde_json::json!({"sprintId":"forged"})).is_err());
+        assert!(matches!(
+            service.request_work_slice_planner(&AgentInvocationId::new("foreign-planning-control").unwrap(), crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {}),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_planning_requests", [], |row| row.get(0)).unwrap(), 0);
+        drop(connection);
+
+        let launches_before = fixture.runtime.requests().len();
+        let barrier = Arc::new(Barrier::new(2));
+        let calls = (0..2).map(|_| {
+            let service = service.clone();
+            let barrier = barrier.clone();
+            let control = control.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                service.request_work_slice_planner(&control, crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {})
+            })
+        }).collect::<Vec<_>>();
+        let results = calls.into_iter().map(|call| call.join().unwrap().unwrap()).collect::<Vec<_>>();
+        assert_eq!(results[0].work_slice_planner_request_id, results[1].work_slice_planner_request_id);
+        assert_eq!(results[0].work_slice_planning_point_id, results[1].work_slice_planning_point_id);
+        assert_eq!(results[0].work_slice_planner_session_id, results[1].work_slice_planner_session_id);
+        assert_eq!(results[0].work_slice_planner_invocation_id, results[1].work_slice_planner_invocation_id);
+        assert_eq!(results[0].work_slice_planner_session_created_at, None);
+        assert_eq!(results[0].work_slice_planner_harness_applied_at, None);
+        assert_eq!(results[0].work_slice_planner_launch_accepted_at, None);
+        assert_eq!(results[0].work_slice_planner_repository_worktree_route, Some(conversation_harness::role_discovery_root(ConversationHarnessRole::WorkSlicePlanner).unwrap()));
+        assert_eq!(fixture.runtime.requests().len(), launches_before, "PS-WSP1 must not create or launch a Planner");
+
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_planning_requests", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<String, _, _>("SELECT parent_sprint_runner_session_id FROM work_slice_planning_requests", [], |row| row.get(0)).unwrap(), sprint.sprint_runner_session_id);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_sessions WHERE id LIKE 'work-slice-planner-session-%'", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocations WHERE id LIKE 'work-slice-planner-invocation-%'", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_units','work_slice_planning_points','work_unit_executions')", [], |row| row.get(0)).unwrap(), 0);
+        drop(connection);
+
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "UPDATE sprint_runner_transitions SET planning_control_harness_version=planning_control_harness_version+1 WHERE sprint_id=?1", [&sprint_id],
+        ).unwrap();
+        assert!(matches!(
+            service.request_work_slice_planner(&control, crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {}),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "UPDATE sprint_runner_transitions SET planning_control_harness_version=?2 WHERE sprint_id=?1", params![sprint_id, control_harness.version],
+        ).unwrap();
+
+        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        reopened.reconcile_startup().unwrap();
+        let after_reopen = reopened.query().unwrap().transitions.into_iter().find(|status| status.sprint_id == sprint_id).unwrap();
+        assert_eq!(after_reopen.work_slice_planning_point_id, results[0].work_slice_planning_point_id);
+        assert_eq!(after_reopen.work_slice_planner_session_created_at, None);
+        assert_eq!(after_reopen.work_slice_planner_harness_applied_at, None);
+        assert_eq!(after_reopen.work_slice_planner_launch_accepted_at, None);
+        assert_eq!(fixture.runtime.requests().len(), launches_before);
+    }
 }
 
 fn read_transition(
