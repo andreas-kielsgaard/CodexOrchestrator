@@ -17,7 +17,7 @@ use crate::{
     },
     agent_sessions::{
         application::AgentSessionApplication,
-        domain::{AgentInvocationId, AgentSessionId},
+        domain::{AgentInvocationId, AgentRuntimeOptions, AgentSessionId},
         ports::RuntimeLaunchExtension,
     },
 };
@@ -120,13 +120,18 @@ pub(crate) struct WorkUnitExecutionHarnessPackage {
     correlation: Mutex<Option<(AgentSessionId, AgentInvocationId)>>,
 }
 
+/// The complete application-owned runtime input for a later launch. Constructing it neither
+/// persists nor launches an invocation; its options cannot be supplied or overridden by a role.
+pub(crate) struct WorkUnitExecutionRuntimeLaunchConfiguration {
+    pub(crate) requested_options: AgentRuntimeOptions,
+    pub(crate) extension: RuntimeLaunchExtension,
+}
+
 impl WorkUnitExecutionHarnessPackage {
-    pub(crate) fn runtime_launch_extension(&self) -> RuntimeLaunchExtension {
-        RuntimeLaunchExtension {
-            additional_args: self.harness.runtime_configuration_args(),
-            environment: vec![],
-            initial_prompt_prefix: Some(self.harness.initial_prompt_prefix()),
-        }
+    pub(crate) fn runtime_launch_configuration(
+        &self,
+    ) -> WorkUnitExecutionRuntimeLaunchConfiguration {
+        package_runtime_launch_configuration(&self.harness)
     }
 
     pub(crate) fn working_directory(&self) -> &str {
@@ -216,6 +221,19 @@ impl WorkUnitExecutionHarnessPackage {
     }
 }
 
+fn package_runtime_launch_configuration(
+    harness: &ConversationHarnessProfile,
+) -> WorkUnitExecutionRuntimeLaunchConfiguration {
+    WorkUnitExecutionRuntimeLaunchConfiguration {
+        requested_options: harness.runtime_options(),
+        extension: RuntimeLaunchExtension {
+            additional_args: harness.runtime_configuration_args(),
+            environment: vec![],
+            initial_prompt_prefix: Some(harness.initial_prompt_prefix()),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,20 +251,21 @@ mod tests {
     }
 
     #[test]
-    fn runtime_extension_carries_only_harness_configuration() {
+    fn runtime_launch_configuration_force_carries_read_only_harness_options() {
         let profile =
             conversation_harness::profile(ConversationHarnessRole::WorkUnitHandler).unwrap();
-        let extension = RuntimeLaunchExtension {
-            additional_args: profile.runtime_configuration_args(),
-            environment: vec![],
-            initial_prompt_prefix: Some(profile.initial_prompt_prefix()),
-        };
+        let configuration = package_runtime_launch_configuration(&profile);
         assert_eq!(
-            extension.additional_args,
+            configuration.extension.additional_args,
             ["-c", "approval_policy=\"never\""]
         );
-        assert!(extension.environment.is_empty());
-        assert!(extension
+        assert_eq!(
+            configuration.requested_options.sandbox,
+            Some(crate::agent_sessions::domain::RuntimeSandboxMode::ReadOnly)
+        );
+        assert!(configuration.extension.environment.is_empty());
+        assert!(configuration
+            .extension
             .initial_prompt_prefix
             .unwrap()
             .content
