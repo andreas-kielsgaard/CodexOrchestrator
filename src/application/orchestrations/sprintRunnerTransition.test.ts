@@ -163,6 +163,8 @@ describe('Sprint Runner transition query', () => {
         planningControlLaunchAcceptedAt: '2026-08-02T00:00:11Z',
         workSlicePlannerRequestId: 'planner-request-1',
         workSlicePlanningPointId: 'planning-point-1',
+        workSlicePlannerSessionId: 'reserved-session-1',
+        workSlicePlannerInvocationId: 'reserved-invocation-1',
         ...fields,
       });
       return projectSprintRunnerTransitionStatus(
@@ -172,42 +174,42 @@ describe('Sprint Runner transition query', () => {
     expect(planner({}).label).toBe(
       'Work Slice Planner planning point authorized; Session pending',
     );
-    expect(planner({ workSlicePlannerSessionId: 'planner-session-1' }).label).toBe(
+    expect(planner({ workSlicePlannerSessionCreatedAt: '2026-08-02T00:00:12Z' }).label).toBe(
       'Work Slice Planner Session created; invocation pending',
     );
     expect(
       planner({
-        workSlicePlannerSessionId: 'planner-session-1',
-        workSlicePlannerInvocationId: 'planner-invocation-1',
+        workSlicePlannerSessionCreatedAt: '2026-08-02T00:00:12Z',
+        workSlicePlannerInvocationCreatedAt: '2026-08-02T00:00:13Z',
       }).label,
     ).toBe('Work Slice Planner invocation prepared; Harness application pending');
     expect(
       planner({
-        workSlicePlannerSessionId: 'planner-session-1',
-        workSlicePlannerInvocationId: 'planner-invocation-1',
+        workSlicePlannerSessionCreatedAt: '2026-08-02T00:00:12Z',
+        workSlicePlannerInvocationCreatedAt: '2026-08-02T00:00:13Z',
         workSlicePlannerHarnessAppliedAt: '2026-08-02T00:00:12Z',
       }).label,
     ).toBe('Work Slice Planner Harness applied; launch request pending');
     expect(
       planner({
-        workSlicePlannerSessionId: 'planner-session-1',
-        workSlicePlannerInvocationId: 'planner-invocation-1',
+        workSlicePlannerSessionCreatedAt: '2026-08-02T00:00:12Z',
+        workSlicePlannerInvocationCreatedAt: '2026-08-02T00:00:13Z',
         workSlicePlannerHarnessAppliedAt: '2026-08-02T00:00:12Z',
         workSlicePlannerLaunchRequestedAt: '2026-08-02T00:00:13Z',
       }).label,
     ).toBe('Work Slice Planner launch requested; runtime acceptance pending');
     expect(
       planner({
-        workSlicePlannerSessionId: 'planner-session-1',
-        workSlicePlannerInvocationId: 'planner-invocation-1',
+        workSlicePlannerSessionCreatedAt: '2026-08-02T00:00:12Z',
+        workSlicePlannerInvocationCreatedAt: '2026-08-02T00:00:13Z',
         workSlicePlannerHarnessAppliedAt: '2026-08-02T00:00:12Z',
         workSlicePlannerLaunchRequestedAt: '2026-08-02T00:00:13Z',
         workSlicePlannerLaunchAcceptedAt: '2026-08-02T00:00:14Z',
       }).label,
     ).toBe('Work Slice Planner runtime launch accepted; readiness pending');
     const ready = planner({
-      workSlicePlannerSessionId: 'planner-session-1',
-      workSlicePlannerInvocationId: 'planner-invocation-1',
+      workSlicePlannerSessionCreatedAt: '2026-08-02T00:00:12Z',
+      workSlicePlannerInvocationCreatedAt: '2026-08-02T00:00:13Z',
       workSlicePlannerHarnessAppliedAt: '2026-08-02T00:00:12Z',
       workSlicePlannerLaunchRequestedAt: '2026-08-02T00:00:13Z',
       workSlicePlannerLaunchAcceptedAt: '2026-08-02T00:00:14Z',
@@ -215,11 +217,42 @@ describe('Sprint Runner transition query', () => {
       workSlicePlannerProviderActivationObservedAt: '2026-08-02T00:00:16Z',
       workSlicePlannerLifecycleObservedAt: '2026-08-02T00:00:17Z',
     });
-    expect(ready.label).toBe(
-      'Work Slice Planner ready; provider and lifecycle observation pending',
-    );
+    expect(ready.label).toBe('Work Slice Planner ready; provider and lifecycle observations recorded');
     expect(ready.workSlicePlannerProviderActivationObservedAt).toBe('2026-08-02T00:00:16Z');
     expect(ready.workSlicePlannerLifecycleObservedAt).toBe('2026-08-02T00:00:17Z');
+    const readyWithoutObservations = planner({
+      workSlicePlannerSessionCreatedAt: '2026-08-02T00:00:12Z',
+      workSlicePlannerInvocationCreatedAt: '2026-08-02T00:00:13Z',
+      workSlicePlannerHarnessAppliedAt: '2026-08-02T00:00:14Z',
+      workSlicePlannerLaunchRequestedAt: '2026-08-02T00:00:15Z',
+      workSlicePlannerLaunchAcceptedAt: '2026-08-02T00:00:16Z',
+      workSlicePlannerReadyAt: '2026-08-02T00:00:17Z',
+    });
+    expect(readyWithoutObservations.label).toBe(
+      'Work Slice Planner ready; provider and lifecycle observation pending',
+    );
+    expect(
+      planner({
+        workSlicePlannerSessionCreatedAt: '2026-08-02T00:00:12Z',
+        workSlicePlannerInvocationCreatedAt: '2026-08-02T00:00:13Z',
+        workSlicePlannerHarnessAppliedAt: '2026-08-02T00:00:14Z',
+        workSlicePlannerLaunchRequestedAt: '2026-08-02T00:00:15Z',
+        workSlicePlannerLaunchAcceptedAt: '2026-08-02T00:00:16Z',
+        workSlicePlannerReadyAt: '2026-08-02T00:00:17Z',
+        workSlicePlannerProviderActivationObservedAt: '2026-08-02T00:00:18Z',
+      }).label,
+    ).toBe('Work Slice Planner ready; provider observed; lifecycle observation pending');
+    expect(
+      planner({
+        workSlicePlannerSessionCreatedAt: '2026-08-02T00:00:12Z',
+        workSlicePlannerInvocationCreatedAt: '2026-08-02T00:00:13Z',
+        workSlicePlannerHarnessAppliedAt: '2026-08-02T00:00:14Z',
+        workSlicePlannerLaunchRequestedAt: '2026-08-02T00:00:15Z',
+        workSlicePlannerLaunchAcceptedAt: '2026-08-02T00:00:16Z',
+        workSlicePlannerReadyAt: '2026-08-02T00:00:17Z',
+        workSlicePlannerLifecycleObservedAt: '2026-08-02T00:00:18Z',
+      }).label,
+    ).toBe('Work Slice Planner ready; lifecycle observed; provider activation pending');
     expect(() => planner({ workSlicePlannerLaunchAcceptedAt: '2026-08-02T00:00:14Z' })).toThrow(
       'launch acceptance requires requested launch',
     );

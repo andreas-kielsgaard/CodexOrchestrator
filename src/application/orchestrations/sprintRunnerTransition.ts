@@ -107,16 +107,16 @@ export function projectSprintRunnerTransitionStatus(
 ): ProductSprintRunnerTransitionStatusV1 {
   return {
     label: transition.workSlicePlannerReadyAt
-      ? 'Work Slice Planner ready; provider and lifecycle observation pending'
+      ? plannerReadyLabel(transition)
       : transition.workSlicePlannerLaunchAcceptedAt
         ? 'Work Slice Planner runtime launch accepted; readiness pending'
         : transition.workSlicePlannerLaunchRequestedAt
           ? 'Work Slice Planner launch requested; runtime acceptance pending'
           : transition.workSlicePlannerHarnessAppliedAt
             ? 'Work Slice Planner Harness applied; launch request pending'
-            : transition.workSlicePlannerInvocationId
+            : transition.workSlicePlannerInvocationCreatedAt
               ? 'Work Slice Planner invocation prepared; Harness application pending'
-              : transition.workSlicePlannerSessionId
+              : transition.workSlicePlannerSessionCreatedAt
                 ? 'Work Slice Planner Session created; invocation pending'
                 : transition.workSlicePlanningPointId
                   ? 'Work Slice Planner planning point authorized; Session pending'
@@ -187,6 +187,15 @@ export function projectSprintRunnerTransitionStatus(
     ...optionalProjection(transition, 'workSlicePlannerLifecycleObservedAt'),
     downstreamNotStarted: transition.downstreamNotStarted,
   };
+}
+
+function plannerReadyLabel(transition: SprintRunnerTransitionV1): string {
+  const provider = Boolean(transition.workSlicePlannerProviderActivationObservedAt);
+  const lifecycle = Boolean(transition.workSlicePlannerLifecycleObservedAt);
+  if (provider && lifecycle) return 'Work Slice Planner ready; provider and lifecycle observations recorded';
+  if (provider) return 'Work Slice Planner ready; provider observed; lifecycle observation pending';
+  if (lifecycle) return 'Work Slice Planner ready; lifecycle observed; provider activation pending';
+  return 'Work Slice Planner ready; provider and lifecycle observation pending';
 }
 function optionalProjection<T extends object, K extends keyof T>(value: T, key: K) {
   return value[key] == null ? {} : { [key]: value[key] };

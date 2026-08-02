@@ -567,8 +567,8 @@ export function WorkSlicePlannerBoundary({
       <ul>
         {stage('Request and authorization', Boolean(transition.workSlicePlannerRequestId))}
         {stage('Work Slice planning point', Boolean(transition.workSlicePlanningPointId))}
-        {stage('Planner Session', Boolean(transition.workSlicePlannerSessionId))}
-        {stage('Planner invocation', Boolean(transition.workSlicePlannerInvocationId))}
+        {stage('Planner Session', Boolean(transition.workSlicePlannerSessionCreatedAt))}
+        {stage('Planner invocation', Boolean(transition.workSlicePlannerInvocationCreatedAt))}
         {stage('Harness application', Boolean(transition.workSlicePlannerHarnessAppliedAt))}
         {stage('Launch requested', Boolean(transition.workSlicePlannerLaunchRequestedAt))}
         {stage('Runtime launch accepted', Boolean(transition.workSlicePlannerLaunchAcceptedAt))}
@@ -583,12 +583,20 @@ export function WorkSlicePlannerBoundary({
         No Planner proposal or result, Work Unit, Handler, Implementer, settlement, or later
         planning point is recorded here.
       </p>
-      <small>
-        Provider activation and lifecycle remain unobserved unless their durable source facts are
-        recorded.
-      </small>
+      <small>{plannerObservationSummary(transition)}</small>
     </section>
   );
+}
+
+function plannerObservationSummary(
+  transition: NonNullable<SprintWorkspacePresentationV1['sprint']['sprintRunnerTransition']>,
+) {
+  const provider = Boolean(transition.workSlicePlannerProviderActivationObservedAt);
+  const lifecycle = Boolean(transition.workSlicePlannerLifecycleObservedAt);
+  if (provider && lifecycle) return 'Provider activation and lifecycle observations are recorded.';
+  if (provider) return 'Provider activation observation is recorded; lifecycle remains unobserved.';
+  if (lifecycle) return 'Lifecycle observation is recorded; provider activation remains unobserved.';
+  return 'Provider activation and lifecycle remain unobserved unless durable source facts are recorded.';
 }
 
 function SprintFileReviewControl({
