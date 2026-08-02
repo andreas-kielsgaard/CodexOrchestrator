@@ -1,4 +1,7 @@
-import type { AgentInvocationObservationDto } from '../agentSessions/contracts';
+import {
+  decodeAgentInvocationObservation,
+  type AgentInvocationObservationDto,
+} from '../agentSessions/contracts';
 
 /** Durable control dispatch facts only; provider receipt, compliance, and work progress stay separate. */
 export interface EpicPauseRestartOutcome {
@@ -163,26 +166,13 @@ function failure(value: unknown, label: string): EpicControlTargetObservation['f
     detail: text(item.detail, `${label}.detail`),
   };
 }
-/** Agent Session remains the owner of this model; strict outer shape prevents foreign control data. */
 function observation(value: unknown, label: string): AgentInvocationObservationDto | null {
   if (value === null) return null;
-  const item = record(value, label);
-  exact(
-    item,
-    [
-      'launchAcceptedAt',
-      'externalContext',
-      'providerActivity',
-      'providerTerminal',
-      'processTerminal',
-      'mcpToolActivities',
-      'mcpToolActivityPartial',
-    ],
-    label,
-  );
-  if (typeof item.mcpToolActivityPartial !== 'boolean' || !Array.isArray(item.mcpToolActivities))
+  try {
+    return decodeAgentInvocationObservation(value);
+  } catch {
     throw new Error(`${label} is invalid`);
-  return item as unknown as AgentInvocationObservationDto;
+  }
 }
 function record(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))

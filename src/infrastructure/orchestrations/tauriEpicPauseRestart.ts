@@ -1,5 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
-import { decodeEpicPauseRestartOutcome, decodeEpicPauseRestartQuery, type EpicPauseRestartController } from '../../application/orchestrations';
+import {
+  decodeEpicPauseRestartOutcome,
+  decodeEpicPauseRestartQuery,
+  type EpicPauseRestartController,
+} from '../../application/orchestrations';
 
 export function createTauriEpicPauseRestartController(
   invokeCommand: typeof invoke = invoke,

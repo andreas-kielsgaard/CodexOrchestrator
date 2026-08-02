@@ -10,6 +10,58 @@ const outcome = {
   targets: [],
 };
 
+const fullObservation = () => ({
+  launchAcceptedAt: '2026-08-02T00:00:00Z',
+  externalContext: {
+    externalContextId: 'context-1',
+    correlation: { eventId: 'event-1', sequence: 1, recordedAt: '2026-08-02T00:00:01Z' },
+  },
+  providerActivity: { eventId: 'event-2', sequence: 2, recordedAt: '2026-08-02T00:00:02Z' },
+  providerTerminal: {
+    status: 'completed',
+    correlation: { eventId: 'event-3', sequence: 3, recordedAt: '2026-08-02T00:00:03Z' },
+  },
+  processTerminal: {
+    status: 'completed',
+    completedAt: '2026-08-02T00:00:04Z',
+    exitCode: 0,
+    signal: null,
+  },
+  mcpToolActivities: [
+    {
+      activity: {
+        phase: 'completed',
+        itemId: 'item-1',
+        server: 'server-1',
+        tool: 'tool-1',
+        status: 'ok',
+        resultClassification: 'succeeded',
+      },
+      correlation: { eventId: 'event-4', sequence: 4, recordedAt: '2026-08-02T00:00:05Z' },
+    },
+  ],
+  mcpToolActivityPartial: false,
+});
+
+function outcomeWithObservation(observation: unknown) {
+  return {
+    ...outcome,
+    targetCount: 1,
+    targets: [
+      {
+        sessionId: 'session-1',
+        sourceInvocationId: 'source-1',
+        cancelRequestedAt: null,
+        interruptionStatus: 'canceled',
+        interruptionObservedAt: null,
+        sourceObservation: observation,
+        controlInvocation: null,
+        failure: null,
+      },
+    ],
+  };
+}
+
 describe('Epic Pause/Restart native contracts', () => {
   it('decodes only complete authoritative control state', () => {
     expect(
@@ -82,5 +134,62 @@ describe('Epic Pause/Restart native contracts', () => {
         observation: { mcpToolActivityPartial: true },
       },
     });
+  });
+
+  it('decodes every nested runtime-observation field from the shared contract', () => {
+    expect(
+      decodeEpicPauseRestartOutcome(outcomeWithObservation(fullObservation())).targets[0]
+        .sourceObservation,
+    ).toMatchObject({
+      externalContext: { correlation: { sequence: 1 } },
+      providerTerminal: { status: 'completed' },
+      processTerminal: { exitCode: 0 },
+      mcpToolActivities: [{ activity: { resultClassification: 'succeeded' } }],
+    });
+  });
+
+  it.each([
+    ['an incomplete provider activity correlation', { ...fullObservation(), providerActivity: {} }],
+    ['a scalar process terminal', { ...fullObservation(), processTerminal: 'completed' }],
+    [
+      'an unknown provider terminal enum',
+      {
+        ...fullObservation(),
+        providerTerminal: { ...fullObservation().providerTerminal, status: 'unknown' },
+      },
+    ],
+    [
+      'an external-context unknown field',
+      {
+        ...fullObservation(),
+        externalContext: { ...fullObservation().externalContext, extra: true },
+      },
+    ],
+    [
+      'an invalid MCP phase',
+      {
+        ...fullObservation(),
+        mcpToolActivities: [
+          {
+            ...fullObservation().mcpToolActivities[0],
+            activity: { ...fullObservation().mcpToolActivities[0].activity, phase: 'invalid' },
+          },
+        ],
+      },
+    ],
+    [
+      'an MCP correlation with a non-integer sequence',
+      {
+        ...fullObservation(),
+        mcpToolActivities: [
+          {
+            ...fullObservation().mcpToolActivities[0],
+            correlation: { ...fullObservation().mcpToolActivities[0].correlation, sequence: '4' },
+          },
+        ],
+      },
+    ],
+  ])('rejects %s', (_label, observation) => {
+    expect(() => decodeEpicPauseRestartOutcome(outcomeWithObservation(observation))).toThrow();
   });
 });

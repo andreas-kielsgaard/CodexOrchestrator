@@ -24,9 +24,10 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
   It does not prove a live provider received either control message, suspended/resumed work,
   restored a provider connection, or produced a product outcome.
 - Checkpoint validation: focused Epic control Rust **7 passed**; focused observation Rust **5
-  passed**; frontend native-contract, Tauri transport, production-composition, and control UI
-  **4 files / 23 tests passed**; TypeScript plus production Vite build passed. Touched Rust
-  `rustfmt --check`, touched-file Prettier, and `git diff --check` passed. The existing Rust dead-code warning in
+  passed**. The later strict nested-observation decoder correction reran the frontend native-
+  contract, Tauri transport, production-composition, and control UI at **4 files / 30 tests
+  passed**; TypeScript plus production Vite build passed. Touched Rust `rustfmt --check`,
+  touched-file Prettier, and `git diff --check` passed. The existing Rust dead-code warning in
   `ProcessSupervisor::system` remains a non-failure.
 
 ## Independent corrections
