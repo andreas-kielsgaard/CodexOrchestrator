@@ -356,7 +356,7 @@ pub(crate) fn validate_harness_key(value: &str) -> Result<(), HarnessWorkingCopy
         .ok_or(HarnessWorkingCopyError::Invalid)
 }
 
-fn validate_draft_configuration(
+pub(crate) fn validate_draft_configuration(
     configuration: &HarnessEffectiveConfiguration,
 ) -> Result<(), HarnessWorkingCopyError> {
     if !draft_text(&configuration.identity.name, 120)
@@ -472,6 +472,41 @@ fn validate_draft_configuration(
         if !draft_text(reason, 4_000) {
             return Err(HarnessWorkingCopyError::Invalid);
         }
+    }
+    Ok(())
+}
+
+/// Publication requires every intentionally draftable semantic text field to be complete. Draft
+/// saves continue to use `validate_draft_configuration` and may preserve empty in-progress text.
+pub(crate) fn validate_complete_configuration(
+    configuration: &HarnessEffectiveConfiguration,
+) -> Result<(), HarnessWorkingCopyError> {
+    validate_draft_configuration(configuration)?;
+    if !required_text(&configuration.identity.name, 120)
+        || !required_text(&configuration.prompt_prefix.content, 200_000)
+        || !required_text(&configuration.tools.schema_boundary, 4_000)
+        || !required_text(&configuration.runtime.authority_summary, 4_000)
+    {
+        return Err(HarnessWorkingCopyError::Invalid);
+    }
+    if configuration
+        .identity
+        .visual_identity
+        .as_ref()
+        .is_some_and(|visual| !required_text(&visual.accent, 120))
+        || configuration.skills.items.iter().any(|skill| {
+            !required_text(&skill.purpose, 4_000) || !required_text(&skill.use_when, 4_000)
+        })
+        || configuration
+            .hooks
+            .iter()
+            .any(|hook| !required_text(&hook.detail, 4_000))
+        || matches!(
+            &configuration.update_policy,
+            HarnessUpdatePolicy::NotConfigured { reason } if !required_text(reason, 4_000)
+        )
+    {
+        return Err(HarnessWorkingCopyError::Invalid);
     }
     Ok(())
 }

@@ -702,6 +702,32 @@ impl OrchestrationApplication {
         self.repository.load_harness_working_copy(harness_key)
     }
 
+    /// Publishes only the exact current draft selected by semantic preconditions. Repository
+    /// location, content bytes, and commit identity remain application-owned.
+    pub(crate) fn create_harness_revision(
+        &self,
+        command: super::conversation_harness_revision::CreateHarnessRevisionCommand,
+    ) -> Result<
+        super::conversation_harness_revision::CreateHarnessRevisionResult,
+        super::conversation_harness_revision::HarnessRevisionError,
+    > {
+        self.repository.create_harness_revision(command)
+    }
+
+    pub(crate) fn load_harness_revision(
+        &self,
+        revision_id: &str,
+    ) -> super::conversation_harness_revision::HarnessRevisionReadOutcome {
+        self.repository.load_harness_revision(revision_id)
+    }
+
+    pub(crate) fn load_harness_revision_history(
+        &self,
+        harness_key: &str,
+    ) -> super::conversation_harness_revision::HarnessRevisionHistoryOutcome {
+        self.repository.load_harness_revision_history(harness_key)
+    }
+
     pub(crate) fn load_scoped_file_review(
         &self,
         opaque_reference: &str,

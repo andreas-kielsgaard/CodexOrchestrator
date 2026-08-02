@@ -4,6 +4,7 @@ pub(crate) mod application;
 pub(crate) mod bootstrap_transition;
 pub(crate) mod confirmation;
 pub(crate) mod conversation_harness;
+pub(crate) mod conversation_harness_revision;
 pub(crate) mod conversation_harness_working_copy;
 pub(crate) mod domain;
 pub(crate) mod execution_support;
