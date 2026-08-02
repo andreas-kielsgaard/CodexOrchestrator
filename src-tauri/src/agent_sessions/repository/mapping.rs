@@ -245,6 +245,21 @@ pub(super) fn list_events_from(
     collect_mapped(rows, map_event_row)
 }
 
+pub(super) fn invocation_launch_accepted_at_from(
+    conn: &Connection,
+    invocation_id: &AgentInvocationId,
+) -> Result<Option<DateTime<Utc>>, RepositoryError> {
+    let accepted_at = conn
+        .query_row(
+            "SELECT accepted_at FROM agent_session_invocation_launch_acceptances WHERE invocation_id = ?1",
+            params![invocation_id.as_str()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(sql_unavailable("load invocation launch acceptance"))?;
+    accepted_at.map(|value| parse_timestamp(&value)).transpose()
+}
+
 pub(super) fn get_session_from(
     conn: &Connection,
     session_id: &AgentSessionId,

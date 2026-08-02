@@ -1,5 +1,6 @@
 import type {
   AgentInvocationStatusDto,
+  AgentInvocationObservationDto,
   AgentRuntimeEventDto,
   AgentSessionDetailsDto,
   AgentSessionSummaryDto,
@@ -45,6 +46,7 @@ export function sessionDetails(
               createdAt: fixtureTime,
               updatedAt: fixtureTime,
             },
+            observation: observation(status),
             events,
           },
         ]
@@ -64,8 +66,22 @@ export function runtimeEvent(
     sequence,
     source: 'stdout',
     rawPayload: { kind },
-    normalized: { kind, text, externalContextId: null, usage: null, details },
+    normalized: { kind, text, externalContextId: null, usage: null, details, toolActivity: null },
     recordedAt: fixtureTime,
+  };
+}
+
+export function observation(status: AgentInvocationStatusDto | null): AgentInvocationObservationDto {
+  return {
+    launchAcceptedAt: null,
+    externalContext: null,
+    providerActivity: null,
+    providerTerminal: null,
+    processTerminal: status && !['pending', 'running'].includes(status)
+      ? { status, completedAt: fixtureTime, exitCode: status === 'completed' ? 0 : null, signal: null }
+      : null,
+    mcpToolActivities: [],
+    mcpToolActivityPartial: false,
   };
 }
 

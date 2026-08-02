@@ -78,6 +78,7 @@ describe('Agent Session client contracts', () => {
         externalContextId: null,
         usage: null,
         details: null,
+        toolActivity: null,
       },
       recordedAt: timestamp,
     };

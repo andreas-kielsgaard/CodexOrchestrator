@@ -262,6 +262,35 @@ pub(crate) enum NormalizedRuntimeEventKind {
     Unknown,
 }
 
+/// Provider-neutral semantic detail for a tool item. The enclosing runtime event retains the
+/// provider payload for audit; consumers use these fields without parsing it.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ToolActivityPhase {
+    Started,
+    Completed,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ToolResultClassification {
+    Succeeded,
+    Failed,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NormalizedToolActivity {
+    pub(crate) phase: ToolActivityPhase,
+    pub(crate) item_id: Option<String>,
+    pub(crate) server: Option<String>,
+    pub(crate) tool: Option<String>,
+    pub(crate) status: Option<String>,
+    pub(crate) result_classification: ToolResultClassification,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentRuntimeUsage {
@@ -278,6 +307,10 @@ pub(crate) struct NormalizedRuntimeEvent {
     pub(crate) external_context_id: Option<ExternalRuntimeContextId>,
     pub(crate) usage: Option<AgentRuntimeUsage>,
     pub(crate) details: Option<Value>,
+    /// Older durable event records predate this field. Missing data remains absent rather than
+    /// being reconstructed from raw provider payloads.
+    #[serde(default)]
+    pub(crate) tool_activity: Option<NormalizedToolActivity>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

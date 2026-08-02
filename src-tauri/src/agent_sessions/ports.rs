@@ -18,6 +18,9 @@ pub(crate) struct AgentSessionHistory {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AgentInvocationHistory {
     pub(crate) invocation: AgentInvocation,
+    /// The application/process launch acknowledgement, if durably recorded. This is not
+    /// inferred from invocation lifecycle fields or provider events.
+    pub(crate) launch_accepted_at: Option<DateTime<Utc>>,
     pub(crate) events: Vec<AgentRuntimeEvent>,
 }
 

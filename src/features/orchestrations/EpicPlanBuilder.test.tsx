@@ -13,7 +13,7 @@ import type {
   EpicPlanProposalSource,
 } from '../../application/orchestrations';
 import { EpicInitiationError } from '../../application/orchestrations';
-import { sessionDetails } from '../agentSessions/testFixtures';
+import { observation, sessionDetails } from '../agentSessions/testFixtures';
 import { BUILD_EPIC_PLAN_PROMPT, EpicPlanBuilder } from './EpicPlanBuilder';
 
 describe('EpicPlanBuilder', () => {
@@ -331,7 +331,7 @@ function createPlanBuilderClient(
         command.submittedText,
         'user',
       );
-      details.invocations.push({ invocation, events: [] });
+      details.invocations.push({ invocation, observation: observation('pending'), events: [] });
       return { sessionId: details.session.id, invocationId: invocation.id };
     },
     cancelInvocation: async () => details.invocations[0].invocation,
@@ -344,7 +344,7 @@ function createPlanBuilderClient(
         BUILD_EPIC_PLAN_PROMPT,
         'application',
       );
-      details.invocations.push({ invocation, events: [] });
+      details.invocations.push({ invocation, observation: observation('pending'), events: [] });
       return { sessionId: details.session.id, invocationId: invocation.id };
     },
     emitTerminal() {
