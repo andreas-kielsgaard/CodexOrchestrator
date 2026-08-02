@@ -261,8 +261,9 @@ strict native-query correction `974ee2c`. The audit used this detached-worktree 
 - The production-equivalent `work_slice_planning_request_launches_one_prepared_planner_and_marks_readiness`
   test now drives settled Work Unit materialization, a real isolated Git worktree through the
   execution-support seam, `AgentSessionApplication`, and a deterministic recording runtime. It
-  proves one root Handler launch/acceptance/ready chain, a dependency blocked after root readiness,
-  replay and two reopened coordinators without a second launch, recovery of a persisted-but-
+  proves a missing-Git-authority root block with no execution effect, then one root Handler
+  launch/acceptance/ready chain, a dependency blocked after root readiness, replay and two
+  reopened coordinators without a second launch, recovery of a persisted-but-
   unnotified provider activity event, revision-A reuse after legitimate revision B publication,
   and fail-closed missing A evidence without an Implementer authorization, Session, or invocation.
 - Latest focused validation: the coordinator integration test **1/1** (306 filtered), immutable

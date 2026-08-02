@@ -4867,14 +4867,6 @@ mod tests {
         let handler_repository_root = handler_repository_root.canonicalize().unwrap();
         let handler_sprint_root = handler_sprint_root.canonicalize().unwrap();
         let handler_common = handler_repository_root.join(".git").canonicalize().unwrap();
-        Connection::open(&fixture.database_path).unwrap().execute("DELETE FROM initiated_sprint_git_authorities WHERE sprint_id=?1", [&sprint_id]).unwrap();
-        SqliteOrchestrationRepository::open(&fixture.database_path).unwrap().store_initiated_sprint_git_authority(InitiatedSprintGitAuthorityWrite {
-            sprint_id: sprint_id.clone(), idempotency_key: "handler-authority".into(),
-            repository_id: "handler-repository".into(), repository_root: handler_repository_root.to_string_lossy().into_owned(),
-            repository_common_dir: handler_common.to_string_lossy().into_owned(), worktree_id: "handler-sprint-worktree".into(),
-            worktree_root: handler_sprint_root.to_string_lossy().into_owned(), baseline_object_id: handler_initial,
-            current_object_id: handler_head, runtime_instance_ref: "handler-runtime".into(), runtime_source_ref: "handler-source".into(), source_fingerprint: "d".repeat(64),
-        }).unwrap();
         let handler_repository = Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap());
         let handler_orchestration = Arc::new(OrchestrationApplication::new(handler_repository.clone()));
         let handler_support = ProductExecutionSupportState::new(
@@ -4890,6 +4882,22 @@ mod tests {
         ).unwrap();
         fixture.notifier.set_sprint(&handler_runner);
         let handler_launches_before = fixture.runtime.requests().len();
+        Connection::open(&fixture.database_path).unwrap().execute("DELETE FROM initiated_sprint_git_authorities WHERE sprint_id=?1", [&sprint_id]).unwrap();
+        handler_runner.attach_work_unit_handler_activation(handler.clone()).unwrap();
+        let blocked_without_authority: (String,Option<String>,Option<String>,Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
+            "SELECT blocked_reason,execution_support_granted_at,handler_session_created_at,handler_invocation_prepared_at FROM work_unit_handler_activations WHERE blocked_reason='initiated_sprint_git_authority_missing' LIMIT 1", [],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+        ).unwrap();
+        assert_eq!(blocked_without_authority.0, "initiated_sprint_git_authority_missing");
+        assert!(blocked_without_authority.1.is_none() && blocked_without_authority.2.is_none() && blocked_without_authority.3.is_none());
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before);
+        SqliteOrchestrationRepository::open(&fixture.database_path).unwrap().store_initiated_sprint_git_authority(InitiatedSprintGitAuthorityWrite {
+            sprint_id: sprint_id.clone(), idempotency_key: "handler-authority".into(),
+            repository_id: "handler-repository".into(), repository_root: handler_repository_root.to_string_lossy().into_owned(),
+            repository_common_dir: handler_common.to_string_lossy().into_owned(), worktree_id: "handler-sprint-worktree".into(),
+            worktree_root: handler_sprint_root.to_string_lossy().into_owned(), baseline_object_id: handler_initial,
+            current_object_id: handler_head, runtime_instance_ref: "handler-runtime".into(), runtime_source_ref: "handler-source".into(), source_fingerprint: "d".repeat(64),
+        }).unwrap();
         handler_runner.attach_work_unit_handler_activation(handler.clone()).unwrap();
         let connection = Connection::open(&fixture.database_path).unwrap();
         let activations = connection.prepare("SELECT work_unit_id,attempt_id,handler_session_id,handler_invocation_id,eligibility_state,blocked_reason,handler_harness_revision_id,handler_harness_configuration_digest,handler_harness_repository_commit_ref,authorized_at,attempt_created_at,execution_support_granted_at,isolated_worktree_ready_at,handler_session_created_at,handler_invocation_prepared_at,handler_harness_bound_at,launch_requested_at,launch_accepted_at,handler_ready_at,provider_activation_observed_at FROM work_unit_handler_activations ORDER BY work_unit_id").unwrap().query_map([], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?,row.get::<_,Option<String>>(5)?,row.get::<_,Option<String>>(6)?,row.get::<_,Option<String>>(7)?,row.get::<_,Option<String>>(8)?,row.get::<_,Option<String>>(9)?,row.get::<_,Option<String>>(10)?,row.get::<_,Option<String>>(11)?,row.get::<_,Option<String>>(12)?,row.get::<_,Option<String>>(13)?,row.get::<_,Option<String>>(14)?,row.get::<_,Option<String>>(15)?,row.get::<_,Option<String>>(16)?,row.get::<_,Option<String>>(17)?,row.get::<_,Option<String>>(18)?,row.get::<_,Option<String>>(19)?))).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
