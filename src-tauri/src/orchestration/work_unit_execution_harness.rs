@@ -89,6 +89,18 @@ impl WorkUnitExecutionHarnessService {
     ) -> Result<WorkUnitExecutionHarnessPackage, WorkUnitHarnessError> {
         let harness = conversation_harness::profile(role.harness_role())
             .map_err(|_| WorkUnitHarnessError::Unavailable)?;
+        self.construct_for_pinned_profile(attempt_id, role, harness)
+    }
+
+    /// The activation coordinator supplies a previously persisted, self-validating profile
+    /// snapshot.  A reopened attempt never consults the mutable catalog for its executable
+    /// package.
+    pub(crate) fn construct_for_pinned_profile(
+        &self,
+        attempt_id: &str,
+        role: WorkUnitHarnessRole,
+        harness: ConversationHarnessProfile,
+    ) -> Result<WorkUnitExecutionHarnessPackage, WorkUnitHarnessError> {
         if harness.mcp.required || !harness.mcp.enabled_tools.is_empty() {
             return Err(WorkUnitHarnessError::Unavailable);
         }

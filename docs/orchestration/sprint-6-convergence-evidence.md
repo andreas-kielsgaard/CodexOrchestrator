@@ -214,9 +214,12 @@ strict native-query correction `974ee2c`. The audit used this detached-worktree 
   by this task harness; no runtime setting is claimed from the request alone.
 - Product composition attaches an application-owned Handler activation coordinator only after the
   existing Agent Session and execution-support seams exist. It derives candidates from settled
-  materialized Work Units and direct `depends_on` relationships. A missing dependency readiness
-  fact or initiated-Sprint Git authority remains durable `blocked` state with a reason; it does
-  not create a Session, invocation, worktree, or provider launch.
+  materialized Work Units and direct `depends_on` relationships. At this boundary no authoritative
+  prerequisite-satisfaction fact exists: every plan-defined dependency therefore remains durably
+  `blocked` as `prerequisite_satisfaction_not_authoritative`; Handler readiness, launch acceptance,
+  provider observation, lifecycle, transcript, and silence never satisfy it. Missing initiated-
+  Sprint Git authority is separately `blocked` and neither block creates a Session, invocation,
+  worktree, or provider launch.
 - Each eligible Work Unit has stable application-derived ordinal-0 attempt, Handler Session, and
   invocation identifiers. The coordinator records request, authorization, attempt creation,
   execution-support/worktree preparation, Session creation, invocation preparation, Harness
@@ -225,12 +228,24 @@ strict native-query correction `974ee2c`. The audit used this detached-worktree 
 - The Handler package remains read-only and has no MCP tools or Implementer-request action. No
   Implementer identity, output acceptance, review, retry, settlement, continuation, pause/restart,
   provider compliance, process reattachment, or user acceptance is created or claimed.
-- The productive native query includes the durable Handler activation stages on each materialized
-  Work Unit. The approved Work Unit activity details distinguish blocked, prepared, requested,
-  launch-accepted/ready, and unobserved provider activity states. Recorded fixtures remain
-  development data and are not production proof.
-- Current local validation: `cargo check --manifest-path src-tauri/Cargo.toml` passed; the
-  focused Handler Harness surface test passed **1/1** (304 filtered). TypeScript typecheck, lint,
-  frontend tests, and build remain unproven in this host-created clean worktree: it has no
-  installed project `node_modules`, and no dependency installation was performed. The repository-
-  wide Rustfmt check reports pre-existing formatting drift outside this patch and was not applied.
+- The initial activation persists an exact serialized `ConversationHarnessProfile` with its key and
+  version. Reopen/replay reconstructs only that pinned snapshot through the narrow execution-
+  support seam; a missing, malformed, or current-catalog mismatch fails closed rather than silently
+  substituting a mutable profile. Callers do not supply a revision or runtime override.
+- Provider activity is recorded only from the correlated invocation observation seam, stays distinct
+  from launch acceptance/readiness, and is reconciled from persisted Handler activity notifications.
+  The productive native query and approved Work Unit activity details distinguish blocked,
+  prepared, requested, launch-accepted/ready, provider-observed, and unobserved states. Recorded
+  fixtures remain development data and are not production proof.
+- Correction validation: focused Rust Handler boundary tests **2/2** (305 filtered); Handler
+  Harness-surface test **1/1** (304 filtered); `cargo check --manifest-path
+  src-tauri/Cargo.toml`; and `git diff --check` passed. In an isolated temporary copy with
+  `npm ci --ignore-scripts` (no manifest or lockfile modification in this worktree), focused
+  `nativeQuery.test.ts` passed **17/17**, `npm exec tsc -- --noEmit`, ESLint, and `npm run build`
+  passed. Repository-wide Rustfmt still reports pre-existing formatting drift outside this patch and
+  was not applied.
+- This remains a partial local checkpoint: it does not yet prove production-equivalent root launch,
+  two-service concurrency, partial-stage/reopen recovery, missed provider-observation recovery, or
+  catalog-drift replay with integration-level tests. No live provider, human, provider-compliance,
+  lifecycle/outcome, reattachment, downstream Implementer, review, retry, settlement, or
+  continuation claim is made.

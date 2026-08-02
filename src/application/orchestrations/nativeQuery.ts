@@ -599,6 +599,8 @@ function materializationStage(materialization: NativeWorkUnitMaterializationV1) 
 
 function handlerActivationDetail(activation: NativeWorkUnitHandlerActivationV1 | undefined) {
   if (!activation) return '';
+  if (activation.providerActivationObservedAt)
+    return ' Handler provider activity observed; no provider lifecycle, outcome, or acceptance is implied.';
   if (activation.handlerReadyAt)
     return ' Handler launch accepted and ready; provider activation is unobserved.';
   if (activation.eligibilityState === 'blocked')
@@ -1035,12 +1037,12 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
   );
   const optional = (key: keyof typeof x) =>
     x[key] === undefined ? undefined : string(x[key], key);
-  const eligibilityState =
+  const eligibilityState: NativeWorkUnitHandlerActivationV1['eligibilityState'] =
     x.eligibilityState === undefined
       ? undefined
-      : (literal(x.eligibilityState, ['blocked', 'eligible'], 'Handler eligibility state') as
-          | 'blocked'
-          | 'eligible');
+      : x.eligibilityState === 'blocked' || x.eligibilityState === 'eligible'
+        ? x.eligibilityState
+        : fail('invalid Handler eligibility state');
   const blockedReason = optional('blockedReason');
   if (eligibilityState === 'blocked' && !blockedReason)
     fail('blocked Handler activation requires a reason');

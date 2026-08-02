@@ -221,6 +221,7 @@ describe('orchestration native query v1', () => {
           launchRequestedAt: '2026-08-02T00:01:08Z',
           launchAcceptedAt: '2026-08-02T00:01:09Z',
           handlerReadyAt: '2026-08-02T00:01:10Z',
+          providerActivationObservedAt: '2026-08-02T00:01:11Z',
         },
       },
       {
@@ -231,6 +232,12 @@ describe('orchestration native query v1', () => {
         laneOrdinal: 1,
         laneTitle: 'Second responsibility',
         specification: 'Second specification.',
+        handlerActivation: {
+          attemptId: 'handler-attempt-2',
+          eligibilityState: 'blocked',
+          blockedReason: 'prerequisite_satisfaction_not_authoritative',
+          requestedAt: '2026-08-02T00:01:00Z',
+        },
       },
     ];
     value.workUnitRelationships = [
@@ -298,7 +305,9 @@ describe('orchestration native query v1', () => {
       { workUnitId: 'unit-1' },
       { workUnitId: 'unit-2', dependencies: [{ workUnitId: 'unit-1' }] },
     ]);
-    expect(sprint.workUnits[0]!.details).toContain('Handler launch accepted and ready');
+    const input = nativeQueryProductCompositionInputV2(query);
+    expect(input.referenceIndex.workUnits[0]!.details).toContain('Handler provider activity observed');
+    expect(input.referenceIndex.workUnits[1]!.details).toContain('Handler activation blocked');
 
     (value.workUnitRelationships as Array<Record<string, unknown>>).push({
       relationshipId: 'duplicate-dependency',
