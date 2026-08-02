@@ -1,16 +1,32 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { EpicPauseRestartController, EpicPauseRestartQuery, EpicPauseRestartOutcome } from '../../../application/orchestrations';
+import type {
+  EpicPauseRestartController,
+  EpicPauseRestartQuery,
+  EpicPauseRestartOutcome,
+} from '../../../application/orchestrations';
 import { EpicPauseRestartControl } from './EpicPauseRestartControl';
 
-const outcome = (kind: EpicPauseRestartOutcome['kind'], status: EpicPauseRestartOutcome['status'], targetCount = 2, launchedCount = 0): EpicPauseRestartOutcome => ({
+const outcome = (
+  kind: EpicPauseRestartOutcome['kind'],
+  status: EpicPauseRestartOutcome['status'],
+  targetCount = 2,
+  launchedCount = 0,
+): EpicPauseRestartOutcome => ({
   actionId: `action-${status}`,
   kind,
   status,
   targetCount,
   launchedCount,
+  targets: [],
 });
-const query = (pause: EpicPauseRestartQuery['pause'], restart: EpicPauseRestartQuery['restart'] = { availability: 'unavailable', reason: 'No interrupted orchestration conversation is eligible for Restart.' }): EpicPauseRestartQuery => ({ epicId: 'epic-1', pause, restart });
+const query = (
+  pause: EpicPauseRestartQuery['pause'],
+  restart: EpicPauseRestartQuery['restart'] = {
+    availability: 'unavailable',
+    reason: 'No interrupted orchestration conversation is eligible for Restart.',
+  },
+): EpicPauseRestartQuery => ({ epicId: 'epic-1', pause, restart });
 
 function controllerFor(initial: EpicPauseRestartQuery, afterRequest = initial) {
   let current = initial;
@@ -32,7 +48,11 @@ function controllerFor(initial: EpicPauseRestartQuery, afterRequest = initial) {
 describe('Epic Pause/Restart control', () => {
   it('loads authoritative state, preserves factual reasons, and reloads after Pause', async () => {
     const initial = query({ availability: 'available', reason: 'Pause dispatch is available.' });
-    const afterPause = query({ availability: 'busy', reason: 'A durable Pause request is still reconciling.', current: outcome('pause', 'pending', 2, 0) });
+    const afterPause = query({
+      availability: 'busy',
+      reason: 'A durable Pause request is still reconciling.',
+      current: outcome('pause', 'pending', 2, 0),
+    });
     const { controller } = controllerFor(initial, afterPause);
     render(<EpicPauseRestartControl epicId="epic-1" controller={controller} />);
 
@@ -45,30 +65,72 @@ describe('Epic Pause/Restart control', () => {
     await waitFor(() => expect(controller.load).toHaveBeenCalledTimes(2));
     expect(screen.getByRole('button', { name: 'Pause' })).toBeDisabled();
     expect(screen.getByText(/Pause pending: 0 of 2 dispatches launch-accepted/)).toBeVisible();
-    expect(screen.getAllByText(/Provider receipt, compliance, and progress are not observed/).length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(/Provider receipt, compliance, and progress are not observed/).length,
+    ).toBeGreaterThan(0);
   });
 
   it.each([
-    ['zero-target unavailable', query({ availability: 'unavailable', reason: 'No working orchestration conversation is eligible for Pause.', current: outcome('pause', 'completed', 0, 0) })],
-    ['partial', query({ availability: 'unavailable', reason: 'Pause completed with attention.', current: outcome('pause', 'partial', 3, 2) })],
-    ['attention', query({ availability: 'unavailable', reason: 'Pause requires attention.', current: outcome('pause', 'attention', 2, 1) })],
-    ['completed', query({ availability: 'unavailable', reason: 'Pause completed.', current: outcome('pause', 'completed', 2, 2) })],
+    [
+      'zero-target unavailable',
+      query({
+        availability: 'unavailable',
+        reason: 'No working orchestration conversation is eligible for Pause.',
+        current: outcome('pause', 'completed', 0, 0),
+      }),
+    ],
+    [
+      'partial',
+      query({
+        availability: 'unavailable',
+        reason: 'Pause completed with attention.',
+        current: outcome('pause', 'partial', 3, 2),
+      }),
+    ],
+    [
+      'attention',
+      query({
+        availability: 'unavailable',
+        reason: 'Pause requires attention.',
+        current: outcome('pause', 'attention', 2, 1),
+      }),
+    ],
+    [
+      'completed',
+      query({
+        availability: 'unavailable',
+        reason: 'Pause completed.',
+        current: outcome('pause', 'completed', 2, 2),
+      }),
+    ],
   ])('renders the factual %s state and disables unavailable controls', async (_label, state) => {
     const { controller } = controllerFor(state);
     render(<EpicPauseRestartControl epicId="epic-1" controller={controller} />);
-    await waitFor(() => expect(screen.getByText(new RegExp(state.pause.current!.status))).toBeVisible());
+    await waitFor(() =>
+      expect(screen.getByText(new RegExp(state.pause.current!.status))).toBeVisible(),
+    );
     expect(screen.getByRole('button', { name: 'Pause' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Restart' })).toBeDisabled();
   });
 
   it('loads authoritative Restart state, guards duplicate submission, reloads, and renders its persisted outcome', async () => {
     const initial = query(
-      { availability: 'unavailable', reason: 'No working orchestration conversation is eligible for Pause.' },
+      {
+        availability: 'unavailable',
+        reason: 'No working orchestration conversation is eligible for Pause.',
+      },
       { availability: 'available', reason: 'Restart dispatch is available.' },
     );
     const afterRestart = query(
-      { availability: 'unavailable', reason: 'Pause is not available while the Epic is interrupted.' },
-      { availability: 'busy', reason: 'A durable Restart request is still reconciling.', current: outcome('restart', 'completed', 2, 2) },
+      {
+        availability: 'unavailable',
+        reason: 'Pause is not available while the Epic is interrupted.',
+      },
+      {
+        availability: 'busy',
+        reason: 'A durable Restart request is still reconciling.',
+        current: outcome('restart', 'completed', 2, 2),
+      },
     );
     const { controller } = controllerFor(initial, afterRestart);
     render(<EpicPauseRestartControl epicId="epic-1" controller={controller} />);
@@ -82,6 +144,60 @@ describe('Epic Pause/Restart control', () => {
     expect(screen.getByRole('button', { name: 'Restart' })).toBeDisabled();
     expect(screen.getByText(/A durable Restart request is still reconciling/)).toBeVisible();
     expect(screen.getByText(/Restart completed: 2 of 2 dispatches launch-accepted/)).toBeVisible();
-    expect(screen.getAllByText(/Provider receipt, compliance, and progress are not observed/).length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(/Provider receipt, compliance, and progress are not observed/).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it('renders correlated durable observation without promoting it to provider receipt or progress', async () => {
+    const correlated = {
+      ...outcome('pause', 'partial', 1, 0),
+      targets: [
+        {
+          sessionId: 'session-1',
+          sourceInvocationId: 'source-1',
+          cancelRequestedAt: 'now',
+          interruptionStatus: 'canceled' as const,
+          interruptionObservedAt: 'now',
+          sourceObservation: {
+            launchAcceptedAt: null,
+            externalContext: null,
+            providerActivity: null,
+            providerTerminal: null,
+            processTerminal: null,
+            mcpToolActivities: [],
+            mcpToolActivityPartial: true,
+          },
+          controlInvocation: {
+            invocationId: 'control-1',
+            persistedAt: 'now',
+            launchAcceptedAt: null,
+            observation: null,
+          },
+          failure: null,
+        },
+      ],
+    };
+    const { controller } = controllerFor(
+      query({
+        availability: 'unavailable',
+        reason: 'Pause completed with attention.',
+        current: correlated,
+      }),
+    );
+    render(<EpicPauseRestartControl epicId="epic-1" controller={controller} />);
+    await waitFor(() =>
+      expect(screen.getByRole('region', { name: 'Pause evidence' })).toBeVisible(),
+    );
+    expect(
+      screen.getByText(
+        /Application control invocation control-1 was persisted but is not launch-accepted/,
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getAllByText(
+        /Provider receipt, instruction compliance, and useful progress are not observed/,
+      ).length,
+    ).toBeGreaterThan(0);
   });
 });

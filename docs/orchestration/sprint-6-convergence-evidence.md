@@ -4,6 +4,31 @@ Status: **partial**. Deterministic convergence and isolated installed-Codex Plan
 Bootstrap Generator, and Epic Runner paths pass. The production user-confirmation click and the
 integrated post-click chain remain a manual gate; no confirmation was bypassed.
 
+## Epic Pause/Restart and runtime-observation convergence
+
+- Epic control availability and target selection remain application-owned durable query state.
+  They are never inferred from transcript text, provider output, or an invocation observation.
+- Every durable control target now exposes only its exact source invocation and its exact
+  application-owned control invocation. Both reuse the Agent Session durable observation
+  projection: launch acceptance, external-context observation, provider activity/terminal
+  evidence, process terminal outcome, and typed or explicitly partial MCP activity.
+- A control request, selected target, cancellation request, observed interruption, control-message
+  persistence, and control-invocation launch acceptance remain separate facts. A `pause work`
+  message is not suspension; a `continue work` message is not useful progress. Provider receipt,
+  instruction compliance, product acceptance, and work outcome remain unobserved unless another
+  bounded product record proves them.
+- Reopen rebuilds the correlated projection from the control row plus each matching invocation's
+  durable history. Missing older normalized detail stays absent/partial; raw payload is not
+  reparsed as a migration and no provider-private reattachment is attempted.
+- This checkpoint has deterministic local fake-runtime and strict native-contract/UI coverage.
+  It does not prove a live provider received either control message, suspended/resumed work,
+  restored a provider connection, or produced a product outcome.
+- Checkpoint validation: focused Epic control Rust **7 passed**; focused observation Rust **5
+  passed**; frontend native-contract, Tauri transport, production-composition, and control UI
+  **4 files / 23 tests passed**; TypeScript plus production Vite build passed. Touched Rust
+  `rustfmt --check`, touched-file Prettier, and `git diff --check` passed. The existing Rust dead-code warning in
+  `ProcessSupervisor::system` remains a non-failure.
+
 ## Independent corrections
 
 - User-authored managed Plan Builder queries retain `user` transcript provenance, while the

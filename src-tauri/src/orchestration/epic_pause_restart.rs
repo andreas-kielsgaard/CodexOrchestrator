@@ -2,7 +2,8 @@
 //! instruction compliance, or observed resumed work.
 use crate::agent_sessions::{
     application::{
-        AgentSessionApplication, AgentSessionNotification, ApplicationInvocationLaunchEvidence,
+        project_invocation_observation, AgentInvocationObservation, AgentSessionApplication,
+        AgentSessionNotification, ApplicationInvocationLaunchEvidence,
         CancelAgentInvocationCommand, SendAgentSessionMessageCommand,
         SendIdempotentApplicationAgentSessionMessageCommand,
     },
@@ -44,6 +45,38 @@ pub(crate) struct EpicControlOutcome {
     pub(crate) status: String,
     pub(crate) target_count: usize,
     pub(crate) launched_count: usize,
+    /// Each entry is durably selected for this control action. Invocation observations are
+    /// reconstructed from only the matching invocation's durable history.
+    pub(crate) targets: Vec<EpicControlTargetObservation>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EpicControlTargetObservation {
+    pub(crate) session_id: String,
+    pub(crate) source_invocation_id: String,
+    pub(crate) cancel_requested_at: Option<String>,
+    pub(crate) interruption_status: String,
+    pub(crate) interruption_observed_at: Option<String>,
+    pub(crate) source_observation: Option<AgentInvocationObservation>,
+    pub(crate) control_invocation: Option<EpicControlInvocationObservation>,
+    pub(crate) failure: Option<EpicControlFailure>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EpicControlInvocationObservation {
+    pub(crate) invocation_id: String,
+    pub(crate) persisted_at: String,
+    pub(crate) launch_accepted_at: Option<String>,
+    pub(crate) observation: Option<AgentInvocationObservation>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EpicControlFailure {
+    pub(crate) category: String,
+    pub(crate) detail: String,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -236,11 +269,12 @@ impl EpicPauseRestartService {
                     );
                 };
                 if invocation.status.is_active() {
-                    if let Err(error) = self.sessions.cancel_invocation(
-                        CancelAgentInvocationCommand {
-                            invocation_id: source,
-                        },
-                    ) {
+                    if let Err(error) =
+                        self.sessions
+                            .cancel_invocation(CancelAgentInvocationCommand {
+                                invocation_id: source,
+                            })
+                    {
                         // A port failure is durable target evidence, not a reason to abandon the
                         // other independently-correlated targets in this action.
                         self.record_failure(
@@ -465,25 +499,115 @@ impl EpicPauseRestartService {
         Ok(())
     }
     fn outcome(&self, a: &str) -> Result<EpicControlOutcome, String> {
-        let c = self
-            .connection
-            .lock()
-            .map_err(|_| "Epic control database lock is poisoned")?;
-        let (kind, status): (String, String) = c
-            .query_row(
-                "SELECT kind,status FROM epic_control_actions WHERE id=?1",
-                [a],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .map_err(|e| e.to_string())?;
-        let (total,launched):(i64,i64)=c.query_row("SELECT count(*),COALESCE(sum(launch_accepted_at IS NOT NULL),0) FROM epic_control_targets WHERE action_id=?1",[a],|r|Ok((r.get(0)?,r.get(1)?))).map_err(|e|e.to_string())?;
+        let (kind, status, total, launched) = {
+            let c = self
+                .connection
+                .lock()
+                .map_err(|_| "Epic control database lock is poisoned")?;
+            let (kind, status): (String, String) = c
+                .query_row(
+                    "SELECT kind,status FROM epic_control_actions WHERE id=?1",
+                    [a],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .map_err(|e| e.to_string())?;
+            let (total, launched): (i64, i64) = c
+                .query_row(
+                    "SELECT count(*),COALESCE(sum(launch_accepted_at IS NOT NULL),0) FROM epic_control_targets WHERE action_id=?1",
+                    [a],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .map_err(|e| e.to_string())?;
+            (kind, status, total, launched)
+        };
         Ok(EpicControlOutcome {
             action_id: a.into(),
             kind,
             status,
             target_count: total as usize,
             launched_count: launched as usize,
+            targets: self.target_observations(a)?,
         })
+    }
+
+    fn target_observations(
+        &self,
+        action_id: &str,
+    ) -> Result<Vec<EpicControlTargetObservation>, String> {
+        let rows = {
+            let c = self
+                .connection
+                .lock()
+                .map_err(|_| "Epic control database lock is poisoned")?;
+            let mut statement = c.prepare("SELECT session_id,source_invocation_id,cancel_requested_at,interruption_status,interruption_observed_at,message_invocation_id,message_persisted_at,launch_accepted_at,failure_category,failure_detail FROM epic_control_targets WHERE action_id=?1 ORDER BY source_invocation_id").map_err(|e| e.to_string())?;
+            let rows = statement
+                .query_map([action_id], |row| {
+                    Ok(ControlTargetRow {
+                        session_id: row.get(0)?,
+                        source_invocation_id: row.get(1)?,
+                        cancel_requested_at: row.get(2)?,
+                        interruption_status: row.get(3)?,
+                        interruption_observed_at: row.get(4)?,
+                        message_invocation_id: row.get(5)?,
+                        message_persisted_at: row.get(6)?,
+                        launch_accepted_at: row.get(7)?,
+                        failure_category: row.get(8)?,
+                        failure_detail: row.get(9)?,
+                    })
+                })
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            rows
+        };
+        rows.into_iter()
+            .map(|row| {
+                let source_observation =
+                    self.invocation_observation(&row.session_id, &row.source_invocation_id)?;
+                let control_invocation = match (row.message_invocation_id, row.message_persisted_at)
+                {
+                    (Some(invocation_id), Some(persisted_at)) => {
+                        Some(EpicControlInvocationObservation {
+                            observation: self
+                                .invocation_observation(&row.session_id, &invocation_id)?,
+                            invocation_id,
+                            persisted_at,
+                            launch_accepted_at: row.launch_accepted_at,
+                        })
+                    }
+                    _ => None,
+                };
+                Ok(EpicControlTargetObservation {
+                    session_id: row.session_id,
+                    source_invocation_id: row.source_invocation_id,
+                    cancel_requested_at: row.cancel_requested_at,
+                    interruption_status: row.interruption_status,
+                    interruption_observed_at: row.interruption_observed_at,
+                    source_observation,
+                    control_invocation,
+                    failure: row
+                        .failure_category
+                        .zip(row.failure_detail)
+                        .map(|(category, detail)| EpicControlFailure { category, detail }),
+                })
+            })
+            .collect()
+    }
+
+    fn invocation_observation(
+        &self,
+        session_id: &str,
+        invocation_id: &str,
+    ) -> Result<Option<AgentInvocationObservation>, String> {
+        let session = self
+            .sessions
+            .load_session(&AgentSessionId::new(session_id.to_string()).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+        Ok(session
+            .invocations
+            .into_iter()
+            .find(|history| history.invocation.id.as_str() == invocation_id)
+            .map(|history| project_invocation_observation(&history)))
     }
     fn latest_outcome(
         &self,
@@ -541,6 +665,19 @@ struct Target {
     launch_accepted_at: Option<String>,
 }
 
+struct ControlTargetRow {
+    session_id: String,
+    source_invocation_id: String,
+    cancel_requested_at: Option<String>,
+    interruption_status: String,
+    interruption_observed_at: Option<String>,
+    message_invocation_id: Option<String>,
+    message_persisted_at: Option<String>,
+    launch_accepted_at: Option<String>,
+    failure_category: Option<String>,
+    failure_detail: Option<String>,
+}
+
 fn active_targets(
     transaction: &rusqlite::Transaction<'_>,
     epic_id: &str,
@@ -576,15 +713,17 @@ mod tests {
     use crate::{
         agent_sessions::{
             application::{
-                AgentSessionNotifier,
-                CreateAgentSessionCommand, CreateApplicationAgentSessionCommand,
-                SendAgentSessionMessageCommand,
-                SendIdempotentApplicationAgentSessionMessageCommand,
-                SystemAgentSessionProviders, AgentSessionApplication,
+                AgentSessionApplication, AgentSessionNotifier, CreateAgentSessionCommand,
+                CreateApplicationAgentSessionCommand, SendAgentSessionMessageCommand,
+                SendIdempotentApplicationAgentSessionMessageCommand, SystemAgentSessionProviders,
             },
-            domain::{AgentInvocationId, AgentInvocationTerminalStatus, AgentRuntimeOptions, AgentSessionId},
+            domain::{
+                AgentInvocationId, AgentInvocationTerminalStatus, AgentRuntimeEventSource,
+                AgentRuntimeOptions, AgentSessionId, NormalizedRuntimeEvent,
+                NormalizedRuntimeEventKind,
+            },
             ports::{
-                AgentRuntime, AgentRuntimeUpdateSink, RuntimeInvocationMode,
+                AgentRuntime, AgentRuntimeUpdateSink, RuntimeEventDraft, RuntimeInvocationMode,
                 RuntimeInvocationOutcome, RuntimeInvocationPreflight, RuntimeInvocationRequest,
                 RuntimePortError, RuntimePortErrorKind, RuntimeUpdate,
             },
@@ -623,7 +762,13 @@ mod tests {
 
         fn finish(&self, invocation_id: &str, status: AgentInvocationTerminalStatus) {
             let invocation_id = AgentInvocationId::new(invocation_id).unwrap();
-            let sink = self.sinks.lock().unwrap().get(&invocation_id).cloned().unwrap();
+            let sink = self
+                .sinks
+                .lock()
+                .unwrap()
+                .get(&invocation_id)
+                .cloned()
+                .unwrap();
             sink.emit_update(
                 &invocation_id,
                 RuntimeUpdate::Finished(RuntimeInvocationOutcome {
@@ -631,6 +776,33 @@ mod tests {
                     exit_code: None,
                     signal: None,
                     runtime_error: None,
+                }),
+            )
+            .unwrap();
+        }
+
+        fn processing_started(&self, invocation_id: &str) {
+            let invocation_id = AgentInvocationId::new(invocation_id).unwrap();
+            let sink = self
+                .sinks
+                .lock()
+                .unwrap()
+                .get(&invocation_id)
+                .cloned()
+                .unwrap();
+            sink.emit_update(
+                &invocation_id,
+                RuntimeUpdate::Event(RuntimeEventDraft {
+                    source: AgentRuntimeEventSource::Stdout,
+                    raw_payload: serde_json::json!({"type": "turn.started"}),
+                    normalized: Some(NormalizedRuntimeEvent {
+                        kind: NormalizedRuntimeEventKind::ProcessingStarted,
+                        text: None,
+                        external_context_id: None,
+                        usage: None,
+                        details: None,
+                        tool_activity: None,
+                    }),
                 }),
             )
             .unwrap();
@@ -643,7 +815,9 @@ mod tests {
             _mode: RuntimeInvocationMode,
             requested_options: &AgentRuntimeOptions,
         ) -> Result<RuntimeInvocationPreflight, RuntimePortError> {
-            Ok(RuntimeInvocationPreflight { effective_options: requested_options.clone() })
+            Ok(RuntimeInvocationPreflight {
+                effective_options: requested_options.clone(),
+            })
         }
 
         fn start_invocation(
@@ -652,10 +826,22 @@ mod tests {
             sink: Arc<dyn AgentRuntimeUpdateSink>,
         ) -> Result<(), RuntimePortError> {
             self.requests.lock().unwrap().push(request.clone());
-            if self.fail_launches.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| count.checked_sub(1)).is_ok() {
-                return Err(RuntimePortError::new(RuntimePortErrorKind::LaunchFailed, "induced launch failure"));
+            if self
+                .fail_launches
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+                    count.checked_sub(1)
+                })
+                .is_ok()
+            {
+                return Err(RuntimePortError::new(
+                    RuntimePortErrorKind::LaunchFailed,
+                    "induced launch failure",
+                ));
             }
-            self.sinks.lock().unwrap().insert(request.invocation_id, sink);
+            self.sinks
+                .lock()
+                .unwrap()
+                .insert(request.invocation_id, sink);
             Ok(())
         }
 
@@ -668,17 +854,34 @@ mod tests {
             self.start_invocation(request, sink)
         }
 
-        fn cancel_invocation(&self, invocation_id: &AgentInvocationId) -> Result<(), RuntimePortError> {
-            self.cancellations.lock().unwrap().push(invocation_id.clone());
-            if self.fail_cancellations.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| count.checked_sub(1)).is_ok() {
-                return Err(RuntimePortError::new(RuntimePortErrorKind::CancellationFailed, "induced cancellation failure"));
+        fn cancel_invocation(
+            &self,
+            invocation_id: &AgentInvocationId,
+        ) -> Result<(), RuntimePortError> {
+            self.cancellations
+                .lock()
+                .unwrap()
+                .push(invocation_id.clone());
+            if self
+                .fail_cancellations
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+                    count.checked_sub(1)
+                })
+                .is_ok()
+            {
+                return Err(RuntimePortError::new(
+                    RuntimePortErrorKind::CancellationFailed,
+                    "induced cancellation failure",
+                ));
             }
             Ok(())
         }
     }
 
     #[derive(Default)]
-    struct ControlNotifier { service: Mutex<Option<Weak<EpicPauseRestartService>>> }
+    struct ControlNotifier {
+        service: Mutex<Option<Weak<EpicPauseRestartService>>>,
+    }
 
     impl ControlNotifier {
         fn set(&self, service: &Arc<EpicPauseRestartService>) {
@@ -688,7 +891,12 @@ mod tests {
 
     impl AgentSessionNotifier for ControlNotifier {
         fn notify(&self, notification: AgentSessionNotification) -> Result<(), String> {
-            let service = self.service.lock().unwrap().as_ref().and_then(Weak::upgrade);
+            let service = self
+                .service
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(Weak::upgrade);
             if let Some(service) = service {
                 service.on_agent_notification(&notification)?;
             }
@@ -714,25 +922,52 @@ mod tests {
             let notifier = Arc::new(ControlNotifier::default());
             let sessions = Arc::new(AgentSessionApplication::new(
                 Arc::new(SqliteAgentSessionRepository::open(&database_path).unwrap()),
-                runtime.clone(), notifier.clone(), Arc::new(SystemAgentSessionProviders),
-                Arc::new(SystemAgentSessionProviders), Some("test-runtime".into()),
+                runtime.clone(),
+                notifier.clone(),
+                Arc::new(SystemAgentSessionProviders),
+                Arc::new(SystemAgentSessionProviders),
+                Some("test-runtime".into()),
             ));
-            let names = ["bootstrap", "runner", "epic-runner", "sprint-runner", "planner", "unrelated"];
+            let names = [
+                "bootstrap",
+                "runner",
+                "epic-runner",
+                "sprint-runner",
+                "planner",
+                "unrelated",
+            ];
             for name in names {
-                sessions.create_application_session(CreateApplicationAgentSessionCommand {
-                    session_id: AgentSessionId::new(format!("{name}-session")).unwrap(),
-                    session: CreateAgentSessionCommand { title: Some(name.into()), working_directory: None, requested_options: AgentRuntimeOptions::default() },
-                }).unwrap();
+                sessions
+                    .create_application_session(CreateApplicationAgentSessionCommand {
+                        session_id: AgentSessionId::new(format!("{name}-session")).unwrap(),
+                        session: CreateAgentSessionCommand {
+                            title: Some(name.into()),
+                            working_directory: None,
+                            requested_options: AgentRuntimeOptions::default(),
+                        },
+                    })
+                    .unwrap();
             }
             let mut source_ids = Vec::new();
             for name in names {
                 let source = format!("{name}-source");
-                sessions.send_idempotent_application_message_with_launch_observation(
-                    SendIdempotentApplicationAgentSessionMessageCommand {
-                        invocation_id: AgentInvocationId::new(source.clone()).unwrap(),
-                        message: SendAgentSessionMessageCommand { session_id: Some(AgentSessionId::new(format!("{name}-session")).unwrap()), submitted_text: format!("{name} original work"), title: None, working_directory: None, requested_options: None },
-                    }, None,
-                ).unwrap();
+                sessions
+                    .send_idempotent_application_message_with_launch_observation(
+                        SendIdempotentApplicationAgentSessionMessageCommand {
+                            invocation_id: AgentInvocationId::new(source.clone()).unwrap(),
+                            message: SendAgentSessionMessageCommand {
+                                session_id: Some(
+                                    AgentSessionId::new(format!("{name}-session")).unwrap(),
+                                ),
+                                submitted_text: format!("{name} original work"),
+                                title: None,
+                                working_directory: None,
+                                requested_options: None,
+                            },
+                        },
+                        None,
+                    )
+                    .unwrap();
                 source_ids.push(source);
             }
             let seed = Connection::open(&database_path).unwrap();
@@ -743,13 +978,29 @@ mod tests {
             drop(seed);
             let service = EpicPauseRestartService::open(&database_path, sessions.clone()).unwrap();
             notifier.set(&service);
-            Self { directory, database_path, runtime, sessions, service, source_ids }
+            Self {
+                directory,
+                database_path,
+                runtime,
+                sessions,
+                service,
+                source_ids,
+            }
         }
 
-        fn target_rows(&self, action_id: &str) -> Vec<(String, String, Option<String>, Option<String>)> {
+        fn target_rows(
+            &self,
+            action_id: &str,
+        ) -> Vec<(String, String, Option<String>, Option<String>)> {
             let connection = Connection::open(&self.database_path).unwrap();
             let mut statement = connection.prepare("SELECT session_id, source_invocation_id, message_invocation_id, failure_category FROM epic_control_targets WHERE action_id=?1 ORDER BY session_id").unwrap();
-            statement.query_map([action_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))).unwrap().collect::<Result<_, _>>().unwrap()
+            statement
+                .query_map([action_id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                })
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
         }
     }
 
@@ -793,44 +1044,78 @@ mod tests {
     #[test]
     fn active_v12_initialization_adds_the_control_schema_and_records_v13() {
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch(crate::agent_sessions::repository::AGENT_SESSION_SCHEMA).unwrap();
-        connection.execute_batch(crate::orchestration::repository::ORCHESTRATION_SCHEMA).unwrap();
-        connection.execute_batch(crate::orchestration::repository::ORCHESTRATION_INITIATION_SCHEMA).unwrap();
+        connection
+            .execute_batch(crate::agent_sessions::repository::AGENT_SESSION_SCHEMA)
+            .unwrap();
+        connection
+            .execute_batch(crate::orchestration::repository::ORCHESTRATION_SCHEMA)
+            .unwrap();
+        connection
+            .execute_batch(crate::orchestration::repository::ORCHESTRATION_INITIATION_SCHEMA)
+            .unwrap();
         connection.pragma_update(None, "user_version", 12).unwrap();
         initialize_active_database(&connection).unwrap();
-        assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 13);
-        assert!(connection.query_row("SELECT 1 FROM sqlite_master WHERE type='table' AND name='epic_control_actions'", [], |_| Ok(())).is_ok());
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            13
+        );
+        assert!(connection
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='epic_control_actions'",
+                [],
+                |_| Ok(())
+            )
+            .is_ok());
         initialize_active_database(&connection).unwrap();
     }
 
     #[test]
-    fn pause_and_restart_use_only_durable_epic_membership_and_application_lifecycle_notifications() {
+    fn pause_and_restart_use_only_durable_epic_membership_and_application_lifecycle_notifications()
+    {
         let fixture = Fixture::new();
         let pause = fixture.service.request("epic", "pause").unwrap();
         assert_eq!(pause.target_count, 5);
         assert_eq!(fixture.runtime.cancellations.lock().unwrap().len(), 5);
-        assert!(!fixture.runtime.cancellations.lock().unwrap().iter().any(|id| id.as_str() == "unrelated-source"));
+        assert!(!fixture
+            .runtime
+            .cancellations
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|id| id.as_str() == "unrelated-source"));
         assert!(fixture.runtime.requests_with_text("pause work").is_empty());
 
         for source in fixture.source_ids.iter().take(5) {
-            fixture.runtime.finish(source, AgentInvocationTerminalStatus::Canceled);
+            fixture
+                .runtime
+                .finish(source, AgentInvocationTerminalStatus::Canceled);
         }
         assert_eq!(fixture.runtime.requests_with_text("pause work").len(), 5);
         let pause_rows = fixture.target_rows(&pause.action_id);
         assert_eq!(pause_rows.len(), 5);
-        assert!(pause_rows.iter().all(|(_, _, message, failure)| message.is_some() && failure.is_none()));
+        assert!(pause_rows
+            .iter()
+            .all(|(_, _, message, failure)| message.is_some() && failure.is_none()));
 
         for (_, _, message, _) in &pause_rows {
-            fixture.runtime.finish(message.as_deref().unwrap(), AgentInvocationTerminalStatus::Completed);
+            fixture.runtime.finish(
+                message.as_deref().unwrap(),
+                AgentInvocationTerminalStatus::Completed,
+            );
         }
         // A later ordinary invocation is not a reattachment point for this interrupted work.
-        fixture.sessions.send_message(SendAgentSessionMessageCommand {
-            session_id: Some(AgentSessionId::new("bootstrap-session").unwrap()),
-            submitted_text: "independent later work".into(),
-            title: None,
-            working_directory: None,
-            requested_options: None,
-        }).unwrap();
+        fixture
+            .sessions
+            .send_message(SendAgentSessionMessageCommand {
+                session_id: Some(AgentSessionId::new("bootstrap-session").unwrap()),
+                submitted_text: "independent later work".into(),
+                title: None,
+                working_directory: None,
+                requested_options: None,
+            })
+            .unwrap();
         let restart = fixture.service.request("epic", "restart").unwrap();
         assert_eq!(restart.target_count, 4);
         assert_eq!(fixture.runtime.requests_with_text("continue work").len(), 4);
@@ -839,7 +1124,9 @@ mod tests {
         assert_eq!(repeated.target_count, 0);
         assert_eq!(fixture.runtime.requests_with_text("continue work").len(), 4);
 
-        let reopened = EpicPauseRestartService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        let reopened =
+            EpicPauseRestartService::open(&fixture.database_path, fixture.sessions.clone())
+                .unwrap();
         reopened.reconcile_startup().unwrap();
         assert_eq!(fixture.runtime.requests_with_text("continue work").len(), 4);
     }
@@ -847,12 +1134,20 @@ mod tests {
     #[test]
     fn one_cancellation_failure_settles_partial_without_abandoning_other_correlated_targets() {
         let fixture = Fixture::new();
-        fixture.runtime.fail_cancellations.store(1, Ordering::SeqCst);
+        fixture
+            .runtime
+            .fail_cancellations
+            .store(1, Ordering::SeqCst);
         let pause = fixture.service.request("epic", "pause").unwrap();
         assert_eq!(pause.status, "partial");
         assert_eq!(fixture.runtime.cancellations.lock().unwrap().len(), 5);
         let rows = fixture.target_rows(&pause.action_id);
-        assert_eq!(rows.iter().filter(|(_, _, _, failure)| failure.as_deref() == Some("cancellation_failed")).count(), 1);
+        assert_eq!(
+            rows.iter()
+                .filter(|(_, _, _, failure)| failure.as_deref() == Some("cancellation_failed"))
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -860,15 +1155,111 @@ mod tests {
         let fixture = Fixture::new();
         let pause = fixture.service.request("epic", "pause").unwrap();
         fixture.runtime.fail_launches.store(1, Ordering::SeqCst);
-        fixture.runtime.finish("bootstrap-source", AgentInvocationTerminalStatus::Canceled);
-        let initial = fixture.service.query("epic").unwrap().pause.current.unwrap();
+        fixture
+            .runtime
+            .finish("bootstrap-source", AgentInvocationTerminalStatus::Canceled);
+        let initial = fixture
+            .service
+            .query("epic")
+            .unwrap()
+            .pause
+            .current
+            .unwrap();
         assert_eq!(initial.status, "partial");
 
-        let reopened = EpicPauseRestartService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        let reopened =
+            EpicPauseRestartService::open(&fixture.database_path, fixture.sessions.clone())
+                .unwrap();
         reopened.reconcile_startup().unwrap();
         let settled = reopened.query("epic").unwrap().pause.current.unwrap();
         assert_eq!(settled.action_id, pause.action_id);
         assert_eq!(settled.status, "attention");
-        assert_eq!(fixture.target_rows(&pause.action_id).iter().filter(|(_, _, _, failure)| failure.as_deref() == Some("launch_not_accepted")).count(), 1);
+        assert_eq!(
+            fixture
+                .target_rows(&pause.action_id)
+                .iter()
+                .filter(|(_, _, _, failure)| failure.as_deref() == Some("launch_not_accepted"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn query_reconstructs_only_each_control_targets_durable_invocation_observations() {
+        let fixture = Fixture::new();
+        let pause = fixture.service.request("epic", "pause").unwrap();
+        fixture
+            .runtime
+            .finish("bootstrap-source", AgentInvocationTerminalStatus::Canceled);
+        let pause_message = fixture
+            .target_rows(&pause.action_id)
+            .into_iter()
+            .find(|(_, source, _, _)| source == "bootstrap-source")
+            .unwrap()
+            .2
+            .unwrap();
+        fixture.runtime.processing_started(&pause_message);
+
+        let current = fixture
+            .service
+            .query("epic")
+            .unwrap()
+            .pause
+            .current
+            .unwrap();
+        let target = current
+            .targets
+            .iter()
+            .find(|target| target.source_invocation_id == "bootstrap-source")
+            .unwrap();
+        assert_eq!(target.interruption_status, "canceled");
+        assert!(target.cancel_requested_at.is_some());
+        assert!(target
+            .source_observation
+            .as_ref()
+            .unwrap()
+            .process_terminal
+            .is_some());
+        let control = target.control_invocation.as_ref().unwrap();
+        assert_eq!(control.invocation_id, pause_message);
+        assert!(control.launch_accepted_at.is_some());
+        assert!(control
+            .observation
+            .as_ref()
+            .unwrap()
+            .provider_activity
+            .is_some());
+        assert!(current
+            .targets
+            .iter()
+            .filter(|target| target.source_invocation_id != "bootstrap-source")
+            .all(|target| target.control_invocation.is_none()));
+
+        let reopened =
+            EpicPauseRestartService::open(&fixture.database_path, fixture.sessions.clone())
+                .unwrap();
+        let rebuilt = reopened.query("epic").unwrap().pause.current.unwrap();
+        let rebuilt_target = rebuilt
+            .targets
+            .iter()
+            .find(|target| target.source_invocation_id == "bootstrap-source")
+            .unwrap();
+        assert_eq!(
+            rebuilt_target
+                .control_invocation
+                .as_ref()
+                .unwrap()
+                .invocation_id,
+            pause_message
+        );
+        assert!(rebuilt_target
+            .control_invocation
+            .as_ref()
+            .unwrap()
+            .observation
+            .as_ref()
+            .unwrap()
+            .provider_activity
+            .is_some());
     }
 }

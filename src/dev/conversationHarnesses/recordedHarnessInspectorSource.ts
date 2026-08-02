@@ -856,6 +856,7 @@ function createRecordedHarnessInspectorSession(): AgentSessionDetailsDto {
       externalContextId: null,
       usage: null,
       details: { role: 'final' },
+      toolActivity: null,
     },
     recordedAt,
   };
@@ -892,6 +893,7 @@ function createRecordedHarnessInspectorSession(): AgentSessionDetailsDto {
           createdAt: recordedAt,
           updatedAt: recordedAt,
         },
+        observation: { launchAcceptedAt: null, externalContext: null, providerActivity: null, providerTerminal: null, processTerminal: { status: 'completed', completedAt: recordedAt, exitCode: 0, signal: null }, mcpToolActivities: [], mcpToolActivityPartial: false },
         events: [response],
       },
     ],

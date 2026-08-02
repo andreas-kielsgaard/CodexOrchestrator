@@ -421,6 +421,7 @@ impl AgentSessionRepository for FakeRepository {
             .filter(|invocation| &invocation.session_id == session_id)
             .cloned()
             .map(|invocation| AgentInvocationHistory {
+                launch_accepted_at: state.launch_acceptances.get(&invocation.id).copied(),
                 events: state
                     .events
                     .get(&invocation.id)
@@ -852,6 +853,7 @@ fn event(id: &str, invocation: &str, sequence: u64) -> AgentRuntimeEvent {
             external_context_id: None,
             usage: None,
             details: None,
+            tool_activity: None,
         }),
         recorded_at: at(1),
     }
@@ -867,6 +869,7 @@ fn runtime_event_draft() -> RuntimeEventDraft {
             external_context_id: None,
             usage: None,
             details: None,
+            tool_activity: None,
         }),
     }
 }
