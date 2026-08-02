@@ -1,3 +1,11 @@
+use super::conversation_harness_revision::{
+    decode_verified_configuration, normalized_configuration_envelope, revision_id,
+    validate_create_command as validate_harness_revision_command, validate_revision,
+    CreateHarnessRevisionCommand, CreateHarnessRevisionResult, HarnessRevision,
+    HarnessRevisionCommitManifest, HarnessRevisionCreationProvenance, HarnessRevisionError,
+    HarnessRevisionHistoryOutcome, HarnessRevisionProvenanceKind, HarnessRevisionReadOutcome,
+    LocalHarnessRevisionRepository, LocalHarnessRevisionRepositoryError,
+};
 use super::conversation_harness_working_copy::{
     validate_command as validate_harness_working_copy_command, validate_harness_key,
     validate_working_copy, HarnessEditorKind, HarnessEffectiveConfigurationEnvelope,
@@ -16,7 +24,7 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBe
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use uuid::Uuid;
@@ -459,6 +467,7 @@ pub(crate) struct ManagedPlanBuilderBinding {
 pub(crate) struct SqliteOrchestrationRepository {
     connection: Mutex<Connection>,
     clock: Arc<dyn OrchestrationClock>,
+    harness_revisions: LocalHarnessRevisionRepository,
     #[cfg(test)]
     fail_next_context_consume: std::sync::atomic::AtomicBool,
 }
@@ -483,20 +492,57 @@ impl SqliteOrchestrationRepository {
         connection: Connection,
         clock: Arc<dyn OrchestrationClock>,
     ) -> Result<Self, SaveProposalError> {
+        Self::new_with_clock_and_harness_revision_repository(
+            connection,
+            clock,
+            std::env::temp_dir().join(format!(
+                "codex-orchestrator-harness-revisions-{}",
+                Uuid::new_v4()
+            )),
+        )
+    }
+
+    pub(crate) fn new_with_clock_and_harness_revision_repository(
+        connection: Connection,
+        clock: Arc<dyn OrchestrationClock>,
+        harness_revision_repository: PathBuf,
+    ) -> Result<Self, SaveProposalError> {
         crate::storage::configure_sqlite_connection(&connection)
             .map_err(sql_error("configure orchestration database"))?;
         Ok(Self {
             connection: Mutex::new(connection),
             clock,
+            harness_revisions: LocalHarnessRevisionRepository::new(harness_revision_repository),
             #[cfg(test)]
             fail_next_context_consume: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
     pub(crate) fn open(path: impl AsRef<Path>) -> Result<Self, SaveProposalError> {
+        let path = path.as_ref();
+        let repository_root = path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(crate::storage::HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME);
+        Self::open_with_harness_revision_repository(path, repository_root)
+    }
+
+    pub(crate) fn open_with_harness_revision_repository(
+        path: impl AsRef<Path>,
+        harness_revision_repository: PathBuf,
+    ) -> Result<Self, SaveProposalError> {
         let connection =
             Connection::open(path).map_err(sql_error("open orchestration database"))?;
-        Self::new(connection)
+        Self::new_with_clock_and_harness_revision_repository(
+            connection,
+            Arc::new(SystemOrchestrationClock),
+            harness_revision_repository,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn harness_revision_repository_root(&self) -> PathBuf {
+        self.harness_revisions.root().to_path_buf()
     }
 
     pub(crate) fn create_planning_draft(
@@ -1393,6 +1439,231 @@ impl SqliteOrchestrationRepository {
         load_harness_working_copy_from_connection(&connection, harness_key)
     }
 
+    /// Publishes the exact current working-copy revision through the application-owned local
+    /// repository. The command carries no configuration bytes or repository authority.
+    pub(crate) fn create_harness_revision(
+        &self,
+        command: CreateHarnessRevisionCommand,
+    ) -> Result<CreateHarnessRevisionResult, HarnessRevisionError> {
+        validate_harness_revision_command(&command)?;
+        let fingerprint = harness_revision_command_fingerprint(&command)?;
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| HarnessRevisionError::Unavailable)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| HarnessRevisionError::Unavailable)?;
+
+        let replay: Option<(String, String, i64, Option<String>, String, String, String, String)> =
+            transaction
+                .query_row(
+                    "SELECT payload_fingerprint,harness_key,expected_source_draft_revision,expected_predecessor_revision_id,result_revision_id,result_json,result_digest,recorded_at FROM harness_revision_commands WHERE idempotency_key=?1",
+                    [&command.idempotency_key],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                            row.get(6)?,
+                            row.get(7)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(|_| HarnessRevisionError::Unavailable)?;
+        if let Some((
+            existing_fingerprint,
+            harness_key,
+            source_draft_revision,
+            expected_predecessor,
+            result_revision_id,
+            result_json,
+            result_digest,
+            recorded_at,
+        )) = replay
+        {
+            if existing_fingerprint != fingerprint {
+                return Err(HarnessRevisionError::Conflict);
+            }
+            if harness_key != command.harness_key
+                || source_draft_revision != command.expected_source_draft_revision as i64
+                || expected_predecessor != command.expected_predecessor_revision_id
+                || result_digest != format!("{:x}", Sha256::digest(result_json.as_bytes()))
+            {
+                return Err(HarnessRevisionError::InvalidStoredState);
+            }
+            let recorded: HarnessRevision = serde_json::from_str(&result_json)
+                .map_err(|_| HarnessRevisionError::InvalidStoredState)?;
+            validate_revision(&recorded)?;
+            if recorded.revision_id != result_revision_id
+                || recorded.harness_key != command.harness_key
+                || recorded.source_draft_revision != command.expected_source_draft_revision
+                || recorded.predecessor_revision_id != command.expected_predecessor_revision_id
+                || recorded.creation_provenance != command.creation_provenance
+                || timestamp(recorded.created_at) != recorded_at
+            {
+                return Err(HarnessRevisionError::InvalidStoredState);
+            }
+            let verified = load_verified_harness_revision_from_connection(
+                &transaction,
+                &self.harness_revisions,
+                &recorded.revision_id,
+            )?
+            .ok_or(HarnessRevisionError::InvalidStoredState)?;
+            if verified != recorded {
+                return Err(HarnessRevisionError::InvalidStoredState);
+            }
+            return Ok(CreateHarnessRevisionResult::IdempotentReplay(verified));
+        }
+
+        let working_copy =
+            load_harness_working_copy_from_connection(&transaction, &command.harness_key)?
+                .ok_or(HarnessRevisionError::MissingWorkingCopy)?;
+        if working_copy.draft_revision != command.expected_source_draft_revision {
+            return Err(HarnessRevisionError::Conflict);
+        }
+        let existing = load_verified_harness_revision_history_from_connection(
+            &transaction,
+            &self.harness_revisions,
+            &command.harness_key,
+        )?;
+        if existing
+            .last()
+            .is_some_and(|revision| revision.source_draft_revision >= working_copy.draft_revision)
+        {
+            return Err(HarnessRevisionError::Conflict);
+        }
+        let current_head = existing.last().map(|revision| revision.revision_id.clone());
+        if current_head != command.expected_predecessor_revision_id {
+            return Err(HarnessRevisionError::Conflict);
+        }
+
+        let (normalized_envelope, configuration_digest) =
+            normalized_configuration_envelope(&working_copy.configuration)?;
+        let created_at = self.clock.now();
+        let revision_id = revision_id();
+        let repository_commit_ref = LocalHarnessRevisionRepository::commit_reference(&revision_id);
+        let revision = HarnessRevision {
+            revision_id,
+            harness_key: command.harness_key.clone(),
+            configuration: working_copy.configuration,
+            configuration_digest,
+            source_draft_revision: working_copy.draft_revision,
+            predecessor_revision_id: current_head,
+            repository_commit_ref,
+            creation_provenance: command.creation_provenance.clone(),
+            created_at,
+        };
+        validate_revision(&revision)?;
+        let manifest = HarnessRevisionCommitManifest::for_revision(&revision);
+        self.harness_revisions
+            .install_and_verify(&manifest, &normalized_envelope)
+            .map_err(map_local_harness_revision_error)?;
+
+        let created_at_text = timestamp(created_at);
+        let result_json =
+            serde_json::to_string(&revision).map_err(|_| HarnessRevisionError::Invalid)?;
+        let result_digest = format!("{:x}", Sha256::digest(result_json.as_bytes()));
+        transaction
+            .execute(
+                "INSERT INTO harness_revisions (revision_id,harness_key,configuration_contract_version,configuration_digest,source_draft_revision,predecessor_revision_id,repository_commit_ref,creation_provenance_kind,creation_provenance_reference,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                params![
+                    revision.revision_id,
+                    revision.harness_key,
+                    HARNESS_EFFECTIVE_CONFIGURATION_V1,
+                    revision.configuration_digest,
+                    revision.source_draft_revision as i64,
+                    revision.predecessor_revision_id,
+                    revision.repository_commit_ref,
+                    revision.creation_provenance.kind.as_str(),
+                    revision.creation_provenance.reference,
+                    created_at_text,
+                ],
+            )
+            .map_err(|_| HarnessRevisionError::Unavailable)?;
+        transaction
+            .execute(
+                "INSERT INTO harness_revision_publications (revision_id,harness_key,repository_commit_ref,evidence_kind,verified_at) VALUES (?1,?2,?3,'local_commit_verified',?4)",
+                params![
+                    revision.revision_id,
+                    revision.harness_key,
+                    revision.repository_commit_ref,
+                    created_at_text,
+                ],
+            )
+            .map_err(|_| HarnessRevisionError::Unavailable)?;
+        transaction
+            .execute(
+                "INSERT INTO harness_revision_commands (idempotency_key,payload_fingerprint,harness_key,expected_source_draft_revision,expected_predecessor_revision_id,result_revision_id,result_json,result_digest,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                params![
+                    command.idempotency_key,
+                    fingerprint,
+                    command.harness_key,
+                    command.expected_source_draft_revision as i64,
+                    command.expected_predecessor_revision_id,
+                    revision.revision_id,
+                    result_json,
+                    result_digest,
+                    created_at_text,
+                ],
+            )
+            .map_err(|_| HarnessRevisionError::Unavailable)?;
+        transaction
+            .commit()
+            .map_err(|_| HarnessRevisionError::Unavailable)?;
+        Ok(CreateHarnessRevisionResult::Published(revision))
+    }
+
+    pub(crate) fn load_harness_revision(&self, revision_id: &str) -> HarnessRevisionReadOutcome {
+        let connection = match self.connection.lock() {
+            Ok(connection) => connection,
+            Err(_) => return HarnessRevisionReadOutcome::Unavailable,
+        };
+        match load_verified_harness_revision_from_connection(
+            &connection,
+            &self.harness_revisions,
+            revision_id,
+        ) {
+            Ok(Some(revision)) => HarnessRevisionReadOutcome::AvailableAndVerified { revision },
+            Ok(None) => HarnessRevisionReadOutcome::Missing,
+            Err(HarnessRevisionError::InvalidStoredState)
+            | Err(HarnessRevisionError::InvalidLocalCommitEvidence) => {
+                HarnessRevisionReadOutcome::InvalidLocalCommitEvidence
+            }
+            Err(_) => HarnessRevisionReadOutcome::Unavailable,
+        }
+    }
+
+    pub(crate) fn load_harness_revision_history(
+        &self,
+        harness_key: &str,
+    ) -> HarnessRevisionHistoryOutcome {
+        if validate_harness_key(harness_key).is_err() {
+            return HarnessRevisionHistoryOutcome::Missing;
+        }
+        let connection = match self.connection.lock() {
+            Ok(connection) => connection,
+            Err(_) => return HarnessRevisionHistoryOutcome::Unavailable,
+        };
+        match load_verified_harness_revision_history_from_connection(
+            &connection,
+            &self.harness_revisions,
+            harness_key,
+        ) {
+            Ok(revisions) if revisions.is_empty() => HarnessRevisionHistoryOutcome::Missing,
+            Ok(revisions) => HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions },
+            Err(HarnessRevisionError::InvalidStoredState)
+            | Err(HarnessRevisionError::InvalidLocalCommitEvidence) => {
+                HarnessRevisionHistoryOutcome::InvalidLocalCommitEvidence
+            }
+            Err(_) => HarnessRevisionHistoryOutcome::Unavailable,
+        }
+    }
+
     /// Control-side write seam. There is intentionally no Tauri command for this authority.
     pub(crate) fn store_file_review_git_capture_authorization(
         &self,
@@ -2197,6 +2468,195 @@ fn harness_working_copy_digest(
         digest.update(part);
     }
     format!("{:x}", digest.finalize())
+}
+
+fn harness_revision_command_fingerprint(
+    command: &CreateHarnessRevisionCommand,
+) -> Result<String, HarnessRevisionError> {
+    let bytes = serde_json::to_vec(command).map_err(|_| HarnessRevisionError::Invalid)?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+#[derive(Clone, Debug)]
+struct StoredHarnessRevision {
+    revision_id: String,
+    harness_key: String,
+    configuration_digest: String,
+    source_draft_revision: u64,
+    predecessor_revision_id: Option<String>,
+    repository_commit_ref: String,
+    creation_provenance: HarnessRevisionCreationProvenance,
+    created_at: DateTime<Utc>,
+}
+
+impl StoredHarnessRevision {
+    fn manifest(&self) -> HarnessRevisionCommitManifest {
+        HarnessRevisionCommitManifest::from_metadata(
+            self.revision_id.clone(),
+            self.harness_key.clone(),
+            self.configuration_digest.clone(),
+            self.source_draft_revision,
+            self.predecessor_revision_id.clone(),
+            self.repository_commit_ref.clone(),
+            self.creation_provenance.clone(),
+            self.created_at,
+        )
+    }
+}
+
+fn load_stored_harness_revision_from_connection(
+    connection: &Connection,
+    revision_id: &str,
+) -> Result<Option<StoredHarnessRevision>, HarnessRevisionError> {
+    let row: Option<(
+        String,
+        String,
+        String,
+        String,
+        i64,
+        Option<String>,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = connection
+        .query_row(
+            "SELECT revision.revision_id,revision.harness_key,revision.configuration_contract_version,revision.configuration_digest,revision.source_draft_revision,revision.predecessor_revision_id,revision.repository_commit_ref,revision.creation_provenance_kind,revision.creation_provenance_reference,revision.created_at,publication.repository_commit_ref,publication.evidence_kind,publication.verified_at FROM harness_revisions revision LEFT JOIN harness_revision_publications publication ON publication.revision_id=revision.revision_id WHERE revision.revision_id=?1",
+            [revision_id],
+            |row| {
+                Ok((
+                    row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?,
+                    row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?,
+                    row.get(10)?, row.get(11)?, row.get(12)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| HarnessRevisionError::Unavailable)?;
+    let Some((
+        revision_id,
+        harness_key,
+        contract,
+        configuration_digest,
+        source_draft_revision,
+        predecessor_revision_id,
+        repository_commit_ref,
+        provenance_kind,
+        provenance_reference,
+        created_at,
+        publication_ref,
+        evidence_kind,
+        verified_at,
+    )) = row
+    else {
+        return Ok(None);
+    };
+    if contract != HARNESS_EFFECTIVE_CONFIGURATION_V1
+        || source_draft_revision <= 0
+        || publication_ref.as_deref() != Some(repository_commit_ref.as_str())
+        || evidence_kind.as_deref() != Some("local_commit_verified")
+        || verified_at.as_deref() != Some(created_at.as_str())
+    {
+        return Err(HarnessRevisionError::InvalidStoredState);
+    }
+    let creation_provenance = HarnessRevisionCreationProvenance {
+        kind: HarnessRevisionProvenanceKind::parse(&provenance_kind)
+            .ok_or(HarnessRevisionError::InvalidStoredState)?,
+        reference: provenance_reference,
+    };
+    let created_at = DateTime::parse_from_rfc3339(&created_at)
+        .map_err(|_| HarnessRevisionError::InvalidStoredState)?
+        .with_timezone(&Utc);
+    Ok(Some(StoredHarnessRevision {
+        revision_id,
+        harness_key,
+        configuration_digest,
+        source_draft_revision: source_draft_revision as u64,
+        predecessor_revision_id,
+        repository_commit_ref,
+        creation_provenance,
+        created_at,
+    }))
+}
+
+fn load_verified_harness_revision_from_connection(
+    connection: &Connection,
+    repository: &LocalHarnessRevisionRepository,
+    revision_id: &str,
+) -> Result<Option<HarnessRevision>, HarnessRevisionError> {
+    let Some(stored) = load_stored_harness_revision_from_connection(connection, revision_id)?
+    else {
+        return Ok(None);
+    };
+    let manifest = stored.manifest();
+    let envelope = repository
+        .read_and_verify(&stored.repository_commit_ref, &manifest)
+        .map_err(map_local_harness_revision_error)?;
+    let configuration = decode_verified_configuration(&envelope, &stored.configuration_digest)?;
+    let revision = HarnessRevision {
+        revision_id: stored.revision_id,
+        harness_key: stored.harness_key,
+        configuration,
+        configuration_digest: stored.configuration_digest,
+        source_draft_revision: stored.source_draft_revision,
+        predecessor_revision_id: stored.predecessor_revision_id,
+        repository_commit_ref: stored.repository_commit_ref,
+        creation_provenance: stored.creation_provenance,
+        created_at: stored.created_at,
+    };
+    validate_revision(&revision)?;
+    Ok(Some(revision))
+}
+
+fn load_verified_harness_revision_history_from_connection(
+    connection: &Connection,
+    repository: &LocalHarnessRevisionRepository,
+    harness_key: &str,
+) -> Result<Vec<HarnessRevision>, HarnessRevisionError> {
+    let revision_ids = connection
+        .prepare(
+            "SELECT revision_id FROM harness_revisions WHERE harness_key=?1 ORDER BY source_draft_revision,revision_id",
+        )
+        .map_err(|_| HarnessRevisionError::Unavailable)?
+        .query_map([harness_key], |row| row.get::<_, String>(0))
+        .map_err(|_| HarnessRevisionError::Unavailable)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| HarnessRevisionError::Unavailable)?;
+    let mut revisions: Vec<HarnessRevision> = Vec::with_capacity(revision_ids.len());
+    for revision_id in revision_ids {
+        let revision =
+            load_verified_harness_revision_from_connection(connection, repository, &revision_id)?
+                .ok_or(HarnessRevisionError::InvalidStoredState)?;
+        if revision.harness_key != harness_key {
+            return Err(HarnessRevisionError::InvalidStoredState);
+        }
+        if let Some(previous) = revisions.last() {
+            if revision.predecessor_revision_id.as_deref() != Some(previous.revision_id.as_str())
+                || revision.source_draft_revision <= previous.source_draft_revision
+                || revision.created_at < previous.created_at
+            {
+                return Err(HarnessRevisionError::InvalidStoredState);
+            }
+        } else if revision.predecessor_revision_id.is_some() {
+            return Err(HarnessRevisionError::InvalidStoredState);
+        }
+        revisions.push(revision);
+    }
+    Ok(revisions)
+}
+
+fn map_local_harness_revision_error(
+    error: LocalHarnessRevisionRepositoryError,
+) -> HarnessRevisionError {
+    match error {
+        LocalHarnessRevisionRepositoryError::InvalidEvidence => {
+            HarnessRevisionError::InvalidLocalCommitEvidence
+        }
+        LocalHarnessRevisionRepositoryError::Unavailable => HarnessRevisionError::Unavailable,
+    }
 }
 
 fn timestamp(value: DateTime<Utc>) -> String {
