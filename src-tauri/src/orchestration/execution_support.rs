@@ -204,7 +204,10 @@ impl ExecutionWorkspaceResolver for ProductExecutionWorkspaceResolver {
         binding: &ExecutionWorkspaceBinding,
         capability_ref: &str,
     ) -> Result<CapturedInspection, ExecutionSupportError> {
-        let (_, current_object_id) = self.verified_workspace(attempt, Some(binding))?;
+        let (root, current_object_id) = self.verified_workspace(attempt, Some(binding))?;
+        if !git_text(&root, &["status", "--porcelain"])?.is_empty() {
+            return Err(ExecutionSupportError::Unavailable);
+        }
         if current_object_id == attempt.baseline_object_id {
             return Ok(CapturedInspection {
                 manifest: vec![],
@@ -693,6 +696,10 @@ mod tests {
         fs::write(root.join("dirty.txt"), "dirty\n").unwrap();
         assert!(resolver.resolve(&attempt, None).is_err());
         assert_eq!(resolver.resolve(&attempt, Some(&binding)).unwrap(), binding);
+        assert!(matches!(
+            resolver.inspect(&attempt, &binding, "capability-1"),
+            Err(ExecutionSupportError::Unavailable)
+        ));
     }
 
     #[test]
