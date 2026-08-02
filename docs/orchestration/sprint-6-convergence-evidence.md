@@ -177,3 +177,33 @@ claimed. The Planner Harness exposes zero MCP tools. No Planner proposal/result/
 Unit, Handler, Implementer Session, later planning point, Sprint settlement, or downstream effect
 is created or accepted. The quarantined `operational-spine-ps-r1` route and saved checkout remain
 untouched; the formerly protected `8bb8` worktree remains absent and unregistered.
+
+## OSWU-03: Accepted Work Slice plan to durable Work Units
+
+Independent audit checkpoint: `6198cbb` -> `440cd9b` -> `0132381` -> `351e043`, with
+strict native-query correction `974ee2c`. The audit used this detached-worktree chain only.
+
+- The productive Rust path accepts only one current, valid, refinement-free, semantically
+  completed, lifecycle-completed, application-accepted, materialization-ready revision. It
+  creates stable Work Slice, Work Unit, and relationship identities in one immediate SQLite
+  transaction. Replays, concurrent opens, and a repaired missing relationship retain those
+  identities; stale current state fails closed.
+- The native query, strict TypeScript decoder, composition, and bounded Sprint UI use durable
+  records. Partial authorization, attempt, unit, relationship, and settlement facts remain
+  distinct; only settled units project as Work Units. UI copy says planned responsibilities and
+  does not claim Handler activation or execution.
+- `974ee2c` rejects duplicate semantic relationships and incoherent planning-point or Sprint
+  ownership in an otherwise forged native payload. It adds the duplicate-dependency regression.
+- Validation: focused Rust materialization path **1 passed**; focused native-query/UI/Tauri
+  suites **3 files / 26 passed**; application orchestration suite **14 files / 180 passed**;
+  TypeScript passed. Broader Rust bootstrap suite observed **28 passed, 1 ignored, 1 failed**:
+  the existing `launch_accepted_epic_runner_authorizes_one_ready_sprint_runner_without_downstream_effects`
+  assertion still expects `planning_ready_at` before lifecycle reconciliation. Broader feature
+  suite observed **8 files / 55 passed, 1 file / 1 failure**; the isolated unrelated
+  `EpicPlanBuilder` suite observed **9 passed, 1 failure** in its existing product Plan prompt
+  assertion. The full frontend aggregate exceeded the two-minute practical window without a
+  result.
+- No Handler or Implementer Session, invocation, worktree, provider process, execution attempt,
+  review, Work Slice settlement, Sprint/Epic continuation, pause/restart,
+  or reattachment was added. This is deterministic local evidence only; live provider,
+  human-in-the-loop, and later activation/execution boundaries remain unproven.
