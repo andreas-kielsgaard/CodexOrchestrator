@@ -77,6 +77,14 @@ pub(crate) fn run() {
                 )
                 .map_err(|error| error.to_string())?,
             );
+            // This is the product-native seam for a later authorized Harness action. It is
+            // deliberately unavailable until application-owned workspace authority is composed.
+            app.manage(
+                crate::orchestration::execution_support::ProductExecutionSupportState::unavailable(
+                    &database_path,
+                )
+                .map_err(|error| error.to_string())?,
+            );
             // Startup never probes the provider. Capability failures are handled per invocation.
             let runtime = Arc::new(crate::runtime::codex::CodexCliRuntime::system(
                 "codex", None,
