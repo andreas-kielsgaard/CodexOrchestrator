@@ -2499,35 +2499,52 @@ fn load_stored_harness_revision_from_connection(
     connection: &Connection,
     revision_id: &str,
 ) -> Result<Option<StoredHarnessRevision>, HarnessRevisionError> {
-    let row: Option<(
-        String,
-        String,
-        String,
-        String,
-        i64,
-        Option<String>,
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    )> = connection
-        .query_row(
+    let mut statement = connection
+        .prepare(
             "SELECT revision.revision_id,revision.harness_key,revision.configuration_contract_version,revision.configuration_digest,revision.source_draft_revision,revision.predecessor_revision_id,revision.repository_commit_ref,revision.creation_provenance_kind,revision.creation_provenance_reference,revision.created_at,publication.repository_commit_ref,publication.evidence_kind,publication.verified_at FROM harness_revisions revision LEFT JOIN harness_revision_publications publication ON publication.revision_id=revision.revision_id WHERE revision.revision_id=?1",
-            [revision_id],
-            |row| {
-                Ok((
-                    row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?,
-                    row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?,
-                    row.get(10)?, row.get(11)?, row.get(12)?,
-                ))
-            },
         )
-        .optional()
         .map_err(|_| HarnessRevisionError::Unavailable)?;
-    let Some((
+    let mut rows = statement
+        .query([revision_id])
+        .map_err(|_| HarnessRevisionError::Unavailable)?;
+    let Some(row) = rows.next().map_err(|_| HarnessRevisionError::Unavailable)? else {
+        return Ok(None);
+    };
+    let decoded: Result<
+        (
+            String,
+            String,
+            String,
+            String,
+            i64,
+            Option<String>,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ),
+        rusqlite::Error,
+    > = (|| {
+        Ok((
+            row.get(0)?,
+            row.get(1)?,
+            row.get(2)?,
+            row.get(3)?,
+            row.get(4)?,
+            row.get(5)?,
+            row.get(6)?,
+            row.get(7)?,
+            row.get(8)?,
+            row.get(9)?,
+            row.get(10)?,
+            row.get(11)?,
+            row.get(12)?,
+        ))
+    })();
+    let (
         revision_id,
         harness_key,
         contract,
@@ -2541,10 +2558,7 @@ fn load_stored_harness_revision_from_connection(
         publication_ref,
         evidence_kind,
         verified_at,
-    )) = row
-    else {
-        return Ok(None);
-    };
+    ) = decoded.map_err(|_| HarnessRevisionError::InvalidStoredState)?;
     if contract != HARNESS_EFFECTIVE_CONFIGURATION_V1
         || source_draft_revision <= 0
         || publication_ref.as_deref() != Some(repository_commit_ref.as_str())
@@ -2615,7 +2629,7 @@ fn load_verified_harness_revision_history_from_connection(
         .query_map([harness_key], |row| row.get::<_, String>(0))
         .map_err(|_| HarnessRevisionError::Unavailable)?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| HarnessRevisionError::Unavailable)?;
+        .map_err(|_| HarnessRevisionError::InvalidStoredState)?;
     let mut revisions: Vec<HarnessRevision> = Vec::with_capacity(revision_ids.len());
     for revision_id in revision_ids {
         let revision =

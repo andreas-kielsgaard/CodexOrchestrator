@@ -1031,6 +1031,102 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_storage_class_tamper_is_invalid_evidence_and_blocks_successor_publication() {
+        for tamper in [
+            "UPDATE harness_revisions SET configuration_digest=zeroblob(64)",
+            "UPDATE harness_revisions SET source_draft_revision='abc'",
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let database_path = directory.path().join("active.sqlite");
+            let repository_root = directory.path().join("harness-revisions");
+            let repository = open_repository(&database_path, &repository_root);
+            let application = OrchestrationApplication::new(repository);
+            application
+                .save_harness_working_copy(save_command(
+                    "epic_plan_builder",
+                    0,
+                    "save-1",
+                    configuration("epic_plan_builder"),
+                ))
+                .unwrap();
+            let revision = published(
+                application
+                    .create_harness_revision(create_command(
+                        "epic_plan_builder",
+                        1,
+                        None,
+                        "publish-1",
+                    ))
+                    .unwrap(),
+            );
+            let mut successor_configuration = configuration("epic_plan_builder");
+            successor_configuration.prompt_prefix.content = "Complete successor prompt.".into();
+            application
+                .save_harness_working_copy(save_command(
+                    "epic_plan_builder",
+                    1,
+                    "save-2",
+                    successor_configuration,
+                ))
+                .unwrap();
+            Connection::open(&database_path)
+                .unwrap()
+                .execute_batch(tamper)
+                .unwrap();
+
+            assert_eq!(
+                application.load_harness_revision(&revision.revision_id),
+                HarnessRevisionReadOutcome::InvalidLocalCommitEvidence,
+                "exact read accepted {tamper}"
+            );
+            assert_eq!(
+                application.load_harness_revision_history("epic_plan_builder"),
+                HarnessRevisionHistoryOutcome::InvalidLocalCommitEvidence,
+                "history accepted {tamper}"
+            );
+            assert_eq!(
+                application.create_harness_revision(create_command(
+                    "epic_plan_builder",
+                    2,
+                    Some(revision.revision_id),
+                    "publish-2",
+                )),
+                Err(HarnessRevisionError::InvalidStoredState),
+                "successor did not fail on {tamper}"
+            );
+            assert_eq!(row_count(&database_path, "harness_revisions"), 1);
+            assert_eq!(
+                row_count(&database_path, "harness_revision_publications"),
+                1
+            );
+            assert_eq!(row_count(&database_path, "harness_revision_commands"), 1);
+        }
+    }
+
+    #[test]
+    fn unavailable_revision_tables_remain_operationally_unavailable() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("active.sqlite");
+        let repository_root = directory.path().join("harness-revisions");
+        let repository = open_repository(&database_path, &repository_root);
+        let application = OrchestrationApplication::new(repository);
+        Connection::open(&database_path)
+            .unwrap()
+            .execute_batch("DROP TABLE harness_revisions")
+            .unwrap();
+
+        assert_eq!(
+            application
+                .load_harness_revision("harness-revision-00000000-0000-0000-0000-000000000000"),
+            HarnessRevisionReadOutcome::Unavailable
+        );
+        assert_eq!(
+            application.load_harness_revision_history("epic_plan_builder"),
+            HarnessRevisionHistoryOutcome::Unavailable
+        );
+    }
+
+    #[test]
     fn reopen_retains_verified_revision_and_repository_path() {
         let directory = tempfile::tempdir().unwrap();
         let database_path = directory.path().join("active.sqlite");
