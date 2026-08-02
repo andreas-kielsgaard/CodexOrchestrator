@@ -2621,15 +2621,21 @@ fn load_verified_harness_revision_history_from_connection(
     repository: &LocalHarnessRevisionRepository,
     harness_key: &str,
 ) -> Result<Vec<HarnessRevision>, HarnessRevisionError> {
-    let revision_ids = connection
+    let mut statement = connection
         .prepare(
             "SELECT revision_id FROM harness_revisions WHERE harness_key=?1 ORDER BY source_draft_revision,revision_id",
         )
-        .map_err(|_| HarnessRevisionError::Unavailable)?
-        .query_map([harness_key], |row| row.get::<_, String>(0))
-        .map_err(|_| HarnessRevisionError::Unavailable)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| HarnessRevisionError::InvalidStoredState)?;
+        .map_err(|_| HarnessRevisionError::Unavailable)?;
+    let mut rows = statement
+        .query([harness_key])
+        .map_err(|_| HarnessRevisionError::Unavailable)?;
+    let mut revision_ids = Vec::new();
+    while let Some(row) = rows.next().map_err(|_| HarnessRevisionError::Unavailable)? {
+        revision_ids.push(
+            row.get::<_, String>(0)
+                .map_err(|_| HarnessRevisionError::InvalidStoredState)?,
+        );
+    }
     let mut revisions: Vec<HarnessRevision> = Vec::with_capacity(revision_ids.len());
     for revision_id in revision_ids {
         let revision =

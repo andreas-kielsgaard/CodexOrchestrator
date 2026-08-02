@@ -1127,6 +1127,82 @@ mod tests {
     }
 
     #[test]
+    fn malformed_history_revision_identity_is_invalid_local_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("active.sqlite");
+        let repository_root = directory.path().join("harness-revisions");
+        let repository = open_repository(&database_path, &repository_root);
+        let application = OrchestrationApplication::new(repository);
+        application
+            .save_harness_working_copy(save_command(
+                "epic_plan_builder",
+                0,
+                "save-1",
+                configuration("epic_plan_builder"),
+            ))
+            .unwrap();
+        application
+            .create_harness_revision(create_command("epic_plan_builder", 1, None, "publish-1"))
+            .unwrap();
+        let tamper = Connection::open(&database_path).unwrap();
+        tamper.execute_batch("PRAGMA foreign_keys=OFF").unwrap();
+        tamper
+            .execute_batch("UPDATE harness_revisions SET revision_id=zeroblob(64)")
+            .unwrap();
+
+        assert_eq!(
+            application.load_harness_revision_history("epic_plan_builder"),
+            HarnessRevisionHistoryOutcome::InvalidLocalCommitEvidence
+        );
+    }
+
+    #[test]
+    fn history_row_step_failure_is_operationally_unavailable() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("active.sqlite");
+        let repository_root = directory.path().join("harness-revisions");
+        let repository = open_repository(&database_path, &repository_root);
+        let application = OrchestrationApplication::new(repository);
+        application
+            .save_harness_working_copy(save_command(
+                "epic_plan_builder",
+                0,
+                "save-1",
+                configuration("epic_plan_builder"),
+            ))
+            .unwrap();
+        application
+            .create_harness_revision(create_command("epic_plan_builder", 1, None, "publish-1"))
+            .unwrap();
+
+        let sabotage = Connection::open(&database_path).unwrap();
+        sabotage
+            .execute_batch(
+                "ALTER TABLE harness_revisions RENAME TO harness_revisions_backing;
+                 CREATE VIEW harness_revisions AS
+                 SELECT abs(-9223372036854775808) AS revision_id,
+                        harness_key,
+                        source_draft_revision
+                 FROM harness_revisions_backing;",
+            )
+            .unwrap();
+        {
+            let mut statement = sabotage
+                .prepare(
+                    "SELECT revision_id FROM harness_revisions WHERE harness_key=?1 ORDER BY source_draft_revision,revision_id",
+                )
+                .unwrap();
+            let mut rows = statement.query(["epic_plan_builder"]).unwrap();
+            assert!(rows.next().is_err(), "expected SQLite row-step failure");
+        }
+
+        assert_eq!(
+            application.load_harness_revision_history("epic_plan_builder"),
+            HarnessRevisionHistoryOutcome::Unavailable
+        );
+    }
+
+    #[test]
     fn reopen_retains_verified_revision_and_repository_path() {
         let directory = tempfile::tempdir().unwrap();
         let database_path = directory.path().join("active.sqlite");
