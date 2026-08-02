@@ -1,11 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
-import { decodeEpicPauseRestartQuery, type EpicPauseRestartController, type EpicPauseRestartOutcome } from '../../application/orchestrations';
+import { decodeEpicPauseRestartOutcome, decodeEpicPauseRestartQuery, type EpicPauseRestartController } from '../../application/orchestrations';
 
 export function createTauriEpicPauseRestartController(
   invokeCommand: typeof invoke = invoke,
 ): EpicPauseRestartController {
-  const request = (command: string, epicId: string) =>
-    invokeCommand<EpicPauseRestartOutcome>(command, { input: { epicId } });
+  const request = async (command: string, epicId: string) =>
+    decodeEpicPauseRestartOutcome(await invokeCommand<unknown>(command, { input: { epicId } }));
   return {
     async load(epicId) {
       return decodeEpicPauseRestartQuery(
