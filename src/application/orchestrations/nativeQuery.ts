@@ -1319,6 +1319,12 @@ function validateMaterializationRelationships(
     (unit) => `${unit.materializationId}:${unit.laneOrdinal}`,
     'materialized Work Unit lane ordinal',
   );
+  unique(
+    relationships,
+    (relationship) =>
+      `${relationship.materializationId}:${relationship.relationshipKind}:${relationship.fromId}:${relationship.toId}`,
+    'Work Unit relationship',
+  );
   const unitIds = new Set(units.map((unit) => unit.workUnitId));
   const exact = (
     kind: NativeWorkUnitRelationshipV1['relationshipKind'],
@@ -1367,6 +1373,18 @@ function validateMaterializationRelationships(
       relationship.ordinal !== undefined
     )
       fail('materialization ownership relationship cannot have an ordinal');
+    if (
+      relationship.relationshipKind === 'planning_point' &&
+      (relationship.fromId !== materialization.planningPointId ||
+        relationship.toId !== materialization.workSliceId)
+    )
+      fail('materialization planning-point relationship is incoherent');
+    if (
+      relationship.relationshipKind === 'sprint' &&
+      (relationship.fromId !== materialization.sprintId ||
+        relationship.toId !== materialization.workSliceId)
+    )
+      fail('materialization Sprint relationship is incoherent');
   }
 }
 function requireConsumed<T>(

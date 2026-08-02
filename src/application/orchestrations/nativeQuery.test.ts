@@ -282,6 +282,18 @@ describe('orchestration native query v1', () => {
       { workUnitId: 'unit-2', dependencies: [{ workUnitId: 'unit-1' }] },
     ]);
 
+    (value.workUnitRelationships as Array<Record<string, unknown>>).push({
+      relationshipId: 'duplicate-dependency',
+      materializationId: 'materialization-1',
+      relationshipKind: 'depends_on',
+      fromId: 'unit-2',
+      toId: 'unit-1',
+    });
+    expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow(
+      'duplicate Work Unit relationship',
+    );
+    (value.workUnitRelationships as Array<Record<string, unknown>>).pop();
+
     (value.workUnitRelationships as Array<Record<string, unknown>>)[2]!.toId = 'missing-unit';
     expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow(
       'requires matching lane and order relationships',
