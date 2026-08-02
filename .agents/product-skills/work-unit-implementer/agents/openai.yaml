@@ -1,4 +1,4 @@
 interface:
   display_name: "Product Work Unit Implementer"
-  short_description: "Implement an assigned product Work Unit"
-  default_prompt: "Use $work-unit-implementer to implement this assigned Work Unit and return evidence to its Handler."
+  short_description: "Inspect bounded Work Unit evidence"
+  default_prompt: "Use $work-unit-implementer only with an application-supplied authorized evidence package."
