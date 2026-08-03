@@ -4919,6 +4919,20 @@ mod tests {
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM execution_support_attempt_authorizations WHERE role_kind='implementer'", [], |row| row.get(0)).unwrap(), 0);
         drop(connection);
         assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 1);
+        fixture.runtime.finish(&root.3, AgentInvocationTerminalStatus::Completed);
+        let continuation: (String,String,String,String,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
+            "SELECT attempt_id,handler_session_id,original_handler_invocation_id,action_invocation_id,
+                    blocked_reason,authorized_at,invocation_prepared_at,harness_bound_at,launch_accepted_at
+             FROM work_unit_handler_action_continuations WHERE work_unit_id=?1",
+            [&root.0], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?)),
+        ).unwrap();
+        assert_eq!(continuation.0, root.1);
+        assert_eq!(continuation.1, root.2);
+        assert_eq!(continuation.2, root.3);
+        assert!(continuation.3.starts_with("work-unit-handler-action-invocation-"));
+        assert!(continuation.4.is_none());
+        for timestamp in [&continuation.5,&continuation.6,&continuation.7,&continuation.8] { assert!(timestamp.is_some()); }
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 2);
         // Publish a legitimate newer Handler revision B after this activation pinned A. Reopen
         // must keep loading A, rather than consulting the now-newer current revision.
         let working_copy = handler_orchestration.load_harness_working_copy("work_unit_handler").unwrap().unwrap();
@@ -4965,7 +4979,7 @@ mod tests {
         ).unwrap();
         let replayed_handlers = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
         replayed_handlers.attach_work_unit_handler_activation(handler.clone()).unwrap();
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 1);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 2);
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<String,_,_>("SELECT handler_harness_revision_id FROM work_unit_handler_activations WHERE work_unit_id=?1", [&root.0], |row| row.get(0)).unwrap(), root.6.clone().unwrap());
         assert!(Connection::open(&fixture.database_path).unwrap().query_row::<Option<String>,_,_>("SELECT provider_activation_observed_at FROM work_unit_handler_activations WHERE work_unit_id=?1", [&root.0], |row| row.get(0)).unwrap().is_some());
         // Recover durable partial stages without replacing any identity or starting another
@@ -4982,14 +4996,14 @@ mod tests {
         ).unwrap();
         assert_eq!(recovered.0, root.1); assert_eq!(recovered.1, root.2); assert_eq!(recovered.2, root.3);
         assert!(recovered.3.is_some() && recovered.4.is_some() && recovered.5.is_some());
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 1);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 2);
         // Missing immutable evidence fails closed and never falls forward to newly published B.
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE work_unit_handler_activations SET handler_harness_revision_id='harness-revision-00000000-0000-0000-0000-000000000000' WHERE work_unit_id=?1", [&root.0],
         ).unwrap();
         let missing_pinned = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
         assert!(missing_pinned.attach_work_unit_handler_activation(handler.clone()).is_err());
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 1);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 2);
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE work_unit_handler_activations SET handler_harness_revision_id=?2 WHERE work_unit_id=?1", params![root.0, root.6],
         ).unwrap();
@@ -5006,14 +5020,14 @@ mod tests {
             })
         }).collect::<Vec<_>>();
         assert!(concurrent_handler_services.into_iter().all(|call| call.join().unwrap().is_ok()));
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 1);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 2);
         let concurrent = (0..2).map(|_| { let service = replayed.clone(); let path = fixture.database_path.clone(); let sessions = fixture.sessions.clone(); std::thread::spawn(move || { drop(service); crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(path, sessions) }) }).collect::<Vec<_>>();
         assert!(concurrent.into_iter().all(|call| call.join().unwrap().is_ok()));
         let connection = Connection::open(&fixture.database_path).unwrap();
         connection.execute("UPDATE work_slice_proposal_revisions SET is_current=0 WHERE revision_id=?1", [&materialization.2]).unwrap();
         drop(connection);
         assert!(matches!(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 1);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 2);
     }
 }
 
