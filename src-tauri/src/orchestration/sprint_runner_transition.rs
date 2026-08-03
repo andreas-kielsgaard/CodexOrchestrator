@@ -1605,10 +1605,14 @@ impl SprintRunnerTransitionService {
         let original: Option<(String, String, String, String)> = self.connection.lock()
             .map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?
             .query_row(
-                "SELECT attempt_id,handler_session_id,handler_invocation_id,sprint_id
-                 FROM work_unit_handler_activations
+                "SELECT h.attempt_id,h.handler_session_id,h.handler_invocation_id,h.sprint_id
+                 FROM work_unit_handler_activations h
+                 JOIN agent_session_invocations invocation
+                   ON invocation.id=h.handler_invocation_id
+                  AND invocation.session_id=h.handler_session_id
                  WHERE work_unit_id=?1 AND eligibility_state='eligible'
-                   AND handler_ready_at IS NOT NULL AND launch_accepted_at IS NOT NULL",
+                   AND handler_ready_at IS NOT NULL AND launch_accepted_at IS NOT NULL
+                   AND invocation.status IN ('completed','failed','canceled','interrupted')",
                 [work_unit_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             ).optional().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
