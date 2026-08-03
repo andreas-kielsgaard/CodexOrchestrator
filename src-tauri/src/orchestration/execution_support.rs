@@ -23,19 +23,20 @@ use std::{
 
 pub(crate) const EXECUTION_SUPPORT_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS execution_support_attempt_authorizations (
-  attempt_id TEXT PRIMARY KEY,
+  attempt_id TEXT NOT NULL,
   work_unit_id TEXT NOT NULL,
   role_kind TEXT NOT NULL CHECK(role_kind IN ('work_unit_handler','work_unit_implementer')),
   sprint_git_authority_id TEXT NOT NULL,
   baseline_object_id TEXT NOT NULL,
   authorization_fingerprint TEXT NOT NULL,
   recorded_at TEXT NOT NULL,
-  FOREIGN KEY(sprint_git_authority_id) REFERENCES initiated_sprint_git_authorities(authority_id) ON DELETE RESTRICT
+  FOREIGN KEY(sprint_git_authority_id) REFERENCES initiated_sprint_git_authorities(authority_id) ON DELETE RESTRICT,
+  PRIMARY KEY(attempt_id,role_kind)
 );
 CREATE INDEX IF NOT EXISTS execution_support_attempt_authorizations_sprint_authority
   ON execution_support_attempt_authorizations(sprint_git_authority_id);
 CREATE TABLE IF NOT EXISTS execution_support_grants (
-  attempt_id TEXT PRIMARY KEY,
+  attempt_id TEXT NOT NULL,
   capability_ref TEXT NOT NULL UNIQUE,
   epic_id TEXT NOT NULL,
   sprint_id TEXT NOT NULL,
@@ -45,8 +46,22 @@ CREATE TABLE IF NOT EXISTS execution_support_grants (
   workspace_id TEXT NOT NULL,
   workspace_fingerprint TEXT NOT NULL,
   correlation_fingerprint TEXT NOT NULL,
-  recorded_at TEXT NOT NULL
+  recorded_at TEXT NOT NULL,
+  PRIMARY KEY(attempt_id,role_id)
 );
+"#;
+const EXECUTION_SUPPORT_ROLE_KEY_MIGRATION: &str = r#"
+CREATE TABLE execution_support_attempt_authorizations_v3 (
+ attempt_id TEXT NOT NULL, work_unit_id TEXT NOT NULL, role_kind TEXT NOT NULL CHECK(role_kind IN ('work_unit_handler','work_unit_implementer')), sprint_git_authority_id TEXT NOT NULL, baseline_object_id TEXT NOT NULL, authorization_fingerprint TEXT NOT NULL, recorded_at TEXT NOT NULL, PRIMARY KEY(attempt_id,role_kind));
+INSERT INTO execution_support_attempt_authorizations_v3 SELECT attempt_id,work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id,authorization_fingerprint,recorded_at FROM execution_support_attempt_authorizations;
+DROP TABLE execution_support_attempt_authorizations;
+ALTER TABLE execution_support_attempt_authorizations_v3 RENAME TO execution_support_attempt_authorizations;
+CREATE INDEX execution_support_attempt_authorizations_sprint_authority ON execution_support_attempt_authorizations(sprint_git_authority_id);
+CREATE TABLE execution_support_grants_v3 (
+ attempt_id TEXT NOT NULL, capability_ref TEXT NOT NULL UNIQUE, epic_id TEXT NOT NULL, sprint_id TEXT NOT NULL, work_unit_id TEXT NOT NULL, repository_id TEXT NOT NULL, role_id TEXT NOT NULL, workspace_id TEXT NOT NULL, workspace_fingerprint TEXT NOT NULL, correlation_fingerprint TEXT NOT NULL, recorded_at TEXT NOT NULL, PRIMARY KEY(attempt_id,role_id));
+INSERT INTO execution_support_grants_v3 SELECT attempt_id,capability_ref,epic_id,sprint_id,work_unit_id,repository_id,role_id,workspace_id,workspace_fingerprint,correlation_fingerprint,recorded_at FROM execution_support_grants;
+DROP TABLE execution_support_grants;
+ALTER TABLE execution_support_grants_v3 RENAME TO execution_support_grants;
 "#;
 pub(crate) const EXECUTION_SUPPORT_BASELINE_MIGRATION: &str =
     "ALTER TABLE execution_support_attempt_authorizations ADD COLUMN baseline_object_id TEXT NOT NULL DEFAULT '';";
@@ -466,6 +481,11 @@ impl SqliteExecutionSupportRepository {
         connection
             .execute_batch(EXECUTION_SUPPORT_SCHEMA)
             .map_err(|_| ExecutionSupportError::Unavailable)?;
+        let role_keyed = connection
+            .query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name='execution_support_attempt_authorizations'", [], |row| row.get::<_, String>(0))
+            .map(|sql| sql.contains("PRIMARY KEY(attempt_id,role_kind)"))
+            .unwrap_or(false);
+        if !role_keyed { connection.execute_batch(EXECUTION_SUPPORT_ROLE_KEY_MIGRATION).map_err(|_| ExecutionSupportError::Unavailable)?; }
         Ok(Self {
             connection: Mutex::new(connection),
             orchestration,
@@ -508,8 +528,8 @@ impl SqliteExecutionSupportRepository {
             .map_err(|_| ExecutionSupportError::Unavailable)?;
         let existing: Option<(String, String)> = transaction
             .query_row(
-                "SELECT baseline_object_id,authorization_fingerprint FROM execution_support_attempt_authorizations WHERE attempt_id=?1",
-                [&request.attempt_id],
+                "SELECT baseline_object_id,authorization_fingerprint FROM execution_support_attempt_authorizations WHERE attempt_id=?1 AND role_kind=?2",
+                params![&request.attempt_id, role_kind],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
@@ -543,9 +563,7 @@ impl SqliteExecutionSupportRepository {
         )
     }
 
-    fn load_authorized_attempt(
-        &self,
-        attempt_id: &str,
+    fn load_authorized_attempt_for_role(&self, attempt_id: &str, role: WorkUnitExecutionRole,
     ) -> Result<AuthorizedExecutionAttempt, ExecutionSupportError> {
         let (work_unit_id, role_kind, authority_id, baseline_object_id, stored_fingerprint):
             (String, String, String, String, String) = self
@@ -553,8 +571,8 @@ impl SqliteExecutionSupportRepository {
             .lock()
             .map_err(|_| ExecutionSupportError::Unavailable)?
             .query_row(
-                "SELECT work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id,authorization_fingerprint FROM execution_support_attempt_authorizations WHERE attempt_id=?1",
-                [attempt_id],
+                "SELECT work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id,authorization_fingerprint FROM execution_support_attempt_authorizations WHERE attempt_id=?1 AND role_kind=?2",
+                params![attempt_id,role.as_str()],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .optional()
@@ -593,6 +611,8 @@ impl SqliteExecutionSupportRepository {
             authority,
         })
     }
+    #[cfg(test)]
+    fn load_authorized_attempt(&self, attempt_id: &str) -> Result<AuthorizedExecutionAttempt, ExecutionSupportError> { self.load_authorized_attempt_for_role(attempt_id, WorkUnitExecutionRole::Implementer) }
 }
 
 pub(crate) struct ExecutionSupportService {
@@ -622,14 +642,12 @@ impl ExecutionSupportService {
 
     /// This application-only operation accepts an opaque existing attempt reference. Its context
     /// is re-derived from durable authority; it does not create a Work Unit or execution attempt.
-    pub(crate) fn grant(
-        &self,
-        attempt_id: &str,
+    pub(crate) fn grant_role(&self, attempt_id: &str, role: WorkUnitExecutionRole,
     ) -> Result<ExecutionSupportReference, ExecutionSupportError> {
         if !bounded_id(attempt_id) {
             return Err(ExecutionSupportError::Denied);
         }
-        let attempt = self.repository.load_authorized_attempt(attempt_id)?;
+        let attempt = self.repository.load_authorized_attempt_for_role(attempt_id, role)?;
         let mut connection = self
             .repository
             .connection
@@ -641,7 +659,7 @@ impl ExecutionSupportService {
         // One ProductExecutionSupportState owns this mutex; the immediate writer transaction
         // serializes its native first-grant side effect. SQLite extends that serialization to a
         // second product process before either can create a duplicate deterministic worktree.
-        let existing = load_grant(&transaction, attempt_id)?;
+        let existing = load_grant(&transaction, attempt_id, role.as_str())?;
         let binding = self
             .resolver
             .resolve(&attempt, existing.as_ref().map(|grant| &grant.binding))?;
@@ -657,7 +675,7 @@ impl ExecutionSupportService {
                 working_directory: self.resolver.working_directory(&attempt, &binding)?,
             });
         }
-        let capability_ref = stable_id("execution-support", attempt_id);
+        let capability_ref = stable_id("execution-support", &format!("{attempt_id}:{}", role.as_str()));
         let correlation = correlation_fingerprint(&attempt, &binding);
         transaction.execute(
             "INSERT INTO execution_support_grants (attempt_id,capability_ref,epic_id,sprint_id,work_unit_id,repository_id,role_id,workspace_id,workspace_fingerprint,correlation_fingerprint,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,datetime('now'))",
@@ -682,11 +700,12 @@ impl ExecutionSupportService {
         if !bounded_id(attempt_id) {
             return Err(ExecutionSupportError::Denied);
         }
-        let attempt = self.repository.load_authorized_attempt(attempt_id)?;
-        if attempt.role_kind != role.as_str() {
-            return Err(ExecutionSupportError::Denied);
-        }
-        self.grant(attempt_id)
+        self.grant_role(attempt_id, role)
+    }
+
+    #[cfg(test)]
+    fn grant(&self, attempt_id: &str) -> Result<ExecutionSupportReference, ExecutionSupportError> {
+        self.grant_role(attempt_id, WorkUnitExecutionRole::Implementer)
     }
 
     pub(crate) fn consume(
@@ -706,7 +725,8 @@ impl ExecutionSupportService {
             load_grant_for_capability(&connection, capability_ref)?
         }
         .ok_or(ExecutionSupportError::Denied)?;
-        let attempt = self.repository.load_authorized_attempt(&grant.attempt_id)?;
+        let role = match grant.role_id.as_str() { "work_unit_handler" => WorkUnitExecutionRole::Handler, "work_unit_implementer" => WorkUnitExecutionRole::Implementer, _ => return Err(ExecutionSupportError::Denied) };
+        let attempt = self.repository.load_authorized_attempt_for_role(&grant.attempt_id, role)?;
         let binding = self.resolver.resolve(&attempt, Some(&grant.binding))?;
         if grant.correlation != correlation_fingerprint(&attempt, &binding) {
             return Err(ExecutionSupportError::CorrelationMismatch);
@@ -765,16 +785,16 @@ impl ProductExecutionSupportState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StoredGrant {
     attempt_id: String,
+    role_id: String,
     capability_ref: String,
     binding: ExecutionWorkspaceBinding,
     correlation: String,
 }
 
-fn load_grant(
-    connection: &Connection,
-    attempt_id: &str,
+fn load_grant(connection: &Connection, attempt_id: &str, role_id: &str,
 ) -> Result<Option<StoredGrant>, ExecutionSupportError> {
-    load_grant_where(connection, "attempt_id", attempt_id)
+    let query = "SELECT attempt_id,role_id,capability_ref,workspace_id,workspace_fingerprint,correlation_fingerprint FROM execution_support_grants WHERE attempt_id=?1 AND role_id=?2";
+    connection.query_row(query, params![attempt_id,role_id], |row| Ok(StoredGrant { attempt_id:row.get(0)?, role_id:row.get(1)?, capability_ref:row.get(2)?, binding:ExecutionWorkspaceBinding{workspace_id:row.get(3)?,workspace_fingerprint:row.get(4)?}, correlation:row.get(5)? })).optional().map_err(|_|ExecutionSupportError::Unavailable)
 }
 fn load_grant_for_capability(
     connection: &Connection,
@@ -787,17 +807,18 @@ fn load_grant_where(
     field: &str,
     value: &str,
 ) -> Result<Option<StoredGrant>, ExecutionSupportError> {
-    let query = format!("SELECT attempt_id,capability_ref,workspace_id,workspace_fingerprint,correlation_fingerprint FROM execution_support_grants WHERE {field}=?1");
+    let query = format!("SELECT attempt_id,role_id,capability_ref,workspace_id,workspace_fingerprint,correlation_fingerprint FROM execution_support_grants WHERE {field}=?1");
     connection
         .query_row(&query, [value], |row| {
             Ok(StoredGrant {
                 attempt_id: row.get(0)?,
-                capability_ref: row.get(1)?,
+                role_id: row.get(1)?,
+                capability_ref: row.get(2)?,
                 binding: ExecutionWorkspaceBinding {
-                    workspace_id: row.get(2)?,
-                    workspace_fingerprint: row.get(3)?,
+                    workspace_id: row.get(3)?,
+                    workspace_fingerprint: row.get(4)?,
                 },
-                correlation: row.get(4)?,
+                correlation: row.get(5)?,
             })
         })
         .optional()
