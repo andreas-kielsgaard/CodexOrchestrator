@@ -633,6 +633,18 @@ mod tests {
     }
 
     #[test]
+    fn implementer_reporting_revision_is_distinct_and_historical_revision_stays_actionless() {
+        let historical = initial_work_unit_implementer_revision_configuration().unwrap();
+        let reporting = implementer_outcome_reporting_revision_configuration().unwrap();
+        let historical_profile = profile_from_immutable_implementer_revision(&historical, 2).unwrap();
+        let reporting_profile = profile_from_immutable_implementer_revision(&reporting, 3).unwrap();
+        assert!(historical_profile.mcp.enabled_tools.is_empty());
+        assert!(!historical_profile.mcp.required);
+        assert_eq!(reporting_profile.mcp.enabled_tools, ["submit_implementation_outcome", "complete_implementation_outcome"]);
+        assert!(reporting_profile.mcp.required);
+    }
+
+    #[test]
     fn old_immutable_handler_revision_remains_actionless() {
         let old = initial_work_unit_handler_baseline_revision_configuration().unwrap();
         assert!(!old.prompt_prefix.content.contains("Use only request_work_unit_implementer"));
