@@ -7,6 +7,7 @@ import type {
   ProductWorkUnitActionContinuationV1,
   ProductWorkUnitHandlerActivationV1,
   ProductWorkUnitImplementerActivationV1,
+  ProductWorkUnitImplementerOutcomeV1,
 } from './productReadModels';
 
 export const ORCHESTRATION_NATIVE_QUERY_V2 = 'orchestration-native-query/v2' as const;
@@ -55,6 +56,7 @@ export interface NativeMaterializedWorkUnitV1 {
   readonly handlerActivation?: NativeWorkUnitHandlerActivationV1;
   readonly actionContinuation?: NativeWorkUnitHandlerActionContinuationV1;
   readonly implementerActivation?: NativeWorkUnitImplementerActivationV1;
+  readonly implementerOutcome?: NativeWorkUnitImplementerOutcomeV1;
 }
 export interface NativeWorkUnitHandlerActivationV1 {
   readonly attemptId: string;
@@ -118,6 +120,7 @@ export interface NativeWorkUnitImplementerActivationV1 {
   readonly implementerReadyAt?: string;
   readonly failureReason?: string;
 }
+export type NativeWorkUnitImplementerOutcomeV1 = ProductWorkUnitImplementerOutcomeV1;
 export interface NativeWorkUnitRelationshipV1 {
   readonly relationshipId: string;
   readonly materializationId: string;
@@ -580,6 +583,9 @@ export function nativeQueryProductCompositionInputV2(
         ...(unit.implementerActivation
           ? { implementerActivation: implementerActivationPresentation(unit.implementerActivation) }
           : {}),
+        ...(unit.implementerOutcome
+          ? { implementerOutcome: implementerOutcomePresentation(unit.implementerOutcome) }
+          : {}),
       })),
       gates: [],
       concerns: [],
@@ -749,6 +755,27 @@ function implementerActivationPresentation(
                         : 'requested',
     ...(activation.failureReason ? { failureReason: activation.failureReason } : {}),
     providerActivityObserved: Boolean(activation.providerActivationObservedAt),
+  };
+}
+
+function implementerOutcomePresentation(
+  outcome: NativeWorkUnitImplementerOutcomeV1,
+): ProductWorkUnitImplementerOutcomeV1 {
+  return {
+    ...outcome,
+    ...(outcome.submittedOutcome ? { submittedOutcome: { ...outcome.submittedOutcome } } : {}),
+    ...(outcome.evidence
+      ? {
+          evidence: {
+            ...outcome.evidence,
+            changedFiles: outcome.evidence.changedFiles.map((file) => ({ ...file })),
+          },
+        }
+      : {}),
+    ...(outcome.semanticCompletion
+      ? { semanticCompletion: { ...outcome.semanticCompletion } }
+      : {}),
+    ...(outcome.terminalLifecycle ? { terminalLifecycle: { ...outcome.terminalLifecycle } } : {}),
   };
 }
 
@@ -1146,6 +1173,7 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
       'handlerActivation',
       'actionContinuation',
       'implementerActivation',
+      'implementerOutcome',
     ],
     'materialized Work Unit',
   );
@@ -1168,6 +1196,9 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
     ...(x.implementerActivation === undefined
       ? {}
       : { implementerActivation: workUnitImplementerActivation(x.implementerActivation) }),
+    ...(x.implementerOutcome === undefined
+      ? {}
+      : { implementerOutcome: workUnitImplementerOutcome(x.implementerOutcome) }),
   };
 };
 const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivationV1 => {
@@ -1531,6 +1562,302 @@ const workUnitImplementerActivation = (value: unknown): NativeWorkUnitImplemente
     fail('failed Implementer activation cannot be application-ready');
   return result;
 };
+const workUnitImplementerOutcome = (value: unknown): NativeWorkUnitImplementerOutcomeV1 => {
+  const x = object(value, 'Work Unit Implementer outcome');
+  keys(
+    x,
+    [
+      'attemptId',
+      'implementerSessionId',
+      'originalImplementerInvocationId',
+      'reportingInvocationId',
+      'reportingHarnessRevisionId',
+      'reportingHarnessConfigurationDigest',
+      'reportingHarnessRepositoryCommitRef',
+      'reportingRequestedAt',
+      'reportingPreparedAt',
+      'reportingHarnessBoundAt',
+      'reportingLaunchRequestedAt',
+      'reportingLaunchAcceptedAt',
+      'reportingReadyAt',
+      'submittedOutcome',
+      'evidence',
+      'semanticCompletion',
+      'terminalLifecycle',
+      'applicationAcceptedAt',
+      'handlerReviewReadyAt',
+      'failureReason',
+    ],
+    'Work Unit Implementer outcome',
+  );
+  const optionalTime = (key: keyof typeof x) =>
+    x[key] === undefined ? undefined : timestamp(x[key], key);
+  const submittedOutcome =
+    x.submittedOutcome === undefined
+      ? undefined
+      : (() => {
+          const submission = object(x.submittedOutcome, 'Implementer submitted outcome');
+          keys(
+            submission,
+            [
+              'variant',
+              'summaryClaim',
+              'validationStatementClaim',
+              'semanticPayloadFingerprint',
+              'submittedAt',
+              'validationAt',
+              'validationResult',
+            ],
+            'Implementer submitted outcome',
+          );
+          if (submission.variant !== 'review_pending') fail('invalid Implementer outcome variant');
+          if (submission.validationResult !== 'valid')
+            fail('invalid Implementer outcome validation result');
+          return {
+            variant: 'review_pending' as const,
+            summaryClaim: boundedString(
+              submission.summaryClaim,
+              20_000,
+              'Implementer summary claim',
+            ),
+            validationStatementClaim: boundedString(
+              submission.validationStatementClaim,
+              20_000,
+              'Implementer validation statement claim',
+            ),
+            semanticPayloadFingerprint: boundedString(
+              submission.semanticPayloadFingerprint,
+              240,
+              'Implementer semantic payload fingerprint',
+            ),
+            submittedAt: timestamp(submission.submittedAt, 'Implementer submittedAt'),
+            validationAt: timestamp(submission.validationAt, 'Implementer validationAt'),
+            validationResult: 'valid' as const,
+          };
+        })();
+  const evidence =
+    x.evidence === undefined
+      ? undefined
+      : (() => {
+          const evidence = object(x.evidence, 'Implementer evidence');
+          keys(
+            evidence,
+            ['changedFiles', 'comparisonFingerprint', 'readyAt'],
+            'Implementer evidence',
+          );
+          const changedFiles = array(evidence.changedFiles, 'Implementer changed files').map(
+            (value) => {
+              const file = object(value, 'Implementer changed file');
+              keys(
+                file,
+                ['evidenceRef', 'displayName', 'changeKind', 'contentFingerprint'],
+                'Implementer changed file',
+              );
+              if (!['added', 'modified', 'deleted', 'renamed'].includes(file.changeKind as string))
+                fail('invalid Implementer evidence change kind');
+              return {
+                evidenceRef: boundedString(file.evidenceRef, 240, 'Implementer evidenceRef'),
+                displayName: boundedString(
+                  file.displayName,
+                  1000,
+                  'Implementer evidence displayName',
+                ),
+                changeKind: file.changeKind as 'added' | 'modified' | 'deleted' | 'renamed',
+                contentFingerprint: boundedString(
+                  file.contentFingerprint,
+                  240,
+                  'Implementer evidence content fingerprint',
+                ),
+              };
+            },
+          );
+          if (!changedFiles.length || changedFiles.length > 500)
+            fail('Implementer evidence must contain a bounded changed-file manifest');
+          unique(changedFiles, (file) => file.evidenceRef, 'Implementer evidence reference');
+          return {
+            changedFiles,
+            comparisonFingerprint: boundedString(
+              evidence.comparisonFingerprint,
+              240,
+              'Implementer comparison fingerprint',
+            ),
+            readyAt: timestamp(evidence.readyAt, 'Implementer evidence readyAt'),
+          };
+        })();
+  const semanticCompletion =
+    x.semanticCompletion === undefined
+      ? undefined
+      : (() => {
+          const completion = object(x.semanticCompletion, 'Implementer semantic completion');
+          keys(completion, ['invocationId', 'completedAt'], 'Implementer semantic completion');
+          return {
+            invocationId: boundedString(
+              completion.invocationId,
+              240,
+              'semantic completion invocationId',
+            ),
+            completedAt: timestamp(completion.completedAt, 'semantic completion completedAt'),
+          };
+        })();
+  const terminalLifecycle =
+    x.terminalLifecycle === undefined
+      ? undefined
+      : (() => {
+          const lifecycle = object(x.terminalLifecycle, 'Implementer terminal lifecycle');
+          keys(lifecycle, ['status', 'observedAt'], 'Implementer terminal lifecycle');
+          if (
+            !['completed', 'failed', 'canceled', 'interrupted'].includes(lifecycle.status as string)
+          )
+            fail('invalid Implementer reporting lifecycle status');
+          return {
+            status: lifecycle.status as 'completed' | 'failed' | 'canceled' | 'interrupted',
+            observedAt: timestamp(lifecycle.observedAt, 'terminal lifecycle observedAt'),
+          };
+        })();
+  const result: NativeWorkUnitImplementerOutcomeV1 = {
+    attemptId: boundedString(x.attemptId, 240, 'outcome attemptId'),
+    implementerSessionId: boundedString(
+      x.implementerSessionId,
+      240,
+      'outcome implementerSessionId',
+    ),
+    originalImplementerInvocationId: boundedString(
+      x.originalImplementerInvocationId,
+      240,
+      'originalImplementerInvocationId',
+    ),
+    reportingInvocationId: boundedString(x.reportingInvocationId, 240, 'reportingInvocationId'),
+    reportingHarnessRevisionId: boundedString(
+      x.reportingHarnessRevisionId,
+      240,
+      'reportingHarnessRevisionId',
+    ),
+    reportingHarnessConfigurationDigest: boundedString(
+      x.reportingHarnessConfigurationDigest,
+      240,
+      'reportingHarnessConfigurationDigest',
+    ),
+    reportingHarnessRepositoryCommitRef: boundedString(
+      x.reportingHarnessRepositoryCommitRef,
+      240,
+      'reportingHarnessRepositoryCommitRef',
+    ),
+    reportingRequestedAt: timestamp(x.reportingRequestedAt, 'reportingRequestedAt'),
+    ...(optionalTime('reportingPreparedAt')
+      ? { reportingPreparedAt: optionalTime('reportingPreparedAt') }
+      : {}),
+    ...(optionalTime('reportingHarnessBoundAt')
+      ? { reportingHarnessBoundAt: optionalTime('reportingHarnessBoundAt') }
+      : {}),
+    ...(optionalTime('reportingLaunchRequestedAt')
+      ? { reportingLaunchRequestedAt: optionalTime('reportingLaunchRequestedAt') }
+      : {}),
+    ...(optionalTime('reportingLaunchAcceptedAt')
+      ? { reportingLaunchAcceptedAt: optionalTime('reportingLaunchAcceptedAt') }
+      : {}),
+    ...(optionalTime('reportingReadyAt')
+      ? { reportingReadyAt: optionalTime('reportingReadyAt') }
+      : {}),
+    ...(submittedOutcome ? { submittedOutcome } : {}),
+    ...(evidence ? { evidence } : {}),
+    ...(semanticCompletion ? { semanticCompletion } : {}),
+    ...(terminalLifecycle ? { terminalLifecycle } : {}),
+    ...(optionalTime('applicationAcceptedAt')
+      ? { applicationAcceptedAt: optionalTime('applicationAcceptedAt') }
+      : {}),
+    ...(optionalTime('handlerReviewReadyAt')
+      ? { handlerReviewReadyAt: optionalTime('handlerReviewReadyAt') }
+      : {}),
+    ...(x.failureReason === undefined
+      ? {}
+      : { failureReason: boundedString(x.failureReason, 4000, 'reporting failureReason') }),
+  };
+  phaseCoherence(
+    result,
+    [
+      'reportingRequestedAt',
+      'reportingPreparedAt',
+      'reportingHarnessBoundAt',
+      'reportingLaunchRequestedAt',
+      'reportingLaunchAcceptedAt',
+      'reportingReadyAt',
+    ],
+    'Implementer reporting',
+  );
+  if (result.submittedOutcome) {
+    if (!result.reportingReadyAt)
+      fail('Implementer outcome submission requires reporting readiness');
+    timestampAtOrAfter(
+      result.reportingReadyAt,
+      result.submittedOutcome.submittedAt,
+      'Implementer outcome submission',
+    );
+    timestampAtOrAfter(
+      result.submittedOutcome.submittedAt,
+      result.submittedOutcome.validationAt,
+      'Implementer outcome validation',
+    );
+  }
+  if (result.evidence) {
+    if (!result.submittedOutcome) fail('Implementer evidence requires a validated submission');
+    timestampAtOrAfter(
+      result.submittedOutcome.validationAt,
+      result.evidence.readyAt,
+      'Implementer evidence readiness',
+    );
+  }
+  if (result.semanticCompletion) {
+    if (!result.evidence) fail('Implementer semantic completion requires evidence');
+    if (result.semanticCompletion.invocationId !== result.reportingInvocationId)
+      fail('Implementer semantic completion has a foreign invocation');
+    timestampAtOrAfter(
+      result.evidence.readyAt,
+      result.semanticCompletion.completedAt,
+      'Implementer semantic completion',
+    );
+  }
+  if (result.terminalLifecycle) {
+    if (!result.reportingReadyAt)
+      fail('Implementer terminal lifecycle requires reporting readiness');
+    timestampAtOrAfter(
+      result.reportingReadyAt,
+      result.terminalLifecycle.observedAt,
+      'Implementer terminal lifecycle observation',
+    );
+    if (result.semanticCompletion)
+      timestampAtOrAfter(
+        result.semanticCompletion.completedAt,
+        result.terminalLifecycle.observedAt,
+        'Implementer terminal lifecycle observation',
+      );
+  }
+  if (result.applicationAcceptedAt) {
+    if (
+      !result.submittedOutcome ||
+      !result.evidence ||
+      !result.semanticCompletion ||
+      result.terminalLifecycle?.status !== 'completed'
+    )
+      fail(
+        'Implementer application acceptance lacks exact semantic, evidence, or Completed prerequisites',
+      );
+    timestampAtOrAfter(
+      result.terminalLifecycle.observedAt,
+      result.applicationAcceptedAt,
+      'Implementer application acceptance',
+    );
+  }
+  if (result.handlerReviewReadyAt) {
+    if (!result.applicationAcceptedAt)
+      fail('Handler review readiness requires Implementer application acceptance');
+    timestampAtOrAfter(
+      result.applicationAcceptedAt,
+      result.handlerReviewReadyAt,
+      'Handler review readiness',
+    );
+  }
+  return result;
+};
 const workUnitRelationship = (value: unknown): NativeWorkUnitRelationshipV1 => {
   const x = object(value, 'Work Unit relationship');
   keys(
@@ -1862,6 +2189,7 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
   const handler = unit.handlerActivation;
   const continuation = unit.actionContinuation;
   const implementer = unit.implementerActivation;
+  const outcome = unit.implementerOutcome;
   if (continuation) {
     if (!handler || handler.attemptId !== continuation.attemptId)
       fail('Handler action continuation does not share the Handler attempt');
@@ -1882,6 +2210,29 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
       fail('Implementer activation does not match the Handler action invocation');
     if (continuation.blockedReason)
       fail('blocked Handler action continuation cannot have an Implementer activation');
+  }
+  if (outcome) {
+    if (
+      !implementer ||
+      implementer.attemptId !== outcome.attemptId ||
+      implementer.implementerSessionId !== outcome.implementerSessionId ||
+      implementer.implementerInvocationId !== outcome.originalImplementerInvocationId
+    )
+      fail('Implementer outcome does not match the exact Implementer attempt and Session');
+    if (!implementer.launchAcceptedAt || !implementer.implementerReadyAt)
+      fail('Implementer outcome requires application-ready Implementer activation');
+    if (
+      outcome.reportingInvocationId === outcome.originalImplementerInvocationId ||
+      outcome.reportingInvocationId === continuation?.actionInvocationId ||
+      outcome.reportingInvocationId === continuation?.originalHandlerInvocationId
+    )
+      fail('Implementer outcome reuses an earlier invocation identity');
+    if (
+      outcome.reportingHarnessRevisionId === implementer.implementerHarnessRevisionId ||
+      outcome.reportingHarnessConfigurationDigest ===
+        implementer.implementerHarnessConfigurationDigest
+    )
+      fail('Implementer outcome reuses the original Implementer Harness revision');
   }
 }
 function validateMaterializationRelationships(
@@ -2032,6 +2383,9 @@ function phaseCoherence(value: object, keys: readonly string[], label: string) {
       fail(`${label} phase timestamps are not ordered`);
     previous = parsed;
   }
+}
+function timestampAtOrAfter(prerequisite: string, value: string, label: string) {
+  if (Date.parse(value) < Date.parse(prerequisite)) fail(`${label} precedes its prerequisite`);
 }
 function keys(value: Record<string, unknown>, allowed: readonly string[], label: string) {
   if (Object.keys(value).some((key) => !allowed.includes(key)))

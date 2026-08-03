@@ -1868,6 +1868,164 @@ fn work_unit_activation_projection_fails_closed_for_foreign_or_incoherent_state(
     assert!(validate_work_unit_activation_projection(&failed_and_ready).is_err());
 }
 
+#[test]
+fn implementer_outcome_projection_serializes_authoritative_claim_evidence_and_readiness_facts() {
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    create_implementer_outcome_projection_table(&connection);
+    let attempt = "attempt";
+    let reporting = projection_stable_id("work-unit-implementer-reporting-invocation", attempt);
+    let payload = r#"{"outcome":"review_pending","summary":"Implemented the bounded change.","validationStatement":"Focused checks passed."}"#;
+    let submission_fingerprint = projection_stable_id("implementer-outcome", payload);
+    connection.execute(
+        "INSERT INTO work_unit_implementer_outcomes VALUES (
+          'unit',?1,'implementer-session','implementer-invocation',?2,
+          'reporting-revision','reporting-digest','reporting-commit',
+          '2026-08-04T00:00:00Z','2026-08-04T00:00:01Z','2026-08-04T00:00:02Z',
+          '2026-08-04T00:00:03Z','2026-08-04T00:00:04Z','2026-08-04T00:00:05Z',
+          'Implemented the bounded change.','review_pending','Focused checks passed.',?3,?4,
+          '2026-08-04T00:00:06Z','2026-08-04T00:00:06Z','valid',?5,'comparison-fingerprint',?6,
+          '2026-08-04T00:00:07Z','2026-08-04T00:00:08Z',?2,
+          '2026-08-04T00:00:09Z','completed','2026-08-04T00:00:10Z',
+          '2026-08-04T00:00:11Z',NULL)",
+        params![
+            attempt,
+            reporting,
+            payload,
+            submission_fingerprint,
+            r#"[{"evidenceRef":"evidence-1","displayName":"src/lib.rs","changeKind":"modified"}]"#,
+            r#"[{"evidenceRef":"evidence-1","contentFingerprint":"content-fingerprint"}]"#,
+        ],
+    ).unwrap();
+
+    let outcomes = implementer_outcome_rows(&connection).unwrap();
+    let value = serde_json::to_value(outcomes.get("unit").unwrap()).unwrap();
+    assert_eq!(value["submittedOutcome"]["variant"], "review_pending");
+    assert_eq!(value["submittedOutcome"]["summaryClaim"], "Implemented the bounded change.");
+    assert_eq!(value["submittedOutcome"]["validationStatementClaim"], "Focused checks passed.");
+    assert_eq!(value["evidence"]["changedFiles"][0]["evidenceRef"], "evidence-1");
+    assert_eq!(value["evidence"]["changedFiles"][0]["contentFingerprint"], "content-fingerprint");
+    assert_eq!(value["terminalLifecycle"]["status"], "completed");
+    assert_eq!(value["applicationAcceptedAt"], "2026-08-04T00:00:10Z");
+    assert_eq!(value["handlerReviewReadyAt"], "2026-08-04T00:00:11Z");
+}
+
+#[test]
+fn implementer_outcome_projection_rejects_partial_bundles_and_incoherent_authority() {
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    create_implementer_outcome_projection_table(&connection);
+    let reporting = projection_stable_id("work-unit-implementer-reporting-invocation", "attempt");
+    connection.execute(
+        "INSERT INTO work_unit_implementer_outcomes (
+          work_unit_id,attempt_id,implementer_session_id,implementer_invocation_id,
+          reporting_invocation_id,reporting_harness_revision_id,
+          reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,
+          reporting_requested_at,submitted_summary
+        ) VALUES ('unit','attempt','implementer-session','implementer-invocation',?1,
+          'reporting-revision','reporting-digest','reporting-commit','2026-08-04T00:00:00Z','partial')",
+        [&reporting],
+    ).unwrap();
+    assert!(implementer_outcome_rows(&connection).is_err());
+
+    let valid = valid_work_unit_outcome_projection();
+    assert!(validate_work_unit_activation_projection(&valid).is_ok());
+
+    let mut foreign_session = valid_work_unit_outcome_projection();
+    foreign_session.implementer_outcome.as_mut().unwrap().implementer_session_id = "foreign".into();
+    assert!(validate_work_unit_activation_projection(&foreign_session).is_err());
+
+    let mut reused_invocation = valid_work_unit_outcome_projection();
+    reused_invocation.implementer_outcome.as_mut().unwrap().reporting_invocation_id =
+        "implementer-invocation".into();
+    assert!(validate_work_unit_activation_projection(&reused_invocation).is_err());
+
+    let mut accepted_failed = valid_work_unit_outcome_projection();
+    accepted_failed.implementer_outcome.as_mut().unwrap().terminal_lifecycle.as_mut().unwrap().status =
+        WorkUnitImplementerLifecycleStatusDto::Failed;
+    assert!(validate_work_unit_activation_projection(&accepted_failed).is_err());
+
+    let mut ready_without_acceptance = valid_work_unit_outcome_projection();
+    ready_without_acceptance.implementer_outcome.as_mut().unwrap().application_accepted_at = None;
+    assert!(validate_work_unit_activation_projection(&ready_without_acceptance).is_err());
+
+    let mut out_of_order = valid_work_unit_outcome_projection();
+    out_of_order.implementer_outcome.as_mut().unwrap().reporting_prepared_at =
+        Some("2026-08-03T23:59:59Z".into());
+    assert!(validate_work_unit_activation_projection(&out_of_order).is_err());
+}
+
+fn create_implementer_outcome_projection_table(connection: &rusqlite::Connection) {
+    connection.execute_batch(
+        "CREATE TABLE work_unit_implementer_outcomes (
+          work_unit_id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL,
+          implementer_session_id TEXT NOT NULL, implementer_invocation_id TEXT NOT NULL,
+          reporting_invocation_id TEXT NOT NULL, reporting_harness_revision_id TEXT NOT NULL,
+          reporting_harness_configuration_digest TEXT NOT NULL,
+          reporting_harness_repository_commit_ref TEXT NOT NULL, reporting_requested_at TEXT NOT NULL,
+          reporting_prepared_at TEXT, reporting_harness_bound_at TEXT,
+          reporting_launch_requested_at TEXT, reporting_launch_accepted_at TEXT, reporting_ready_at TEXT,
+          submitted_summary TEXT, outcome_variant TEXT, submitted_validation_statement TEXT,
+          semantic_payload_json TEXT, submission_fingerprint TEXT, submitted_at TEXT,
+          validation_at TEXT, validation_result TEXT, evidence_manifest_json TEXT,
+          comparison_fingerprint TEXT, evidence_content_fingerprints_json TEXT, evidence_ready_at TEXT,
+          semantic_completed_at TEXT, semantic_completion_invocation_id TEXT,
+          lifecycle_observed_at TEXT, lifecycle_status TEXT, application_accepted_at TEXT,
+          handler_review_ready_at TEXT, failure_reason TEXT
+        );"
+    ).unwrap();
+}
+
+fn valid_work_unit_outcome_projection() -> WorkUnitDto {
+    let mut work_unit = valid_work_unit_activation_projection();
+    let reporting_invocation_id =
+        projection_stable_id("work-unit-implementer-reporting-invocation", "attempt");
+    work_unit.implementer_outcome = Some(WorkUnitImplementerOutcomeDto {
+        attempt_id: "attempt".into(),
+        implementer_session_id: "implementer-session".into(),
+        original_implementer_invocation_id: "implementer-invocation".into(),
+        reporting_invocation_id: reporting_invocation_id.clone(),
+        reporting_harness_revision_id: "reporting-revision".into(),
+        reporting_harness_configuration_digest: "reporting-digest".into(),
+        reporting_harness_repository_commit_ref: "reporting-commit".into(),
+        reporting_requested_at: "2026-08-04T00:00:00Z".into(),
+        reporting_prepared_at: Some("2026-08-04T00:00:01Z".into()),
+        reporting_harness_bound_at: Some("2026-08-04T00:00:02Z".into()),
+        reporting_launch_requested_at: Some("2026-08-04T00:00:03Z".into()),
+        reporting_launch_accepted_at: Some("2026-08-04T00:00:04Z".into()),
+        reporting_ready_at: Some("2026-08-04T00:00:05Z".into()),
+        submitted_outcome: Some(WorkUnitImplementerSubmissionDto {
+            variant: ImplementationOutcomeVariantDto::ReviewPending,
+            summary_claim: "Implemented the bounded change.".into(),
+            validation_statement_claim: "Focused checks passed.".into(),
+            semantic_payload_fingerprint: "payload-fingerprint".into(),
+            submitted_at: "2026-08-04T00:00:06Z".into(),
+            validation_at: "2026-08-04T00:00:06Z".into(),
+            validation_result: "valid",
+        }),
+        evidence: Some(WorkUnitImplementerEvidenceDto {
+            changed_files: vec![WorkUnitImplementerEvidenceFileDto {
+                evidence_ref: "evidence-1".into(),
+                display_name: "src/lib.rs".into(),
+                change_kind: ImplementationEvidenceChangeKindDto::Modified,
+                content_fingerprint: "content-fingerprint".into(),
+            }],
+            comparison_fingerprint: "comparison-fingerprint".into(),
+            ready_at: "2026-08-04T00:00:07Z".into(),
+        }),
+        semantic_completion: Some(WorkUnitImplementerSemanticCompletionDto {
+            invocation_id: reporting_invocation_id,
+            completed_at: "2026-08-04T00:00:08Z".into(),
+        }),
+        terminal_lifecycle: Some(WorkUnitImplementerTerminalLifecycleDto {
+            status: WorkUnitImplementerLifecycleStatusDto::Completed,
+            observed_at: "2026-08-04T00:00:09Z".into(),
+        }),
+        application_accepted_at: Some("2026-08-04T00:00:10Z".into()),
+        handler_review_ready_at: Some("2026-08-04T00:00:11Z".into()),
+        failure_reason: None,
+    });
+    work_unit
+}
+
 fn valid_work_unit_activation_projection() -> WorkUnitDto {
     let timestamp = || Some("2026-08-03T00:00:00Z".to_string());
     WorkUnitDto {
@@ -1940,5 +2098,6 @@ fn valid_work_unit_activation_projection() -> WorkUnitDto {
             implementer_ready_at: timestamp(),
             failure_reason: None,
         }),
+        implementer_outcome: None,
     }
 }

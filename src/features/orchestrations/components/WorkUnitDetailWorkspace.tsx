@@ -91,7 +91,10 @@ export function WorkUnitDetailWorkspace({
           <h1>{unit.title}</h1>
           <p>{unit.summary}</p>
           <p>{unit.details}</p>
-          {(unit.handlerActivation || unit.actionContinuation || unit.implementerActivation) && (
+          {(unit.handlerActivation ||
+            unit.actionContinuation ||
+            unit.implementerActivation ||
+            unit.implementerOutcome) && (
             <section className="work-unit-activation" aria-label="Work Unit activation activity">
               <h2>Activation activity</h2>
               {unit.handlerActivation && <p>{handlerActivity(unit.handlerActivation)}</p>}
@@ -100,6 +103,9 @@ export function WorkUnitDetailWorkspace({
               )}
               {unit.implementerActivation && (
                 <p>{implementerActivity(unit.implementerActivation)}</p>
+              )}
+              {unit.implementerOutcome && (
+                <ImplementerOutcomeActivity outcome={unit.implementerOutcome} />
               )}
             </section>
           )}
@@ -332,4 +338,154 @@ function implementerActivity(
   return activation.providerActivityObserved
     ? `${detail} Provider activity is observed separately.`
     : detail;
+}
+
+function ImplementerOutcomeActivity({
+  outcome,
+}: {
+  readonly outcome: NonNullable<
+    SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['implementerOutcome']
+  >;
+}) {
+  const reportingStage = outcome.reportingReadyAt
+    ? 'Implementer reporting is application-ready.'
+    : outcome.reportingLaunchAcceptedAt
+      ? 'Implementer reporting launch was accepted; reporting readiness is not yet recorded.'
+      : outcome.reportingLaunchRequestedAt
+        ? 'Implementer reporting launch was requested; launch acceptance is not yet recorded.'
+        : outcome.reportingHarnessBoundAt
+          ? 'Implementer reporting is bound to its immutable Harness revision.'
+          : outcome.reportingPreparedAt
+            ? 'Implementer reporting invocation is prepared.'
+            : 'Implementer reporting was requested.';
+  return (
+    <div className="work-unit-implementer-outcome">
+      <h3>Implementer reporting</h3>
+      <p>{reportingStage}</p>
+      <dl>
+        <RecordedFact label="Attempt" value={outcome.attemptId} />
+        <RecordedFact label="Implementer Session" value={outcome.implementerSessionId} />
+        <RecordedFact
+          label="Original Implementer invocation"
+          value={outcome.originalImplementerInvocationId}
+        />
+        <RecordedFact label="Reporting invocation" value={outcome.reportingInvocationId} />
+        <RecordedFact
+          label="Reporting Harness revision"
+          value={outcome.reportingHarnessRevisionId}
+        />
+        <RecordedFact
+          label="Reporting Harness configuration digest"
+          value={outcome.reportingHarnessConfigurationDigest}
+        />
+        <RecordedFact
+          label="Reporting Harness repository commit"
+          value={outcome.reportingHarnessRepositoryCommitRef}
+        />
+        <RecordedFact label="Requested" value={outcome.reportingRequestedAt} />
+        {outcome.reportingPreparedAt && (
+          <RecordedFact label="Prepared" value={outcome.reportingPreparedAt} />
+        )}
+        {outcome.reportingHarnessBoundAt && (
+          <RecordedFact label="Harness bound" value={outcome.reportingHarnessBoundAt} />
+        )}
+        {outcome.reportingLaunchRequestedAt && (
+          <RecordedFact label="Launch requested" value={outcome.reportingLaunchRequestedAt} />
+        )}
+        {outcome.reportingLaunchAcceptedAt && (
+          <RecordedFact label="Launch accepted" value={outcome.reportingLaunchAcceptedAt} />
+        )}
+        {outcome.reportingReadyAt && (
+          <RecordedFact label="Reporting ready" value={outcome.reportingReadyAt} />
+        )}
+      </dl>
+      {outcome.failureReason && <p>Reporting needs attention: {outcome.failureReason}.</p>}
+      {outcome.submittedOutcome && (
+        <div>
+          <h3>Submitted outcome claims</h3>
+          <dl>
+            <RecordedFact label="Outcome variant" value="Review pending" />
+            <RecordedFact
+              label="Implementer summary claim"
+              value={outcome.submittedOutcome.summaryClaim}
+            />
+            <RecordedFact
+              label="Implementer validation claim"
+              value={outcome.submittedOutcome.validationStatementClaim}
+            />
+            <RecordedFact
+              label="Claim payload fingerprint"
+              value={outcome.submittedOutcome.semanticPayloadFingerprint}
+            />
+            <RecordedFact label="Submitted" value={outcome.submittedOutcome.submittedAt} />
+            <RecordedFact
+              label="Claim validation recorded"
+              value={`${outcome.submittedOutcome.validationResult} at ${outcome.submittedOutcome.validationAt}`}
+            />
+          </dl>
+          <p>These Implementer statements are claims, not application-owned evidence.</p>
+        </div>
+      )}
+      {outcome.evidence && (
+        <div>
+          <h3>Application-owned File Review evidence</h3>
+          <p>Evidence became ready at {outcome.evidence.readyAt}.</p>
+          <p>Comparison fingerprint: {outcome.evidence.comparisonFingerprint}</p>
+          <ul>
+            {outcome.evidence.changedFiles.map((file) => (
+              <li key={file.evidenceRef}>
+                <strong>{file.displayName}</strong>
+                <span>
+                  {file.changeKind}; evidence reference {file.evidenceRef}; content fingerprint{' '}
+                  {file.contentFingerprint}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {outcome.semanticCompletion && (
+        <p>
+          Semantic outcome completion was recorded at {outcome.semanticCompletion.completedAt} for
+          the exact reporting invocation.
+        </p>
+      )}
+      {outcome.terminalLifecycle && (
+        <p>
+          Reporting lifecycle was observed as {lifecycleLabel(outcome.terminalLifecycle.status)} at{' '}
+          {outcome.terminalLifecycle.observedAt}.
+        </p>
+      )}
+      {outcome.applicationAcceptedAt && (
+        <p>
+          The reporting outcome was application-accepted at {outcome.applicationAcceptedAt}. This is
+          not implementation approval or Work Unit acceptance.
+        </p>
+      )}
+      {outcome.handlerReviewReadyAt && (
+        <p>
+          <strong>Ready for Handler review</strong> at {outcome.handlerReviewReadyAt}. No Handler
+          judgment is recorded here.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function RecordedFact({ label, value }: { readonly label: string; readonly value: string }) {
+  return (
+    <>
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </>
+  );
+}
+
+function lifecycleLabel(status: 'completed' | 'failed' | 'canceled' | 'interrupted') {
+  return {
+    completed: 'Completed',
+    failed: 'Failed',
+    canceled: 'Canceled',
+    interrupted: 'Interrupted',
+  }[status];
 }

@@ -487,6 +487,94 @@ describe('orchestration native query v1', () => {
     );
   });
 
+  it('projects Implementer reporting states and rejects malformed authority or readiness', () => {
+    const absent = implementerOutcomeNativeFixture();
+    const absentQuery = decodeOrchestrationNativeQueryV2(absent);
+    expect(absentQuery.workUnits[0]!.implementerOutcome).toBeUndefined();
+
+    const inProgress = implementerOutcomeNativeFixture();
+    (inProgress.workUnits as Array<Record<string, unknown>>)[0]!.implementerOutcome =
+      implementerOutcomeFixture('in_progress');
+    const inProgressInput = nativeQueryProductCompositionInputV2(
+      decodeOrchestrationNativeQueryV2(inProgress),
+    );
+    expect(inProgressInput.referenceIndex.workUnits[0]!.implementerOutcome).toMatchObject({
+      reportingRequestedAt: '2026-08-04T00:00:00Z',
+      reportingPreparedAt: '2026-08-04T00:00:01Z',
+    });
+    expect(inProgressInput.referenceIndex.workUnits[0]!.implementerOutcome).not.toHaveProperty(
+      'submittedOutcome',
+    );
+
+    for (const status of ['failed', 'canceled'] as const) {
+      const terminal = implementerOutcomeNativeFixture();
+      (terminal.workUnits as Array<Record<string, unknown>>)[0]!.implementerOutcome =
+        implementerOutcomeFixture(status);
+      expect(
+        decodeOrchestrationNativeQueryV2(terminal).workUnits[0]!.implementerOutcome
+          ?.terminalLifecycle,
+      ).toMatchObject({ status });
+    }
+
+    const reviewReady = implementerOutcomeNativeFixture();
+    (reviewReady.workUnits as Array<Record<string, unknown>>)[0]!.implementerOutcome =
+      implementerOutcomeFixture('review_ready');
+    const readyQuery = decodeOrchestrationNativeQueryV2(reviewReady);
+    const readyOutcome = readyQuery.workUnits[0]!.implementerOutcome!;
+    expect(readyOutcome.submittedOutcome).toMatchObject({
+      variant: 'review_pending',
+      summaryClaim: 'Implemented the bounded change.',
+      validationStatementClaim: 'Focused checks passed.',
+    });
+    expect(readyOutcome.evidence?.changedFiles).toEqual([
+      expect.objectContaining({ evidenceRef: 'evidence-1', contentFingerprint: 'content-1' }),
+    ]);
+    expect(readyOutcome.applicationAcceptedAt).toBe('2026-08-04T00:00:10Z');
+    expect(readyOutcome.handlerReviewReadyAt).toBe('2026-08-04T00:00:11Z');
+    expect(
+      composeProductOrchestrationReadModels(nativeQueryProductCompositionInputV2(readyQuery))
+        .epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!.implementerOutcome,
+    ).toEqual(readyOutcome);
+
+    const malformed = [
+      (() => {
+        const outcome = implementerOutcomeFixture('review_ready');
+        delete (outcome.evidence as Record<string, unknown>).comparisonFingerprint;
+        return outcome;
+      })(),
+      { ...implementerOutcomeFixture('review_ready'), semanticCompletion: undefined },
+      { ...implementerOutcomeFixture('review_ready'), applicationAcceptedAt: undefined },
+      { ...implementerOutcomeFixture('review_ready'), implementerSessionId: 'foreign-session' },
+      {
+        ...implementerOutcomeFixture('review_ready'),
+        reportingInvocationId: 'implementer-invocation-1',
+      },
+      {
+        ...implementerOutcomeFixture('review_ready'),
+        terminalLifecycle: { status: 'unknown', observedAt: '2026-08-04T00:00:09Z' },
+      },
+      {
+        ...implementerOutcomeFixture('review_ready'),
+        submittedOutcome: {
+          ...(implementerOutcomeFixture('review_ready').submittedOutcome as object),
+          variant: 'accepted',
+        },
+      },
+      {
+        ...implementerOutcomeFixture('in_progress'),
+        reportingPreparedAt: '2026-08-03T23:59:59Z',
+      },
+    ];
+    for (const implementerOutcome of malformed) {
+      const value = implementerOutcomeNativeFixture();
+      (value.workUnits as Array<Record<string, unknown>>)[0]!.implementerOutcome =
+        implementerOutcome;
+      expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow(
+        'Invalid orchestration native query',
+      );
+    }
+  });
+
   it('keeps partial materialization stages separate from Work Unit production truth', () => {
     const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
     value.workUnitMaterializations = [
@@ -664,3 +752,185 @@ describe('orchestration native query v1', () => {
     );
   });
 });
+
+function implementerOutcomeNativeFixture(): Record<string, unknown> {
+  const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
+  value.workUnitMaterializations = [
+    {
+      materializationId: 'materialization-1',
+      planningPointId: 'point-1',
+      acceptedRevisionId: 'accepted-revision-1',
+      epicId: 'epic-fixture',
+      sprintId: 'sprint-fixture',
+      workSliceId: 'slice-1',
+      authorizationRecordedAt: '2026-08-03T00:00:00Z',
+      attemptRecordedAt: '2026-08-03T00:00:01Z',
+      workUnitsCreatedAt: '2026-08-03T00:00:02Z',
+      relationshipsCompletedAt: '2026-08-03T00:00:03Z',
+      settledAt: '2026-08-03T00:00:04Z',
+    },
+  ];
+  value.workUnits = [
+    {
+      workUnitId: 'unit-1',
+      materializationId: 'materialization-1',
+      workSliceId: 'slice-1',
+      acceptedRevisionId: 'accepted-revision-1',
+      laneOrdinal: 0,
+      laneTitle: 'Bounded responsibility',
+      specification: 'Implement and report one bounded outcome.',
+      handlerActivation: {
+        attemptId: 'attempt-1',
+        handlerSessionId: 'handler-session-1',
+        handlerInvocationId: 'handler-invocation-1',
+        handlerHarnessRevisionId: 'handler-revision-1',
+        handlerHarnessConfigurationDigest: 'handler-digest-1',
+        handlerHarnessRepositoryCommitRef: 'handler-commit-1',
+        eligibilityState: 'eligible',
+        requestedAt: '2026-08-03T00:01:00Z',
+        authorizedAt: '2026-08-03T00:01:01Z',
+        attemptCreatedAt: '2026-08-03T00:01:02Z',
+        executionSupportGrantedAt: '2026-08-03T00:01:03Z',
+        isolatedWorktreeReadyAt: '2026-08-03T00:01:04Z',
+        handlerSessionCreatedAt: '2026-08-03T00:01:05Z',
+        handlerInvocationPreparedAt: '2026-08-03T00:01:06Z',
+        handlerHarnessBoundAt: '2026-08-03T00:01:07Z',
+        launchRequestedAt: '2026-08-03T00:01:08Z',
+        launchAcceptedAt: '2026-08-03T00:01:09Z',
+        handlerReadyAt: '2026-08-03T00:01:10Z',
+      },
+      actionContinuation: {
+        attemptId: 'attempt-1',
+        handlerSessionId: 'handler-session-1',
+        originalHandlerInvocationId: 'handler-invocation-1',
+        actionInvocationId: 'handler-action-1',
+        actionHarnessRevisionId: 'handler-action-revision-1',
+        actionHarnessConfigurationDigest: 'handler-action-digest-1',
+        actionHarnessRepositoryCommitRef: 'handler-action-commit-1',
+        requestedAt: '2026-08-03T00:01:11Z',
+        authorizedAt: '2026-08-03T00:01:12Z',
+        invocationPreparedAt: '2026-08-03T00:01:13Z',
+        harnessBoundAt: '2026-08-03T00:01:14Z',
+        launchRequestedAt: '2026-08-03T00:01:15Z',
+        launchAcceptedAt: '2026-08-03T00:01:16Z',
+        actionReadyAt: '2026-08-03T00:01:17Z',
+      },
+      implementerActivation: {
+        attemptId: 'attempt-1',
+        handlerActionInvocationId: 'handler-action-1',
+        implementerSessionId: 'implementer-session-1',
+        implementerInvocationId: 'implementer-invocation-1',
+        implementerHarnessRevisionId: 'implementer-revision-1',
+        implementerHarnessConfigurationDigest: 'implementer-digest-1',
+        implementerHarnessRepositoryCommitRef: 'implementer-commit-1',
+        requestedAt: '2026-08-03T00:01:18Z',
+        authorizedAt: '2026-08-03T00:01:19Z',
+        executionSupportGrantedAt: '2026-08-03T00:01:20Z',
+        isolatedWorktreeReadyAt: '2026-08-03T00:01:21Z',
+        implementerSessionCreatedAt: '2026-08-03T00:01:22Z',
+        implementerInvocationPreparedAt: '2026-08-03T00:01:23Z',
+        implementerHarnessBoundAt: '2026-08-03T00:01:24Z',
+        launchRequestedAt: '2026-08-03T00:01:25Z',
+        launchAcceptedAt: '2026-08-03T00:01:26Z',
+        implementerReadyAt: '2026-08-03T00:01:27Z',
+      },
+    },
+  ];
+  value.workUnitRelationships = [
+    {
+      relationshipId: 'point',
+      materializationId: 'materialization-1',
+      relationshipKind: 'planning_point',
+      fromId: 'point-1',
+      toId: 'slice-1',
+    },
+    {
+      relationshipId: 'sprint',
+      materializationId: 'materialization-1',
+      relationshipKind: 'sprint',
+      fromId: 'sprint-fixture',
+      toId: 'slice-1',
+    },
+    {
+      relationshipId: 'lane',
+      materializationId: 'materialization-1',
+      relationshipKind: 'lane',
+      fromId: 'slice-1',
+      toId: 'unit-1',
+      ordinal: 0,
+    },
+    {
+      relationshipId: 'order',
+      materializationId: 'materialization-1',
+      relationshipKind: 'order',
+      fromId: 'slice-1',
+      toId: 'unit-1',
+      ordinal: 0,
+    },
+  ];
+  return value;
+}
+
+function implementerOutcomeFixture(
+  state: 'in_progress' | 'failed' | 'canceled' | 'review_ready',
+): Record<string, unknown> {
+  const outcome: Record<string, unknown> = {
+    attemptId: 'attempt-1',
+    implementerSessionId: 'implementer-session-1',
+    originalImplementerInvocationId: 'implementer-invocation-1',
+    reportingInvocationId: 'reporting-invocation-1',
+    reportingHarnessRevisionId: 'reporting-revision-1',
+    reportingHarnessConfigurationDigest: 'reporting-digest-1',
+    reportingHarnessRepositoryCommitRef: 'reporting-commit-1',
+    reportingRequestedAt: '2026-08-04T00:00:00Z',
+    reportingPreparedAt: '2026-08-04T00:00:01Z',
+  };
+  if (state === 'in_progress') return outcome;
+  Object.assign(outcome, {
+    reportingHarnessBoundAt: '2026-08-04T00:00:02Z',
+    reportingLaunchRequestedAt: '2026-08-04T00:00:03Z',
+    reportingLaunchAcceptedAt: '2026-08-04T00:00:04Z',
+    reportingReadyAt: '2026-08-04T00:00:05Z',
+  });
+  if (state === 'failed' || state === 'canceled') {
+    outcome.terminalLifecycle = {
+      status: state,
+      observedAt: '2026-08-04T00:00:09Z',
+    };
+    return outcome;
+  }
+  Object.assign(outcome, {
+    submittedOutcome: {
+      variant: 'review_pending',
+      summaryClaim: 'Implemented the bounded change.',
+      validationStatementClaim: 'Focused checks passed.',
+      semanticPayloadFingerprint: 'payload-1',
+      submittedAt: '2026-08-04T00:00:06Z',
+      validationAt: '2026-08-04T00:00:06Z',
+      validationResult: 'valid',
+    },
+    evidence: {
+      changedFiles: [
+        {
+          evidenceRef: 'evidence-1',
+          displayName: 'src/feature.ts',
+          changeKind: 'modified',
+          contentFingerprint: 'content-1',
+        },
+      ],
+      comparisonFingerprint: 'comparison-1',
+      readyAt: '2026-08-04T00:00:07Z',
+    },
+    semanticCompletion: {
+      invocationId: 'reporting-invocation-1',
+      completedAt: '2026-08-04T00:00:08Z',
+    },
+    terminalLifecycle: {
+      status: 'completed',
+      observedAt: '2026-08-04T00:00:09Z',
+    },
+    applicationAcceptedAt: '2026-08-04T00:00:10Z',
+    handlerReviewReadyAt: '2026-08-04T00:00:11Z',
+  });
+  return outcome;
+}

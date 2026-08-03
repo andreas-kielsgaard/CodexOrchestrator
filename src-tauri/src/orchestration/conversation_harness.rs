@@ -280,13 +280,13 @@ pub(crate) fn initial_work_unit_implementer_revision_configuration() -> Result<H
 /// Implementer revision stays actionless; this configuration is never applied to it.
 pub(crate) fn implementer_outcome_reporting_revision_configuration() -> Result<HarnessEffectiveConfiguration, String> {
     let mut configuration = initial_work_unit_implementer_revision_configuration()?;
-    configuration.prompt_prefix.content = "You are the Work Unit Implementer reporting continuation for one completed isolated attempt. Use only submit_implementation_outcome and complete_implementation_outcome. The application derives every identity and captures file evidence itself. Do not accept, review, return, retry, settle, activate dependents, or continue a Sprint or Epic.".into();
+    configuration.prompt_prefix.content = "You are the Work Unit Implementer reporting continuation for one completed isolated attempt. Use only submit_implementation_outcome and complete_implementation_outcome. Submit one ReviewPending summary and validation statement as claims. The application derives every identity and captures file evidence itself. Claims are not evidence, and tool success is not application acceptance or Handler review. Do not accept, review, return, retry, settle, activate dependents, or continue a Sprint or Epic.".into();
     configuration.tools.items = vec![
         HarnessToolConfiguration { name: "submit_implementation_outcome".into(), policy: HarnessToolPolicy::Available },
         HarnessToolConfiguration { name: "complete_implementation_outcome".into(), policy: HarnessToolPolicy::Available },
     ];
-    configuration.tools.schema_boundary = "Only one context-bound Implementer outcome submission and semantic completion are exposed.".into();
-    configuration.hooks = vec![HarnessHookConfiguration { name: "completion".into(), status: HarnessHookStatus::NotConnected, detail: "Application acceptance requires a separate matching terminal lifecycle observation.".into() }];
+    configuration.tools.schema_boundary = "Only one context-bound ReviewPending claim submission and semantic completion are exposed; neither is evidence, application acceptance, or Handler review.".into();
+    configuration.hooks = vec![HarnessHookConfiguration { name: "completion".into(), status: HarnessHookStatus::NotConnected, detail: "Application acceptance requires separate application-owned evidence and a matching Completed terminal lifecycle observation; Handler-review readiness is later still.".into() }];
     Ok(configuration)
 }
 
@@ -299,7 +299,12 @@ pub(crate) fn profile_from_immutable_implementer_revision(configuration: &Harnes
         || configuration.runtime.approval_policy != RevisionApprovalPolicy::Never {
         return Err("immutable Implementer revision is outside the bounded Implementer contract".into());
     }
-    Ok(ConversationHarnessProfile { key: configuration.identity.machine_key.clone(), version: revision_version, context: configuration.prompt_prefix.content.clone(), skill_guidance: configuration.skills.items.iter().map(|skill| SkillGuidance { canonical_name: skill.name.clone(), canonical_path: skill.path.clone(), purpose: skill.purpose.clone(), use_when: skill.use_when.clone() }).collect(), runtime: HarnessRuntime { model: configuration.runtime.default_model.clone(), reasoning_effort: configuration.runtime.default_reasoning.map(reasoning_to_catalog), sandbox: sandbox_from_revision(configuration.runtime.sandbox)?, approval_policy: HarnessApprovalPolicy::Never }, mcp: HarnessMcpExposure { required: !tools.is_empty(), enabled_tools: configuration.tools.items.iter().map(|tool| tool.name.clone()).collect() }, lifecycle: HarnessLifecycle { context_delivery: HarnessContextDelivery::FirstQuery, completion_criteria: vec!["application_observed_implementer_ready_state".into()] } })
+    let completion_criteria = if tools.is_empty() {
+        "application_observed_implementer_ready_state"
+    } else {
+        "semantic_completion_and_application_observed_terminal_lifecycle"
+    };
+    Ok(ConversationHarnessProfile { key: configuration.identity.machine_key.clone(), version: revision_version, context: configuration.prompt_prefix.content.clone(), skill_guidance: configuration.skills.items.iter().map(|skill| SkillGuidance { canonical_name: skill.name.clone(), canonical_path: skill.path.clone(), purpose: skill.purpose.clone(), use_when: skill.use_when.clone() }).collect(), runtime: HarnessRuntime { model: configuration.runtime.default_model.clone(), reasoning_effort: configuration.runtime.default_reasoning.map(reasoning_to_catalog), sandbox: sandbox_from_revision(configuration.runtime.sandbox)?, approval_policy: HarnessApprovalPolicy::Never }, mcp: HarnessMcpExposure { required: !tools.is_empty(), enabled_tools: configuration.tools.items.iter().map(|tool| tool.name.clone()).collect() }, lifecycle: HarnessLifecycle { context_delivery: HarnessContextDelivery::FirstQuery, completion_criteria: vec![completion_criteria.into()] } })
 }
 
 fn reasoning_from_catalog(value: &str) -> Option<HarnessReasoningLevel> {
@@ -640,8 +645,11 @@ mod tests {
         let reporting_profile = profile_from_immutable_implementer_revision(&reporting, 3).unwrap();
         assert!(historical_profile.mcp.enabled_tools.is_empty());
         assert!(!historical_profile.mcp.required);
+        assert_eq!(historical_profile.lifecycle.completion_criteria, ["application_observed_implementer_ready_state"]);
         assert_eq!(reporting_profile.mcp.enabled_tools, ["submit_implementation_outcome", "complete_implementation_outcome"]);
         assert!(reporting_profile.mcp.required);
+        assert_eq!(reporting_profile.lifecycle.completion_criteria, ["semantic_completion_and_application_observed_terminal_lifecycle"]);
+        assert!(reporting.prompt_prefix.content.contains("Claims are not evidence"));
     }
 
     #[test]

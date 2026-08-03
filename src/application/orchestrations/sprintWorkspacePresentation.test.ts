@@ -60,6 +60,18 @@ describe('Sprint workspace presentation projector', () => {
       ],
       gates: [{ gateId: 'gate-2', presentationRole: { kind: 'accepted_review_marker' } }],
     });
+    expect(presentation.revisionViews[1].workUnits[0].implementerOutcome).toMatchObject({
+      submittedOutcome: {
+        summaryClaim: 'Implemented the bounded change.',
+        validationStatementClaim: 'Focused checks passed.',
+      },
+      evidence: {
+        changedFiles: [{ evidenceRef: 'evidence-1', contentFingerprint: 'content-1' }],
+      },
+      terminalLifecycle: { status: 'completed' },
+      applicationAcceptedAt: '2026-08-04T00:00:10Z',
+      handlerReviewReadyAt: '2026-08-04T00:00:11Z',
+    });
     expect(presentation.documents.map((document) => document.documentRefId)).toEqual([
       'document-early',
       'document-late',
@@ -291,6 +303,52 @@ function sprintReadModel(): ProductSprintReadModelV1 {
             summary: 'Summary',
             details: 'Details',
             source: source(),
+            implementerOutcome: {
+              attemptId: 'attempt-1',
+              implementerSessionId: 'implementer-session-1',
+              originalImplementerInvocationId: 'implementer-invocation-1',
+              reportingInvocationId: 'reporting-invocation-1',
+              reportingHarnessRevisionId: 'reporting-revision-1',
+              reportingHarnessConfigurationDigest: 'reporting-digest-1',
+              reportingHarnessRepositoryCommitRef: 'reporting-commit-1',
+              reportingRequestedAt: '2026-08-04T00:00:00Z',
+              reportingPreparedAt: '2026-08-04T00:00:01Z',
+              reportingHarnessBoundAt: '2026-08-04T00:00:02Z',
+              reportingLaunchRequestedAt: '2026-08-04T00:00:03Z',
+              reportingLaunchAcceptedAt: '2026-08-04T00:00:04Z',
+              reportingReadyAt: '2026-08-04T00:00:05Z',
+              submittedOutcome: {
+                variant: 'review_pending',
+                summaryClaim: 'Implemented the bounded change.',
+                validationStatementClaim: 'Focused checks passed.',
+                semanticPayloadFingerprint: 'payload-1',
+                submittedAt: '2026-08-04T00:00:06Z',
+                validationAt: '2026-08-04T00:00:06Z',
+                validationResult: 'valid',
+              },
+              evidence: {
+                changedFiles: [
+                  {
+                    evidenceRef: 'evidence-1',
+                    displayName: 'src/feature.ts',
+                    changeKind: 'modified',
+                    contentFingerprint: 'content-1',
+                  },
+                ],
+                comparisonFingerprint: 'comparison-1',
+                readyAt: '2026-08-04T00:00:07Z',
+              },
+              semanticCompletion: {
+                invocationId: 'reporting-invocation-1',
+                completedAt: '2026-08-04T00:00:08Z',
+              },
+              terminalLifecycle: {
+                status: 'completed',
+                observedAt: '2026-08-04T00:00:09Z',
+              },
+              applicationAcceptedAt: '2026-08-04T00:00:10Z',
+              handlerReviewReadyAt: '2026-08-04T00:00:11Z',
+            },
             workUnitScopeId: 'scope-2a',
             sprintPlanRevisionId: 'revision-2',
             fixedExecutionScopeIds: [],

@@ -21,7 +21,7 @@ use super::domain::{
 };
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction, TransactionBehavior};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
@@ -1156,11 +1156,16 @@ impl SqliteOrchestrationRepository {
         let handler_activation_tables = materialization_tables && connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_handler_activations')", [], |row| row.get::<_, bool>(0)).map_err(|e| e.to_string())?;
         let action_continuations = activation_rows(&connection, "work_unit_handler_action_continuations", "attempt_id,handler_session_id,original_handler_invocation_id,action_invocation_id,action_harness_revision_id,action_harness_configuration_digest,action_harness_repository_commit_ref,requested_at,authorized_at,invocation_prepared_at,harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,action_ready_at,blocked_reason,failure_reason", |row| Ok(WorkUnitHandlerActionContinuationDto { attempt_id:row.get(1)?, handler_session_id:row.get(2)?, original_handler_invocation_id:row.get(3)?, action_invocation_id:row.get(4)?, action_harness_revision_id:row.get(5)?, action_harness_configuration_digest:row.get(6)?, action_harness_repository_commit_ref:row.get(7)?, requested_at:row.get(8)?, authorized_at:row.get(9)?, invocation_prepared_at:row.get(10)?, harness_bound_at:row.get(11)?, launch_requested_at:row.get(12)?, launch_accepted_at:row.get(13)?, provider_activation_observed_at:row.get(14)?, action_ready_at:row.get(15)?, blocked_reason:row.get(16)?, failure_reason:row.get(17)? }))?;
         let implementer_activations = activation_rows(&connection, "work_unit_implementer_activations", "attempt_id,handler_invocation_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at,authorized_at,execution_support_granted_at,isolated_worktree_ready_at,implementer_session_created_at,implementer_invocation_prepared_at,implementer_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,implementer_ready_at,failure_reason", map_implementer_activation)?;
-        let mut work_units = if handler_activation_tables { collect(&connection, "SELECT u.work_unit_id,u.materialization_id,u.work_slice_id,u.accepted_revision_id,u.lane_ordinal,u.lane_title,u.specification,a.attempt_id,a.handler_session_id,a.handler_invocation_id,a.handler_harness_revision_id,a.handler_harness_configuration_digest,a.handler_harness_repository_commit_ref,a.eligibility_state,a.blocked_reason,a.requested_at,a.authorized_at,a.attempt_created_at,a.execution_support_granted_at,a.isolated_worktree_ready_at,a.handler_session_created_at,a.handler_invocation_prepared_at,a.handler_harness_bound_at,a.launch_requested_at,a.launch_accepted_at,a.provider_activation_observed_at,a.handler_ready_at FROM work_units u LEFT JOIN work_unit_handler_activations a ON a.work_unit_id=u.work_unit_id ORDER BY u.materialization_id,u.lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation: match row.get::<_,Option<String>>(7)? { Some(attempt_id) => Some(WorkUnitHandlerActivationDto { attempt_id, handler_session_id:row.get(8)?, handler_invocation_id:row.get(9)?, handler_harness_revision_id:row.get(10)?, handler_harness_configuration_digest:row.get(11)?, handler_harness_repository_commit_ref:row.get(12)?, eligibility_state:row.get(13)?, blocked_reason:row.get(14)?, requested_at:row.get(15)?, authorized_at:row.get(16)?, attempt_created_at:row.get(17)?, execution_support_granted_at:row.get(18)?, isolated_worktree_ready_at:row.get(19)?, handler_session_created_at:row.get(20)?, handler_invocation_prepared_at:row.get(21)?, handler_harness_bound_at:row.get(22)?, launch_requested_at:row.get(23)?, launch_accepted_at:row.get(24)?, provider_activation_observed_at:row.get(25)?, handler_ready_at:row.get(26)? }), None => None }, action_continuation:None, implementer_activation:None }))? } else if materialization_tables { collect(&connection, "SELECT work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification FROM work_units ORDER BY materialization_id,lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation:None, action_continuation:None, implementer_activation:None }))? } else { Vec::new() };
+        let mut implementer_outcomes = implementer_outcome_rows(&connection)?;
+        let mut work_units = if handler_activation_tables { collect(&connection, "SELECT u.work_unit_id,u.materialization_id,u.work_slice_id,u.accepted_revision_id,u.lane_ordinal,u.lane_title,u.specification,a.attempt_id,a.handler_session_id,a.handler_invocation_id,a.handler_harness_revision_id,a.handler_harness_configuration_digest,a.handler_harness_repository_commit_ref,a.eligibility_state,a.blocked_reason,a.requested_at,a.authorized_at,a.attempt_created_at,a.execution_support_granted_at,a.isolated_worktree_ready_at,a.handler_session_created_at,a.handler_invocation_prepared_at,a.handler_harness_bound_at,a.launch_requested_at,a.launch_accepted_at,a.provider_activation_observed_at,a.handler_ready_at FROM work_units u LEFT JOIN work_unit_handler_activations a ON a.work_unit_id=u.work_unit_id ORDER BY u.materialization_id,u.lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation: match row.get::<_,Option<String>>(7)? { Some(attempt_id) => Some(WorkUnitHandlerActivationDto { attempt_id, handler_session_id:row.get(8)?, handler_invocation_id:row.get(9)?, handler_harness_revision_id:row.get(10)?, handler_harness_configuration_digest:row.get(11)?, handler_harness_repository_commit_ref:row.get(12)?, eligibility_state:row.get(13)?, blocked_reason:row.get(14)?, requested_at:row.get(15)?, authorized_at:row.get(16)?, attempt_created_at:row.get(17)?, execution_support_granted_at:row.get(18)?, isolated_worktree_ready_at:row.get(19)?, handler_session_created_at:row.get(20)?, handler_invocation_prepared_at:row.get(21)?, handler_harness_bound_at:row.get(22)?, launch_requested_at:row.get(23)?, launch_accepted_at:row.get(24)?, provider_activation_observed_at:row.get(25)?, handler_ready_at:row.get(26)? }), None => None }, action_continuation:None, implementer_activation:None, implementer_outcome:None }))? } else if materialization_tables { collect(&connection, "SELECT work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification FROM work_units ORDER BY materialization_id,lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation:None, action_continuation:None, implementer_activation:None, implementer_outcome:None }))? } else { Vec::new() };
         for work_unit in &mut work_units {
             work_unit.action_continuation = action_continuations.get(&work_unit.work_unit_id).cloned();
             work_unit.implementer_activation = implementer_activations.get(&work_unit.work_unit_id).cloned();
+            work_unit.implementer_outcome = implementer_outcomes.remove(&work_unit.work_unit_id);
             validate_work_unit_activation_projection(work_unit)?;
+        }
+        if !implementer_outcomes.is_empty() {
+            return Err("Implementer outcome references an unknown Work Unit".into());
         }
         let work_unit_relationships = if materialization_tables { collect(&connection, "SELECT relationship_id,materialization_id,relationship_kind,from_id,to_id,ordinal FROM work_unit_relationships ORDER BY materialization_id,relationship_kind,from_id,to_id", |row| Ok(WorkUnitRelationshipDto { relationship_id:row.get(0)?, materialization_id:row.get(1)?, relationship_kind:row.get(2)?, from_id:row.get(3)?, to_id:row.get(4)?, ordinal:row.get(5)? }))? } else { Vec::new() };
         Ok(NativeQueryV2 {
@@ -2905,6 +2910,8 @@ struct WorkUnitDto {
     handler_activation: Option<WorkUnitHandlerActivationDto>,
     action_continuation: Option<WorkUnitHandlerActionContinuationDto>,
     implementer_activation: Option<WorkUnitImplementerActivationDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    implementer_outcome: Option<WorkUnitImplementerOutcomeDto>,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2973,6 +2980,318 @@ struct WorkUnitImplementerActivationDto {
     provider_activation_observed_at: Option<String>,
     implementer_ready_at: Option<String>,
     failure_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ImplementationOutcomeVariantDto {
+    ReviewPending,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistedImplementationOutcomeClaims {
+    outcome: ImplementationOutcomeVariantDto,
+    summary: String,
+    validation_statement: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitImplementerSubmissionDto {
+    variant: ImplementationOutcomeVariantDto,
+    summary_claim: String,
+    validation_statement_claim: String,
+    semantic_payload_fingerprint: String,
+    submitted_at: String,
+    validation_at: String,
+    validation_result: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistedImplementationEvidenceManifestEntry {
+    evidence_ref: String,
+    display_name: String,
+    change_kind: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistedImplementationEvidenceContentFingerprint {
+    evidence_ref: String,
+    content_fingerprint: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ImplementationEvidenceChangeKindDto {
+    Added,
+    Modified,
+    Deleted,
+    Renamed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitImplementerEvidenceFileDto {
+    evidence_ref: String,
+    display_name: String,
+    change_kind: ImplementationEvidenceChangeKindDto,
+    content_fingerprint: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitImplementerEvidenceDto {
+    changed_files: Vec<WorkUnitImplementerEvidenceFileDto>,
+    comparison_fingerprint: String,
+    ready_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitImplementerSemanticCompletionDto {
+    invocation_id: String,
+    completed_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkUnitImplementerLifecycleStatusDto {
+    Completed,
+    Failed,
+    Canceled,
+    Interrupted,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitImplementerTerminalLifecycleDto {
+    status: WorkUnitImplementerLifecycleStatusDto,
+    observed_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitImplementerOutcomeDto {
+    attempt_id: String,
+    implementer_session_id: String,
+    original_implementer_invocation_id: String,
+    reporting_invocation_id: String,
+    reporting_harness_revision_id: String,
+    reporting_harness_configuration_digest: String,
+    reporting_harness_repository_commit_ref: String,
+    reporting_requested_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reporting_prepared_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reporting_harness_bound_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reporting_launch_requested_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reporting_launch_accepted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reporting_ready_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    submitted_outcome: Option<WorkUnitImplementerSubmissionDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    evidence: Option<WorkUnitImplementerEvidenceDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    semantic_completion: Option<WorkUnitImplementerSemanticCompletionDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    terminal_lifecycle: Option<WorkUnitImplementerTerminalLifecycleDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    application_accepted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    handler_review_ready_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failure_reason: Option<String>,
+}
+
+fn map_implementer_outcome(row: &Row<'_>) -> Result<WorkUnitImplementerOutcomeDto, rusqlite::Error> {
+    let summary: Option<String> = row.get(14)?;
+    let variant: Option<String> = row.get(15)?;
+    let validation_statement: Option<String> = row.get(16)?;
+    let semantic_payload: Option<String> = row.get(17)?;
+    let submission_fingerprint: Option<String> = row.get(18)?;
+    let submitted_at: Option<String> = row.get(19)?;
+    let validation_at: Option<String> = row.get(20)?;
+    let validation_result: Option<String> = row.get(21)?;
+    let submitted_outcome = match (
+        summary,
+        variant,
+        validation_statement,
+        semantic_payload,
+        submission_fingerprint,
+        submitted_at,
+        validation_at,
+        validation_result,
+    ) {
+        (None, None, None, None, None, None, None, None) => None,
+        (
+            Some(summary),
+            Some(variant),
+            Some(validation_statement),
+            Some(payload),
+            Some(fingerprint),
+            Some(submitted_at),
+            Some(validation_at),
+            Some(validation_result),
+        ) => {
+            let claims: PersistedImplementationOutcomeClaims =
+                serde_json::from_str(&payload).map_err(|error| to_sql_error(error.to_string()))?;
+            let canonical = serde_json::to_string(&claims)
+                .map_err(|error| to_sql_error(error.to_string()))?;
+            if variant != "review_pending"
+                || claims.outcome != ImplementationOutcomeVariantDto::ReviewPending
+                || validation_result != "valid"
+                || claims.summary != summary
+                || claims.validation_statement != validation_statement
+                || canonical != payload
+                || fingerprint != projection_stable_id("implementer-outcome", &payload)
+                || summary.trim().is_empty()
+                || validation_statement.trim().is_empty()
+            {
+                return Err(to_sql_error(
+                    "Implementer submitted outcome bundle is incoherent".into(),
+                ));
+            }
+            Some(WorkUnitImplementerSubmissionDto {
+                variant: claims.outcome,
+                summary_claim: summary,
+                validation_statement_claim: validation_statement,
+                semantic_payload_fingerprint: fingerprint,
+                submitted_at,
+                validation_at,
+                validation_result: "valid",
+            })
+        }
+        _ => {
+            return Err(to_sql_error(
+                "Implementer submitted outcome bundle is partial".into(),
+            ))
+        }
+    };
+
+    let manifest_json: Option<String> = row.get(22)?;
+    let comparison_fingerprint: Option<String> = row.get(23)?;
+    let content_fingerprints_json: Option<String> = row.get(24)?;
+    let evidence_ready_at: Option<String> = row.get(25)?;
+    let evidence = match (
+        manifest_json,
+        comparison_fingerprint,
+        content_fingerprints_json,
+        evidence_ready_at,
+    ) {
+        (None, None, None, None) => None,
+        (Some(manifest_json), Some(comparison_fingerprint), Some(contents_json), Some(ready_at)) => {
+            let manifest: Vec<PersistedImplementationEvidenceManifestEntry> =
+                serde_json::from_str(&manifest_json).map_err(|error| to_sql_error(error.to_string()))?;
+            let contents: Vec<PersistedImplementationEvidenceContentFingerprint> =
+                serde_json::from_str(&contents_json).map_err(|error| to_sql_error(error.to_string()))?;
+            if manifest.is_empty()
+                || manifest.len() > 500
+                || manifest.len() != contents.len()
+                || comparison_fingerprint.trim().is_empty()
+            {
+                return Err(to_sql_error("Implementer evidence bundle is incoherent".into()));
+            }
+            let content_by_reference = contents
+                .into_iter()
+                .map(|entry| (entry.evidence_ref, entry.content_fingerprint))
+                .collect::<std::collections::BTreeMap<_, _>>();
+            if content_by_reference.len() != manifest.len() {
+                return Err(to_sql_error("Implementer evidence references are duplicated".into()));
+            }
+            let mut changed_files = Vec::with_capacity(manifest.len());
+            let mut seen = std::collections::BTreeSet::new();
+            for entry in manifest {
+                let change_kind = match entry.change_kind.as_str() {
+                    "added" => ImplementationEvidenceChangeKindDto::Added,
+                    "modified" => ImplementationEvidenceChangeKindDto::Modified,
+                    "deleted" => ImplementationEvidenceChangeKindDto::Deleted,
+                    "renamed" => ImplementationEvidenceChangeKindDto::Renamed,
+                    _ => return Err(to_sql_error("invalid Implementer evidence change kind".into())),
+                };
+                let content_fingerprint = content_by_reference
+                    .get(&entry.evidence_ref)
+                    .filter(|fingerprint| !fingerprint.trim().is_empty())
+                    .cloned()
+                    .ok_or_else(|| to_sql_error("Implementer evidence content is uncorrelated".into()))?;
+                if !seen.insert(entry.evidence_ref.clone())
+                    || entry.evidence_ref.trim().is_empty()
+                    || entry.display_name.trim().is_empty()
+                {
+                    return Err(to_sql_error("Implementer evidence manifest is incoherent".into()));
+                }
+                changed_files.push(WorkUnitImplementerEvidenceFileDto {
+                    evidence_ref: entry.evidence_ref,
+                    display_name: entry.display_name,
+                    change_kind,
+                    content_fingerprint,
+                });
+            }
+            changed_files.sort_by(|left, right| left.evidence_ref.cmp(&right.evidence_ref));
+            Some(WorkUnitImplementerEvidenceDto {
+                changed_files,
+                comparison_fingerprint,
+                ready_at,
+            })
+        }
+        _ => return Err(to_sql_error("Implementer evidence bundle is partial".into())),
+    };
+
+    let semantic_completed_at: Option<String> = row.get(26)?;
+    let semantic_completion_invocation_id: Option<String> = row.get(27)?;
+    let semantic_completion = match (semantic_completed_at, semantic_completion_invocation_id) {
+        (None, None) => None,
+        (Some(completed_at), Some(invocation_id)) => Some(WorkUnitImplementerSemanticCompletionDto {
+            invocation_id,
+            completed_at,
+        }),
+        _ => return Err(to_sql_error("Implementer semantic completion bundle is partial".into())),
+    };
+
+    let lifecycle_observed_at: Option<String> = row.get(28)?;
+    let lifecycle_status: Option<String> = row.get(29)?;
+    let terminal_lifecycle = match (lifecycle_observed_at, lifecycle_status) {
+        (None, None) => None,
+        (Some(observed_at), Some(status)) => {
+            let status = match status.as_str() {
+                "completed" => WorkUnitImplementerLifecycleStatusDto::Completed,
+                "failed" => WorkUnitImplementerLifecycleStatusDto::Failed,
+                "canceled" => WorkUnitImplementerLifecycleStatusDto::Canceled,
+                "interrupted" => WorkUnitImplementerLifecycleStatusDto::Interrupted,
+                _ => return Err(to_sql_error("invalid Implementer reporting lifecycle status".into())),
+            };
+            Some(WorkUnitImplementerTerminalLifecycleDto { status, observed_at })
+        }
+        _ => return Err(to_sql_error("Implementer terminal lifecycle bundle is partial".into())),
+    };
+
+    Ok(WorkUnitImplementerOutcomeDto {
+        attempt_id: row.get(1)?,
+        implementer_session_id: row.get(2)?,
+        original_implementer_invocation_id: row.get(3)?,
+        reporting_invocation_id: row.get(4)?,
+        reporting_harness_revision_id: row.get(5)?,
+        reporting_harness_configuration_digest: row.get(6)?,
+        reporting_harness_repository_commit_ref: row.get(7)?,
+        reporting_requested_at: row.get(8)?,
+        reporting_prepared_at: row.get(9)?,
+        reporting_harness_bound_at: row.get(10)?,
+        reporting_launch_requested_at: row.get(11)?,
+        reporting_launch_accepted_at: row.get(12)?,
+        reporting_ready_at: row.get(13)?,
+        submitted_outcome,
+        evidence,
+        semantic_completion,
+        terminal_lifecycle,
+        application_accepted_at: row.get(30)?,
+        handler_review_ready_at: row.get(31)?,
+        failure_reason: row.get(32)?,
+    })
 }
 
 fn map_implementer_activation(row: &Row<'_>) -> Result<WorkUnitImplementerActivationDto, rusqlite::Error> {
@@ -3115,6 +3434,133 @@ fn validate_work_unit_activation_projection(work_unit: &WorkUnitDto) -> Result<(
             return Err("Implementer failure projection is incoherent".into());
         }
     }
+
+    if let Some(outcome) = &work_unit.implementer_outcome {
+        let implementer = work_unit.implementer_activation.as_ref()
+            .ok_or_else(|| "Implementer outcome lacks Implementer activation".to_string())?;
+        let continuation = work_unit.action_continuation.as_ref()
+            .ok_or_else(|| "Implementer outcome lacks Handler action continuation".to_string())?;
+        if outcome.attempt_id != implementer.attempt_id
+            || outcome.implementer_session_id != implementer.implementer_session_id
+            || outcome.original_implementer_invocation_id != implementer.implementer_invocation_id
+            || implementer.launch_accepted_at.is_none()
+            || implementer.implementer_ready_at.is_none()
+        {
+            return Err("Implementer outcome has foreign activation correlation".into());
+        }
+        if outcome.reporting_invocation_id
+            != projection_stable_id("work-unit-implementer-reporting-invocation", &outcome.attempt_id)
+            || outcome.reporting_invocation_id == outcome.original_implementer_invocation_id
+            || outcome.reporting_invocation_id == continuation.action_invocation_id
+            || outcome.reporting_invocation_id == continuation.original_handler_invocation_id
+            || outcome.reporting_harness_revision_id == implementer.implementer_harness_revision_id
+            || outcome.reporting_harness_configuration_digest
+                == implementer.implementer_harness_configuration_digest
+        {
+            return Err("Implementer outcome reuses or mismatches reporting identity".into());
+        }
+        for identity in [
+            &outcome.reporting_harness_revision_id,
+            &outcome.reporting_harness_configuration_digest,
+            &outcome.reporting_harness_repository_commit_ref,
+        ] {
+            if identity.trim().is_empty() {
+                return Err("Implementer reporting Harness facts are incomplete".into());
+            }
+        }
+        require_ordered_projected_phases(
+            &[
+                Some(outcome.reporting_requested_at.as_str()),
+                outcome.reporting_prepared_at.as_deref(),
+                outcome.reporting_harness_bound_at.as_deref(),
+                outcome.reporting_launch_requested_at.as_deref(),
+                outcome.reporting_launch_accepted_at.as_deref(),
+                outcome.reporting_ready_at.as_deref(),
+            ],
+            "Implementer reporting",
+        )?;
+        if outcome.failure_reason.as_deref().is_some_and(|reason| reason.trim().is_empty()) {
+            return Err("Implementer reporting failure reason is blank".into());
+        }
+        if let Some(submission) = &outcome.submitted_outcome {
+            let reporting_ready = outcome.reporting_ready_at.as_deref()
+                .ok_or_else(|| "Implementer outcome submission lacks reporting readiness".to_string())?;
+            require_timestamp_at_or_after(
+                reporting_ready,
+                &submission.submitted_at,
+                "Implementer outcome submission",
+            )?;
+            require_timestamp_at_or_after(
+                &submission.submitted_at,
+                &submission.validation_at,
+                "Implementer outcome validation",
+            )?;
+        }
+        if let Some(evidence) = &outcome.evidence {
+            let validation_at = outcome.submitted_outcome.as_ref()
+                .map(|submission| submission.validation_at.as_str())
+                .ok_or_else(|| "Implementer evidence lacks a validated submission".to_string())?;
+            require_timestamp_at_or_after(
+                validation_at,
+                &evidence.ready_at,
+                "Implementer evidence readiness",
+            )?;
+        }
+        if let Some(completion) = &outcome.semantic_completion {
+            let evidence_ready = outcome.evidence.as_ref()
+                .map(|evidence| evidence.ready_at.as_str())
+                .ok_or_else(|| "Implementer semantic completion lacks evidence".to_string())?;
+            if completion.invocation_id != outcome.reporting_invocation_id {
+                return Err("Implementer semantic completion has a foreign invocation".into());
+            }
+            require_timestamp_at_or_after(
+                evidence_ready,
+                &completion.completed_at,
+                "Implementer semantic completion",
+            )?;
+        }
+        if let Some(lifecycle) = &outcome.terminal_lifecycle {
+            let reporting_ready = outcome.reporting_ready_at.as_deref()
+                .ok_or_else(|| "Implementer terminal lifecycle lacks reporting readiness".to_string())?;
+            require_timestamp_at_or_after(
+                reporting_ready,
+                &lifecycle.observed_at,
+                "Implementer terminal lifecycle observation",
+            )?;
+            if let Some(completion) = &outcome.semantic_completion {
+                require_timestamp_at_or_after(
+                    &completion.completed_at,
+                    &lifecycle.observed_at,
+                    "Implementer terminal lifecycle observation",
+                )?;
+            }
+        }
+        if let Some(accepted_at) = &outcome.application_accepted_at {
+            let lifecycle = outcome.terminal_lifecycle.as_ref()
+                .filter(|lifecycle| matches!(lifecycle.status, WorkUnitImplementerLifecycleStatusDto::Completed))
+                .ok_or_else(|| "Implementer application acceptance lacks Completed lifecycle".to_string())?;
+            if outcome.submitted_outcome.is_none()
+                || outcome.evidence.is_none()
+                || outcome.semantic_completion.is_none()
+            {
+                return Err("Implementer application acceptance lacks semantic or evidence prerequisites".into());
+            }
+            require_timestamp_at_or_after(
+                &lifecycle.observed_at,
+                accepted_at,
+                "Implementer application acceptance",
+            )?;
+        }
+        if let Some(review_ready_at) = &outcome.handler_review_ready_at {
+            let accepted_at = outcome.application_accepted_at.as_deref()
+                .ok_or_else(|| "Handler review readiness lacks application acceptance".to_string())?;
+            require_timestamp_at_or_after(
+                accepted_at,
+                review_ready_at,
+                "Handler review readiness",
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -3128,6 +3574,39 @@ fn require_projected_phase_prerequisites(phases: &[Option<&str>], label: &str) -
         }
     }
     Ok(())
+}
+
+fn require_ordered_projected_phases(phases: &[Option<&str>], label: &str) -> Result<(), String> {
+    require_projected_phase_prerequisites(phases, label)?;
+    let mut previous = None;
+    for phase in phases.iter().flatten() {
+        let parsed = DateTime::parse_from_rfc3339(phase)
+            .map_err(|_| format!("{label} has an invalid timestamp"))?;
+        if previous.is_some_and(|previous| parsed < previous) {
+            return Err(format!("{label} phase timestamps are not ordered"));
+        }
+        previous = Some(parsed);
+    }
+    Ok(())
+}
+
+fn require_timestamp_at_or_after(prerequisite: &str, value: &str, label: &str) -> Result<(), String> {
+    let prerequisite = DateTime::parse_from_rfc3339(prerequisite)
+        .map_err(|_| format!("{label} prerequisite has an invalid timestamp"))?;
+    let value = DateTime::parse_from_rfc3339(value)
+        .map_err(|_| format!("{label} has an invalid timestamp"))?;
+    if value < prerequisite {
+        return Err(format!("{label} precedes its prerequisite"));
+    }
+    Ok(())
+}
+
+fn projection_stable_id(prefix: &str, value: &str) -> String {
+    let mut hash = Sha256::new();
+    hash.update(prefix.as_bytes());
+    hash.update([0]);
+    hash.update(value.as_bytes());
+    format!("{prefix}-{:x}", hash.finalize())
 }
 
 fn activation_rows<T, F>(connection: &Connection, table: &str, columns: &str, mut map: F) -> Result<std::collections::HashMap<String, T>, String>
@@ -3147,6 +3626,27 @@ where
     let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, map(row)?)))
         .map_err(|error| error.to_string())?;
     rows.collect::<Result<std::collections::HashMap<_, _>, _>>().map_err(|error| error.to_string())
+}
+
+fn implementer_outcome_rows(
+    connection: &Connection,
+) -> Result<std::collections::HashMap<String, WorkUnitImplementerOutcomeDto>, String> {
+    let exists = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_implementer_outcomes')",
+        [],
+        |row| row.get::<_, bool>(0),
+    ).map_err(|error| error.to_string())?;
+    if !exists {
+        return Ok(std::collections::HashMap::new());
+    }
+    let mut statement = connection.prepare(
+        "SELECT work_unit_id,attempt_id,implementer_session_id,implementer_invocation_id,reporting_invocation_id,reporting_harness_revision_id,reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,reporting_requested_at,reporting_prepared_at,reporting_harness_bound_at,reporting_launch_requested_at,reporting_launch_accepted_at,reporting_ready_at,submitted_summary,outcome_variant,submitted_validation_statement,semantic_payload_json,submission_fingerprint,submitted_at,validation_at,validation_result,evidence_manifest_json,comparison_fingerprint,evidence_content_fingerprints_json,evidence_ready_at,semantic_completed_at,semantic_completion_invocation_id,lifecycle_observed_at,lifecycle_status,application_accepted_at,handler_review_ready_at,failure_reason FROM work_unit_implementer_outcomes"
+    ).map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, map_implementer_outcome(row)?))
+    }).map_err(|error| error.to_string())?;
+    rows.collect::<Result<std::collections::HashMap<_, _>, _>>()
+        .map_err(|error| error.to_string())
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -1,0 +1,174 @@
+import { render, screen } from '@testing-library/react';
+import type {
+  ProductWorkUnitImplementerOutcomeV1,
+  SprintWorkspacePresentationV1,
+} from '../../../application/orchestrations';
+import { WorkUnitDetailWorkspace } from './WorkUnitDetailWorkspace';
+
+type PresentedWorkUnit =
+  SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number];
+
+describe('WorkUnitDetailWorkspace Implementer outcome activity', () => {
+  it('keeps absence as absence and shows an in-progress reporting continuation without later facts', () => {
+    const rendered = renderWorkspace();
+    expect(screen.queryByText('Implementer reporting')).toBeNull();
+    expect(screen.queryByText('Ready for Handler review')).toBeNull();
+
+    rendered.rerender(workspace(reportingOutcome()));
+    const detail = screen.getByLabelText('Work Unit context');
+    expect(detail).toHaveTextContent('Implementer reporting invocation is prepared.');
+    expect(detail).toHaveTextContent('Requested');
+    expect(detail).toHaveTextContent('Prepared');
+    expect(detail).not.toHaveTextContent('Submitted outcome claims');
+    expect(detail).not.toHaveTextContent('Application-owned File Review evidence');
+    expect(screen.queryByText('Ready for Handler review')).toBeNull();
+  });
+
+  it.each(['failed', 'canceled'] as const)(
+    'shows a %s reporting terminal without application acceptance or review readiness',
+    (status) => {
+      renderWorkspace(terminalOutcome(status));
+      const detail = screen.getByLabelText('Work Unit context');
+      expect(detail).toHaveTextContent(
+        `Reporting lifecycle was observed as ${status === 'failed' ? 'Failed' : 'Canceled'}`,
+      );
+      expect(detail).not.toHaveTextContent('application-accepted');
+      expect(screen.queryByText('Ready for Handler review')).toBeNull();
+    },
+  );
+
+  it('labels Implementer prose as claims and shows authoritative evidence before exact review readiness', () => {
+    renderWorkspace(reviewReadyOutcome());
+    const detail = screen.getByLabelText('Work Unit context');
+    expect(detail).toHaveTextContent('Submitted outcome claims');
+    expect(detail).toHaveTextContent('Implementer summary claim');
+    expect(detail).toHaveTextContent('Implemented the bounded change.');
+    expect(detail).toHaveTextContent('Implementer validation claim');
+    expect(detail).toHaveTextContent('Focused checks passed.');
+    expect(detail).toHaveTextContent(
+      'These Implementer statements are claims, not application-owned evidence.',
+    );
+    expect(detail).toHaveTextContent('Application-owned File Review evidence');
+    expect(detail).toHaveTextContent('Reporting invocation');
+    expect(detail).toHaveTextContent('reporting-invocation-1');
+    expect(detail).toHaveTextContent('Reporting Harness revision');
+    expect(detail).toHaveTextContent('reporting-revision-1');
+    expect(detail).toHaveTextContent('src/feature.ts');
+    expect(detail).toHaveTextContent('evidence reference evidence-1');
+    expect(detail).toHaveTextContent('content fingerprint content-1');
+    expect(detail).toHaveTextContent('Comparison fingerprint: comparison-1');
+    expect(detail).toHaveTextContent('Semantic outcome completion was recorded');
+    expect(detail).toHaveTextContent('Reporting lifecycle was observed as Completed');
+    expect(detail).toHaveTextContent('The reporting outcome was application-accepted');
+    expect(screen.getByText('Ready for Handler review')).toBeVisible();
+    expect(detail).toHaveTextContent('No Handler judgment is recorded here.');
+    expect(detail).not.toHaveTextContent(
+      /implementation approved|Work Unit accepted|returned for correction|retry requested|settled|dependency activated|Sprint continuation/i,
+    );
+  });
+});
+
+function renderWorkspace(outcome?: ProductWorkUnitImplementerOutcomeV1) {
+  return render(workspace(outcome));
+}
+
+function workspace(outcome?: ProductWorkUnitImplementerOutcomeV1) {
+  return (
+    <WorkUnitDetailWorkspace
+      unit={presentedWorkUnit(outcome)}
+      lifecycleEntries={[]}
+      workSlicePlanningPointGroupTitle="Planning point"
+      sessions={[]}
+      onBack={vi.fn()}
+    />
+  );
+}
+
+function presentedWorkUnit(outcome?: ProductWorkUnitImplementerOutcomeV1): PresentedWorkUnit {
+  return {
+    workUnitId: 'unit-1',
+    title: 'Bounded responsibility',
+    summary: 'Implement one bounded change.',
+    details: 'Accepted Work Slice responsibility.',
+    source: {
+      status: 'available',
+      sourceKind: 'repository',
+      sourceReferences: ['materialization-1'],
+    },
+    ...(outcome ? { implementerOutcome: outcome } : {}),
+    workUnitScopeId: 'scope-1',
+    sprintPlanRevisionId: 'revision-1',
+    fixedExecutionScopeIds: [],
+    dependencies: [],
+    gateIds: [],
+    attempts: [],
+    reviews: [],
+    observed: {
+      executionRequested: false,
+      launched: false,
+      returned: false,
+      integrated: false,
+      responsibilityAccepted: false,
+    },
+    presentationState: 'not_started',
+  };
+}
+
+function reportingOutcome(): ProductWorkUnitImplementerOutcomeV1 {
+  return {
+    attemptId: 'attempt-1',
+    implementerSessionId: 'implementer-session-1',
+    originalImplementerInvocationId: 'implementer-invocation-1',
+    reportingInvocationId: 'reporting-invocation-1',
+    reportingHarnessRevisionId: 'reporting-revision-1',
+    reportingHarnessConfigurationDigest: 'reporting-digest-1',
+    reportingHarnessRepositoryCommitRef: 'reporting-commit-1',
+    reportingRequestedAt: '2026-08-04T00:00:00Z',
+    reportingPreparedAt: '2026-08-04T00:00:01Z',
+  };
+}
+
+function terminalOutcome(status: 'failed' | 'canceled'): ProductWorkUnitImplementerOutcomeV1 {
+  return {
+    ...reportingOutcome(),
+    reportingHarnessBoundAt: '2026-08-04T00:00:02Z',
+    reportingLaunchRequestedAt: '2026-08-04T00:00:03Z',
+    reportingLaunchAcceptedAt: '2026-08-04T00:00:04Z',
+    reportingReadyAt: '2026-08-04T00:00:05Z',
+    terminalLifecycle: { status, observedAt: '2026-08-04T00:00:09Z' },
+  };
+}
+
+function reviewReadyOutcome(): ProductWorkUnitImplementerOutcomeV1 {
+  return {
+    ...terminalOutcome('failed'),
+    submittedOutcome: {
+      variant: 'review_pending',
+      summaryClaim: 'Implemented the bounded change.',
+      validationStatementClaim: 'Focused checks passed.',
+      semanticPayloadFingerprint: 'payload-1',
+      submittedAt: '2026-08-04T00:00:06Z',
+      validationAt: '2026-08-04T00:00:06Z',
+      validationResult: 'valid',
+    },
+    evidence: {
+      changedFiles: [
+        {
+          evidenceRef: 'evidence-1',
+          displayName: 'src/feature.ts',
+          changeKind: 'modified',
+          contentFingerprint: 'content-1',
+        },
+      ],
+      comparisonFingerprint: 'comparison-1',
+      readyAt: '2026-08-04T00:00:07Z',
+    },
+    semanticCompletion: {
+      invocationId: 'reporting-invocation-1',
+      completedAt: '2026-08-04T00:00:08Z',
+    },
+    terminalLifecycle: { status: 'completed', observedAt: '2026-08-04T00:00:09Z' },
+    applicationAcceptedAt: '2026-08-04T00:00:10Z',
+    handlerReviewReadyAt: '2026-08-04T00:00:11Z',
+  };
+}

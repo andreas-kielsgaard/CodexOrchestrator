@@ -169,6 +169,7 @@ export interface ProductReadReferenceIndexV1 {
     readonly handlerActivation?: ProductWorkUnitHandlerActivationV1;
     readonly actionContinuation?: ProductWorkUnitActionContinuationV1;
     readonly implementerActivation?: ProductWorkUnitImplementerActivationV1;
+    readonly implementerOutcome?: ProductWorkUnitImplementerOutcomeV1;
   }[];
   readonly gates: readonly {
     readonly gateId: string;
@@ -308,6 +309,53 @@ export type ProductWorkUnitImplementerActivationV1 = Readonly<{
   readonly providerActivityObserved: boolean;
 }>;
 
+/** Application-recorded reporting facts; submitted prose remains explicitly claim-only. */
+export type ProductWorkUnitImplementerOutcomeV1 = Readonly<{
+  readonly attemptId: string;
+  readonly implementerSessionId: string;
+  readonly originalImplementerInvocationId: string;
+  readonly reportingInvocationId: string;
+  readonly reportingHarnessRevisionId: string;
+  readonly reportingHarnessConfigurationDigest: string;
+  readonly reportingHarnessRepositoryCommitRef: string;
+  readonly reportingRequestedAt: string;
+  readonly reportingPreparedAt?: string;
+  readonly reportingHarnessBoundAt?: string;
+  readonly reportingLaunchRequestedAt?: string;
+  readonly reportingLaunchAcceptedAt?: string;
+  readonly reportingReadyAt?: string;
+  readonly submittedOutcome?: Readonly<{
+    readonly variant: 'review_pending';
+    readonly summaryClaim: string;
+    readonly validationStatementClaim: string;
+    readonly semanticPayloadFingerprint: string;
+    readonly submittedAt: string;
+    readonly validationAt: string;
+    readonly validationResult: 'valid';
+  }>;
+  readonly evidence?: Readonly<{
+    readonly changedFiles: readonly Readonly<{
+      readonly evidenceRef: string;
+      readonly displayName: string;
+      readonly changeKind: 'added' | 'modified' | 'deleted' | 'renamed';
+      readonly contentFingerprint: string;
+    }>[];
+    readonly comparisonFingerprint: string;
+    readonly readyAt: string;
+  }>;
+  readonly semanticCompletion?: Readonly<{
+    readonly invocationId: string;
+    readonly completedAt: string;
+  }>;
+  readonly terminalLifecycle?: Readonly<{
+    readonly status: 'completed' | 'failed' | 'canceled' | 'interrupted';
+    readonly observedAt: string;
+  }>;
+  readonly applicationAcceptedAt?: string;
+  readonly handlerReviewReadyAt?: string;
+  readonly failureReason?: string;
+}>;
+
 export interface ProductContinuationReadModelV1 {
   readonly level: 'sprint' | 'epic';
   readonly policy: Readonly<{
@@ -380,6 +428,7 @@ export interface ProductSprintRevisionViewV1 {
     readonly handlerActivation?: ProductWorkUnitHandlerActivationV1;
     readonly actionContinuation?: ProductWorkUnitActionContinuationV1;
     readonly implementerActivation?: ProductWorkUnitImplementerActivationV1;
+    readonly implementerOutcome?: ProductWorkUnitImplementerOutcomeV1;
     readonly workUnitScopeId: string;
     readonly sprintPlanRevisionId: string;
     readonly fixedExecutionScopeIds: readonly string[];
