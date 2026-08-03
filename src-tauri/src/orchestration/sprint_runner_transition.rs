@@ -1755,15 +1755,82 @@ impl SprintRunnerTransitionService {
         let existing:bool=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_implementer_activations WHERE work_unit_id=?1)",[&work_unit],|row|row.get(0)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         if !existing { let desired=handler.current_implementer_revision().map_err(|_|SprintRunnerTransitionError::Unavailable("immutable Implementer Harness revision unavailable".into()))?;self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("INSERT INTO work_unit_implementer_activations (work_unit_id,handler_attempt_id,handler_invocation_id,attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",params![work_unit,handler_attempt,handler_invocation.as_str(),attempt,session_id,invocation_id,desired.revision_id,desired.configuration_digest,desired.repository_commit_ref,chrono::Utc::now().to_rfc3339()]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?; }
         let (attempt,session_id,invocation_id,revision_id,digest,commit):(String,String,String,String,String,String)=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref FROM work_unit_implementer_activations WHERE work_unit_id=?1 AND handler_attempt_id=?2 AND handler_invocation_id=?3",params![work_unit,handler_attempt,handler_invocation.as_str()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).map_err(|_|SprintRunnerTransitionError::Conflict)?;
-        let pinned=handler.load_pinned_implementer_revision(&revision_id,&digest,&commit).map_err(|_|SprintRunnerTransitionError::Conflict)?;handler.authorize_implementer_attempt(&attempt,&work_unit,&authority).map_err(|_|SprintRunnerTransitionError::Conflict)?;self.mark_implementer(&work_unit,"authorized_at")?;
-        let package=handler.construct_for_pinned_profile(&attempt,WorkUnitHarnessRole::Implementer,pinned.profile).map_err(|_|SprintRunnerTransitionError::Unavailable("Implementer Harness package construction failed".into()))?;self.mark_implementer(&work_unit,"execution_support_granted_at")?;self.mark_implementer(&work_unit,"isolated_worktree_ready_at")?;let session=AgentSessionId::new(session_id).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let invocation=AgentInvocationId::new(invocation_id).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let runtime=package.runtime_launch_configuration();
-        self.sessions.create_application_session(CreateApplicationAgentSessionCommand{session_id:session.clone(),session:CreateAgentSessionCommand{title:Some("Work Unit Implementer".into()),working_directory:Some(package.working_directory().into()),requested_options:runtime.requested_options.clone()}}).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;self.mark_implementer(&work_unit,"implementer_session_created_at")?;let prompt="Work Unit Implementer activation. Work only in the application-provided isolated execution workspace. Do not submit outcomes, accept, review, settle, retry, activate dependents, or continue any Sprint or Epic.".to_string();
-        self.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:invocation.clone(),message:SendAgentSessionMessageCommand{session_id:Some(session.clone()),submitted_text:prompt.clone(),title:None,working_directory:None,requested_options:Some(runtime.requested_options.clone())}}).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;self.mark_implementer(&work_unit,"implementer_invocation_prepared_at")?;package.bind_correlated_invocation(session.clone(),invocation.clone()).map_err(|_|SprintRunnerTransitionError::Conflict)?;self.mark_implementer(&work_unit,"implementer_harness_bound_at")?;
-        match self.sessions.application_invocation_launch_evidence(&invocation,&session).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?{ApplicationInvocationLaunchEvidence::LaunchAccepted=>{self.mark_implementer(&work_unit,"launch_accepted_at")?;self.mark_implementer(&work_unit,"implementer_ready_at")?},ApplicationInvocationLaunchEvidence::PersistedNotAccepted=>{self.mark_implementer(&work_unit,"launch_requested_at")?;let launch=self.sessions.launch_prepared_application_invocation_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:invocation.clone(),message:SendAgentSessionMessageCommand{session_id:Some(session.clone()),submitted_text:prompt,title:None,working_directory:Some(package.working_directory().into()),requested_options:Some(runtime.requested_options)}},Some(runtime.extension)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if launch.launch_accepted{self.mark_implementer(&work_unit,"launch_accepted_at")?;self.mark_implementer(&work_unit,"implementer_ready_at")?}},ApplicationInvocationLaunchEvidence::NeverPersisted=>return Err(SprintRunnerTransitionError::Conflict)};
+        let pinned = match handler.load_pinned_implementer_revision(&revision_id, &digest, &commit) {
+            Ok(pinned) => pinned,
+            Err(_) => return self.fail_implementer(&work_unit, "pinned_implementer_harness_invalid", SprintRunnerTransitionError::Conflict),
+        };
+        if handler.authorize_implementer_attempt(&attempt, &work_unit, &authority).is_err() {
+            return self.fail_implementer(&work_unit, "implementer_authorization_failed", SprintRunnerTransitionError::Conflict);
+        }
+        self.mark_implementer(&work_unit, "authorized_at")?;
+        let package = match handler.construct_for_pinned_profile(&attempt, WorkUnitHarnessRole::Implementer, pinned.profile) {
+            Ok(package) => package,
+            Err(_) => return self.fail_implementer(&work_unit, "implementer_execution_support_failed", SprintRunnerTransitionError::Unavailable("Implementer Harness package construction failed".into())),
+        };
+        self.mark_implementer(&work_unit, "execution_support_granted_at")?;
+        self.mark_implementer(&work_unit, "isolated_worktree_ready_at")?;
+        let session = match AgentSessionId::new(session_id) {
+            Ok(session) => session,
+            Err(error) => return self.fail_implementer(&work_unit, "implementer_session_identity_invalid", SprintRunnerTransitionError::Unavailable(error.to_string())),
+        };
+        let invocation = match AgentInvocationId::new(invocation_id) {
+            Ok(invocation) => invocation,
+            Err(error) => return self.fail_implementer(&work_unit, "implementer_invocation_identity_invalid", SprintRunnerTransitionError::Unavailable(error.to_string())),
+        };
+        let runtime = package.runtime_launch_configuration();
+        if let Err(error) = self.sessions.create_application_session(CreateApplicationAgentSessionCommand { session_id: session.clone(), session: CreateAgentSessionCommand { title: Some("Work Unit Implementer".into()), working_directory: Some(package.working_directory().into()), requested_options: runtime.requested_options.clone() }}) {
+            return self.fail_implementer(&work_unit, "implementer_session_creation_failed", SprintRunnerTransitionError::Unavailable(error.to_string()));
+        }
+        self.mark_implementer(&work_unit, "implementer_session_created_at")?;
+        let prompt = "Work Unit Implementer activation. Work only in the application-provided isolated execution workspace. Do not submit outcomes, accept, review, settle, retry, activate dependents, or continue any Sprint or Epic.".to_string();
+        if let Err(error) = self.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: prompt.clone(), title: None, working_directory: None, requested_options: Some(runtime.requested_options.clone()) }}) {
+            return self.fail_implementer(&work_unit, "implementer_invocation_preparation_failed", SprintRunnerTransitionError::Unavailable(error.to_string()));
+        }
+        self.mark_implementer(&work_unit, "implementer_invocation_prepared_at")?;
+        if package.bind_correlated_invocation(session.clone(), invocation.clone()).is_err() {
+            return self.fail_implementer(&work_unit, "implementer_harness_binding_failed", SprintRunnerTransitionError::Conflict);
+        }
+        self.mark_implementer(&work_unit, "implementer_harness_bound_at")?;
+        match self.sessions.application_invocation_launch_evidence(&invocation, &session) {
+            Err(error) => return self.fail_implementer(&work_unit, "implementer_launch_evidence_failed", SprintRunnerTransitionError::Unavailable(error.to_string())),
+            Ok(ApplicationInvocationLaunchEvidence::LaunchAccepted) => {
+                self.mark_implementer(&work_unit, "launch_accepted_at")?;
+                self.mark_implementer(&work_unit, "implementer_ready_at")?;
+            }
+            Ok(ApplicationInvocationLaunchEvidence::PersistedNotAccepted) => {
+                self.mark_implementer(&work_unit, "launch_requested_at")?;
+                let launch = match self.sessions.launch_prepared_application_invocation_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: prompt, title: None, working_directory: Some(package.working_directory().into()), requested_options: Some(runtime.requested_options) }}, Some(runtime.extension)) {
+                    Ok(launch) => launch,
+                    Err(error) => return self.fail_implementer(&work_unit, "implementer_launch_failed", SprintRunnerTransitionError::Unavailable(error.to_string())),
+                };
+                if launch.launch_accepted {
+                    self.mark_implementer(&work_unit, "launch_accepted_at")?;
+                    self.mark_implementer(&work_unit, "implementer_ready_at")?;
+                } else {
+                    return self.fail_implementer(
+                        &work_unit,
+                        "implementer_launch_not_accepted",
+                        SprintRunnerTransitionError::Unavailable(
+                            "Implementer launch was not accepted".into(),
+                        ),
+                    );
+                }
+            }
+            Ok(ApplicationInvocationLaunchEvidence::NeverPersisted) => return self.fail_implementer(&work_unit, "implementer_launch_missing_prepared_invocation", SprintRunnerTransitionError::Conflict),
+        };
+        self.clear_implementer_failure(&work_unit)?;
         if let Ok(observation)=package.observe_correlated_invocation(){if let Some(activity)=observation.provider_activity{self.mark_implementer_at(&work_unit,"provider_activation_observed_at",activity.recorded_at.to_rfc3339())?}};Ok(())
     }
     fn mark_implementer(&self,work_unit:&str,column:&str)->Result<(),SprintRunnerTransitionError>{self.mark_implementer_at(work_unit,column,chrono::Utc::now().to_rfc3339())}
     fn mark_implementer_at(&self,work_unit:&str,column:&str,at:String)->Result<(),SprintRunnerTransitionError>{if !["authorized_at","execution_support_granted_at","isolated_worktree_ready_at","implementer_session_created_at","implementer_invocation_prepared_at","implementer_harness_bound_at","launch_requested_at","launch_accepted_at","provider_activation_observed_at","implementer_ready_at"].contains(&column){return Err(SprintRunnerTransitionError::Unavailable("invalid Implementer activation stage".into()))}self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute(&format!("UPDATE work_unit_implementer_activations SET {column}=COALESCE({column},?2) WHERE work_unit_id=?1"),params![work_unit,at]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;Ok(())}
+    fn fail_implementer<T>(&self, work_unit: &str, reason: &str, error: SprintRunnerTransitionError) -> Result<T, SprintRunnerTransitionError> {
+        self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_implementer_activations SET failure_reason=?2 WHERE work_unit_id=?1", params![work_unit, reason]).map_err(|database_error| SprintRunnerTransitionError::Unavailable(database_error.to_string()))?;
+        Err(error)
+    }
+    fn clear_implementer_failure(&self, work_unit: &str) -> Result<(), SprintRunnerTransitionError> {
+        self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_implementer_activations SET failure_reason=NULL WHERE work_unit_id=?1", [work_unit]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        Ok(())
+    }
 
     fn mark_handler_action(&self, work_unit: &str, column: &str) -> Result<(), SprintRunnerTransitionError> {
         self.mark_handler_action_at(work_unit, column, chrono::Utc::now().to_rfc3339())

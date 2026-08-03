@@ -4974,6 +4974,83 @@ mod tests {
         assert_eq!(grants[1].0, "work_unit_implementer");
         assert_ne!(grants[0].1, grants[1].1);
         assert_eq!(grants[0].2, grants[1].2);
+        // These are the persisted/prepared application launch records, not catalog-only
+        // profiles: both Handler invocations remain read-only while the distinct Implementer
+        // capability receives the only workspace-write runtime.  All three are pinned to the
+        // one execution-support workspace and carry no caller-provided model or approval
+        // override.
+        let launches = fixture.runtime.requests();
+        let original_handler_launch = launches
+            .iter()
+            .find(|launch| launch.invocation_id.as_str() == root.3)
+            .unwrap();
+        let action_handler_launch = launches
+            .iter()
+            .find(|launch| launch.invocation_id.as_str() == continuation.3)
+            .unwrap();
+        let implementer_launch = launches
+            .iter()
+            .find(|launch| launch.invocation_id.as_str() == implementer.2)
+            .unwrap();
+        let shared_working_directory = original_handler_launch.working_directory.as_deref().unwrap();
+        assert_eq!(
+            action_handler_launch.working_directory.as_deref(),
+            Some(shared_working_directory)
+        );
+        assert_eq!(
+            implementer_launch.working_directory.as_deref(),
+            Some(shared_working_directory)
+        );
+        assert_eq!(original_handler_launch.options.model, None);
+        assert_eq!(action_handler_launch.options.model, None);
+        assert_eq!(implementer_launch.options.model, None);
+        assert_eq!(
+            original_handler_launch.options.sandbox,
+            Some(crate::agent_sessions::domain::RuntimeSandboxMode::ReadOnly)
+        );
+        assert_eq!(
+            action_handler_launch.options.sandbox,
+            Some(crate::agent_sessions::domain::RuntimeSandboxMode::ReadOnly)
+        );
+        assert_eq!(
+            implementer_launch.options.sandbox,
+            Some(crate::agent_sessions::domain::RuntimeSandboxMode::WorkspaceWrite)
+        );
+        for handler_launch in [original_handler_launch, action_handler_launch] {
+            let extension = handler_launch.launch_extension.as_ref().unwrap();
+            assert_eq!(
+                &extension.additional_args[..2],
+                &["-c", "approval_policy=\"never\""]
+            );
+            assert_eq!(
+                extension.initial_prompt_prefix.as_ref().unwrap().source,
+                "work_unit_handler"
+            );
+        }
+        let implementer_extension = implementer_launch.launch_extension.as_ref().unwrap();
+        assert_eq!(
+            implementer_extension.additional_args,
+            ["-c", "approval_policy=\"never\""]
+        );
+        assert!(implementer_extension.environment.is_empty());
+        assert_eq!(
+            implementer_extension.initial_prompt_prefix.as_ref().unwrap().source,
+            "work_unit_implementer"
+        );
+        let persisted_directories = Connection::open(&fixture.database_path)
+            .unwrap()
+            .prepare("SELECT id,working_directory FROM agent_sessions WHERE id IN (?1,?2)")
+            .unwrap()
+            .query_map([&continuation.1, &implementer.1], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(persisted_directories.len(), 2);
+        assert!(persisted_directories
+            .iter()
+            .all(|(_, directory)| directory == shared_working_directory));
         assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
         let concurrent_requests = (0..2).map(|_| {
             let service = handler_runner.clone();
