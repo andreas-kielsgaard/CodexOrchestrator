@@ -4970,6 +4970,26 @@ mod tests {
         for timestamp in [&implementer.5,&implementer.6,&implementer.7,&implementer.8,&implementer.9,&implementer.10] { assert!(timestamp.is_some()); }
         assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
         Connection::open(&fixture.database_path).unwrap().execute(
+            "UPDATE work_unit_implementer_activations
+             SET implementer_harness_bound_at=NULL,launch_accepted_at=NULL,implementer_ready_at=NULL
+             WHERE work_unit_id=?1",
+            [&root.0],
+        ).unwrap();
+        let partial_implementer = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        partial_implementer.attach_work_unit_handler_activation(handler.clone()).unwrap();
+        let recovered_implementer: (String,String,String,String,Option<String>,Option<String>,Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
+            "SELECT attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,
+                    implementer_harness_bound_at,launch_accepted_at,implementer_ready_at
+             FROM work_unit_implementer_activations WHERE work_unit_id=?1",
+            [&root.0], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?)),
+        ).unwrap();
+        assert_eq!(recovered_implementer.0, implementer.0);
+        assert_eq!(recovered_implementer.1, implementer.1);
+        assert_eq!(recovered_implementer.2, implementer.2);
+        assert_eq!(recovered_implementer.3, implementer.3);
+        for timestamp in [&recovered_implementer.4,&recovered_implementer.5,&recovered_implementer.6] { assert!(timestamp.is_some()); }
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        Connection::open(&fixture.database_path).unwrap().execute(
             "INSERT INTO agent_session_runtime_events (id,invocation_id,sequence,source,raw_payload_json,normalized_json,recorded_at) VALUES (?1,?2,0,'runtime','{}',?3,?4)",
             params!["implementer-provider-activity", implementer.2, r#"{"kind":"processing_started","text":null,"externalContextId":null,"usage":null,"details":null}"#, chrono::Utc::now().to_rfc3339()],
         ).unwrap();
