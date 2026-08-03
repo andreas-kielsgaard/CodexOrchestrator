@@ -126,6 +126,73 @@ impl WorkUnitExecutionHarnessService {
         self.pinned_handler_revision_from_revision(revision)
     }
 
+    /// Publishes (once) the immutable Handler revision which exposes the one application-owned
+    /// continuation action.  It deliberately does not alter an earlier pinned revision.
+    pub(crate) fn current_handler_action_revision(
+        &self,
+    ) -> Result<PinnedHandlerHarnessRevision, WorkUnitHarnessError> {
+        let history = self.orchestration.load_harness_revision_history("work_unit_handler");
+        let revisions = match history {
+            HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions,
+            HarnessRevisionHistoryOutcome::Missing => {
+                self.bootstrap_initial_handler_revision()?;
+                match self.orchestration.load_harness_revision_history("work_unit_handler") {
+                    HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions,
+                    _ => return Err(WorkUnitHarnessError::Unavailable),
+                }
+            }
+            _ => return Err(WorkUnitHarnessError::Unavailable),
+        };
+        if let Some(revision) = revisions.iter().rev().find(|revision| {
+            self.pinned_handler_revision_from_revision((*revision).clone())
+                .map(|pinned| pinned.profile.mcp.required
+                    && pinned.profile.mcp.enabled_tools == ["request_work_unit_implementer"])
+                .unwrap_or(false)
+        }) {
+            return self.pinned_handler_revision_from_revision((*revision).clone());
+        }
+        let predecessor = revisions.last().ok_or(WorkUnitHarnessError::Unavailable)?;
+        let copy = self.orchestration.load_harness_working_copy("work_unit_handler")
+            .map_err(|_| WorkUnitHarnessError::Unavailable)?;
+        let expected = copy.as_ref().map_or(0, |copy| copy.draft_revision);
+        let saved = self.orchestration.save_harness_working_copy(SaveHarnessWorkingCopyCommand {
+            harness_key: "work_unit_handler".into(),
+            configuration: conversation_harness::initial_work_unit_handler_revision_configuration()
+                .map_err(|_| WorkUnitHarnessError::Unavailable)?,
+            expected_current_revision: expected,
+            editor: HarnessWorkingCopyEditor {
+                kind: HarnessEditorKind::ApplicationUser,
+                reference: "work-unit-handler-action-continuation".into(),
+            },
+            idempotency_key: format!("work-unit-handler-action-working-copy-{}", predecessor.revision_id),
+        }).map_err(|_| WorkUnitHarnessError::Unavailable)?;
+        let draft = match saved {
+            super::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::Stored(copy)
+            | super::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::IdempotentReplay(copy) => copy.draft_revision,
+        };
+        let revision = match self.orchestration.create_harness_revision(CreateHarnessRevisionCommand {
+            harness_key: "work_unit_handler".into(),
+            expected_source_draft_revision: draft,
+            expected_predecessor_revision_id: Some(predecessor.revision_id.clone()),
+            idempotency_key: format!("work-unit-handler-action-revision-{}", predecessor.revision_id),
+            creation_provenance: HarnessRevisionCreationProvenance {
+                kind: HarnessRevisionProvenanceKind::ApplicationUser,
+                reference: "work-unit-handler-action-continuation".into(),
+            },
+        }) {
+            Ok(CreateHarnessRevisionResult::Published(revision))
+            | Ok(CreateHarnessRevisionResult::IdempotentReplay(revision)) => revision,
+            Err(HarnessRevisionError::Conflict) => self.load_newly_published_handler_revision()?,
+            Err(_) => return Err(WorkUnitHarnessError::Unavailable),
+        };
+        let pinned = self.pinned_handler_revision_from_revision(revision)?;
+        if !pinned.profile.mcp.required
+            || pinned.profile.mcp.enabled_tools != ["request_work_unit_implementer"] {
+            return Err(WorkUnitHarnessError::Denied);
+        }
+        Ok(pinned)
+    }
+
     pub(crate) fn load_pinned_handler_revision(
         &self,
         revision_id: &str,
@@ -162,7 +229,7 @@ impl WorkUnitExecutionHarnessService {
             Some(copy) => copy.draft_revision,
             None => match self.orchestration.save_harness_working_copy(SaveHarnessWorkingCopyCommand {
                 harness_key: "work_unit_handler".into(),
-                configuration: conversation_harness::initial_work_unit_handler_revision_configuration()
+                configuration: conversation_harness::initial_work_unit_handler_baseline_revision_configuration()
                     .map_err(|_| WorkUnitHarnessError::Unavailable)?,
                 expected_current_revision: 0,
                 editor: HarnessWorkingCopyEditor {

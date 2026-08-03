@@ -197,6 +197,17 @@ pub(crate) fn initial_work_unit_handler_revision_configuration(
     })
 }
 
+/// The initial Handler invocation is deliberately actionless.  The action belongs to the later
+/// same-Session continuation, which publishes the configuration above as a new revision.
+pub(crate) fn initial_work_unit_handler_baseline_revision_configuration(
+) -> Result<HarnessEffectiveConfiguration, String> {
+    let mut configuration = initial_work_unit_handler_revision_configuration()?;
+    configuration.tools.items.clear();
+    configuration.tools.schema_boundary = "No Handler action is exposed by the original invocation.".into();
+    configuration.runtime.authority_summary = "Read-only bounded Handler evidence; no downstream action.".into();
+    Ok(configuration)
+}
+
 pub(crate) fn profile_from_immutable_handler_revision(
     configuration: &HarnessEffectiveConfiguration,
     revision_version: u16,
