@@ -338,3 +338,72 @@ strict native-query correction `974ee2c`. The audit used this detached-worktree 
   frontend build, and focused Prettier passed. `git diff --check` passed. This TypeScript-only
   correction changed no Rust source, so no Rust suite was rerun. No live/provider, human,
   Implementer, review, outcome, settlement, or continuation claim is added.
+
+## HI-03: Work Unit Handler to Implementer activation audit and convergence
+
+The independent audit covered the accepted baseline
+`a5e0abdef85a1937696a7926637ee8972ea342ec` through the supplied Slice head
+`b5edee236a1a6d1ac40c09103eadb3204a7f9d63`. Bounded audit corrections are checkpointed in
+`547aafea71c276b3f454b16348d61fbb0d48c71c` (`Audit Handler Implementer convergence`). This
+checkpoint is a candidate returned for Slice evaluation; it is not Slice acceptance, merge,
+publication, receiver activation, or user acceptance.
+
+The corrected boundary preserves the original immutable, read-only, actionless Handler revision.
+Only the later application-owned same-Session continuation carries the zero-input
+`request_work_unit_implementer` action. The public action rederives and verifies the stable Handler
+attempt, original Handler Session and invocation, action invocation, immutable action revision,
+active application provenance, original terminal state, eligibility, phase prerequisites, and
+absence of block or failure before recording any Implementer effect. Wrong bearer, Host, Origin,
+original invocation, Session, revision digest, inactive or terminal action, stale block or failure,
+missing readiness prerequisite, and dependency-ineligible state are denied before the Implementer
+request or execution-support grant.
+
+The Implementer reuses the original Handler attempt and exact isolated worktree. Handler and
+Implementer receive distinct role-bound capabilities; both Handler invocations remain `ReadOnly`,
+while only the Implementer is `WorkspaceWrite` for that workspace. One pinned Implementer Harness
+revision, Session, and invocation are reused across duplicate requests, reopen, partial recovery,
+and provider-observation recovery. Public action authorization remains limited to the pending or
+running action invocation, while restart reconciliation uses only an already-persisted correlated
+Implementer request. A terminal action therefore exposes no recreated MCP server and cannot be
+called, but its recorded request can still finish reconciliation without a replacement identity or
+runtime launch.
+
+Request, authorization, execution support, worktree readiness, Session creation, invocation
+preparation, Harness binding, launch request, launch acceptance, provider activity observation, and
+application readiness remain separate durable facts. Retryable preterminal failure retains the
+same identities. Terminal non-acceptance for either the Handler action continuation or Implementer
+records an exact failure reason, leaves readiness absent, and does not relaunch on reopen. The Rust
+native projection and strict TypeScript decoder now fail closed on foreign correlations, missing
+phase prerequisites, blocked state with later effects, failure combined with readiness, or reused
+action/Implementer invocation identity. The Work Unit detail renders these as factual activity only,
+including durable failure wording, and contains no activation control.
+
+Validation evidence for the audited checkpoint:
+
+- Production-equivalent Rust coordinator regression:
+
+  ```text
+  cargo test --manifest-path src-tauri/Cargo.toml --lib orchestration::bootstrap_transition::tests::work_slice_planning_request_launches_one_prepared_planner_and_marks_readiness -- --exact --test-threads=1
+  ```
+
+  It passed **1/1** with **315 filtered** and exercises the scoped MCP
+  transport, action/context denials, stable attempt/worktree and role authority, duplicate and
+  concurrent requests, restart/partial drains, immutable revision reuse, provider observation,
+  terminal action and Implementer failure/no-relaunch, native projection, the blocked dependent,
+  unchanged upstream state, and absence of forbidden downstream tables.
+- Native repository suite passed **26/26** with **290 filtered**, including the new malformed or
+  foreign activation fail-closed regression. Execution-support suite passed **10/10** with **305
+  filtered**. Conversation Harness suite passed **6/6** with **309 filtered**, and Work Unit
+  execution-Harness suite passed **2/2** with **313 filtered**.
+- Application orchestration plus the two Work Unit/Sprint activity UI files passed **16 files / 186
+  tests**. `cargo check --manifest-path src-tauri/Cargo.toml`, focused ESLint, TypeScript
+  `tsc --noEmit`, and the production Vite build passed. Focused Prettier and `git diff --check`
+  passed. Only the existing Rust dead-code warnings and temporary Git line-ending notices were
+  observed.
+
+No implementation output, Handler review, acceptance, return, retry attempt, settlement,
+integration, dependent activation, later planning point, Sprint continuation, or Epic continuation
+is created by this boundary. The deterministic `RecordingRuntime`, local SQLite, isolated Git
+worktree, and local MCP server prove application behavior and correlations only. They do not prove
+live external-provider launch behavior, provider-private activation or compliance, provider result
+quality, receiver evaluation, or user acceptance.
