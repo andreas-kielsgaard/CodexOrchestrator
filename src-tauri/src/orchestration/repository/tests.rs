@@ -1798,3 +1798,49 @@ impl From<SaveProposalError> for GoldenBoundaryDto {
         }
     }
 }
+
+#[test]
+fn implementer_activation_projection_serializes_every_persisted_fact_at_its_named_column() {
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    connection.execute_batch(
+        "CREATE TABLE work_unit_implementer_activations (
+           work_unit_id TEXT PRIMARY KEY, handler_attempt_id TEXT NOT NULL,
+           handler_invocation_id TEXT NOT NULL, attempt_id TEXT NOT NULL,
+           implementer_session_id TEXT NOT NULL, implementer_invocation_id TEXT NOT NULL,
+           implementer_harness_revision_id TEXT NOT NULL,
+           implementer_harness_configuration_digest TEXT NOT NULL,
+           implementer_harness_repository_commit_ref TEXT NOT NULL, requested_at TEXT NOT NULL,
+           authorized_at TEXT, execution_support_granted_at TEXT, isolated_worktree_ready_at TEXT,
+           implementer_session_created_at TEXT, implementer_invocation_prepared_at TEXT,
+           implementer_harness_bound_at TEXT, launch_requested_at TEXT, launch_accepted_at TEXT,
+           provider_activation_observed_at TEXT, implementer_ready_at TEXT, failure_reason TEXT
+         );
+         INSERT INTO work_unit_implementer_activations VALUES
+           ('unit','handler-attempt','handler-action','shared-attempt','implementer-session',
+            'implementer-invocation','implementer-revision','digest','commit','requested',
+            'authorized','support','worktree','session-created','prepared','bound','launch-requested',
+            'launch-accepted','provider-observed','ready','precise-failure');",
+    ).unwrap();
+    let activations = activation_rows(
+        &connection, "work_unit_implementer_activations",
+        "attempt_id,handler_invocation_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at,authorized_at,execution_support_granted_at,isolated_worktree_ready_at,implementer_session_created_at,implementer_invocation_prepared_at,implementer_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,implementer_ready_at,failure_reason",
+        map_implementer_activation,
+    ).unwrap();
+    let value = serde_json::to_value(activations.get("unit").unwrap()).unwrap();
+    assert_eq!(value["attemptId"], "shared-attempt");
+    assert_eq!(value["handlerActionInvocationId"], "handler-action");
+    assert_eq!(value["implementerSessionId"], "implementer-session");
+    assert_eq!(value["implementerInvocationId"], "implementer-invocation");
+    assert_eq!(value["implementerHarnessRevisionId"], "implementer-revision");
+    assert_eq!(value["implementerHarnessConfigurationDigest"], "digest");
+    assert_eq!(value["implementerHarnessRepositoryCommitRef"], "commit");
+    for (key, expected) in [
+        ("requestedAt", "requested"), ("authorizedAt", "authorized"),
+        ("executionSupportGrantedAt", "support"), ("isolatedWorktreeReadyAt", "worktree"),
+        ("implementerSessionCreatedAt", "session-created"),
+        ("implementerInvocationPreparedAt", "prepared"), ("implementerHarnessBoundAt", "bound"),
+        ("launchRequestedAt", "launch-requested"), ("launchAcceptedAt", "launch-accepted"),
+        ("providerActivationObservedAt", "provider-observed"), ("implementerReadyAt", "ready"),
+        ("failureReason", "precise-failure"),
+    ] { assert_eq!(value[key], expected); }
+}
