@@ -774,6 +774,21 @@ impl SprintRunnerTransitionService {
     }
 
     #[cfg(test)]
+    pub(crate) fn attach_reporting_test_harness(
+        &self,
+        handler: Arc<WorkUnitExecutionHarnessService>,
+    ) {
+        *self.work_unit_handler.lock().unwrap() = Some(handler);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reconcile_reporting_for_test(
+        &self,
+    ) -> Result<(), SprintRunnerTransitionError> {
+        self.reconcile_implementer_outcomes_v3()
+    }
+
+    #[cfg(test)]
     pub(crate) fn request_work_unit_implementer_from_authenticated_continuation(
         self: &Arc<Self>,
         invocation_id: &str,

@@ -1780,7 +1780,9 @@ mod tests {
             domain::{InitiateEpicCommand, ProposedSprint, SaveEpicPlanProposalCommand},
             execution_support::ProductExecutionSupportState,
             repository::{InitiatedSprintGitAuthorityWrite, SqliteOrchestrationRepository},
-            work_unit_execution_harness::WorkUnitExecutionHarnessService,
+            work_unit_execution_harness::{
+                WorkUnitExecutionHarnessService, WorkUnitHarnessRole,
+            },
         },
     };
     use sha2::{Digest, Sha256};
@@ -5573,6 +5575,603 @@ mod tests {
         drop(connection);
         assert!(matches!(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));
         assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 6);
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    struct ReportingFacts {
+        summary: Option<String>,
+        validation: Option<String>,
+        payload: Option<String>,
+        fingerprint: Option<String>,
+        submitted_at: Option<String>,
+        validation_result: Option<String>,
+        evidence_manifest: Option<String>,
+        comparison_fingerprint: Option<String>,
+        evidence_contents: Option<String>,
+        evidence_ready_at: Option<String>,
+        semantic_completed_at: Option<String>,
+        semantic_invocation: Option<String>,
+        lifecycle_status: Option<String>,
+        application_accepted_at: Option<String>,
+        handler_review_ready_at: Option<String>,
+    }
+
+    struct ReportingFixture {
+        base: Fixture,
+        transition: Arc<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>,
+        handler: Arc<WorkUnitExecutionHarnessService>,
+        work_unit_id: String,
+        attempt_id: String,
+        session_id: String,
+        implementer_invocation_id: String,
+        reporting_invocation_id: String,
+        working_directory: PathBuf,
+        expected_identities: (String, String, String, String, String),
+    }
+
+    impl ReportingFixture {
+        fn new() -> Self {
+            let base = Fixture::unstarted();
+            let transition = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &base.database_path,
+                base.sessions.clone(),
+            ).unwrap();
+            let sprint_id: String = Connection::open(&base.database_path).unwrap().query_row(
+                "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |row| row.get(0),
+            ).unwrap();
+
+            let repository_root = base._directory.path().join("reporting-repository");
+            let sprint_root = base._directory.path().join("reporting-sprint-worktree");
+            fs::create_dir_all(&repository_root).unwrap();
+            let git = |root: &Path, arguments: &[&str]| {
+                let output = std::process::Command::new("git")
+                    .args(arguments)
+                    .current_dir(root)
+                    .output()
+                    .unwrap();
+                assert!(output.status.success(), "{output:?}");
+                String::from_utf8(output.stdout).unwrap().trim().to_owned()
+            };
+            git(&repository_root, &["init"]);
+            git(&repository_root, &["config", "user.email", "reporting@example.test"]);
+            git(&repository_root, &["config", "user.name", "Reporting Test"]);
+            fs::write(repository_root.join("README.md"), "base\n").unwrap();
+            git(&repository_root, &["add", "README.md"]);
+            git(&repository_root, &["commit", "-m", "reporting base"]);
+            let initial = git(&repository_root, &["rev-parse", "HEAD"]);
+            git(
+                &repository_root,
+                &[
+                    "worktree",
+                    "add",
+                    "-b",
+                    "reporting-sprint",
+                    sprint_root.to_string_lossy().as_ref(),
+                    &initial,
+                ],
+            );
+            fs::write(sprint_root.join("README.md"), "sprint baseline\n").unwrap();
+            git(&sprint_root, &["add", "README.md"]);
+            git(&sprint_root, &["commit", "-m", "reporting sprint baseline"]);
+            let current = git(&sprint_root, &["rev-parse", "HEAD"]);
+            let repository_root = repository_root.canonicalize().unwrap();
+            let sprint_root = sprint_root.canonicalize().unwrap();
+            let repository = Arc::new(SqliteOrchestrationRepository::open(&base.database_path).unwrap());
+            let authority_id = match repository.store_initiated_sprint_git_authority(
+                InitiatedSprintGitAuthorityWrite {
+                    sprint_id,
+                    idempotency_key: "implementer-reporting-test-authority".into(),
+                    repository_id: "implementer-reporting-repository".into(),
+                    repository_root: repository_root.to_string_lossy().into_owned(),
+                    repository_common_dir: repository_root.join(".git").canonicalize().unwrap().to_string_lossy().into_owned(),
+                    worktree_id: "implementer-reporting-sprint-worktree".into(),
+                    worktree_root: sprint_root.to_string_lossy().into_owned(),
+                    baseline_object_id: initial,
+                    current_object_id: current,
+                    runtime_instance_ref: "implementer-reporting-runtime".into(),
+                    runtime_source_ref: "implementer-reporting-source".into(),
+                    source_fingerprint: "e".repeat(64),
+                },
+            ).unwrap() {
+                crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::Stored { authority_id }
+                | crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::IdempotentReplay { authority_id } => authority_id,
+            };
+            let orchestration = Arc::new(OrchestrationApplication::new(repository.clone()));
+            let support = ProductExecutionSupportState::new(
+                &base.database_path,
+                base._directory.path().join("reporting-workspaces"),
+                repository,
+            ).unwrap();
+            let handler = Arc::new(WorkUnitExecutionHarnessService::new(
+                support.service(),
+                base.sessions.clone(),
+                orchestration,
+            ));
+            let work_unit_id = "implementer-reporting-work-unit".to_string();
+            let attempt_id = "implementer-reporting-attempt".to_string();
+            handler.authorize_implementer_attempt(&attempt_id, &work_unit_id, &authority_id).unwrap();
+            let original_revision = handler.current_implementer_revision().unwrap();
+            let reporting_revision = handler.current_implementer_reporting_revision().unwrap();
+            let original_package = handler.construct_for_pinned_profile(
+                &attempt_id,
+                WorkUnitHarnessRole::Implementer,
+                original_revision.profile.clone(),
+            ).unwrap();
+            let reporting_package = handler.construct_for_pinned_profile(
+                &attempt_id,
+                WorkUnitHarnessRole::Implementer,
+                reporting_revision.profile.clone(),
+            ).unwrap();
+            assert_eq!(original_package.working_directory(), reporting_package.working_directory());
+            let working_directory = PathBuf::from(original_package.working_directory());
+            let session_id = "implementer-reporting-session".to_string();
+            let implementer_invocation_id = "implementer-original-invocation".to_string();
+            let reporting_invocation_id = {
+                let mut hash = Sha256::new();
+                hash.update(b"work-unit-implementer-reporting-invocation");
+                hash.update([0]);
+                hash.update(attempt_id.as_bytes());
+                format!("work-unit-implementer-reporting-invocation-{:x}", hash.finalize())
+            };
+            let original_runtime = original_package.runtime_launch_configuration();
+            base.sessions.create_application_session(CreateApplicationAgentSessionCommand {
+                session_id: AgentSessionId::new(session_id.clone()).unwrap(),
+                session: CreateAgentSessionCommand {
+                    title: Some("Implementer reporting test".into()),
+                    working_directory: Some(working_directory.to_string_lossy().into_owned()),
+                    requested_options: original_runtime.requested_options.clone(),
+                },
+            }).unwrap();
+            base.sessions.send_idempotent_application_message_with_launch_observation(
+                SendIdempotentApplicationAgentSessionMessageCommand {
+                    invocation_id: AgentInvocationId::new(implementer_invocation_id.clone()).unwrap(),
+                    message: SendAgentSessionMessageCommand {
+                        session_id: Some(AgentSessionId::new(session_id.clone()).unwrap()),
+                        submitted_text: "Implement the bounded Work Unit.".into(),
+                        title: None,
+                        working_directory: Some(working_directory.to_string_lossy().into_owned()),
+                        requested_options: Some(original_runtime.requested_options),
+                    },
+                },
+                Some(original_runtime.extension),
+            ).unwrap();
+            base.runtime.finish(&implementer_invocation_id, AgentInvocationTerminalStatus::Completed);
+            let reporting_runtime = reporting_package.runtime_launch_configuration();
+            let reporting_launch = base.sessions.send_idempotent_application_message_with_launch_observation(
+                SendIdempotentApplicationAgentSessionMessageCommand {
+                    invocation_id: AgentInvocationId::new(reporting_invocation_id.clone()).unwrap(),
+                    message: SendAgentSessionMessageCommand {
+                        session_id: Some(AgentSessionId::new(session_id.clone()).unwrap()),
+                        submitted_text: "Report the completed implementation.".into(),
+                        title: None,
+                        working_directory: Some(working_directory.to_string_lossy().into_owned()),
+                        requested_options: Some(reporting_runtime.requested_options),
+                    },
+                },
+                Some(reporting_runtime.extension),
+            ).unwrap();
+            assert!(reporting_launch.launch_accepted);
+
+            let now = "2026-08-04T00:00:00Z";
+            let connection = Connection::open(&base.database_path).unwrap();
+            connection.pragma_update(None, "foreign_keys", false).unwrap();
+            connection.execute(
+                "INSERT INTO work_unit_implementer_activations (
+                    work_unit_id,handler_attempt_id,handler_invocation_id,attempt_id,
+                    implementer_session_id,implementer_invocation_id,
+                    implementer_harness_revision_id,implementer_harness_configuration_digest,
+                    implementer_harness_repository_commit_ref,requested_at,authorized_at,
+                    execution_support_granted_at,isolated_worktree_ready_at,
+                    implementer_session_created_at,implementer_invocation_prepared_at,
+                    implementer_harness_bound_at,launch_requested_at,launch_accepted_at,
+                    implementer_ready_at
+                 ) VALUES (?1,'reporting-handler-attempt','reporting-handler-action',?2,?3,?4,?5,?6,?7,?8,?8,?8,?8,?8,?8,?8,?8,?8,?8)",
+                params![
+                    work_unit_id,
+                    attempt_id,
+                    session_id,
+                    implementer_invocation_id,
+                    original_revision.revision_id,
+                    original_revision.configuration_digest,
+                    original_revision.repository_commit_ref,
+                    now,
+                ],
+            ).unwrap();
+            connection.execute(
+                "INSERT INTO work_unit_implementer_outcomes (
+                    work_unit_id,attempt_id,implementer_session_id,implementer_invocation_id,
+                    reporting_invocation_id,reporting_harness_revision_id,
+                    reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,
+                    reporting_requested_at,reporting_prepared_at,reporting_harness_bound_at,
+                    reporting_launch_requested_at,reporting_launch_accepted_at,reporting_ready_at
+                 ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?9,?9,?9,?9,?9)",
+                params![
+                    work_unit_id,
+                    attempt_id,
+                    session_id,
+                    implementer_invocation_id,
+                    reporting_invocation_id,
+                    reporting_revision.revision_id,
+                    reporting_revision.configuration_digest,
+                    reporting_revision.repository_commit_ref,
+                    now,
+                ],
+            ).unwrap();
+            connection.pragma_update(None, "foreign_keys", true).unwrap();
+            transition.attach_reporting_test_harness(handler.clone());
+            let expected_identities = (
+                work_unit_id.clone(),
+                attempt_id.clone(),
+                session_id.clone(),
+                implementer_invocation_id.clone(),
+                reporting_invocation_id.clone(),
+            );
+            Self {
+                base,
+                transition,
+                handler,
+                work_unit_id,
+                attempt_id,
+                session_id,
+                implementer_invocation_id,
+                reporting_invocation_id,
+                working_directory,
+                expected_identities,
+            }
+        }
+
+        fn invocation(&self) -> AgentInvocationId {
+            AgentInvocationId::new(self.reporting_invocation_id.clone()).unwrap()
+        }
+
+        fn claims(&self) -> crate::orchestration::sprint_runner_transition::ImplementationOutcomeClaims {
+            crate::orchestration::sprint_runner_transition::ImplementationOutcomeClaims {
+                outcome: crate::orchestration::sprint_runner_transition::ImplementationOutcomeVariant::ReviewPending,
+                summary: "Implemented the reporting boundary.".into(),
+                validation_statement: "Focused deterministic proof passed.".into(),
+            }
+        }
+
+        fn facts(&self) -> ReportingFacts {
+            Connection::open(&self.base.database_path).unwrap().query_row(
+                "SELECT submitted_summary,submitted_validation_statement,semantic_payload_json,
+                        submission_fingerprint,submitted_at,validation_result,evidence_manifest_json,
+                        comparison_fingerprint,evidence_content_fingerprints_json,evidence_ready_at,
+                        semantic_completed_at,semantic_completion_invocation_id,lifecycle_status,
+                        application_accepted_at,handler_review_ready_at
+                 FROM work_unit_implementer_outcomes WHERE work_unit_id=?1",
+                [&self.work_unit_id],
+                |row| Ok(ReportingFacts {
+                    summary: row.get(0)?, validation: row.get(1)?, payload: row.get(2)?,
+                    fingerprint: row.get(3)?, submitted_at: row.get(4)?, validation_result: row.get(5)?,
+                    evidence_manifest: row.get(6)?, comparison_fingerprint: row.get(7)?,
+                    evidence_contents: row.get(8)?, evidence_ready_at: row.get(9)?,
+                    semantic_completed_at: row.get(10)?, semantic_invocation: row.get(11)?,
+                    lifecycle_status: row.get(12)?, application_accepted_at: row.get(13)?,
+                    handler_review_ready_at: row.get(14)?,
+                }),
+            ).unwrap()
+        }
+
+        fn identities(&self) -> (String, String, String, String, String) {
+            Connection::open(&self.base.database_path).unwrap().query_row(
+                "SELECT work_unit_id,attempt_id,implementer_session_id,implementer_invocation_id,
+                        reporting_invocation_id FROM work_unit_implementer_outcomes",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            ).unwrap()
+        }
+
+        fn write_evidence(&self, content: &str) {
+            fs::write(self.working_directory.join("README.md"), content).unwrap();
+            for arguments in [["add", "README.md"].as_slice(), ["commit", "-m", "reporting evidence"].as_slice()] {
+                let output = std::process::Command::new("git")
+                    .args(arguments)
+                    .current_dir(&self.working_directory)
+                    .output()
+                    .unwrap();
+                assert!(output.status.success(), "{output:?}");
+            }
+        }
+
+        fn assert_pinned_evidence_available(&self) {
+            let (revision, digest, commit): (String, String, String) = Connection::open(&self.base.database_path).unwrap().query_row(
+                "SELECT reporting_harness_revision_id,reporting_harness_configuration_digest,
+                        reporting_harness_repository_commit_ref
+                 FROM work_unit_implementer_outcomes WHERE work_unit_id=?1",
+                [&self.work_unit_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).unwrap();
+            let pinned = self.handler.load_pinned_implementer_revision(&revision, &digest, &commit).unwrap();
+            let package = self.handler.construct_for_pinned_profile(
+                &self.attempt_id,
+                WorkUnitHarnessRole::Implementer,
+                pinned.profile,
+            ).unwrap();
+            package.bind_correlated_invocation(
+                AgentSessionId::new(self.session_id.clone()).unwrap(),
+                self.invocation(),
+            ).unwrap();
+            let manifest = package.changed_file_manifest().unwrap();
+            assert!(!manifest.is_empty(), "expected a changed-file manifest");
+            assert!(!package.comparison().unwrap().is_empty(), "expected File Review comparison bytes");
+            for entry in manifest {
+                assert!(!package.evidence_content(&entry.evidence_ref).unwrap().is_empty(), "missing evidence content for {}", entry.display_name);
+            }
+        }
+
+        fn enable_notifications(&self) {
+            self.base.notifier.set_sprint(&self.transition);
+        }
+
+        fn finish(&self, status: AgentInvocationTerminalStatus) {
+            self.base.runtime.finish(&self.reporting_invocation_id, status);
+        }
+
+        fn reopened(&self) -> Arc<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService> {
+            let service = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &self.base.database_path,
+                self.base.sessions.clone(),
+            ).unwrap();
+            service.attach_reporting_test_harness(self.handler.clone());
+            service
+        }
+
+        fn assert_no_submission_evidence_or_completion(&self) {
+            let facts = self.facts();
+            assert!(facts.summary.is_none() && facts.validation.is_none());
+            assert!(facts.payload.is_none() && facts.fingerprint.is_none() && facts.submitted_at.is_none());
+            assert!(facts.validation_result.is_none());
+            assert!(facts.evidence_manifest.is_none() && facts.comparison_fingerprint.is_none());
+            assert!(facts.evidence_contents.is_none() && facts.evidence_ready_at.is_none());
+            assert!(facts.semantic_completed_at.is_none() && facts.semantic_invocation.is_none());
+            assert!(facts.application_accepted_at.is_none() && facts.handler_review_ready_at.is_none());
+        }
+    }
+
+    #[test]
+    fn implementer_reporting_exact_retries_replay_without_replacement_and_divergence_conflicts() {
+        let fixture = ReportingFixture::new();
+        let barrier = Arc::new(Barrier::new(2));
+        let calls = (0..2).map(|_| {
+            let service = fixture.transition.clone();
+            let invocation = fixture.invocation();
+            let claims = fixture.claims();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                service.submit_implementation_outcome(&invocation, claims)
+            })
+        }).collect::<Vec<_>>();
+        assert!(calls.into_iter().all(|call| call.join().unwrap().is_ok()));
+        let recorded = fixture.facts();
+        fixture.transition.submit_implementation_outcome(&fixture.invocation(), fixture.claims()).unwrap();
+        assert_eq!(fixture.facts(), recorded);
+        let mut divergent = fixture.claims();
+        divergent.summary = "A different implementation claim.".into();
+        assert!(matches!(
+            fixture.transition.submit_implementation_outcome(&fixture.invocation(), divergent),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)
+        ));
+        assert_eq!(fixture.facts(), recorded);
+        assert_eq!(fixture.identities(), fixture.expected_identities);
+        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM work_unit_implementer_outcomes", [], |row| row.get(0),
+        ).unwrap(), 1);
+    }
+
+    #[test]
+    fn implementer_reporting_requires_pinned_file_evidence_then_completed_lifecycle_for_review_readiness() {
+        let fixture = ReportingFixture::new();
+        fixture.transition.submit_implementation_outcome(&fixture.invocation(), fixture.claims()).unwrap();
+        assert!(matches!(
+            fixture.transition.complete_implementation_outcome(&fixture.invocation()),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        let without_evidence = fixture.facts();
+        assert!(without_evidence.evidence_ready_at.is_none());
+        assert!(without_evidence.semantic_completed_at.is_none());
+
+        fixture.write_evidence("implemented reporting boundary\n");
+        fixture.assert_pinned_evidence_available();
+        let barrier = Arc::new(Barrier::new(2));
+        let calls = (0..2).map(|_| {
+            let service = fixture.transition.clone();
+            let invocation = fixture.invocation();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                service.complete_implementation_outcome(&invocation)
+            })
+        }).collect::<Vec<_>>();
+        let results = calls.into_iter().map(|call| call.join().unwrap()).collect::<Vec<_>>();
+        assert!(results.iter().any(Result::is_ok), "{results:?}");
+        fixture.transition.complete_implementation_outcome(&fixture.invocation()).unwrap();
+        let completed_semantic = fixture.facts();
+        assert!(completed_semantic.evidence_manifest.as_deref().is_some_and(|value| value.contains("README.md")));
+        assert!(completed_semantic.comparison_fingerprint.is_some());
+        assert!(completed_semantic.evidence_contents.is_some());
+        assert!(completed_semantic.evidence_ready_at.is_some());
+        assert!(completed_semantic.semantic_completed_at.is_some());
+        assert_eq!(completed_semantic.semantic_invocation.as_deref(), Some(fixture.reporting_invocation_id.as_str()));
+        assert!(completed_semantic.application_accepted_at.is_none());
+        assert!(completed_semantic.handler_review_ready_at.is_none());
+        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<String, _, _>(
+            "SELECT role_id FROM execution_support_grants WHERE attempt_id=?1",
+            [&fixture.attempt_id],
+            |row| row.get(0),
+        ).unwrap(), "work_unit_implementer");
+
+        fixture.enable_notifications();
+        fixture.finish(AgentInvocationTerminalStatus::Completed);
+        let accepted = fixture.facts();
+        assert_eq!(accepted.lifecycle_status.as_deref(), Some("completed"));
+        assert!(accepted.application_accepted_at.is_some());
+        assert!(accepted.handler_review_ready_at.is_some());
+        assert_eq!(fixture.identities(), fixture.expected_identities);
+    }
+
+    #[test]
+    fn implementer_reporting_rejects_wrong_foreign_stale_and_terminal_calls_without_semantic_facts() {
+        let fixture = ReportingFixture::new();
+        for invocation in [
+            AgentInvocationId::new(fixture.implementer_invocation_id.clone()).unwrap(),
+            AgentInvocationId::new("foreign-reporting-invocation").unwrap(),
+        ] {
+            assert!(matches!(
+                fixture.transition.submit_implementation_outcome(&invocation, fixture.claims()),
+                Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+            ));
+            assert!(matches!(
+                fixture.transition.complete_implementation_outcome(&invocation),
+                Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+            ));
+        }
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE work_unit_implementer_outcomes SET reporting_ready_at=NULL WHERE work_unit_id=?1",
+            [&fixture.work_unit_id],
+        ).unwrap();
+        assert!(matches!(
+            fixture.transition.submit_implementation_outcome(&fixture.invocation(), fixture.claims()),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE work_unit_implementer_outcomes SET reporting_ready_at='2026-08-04T00:00:00Z',reporting_harness_configuration_digest='stale' WHERE work_unit_id=?1",
+            [&fixture.work_unit_id],
+        ).unwrap();
+        assert!(matches!(
+            fixture.transition.submit_implementation_outcome(&fixture.invocation(), fixture.claims()),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)
+        ));
+        fixture.assert_no_submission_evidence_or_completion();
+
+        let terminal = ReportingFixture::new();
+        terminal.enable_notifications();
+        terminal.finish(AgentInvocationTerminalStatus::Failed);
+        assert!(matches!(
+            terminal.transition.submit_implementation_outcome(&terminal.invocation(), terminal.claims()),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        assert!(matches!(
+            terminal.transition.complete_implementation_outcome(&terminal.invocation()),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        terminal.assert_no_submission_evidence_or_completion();
+
+        for status in [AgentInvocationTerminalStatus::Failed, AgentInvocationTerminalStatus::Canceled] {
+            let lifecycle = ReportingFixture::new();
+            lifecycle.transition.submit_implementation_outcome(&lifecycle.invocation(), lifecycle.claims()).unwrap();
+            lifecycle.write_evidence("non-completed lifecycle evidence\n");
+            lifecycle.transition.complete_implementation_outcome(&lifecycle.invocation()).unwrap();
+            lifecycle.enable_notifications();
+            lifecycle.finish(status);
+            let facts = lifecycle.facts();
+            assert!(facts.evidence_ready_at.is_some() && facts.semantic_completed_at.is_some());
+            assert_ne!(facts.lifecycle_status.as_deref(), Some("completed"));
+            assert!(facts.application_accepted_at.is_none());
+            assert!(facts.handler_review_ready_at.is_none());
+        }
+    }
+
+    #[test]
+    fn implementer_reporting_reopen_reconciles_exact_identities_and_drift_blocks_acceptance() {
+        let fixture = ReportingFixture::new();
+        fixture.transition.submit_implementation_outcome(&fixture.invocation(), fixture.claims()).unwrap();
+        fixture.write_evidence("reopen evidence\n");
+        fixture.assert_pinned_evidence_available();
+        fixture.transition.complete_implementation_outcome(&fixture.invocation()).unwrap();
+        fixture.finish(AgentInvocationTerminalStatus::Completed);
+        assert!(fixture.facts().lifecycle_status.is_none());
+        let reopened = fixture.reopened();
+        let barrier = Arc::new(Barrier::new(2));
+        let calls = (0..2).map(|_| {
+            let service = reopened.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                service.reconcile_reporting_for_test()
+            })
+        }).collect::<Vec<_>>();
+        assert!(calls.into_iter().all(|call| call.join().unwrap().is_ok()));
+        let accepted = fixture.facts();
+        assert_eq!(accepted.lifecycle_status.as_deref(), Some("completed"));
+        assert!(accepted.application_accepted_at.is_some());
+        assert!(accepted.handler_review_ready_at.is_some());
+        assert_eq!(fixture.identities(), fixture.expected_identities);
+
+        let evidence_drift = ReportingFixture::new();
+        evidence_drift.transition.submit_implementation_outcome(&evidence_drift.invocation(), evidence_drift.claims()).unwrap();
+        evidence_drift.write_evidence("captured evidence\n");
+        evidence_drift.transition.complete_implementation_outcome(&evidence_drift.invocation()).unwrap();
+        evidence_drift.finish(AgentInvocationTerminalStatus::Completed);
+        evidence_drift.write_evidence("changed after capture\n");
+        assert!(matches!(
+            evidence_drift.reopened().reconcile_reporting_for_test(),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)
+        ));
+        assert!(evidence_drift.facts().application_accepted_at.is_none());
+        assert!(evidence_drift.facts().handler_review_ready_at.is_none());
+
+        for column in ["semantic_payload_json", "submission_fingerprint"] {
+            let payload_drift = ReportingFixture::new();
+            payload_drift.transition.submit_implementation_outcome(&payload_drift.invocation(), payload_drift.claims()).unwrap();
+            payload_drift.write_evidence("payload evidence\n");
+            payload_drift.transition.complete_implementation_outcome(&payload_drift.invocation()).unwrap();
+            payload_drift.finish(AgentInvocationTerminalStatus::Completed);
+            let value = if column == "semantic_payload_json" {
+                r#"{"summary":"Implemented the reporting boundary.","outcome":"review_pending","validationStatement":"Focused deterministic proof passed."}"#
+            } else {
+                "drifted-fingerprint"
+            };
+            Connection::open(&payload_drift.base.database_path).unwrap().execute(
+                &format!("UPDATE work_unit_implementer_outcomes SET {column}=?1 WHERE work_unit_id=?2"),
+                params![value, payload_drift.work_unit_id],
+            ).unwrap();
+            assert!(matches!(
+                payload_drift.reopened().reconcile_reporting_for_test(),
+                Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)
+            ));
+            assert!(payload_drift.facts().application_accepted_at.is_none());
+            assert!(payload_drift.facts().handler_review_ready_at.is_none());
+        }
+    }
+
+    #[test]
+    fn reserved_implementer_reporting_row_is_reopen_and_startup_safe() {
+        let fixture = Fixture::unstarted();
+        let service = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+        ).unwrap();
+        drop(service);
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        connection.pragma_update(None, "foreign_keys", false).unwrap();
+        connection.execute(
+            "INSERT INTO work_unit_implementer_outcomes (
+                work_unit_id,attempt_id,implementer_session_id,implementer_invocation_id,
+                reporting_invocation_id,reporting_harness_revision_id,
+                reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,
+                reporting_requested_at
+             ) VALUES ('reserved-work-unit','reserved-attempt','reserved-session','reserved-original',
+                       'reserved-reporting','reserved-revision','reserved-digest','reserved-commit',
+                       '2026-08-04T00:00:00Z')",
+            [],
+        ).unwrap();
+        connection.pragma_update(None, "foreign_keys", true).unwrap();
+        drop(connection);
+        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+        ).unwrap();
+        assert_eq!(reopened.reconcile_startup().unwrap(), 0);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM work_unit_implementer_outcomes
+             WHERE reporting_ready_at IS NULL AND submitted_at IS NULL AND application_accepted_at IS NULL",
+            [],
+            |row| row.get(0),
+        ).unwrap(), 1);
     }
 }
 
