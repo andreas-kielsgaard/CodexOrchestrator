@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS execution_support_grants (
 );
 "#;
 const EXECUTION_SUPPORT_ROLE_KEY_MIGRATION: &str = r#"
+BEGIN IMMEDIATE;
 CREATE TABLE execution_support_attempt_authorizations_v3 (
  attempt_id TEXT NOT NULL, work_unit_id TEXT NOT NULL, role_kind TEXT NOT NULL CHECK(role_kind IN ('work_unit_handler','work_unit_implementer')), sprint_git_authority_id TEXT NOT NULL, baseline_object_id TEXT NOT NULL, authorization_fingerprint TEXT NOT NULL, recorded_at TEXT NOT NULL, FOREIGN KEY(sprint_git_authority_id) REFERENCES initiated_sprint_git_authorities(authority_id) ON DELETE RESTRICT, PRIMARY KEY(attempt_id,role_kind));
 INSERT INTO execution_support_attempt_authorizations_v3 SELECT attempt_id,work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id,authorization_fingerprint,recorded_at FROM execution_support_attempt_authorizations;
@@ -62,6 +63,7 @@ CREATE TABLE execution_support_grants_v3 (
 INSERT INTO execution_support_grants_v3 SELECT attempt_id,capability_ref,epic_id,sprint_id,work_unit_id,repository_id,role_id,workspace_id,workspace_fingerprint,correlation_fingerprint,recorded_at FROM execution_support_grants;
 DROP TABLE execution_support_grants;
 ALTER TABLE execution_support_grants_v3 RENAME TO execution_support_grants;
+COMMIT;
 "#;
 pub(crate) const EXECUTION_SUPPORT_BASELINE_MIGRATION: &str =
     "ALTER TABLE execution_support_attempt_authorizations ADD COLUMN baseline_object_id TEXT NOT NULL DEFAULT '';";
@@ -485,7 +487,10 @@ impl SqliteExecutionSupportRepository {
             .query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name='execution_support_attempt_authorizations'", [], |row| row.get::<_, String>(0))
             .map(|sql| sql.contains("PRIMARY KEY(attempt_id,role_kind)"))
             .unwrap_or(false);
-        if !role_keyed { connection.execute_batch(EXECUTION_SUPPORT_ROLE_KEY_MIGRATION).map_err(|_| ExecutionSupportError::Unavailable)?; }
+        if !role_keyed && connection.execute_batch(EXECUTION_SUPPORT_ROLE_KEY_MIGRATION).is_err() {
+            let _ = connection.execute_batch("ROLLBACK;");
+            return Err(ExecutionSupportError::Unavailable);
+        }
         Ok(Self {
             connection: Mutex::new(connection),
             orchestration,
@@ -1429,6 +1434,24 @@ mod tests {
         assert!(matches!(service.grant_for_role("legacy-attempt", WorkUnitExecutionRole::Handler), Ok(_)));
         let reopened = fixture.service();
         assert!(matches!(reopened.grant_for_role("legacy-attempt", WorkUnitExecutionRole::Handler), Ok(_)));
+    }
+
+    #[test]
+    fn failed_legacy_migration_rolls_back_and_retries_after_authority_recovery() {
+        let fixture = fixture();
+        let connection = Connection::open(&fixture.database).unwrap();
+        connection.execute_batch("DROP TABLE execution_support_attempt_authorizations; DROP TABLE execution_support_grants; CREATE TABLE execution_support_attempt_authorizations (attempt_id TEXT PRIMARY KEY,work_unit_id TEXT NOT NULL,role_kind TEXT NOT NULL CHECK(role_kind IN ('work_unit_handler','work_unit_implementer')),sprint_git_authority_id TEXT NOT NULL,baseline_object_id TEXT NOT NULL,authorization_fingerprint TEXT NOT NULL,recorded_at TEXT NOT NULL); CREATE TABLE execution_support_grants (attempt_id TEXT PRIMARY KEY,capability_ref TEXT NOT NULL UNIQUE,epic_id TEXT NOT NULL,sprint_id TEXT NOT NULL,work_unit_id TEXT NOT NULL,repository_id TEXT NOT NULL,role_id TEXT NOT NULL,workspace_id TEXT NOT NULL,workspace_fingerprint TEXT NOT NULL,correlation_fingerprint TEXT NOT NULL,recorded_at TEXT NOT NULL);").unwrap();
+        connection.execute("INSERT INTO execution_support_attempt_authorizations VALUES ('bad','unit','work_unit_handler','missing-authority',?1,'fingerprint',datetime('now'))", [&fixture.baseline]).unwrap();
+        drop(connection);
+        let orchestration = Arc::new(SqliteOrchestrationRepository::open(&fixture.database).unwrap());
+        assert!(SqliteExecutionSupportRepository::open(&fixture.database, orchestration).is_err());
+        let connection = Connection::open(&fixture.database).unwrap();
+        assert!(connection.query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name='execution_support_attempt_authorizations'", [], |row| row.get::<_,String>(0)).unwrap().contains("attempt_id TEXT PRIMARY KEY"));
+        connection.execute("DELETE FROM execution_support_attempt_authorizations WHERE attempt_id='bad'", []).unwrap();
+        drop(connection);
+        let _ = fixture.service();
+        let connection = Connection::open(&fixture.database).unwrap();
+        assert!(connection.query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name='execution_support_attempt_authorizations'", [], |row| row.get::<_,String>(0)).unwrap().contains("PRIMARY KEY(attempt_id,role_kind)"));
     }
 
     #[test]
