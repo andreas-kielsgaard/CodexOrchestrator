@@ -4933,6 +4933,8 @@ mod tests {
         assert!(continuation.4.is_none());
         for timestamp in [&continuation.5,&continuation.6,&continuation.7,&continuation.8,&continuation.9] { assert!(timestamp.is_some()); }
         assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 2);
+        assert!(matches!(handler_runner.request_work_unit_implementer_from_authenticated_continuation(&root.3), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_implementer_activations", [], |row| row.get(0)).unwrap(), 0);
         let injection = handler_runner.prepared_handler_action_injection(&continuation.3).unwrap();
         let endpoint = injection.configuration_args.iter().find_map(|argument| argument.strip_prefix("mcp_servers.").and_then(|value| value.split_once(".url=\"")).map(|(_, value)| value.trim_end_matches('"').to_owned())).unwrap();
         let bearer = injection.environment.1.clone();
@@ -4941,6 +4943,7 @@ mod tests {
             let initialize = serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}).to_string();
             assert_eq!(client.post(&endpoint).header("content-type","application/json").header("accept","application/json, text/event-stream").header("authorization","Bearer wrong").body(initialize.clone()).send().await.unwrap().status(), reqwest::StatusCode::UNAUTHORIZED);
             assert_eq!(client.post(&endpoint).header("content-type","application/json").header("accept","application/json, text/event-stream").header("authorization",format!("Bearer {bearer}")).header("origin","https://evil.example").body(initialize.clone()).send().await.unwrap().status(), reqwest::StatusCode::FORBIDDEN);
+            assert_eq!(client.post(&endpoint).header("content-type","application/json").header("accept","application/json, text/event-stream").header("authorization",format!("Bearer {bearer}")).header("host","evil.example").body(initialize.clone()).send().await.unwrap().status(), reqwest::StatusCode::FORBIDDEN);
             let initialized = client.post(&endpoint).header("content-type","application/json").header("accept","application/json, text/event-stream").header("authorization",format!("Bearer {bearer}")).body(initialize).send().await.unwrap();
             let session = initialized.headers().get("mcp-session-id").unwrap().to_str().unwrap().to_owned();
             client.post(&endpoint).header("content-type","application/json").header("accept","application/json, text/event-stream").header("authorization",format!("Bearer {bearer}")).header("mcp-session-id",&session).body(serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}).to_string()).send().await.unwrap();
