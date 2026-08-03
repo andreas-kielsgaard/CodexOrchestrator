@@ -276,6 +276,7 @@ CREATE TABLE IF NOT EXISTS work_unit_implementer_activations (
   launch_accepted_at TEXT,
   provider_activation_observed_at TEXT,
   implementer_ready_at TEXT,
+  failure_reason TEXT,
   CHECK ((implementer_ready_at IS NULL) OR (launch_accepted_at IS NOT NULL))
 );
 -- The v2 action is a separate immutable Handler invocation in the original Handler Session.
@@ -324,6 +325,7 @@ CREATE TABLE work_unit_implementer_activations_v4 (
   launch_accepted_at TEXT,
   provider_activation_observed_at TEXT,
   implementer_ready_at TEXT,
+  failure_reason TEXT,
   CHECK ((implementer_ready_at IS NULL) OR (launch_accepted_at IS NOT NULL))
 );
 "#;
@@ -337,6 +339,10 @@ fn migrate_legacy_implementer_activations(connection: &Connection) -> Result<(),
         .map_err(|error| format!("inspect Implementer activation migration: {error}"))?;
     if !columns.iter().any(|column| column == "implementer_attempt_id") {
         if columns.iter().any(|column| column == "attempt_id") {
+            if !columns.iter().any(|column| column == "failure_reason") {
+                connection.execute_batch("ALTER TABLE work_unit_implementer_activations ADD COLUMN failure_reason TEXT")
+                    .map_err(|error| format!("add Implementer activation failure reason: {error}"))?;
+            }
             return Ok(());
         }
         return Err("Implementer activation table has neither legacy nor shared attempt identity".into());
@@ -370,7 +376,7 @@ fn migrate_legacy_implementer_activations(connection: &Connection) -> Result<(),
                     i.execution_support_granted_at,i.isolated_worktree_ready_at,
                     i.implementer_session_created_at,i.implementer_invocation_prepared_at,
                     i.implementer_harness_bound_at,i.launch_requested_at,i.launch_accepted_at,
-                    i.provider_activation_observed_at,i.implementer_ready_at
+                    i.provider_activation_observed_at,i.implementer_ready_at,NULL
              FROM work_unit_implementer_activations i
              JOIN work_unit_handler_activations h
                ON h.work_unit_id=i.work_unit_id
