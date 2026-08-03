@@ -278,6 +278,7 @@ export type ProductWorkUnitHandlerActivationV1 =
 export type ProductWorkUnitActionContinuationV1 = Readonly<{
   readonly stage:
     | 'blocked'
+    | 'failed'
     | 'requested'
     | 'authorized'
     | 'invocation_prepared'
@@ -286,6 +287,7 @@ export type ProductWorkUnitActionContinuationV1 = Readonly<{
     | 'launch_accepted'
     | 'action_ready';
   readonly blockedReason?: string;
+  readonly failureReason?: string;
   readonly providerActivityObserved: boolean;
 }>;
 

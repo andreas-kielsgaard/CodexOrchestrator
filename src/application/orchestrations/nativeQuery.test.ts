@@ -377,6 +377,30 @@ describe('orchestration native query v1', () => {
         .referenceIndex.workUnits[0]!.implementerActivation,
     ).toMatchObject({ stage: 'failed', failureReason: 'launch_terminal_failure' });
 
+    const failedAction = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    const failedContinuation = (failedAction.workUnits as Array<Record<string, unknown>>)[0]!
+      .actionContinuation as Record<string, unknown>;
+    delete failedContinuation.launchAcceptedAt;
+    delete failedContinuation.providerActivationObservedAt;
+    delete failedContinuation.actionReadyAt;
+    failedContinuation.failureReason = 'handler_action_launch_not_accepted';
+    expect(
+      nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(failedAction))
+        .referenceIndex.workUnits[0]!.actionContinuation,
+    ).toMatchObject({
+      stage: 'failed',
+      failureReason: 'handler_action_launch_not_accepted',
+    });
+
+    const failedReadyAction = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (
+      (failedReadyAction.workUnits as Array<Record<string, unknown>>)[0]!
+        .actionContinuation as Record<string, unknown>
+    ).failureReason = 'forged_failure';
+    expect(() => decodeOrchestrationNativeQueryV2(failedReadyAction)).toThrow(
+      'failed Handler action continuation cannot be application-ready',
+    );
+
     const malformedCorrelation = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
     (
       (malformedCorrelation.workUnits as Array<Record<string, unknown>>)[0]!
@@ -384,6 +408,42 @@ describe('orchestration native query v1', () => {
     ).handlerActionInvocationId = 'foreign-action';
     expect(() => decodeOrchestrationNativeQueryV2(malformedCorrelation)).toThrow(
       'Implementer activation does not match the Handler action invocation',
+    );
+
+    const missingHandlerPrerequisite = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    delete (
+      (missingHandlerPrerequisite.workUnits as Array<Record<string, unknown>>)[0]!
+        .handlerActivation as Record<string, unknown>
+    ).isolatedWorktreeReadyAt;
+    expect(() => decodeOrchestrationNativeQueryV2(missingHandlerPrerequisite)).toThrow(
+      'Handler activation has a phase without its prerequisite',
+    );
+
+    const foreignOriginalHandler = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (
+      (foreignOriginalHandler.workUnits as Array<Record<string, unknown>>)[0]!
+        .actionContinuation as Record<string, unknown>
+    ).originalHandlerInvocationId = 'foreign-original-handler';
+    expect(() => decodeOrchestrationNativeQueryV2(foreignOriginalHandler)).toThrow(
+      'Handler action continuation does not match the original Handler Session and invocation',
+    );
+
+    const staleBlockedAction = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (
+      (staleBlockedAction.workUnits as Array<Record<string, unknown>>)[0]!
+        .actionContinuation as Record<string, unknown>
+    ).blockedReason = 'stale_action_block';
+    expect(() => decodeOrchestrationNativeQueryV2(staleBlockedAction)).toThrow(
+      'blocked Handler action continuation cannot have authorized action phases',
+    );
+
+    const reusedActionInvocation = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    const reusedImplementer = (
+      reusedActionInvocation.workUnits as Array<Record<string, unknown>>
+    )[0]!.implementerActivation as Record<string, unknown>;
+    reusedImplementer.implementerInvocationId = reusedImplementer.handlerActionInvocationId;
+    expect(() => decodeOrchestrationNativeQueryV2(reusedActionInvocation)).toThrow(
+      'Implementer invocation must differ from the Handler action invocation',
     );
 
     const launchAcceptedNotReady = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;

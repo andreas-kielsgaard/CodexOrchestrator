@@ -184,7 +184,9 @@ pub(crate) fn initial_work_unit_handler_revision_configuration(
             sandbox_options: vec![sandbox_to_revision(profile.runtime.sandbox)],
             approval_policy: RevisionApprovalPolicy::Never,
             approval_policy_options: vec![RevisionApprovalPolicy::Never],
-            authority_summary: "Read-only bounded Handler evidence; no downstream action.".into(),
+            authority_summary:
+                "Read-only bounded Handler evidence plus one application-derived Implementer request."
+                    .into(),
         },
         hooks: vec![HarnessHookConfiguration {
             name: "completion".into(),
@@ -202,6 +204,7 @@ pub(crate) fn initial_work_unit_handler_revision_configuration(
 pub(crate) fn initial_work_unit_handler_baseline_revision_configuration(
 ) -> Result<HarnessEffectiveConfiguration, String> {
     let mut configuration = initial_work_unit_handler_revision_configuration()?;
+    configuration.prompt_prefix.content = "You are the Work Unit Handler for an already-authorized execution attempt. This original immutable Handler invocation is read-only and exposes no downstream action. Inspect only the application-supplied bounded evidence. Do not create Work Units, execution attempts, sessions, Implementers, requests, outcomes, acceptance, integration, settlement, or continuations.".into();
     configuration.tools.items.clear();
     configuration.tools.schema_boundary = "No Handler action is exposed by the original invocation.".into();
     configuration.runtime.authority_summary = "Read-only bounded Handler evidence; no downstream action.".into();
@@ -214,6 +217,7 @@ pub(crate) fn profile_from_immutable_handler_revision(
 ) -> Result<ConversationHarnessProfile, String> {
     if configuration.identity.machine_key != "work_unit_handler"
         || configuration.tools.items.iter().any(|tool| tool.name != "request_work_unit_implementer" || tool.policy != HarnessToolPolicy::Available)
+        || configuration.runtime.sandbox != HarnessSandbox::ReadOnly
         || configuration.runtime.approval_policy != RevisionApprovalPolicy::Never
     {
         return Err("immutable Handler revision is outside the bounded Handler contract".into());
@@ -609,11 +613,15 @@ mod tests {
 
     #[test]
     fn old_immutable_handler_revision_remains_actionless() {
-        let mut old = initial_work_unit_handler_revision_configuration().unwrap();
-        old.tools.items.clear();
+        let old = initial_work_unit_handler_baseline_revision_configuration().unwrap();
+        assert!(!old.prompt_prefix.content.contains("Use only request_work_unit_implementer"));
         let reopened = profile_from_immutable_handler_revision(&old, 1).unwrap();
         assert!(reopened.mcp.enabled_tools.is_empty());
         assert!(!reopened.mcp.required);
+
+        let mut unsafe_revision = initial_work_unit_handler_revision_configuration().unwrap();
+        unsafe_revision.runtime.sandbox = HarnessSandbox::WorkspaceWrite;
+        assert!(profile_from_immutable_handler_revision(&unsafe_revision, 2).is_err());
     }
 
     #[test]

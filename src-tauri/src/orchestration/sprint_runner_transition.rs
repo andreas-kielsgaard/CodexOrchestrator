@@ -299,6 +299,7 @@ CREATE TABLE IF NOT EXISTS work_unit_handler_action_continuations (
   provider_activation_observed_at TEXT,
   action_ready_at TEXT,
   blocked_reason TEXT,
+  failure_reason TEXT,
   CHECK ((action_ready_at IS NULL) OR (launch_accepted_at IS NOT NULL))
 );
 "#;
@@ -401,6 +402,17 @@ fn migrate_legacy_implementer_activations(connection: &Connection) -> Result<(),
             Err(error)
         }
     }
+}
+
+fn ensure_handler_action_failure_reason(connection: &Connection) -> Result<(), String> {
+    let columns = connection.prepare("PRAGMA table_info(work_unit_handler_action_continuations)")
+        .and_then(|mut statement| statement.query_map([], |row| row.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>())
+        .map_err(|error| format!("inspect Handler action continuation schema: {error}"))?;
+    if !columns.iter().any(|column| column == "failure_reason") {
+        connection.execute_batch("ALTER TABLE work_unit_handler_action_continuations ADD COLUMN failure_reason TEXT")
+            .map_err(|error| format!("add Handler action continuation failure reason: {error}"))?;
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -661,6 +673,8 @@ impl SprintRunnerTransitionService {
                 .map_err(|e| SprintRunnerTransitionError::Unavailable(format!("migrate Handler activation schema: {e}")))?; }
         }
         migrate_legacy_implementer_activations(&connection)
+            .map_err(SprintRunnerTransitionError::Unavailable)?;
+        ensure_handler_action_failure_reason(&connection)
             .map_err(SprintRunnerTransitionError::Unavailable)?;
         let authority_repository = SqliteOrchestrationRepository::open(path)
             .map_err(|error| SprintRunnerTransitionError::Unavailable(format!("open Sprint Git authority repository: {error}")))?;
@@ -1518,7 +1532,7 @@ impl SprintRunnerTransitionService {
         for invocation in invocations {
             let invocation = AgentInvocationId::new(invocation)
                 .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
-            self.request_work_unit_implementer(&invocation)?;
+            self.request_work_unit_implementer_inner(&invocation, false)?;
         }
         Ok(())
     }
@@ -1692,9 +1706,6 @@ impl SprintRunnerTransitionService {
         let invocation = AgentInvocationId::new(invocation_id)
             .map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         let mut runtime = package.runtime_launch_configuration();
-        let injection = self.prepare_work_unit_handler_action(invocation.clone())?;
-        runtime.extension.additional_args.extend(injection.configuration_args);
-        runtime.extension.environment.push(injection.environment);
         let prompt = "Handler action continuation. The only exposed action is request_work_unit_implementer. The application derives all identities and does not accept outcomes, review, settlement, retries, dependent activation, or continuation.".to_string();
         self.sessions.prepare_idempotent_application_invocation(
             SendIdempotentApplicationAgentSessionMessageCommand {
@@ -1709,15 +1720,38 @@ impl SprintRunnerTransitionService {
         package.bind_correlated_invocation(session.clone(), invocation.clone())
             .map_err(|_| SprintRunnerTransitionError::Conflict)?;
         self.mark_handler_action(work_unit_id, "harness_bound_at")?;
-        match self.sessions.application_invocation_launch_evidence(&invocation, &session)
-            .map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))? {
-            ApplicationInvocationLaunchEvidence::LaunchAccepted => {
+        match self.sessions.application_invocation_launch_evidence(&invocation, &session) {
+            Err(error) => return self.fail_handler_action(
+                work_unit_id,
+                "handler_action_launch_evidence_failed",
+                SprintRunnerTransitionError::Unavailable(error.to_string()),
+            ),
+            Ok(ApplicationInvocationLaunchEvidence::LaunchAccepted) => {
                 self.mark_handler_action(work_unit_id, "launch_accepted_at")?;
                 self.mark_handler_action(work_unit_id, "action_ready_at")?;
             }
-            ApplicationInvocationLaunchEvidence::PersistedNotAccepted => {
+            Ok(ApplicationInvocationLaunchEvidence::PersistedNotAccepted) => {
                 self.mark_handler_action(work_unit_id, "launch_requested_at")?;
-                let launch = self.sessions.launch_prepared_application_invocation_with_launch_observation(
+                let action_status: String = self.connection.lock()
+                    .map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?
+                    .query_row(
+                        "SELECT status FROM agent_session_invocations WHERE id=?1 AND session_id=?2",
+                        params![invocation.as_str(), session.as_str()],
+                        |row| row.get(0),
+                    ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+                if action_status != "pending" {
+                    return self.fail_handler_action(
+                        work_unit_id,
+                        "handler_action_launch_not_accepted",
+                        SprintRunnerTransitionError::Unavailable(
+                            "Handler action continuation is terminal without launch acceptance".into(),
+                        ),
+                    );
+                }
+                let injection = self.prepare_work_unit_handler_action(invocation.clone())?;
+                runtime.extension.additional_args.extend(injection.configuration_args);
+                runtime.extension.environment.push(injection.environment);
+                let launch = match self.sessions.launch_prepared_application_invocation_with_launch_observation(
                     SendIdempotentApplicationAgentSessionMessageCommand {
                         invocation_id: invocation.clone(),
                         message: SendAgentSessionMessageCommand {
@@ -1726,14 +1760,34 @@ impl SprintRunnerTransitionService {
                             requested_options: Some(runtime.requested_options),
                         },
                     }, Some(runtime.extension),
-                ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+                ) {
+                    Ok(launch) => launch,
+                    Err(error) => return self.fail_handler_action(
+                        work_unit_id,
+                        "handler_action_launch_failed",
+                        SprintRunnerTransitionError::Unavailable(error.to_string()),
+                    ),
+                };
                 if launch.launch_accepted {
                     self.mark_handler_action(work_unit_id, "launch_accepted_at")?;
                     self.mark_handler_action(work_unit_id, "action_ready_at")?;
+                } else {
+                    return self.fail_handler_action(
+                        work_unit_id,
+                        "handler_action_launch_not_accepted",
+                        SprintRunnerTransitionError::Unavailable(
+                            "Handler action continuation launch was not accepted".into(),
+                        ),
+                    );
                 }
             }
-            ApplicationInvocationLaunchEvidence::NeverPersisted => return Err(SprintRunnerTransitionError::Conflict),
+            Ok(ApplicationInvocationLaunchEvidence::NeverPersisted) => return self.fail_handler_action(
+                work_unit_id,
+                "handler_action_launch_missing_prepared_invocation",
+                SprintRunnerTransitionError::Conflict,
+            ),
         }
+        self.clear_handler_action_failure(work_unit_id)?;
         if let Ok(observation) = package.observe_correlated_invocation() {
             if let Some(activity) = observation.provider_activity {
                 self.mark_handler_action_at(work_unit_id, "provider_activation_observed_at", activity.recorded_at.to_rfc3339())?;
@@ -1743,9 +1797,66 @@ impl SprintRunnerTransitionService {
     }
 
     fn request_work_unit_implementer(self:&Arc<Self>,handler_invocation:&AgentInvocationId)->Result<(),SprintRunnerTransitionError>{
+        self.request_work_unit_implementer_inner(handler_invocation, true)
+    }
+
+    fn request_work_unit_implementer_inner(self:&Arc<Self>,handler_invocation:&AgentInvocationId,require_active_action:bool)->Result<(),SprintRunnerTransitionError>{
         let handler=self.work_unit_handler.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("Work Unit Handler registry is poisoned".into()))?.clone().ok_or_else(||SprintRunnerTransitionError::Unavailable("Work Unit Handler activation is unavailable".into()))?;
-        let row:Option<(String,String,String,String,String,String,String)>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT c.work_unit_id,c.attempt_id,h.sprint_id,c.handler_session_id,c.action_harness_revision_id,c.action_harness_configuration_digest,c.action_harness_repository_commit_ref FROM work_unit_handler_action_continuations c JOIN work_unit_handler_activations h ON h.work_unit_id=c.work_unit_id AND h.attempt_id=c.attempt_id WHERE c.action_invocation_id=?1 AND c.authorized_at IS NOT NULL AND c.harness_bound_at IS NOT NULL AND c.launch_accepted_at IS NOT NULL AND c.action_ready_at IS NOT NULL AND h.eligibility_state='eligible' AND h.handler_ready_at IS NOT NULL AND EXISTS (SELECT 1 FROM agent_session_invocations ai WHERE ai.id=c.action_invocation_id AND ai.session_id=c.handler_session_id AND ai.input_provenance='application' AND ai.status IN ('pending','running'))",[handler_invocation.as_str()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).optional().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        let Some((work_unit,handler_attempt,sprint,handler_session,handler_revision,handler_digest,handler_commit))=row else{return Err(SprintRunnerTransitionError::Forbidden)};
+        let row:Option<(String,String,String,String,String,String,String,String)>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
+            "SELECT c.work_unit_id,c.attempt_id,h.sprint_id,c.handler_session_id,h.handler_invocation_id,
+                    c.action_harness_revision_id,c.action_harness_configuration_digest,c.action_harness_repository_commit_ref
+             FROM work_unit_handler_action_continuations c
+             JOIN work_unit_handler_activations h
+               ON h.work_unit_id=c.work_unit_id
+              AND h.attempt_id=c.attempt_id
+              AND h.handler_session_id=c.handler_session_id
+              AND h.handler_invocation_id=c.original_handler_invocation_id
+             WHERE c.action_invocation_id=?1
+               AND c.blocked_reason IS NULL
+               AND c.failure_reason IS NULL
+               AND c.authorized_at IS NOT NULL
+               AND c.invocation_prepared_at IS NOT NULL
+               AND c.harness_bound_at IS NOT NULL
+               AND c.launch_requested_at IS NOT NULL
+               AND c.launch_accepted_at IS NOT NULL
+               AND c.action_ready_at IS NOT NULL
+               AND h.eligibility_state='eligible'
+               AND h.blocked_reason IS NULL
+               AND h.handler_invocation_prepared_at IS NOT NULL
+               AND h.handler_harness_bound_at IS NOT NULL
+               AND h.launch_requested_at IS NOT NULL
+               AND h.launch_accepted_at IS NOT NULL
+               AND h.handler_ready_at IS NOT NULL
+               AND EXISTS (
+                   SELECT 1 FROM agent_session_invocations original
+                   WHERE original.id=c.original_handler_invocation_id
+                     AND original.session_id=c.handler_session_id
+                     AND original.input_provenance='application'
+                     AND original.status IN ('completed','failed','canceled','interrupted')
+               )
+               AND EXISTS (
+                   SELECT 1 FROM agent_session_invocations action
+                   WHERE action.id=c.action_invocation_id
+                     AND action.session_id=c.handler_session_id
+                     AND action.input_provenance='application'
+                     AND (?2=0 OR action.status IN ('pending','running'))
+               )
+               AND (?2=1 OR EXISTS (
+                   SELECT 1 FROM work_unit_implementer_activations persisted
+                   WHERE persisted.work_unit_id=c.work_unit_id
+                     AND persisted.handler_attempt_id=c.attempt_id
+                     AND persisted.handler_invocation_id=c.action_invocation_id
+                     AND persisted.attempt_id=c.attempt_id
+               ))",
+            params![handler_invocation.as_str(), if require_active_action { 1 } else { 0 }],
+            |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?)),
+        ).optional().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let Some((work_unit,handler_attempt,sprint,handler_session,original_handler_invocation,handler_revision,handler_digest,handler_commit))=row else{return Err(SprintRunnerTransitionError::Forbidden)};
+        if handler_attempt != stable_id("work-unit-handler-attempt", &work_unit)
+            || handler_session != stable_id("work-unit-handler-session", &work_unit)
+            || original_handler_invocation != stable_id("work-unit-handler-invocation", &work_unit)
+            || handler_invocation.as_str() != stable_id("work-unit-handler-action-invocation", &handler_attempt)
+        { return Err(SprintRunnerTransitionError::Forbidden) }
         let action=handler.load_pinned_handler_revision(&handler_revision,&handler_digest,&handler_commit).map_err(|_|SprintRunnerTransitionError::Forbidden)?;
         if !action.profile.mcp.required || action.profile.mcp.enabled_tools != ["request_work_unit_implementer"] { return Err(SprintRunnerTransitionError::Forbidden) }
         let persisted:bool=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT EXISTS(SELECT 1 FROM agent_session_invocations WHERE id=?1 AND session_id=?2 AND input_provenance='application')",params![handler_invocation.as_str(),handler_session],|r|r.get(0)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if !persisted{return Err(SprintRunnerTransitionError::Forbidden)}
@@ -1753,8 +1864,12 @@ impl SprintRunnerTransitionService {
         let attempt=handler_attempt.clone();let session_id=stable_id("work-unit-implementer-session",&handler_attempt);let invocation_id=stable_id("work-unit-implementer-invocation",&handler_attempt);
         let lock=self.transition_lock(&sprint)?;let _guard=lock.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("Work Unit activation lock is poisoned".into()))?;
         let existing:bool=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_implementer_activations WHERE work_unit_id=?1)",[&work_unit],|row|row.get(0)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        if !existing { let desired=handler.current_implementer_revision().map_err(|_|SprintRunnerTransitionError::Unavailable("immutable Implementer Harness revision unavailable".into()))?;self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("INSERT INTO work_unit_implementer_activations (work_unit_id,handler_attempt_id,handler_invocation_id,attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",params![work_unit,handler_attempt,handler_invocation.as_str(),attempt,session_id,invocation_id,desired.revision_id,desired.configuration_digest,desired.repository_commit_ref,chrono::Utc::now().to_rfc3339()]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?; }
+        if !existing { let desired=handler.current_implementer_revision().map_err(|_|SprintRunnerTransitionError::Unavailable("immutable Implementer Harness revision unavailable".into()))?;self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("INSERT OR IGNORE INTO work_unit_implementer_activations (work_unit_id,handler_attempt_id,handler_invocation_id,attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",params![work_unit,handler_attempt,handler_invocation.as_str(),attempt,session_id,invocation_id,desired.revision_id,desired.configuration_digest,desired.repository_commit_ref,chrono::Utc::now().to_rfc3339()]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?; }
         let (attempt,session_id,invocation_id,revision_id,digest,commit):(String,String,String,String,String,String)=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref FROM work_unit_implementer_activations WHERE work_unit_id=?1 AND handler_attempt_id=?2 AND handler_invocation_id=?3",params![work_unit,handler_attempt,handler_invocation.as_str()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).map_err(|_|SprintRunnerTransitionError::Conflict)?;
+        if attempt != handler_attempt
+            || session_id != stable_id("work-unit-implementer-session", &handler_attempt)
+            || invocation_id != stable_id("work-unit-implementer-invocation", &handler_attempt)
+        { return self.fail_implementer(&work_unit, "pinned_implementer_identity_invalid", SprintRunnerTransitionError::Conflict) }
         let pinned = match handler.load_pinned_implementer_revision(&revision_id, &digest, &commit) {
             Ok(pinned) => pinned,
             Err(_) => return self.fail_implementer(&work_unit, "pinned_implementer_harness_invalid", SprintRunnerTransitionError::Conflict),
@@ -1829,6 +1944,15 @@ impl SprintRunnerTransitionService {
     }
     fn clear_implementer_failure(&self, work_unit: &str) -> Result<(), SprintRunnerTransitionError> {
         self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_implementer_activations SET failure_reason=NULL WHERE work_unit_id=?1", [work_unit]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        Ok(())
+    }
+
+    fn fail_handler_action<T>(&self, work_unit: &str, reason: &str, error: SprintRunnerTransitionError) -> Result<T, SprintRunnerTransitionError> {
+        self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_handler_action_continuations SET failure_reason=?2 WHERE work_unit_id=?1", params![work_unit, reason]).map_err(|database_error| SprintRunnerTransitionError::Unavailable(database_error.to_string()))?;
+        Err(error)
+    }
+    fn clear_handler_action_failure(&self, work_unit: &str) -> Result<(), SprintRunnerTransitionError> {
+        self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_handler_action_continuations SET failure_reason=NULL WHERE work_unit_id=?1", [work_unit]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         Ok(())
     }
 
@@ -2328,7 +2452,7 @@ fn start_epic_runner_server(
 
 #[cfg(test)]
 mod implementer_activation_migration_tests {
-    use super::migrate_legacy_implementer_activations;
+    use super::{ensure_handler_action_failure_reason, migrate_legacy_implementer_activations};
     use rusqlite::{params, Connection};
 
     fn legacy_connection() -> Connection {
@@ -2400,5 +2524,21 @@ mod implementer_activation_migration_tests {
         ).unwrap();
         migrate_legacy_implementer_activations(&connection).unwrap();
         assert_eq!(connection.query_row::<String, _, _>("SELECT attempt_id FROM work_unit_implementer_activations", [], |row| row.get(0)).unwrap(), "handler-attempt");
+    }
+
+    #[test]
+    fn handler_action_failure_reason_migrates_idempotently() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(
+            "CREATE TABLE work_unit_handler_action_continuations (
+               work_unit_id TEXT PRIMARY KEY, blocked_reason TEXT
+             );",
+        ).unwrap();
+        ensure_handler_action_failure_reason(&connection).unwrap();
+        ensure_handler_action_failure_reason(&connection).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM pragma_table_info('work_unit_handler_action_continuations')
+             WHERE name='failure_reason'", [], |row| row.get(0),
+        ).unwrap(), 1);
     }
 }

@@ -1154,12 +1154,13 @@ impl SqliteOrchestrationRepository {
         let materialization_tables = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_materializations')", [], |row| row.get::<_, bool>(0)).map_err(|e| e.to_string())?;
         let work_unit_materializations = if materialization_tables { collect(&connection, "SELECT materialization_id,planning_point_id,accepted_revision_id,epic_id,sprint_id,work_slice_id,authorization_recorded_at,attempt_recorded_at,work_units_created_at,relationships_completed_at,settled_at FROM work_unit_materializations ORDER BY authorization_recorded_at,materialization_id", |row| Ok(WorkUnitMaterializationDto { materialization_id:row.get(0)?, planning_point_id:row.get(1)?, accepted_revision_id:row.get(2)?, epic_id:row.get(3)?, sprint_id:row.get(4)?, work_slice_id:row.get(5)?, authorization_recorded_at:row.get(6)?, attempt_recorded_at:row.get(7)?, work_units_created_at:row.get(8)?, relationships_completed_at:row.get(9)?, settled_at:row.get(10)? }))? } else { Vec::new() };
         let handler_activation_tables = materialization_tables && connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_handler_activations')", [], |row| row.get::<_, bool>(0)).map_err(|e| e.to_string())?;
-        let action_continuations = activation_rows(&connection, "work_unit_handler_action_continuations", "attempt_id,handler_session_id,original_handler_invocation_id,action_invocation_id,action_harness_revision_id,action_harness_configuration_digest,action_harness_repository_commit_ref,requested_at,authorized_at,invocation_prepared_at,harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,action_ready_at,blocked_reason", |row| Ok(WorkUnitHandlerActionContinuationDto { attempt_id:row.get(1)?, handler_session_id:row.get(2)?, original_handler_invocation_id:row.get(3)?, action_invocation_id:row.get(4)?, action_harness_revision_id:row.get(5)?, action_harness_configuration_digest:row.get(6)?, action_harness_repository_commit_ref:row.get(7)?, requested_at:row.get(8)?, authorized_at:row.get(9)?, invocation_prepared_at:row.get(10)?, harness_bound_at:row.get(11)?, launch_requested_at:row.get(12)?, launch_accepted_at:row.get(13)?, provider_activation_observed_at:row.get(14)?, action_ready_at:row.get(15)?, blocked_reason:row.get(16)? }))?;
+        let action_continuations = activation_rows(&connection, "work_unit_handler_action_continuations", "attempt_id,handler_session_id,original_handler_invocation_id,action_invocation_id,action_harness_revision_id,action_harness_configuration_digest,action_harness_repository_commit_ref,requested_at,authorized_at,invocation_prepared_at,harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,action_ready_at,blocked_reason,failure_reason", |row| Ok(WorkUnitHandlerActionContinuationDto { attempt_id:row.get(1)?, handler_session_id:row.get(2)?, original_handler_invocation_id:row.get(3)?, action_invocation_id:row.get(4)?, action_harness_revision_id:row.get(5)?, action_harness_configuration_digest:row.get(6)?, action_harness_repository_commit_ref:row.get(7)?, requested_at:row.get(8)?, authorized_at:row.get(9)?, invocation_prepared_at:row.get(10)?, harness_bound_at:row.get(11)?, launch_requested_at:row.get(12)?, launch_accepted_at:row.get(13)?, provider_activation_observed_at:row.get(14)?, action_ready_at:row.get(15)?, blocked_reason:row.get(16)?, failure_reason:row.get(17)? }))?;
         let implementer_activations = activation_rows(&connection, "work_unit_implementer_activations", "attempt_id,handler_invocation_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at,authorized_at,execution_support_granted_at,isolated_worktree_ready_at,implementer_session_created_at,implementer_invocation_prepared_at,implementer_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,implementer_ready_at,failure_reason", map_implementer_activation)?;
         let mut work_units = if handler_activation_tables { collect(&connection, "SELECT u.work_unit_id,u.materialization_id,u.work_slice_id,u.accepted_revision_id,u.lane_ordinal,u.lane_title,u.specification,a.attempt_id,a.handler_session_id,a.handler_invocation_id,a.handler_harness_revision_id,a.handler_harness_configuration_digest,a.handler_harness_repository_commit_ref,a.eligibility_state,a.blocked_reason,a.requested_at,a.authorized_at,a.attempt_created_at,a.execution_support_granted_at,a.isolated_worktree_ready_at,a.handler_session_created_at,a.handler_invocation_prepared_at,a.handler_harness_bound_at,a.launch_requested_at,a.launch_accepted_at,a.provider_activation_observed_at,a.handler_ready_at FROM work_units u LEFT JOIN work_unit_handler_activations a ON a.work_unit_id=u.work_unit_id ORDER BY u.materialization_id,u.lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation: match row.get::<_,Option<String>>(7)? { Some(attempt_id) => Some(WorkUnitHandlerActivationDto { attempt_id, handler_session_id:row.get(8)?, handler_invocation_id:row.get(9)?, handler_harness_revision_id:row.get(10)?, handler_harness_configuration_digest:row.get(11)?, handler_harness_repository_commit_ref:row.get(12)?, eligibility_state:row.get(13)?, blocked_reason:row.get(14)?, requested_at:row.get(15)?, authorized_at:row.get(16)?, attempt_created_at:row.get(17)?, execution_support_granted_at:row.get(18)?, isolated_worktree_ready_at:row.get(19)?, handler_session_created_at:row.get(20)?, handler_invocation_prepared_at:row.get(21)?, handler_harness_bound_at:row.get(22)?, launch_requested_at:row.get(23)?, launch_accepted_at:row.get(24)?, provider_activation_observed_at:row.get(25)?, handler_ready_at:row.get(26)? }), None => None }, action_continuation:None, implementer_activation:None }))? } else if materialization_tables { collect(&connection, "SELECT work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification FROM work_units ORDER BY materialization_id,lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation:None, action_continuation:None, implementer_activation:None }))? } else { Vec::new() };
         for work_unit in &mut work_units {
             work_unit.action_continuation = action_continuations.get(&work_unit.work_unit_id).cloned();
             work_unit.implementer_activation = implementer_activations.get(&work_unit.work_unit_id).cloned();
+            validate_work_unit_activation_projection(work_unit)?;
         }
         let work_unit_relationships = if materialization_tables { collect(&connection, "SELECT relationship_id,materialization_id,relationship_kind,from_id,to_id,ordinal FROM work_unit_relationships ORDER BY materialization_id,relationship_kind,from_id,to_id", |row| Ok(WorkUnitRelationshipDto { relationship_id:row.get(0)?, materialization_id:row.get(1)?, relationship_kind:row.get(2)?, from_id:row.get(3)?, to_id:row.get(4)?, ordinal:row.get(5)? }))? } else { Vec::new() };
         Ok(NativeQueryV2 {
@@ -2948,6 +2949,7 @@ struct WorkUnitHandlerActionContinuationDto {
     provider_activation_observed_at: Option<String>,
     action_ready_at: Option<String>,
     blocked_reason: Option<String>,
+    failure_reason: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2987,6 +2989,145 @@ fn map_implementer_activation(row: &Row<'_>) -> Result<WorkUnitImplementerActiva
         provider_activation_observed_at: row.get(17)?, implementer_ready_at: row.get(18)?,
         failure_reason: row.get(19)?,
     })
+}
+
+fn validate_work_unit_activation_projection(work_unit: &WorkUnitDto) -> Result<(), String> {
+    if let Some(handler) = &work_unit.handler_activation {
+        match (handler.eligibility_state.as_deref(), handler.blocked_reason.as_deref()) {
+            (Some("eligible"), None) | (Some("blocked"), Some(_)) => {}
+            _ => return Err("Handler activation eligibility projection is incoherent".into()),
+        }
+        if handler.requested_at.is_none() {
+            return Err("Handler activation lacks its request phase".into());
+        }
+        require_projected_phase_prerequisites(
+            &[
+                handler.requested_at.as_deref(), handler.authorized_at.as_deref(),
+                handler.attempt_created_at.as_deref(), handler.execution_support_granted_at.as_deref(),
+                handler.isolated_worktree_ready_at.as_deref(), handler.handler_session_created_at.as_deref(),
+                handler.handler_invocation_prepared_at.as_deref(), handler.handler_harness_bound_at.as_deref(),
+                handler.launch_requested_at.as_deref(), handler.launch_accepted_at.as_deref(),
+                handler.handler_ready_at.as_deref(),
+            ],
+            "Handler activation",
+        )?;
+        if handler.provider_activation_observed_at.is_some() && handler.launch_requested_at.is_none() {
+            return Err("Handler provider observation lacks launch request".into());
+        }
+        if handler.handler_ready_at.is_some() && handler.launch_accepted_at.is_none() {
+            return Err("Handler readiness lacks launch acceptance".into());
+        }
+        if handler.eligibility_state.as_deref() == Some("blocked")
+            && [
+                &handler.authorized_at, &handler.attempt_created_at,
+                &handler.execution_support_granted_at, &handler.isolated_worktree_ready_at,
+                &handler.handler_session_created_at, &handler.handler_invocation_prepared_at,
+                &handler.handler_harness_bound_at, &handler.launch_requested_at,
+                &handler.launch_accepted_at, &handler.provider_activation_observed_at,
+                &handler.handler_ready_at,
+            ].into_iter().any(Option::is_some)
+        {
+            return Err("blocked Handler activation has authorized phases".into());
+        }
+    }
+
+    if let Some(continuation) = &work_unit.action_continuation {
+        let handler = work_unit.handler_activation.as_ref()
+            .ok_or_else(|| "Handler action continuation lacks Handler activation".to_string())?;
+        if handler.eligibility_state.as_deref() != Some("eligible")
+            || handler.attempt_id != continuation.attempt_id
+            || handler.handler_session_id.as_deref() != Some(continuation.handler_session_id.as_str())
+            || handler.handler_invocation_id.as_deref() != Some(continuation.original_handler_invocation_id.as_str())
+        {
+            return Err("Handler action continuation has foreign Handler correlation".into());
+        }
+        if continuation.action_invocation_id == continuation.original_handler_invocation_id {
+            return Err("Handler action continuation reuses the original invocation".into());
+        }
+        require_projected_phase_prerequisites(
+            &[
+                Some(continuation.requested_at.as_str()), continuation.authorized_at.as_deref(),
+                continuation.invocation_prepared_at.as_deref(), continuation.harness_bound_at.as_deref(),
+                continuation.launch_requested_at.as_deref(), continuation.launch_accepted_at.as_deref(),
+                continuation.action_ready_at.as_deref(),
+            ],
+            "Handler action continuation",
+        )?;
+        if continuation.provider_activation_observed_at.is_some() && continuation.launch_requested_at.is_none() {
+            return Err("Handler action provider observation lacks launch request".into());
+        }
+        if continuation.action_ready_at.is_some() && continuation.launch_accepted_at.is_none() {
+            return Err("Handler action readiness lacks launch acceptance".into());
+        }
+        if continuation.blocked_reason.as_deref().is_some_and(|reason| reason.trim().is_empty())
+            || continuation.blocked_reason.is_some()
+                && [
+                    &continuation.authorized_at, &continuation.invocation_prepared_at,
+                    &continuation.harness_bound_at, &continuation.launch_requested_at,
+                    &continuation.launch_accepted_at, &continuation.provider_activation_observed_at,
+                    &continuation.action_ready_at,
+                ].into_iter().any(Option::is_some)
+        {
+            return Err("blocked Handler action continuation has authorized phases".into());
+        }
+        if continuation.failure_reason.as_deref().is_some_and(|reason| reason.trim().is_empty())
+            || continuation.failure_reason.is_some() && continuation.action_ready_at.is_some()
+            || continuation.failure_reason.is_some() && continuation.blocked_reason.is_some()
+        {
+            return Err("Handler action failure projection is incoherent".into());
+        }
+    }
+
+    if let Some(implementer) = &work_unit.implementer_activation {
+        let handler = work_unit.handler_activation.as_ref()
+            .ok_or_else(|| "Implementer activation lacks Handler activation".to_string())?;
+        let continuation = work_unit.action_continuation.as_ref()
+            .ok_or_else(|| "Implementer activation lacks Handler action continuation".to_string())?;
+        if handler.eligibility_state.as_deref() != Some("eligible")
+            || handler.attempt_id != implementer.attempt_id
+            || continuation.action_invocation_id != implementer.handler_action_invocation_id
+            || continuation.blocked_reason.is_some()
+        {
+            return Err("Implementer activation has foreign Handler correlation".into());
+        }
+        if implementer.implementer_invocation_id == implementer.handler_action_invocation_id {
+            return Err("Implementer activation reuses the Handler action invocation".into());
+        }
+        require_projected_phase_prerequisites(
+            &[
+                Some(implementer.requested_at.as_str()), implementer.authorized_at.as_deref(),
+                implementer.execution_support_granted_at.as_deref(), implementer.isolated_worktree_ready_at.as_deref(),
+                implementer.implementer_session_created_at.as_deref(), implementer.implementer_invocation_prepared_at.as_deref(),
+                implementer.implementer_harness_bound_at.as_deref(), implementer.launch_requested_at.as_deref(),
+                implementer.launch_accepted_at.as_deref(), implementer.implementer_ready_at.as_deref(),
+            ],
+            "Implementer activation",
+        )?;
+        if implementer.provider_activation_observed_at.is_some() && implementer.launch_requested_at.is_none() {
+            return Err("Implementer provider observation lacks launch request".into());
+        }
+        if implementer.implementer_ready_at.is_some() && implementer.launch_accepted_at.is_none() {
+            return Err("Implementer readiness lacks launch acceptance".into());
+        }
+        if implementer.failure_reason.as_deref().is_some_and(|reason| reason.trim().is_empty())
+            || implementer.failure_reason.is_some() && implementer.implementer_ready_at.is_some()
+        {
+            return Err("Implementer failure projection is incoherent".into());
+        }
+    }
+    Ok(())
+}
+
+fn require_projected_phase_prerequisites(phases: &[Option<&str>], label: &str) -> Result<(), String> {
+    let mut missing = false;
+    for phase in phases {
+        if phase.is_none() {
+            missing = true;
+        } else if missing {
+            return Err(format!("{label} has a phase without its prerequisite"));
+        }
+    }
+    Ok(())
 }
 
 fn activation_rows<T, F>(connection: &Connection, table: &str, columns: &str, mut map: F) -> Result<std::collections::HashMap<String, T>, String>

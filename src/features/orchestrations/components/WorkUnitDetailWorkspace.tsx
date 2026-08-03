@@ -293,6 +293,8 @@ function actionContinuationActivity(
 ) {
   if (continuation.stage === 'blocked')
     return `Handler action continuation is blocked: ${continuation.blockedReason}.`;
+  if (continuation.stage === 'failed')
+    return `Handler action continuation needs attention: ${continuation.failureReason}.`;
   const detail = {
     requested: 'Handler action continuation was requested.',
     authorized: 'Handler action continuation is authorized.',

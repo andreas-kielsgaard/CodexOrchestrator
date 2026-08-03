@@ -1844,3 +1844,101 @@ fn implementer_activation_projection_serializes_every_persisted_fact_at_its_name
         ("failureReason", "precise-failure"),
     ] { assert_eq!(value[key], expected); }
 }
+
+#[test]
+fn work_unit_activation_projection_fails_closed_for_foreign_or_incoherent_state() {
+    let valid = valid_work_unit_activation_projection();
+    assert!(validate_work_unit_activation_projection(&valid).is_ok());
+
+    let mut foreign_original = valid_work_unit_activation_projection();
+    foreign_original.action_continuation.as_mut().unwrap().original_handler_invocation_id =
+        "foreign-original".into();
+    assert!(validate_work_unit_activation_projection(&foreign_original).is_err());
+
+    let mut missing_prerequisite = valid_work_unit_activation_projection();
+    missing_prerequisite.handler_activation.as_mut().unwrap().isolated_worktree_ready_at = None;
+    assert!(validate_work_unit_activation_projection(&missing_prerequisite).is_err());
+
+    let mut stale_block = valid_work_unit_activation_projection();
+    stale_block.action_continuation.as_mut().unwrap().blocked_reason = Some("stale".into());
+    assert!(validate_work_unit_activation_projection(&stale_block).is_err());
+
+    let mut failed_and_ready = valid_work_unit_activation_projection();
+    failed_and_ready.implementer_activation.as_mut().unwrap().failure_reason = Some("failed".into());
+    assert!(validate_work_unit_activation_projection(&failed_and_ready).is_err());
+}
+
+fn valid_work_unit_activation_projection() -> WorkUnitDto {
+    let timestamp = || Some("2026-08-03T00:00:00Z".to_string());
+    WorkUnitDto {
+        work_unit_id: "unit".into(),
+        materialization_id: "materialization".into(),
+        work_slice_id: "slice".into(),
+        accepted_revision_id: "revision".into(),
+        lane_ordinal: 0,
+        lane_title: "Lane".into(),
+        specification: "Specification".into(),
+        handler_activation: Some(WorkUnitHandlerActivationDto {
+            attempt_id: "attempt".into(),
+            handler_session_id: Some("handler-session".into()),
+            handler_invocation_id: Some("handler-original".into()),
+            handler_harness_revision_id: Some("handler-revision".into()),
+            handler_harness_configuration_digest: Some("handler-digest".into()),
+            handler_harness_repository_commit_ref: Some("handler-commit".into()),
+            eligibility_state: Some("eligible".into()),
+            blocked_reason: None,
+            requested_at: timestamp(),
+            authorized_at: timestamp(),
+            attempt_created_at: timestamp(),
+            execution_support_granted_at: timestamp(),
+            isolated_worktree_ready_at: timestamp(),
+            handler_session_created_at: timestamp(),
+            handler_invocation_prepared_at: timestamp(),
+            handler_harness_bound_at: timestamp(),
+            launch_requested_at: timestamp(),
+            launch_accepted_at: timestamp(),
+            provider_activation_observed_at: timestamp(),
+            handler_ready_at: timestamp(),
+        }),
+        action_continuation: Some(WorkUnitHandlerActionContinuationDto {
+            attempt_id: "attempt".into(),
+            handler_session_id: "handler-session".into(),
+            original_handler_invocation_id: "handler-original".into(),
+            action_invocation_id: "handler-action".into(),
+            action_harness_revision_id: "action-revision".into(),
+            action_harness_configuration_digest: "action-digest".into(),
+            action_harness_repository_commit_ref: "action-commit".into(),
+            requested_at: timestamp().unwrap(),
+            authorized_at: timestamp(),
+            invocation_prepared_at: timestamp(),
+            harness_bound_at: timestamp(),
+            launch_requested_at: timestamp(),
+            launch_accepted_at: timestamp(),
+            provider_activation_observed_at: timestamp(),
+            action_ready_at: timestamp(),
+            blocked_reason: None,
+            failure_reason: None,
+        }),
+        implementer_activation: Some(WorkUnitImplementerActivationDto {
+            attempt_id: "attempt".into(),
+            handler_action_invocation_id: "handler-action".into(),
+            implementer_session_id: "implementer-session".into(),
+            implementer_invocation_id: "implementer-invocation".into(),
+            implementer_harness_revision_id: "implementer-revision".into(),
+            implementer_harness_configuration_digest: "implementer-digest".into(),
+            implementer_harness_repository_commit_ref: "implementer-commit".into(),
+            requested_at: timestamp().unwrap(),
+            authorized_at: timestamp(),
+            execution_support_granted_at: timestamp(),
+            isolated_worktree_ready_at: timestamp(),
+            implementer_session_created_at: timestamp(),
+            implementer_invocation_prepared_at: timestamp(),
+            implementer_harness_bound_at: timestamp(),
+            launch_requested_at: timestamp(),
+            launch_accepted_at: timestamp(),
+            provider_activation_observed_at: timestamp(),
+            implementer_ready_at: timestamp(),
+            failure_reason: None,
+        }),
+    }
+}

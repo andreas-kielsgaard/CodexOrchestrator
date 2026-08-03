@@ -50,7 +50,13 @@ describe('WorkUnitDetailWorkspace Handler activation detail', () => {
           handlerInvocationId: 'handler-invocation-accepted',
           eligibilityState: 'eligible',
           requestedAt: '2026-08-02T00:01:00Z',
+          authorizedAt: '2026-08-02T00:01:01Z',
+          attemptCreatedAt: '2026-08-02T00:01:02Z',
+          executionSupportGrantedAt: '2026-08-02T00:01:03Z',
+          isolatedWorktreeReadyAt: '2026-08-02T00:01:04Z',
+          handlerSessionCreatedAt: '2026-08-02T00:01:05Z',
           handlerInvocationPreparedAt: '2026-08-02T00:01:06Z',
+          handlerHarnessBoundAt: '2026-08-02T00:01:07Z',
           launchRequestedAt: '2026-08-02T00:01:08Z',
           launchAcceptedAt: '2026-08-02T00:01:09Z',
         },
@@ -112,7 +118,7 @@ describe('WorkUnitDetailWorkspace Handler activation detail', () => {
       providerActivityObserved: false,
     });
 
-    render(
+    const rendered = render(
       <WorkUnitDetailWorkspace
         unit={unit}
         lifecycleEntries={[]}
@@ -123,6 +129,9 @@ describe('WorkUnitDetailWorkspace Handler activation detail', () => {
     );
 
     const detail = screen.getByLabelText('Work Unit context');
+    expect(
+      screen.getByLabelText('Work Unit activation activity').querySelector('button'),
+    ).toBeNull();
     expect(detail).toHaveTextContent(
       'Handler launch accepted; application Handler readiness is not yet recorded.',
     );
@@ -132,6 +141,26 @@ describe('WorkUnitDetailWorkspace Handler activation detail', () => {
     );
     expect(detail).not.toHaveTextContent(
       /provider compliance|outcome|review|retry|application acceptance/,
+    );
+
+    rendered.rerender(
+      <WorkUnitDetailWorkspace
+        unit={{
+          ...unit,
+          actionContinuation: {
+            stage: 'failed',
+            failureReason: 'handler_action_launch_not_accepted',
+            providerActivityObserved: false,
+          },
+        }}
+        lifecycleEntries={[]}
+        workSlicePlanningPointGroupTitle="Planning point"
+        sessions={[]}
+        onBack={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText('Work Unit context')).toHaveTextContent(
+      'Handler action continuation needs attention: handler_action_launch_not_accepted.',
     );
   });
 });

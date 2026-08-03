@@ -95,6 +95,7 @@ export interface NativeWorkUnitHandlerActionContinuationV1 {
   readonly providerActivationObservedAt?: string;
   readonly actionReadyAt?: string;
   readonly blockedReason?: string;
+  readonly failureReason?: string;
 }
 export interface NativeWorkUnitImplementerActivationV1 {
   readonly attemptId: string;
@@ -700,20 +701,23 @@ function actionContinuationPresentation(
   return {
     stage: continuation.blockedReason
       ? 'blocked'
-      : continuation.actionReadyAt
-        ? 'action_ready'
-        : continuation.launchAcceptedAt
-          ? 'launch_accepted'
-          : continuation.launchRequestedAt
-            ? 'launch_requested'
-            : continuation.harnessBoundAt
-              ? 'harness_bound'
-              : continuation.invocationPreparedAt
-                ? 'invocation_prepared'
-                : continuation.authorizedAt
-                  ? 'authorized'
-                  : 'requested',
+      : continuation.failureReason
+        ? 'failed'
+        : continuation.actionReadyAt
+          ? 'action_ready'
+          : continuation.launchAcceptedAt
+            ? 'launch_accepted'
+            : continuation.launchRequestedAt
+              ? 'launch_requested'
+              : continuation.harnessBoundAt
+                ? 'harness_bound'
+                : continuation.invocationPreparedAt
+                  ? 'invocation_prepared'
+                  : continuation.authorizedAt
+                    ? 'authorized'
+                    : 'requested',
     ...(continuation.blockedReason ? { blockedReason: continuation.blockedReason } : {}),
+    ...(continuation.failureReason ? { failureReason: continuation.failureReason } : {}),
     providerActivityObserved: Boolean(continuation.providerActivationObservedAt),
   };
 }
@@ -1247,8 +1251,45 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
       : {}),
     ...(optional('handlerReadyAt') ? { handlerReadyAt: optional('handlerReadyAt') } : {}),
   };
+  if (!result.requestedAt) fail('Handler activation requires its request phase');
+  phaseCoherence(
+    result,
+    [
+      'requestedAt',
+      'authorizedAt',
+      'attemptCreatedAt',
+      'executionSupportGrantedAt',
+      'isolatedWorktreeReadyAt',
+      'handlerSessionCreatedAt',
+      'handlerInvocationPreparedAt',
+      'handlerHarnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+      'handlerReadyAt',
+    ],
+    'Handler activation',
+  );
+  if (result.providerActivationObservedAt && !result.launchRequestedAt)
+    fail('Handler provider observation requires launch request');
   if (result.handlerReadyAt && !result.launchAcceptedAt)
     fail('Handler readiness requires launch acceptance');
+  if (
+    result.eligibilityState === 'blocked' &&
+    [
+      result.authorizedAt,
+      result.attemptCreatedAt,
+      result.executionSupportGrantedAt,
+      result.isolatedWorktreeReadyAt,
+      result.handlerSessionCreatedAt,
+      result.handlerInvocationPreparedAt,
+      result.handlerHarnessBoundAt,
+      result.launchRequestedAt,
+      result.launchAcceptedAt,
+      result.providerActivationObservedAt,
+      result.handlerReadyAt,
+    ].some(Boolean)
+  )
+    fail('blocked Handler activation cannot have authorized phases');
   return result;
 };
 const workUnitActionContinuation = (value: unknown): NativeWorkUnitHandlerActionContinuationV1 => {
@@ -1272,6 +1313,7 @@ const workUnitActionContinuation = (value: unknown): NativeWorkUnitHandlerAction
       'providerActivationObservedAt',
       'actionReadyAt',
       'blockedReason',
+      'failureReason',
     ],
     'Work Unit Handler action continuation',
   );
@@ -1281,6 +1323,10 @@ const workUnitActionContinuation = (value: unknown): NativeWorkUnitHandlerAction
     x.blockedReason === undefined
       ? undefined
       : boundedString(x.blockedReason, 4000, 'blockedReason');
+  const failureReason =
+    x.failureReason === undefined
+      ? undefined
+      : boundedString(x.failureReason, 4000, 'failureReason');
   const result = {
     attemptId: boundedString(x.attemptId, 240, 'action continuation attemptId'),
     handlerSessionId: boundedString(
@@ -1326,6 +1372,7 @@ const workUnitActionContinuation = (value: unknown): NativeWorkUnitHandlerAction
       : {}),
     ...(optionalTime('actionReadyAt') ? { actionReadyAt: optionalTime('actionReadyAt') } : {}),
     ...(blockedReason ? { blockedReason } : {}),
+    ...(failureReason ? { failureReason } : {}),
   };
   if (result.actionInvocationId === result.originalHandlerInvocationId)
     fail('Handler action invocation must differ from the original Handler invocation');
@@ -1346,8 +1393,23 @@ const workUnitActionContinuation = (value: unknown): NativeWorkUnitHandlerAction
     fail('Handler action provider observation requires launch request');
   if (result.actionReadyAt && !result.launchAcceptedAt)
     fail('Handler action readiness requires launch acceptance');
-  if (result.blockedReason && (result.authorizedAt || result.invocationPreparedAt))
+  if (
+    result.blockedReason &&
+    [
+      result.authorizedAt,
+      result.invocationPreparedAt,
+      result.harnessBoundAt,
+      result.launchRequestedAt,
+      result.launchAcceptedAt,
+      result.providerActivationObservedAt,
+      result.actionReadyAt,
+    ].some(Boolean)
+  )
     fail('blocked Handler action continuation cannot have authorized action phases');
+  if (result.failureReason && result.actionReadyAt)
+    fail('failed Handler action continuation cannot be application-ready');
+  if (result.failureReason && result.blockedReason)
+    fail('Handler action continuation cannot be both blocked and failed');
   return result;
 };
 
@@ -1461,6 +1523,8 @@ const workUnitImplementerActivation = (value: unknown): NativeWorkUnitImplemente
   );
   if (result.providerActivationObservedAt && !result.launchRequestedAt)
     fail('Implementer provider observation requires launch request');
+  if (result.implementerInvocationId === result.handlerActionInvocationId)
+    fail('Implementer invocation must differ from the Handler action invocation');
   if (result.implementerReadyAt && !result.launchAcceptedAt)
     fail('Implementer readiness requires launch acceptance');
   if (result.failureReason && result.implementerReadyAt)
@@ -1801,6 +1865,8 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
   if (continuation) {
     if (!handler || handler.attemptId !== continuation.attemptId)
       fail('Handler action continuation does not share the Handler attempt');
+    if (handler.eligibilityState !== 'eligible')
+      fail('Handler action continuation requires an eligible Handler activation');
     if (
       handler.handlerSessionId !== continuation.handlerSessionId ||
       handler.handlerInvocationId !== continuation.originalHandlerInvocationId
@@ -1814,6 +1880,8 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
       fail('Implementer activation does not share the Handler attempt');
     if (!continuation || continuation.actionInvocationId !== implementer.handlerActionInvocationId)
       fail('Implementer activation does not match the Handler action invocation');
+    if (continuation.blockedReason)
+      fail('blocked Handler action continuation cannot have an Implementer activation');
   }
 }
 function validateMaterializationRelationships(
