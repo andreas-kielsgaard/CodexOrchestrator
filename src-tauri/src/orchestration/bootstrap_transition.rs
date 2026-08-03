@@ -4933,6 +4933,24 @@ mod tests {
         assert!(continuation.4.is_none());
         for timestamp in [&continuation.5,&continuation.6,&continuation.7,&continuation.8,&continuation.9] { assert!(timestamp.is_some()); }
         assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 2);
+        let injection = handler_runner.prepared_handler_action_injection(&continuation.3).unwrap();
+        let endpoint = injection.configuration_args.iter().find_map(|argument| argument.strip_prefix("mcp_servers.").and_then(|value| value.split_once(".url=\"")).map(|(_, value)| value.trim_end_matches('"').to_owned())).unwrap();
+        let bearer = injection.environment.1.clone();
+        tokio::runtime::Builder::new_current_thread().enable_io().enable_time().build().unwrap().block_on(async {
+            let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).build().unwrap();
+            let initialize = serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}).to_string();
+            assert_eq!(client.post(&endpoint).header("content-type","application/json").header("accept","application/json, text/event-stream").header("authorization","Bearer wrong").body(initialize.clone()).send().await.unwrap().status(), reqwest::StatusCode::UNAUTHORIZED);
+            assert_eq!(client.post(&endpoint).header("content-type","application/json").header("accept","application/json, text/event-stream").header("authorization",format!("Bearer {bearer}")).header("origin","https://evil.example").body(initialize.clone()).send().await.unwrap().status(), reqwest::StatusCode::FORBIDDEN);
+            let initialized = client.post(&endpoint).header("content-type","application/json").header("accept","application/json, text/event-stream").header("authorization",format!("Bearer {bearer}")).body(initialize).send().await.unwrap();
+            let session = initialized.headers().get("mcp-session-id").unwrap().to_str().unwrap().to_owned();
+            client.post(&endpoint).header("content-type","application/json").header("accept","application/json, text/event-stream").header("authorization",format!("Bearer {bearer}")).header("mcp-session-id",&session).body(serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}).to_string()).send().await.unwrap();
+            let response = client.post(&endpoint).header("content-type","application/json").header("accept","application/json, text/event-stream").header("authorization",format!("Bearer {bearer}")).header("mcp-session-id",&session).body(serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"request_work_unit_implementer","arguments":{}}}).to_string()).send().await.unwrap();
+            let text = response.text().await.unwrap();
+            let json = text.lines().filter_map(|line| line.strip_prefix("data: ")).find(|line| !line.trim().is_empty()).unwrap_or(&text);
+            let result: serde_json::Value = serde_json::from_str(json).unwrap();
+            assert_eq!(result["result"]["isError"], false);
+            assert_eq!(serde_json::from_str::<serde_json::Value>(result["result"]["content"][0]["text"].as_str().unwrap()).unwrap()["status"], "implementer_request_recorded");
+        });
         handler_runner.request_work_unit_implementer_from_authenticated_continuation(&continuation.3).unwrap();
         let implementer: (String,String,String,String,String,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
             "SELECT attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,

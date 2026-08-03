@@ -702,6 +702,15 @@ impl SprintRunnerTransitionService {
         self.request_work_unit_implementer(&invocation)
     }
 
+    #[cfg(test)]
+    pub(crate) fn prepared_handler_action_injection(
+        &self,
+        invocation_id: &str,
+    ) -> Option<CodexMcpInjection> {
+        let invocation = AgentInvocationId::new(invocation_id.to_owned()).ok()?;
+        self.mcp.lock().ok()?.get(&invocation).map(|action| action.injection.clone())
+    }
+
     /// Starts the one-invocation semantic boundary before the Epic Runner launch request is made.
     pub(crate) fn prepare_epic_runner_action(
         self: &Arc<Self>,
