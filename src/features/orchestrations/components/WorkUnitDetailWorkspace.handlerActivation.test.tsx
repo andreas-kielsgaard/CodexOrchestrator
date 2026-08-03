@@ -46,11 +46,24 @@ describe('WorkUnitDetailWorkspace Handler activation detail', () => {
         specification: 'Launch acceptance is separate from Handler readiness.',
         handlerActivation: {
           attemptId: 'handler-attempt-accepted',
+          handlerSessionId: 'handler-session-accepted',
+          handlerInvocationId: 'handler-invocation-accepted',
           eligibilityState: 'eligible',
           requestedAt: '2026-08-02T00:01:00Z',
           handlerInvocationPreparedAt: '2026-08-02T00:01:06Z',
           launchRequestedAt: '2026-08-02T00:01:08Z',
           launchAcceptedAt: '2026-08-02T00:01:09Z',
+        },
+        actionContinuation: {
+          attemptId: 'handler-attempt-accepted',
+          handlerSessionId: 'handler-session-accepted',
+          originalHandlerInvocationId: 'handler-invocation-accepted',
+          actionInvocationId: 'handler-action-invocation-accepted',
+          actionHarnessRevisionId: 'handler-action-revision',
+          actionHarnessConfigurationDigest: 'handler-action-digest',
+          actionHarnessRepositoryCommitRef: 'handler-action-commit',
+          requestedAt: '2026-08-02T00:01:10Z',
+          blockedReason: 'original_handler_invocation_active',
         },
       },
     ];
@@ -114,8 +127,11 @@ describe('WorkUnitDetailWorkspace Handler activation detail', () => {
       'Handler launch accepted; application Handler readiness is not yet recorded.',
     );
     expect(detail).not.toHaveTextContent('acceptance is not yet recorded');
+    expect(detail).toHaveTextContent(
+      'Handler action continuation is blocked: original_handler_invocation_active.',
+    );
     expect(detail).not.toHaveTextContent(
-      /Implementer|provider compliance|outcome|review|retry|application acceptance|continuation/,
+      /provider compliance|outcome|review|retry|application acceptance/,
     );
   });
 });

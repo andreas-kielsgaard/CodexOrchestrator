@@ -91,6 +91,18 @@ export function WorkUnitDetailWorkspace({
           <h1>{unit.title}</h1>
           <p>{unit.summary}</p>
           <p>{unit.details}</p>
+          {(unit.handlerActivation || unit.actionContinuation || unit.implementerActivation) && (
+            <section className="work-unit-activation" aria-label="Work Unit activation activity">
+              <h2>Activation activity</h2>
+              {unit.handlerActivation && <p>{handlerActivity(unit.handlerActivation)}</p>}
+              {unit.actionContinuation && (
+                <p>{actionContinuationActivity(unit.actionContinuation)}</p>
+              )}
+              {unit.implementerActivation && (
+                <p>{implementerActivity(unit.implementerActivation)}</p>
+              )}
+            </section>
+          )}
           <section className="work-unit-lifecycle" aria-label="Work Unit lifecycle turn log">
             <h2>Lifecycle</h2>
             {lifecycleEntries.length ? (
@@ -228,13 +240,14 @@ function SessionSlot({
 function agentInitial(
   role: SprintWorkspacePresentationV1['workUnitLifecycle'][number]['agentRole'],
 ) {
-  return {
+  const detail = {
     epic: 'ER',
     sprint: 'SR',
     work_slice_planner: 'SP',
     work_unit_handler: 'H',
     work_unit_implementer: 'I',
   }[role];
+  return detail;
 }
 
 function workUnitStatusLabel(
@@ -251,4 +264,70 @@ function workUnitStatusLabel(
     responsibility_accepted: 'Completed',
     deferred: 'Deferred',
   }[state];
+}
+
+function handlerActivity(
+  activation: NonNullable<
+    SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['handlerActivation']
+  >,
+) {
+  if (activation.eligibilityState === 'blocked')
+    return `Original Handler is blocked: ${activation.blockedReason}.`;
+  const detail = {
+    eligible_not_prepared: 'Original Handler is authorized but not yet prepared.',
+    invocation_prepared: 'Original Handler invocation is prepared.',
+    launch_requested: 'Original Handler launch has been requested.',
+    launch_accepted:
+      'Original Handler launch was accepted; application readiness is not yet recorded.',
+    handler_ready: 'Original Handler is application-ready.',
+  }[activation.stage];
+  return activation.providerActivityObserved
+    ? `${detail} Provider activity is observed separately.`
+    : detail;
+}
+
+function actionContinuationActivity(
+  continuation: NonNullable<
+    SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['actionContinuation']
+  >,
+) {
+  if (continuation.stage === 'blocked')
+    return `Handler action continuation is blocked: ${continuation.blockedReason}.`;
+  const detail = {
+    requested: 'Handler action continuation was requested.',
+    authorized: 'Handler action continuation is authorized.',
+    invocation_prepared: 'Handler action continuation invocation is prepared.',
+    harness_bound: 'Handler action continuation is bound.',
+    launch_requested: 'Handler action continuation launch has been requested.',
+    launch_accepted:
+      'Handler action continuation launch was accepted; application readiness is not yet recorded.',
+    action_ready: 'Handler action continuation is application-ready.',
+  }[continuation.stage];
+  return continuation.providerActivityObserved
+    ? `${detail} Provider activity is observed separately.`
+    : detail;
+}
+
+function implementerActivity(
+  activation: NonNullable<
+    SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['implementerActivation']
+  >,
+) {
+  if (activation.stage === 'failed')
+    return `Implementer activation needs attention: ${activation.failureReason}.`;
+  const detail = {
+    requested: 'Implementer activation was requested.',
+    authorized: 'Implementer activation is authorized.',
+    execution_support_granted: 'Implementer execution support is granted.',
+    worktree_ready: 'Implementer isolated worktree is ready.',
+    session_created: 'Implementer Session is created.',
+    invocation_prepared: 'Implementer invocation is prepared.',
+    harness_bound: 'Implementer invocation is bound.',
+    launch_requested: 'Implementer launch has been requested.',
+    launch_accepted: 'Implementer launch was accepted; application readiness is not yet recorded.',
+    implementer_ready: 'Implementer is application-ready.',
+  }[activation.stage];
+  return activation.providerActivityObserved
+    ? `${detail} Provider activity is observed separately.`
+    : detail;
 }

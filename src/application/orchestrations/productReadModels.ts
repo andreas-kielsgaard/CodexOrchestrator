@@ -167,6 +167,8 @@ export interface ProductReadReferenceIndexV1 {
     readonly details: string;
     readonly source: ReadSourceAuthorityV1;
     readonly handlerActivation?: ProductWorkUnitHandlerActivationV1;
+    readonly actionContinuation?: ProductWorkUnitActionContinuationV1;
+    readonly implementerActivation?: ProductWorkUnitImplementerActivationV1;
   }[];
   readonly gates: readonly {
     readonly gateId: string;
@@ -273,6 +275,37 @@ export type ProductWorkUnitHandlerActivationV1 =
       readonly providerActivityObserved: boolean;
     }>;
 
+export type ProductWorkUnitActionContinuationV1 = Readonly<{
+  readonly stage:
+    | 'blocked'
+    | 'requested'
+    | 'authorized'
+    | 'invocation_prepared'
+    | 'harness_bound'
+    | 'launch_requested'
+    | 'launch_accepted'
+    | 'action_ready';
+  readonly blockedReason?: string;
+  readonly providerActivityObserved: boolean;
+}>;
+
+export type ProductWorkUnitImplementerActivationV1 = Readonly<{
+  readonly stage:
+    | 'requested'
+    | 'authorized'
+    | 'execution_support_granted'
+    | 'worktree_ready'
+    | 'session_created'
+    | 'invocation_prepared'
+    | 'harness_bound'
+    | 'launch_requested'
+    | 'launch_accepted'
+    | 'implementer_ready'
+    | 'failed';
+  readonly failureReason?: string;
+  readonly providerActivityObserved: boolean;
+}>;
+
 export interface ProductContinuationReadModelV1 {
   readonly level: 'sprint' | 'epic';
   readonly policy: Readonly<{
@@ -343,6 +376,8 @@ export interface ProductSprintRevisionViewV1 {
     readonly details: string;
     readonly source: ReadSourceAuthorityV1;
     readonly handlerActivation?: ProductWorkUnitHandlerActivationV1;
+    readonly actionContinuation?: ProductWorkUnitActionContinuationV1;
+    readonly implementerActivation?: ProductWorkUnitImplementerActivationV1;
     readonly workUnitScopeId: string;
     readonly sprintPlanRevisionId: string;
     readonly fixedExecutionScopeIds: readonly string[];

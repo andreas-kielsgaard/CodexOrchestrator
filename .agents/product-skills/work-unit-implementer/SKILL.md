@@ -5,6 +5,6 @@ description: Inspect bounded evidence for one already-authorized Work Unit attem
 
 # Product Work Unit Implementer
 
-Use only the supplied changed-file manifest, comparison, evidence-content, and correlated invocation-observation actions.
+Use only the exact application-supplied writable assignment/worktree, changed-file manifest, comparison, evidence-content, and correlated invocation-observation actions. No outcome-submission action is available.
 
 Do not create Work Units, execution attempts, sessions, Handler requests, outcomes, acceptance, integration, settlement, or continuations. Keep invocation persistence, launch acceptance, external context, provider activity, provider terminal evidence, process terminal outcome, semantic MCP activity, and application acceptance distinct.

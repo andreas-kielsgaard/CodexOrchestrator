@@ -223,6 +223,43 @@ describe('orchestration native query v1', () => {
           handlerReadyAt: '2026-08-02T00:01:10Z',
           providerActivationObservedAt: '2026-08-02T00:01:11Z',
         },
+        actionContinuation: {
+          attemptId: 'handler-attempt-1',
+          handlerSessionId: 'handler-session-1',
+          originalHandlerInvocationId: 'handler-invocation-1',
+          actionInvocationId: 'handler-action-invocation-1',
+          actionHarnessRevisionId: 'handler-action-revision-1',
+          actionHarnessConfigurationDigest: 'handler-action-digest-1',
+          actionHarnessRepositoryCommitRef: 'handler-action-commit-1',
+          requestedAt: '2026-08-02T00:01:12Z',
+          authorizedAt: '2026-08-02T00:01:13Z',
+          invocationPreparedAt: '2026-08-02T00:01:14Z',
+          harnessBoundAt: '2026-08-02T00:01:15Z',
+          launchRequestedAt: '2026-08-02T00:01:16Z',
+          launchAcceptedAt: '2026-08-02T00:01:17Z',
+          providerActivationObservedAt: '2026-08-02T00:01:18Z',
+          actionReadyAt: '2026-08-02T00:01:19Z',
+        },
+        implementerActivation: {
+          attemptId: 'handler-attempt-1',
+          handlerActionInvocationId: 'handler-action-invocation-1',
+          implementerSessionId: 'implementer-session-1',
+          implementerInvocationId: 'implementer-invocation-1',
+          implementerHarnessRevisionId: 'implementer-revision-1',
+          implementerHarnessConfigurationDigest: 'implementer-digest-1',
+          implementerHarnessRepositoryCommitRef: 'implementer-commit-1',
+          requestedAt: '2026-08-02T00:01:20Z',
+          authorizedAt: '2026-08-02T00:01:21Z',
+          executionSupportGrantedAt: '2026-08-02T00:01:22Z',
+          isolatedWorktreeReadyAt: '2026-08-02T00:01:23Z',
+          implementerSessionCreatedAt: '2026-08-02T00:01:24Z',
+          implementerInvocationPreparedAt: '2026-08-02T00:01:25Z',
+          implementerHarnessBoundAt: '2026-08-02T00:01:26Z',
+          launchRequestedAt: '2026-08-02T00:01:27Z',
+          launchAcceptedAt: '2026-08-02T00:01:28Z',
+          providerActivationObservedAt: '2026-08-02T00:01:29Z',
+          implementerReadyAt: '2026-08-02T00:01:30Z',
+        },
       },
       {
         workUnitId: 'unit-2',
@@ -309,6 +346,8 @@ describe('orchestration native query v1', () => {
           stage: 'handler_ready',
           providerActivityObserved: true,
         },
+        actionContinuation: { stage: 'action_ready', providerActivityObserved: true },
+        implementerActivation: { stage: 'implementer_ready', providerActivityObserved: true },
       },
       {
         workUnitId: 'unit-2',
@@ -327,6 +366,25 @@ describe('orchestration native query v1', () => {
       'Provider activity observed separately',
     );
     expect(input.referenceIndex.workUnits[1]!.details).toContain('Handler activation blocked');
+
+    const failedActivation = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    const failedImplementer = (failedActivation.workUnits as Array<Record<string, unknown>>)[0]!
+      .implementerActivation as Record<string, unknown>;
+    delete failedImplementer.implementerReadyAt;
+    failedImplementer.failureReason = 'launch_terminal_failure';
+    expect(
+      nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(failedActivation))
+        .referenceIndex.workUnits[0]!.implementerActivation,
+    ).toMatchObject({ stage: 'failed', failureReason: 'launch_terminal_failure' });
+
+    const malformedCorrelation = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (
+      (malformedCorrelation.workUnits as Array<Record<string, unknown>>)[0]!
+        .implementerActivation as Record<string, unknown>
+    ).handlerActionInvocationId = 'foreign-action';
+    expect(() => decodeOrchestrationNativeQueryV2(malformedCorrelation)).toThrow(
+      'Implementer activation does not match the Handler action invocation',
+    );
 
     const launchAcceptedNotReady = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
     const acceptedActivation = (

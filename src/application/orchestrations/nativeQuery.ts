@@ -4,7 +4,9 @@ import { ARTIFACT_ACCESS_CONTRACTS_V1 } from './artifactAccess';
 import { ORCHESTRATION_EVENTS_V1 } from './orchestrationEvents';
 import type {
   ProductReadCompositionInputV1,
+  ProductWorkUnitActionContinuationV1,
   ProductWorkUnitHandlerActivationV1,
+  ProductWorkUnitImplementerActivationV1,
 } from './productReadModels';
 
 export const ORCHESTRATION_NATIVE_QUERY_V2 = 'orchestration-native-query/v2' as const;
@@ -51,6 +53,8 @@ export interface NativeMaterializedWorkUnitV1 {
   readonly laneTitle: string;
   readonly specification: string;
   readonly handlerActivation?: NativeWorkUnitHandlerActivationV1;
+  readonly actionContinuation?: NativeWorkUnitHandlerActionContinuationV1;
+  readonly implementerActivation?: NativeWorkUnitImplementerActivationV1;
 }
 export interface NativeWorkUnitHandlerActivationV1 {
   readonly attemptId: string;
@@ -73,6 +77,45 @@ export interface NativeWorkUnitHandlerActivationV1 {
   readonly launchAcceptedAt?: string;
   readonly providerActivationObservedAt?: string;
   readonly handlerReadyAt?: string;
+}
+export interface NativeWorkUnitHandlerActionContinuationV1 {
+  readonly attemptId: string;
+  readonly handlerSessionId: string;
+  readonly originalHandlerInvocationId: string;
+  readonly actionInvocationId: string;
+  readonly actionHarnessRevisionId: string;
+  readonly actionHarnessConfigurationDigest: string;
+  readonly actionHarnessRepositoryCommitRef: string;
+  readonly requestedAt: string;
+  readonly authorizedAt?: string;
+  readonly invocationPreparedAt?: string;
+  readonly harnessBoundAt?: string;
+  readonly launchRequestedAt?: string;
+  readonly launchAcceptedAt?: string;
+  readonly providerActivationObservedAt?: string;
+  readonly actionReadyAt?: string;
+  readonly blockedReason?: string;
+}
+export interface NativeWorkUnitImplementerActivationV1 {
+  readonly attemptId: string;
+  readonly handlerActionInvocationId: string;
+  readonly implementerSessionId: string;
+  readonly implementerInvocationId: string;
+  readonly implementerHarnessRevisionId: string;
+  readonly implementerHarnessConfigurationDigest: string;
+  readonly implementerHarnessRepositoryCommitRef: string;
+  readonly requestedAt: string;
+  readonly authorizedAt?: string;
+  readonly executionSupportGrantedAt?: string;
+  readonly isolatedWorktreeReadyAt?: string;
+  readonly implementerSessionCreatedAt?: string;
+  readonly implementerInvocationPreparedAt?: string;
+  readonly implementerHarnessBoundAt?: string;
+  readonly launchRequestedAt?: string;
+  readonly launchAcceptedAt?: string;
+  readonly providerActivationObservedAt?: string;
+  readonly implementerReadyAt?: string;
+  readonly failureReason?: string;
 }
 export interface NativeWorkUnitRelationshipV1 {
   readonly relationshipId: string;
@@ -530,6 +573,12 @@ export function nativeQueryProductCompositionInputV2(
         ...(unit.handlerActivation
           ? { handlerActivation: handlerActivationPresentation(unit.handlerActivation) }
           : {}),
+        ...(unit.actionContinuation
+          ? { actionContinuation: actionContinuationPresentation(unit.actionContinuation) }
+          : {}),
+        ...(unit.implementerActivation
+          ? { implementerActivation: implementerActivationPresentation(unit.implementerActivation) }
+          : {}),
       })),
       gates: [],
       concerns: [],
@@ -641,6 +690,60 @@ function handlerActivationPresentation(
           : activation.handlerInvocationPreparedAt
             ? 'invocation_prepared'
             : 'eligible_not_prepared',
+    providerActivityObserved: Boolean(activation.providerActivationObservedAt),
+  };
+}
+
+function actionContinuationPresentation(
+  continuation: NativeWorkUnitHandlerActionContinuationV1,
+): ProductWorkUnitActionContinuationV1 {
+  return {
+    stage: continuation.blockedReason
+      ? 'blocked'
+      : continuation.actionReadyAt
+        ? 'action_ready'
+        : continuation.launchAcceptedAt
+          ? 'launch_accepted'
+          : continuation.launchRequestedAt
+            ? 'launch_requested'
+            : continuation.harnessBoundAt
+              ? 'harness_bound'
+              : continuation.invocationPreparedAt
+                ? 'invocation_prepared'
+                : continuation.authorizedAt
+                  ? 'authorized'
+                  : 'requested',
+    ...(continuation.blockedReason ? { blockedReason: continuation.blockedReason } : {}),
+    providerActivityObserved: Boolean(continuation.providerActivationObservedAt),
+  };
+}
+
+function implementerActivationPresentation(
+  activation: NativeWorkUnitImplementerActivationV1,
+): ProductWorkUnitImplementerActivationV1 {
+  return {
+    stage: activation.failureReason
+      ? 'failed'
+      : activation.implementerReadyAt
+        ? 'implementer_ready'
+        : activation.launchAcceptedAt
+          ? 'launch_accepted'
+          : activation.launchRequestedAt
+            ? 'launch_requested'
+            : activation.implementerHarnessBoundAt
+              ? 'harness_bound'
+              : activation.implementerInvocationPreparedAt
+                ? 'invocation_prepared'
+                : activation.implementerSessionCreatedAt
+                  ? 'session_created'
+                  : activation.isolatedWorktreeReadyAt
+                    ? 'worktree_ready'
+                    : activation.executionSupportGrantedAt
+                      ? 'execution_support_granted'
+                      : activation.authorizedAt
+                        ? 'authorized'
+                        : 'requested',
+    ...(activation.failureReason ? { failureReason: activation.failureReason } : {}),
     providerActivityObserved: Boolean(activation.providerActivationObservedAt),
   };
 }
@@ -1037,6 +1140,8 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
       'laneTitle',
       'specification',
       'handlerActivation',
+      'actionContinuation',
+      'implementerActivation',
     ],
     'materialized Work Unit',
   );
@@ -1053,6 +1158,12 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
     ...(x.handlerActivation === undefined
       ? {}
       : { handlerActivation: workUnitHandlerActivation(x.handlerActivation) }),
+    ...(x.actionContinuation === undefined
+      ? {}
+      : { actionContinuation: workUnitActionContinuation(x.actionContinuation) }),
+    ...(x.implementerActivation === undefined
+      ? {}
+      : { implementerActivation: workUnitImplementerActivation(x.implementerActivation) }),
   };
 };
 const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivationV1 => {
@@ -1138,6 +1249,222 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
   };
   if (result.handlerReadyAt && !result.launchAcceptedAt)
     fail('Handler readiness requires launch acceptance');
+  return result;
+};
+const workUnitActionContinuation = (value: unknown): NativeWorkUnitHandlerActionContinuationV1 => {
+  const x = object(value, 'Work Unit Handler action continuation');
+  keys(
+    x,
+    [
+      'attemptId',
+      'handlerSessionId',
+      'originalHandlerInvocationId',
+      'actionInvocationId',
+      'actionHarnessRevisionId',
+      'actionHarnessConfigurationDigest',
+      'actionHarnessRepositoryCommitRef',
+      'requestedAt',
+      'authorizedAt',
+      'invocationPreparedAt',
+      'harnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+      'providerActivationObservedAt',
+      'actionReadyAt',
+      'blockedReason',
+    ],
+    'Work Unit Handler action continuation',
+  );
+  const optionalTime = (key: keyof typeof x) =>
+    x[key] === undefined ? undefined : timestamp(x[key], key);
+  const blockedReason =
+    x.blockedReason === undefined
+      ? undefined
+      : boundedString(x.blockedReason, 4000, 'blockedReason');
+  const result = {
+    attemptId: boundedString(x.attemptId, 240, 'action continuation attemptId'),
+    handlerSessionId: boundedString(
+      x.handlerSessionId,
+      240,
+      'action continuation handlerSessionId',
+    ),
+    originalHandlerInvocationId: boundedString(
+      x.originalHandlerInvocationId,
+      240,
+      'originalHandlerInvocationId',
+    ),
+    actionInvocationId: boundedString(x.actionInvocationId, 240, 'actionInvocationId'),
+    actionHarnessRevisionId: boundedString(
+      x.actionHarnessRevisionId,
+      240,
+      'actionHarnessRevisionId',
+    ),
+    actionHarnessConfigurationDigest: boundedString(
+      x.actionHarnessConfigurationDigest,
+      240,
+      'actionHarnessConfigurationDigest',
+    ),
+    actionHarnessRepositoryCommitRef: boundedString(
+      x.actionHarnessRepositoryCommitRef,
+      240,
+      'actionHarnessRepositoryCommitRef',
+    ),
+    requestedAt: timestamp(x.requestedAt, 'action continuation requestedAt'),
+    ...(optionalTime('authorizedAt') ? { authorizedAt: optionalTime('authorizedAt') } : {}),
+    ...(optionalTime('invocationPreparedAt')
+      ? { invocationPreparedAt: optionalTime('invocationPreparedAt') }
+      : {}),
+    ...(optionalTime('harnessBoundAt') ? { harnessBoundAt: optionalTime('harnessBoundAt') } : {}),
+    ...(optionalTime('launchRequestedAt')
+      ? { launchRequestedAt: optionalTime('launchRequestedAt') }
+      : {}),
+    ...(optionalTime('launchAcceptedAt')
+      ? { launchAcceptedAt: optionalTime('launchAcceptedAt') }
+      : {}),
+    ...(optionalTime('providerActivationObservedAt')
+      ? { providerActivationObservedAt: optionalTime('providerActivationObservedAt') }
+      : {}),
+    ...(optionalTime('actionReadyAt') ? { actionReadyAt: optionalTime('actionReadyAt') } : {}),
+    ...(blockedReason ? { blockedReason } : {}),
+  };
+  if (result.actionInvocationId === result.originalHandlerInvocationId)
+    fail('Handler action invocation must differ from the original Handler invocation');
+  phaseCoherence(
+    result,
+    [
+      'requestedAt',
+      'authorizedAt',
+      'invocationPreparedAt',
+      'harnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+      'actionReadyAt',
+    ],
+    'Handler action continuation',
+  );
+  if (result.providerActivationObservedAt && !result.launchRequestedAt)
+    fail('Handler action provider observation requires launch request');
+  if (result.actionReadyAt && !result.launchAcceptedAt)
+    fail('Handler action readiness requires launch acceptance');
+  if (result.blockedReason && (result.authorizedAt || result.invocationPreparedAt))
+    fail('blocked Handler action continuation cannot have authorized action phases');
+  return result;
+};
+
+const workUnitImplementerActivation = (value: unknown): NativeWorkUnitImplementerActivationV1 => {
+  const x = object(value, 'Work Unit Implementer activation');
+  keys(
+    x,
+    [
+      'attemptId',
+      'handlerActionInvocationId',
+      'implementerSessionId',
+      'implementerInvocationId',
+      'implementerHarnessRevisionId',
+      'implementerHarnessConfigurationDigest',
+      'implementerHarnessRepositoryCommitRef',
+      'requestedAt',
+      'authorizedAt',
+      'executionSupportGrantedAt',
+      'isolatedWorktreeReadyAt',
+      'implementerSessionCreatedAt',
+      'implementerInvocationPreparedAt',
+      'implementerHarnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+      'providerActivationObservedAt',
+      'implementerReadyAt',
+      'failureReason',
+    ],
+    'Work Unit Implementer activation',
+  );
+  const optionalTime = (key: keyof typeof x) =>
+    x[key] === undefined ? undefined : timestamp(x[key], key);
+  const failureReason =
+    x.failureReason === undefined
+      ? undefined
+      : boundedString(x.failureReason, 4000, 'failureReason');
+  const result = {
+    attemptId: boundedString(x.attemptId, 240, 'Implementer attemptId'),
+    handlerActionInvocationId: boundedString(
+      x.handlerActionInvocationId,
+      240,
+      'handlerActionInvocationId',
+    ),
+    implementerSessionId: boundedString(x.implementerSessionId, 240, 'implementerSessionId'),
+    implementerInvocationId: boundedString(
+      x.implementerInvocationId,
+      240,
+      'implementerInvocationId',
+    ),
+    implementerHarnessRevisionId: boundedString(
+      x.implementerHarnessRevisionId,
+      240,
+      'implementerHarnessRevisionId',
+    ),
+    implementerHarnessConfigurationDigest: boundedString(
+      x.implementerHarnessConfigurationDigest,
+      240,
+      'implementerHarnessConfigurationDigest',
+    ),
+    implementerHarnessRepositoryCommitRef: boundedString(
+      x.implementerHarnessRepositoryCommitRef,
+      240,
+      'implementerHarnessRepositoryCommitRef',
+    ),
+    requestedAt: timestamp(x.requestedAt, 'Implementer requestedAt'),
+    ...(optionalTime('authorizedAt') ? { authorizedAt: optionalTime('authorizedAt') } : {}),
+    ...(optionalTime('executionSupportGrantedAt')
+      ? { executionSupportGrantedAt: optionalTime('executionSupportGrantedAt') }
+      : {}),
+    ...(optionalTime('isolatedWorktreeReadyAt')
+      ? { isolatedWorktreeReadyAt: optionalTime('isolatedWorktreeReadyAt') }
+      : {}),
+    ...(optionalTime('implementerSessionCreatedAt')
+      ? { implementerSessionCreatedAt: optionalTime('implementerSessionCreatedAt') }
+      : {}),
+    ...(optionalTime('implementerInvocationPreparedAt')
+      ? { implementerInvocationPreparedAt: optionalTime('implementerInvocationPreparedAt') }
+      : {}),
+    ...(optionalTime('implementerHarnessBoundAt')
+      ? { implementerHarnessBoundAt: optionalTime('implementerHarnessBoundAt') }
+      : {}),
+    ...(optionalTime('launchRequestedAt')
+      ? { launchRequestedAt: optionalTime('launchRequestedAt') }
+      : {}),
+    ...(optionalTime('launchAcceptedAt')
+      ? { launchAcceptedAt: optionalTime('launchAcceptedAt') }
+      : {}),
+    ...(optionalTime('providerActivationObservedAt')
+      ? { providerActivationObservedAt: optionalTime('providerActivationObservedAt') }
+      : {}),
+    ...(optionalTime('implementerReadyAt')
+      ? { implementerReadyAt: optionalTime('implementerReadyAt') }
+      : {}),
+    ...(failureReason ? { failureReason } : {}),
+  };
+  phaseCoherence(
+    result,
+    [
+      'requestedAt',
+      'authorizedAt',
+      'executionSupportGrantedAt',
+      'isolatedWorktreeReadyAt',
+      'implementerSessionCreatedAt',
+      'implementerInvocationPreparedAt',
+      'implementerHarnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+      'implementerReadyAt',
+    ],
+    'Implementer activation',
+  );
+  if (result.providerActivationObservedAt && !result.launchRequestedAt)
+    fail('Implementer provider observation requires launch request');
+  if (result.implementerReadyAt && !result.launchAcceptedAt)
+    fail('Implementer readiness requires launch acceptance');
+  if (result.failureReason && result.implementerReadyAt)
+    fail('failed Implementer activation cannot be application-ready');
   return result;
 };
 const workUnitRelationship = (value: unknown): NativeWorkUnitRelationshipV1 => {
@@ -1459,12 +1786,35 @@ function validate(query: OrchestrationNativeQueryV2) {
         unit.acceptedRevisionId !== materialization.acceptedRevisionId
       )
         fail('materialized Work Unit does not match its materialization');
+      validateActivationCorrelations(unit);
     });
   });
   if (query.workUnits.some((unit) => !materializations.has(unit.materializationId)))
     fail('materialized Work Unit references unknown materialization');
   if (query.workUnitRelationships.some((item) => !materializations.has(item.materializationId)))
     fail('Work Unit relationship references unknown materialization');
+}
+function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
+  const handler = unit.handlerActivation;
+  const continuation = unit.actionContinuation;
+  const implementer = unit.implementerActivation;
+  if (continuation) {
+    if (!handler || handler.attemptId !== continuation.attemptId)
+      fail('Handler action continuation does not share the Handler attempt');
+    if (
+      handler.handlerSessionId !== continuation.handlerSessionId ||
+      handler.handlerInvocationId !== continuation.originalHandlerInvocationId
+    )
+      fail(
+        'Handler action continuation does not match the original Handler Session and invocation',
+      );
+  }
+  if (implementer) {
+    if (!handler || handler.attemptId !== implementer.attemptId)
+      fail('Implementer activation does not share the Handler attempt');
+    if (!continuation || continuation.actionInvocationId !== implementer.handlerActionInvocationId)
+      fail('Implementer activation does not match the Handler action invocation');
+  }
 }
 function validateMaterializationRelationships(
   materialization: NativeWorkUnitMaterializationV1,
@@ -1592,6 +1942,28 @@ function array(value: unknown, label: string): readonly unknown[] {
 function string(value: unknown, label: string): string {
   if (typeof value !== 'string' || value.length === 0) fail(`${label} must be a non-empty string`);
   return value;
+}
+function timestamp(value: unknown, label: string): string {
+  const result = boundedString(value, 80, label);
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(result) || Number.isNaN(Date.parse(result)))
+    fail(`${label} must be an ISO timestamp`);
+  return result;
+}
+function phaseCoherence(value: object, keys: readonly string[], label: string) {
+  let previous: number | undefined;
+  let priorPresent = true;
+  for (const [index, key] of keys.entries()) {
+    const current = (value as Record<string, unknown>)[key];
+    if (current === undefined) {
+      priorPresent = false;
+      continue;
+    }
+    if (index > 0 && !priorPresent) fail(`${label} has a phase without its prerequisite`);
+    const parsed = Date.parse(current as string);
+    if (previous !== undefined && parsed < previous)
+      fail(`${label} phase timestamps are not ordered`);
+    previous = parsed;
+  }
 }
 function keys(value: Record<string, unknown>, allowed: readonly string[], label: string) {
   if (Object.keys(value).some((key) => !allowed.includes(key)))
