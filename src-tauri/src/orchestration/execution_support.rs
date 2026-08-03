@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS execution_support_grants (
 "#;
 const EXECUTION_SUPPORT_ROLE_KEY_MIGRATION: &str = r#"
 CREATE TABLE execution_support_attempt_authorizations_v3 (
- attempt_id TEXT NOT NULL, work_unit_id TEXT NOT NULL, role_kind TEXT NOT NULL CHECK(role_kind IN ('work_unit_handler','work_unit_implementer')), sprint_git_authority_id TEXT NOT NULL, baseline_object_id TEXT NOT NULL, authorization_fingerprint TEXT NOT NULL, recorded_at TEXT NOT NULL, PRIMARY KEY(attempt_id,role_kind));
+ attempt_id TEXT NOT NULL, work_unit_id TEXT NOT NULL, role_kind TEXT NOT NULL CHECK(role_kind IN ('work_unit_handler','work_unit_implementer')), sprint_git_authority_id TEXT NOT NULL, baseline_object_id TEXT NOT NULL, authorization_fingerprint TEXT NOT NULL, recorded_at TEXT NOT NULL, FOREIGN KEY(sprint_git_authority_id) REFERENCES initiated_sprint_git_authorities(authority_id) ON DELETE RESTRICT, PRIMARY KEY(attempt_id,role_kind));
 INSERT INTO execution_support_attempt_authorizations_v3 SELECT attempt_id,work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id,authorization_fingerprint,recorded_at FROM execution_support_attempt_authorizations;
 DROP TABLE execution_support_attempt_authorizations;
 ALTER TABLE execution_support_attempt_authorizations_v3 RENAME TO execution_support_attempt_authorizations;
@@ -1411,6 +1411,24 @@ mod tests {
             ),
             Err(ExecutionSupportError::Unavailable | ExecutionSupportError::CorrelationMismatch)
         ));
+    }
+
+    #[test]
+    fn legacy_role_migration_retains_authority_foreign_key_and_reopens_idempotently() {
+        let fixture = fixture();
+        let connection = Connection::open(&fixture.database).unwrap();
+        connection.execute_batch("DROP TABLE execution_support_attempt_authorizations; DROP TABLE execution_support_grants; CREATE TABLE execution_support_attempt_authorizations (attempt_id TEXT PRIMARY KEY,work_unit_id TEXT NOT NULL,role_kind TEXT NOT NULL CHECK(role_kind IN ('work_unit_handler','work_unit_implementer')),sprint_git_authority_id TEXT NOT NULL,baseline_object_id TEXT NOT NULL,authorization_fingerprint TEXT NOT NULL,recorded_at TEXT NOT NULL); CREATE TABLE execution_support_grants (attempt_id TEXT PRIMARY KEY,capability_ref TEXT NOT NULL UNIQUE,epic_id TEXT NOT NULL,sprint_id TEXT NOT NULL,work_unit_id TEXT NOT NULL,repository_id TEXT NOT NULL,role_id TEXT NOT NULL,workspace_id TEXT NOT NULL,workspace_fingerprint TEXT NOT NULL,correlation_fingerprint TEXT NOT NULL,recorded_at TEXT NOT NULL);").unwrap();
+        let fingerprint = authorization_fingerprint("legacy-attempt", "legacy-unit", "work_unit_handler", &fixture.authority_id, &fixture.baseline);
+        connection.execute("INSERT INTO execution_support_attempt_authorizations VALUES (?1,?2,?3,?4,?5,?6,datetime('now'))", params!["legacy-attempt","legacy-unit","work_unit_handler",fixture.authority_id,fixture.baseline,fingerprint]).unwrap();
+        drop(connection);
+        let service = fixture.service();
+        let connection = Connection::open(&fixture.database).unwrap();
+        assert_eq!(connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_list('execution_support_attempt_authorizations') WHERE \"table\"='initiated_sprint_git_authorities'", [], |row| row.get::<_,i64>(0)).unwrap(), 1);
+        assert_eq!(connection.query_row("SELECT COUNT(*) FROM execution_support_attempt_authorizations WHERE attempt_id='legacy-attempt' AND role_kind='work_unit_handler'", [], |row| row.get::<_,i64>(0)).unwrap(), 1);
+        drop(connection);
+        assert!(matches!(service.grant_for_role("legacy-attempt", WorkUnitExecutionRole::Handler), Ok(_)));
+        let reopened = fixture.service();
+        assert!(matches!(reopened.grant_for_role("legacy-attempt", WorkUnitExecutionRole::Handler), Ok(_)));
     }
 
     #[test]
