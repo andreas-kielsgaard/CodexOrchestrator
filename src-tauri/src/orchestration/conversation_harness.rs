@@ -294,7 +294,9 @@ pub(crate) fn profile_from_immutable_implementer_revision(configuration: &Harnes
     let reporting_tools = ["submit_implementation_outcome", "complete_implementation_outcome"];
     let tools = configuration.tools.items.iter().map(|tool| tool.name.as_str()).collect::<Vec<_>>();
     if configuration.identity.machine_key != "work_unit_implementer"
+        || configuration.tools.available_discovery_policy != HarnessDiscoveryPolicy::Whitelist
         || (!tools.is_empty() && tools.as_slice() != reporting_tools)
+        || configuration.tools.items.iter().any(|tool| tool.policy != HarnessToolPolicy::Available)
         || configuration.runtime.sandbox != HarnessSandbox::WorkspaceWrite
         || configuration.runtime.approval_policy != RevisionApprovalPolicy::Never {
         return Err("immutable Implementer revision is outside the bounded Implementer contract".into());
@@ -650,6 +652,14 @@ mod tests {
         assert!(reporting_profile.mcp.required);
         assert_eq!(reporting_profile.lifecycle.completion_criteria, ["semantic_completion_and_application_observed_terminal_lifecycle"]);
         assert!(reporting.prompt_prefix.content.contains("Claims are not evidence"));
+
+        let mut wrong_policy = reporting.clone();
+        wrong_policy.tools.items[0].policy = HarnessToolPolicy::InitialInvocation;
+        assert!(profile_from_immutable_implementer_revision(&wrong_policy, 3).is_err());
+
+        let mut wrong_discovery = reporting;
+        wrong_discovery.tools.available_discovery_policy = HarnessDiscoveryPolicy::Blacklist;
+        assert!(profile_from_immutable_implementer_revision(&wrong_discovery, 3).is_err());
     }
 
     #[test]
