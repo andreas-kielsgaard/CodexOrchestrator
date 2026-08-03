@@ -4969,6 +4969,14 @@ mod tests {
         assert_eq!(implementer.4.len(), 64);
         for timestamp in [&implementer.5,&implementer.6,&implementer.7,&implementer.8,&implementer.9,&implementer.10] { assert!(timestamp.is_some()); }
         assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        let concurrent_requests = (0..2).map(|_| {
+            let service = handler_runner.clone();
+            let invocation = continuation.3.clone();
+            std::thread::spawn(move || service.request_work_unit_implementer_from_authenticated_continuation(&invocation))
+        }).collect::<Vec<_>>();
+        assert!(concurrent_requests.into_iter().all(|request| request.join().unwrap().is_ok()));
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1", [&root.0], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE work_unit_implementer_activations
              SET implementer_harness_bound_at=NULL,launch_accepted_at=NULL,implementer_ready_at=NULL
