@@ -5002,6 +5002,19 @@ mod tests {
             "UPDATE work_unit_handler_activations SET eligibility_state='eligible',blocked_reason=NULL WHERE work_unit_id=?1",
             [&root.0],
         ).unwrap();
+        let upstream_before: (Option<String>, Option<String>, Option<String>, Option<String>, Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
+            "SELECT epic_continuation_invocation_id,epic_continuation_launch_accepted_at,
+                    sprint_continuation_invocation_id,sprint_continuation_launch_accepted_at,
+                    planning_ready_at
+             FROM sprint_runner_transitions WHERE sprint_id=?1",
+            [&sprint_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        ).unwrap();
+        let materialization_before: (i64, Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
+            "SELECT COUNT(*),MAX(settled_at) FROM work_unit_materializations WHERE materialization_id=?1",
+            [&materialization.0],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
         let injection = handler_runner.prepared_handler_action_injection(&continuation.3).unwrap();
         let endpoint = injection.configuration_args.iter().find_map(|argument| argument.strip_prefix("mcp_servers.").and_then(|value| value.split_once(".url=\"")).map(|(_, value)| value.trim_end_matches('"').to_owned())).unwrap();
         let bearer = injection.environment.1.clone();
@@ -5124,6 +5137,51 @@ mod tests {
         assert!(persisted_directories
             .iter()
             .all(|(_, directory)| directory == shared_working_directory));
+        // The valid action creates only its own continuation/Implementer boundary for the eligible
+        // root. The dependency remains blocked and has no action continuation or Implementer.
+        let action_continuations = Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM work_unit_handler_action_continuations", [], |row| row.get(0),
+        ).unwrap();
+        let implementer_activations = Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM work_unit_implementer_activations", [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(action_continuations, 1);
+        assert_eq!(implementer_activations, 1);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM work_unit_handler_action_continuations WHERE work_unit_id=?1",
+            [&dependent.0], |row| row.get(0),
+        ).unwrap(), 0);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1",
+            [&dependent.0], |row| row.get(0),
+        ).unwrap(), 0);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<String, _, _>(
+            "SELECT eligibility_state FROM work_unit_handler_activations WHERE work_unit_id=?1",
+            [&dependent.0], |row| row.get(0),
+        ).unwrap(), "blocked");
+        let upstream_after: (Option<String>, Option<String>, Option<String>, Option<String>, Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
+            "SELECT epic_continuation_invocation_id,epic_continuation_launch_accepted_at,
+                    sprint_continuation_invocation_id,sprint_continuation_launch_accepted_at,
+                    planning_ready_at
+             FROM sprint_runner_transitions WHERE sprint_id=?1",
+            [&sprint_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        ).unwrap();
+        let materialization_after: (i64, Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
+            "SELECT COUNT(*),MAX(settled_at) FROM work_unit_materializations WHERE materialization_id=?1",
+            [&materialization.0],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        assert_eq!(upstream_after, upstream_before);
+        assert_eq!(materialization_after, materialization_before);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN (
+                'work_unit_implementation_outputs','work_unit_implementation_feedback',
+                'work_unit_handler_reviews','work_unit_handler_acceptances','work_unit_handler_returns',
+                'work_unit_retry_attempts','work_unit_settlements','work_unit_integrations',
+                'work_unit_handoffs','work_unit_executions')",
+            [], |row| row.get(0),
+        ).unwrap(), 0);
         assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
         let concurrent_requests = (0..2).map(|_| {
             let service = handler_runner.clone();
