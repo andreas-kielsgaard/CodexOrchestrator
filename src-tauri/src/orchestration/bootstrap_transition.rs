@@ -4968,6 +4968,12 @@ mod tests {
         assert!(implementer.3.starts_with("harness-revision-"));
         assert_eq!(implementer.4.len(), 64);
         for timestamp in [&implementer.5,&implementer.6,&implementer.7,&implementer.8,&implementer.9,&implementer.10] { assert!(timestamp.is_some()); }
+        let grants = Connection::open(&fixture.database_path).unwrap().prepare("SELECT role_id,capability_ref,workspace_id FROM execution_support_grants WHERE attempt_id=?1 ORDER BY role_id").unwrap().query_map([&root.1], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?))).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+        assert_eq!(grants.len(), 2);
+        assert_eq!(grants[0].0, "work_unit_handler");
+        assert_eq!(grants[1].0, "work_unit_implementer");
+        assert_ne!(grants[0].1, grants[1].1);
+        assert_eq!(grants[0].2, grants[1].2);
         assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
         let concurrent_requests = (0..2).map(|_| {
             let service = handler_runner.clone();
