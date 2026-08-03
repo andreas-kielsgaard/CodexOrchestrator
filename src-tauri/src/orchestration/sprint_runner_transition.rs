@@ -1568,6 +1568,39 @@ impl SprintRunnerTransitionService {
                 .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
             self.request_work_unit_implementer_inner(&invocation, false)?;
         }
+        self.reconcile_implementer_reporting_continuations()?;
+        Ok(())
+    }
+
+    /// The v2 Implementer is historical and actionless.  Only after its exact durable terminal
+    /// invocation has completed does the application reserve one same-Session reporting
+    /// continuation and one later immutable reporting revision.  Launch wiring deliberately
+    /// remains a later step; this function cannot alter or relaunch the original invocation.
+    fn reconcile_implementer_reporting_continuations(self: &Arc<Self>) -> Result<(), SprintRunnerTransitionError> {
+        let Some(handler) = self.work_unit_handler.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Work Unit Handler registry is poisoned".into()))?.clone() else { return Ok(()) };
+        let activations = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?
+            .prepare("SELECT work_unit_id,attempt_id,implementer_session_id,implementer_invocation_id FROM work_unit_implementer_activations WHERE implementer_ready_at IS NOT NULL ORDER BY requested_at,work_unit_id")
+            .and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)))?.collect::<Result<Vec<_>, _>>())
+            .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        for (work_unit, attempt, session_id, invocation_id) in activations {
+            let session = AgentSessionId::new(session_id.clone()).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+            let history = self.sessions.load_session(&session).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+            let completed = history.invocations.iter().any(|entry| entry.invocation.id.as_str() == invocation_id && entry.invocation.status == AgentInvocationStatus::Completed);
+            if !completed { continue; }
+            let reporting = handler.current_implementer_reporting_revision().map_err(|_| SprintRunnerTransitionError::Unavailable("immutable Implementer reporting Harness revision unavailable".into()))?;
+            let reporting_invocation = stable_id("work-unit-implementer-reporting-invocation", &attempt);
+            let changed = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute(
+                "INSERT OR IGNORE INTO work_unit_implementer_outcomes (work_unit_id,attempt_id,implementer_session_id,implementer_invocation_id,reporting_invocation_id,reporting_harness_revision_id,reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,reporting_requested_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                params![work_unit,attempt,session_id,invocation_id,reporting_invocation,reporting.revision_id,reporting.configuration_digest,reporting.repository_commit_ref,chrono::Utc::now().to_rfc3339()],
+            ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+            if changed == 0 {
+                let exact: bool = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM work_unit_implementer_outcomes WHERE work_unit_id=?1 AND attempt_id=?2 AND implementer_session_id=?3 AND implementer_invocation_id=?4 AND reporting_invocation_id=?5)",
+                    params![work_unit,attempt,session_id,invocation_id,reporting_invocation], |row| row.get(0),
+                ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+                if !exact { return Err(SprintRunnerTransitionError::Conflict); }
+            }
+        }
         Ok(())
     }
 
