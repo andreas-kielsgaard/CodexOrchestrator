@@ -302,6 +302,40 @@ CREATE TABLE IF NOT EXISTS work_unit_handler_action_continuations (
   failure_reason TEXT,
   CHECK ((action_ready_at IS NULL) OR (launch_accepted_at IS NOT NULL))
 );
+-- A reporting continuation is separate from the original, actionless Implementer invocation.
+-- Acceptance here means only ready for independent Handler review; it cannot move the Work Unit.
+CREATE TABLE IF NOT EXISTS work_unit_implementer_outcomes (
+  work_unit_id TEXT PRIMARY KEY REFERENCES work_units(work_unit_id) ON DELETE RESTRICT,
+  attempt_id TEXT NOT NULL UNIQUE,
+  implementer_session_id TEXT NOT NULL,
+  implementer_invocation_id TEXT NOT NULL UNIQUE,
+  reporting_invocation_id TEXT NOT NULL UNIQUE,
+  reporting_harness_revision_id TEXT NOT NULL,
+  reporting_harness_configuration_digest TEXT NOT NULL,
+  reporting_harness_repository_commit_ref TEXT NOT NULL,
+  reporting_requested_at TEXT NOT NULL,
+  reporting_prepared_at TEXT,
+  reporting_harness_bound_at TEXT,
+  reporting_launch_accepted_at TEXT,
+  submitted_summary TEXT,
+  submitted_validation_statement TEXT,
+  submission_fingerprint TEXT,
+  submitted_at TEXT,
+  validation_at TEXT,
+  validation_result TEXT,
+  evidence_manifest_json TEXT CHECK (evidence_manifest_json IS NULL OR json_valid(evidence_manifest_json)),
+  comparison_fingerprint TEXT,
+  evidence_ready_at TEXT,
+  semantic_completed_at TEXT,
+  semantic_completion_invocation_id TEXT,
+  lifecycle_observed_at TEXT,
+  lifecycle_status TEXT,
+  application_accepted_at TEXT,
+  handler_review_ready_at TEXT,
+  failure_reason TEXT,
+  CHECK ((semantic_completed_at IS NULL) OR (submitted_at IS NOT NULL AND validation_result='valid')),
+  CHECK ((handler_review_ready_at IS NULL) OR (application_accepted_at IS NOT NULL))
+);
 "#;
 
 const SHARED_IMPLEMENTER_ACTIVATION_TABLE: &str = r#"

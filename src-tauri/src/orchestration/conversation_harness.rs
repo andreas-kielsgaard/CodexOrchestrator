@@ -276,9 +276,30 @@ pub(crate) fn initial_work_unit_implementer_revision_configuration() -> Result<H
     })
 }
 
+/// A later, distinct immutable revision for the reporting continuation.  The original
+/// Implementer revision stays actionless; this configuration is never applied to it.
+pub(crate) fn implementer_outcome_reporting_revision_configuration() -> Result<HarnessEffectiveConfiguration, String> {
+    let mut configuration = initial_work_unit_implementer_revision_configuration()?;
+    configuration.prompt_prefix.content = "You are the Work Unit Implementer reporting continuation for one completed isolated attempt. Use only submit_implementation_outcome and complete_implementation_outcome. The application derives every identity and captures file evidence itself. Do not accept, review, return, retry, settle, activate dependents, or continue a Sprint or Epic.".into();
+    configuration.tools.items = vec![
+        HarnessToolConfiguration { name: "submit_implementation_outcome".into(), policy: HarnessToolPolicy::Available },
+        HarnessToolConfiguration { name: "complete_implementation_outcome".into(), policy: HarnessToolPolicy::Available },
+    ];
+    configuration.tools.schema_boundary = "Only one context-bound Implementer outcome submission and semantic completion are exposed.".into();
+    configuration.hooks = vec![HarnessHookConfiguration { name: "completion".into(), status: HarnessHookStatus::NotConnected, detail: "Application acceptance requires a separate matching terminal lifecycle observation.".into() }];
+    Ok(configuration)
+}
+
 pub(crate) fn profile_from_immutable_implementer_revision(configuration: &HarnessEffectiveConfiguration, revision_version: u16) -> Result<ConversationHarnessProfile, String> {
-    if configuration.identity.machine_key != "work_unit_implementer" || !configuration.tools.items.is_empty() || configuration.runtime.sandbox != HarnessSandbox::WorkspaceWrite || configuration.runtime.approval_policy != RevisionApprovalPolicy::Never { return Err("immutable Implementer revision is outside the bounded Implementer contract".into()); }
-    Ok(ConversationHarnessProfile { key: configuration.identity.machine_key.clone(), version: revision_version, context: configuration.prompt_prefix.content.clone(), skill_guidance: configuration.skills.items.iter().map(|skill| SkillGuidance { canonical_name: skill.name.clone(), canonical_path: skill.path.clone(), purpose: skill.purpose.clone(), use_when: skill.use_when.clone() }).collect(), runtime: HarnessRuntime { model: configuration.runtime.default_model.clone(), reasoning_effort: configuration.runtime.default_reasoning.map(reasoning_to_catalog), sandbox: sandbox_from_revision(configuration.runtime.sandbox)?, approval_policy: HarnessApprovalPolicy::Never }, mcp: HarnessMcpExposure { required: false, enabled_tools: vec![] }, lifecycle: HarnessLifecycle { context_delivery: HarnessContextDelivery::FirstQuery, completion_criteria: vec!["application_observed_implementer_ready_state".into()] } })
+    let reporting_tools = ["submit_implementation_outcome", "complete_implementation_outcome"];
+    let tools = configuration.tools.items.iter().map(|tool| tool.name.as_str()).collect::<Vec<_>>();
+    if configuration.identity.machine_key != "work_unit_implementer"
+        || (!tools.is_empty() && tools.as_slice() != reporting_tools)
+        || configuration.runtime.sandbox != HarnessSandbox::WorkspaceWrite
+        || configuration.runtime.approval_policy != RevisionApprovalPolicy::Never {
+        return Err("immutable Implementer revision is outside the bounded Implementer contract".into());
+    }
+    Ok(ConversationHarnessProfile { key: configuration.identity.machine_key.clone(), version: revision_version, context: configuration.prompt_prefix.content.clone(), skill_guidance: configuration.skills.items.iter().map(|skill| SkillGuidance { canonical_name: skill.name.clone(), canonical_path: skill.path.clone(), purpose: skill.purpose.clone(), use_when: skill.use_when.clone() }).collect(), runtime: HarnessRuntime { model: configuration.runtime.default_model.clone(), reasoning_effort: configuration.runtime.default_reasoning.map(reasoning_to_catalog), sandbox: sandbox_from_revision(configuration.runtime.sandbox)?, approval_policy: HarnessApprovalPolicy::Never }, mcp: HarnessMcpExposure { required: !tools.is_empty(), enabled_tools: configuration.tools.items.iter().map(|tool| tool.name.clone()).collect() }, lifecycle: HarnessLifecycle { context_delivery: HarnessContextDelivery::FirstQuery, completion_criteria: vec!["application_observed_implementer_ready_state".into()] } })
 }
 
 fn reasoning_from_catalog(value: &str) -> Option<HarnessReasoningLevel> {
