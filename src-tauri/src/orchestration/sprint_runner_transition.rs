@@ -692,6 +692,16 @@ impl SprintRunnerTransitionService {
         self.reconcile_work_unit_handlers()
     }
 
+    #[cfg(test)]
+    pub(crate) fn request_work_unit_implementer_from_authenticated_continuation(
+        self: &Arc<Self>,
+        invocation_id: &str,
+    ) -> Result<(), SprintRunnerTransitionError> {
+        let invocation = AgentInvocationId::new(invocation_id.to_owned())
+            .map_err(|_| SprintRunnerTransitionError::Forbidden)?;
+        self.request_work_unit_implementer(&invocation)
+    }
+
     /// Starts the one-invocation semantic boundary before the Epic Runner launch request is made.
     pub(crate) fn prepare_epic_runner_action(
         self: &Arc<Self>,
