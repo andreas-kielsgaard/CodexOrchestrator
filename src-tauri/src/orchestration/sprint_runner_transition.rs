@@ -1483,6 +1483,24 @@ impl SprintRunnerTransitionService {
         for (work_unit, materialization, sprint) in units {
             self.reconcile_work_unit_handler(&handler, &work_unit, &materialization, &sprint)?;
         }
+        self.reconcile_implementer_activations()?;
+        Ok(())
+    }
+
+    /// A persisted request is replayed through the same authenticated continuation boundary.
+    /// The request method reads the pinned Implementer identity already stored in the row, so a
+    /// reopen neither chooses a replacement revision nor relaunches an accepted invocation.
+    fn reconcile_implementer_activations(self: &Arc<Self>) -> Result<(), SprintRunnerTransitionError> {
+        let invocations = self.connection.lock()
+            .map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?
+            .prepare("SELECT handler_invocation_id FROM work_unit_implementer_activations ORDER BY requested_at,work_unit_id")
+            .and_then(|mut statement| statement.query_map([], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>())
+            .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        for invocation in invocations {
+            let invocation = AgentInvocationId::new(invocation)
+                .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+            self.request_work_unit_implementer(&invocation)?;
+        }
         Ok(())
     }
 
@@ -1597,12 +1615,17 @@ impl SprintRunnerTransitionService {
         let Some((attempt_id, session_id, original_invocation_id, _sprint_id)) = original else {
             return Ok(());
         };
-        let desired = handler.current_handler_action_revision()
-            .map_err(|_| SprintRunnerTransitionError::Unavailable("load immutable Handler action revision".into()))?;
         let action_invocation_id = stable_id("work-unit-handler-action-invocation", &attempt_id);
-        self.connection.lock()
+        let existing: bool = self.connection.lock()
             .map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?
-            .execute(
+            .query_row("SELECT EXISTS(SELECT 1 FROM work_unit_handler_action_continuations WHERE work_unit_id=?1)", [work_unit_id], |row| row.get(0))
+            .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        if !existing {
+            let desired = handler.current_handler_action_revision()
+                .map_err(|_| SprintRunnerTransitionError::Unavailable("load immutable Handler action revision".into()))?;
+            self.connection.lock()
+                .map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?
+                .execute(
                 "INSERT OR IGNORE INTO work_unit_handler_action_continuations
                  (work_unit_id,attempt_id,handler_session_id,original_handler_invocation_id,
                   action_invocation_id,action_harness_revision_id,action_harness_configuration_digest,
@@ -1611,7 +1634,8 @@ impl SprintRunnerTransitionService {
                 params![work_unit_id, attempt_id, session_id, original_invocation_id,
                     action_invocation_id, desired.revision_id, desired.configuration_digest,
                     desired.repository_commit_ref, chrono::Utc::now().to_rfc3339()],
-            ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+                ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        }
         let row: (String, String, String, String, String, String) = self.connection.lock()
             .map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?
             .query_row(
@@ -1695,9 +1719,10 @@ impl SprintRunnerTransitionService {
         if !action.profile.mcp.required || action.profile.mcp.enabled_tools != ["request_work_unit_implementer"] { return Err(SprintRunnerTransitionError::Forbidden) }
         let persisted:bool=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT EXISTS(SELECT 1 FROM agent_session_invocations WHERE id=?1 AND session_id=?2 AND input_provenance='application')",params![handler_invocation.as_str(),handler_session],|r|r.get(0)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if !persisted{return Err(SprintRunnerTransitionError::Forbidden)}
         let authority:String=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT authority_id FROM initiated_sprint_git_authorities WHERE sprint_id=?1 ORDER BY recorded_at,authority_id LIMIT 1",[&sprint],|r|r.get(0)).optional().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?.ok_or(SprintRunnerTransitionError::Forbidden)?;
-        let desired=handler.current_implementer_revision().map_err(|_|SprintRunnerTransitionError::Unavailable("immutable Implementer Harness revision unavailable".into()))?;let attempt=handler_attempt.clone();let session_id=stable_id("work-unit-implementer-session",&handler_attempt);let invocation_id=stable_id("work-unit-implementer-invocation",&handler_attempt);
+        let attempt=handler_attempt.clone();let session_id=stable_id("work-unit-implementer-session",&handler_attempt);let invocation_id=stable_id("work-unit-implementer-invocation",&handler_attempt);
         let lock=self.transition_lock(&sprint)?;let _guard=lock.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("Work Unit activation lock is poisoned".into()))?;
-        self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("INSERT OR IGNORE INTO work_unit_implementer_activations (work_unit_id,handler_attempt_id,handler_invocation_id,attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",params![work_unit,handler_attempt,handler_invocation.as_str(),attempt,session_id,invocation_id,desired.revision_id,desired.configuration_digest,desired.repository_commit_ref,chrono::Utc::now().to_rfc3339()]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let existing:bool=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_implementer_activations WHERE work_unit_id=?1)",[&work_unit],|row|row.get(0)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        if !existing { let desired=handler.current_implementer_revision().map_err(|_|SprintRunnerTransitionError::Unavailable("immutable Implementer Harness revision unavailable".into()))?;self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("INSERT INTO work_unit_implementer_activations (work_unit_id,handler_attempt_id,handler_invocation_id,attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",params![work_unit,handler_attempt,handler_invocation.as_str(),attempt,session_id,invocation_id,desired.revision_id,desired.configuration_digest,desired.repository_commit_ref,chrono::Utc::now().to_rfc3339()]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?; }
         let (attempt,session_id,invocation_id,revision_id,digest,commit):(String,String,String,String,String,String)=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref FROM work_unit_implementer_activations WHERE work_unit_id=?1 AND handler_attempt_id=?2 AND handler_invocation_id=?3",params![work_unit,handler_attempt,handler_invocation.as_str()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).map_err(|_|SprintRunnerTransitionError::Conflict)?;
         let pinned=handler.load_pinned_implementer_revision(&revision_id,&digest,&commit).map_err(|_|SprintRunnerTransitionError::Conflict)?;handler.authorize_implementer_attempt(&attempt,&work_unit,&authority).map_err(|_|SprintRunnerTransitionError::Conflict)?;self.mark_implementer(&work_unit,"authorized_at")?;
         let package=handler.construct_for_pinned_profile(&attempt,WorkUnitHarnessRole::Implementer,pinned.profile).map_err(|_|SprintRunnerTransitionError::Unavailable("Implementer Harness package construction failed".into()))?;self.mark_implementer(&work_unit,"execution_support_granted_at")?;self.mark_implementer(&work_unit,"isolated_worktree_ready_at")?;let session=AgentSessionId::new(session_id).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let invocation=AgentInvocationId::new(invocation_id).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let runtime=package.runtime_launch_configuration();
