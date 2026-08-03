@@ -1602,23 +1602,23 @@ impl SprintRunnerTransitionService {
         handler: &Arc<WorkUnitExecutionHarnessService>,
         work_unit_id: &str,
     ) -> Result<(), SprintRunnerTransitionError> {
-        let original: Option<(String, String, String, String)> = self.connection.lock()
+        let original: Option<(String, String, String, String, String)> = self.connection.lock()
             .map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?
             .query_row(
-                "SELECT h.attempt_id,h.handler_session_id,h.handler_invocation_id,h.sprint_id
+                "SELECT h.attempt_id,h.handler_session_id,h.handler_invocation_id,h.sprint_id,invocation.status
                  FROM work_unit_handler_activations h
                  JOIN agent_session_invocations invocation
                    ON invocation.id=h.handler_invocation_id
                   AND invocation.session_id=h.handler_session_id
                  WHERE work_unit_id=?1 AND eligibility_state='eligible'
-                   AND handler_ready_at IS NOT NULL AND launch_accepted_at IS NOT NULL
-                   AND invocation.status IN ('completed','failed','canceled','interrupted')",
+                   AND handler_ready_at IS NOT NULL AND launch_accepted_at IS NOT NULL",
                 [work_unit_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             ).optional().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        let Some((attempt_id, session_id, original_invocation_id, _sprint_id)) = original else {
+        let Some((attempt_id, session_id, original_invocation_id, _sprint_id, status)) = original else {
             return Ok(());
         };
+        let terminal = matches!(status.as_str(), "completed" | "failed" | "canceled" | "interrupted");
         let action_invocation_id = stable_id("work-unit-handler-action-invocation", &attempt_id);
         let existing: bool = self.connection.lock()
             .map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?
@@ -1633,13 +1633,21 @@ impl SprintRunnerTransitionService {
                 "INSERT OR IGNORE INTO work_unit_handler_action_continuations
                  (work_unit_id,attempt_id,handler_session_id,original_handler_invocation_id,
                   action_invocation_id,action_harness_revision_id,action_harness_configuration_digest,
-                  action_harness_repository_commit_ref,requested_at)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                  action_harness_repository_commit_ref,requested_at,blocked_reason)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
                 params![work_unit_id, attempt_id, session_id, original_invocation_id,
                     action_invocation_id, desired.revision_id, desired.configuration_digest,
-                    desired.repository_commit_ref, chrono::Utc::now().to_rfc3339()],
+                    desired.repository_commit_ref, chrono::Utc::now().to_rfc3339(),
+                    if terminal { None } else { Some("original_handler_invocation_active") }],
                 ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         }
+        self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute(
+            "UPDATE work_unit_handler_action_continuations
+             SET blocked_reason=CASE WHEN ?2 THEN NULL ELSE COALESCE(blocked_reason,'original_handler_invocation_active') END
+             WHERE work_unit_id=?1",
+            params![work_unit_id, terminal],
+        ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        if !terminal { return Ok(()); }
         let row: (String, String, String, String, String, String) = self.connection.lock()
             .map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?
             .query_row(

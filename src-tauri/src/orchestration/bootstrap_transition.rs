@@ -4938,10 +4938,14 @@ mod tests {
             crate::orchestration::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::Stored(copy)
             | crate::orchestration::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::IdempotentReplay(copy) => copy,
         };
+        let action_revision: String = Connection::open(&fixture.database_path).unwrap().query_row(
+            "SELECT action_harness_revision_id FROM work_unit_handler_action_continuations WHERE work_unit_id=?1",
+            [&root.0], |row| row.get(0),
+        ).unwrap();
         let revision_b = handler_orchestration.create_harness_revision(
             crate::orchestration::conversation_harness_revision::CreateHarnessRevisionCommand {
                 harness_key: "work_unit_handler".into(), expected_source_draft_revision: saved.draft_revision,
-                expected_predecessor_revision_id: root.6.clone(), idempotency_key: "handler-revision-b".into(),
+                expected_predecessor_revision_id: Some(action_revision), idempotency_key: "handler-revision-b".into(),
                 creation_provenance: crate::orchestration::conversation_harness_revision::HarnessRevisionCreationProvenance {
                     kind: crate::orchestration::conversation_harness_revision::HarnessRevisionProvenanceKind::ApplicationUser,
                     reference: "handler-revision-test".into(),
