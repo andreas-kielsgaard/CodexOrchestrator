@@ -376,7 +376,9 @@ impl WorkUnitExecutionHarnessService {
         role: WorkUnitHarnessRole,
         harness: ConversationHarnessProfile,
     ) -> Result<WorkUnitExecutionHarnessPackage, WorkUnitHarnessError> {
-        if role == WorkUnitHarnessRole::Implementer && (harness.mcp.required || !harness.mcp.enabled_tools.is_empty()) {
+        if role == WorkUnitHarnessRole::Implementer
+            && harness.mcp.required
+            && harness.mcp.enabled_tools != ["submit_implementation_outcome", "complete_implementation_outcome"] {
             return Err(WorkUnitHarnessError::Unavailable);
         }
         let discovery_root = conversation_harness::role_discovery_root(role.harness_role())
