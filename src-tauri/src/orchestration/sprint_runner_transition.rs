@@ -302,6 +302,101 @@ CREATE TABLE IF NOT EXISTS work_unit_handler_action_continuations (
 );
 "#;
 
+const SHARED_IMPLEMENTER_ACTIVATION_TABLE: &str = r#"
+CREATE TABLE work_unit_implementer_activations_v4 (
+  work_unit_id TEXT PRIMARY KEY REFERENCES work_units(work_unit_id) ON DELETE RESTRICT,
+  handler_attempt_id TEXT NOT NULL UNIQUE,
+  handler_invocation_id TEXT NOT NULL UNIQUE,
+  attempt_id TEXT NOT NULL UNIQUE,
+  implementer_session_id TEXT NOT NULL UNIQUE,
+  implementer_invocation_id TEXT NOT NULL UNIQUE,
+  implementer_harness_revision_id TEXT NOT NULL,
+  implementer_harness_configuration_digest TEXT NOT NULL,
+  implementer_harness_repository_commit_ref TEXT NOT NULL,
+  requested_at TEXT NOT NULL,
+  authorized_at TEXT,
+  execution_support_granted_at TEXT,
+  isolated_worktree_ready_at TEXT,
+  implementer_session_created_at TEXT,
+  implementer_invocation_prepared_at TEXT,
+  implementer_harness_bound_at TEXT,
+  launch_requested_at TEXT,
+  launch_accepted_at TEXT,
+  provider_activation_observed_at TEXT,
+  implementer_ready_at TEXT,
+  CHECK ((implementer_ready_at IS NULL) OR (launch_accepted_at IS NOT NULL))
+);
+"#;
+
+/// Rebuild the short-lived second-attempt table only when every row proves it belongs to the
+/// exact Handler attempt and invocation.  The old table stays intact on any mismatch or SQL
+/// error, so reopen can safely retry after the missing durable evidence is restored.
+fn migrate_legacy_implementer_activations(connection: &Connection) -> Result<(), String> {
+    let columns = connection.prepare("PRAGMA table_info(work_unit_implementer_activations)")
+        .and_then(|mut statement| statement.query_map([], |row| row.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>())
+        .map_err(|error| format!("inspect Implementer activation migration: {error}"))?;
+    if !columns.iter().any(|column| column == "implementer_attempt_id") {
+        if columns.iter().any(|column| column == "attempt_id") {
+            return Ok(());
+        }
+        return Err("Implementer activation table has neither legacy nor shared attempt identity".into());
+    }
+    connection.execute_batch("BEGIN IMMEDIATE;")
+        .map_err(|error| format!("begin Implementer activation migration: {error}"))?;
+    let migrated = (|| -> Result<(), String> {
+        let legacy_count: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM work_unit_implementer_activations", [], |row| row.get(0),
+        ).map_err(|error| format!("count legacy Implementer activations: {error}"))?;
+        let coherent_count: i64 = connection.query_row(
+            "SELECT COUNT(*)
+             FROM work_unit_implementer_activations i
+             JOIN work_unit_handler_activations h
+               ON h.work_unit_id=i.work_unit_id
+              AND h.attempt_id=i.handler_attempt_id
+              AND h.handler_invocation_id=i.handler_invocation_id",
+            [], |row| row.get(0),
+        ).map_err(|error| format!("validate Handler-correlated Implementer activations: {error}"))?;
+        if legacy_count != coherent_count {
+            return Err("legacy Implementer activation lacks coherent Handler correlation".into());
+        }
+        connection.execute_batch(SHARED_IMPLEMENTER_ACTIVATION_TABLE)
+            .map_err(|error| format!("create shared Implementer activation table: {error}"))?;
+        let copied = connection.execute(
+            "INSERT INTO work_unit_implementer_activations_v4
+             SELECT i.work_unit_id,i.handler_attempt_id,i.handler_invocation_id,h.attempt_id,
+                    i.implementer_session_id,i.implementer_invocation_id,
+                    i.implementer_harness_revision_id,i.implementer_harness_configuration_digest,
+                    i.implementer_harness_repository_commit_ref,i.requested_at,i.authorized_at,
+                    i.execution_support_granted_at,i.isolated_worktree_ready_at,
+                    i.implementer_session_created_at,i.implementer_invocation_prepared_at,
+                    i.implementer_harness_bound_at,i.launch_requested_at,i.launch_accepted_at,
+                    i.provider_activation_observed_at,i.implementer_ready_at
+             FROM work_unit_implementer_activations i
+             JOIN work_unit_handler_activations h
+               ON h.work_unit_id=i.work_unit_id
+              AND h.attempt_id=i.handler_attempt_id
+              AND h.handler_invocation_id=i.handler_invocation_id",
+            [],
+        ).map_err(|error| format!("copy shared Implementer activations: {error}"))?;
+        if i64::try_from(copied).map_err(|_| "legacy Implementer activation count overflow".to_string())? != legacy_count {
+            return Err("shared Implementer activation copy was incomplete".into());
+        }
+        connection.execute_batch(
+            "DROP TABLE work_unit_implementer_activations;
+             ALTER TABLE work_unit_implementer_activations_v4 RENAME TO work_unit_implementer_activations;",
+        ).map_err(|error| format!("replace legacy Implementer activation table: {error}"))?;
+        Ok(())
+    })();
+    match migrated {
+        Ok(()) => connection.execute_batch("COMMIT;")
+            .map_err(|error| format!("commit Implementer activation migration: {error}")),
+        Err(error) => {
+            let _ = connection.execute_batch("ROLLBACK;");
+            Err(error)
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SprintRunnerSelection {
@@ -559,19 +654,8 @@ impl SprintRunnerTransitionService {
             if !exists { connection.execute_batch(&format!("ALTER TABLE work_unit_handler_activations ADD COLUMN {column}"))
                 .map_err(|e| SprintRunnerTransitionError::Unavailable(format!("migrate Handler activation schema: {e}")))?; }
         }
-        let implementer_attempt_exists = connection.prepare("PRAGMA table_info(work_unit_implementer_activations)")
-            .and_then(|mut statement| statement.query_map([], |row| row.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>())
-            .map_err(|e| SprintRunnerTransitionError::Unavailable(format!("inspect Implementer activation schema: {e}")))?
-            .iter().any(|name| name == "attempt_id");
-        if !implementer_attempt_exists {
-            connection.execute_batch("ALTER TABLE work_unit_implementer_activations ADD COLUMN attempt_id TEXT")
-                .map_err(|e| SprintRunnerTransitionError::Unavailable(format!("migrate Implementer activation schema: {e}")))?;
-            connection.execute_batch(
-                "UPDATE work_unit_implementer_activations
-                 SET attempt_id=(SELECT attempt_id FROM work_unit_handler_activations h
-                                 WHERE h.work_unit_id=work_unit_implementer_activations.work_unit_id)",
-            ).map_err(|e| SprintRunnerTransitionError::Unavailable(format!("backfill shared Implementer attempt: {e}")))?;
-        }
+        migrate_legacy_implementer_activations(&connection)
+            .map_err(SprintRunnerTransitionError::Unavailable)?;
         let authority_repository = SqliteOrchestrationRepository::open(path)
             .map_err(|error| SprintRunnerTransitionError::Unavailable(format!("open Sprint Git authority repository: {error}")))?;
         let service = Arc::new(Self {
@@ -2111,4 +2195,81 @@ fn start_epic_runner_server(
         cancellation,
         join: Some(join),
     })
+}
+
+#[cfg(test)]
+mod implementer_activation_migration_tests {
+    use super::migrate_legacy_implementer_activations;
+    use rusqlite::{params, Connection};
+
+    fn legacy_connection() -> Connection {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(
+            "CREATE TABLE work_units (work_unit_id TEXT PRIMARY KEY);
+             CREATE TABLE work_unit_handler_activations (
+               work_unit_id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL,
+               handler_invocation_id TEXT NOT NULL
+             );
+             CREATE TABLE work_unit_implementer_activations (
+               work_unit_id TEXT PRIMARY KEY, handler_attempt_id TEXT NOT NULL UNIQUE,
+               handler_invocation_id TEXT NOT NULL UNIQUE,
+               implementer_attempt_id TEXT NOT NULL UNIQUE,
+               implementer_session_id TEXT NOT NULL UNIQUE,
+               implementer_invocation_id TEXT NOT NULL UNIQUE,
+               implementer_harness_revision_id TEXT NOT NULL,
+               implementer_harness_configuration_digest TEXT NOT NULL,
+               implementer_harness_repository_commit_ref TEXT NOT NULL,
+               requested_at TEXT NOT NULL, authorized_at TEXT,
+               execution_support_granted_at TEXT, isolated_worktree_ready_at TEXT,
+               implementer_session_created_at TEXT, implementer_invocation_prepared_at TEXT,
+               implementer_harness_bound_at TEXT, launch_requested_at TEXT,
+               launch_accepted_at TEXT, provider_activation_observed_at TEXT,
+               implementer_ready_at TEXT,
+               CHECK ((implementer_ready_at IS NULL) OR (launch_accepted_at IS NOT NULL))
+             );
+             INSERT INTO work_units VALUES ('unit');
+             INSERT INTO work_unit_implementer_activations VALUES
+               ('unit','handler-attempt','handler-invocation','obsolete-attempt','session','invocation',
+                'revision','digest','commit','requested','authorized','support','worktree','session-created',
+                'prepared','bound','launch-requested','launch-accepted','observed','ready');",
+        ).unwrap();
+        connection
+    }
+
+    #[test]
+    fn legacy_implementer_activation_migrates_to_the_exact_handler_attempt() {
+        let connection = legacy_connection();
+        connection.execute(
+            "INSERT INTO work_unit_handler_activations VALUES (?1,?2,?3)",
+            params!["unit", "handler-attempt", "handler-invocation"],
+        ).unwrap();
+        migrate_legacy_implementer_activations(&connection).unwrap();
+        let row: (String, String, String, String, String) = connection.query_row(
+            "SELECT attempt_id,implementer_session_id,implementer_invocation_id,
+                    provider_activation_observed_at,implementer_ready_at
+             FROM work_unit_implementer_activations", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        ).unwrap();
+        assert_eq!(row, ("handler-attempt".into(), "session".into(), "invocation".into(), "observed".into(), "ready".into()));
+        migrate_legacy_implementer_activations(&connection).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_activations", [], |row| row.get(0)).unwrap(), 1);
+    }
+
+    #[test]
+    fn incoherent_legacy_activation_rolls_back_then_retries_after_handler_recovery() {
+        let connection = legacy_connection();
+        assert!(migrate_legacy_implementer_activations(&connection).is_err());
+        let legacy_column: String = connection.query_row(
+            "SELECT name FROM pragma_table_info('work_unit_implementer_activations')
+             WHERE name='implementer_attempt_id'", [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(legacy_column, "implementer_attempt_id");
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE name='work_unit_implementer_activations_v4'", [], |row| row.get(0)).unwrap(), 0);
+        connection.execute(
+            "INSERT INTO work_unit_handler_activations VALUES (?1,?2,?3)",
+            params!["unit", "handler-attempt", "handler-invocation"],
+        ).unwrap();
+        migrate_legacy_implementer_activations(&connection).unwrap();
+        assert_eq!(connection.query_row::<String, _, _>("SELECT attempt_id FROM work_unit_implementer_activations", [], |row| row.get(0)).unwrap(), "handler-attempt");
+    }
 }
