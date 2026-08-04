@@ -6336,6 +6336,20 @@ mod tests {
         assert_eq!(Connection::open(&returned.base.database_path).unwrap().query_row::<i64,_,_>(
             "SELECT COUNT(*) FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=1", [&returned.work_unit_id], |row| row.get(0),
         ).unwrap(), 1);
+        // Once retry lineage is durable, source-candidate drift is a bounded semantic failure.
+        // Reopen does not silently leave the prior ready projection in place or allocate a new
+        // retry identity; restoring the exact source lets the same retry recover.
+        let source_drift = returned.working_directory.join("retry-source-drift.txt");
+        fs::write(&source_drift, "untracked retry source drift\n").unwrap();
+        assert!(reopened_retry.reconcile_handler_reviews_for_test().is_err());
+        assert_eq!(Connection::open(&returned.base.database_path).unwrap().query_row::<String,_,_>(
+            "SELECT failure_reason FROM work_unit_retry_attempts WHERE work_unit_id=?1", [&returned.work_unit_id], |row| row.get(0),
+        ).unwrap(), "retry_evidence_revalidation_failed");
+        fs::remove_file(source_drift).unwrap();
+        reopened_retry.reconcile_handler_reviews_for_test().unwrap();
+        assert_eq!(Connection::open(&returned.base.database_path).unwrap().query_row::<i64,_,_>(
+            "SELECT COUNT(*) FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=1", [&returned.work_unit_id], |row| row.get(0),
+        ).unwrap(), 1);
         // Policy B: a runtime start error terminally fails this exact ordinal-1 invocation.  The
         // retry row remains factual and unready; reopen only observes it and never relaunches.
         let connection = Connection::open(&returned.base.database_path).unwrap();

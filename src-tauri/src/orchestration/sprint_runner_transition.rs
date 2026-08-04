@@ -1920,15 +1920,43 @@ impl SprintRunnerTransitionService {
     fn reconcile_work_unit_retry(self: &Arc<Self>, handler: &Arc<WorkUnitExecutionHarnessService>, source: RetrySource) -> Result<(), SprintRunnerTransitionError> {
         let lock = self.transition_lock(&source.sprint_id)?;
         let _guard = lock.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Work Unit retry lock is poisoned".into()))?;
+        let retry_exists: bool = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM work_unit_retry_attempts WHERE work_unit_id=?1)",
+            [&source.work_unit_id],
+            |row| row.get(0),
+        ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         let reporting = AgentInvocationId::new(source.reporting_invocation_id.clone()).map_err(|_| SprintRunnerTransitionError::Conflict)?;
-        let (_, snapshot) = self.evidence_snapshot(&reporting, false)?;
-        if snapshot.manifest_json != source.manifest_json || snapshot.comparison_fingerprint != source.comparison_fingerprint || snapshot.content_fingerprints_json != source.content_fingerprints_json { return Err(SprintRunnerTransitionError::Conflict); }
-        let authority = self.authority_repository.load_initiated_sprint_git_authority(&source.authority_id)
-            .map_err(|_| SprintRunnerTransitionError::Unavailable("load retry Sprint Git authority".into()))?.ok_or(SprintRunnerTransitionError::Forbidden)?;
-        let pinned_reporting = handler.load_pinned_implementer_revision(&source.reporting_revision_id, &source.reporting_configuration_digest, &source.reporting_repository_commit_ref).map_err(|_| SprintRunnerTransitionError::Conflict)?;
-        let origin_package = handler.construct_for_pinned_profile(&source.origin_attempt_id, WorkUnitHarnessRole::Implementer, pinned_reporting.profile).map_err(|_| SprintRunnerTransitionError::Conflict)?;
+        let (_, snapshot) = match self.evidence_snapshot(&reporting, false) {
+            Ok(value) => value,
+            Err(error) if retry_exists => return self.fail_retry(&source.work_unit_id, "retry_evidence_revalidation_failed", error),
+            Err(error) => return Err(error),
+        };
+        if snapshot.manifest_json != source.manifest_json || snapshot.comparison_fingerprint != source.comparison_fingerprint || snapshot.content_fingerprints_json != source.content_fingerprints_json {
+            return if retry_exists { self.fail_retry(&source.work_unit_id, "retry_evidence_revalidation_failed", SprintRunnerTransitionError::Conflict) } else { Err(SprintRunnerTransitionError::Conflict) };
+        }
+        let authority = match self.authority_repository.load_initiated_sprint_git_authority(&source.authority_id) {
+            Ok(Some(authority)) => authority,
+            Ok(None) if retry_exists => return self.fail_retry(&source.work_unit_id, "retry_authority_revalidation_failed", SprintRunnerTransitionError::Conflict),
+            Ok(None) => return Err(SprintRunnerTransitionError::Forbidden),
+            Err(_) if retry_exists => return self.fail_retry(&source.work_unit_id, "retry_authority_revalidation_failed", SprintRunnerTransitionError::Unavailable("load retry Sprint Git authority".into())),
+            Err(_) => return Err(SprintRunnerTransitionError::Unavailable("load retry Sprint Git authority".into())),
+        };
+        let pinned_reporting = match handler.load_pinned_implementer_revision(&source.reporting_revision_id, &source.reporting_configuration_digest, &source.reporting_repository_commit_ref) {
+            Ok(value) => value,
+            Err(_) if retry_exists => return self.fail_retry(&source.work_unit_id, "retry_harness_revalidation_failed", SprintRunnerTransitionError::Conflict),
+            Err(_) => return Err(SprintRunnerTransitionError::Conflict),
+        };
+        let origin_package = match handler.construct_for_pinned_profile(&source.origin_attempt_id, WorkUnitHarnessRole::Implementer, pinned_reporting.profile) {
+            Ok(value) => value,
+            Err(_) if retry_exists => return self.fail_retry(&source.work_unit_id, "retry_execution_support_revalidation_failed", SprintRunnerTransitionError::Conflict),
+            Err(_) => return Err(SprintRunnerTransitionError::Conflict),
+        };
         let source_root = PathBuf::from(origin_package.working_directory());
-        let (candidate_commit, candidate_tree) = retry_git_candidate_facts(&authority, &source_root)?;
+        let (candidate_commit, candidate_tree) = match retry_git_candidate_facts(&authority, &source_root) {
+            Ok(value) => value,
+            Err(error) if retry_exists => return self.fail_retry(&source.work_unit_id, "retry_candidate_revalidation_failed", error),
+            Err(error) => return Err(error),
+        };
         let retry_attempt = stable_id("work-unit-retry-attempt", &source.origin_attempt_id);
         let session_id = stable_id("work-unit-retry-implementer-session", &retry_attempt);
         let invocation_id = stable_id("work-unit-retry-implementer-invocation", &retry_attempt);
