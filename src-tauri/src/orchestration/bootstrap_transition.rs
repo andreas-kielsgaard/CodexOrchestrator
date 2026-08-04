@@ -5980,6 +5980,33 @@ mod tests {
             assert!(facts.semantic_completed_at.is_none() && facts.semantic_invocation.is_none());
             assert!(facts.application_accepted_at.is_none() && facts.handler_review_ready_at.is_none());
         }
+
+        fn return_one_retry(&self) -> (String, String, String, String) {
+            let review = self.ready_review();
+            self.transition.record_handler_review_judgment_for_test(
+                &review,
+                "return",
+                Some(crate::orchestration::sprint_runner_transition::HandlerReviewReturnReason {
+                    code: "review_failed".into(),
+                    explanation: "evidence requires correction".into(),
+                }),
+            ).unwrap();
+            self.base.runtime.finish(&review, AgentInvocationTerminalStatus::Completed);
+            Connection::open(&self.base.database_path).unwrap().query_row(
+                "SELECT retry_attempt_id,implementer_session_id,implementer_invocation_id,private_ref_name
+                 FROM work_unit_retry_attempts WHERE work_unit_id=?1",
+                [&self.work_unit_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            ).unwrap()
+        }
+
+        fn retry_count(&self) -> i64 {
+            Connection::open(&self.base.database_path).unwrap().query_row(
+                "SELECT COUNT(*) FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=1",
+                [&self.work_unit_id],
+                |row| row.get(0),
+            ).unwrap()
+        }
     }
 
     #[test]
@@ -6385,6 +6412,196 @@ mod tests {
             terminal.base.runtime.finish(&terminal_review, status);
             assert_eq!(Connection::open(&terminal.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_decisions", [], |row| row.get(0)).unwrap(), 0);
         }
+    }
+
+    #[test]
+    fn returned_retry_two_independent_services_converge_on_one_ordinal_one_launch() {
+        let fixture = ReportingFixture::new();
+        let review = fixture.ready_review();
+        fixture.transition.record_handler_review_judgment_for_test(
+            &review,
+            "return",
+            Some(crate::orchestration::sprint_runner_transition::HandlerReviewReturnReason {
+                code: "review_failed".into(),
+                explanation: "evidence requires correction".into(),
+            }),
+        ).unwrap();
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE agent_session_invocations SET status='completed',completed_at=?2 WHERE id=?1",
+            params![review, "2026-08-04T00:00:01Z"],
+        ).unwrap();
+
+        let first = fixture.reopened();
+        let second = fixture.reopened();
+        let barrier = Arc::new(Barrier::new(2));
+        let drains = [first, second].map(|service| {
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                service.reconcile_handler_reviews_for_test()
+            })
+        });
+        assert!(drains.into_iter().all(|drain| drain.join().unwrap().is_ok()));
+
+        let (attempt, session, invocation, revision, private_ref, pinned, accepted, ready):
+            (String, String, String, String, String, Option<String>, Option<String>, Option<String>) =
+            Connection::open(&fixture.base.database_path).unwrap().query_row(
+                "SELECT retry_attempt_id,implementer_session_id,implementer_invocation_id,
+                        implementer_harness_revision_id,private_ref_name,candidate_pinned_at,
+                        launch_accepted_at,retry_ready_at
+                 FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=1",
+                [&fixture.work_unit_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?)),
+            ).unwrap();
+        assert!(pinned.is_some() && accepted.is_some() && ready.is_some());
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        assert_eq!(fixture.retry_count(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM execution_support_grants WHERE attempt_id=?1", [&attempt], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_sessions WHERE id=?1", [&session], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1 AND session_id=?2 AND input_provenance='application'", params![invocation, session], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1", [&invocation], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_retry_attempts WHERE implementer_harness_revision_id=?1", [&revision], |row| row.get(0)).unwrap(), 1);
+        drop(connection);
+        let authority_root: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
+            "SELECT repository_root FROM initiated_sprint_git_authorities WHERE authority_id=?1",
+            [&fixture.authority_id],
+            |row| row.get(0),
+        ).unwrap();
+        let target = std::process::Command::new("git")
+            .args(["rev-parse", "--verify", &format!("{private_ref}^{{commit}}")])
+            .current_dir(authority_root)
+            .output().unwrap();
+        assert!(target.status.success());
+        assert_eq!(fixture.base.runtime.requests().iter().filter(|request| request.invocation_id.as_str() == invocation).count(), 1);
+        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM work_unit_handler_reviews WHERE work_unit_id=?1",
+            [&fixture.work_unit_id], |row| row.get(0),
+        ).unwrap(), 1);
+        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE work_unit_id=?1",
+            [&fixture.work_unit_id], |row| row.get(0),
+        ).unwrap(), 1);
+    }
+
+    #[test]
+    fn returned_retry_adopts_each_exact_effect_after_its_intent_crash_window() {
+        let fixture = ReportingFixture::new();
+        let (attempt, session, invocation, private_ref) = fixture.return_one_retry();
+        let launches = fixture.base.runtime.requests().len();
+        let reopened = fixture.reopened();
+        let stage = |fixture: &ReportingFixture, columns: &str| {
+            let assignments = columns.replace(',', "=NULL,");
+            Connection::open(&fixture.base.database_path).unwrap().execute(
+                &format!("UPDATE work_unit_retry_attempts SET {assignments}=NULL,failure_reason=NULL WHERE work_unit_id=?1"),
+                [&fixture.work_unit_id],
+            ).unwrap();
+            reopened.reconcile_handler_reviews_for_test().unwrap();
+            assert_eq!(fixture.retry_count(), 1);
+            assert_eq!(fixture.base.runtime.requests().len(), launches);
+        };
+
+        let authority_root: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
+            "SELECT repository_root FROM initiated_sprint_git_authorities WHERE authority_id=?1",
+            [&fixture.authority_id], |row| row.get(0),
+        ).unwrap();
+        assert!(std::process::Command::new("git").args(["update-ref", "-d", &private_ref])
+            .current_dir(&authority_root).output().unwrap().status.success());
+        stage(&fixture, "candidate_pinned_at");
+        stage(&fixture, "candidate_pinned_at");
+        stage(&fixture, "execution_support_granted_at,isolated_worktree_ready_at");
+        stage(&fixture, "implementer_session_created_at");
+        stage(&fixture, "implementer_invocation_prepared_at");
+        stage(&fixture, "implementer_harness_bound_at");
+        stage(&fixture, "launch_accepted_at,retry_ready_at");
+
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM execution_support_grants WHERE attempt_id=?1", [&attempt], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_sessions WHERE id=?1", [&session], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1", [&invocation], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1", [&invocation], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_retry_attempts WHERE ordinal=2", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_reviews WHERE work_unit_id=?1", [&fixture.work_unit_id], |row| row.get(0)).unwrap(), 1);
+    }
+
+    #[test]
+    fn returned_retry_divergent_effects_fail_closed_without_replacement() {
+        let fixture = ReportingFixture::new();
+        let (attempt, session, invocation, private_ref) = fixture.return_one_retry();
+        let launches = fixture.base.runtime.requests().len();
+        let reopened = fixture.reopened();
+        let failure = |expected: &str| {
+            assert!(reopened.reconcile_handler_reviews_for_test().is_err());
+            assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<String, _, _>(
+                "SELECT failure_reason FROM work_unit_retry_attempts WHERE work_unit_id=?1",
+                [&fixture.work_unit_id], |row| row.get(0),
+            ).unwrap(), expected);
+            assert_eq!(fixture.retry_count(), 1);
+            assert_eq!(fixture.base.runtime.requests().len(), launches);
+        };
+        let recover = || {
+            reopened.reconcile_handler_reviews_for_test().unwrap();
+            assert_eq!(fixture.retry_count(), 1);
+            assert_eq!(fixture.base.runtime.requests().len(), launches);
+        };
+
+        let authority_root: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
+            "SELECT repository_root FROM initiated_sprint_git_authorities WHERE authority_id=?1",
+            [&fixture.authority_id], |row| row.get(0),
+        ).unwrap();
+        let seed: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
+            "SELECT candidate_commit_id FROM work_unit_retry_attempts WHERE work_unit_id=?1",
+            [&fixture.work_unit_id], |row| row.get(0),
+        ).unwrap();
+        let foreign_target: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
+            "SELECT sprint_current_object_id FROM work_unit_retry_attempts WHERE work_unit_id=?1",
+            [&fixture.work_unit_id], |row| row.get(0),
+        ).unwrap();
+        assert!(std::process::Command::new("git").args(["update-ref", &private_ref, &foreign_target])
+            .current_dir(&authority_root).output().unwrap().status.success());
+        failure("retry_private_ref_pin_failed");
+        assert!(std::process::Command::new("git").args(["update-ref", &private_ref, &seed])
+            .current_dir(&authority_root).output().unwrap().status.success());
+        recover();
+
+        let retry_worktree: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
+            "SELECT working_directory FROM agent_sessions WHERE id=?1", [&session], |row| row.get(0),
+        ).unwrap();
+        let worktree_drift = PathBuf::from(&retry_worktree).join("retry-worktree-drift.txt");
+        fs::write(&worktree_drift, "untracked divergence\n").unwrap();
+        failure("retry_workspace_validation_failed");
+        fs::remove_file(&worktree_drift).unwrap();
+        recover();
+
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE agent_sessions SET working_directory='divergent-session-route' WHERE id=?1",
+            [&session],
+        ).unwrap();
+        failure("retry_session_creation_failed");
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE agent_sessions SET working_directory=?2 WHERE id=?1",
+            params![session, retry_worktree],
+        ).unwrap();
+        recover();
+
+        let submitted_text: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
+            "SELECT submitted_text FROM agent_session_invocations WHERE id=?1", [&invocation], |row| row.get(0),
+        ).unwrap();
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE agent_session_invocations SET submitted_text='divergent prepared invocation' WHERE id=?1",
+            [&invocation],
+        ).unwrap();
+        failure("retry_invocation_preparation_failed");
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE agent_session_invocations SET submitted_text=?2 WHERE id=?1",
+            params![invocation, submitted_text],
+        ).unwrap();
+        recover();
+
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM execution_support_grants WHERE attempt_id=?1", [&attempt], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_sessions WHERE id=?1", [&session], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1", [&invocation], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_retry_attempts WHERE ordinal=2", [], |row| row.get(0)).unwrap(), 0);
     }
 
     #[test]
