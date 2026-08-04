@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS accepted_handler_candidates (
   review_invocation_id TEXT NOT NULL UNIQUE REFERENCES work_unit_handler_reviews(review_invocation_id) ON DELETE RESTRICT,
   decision_fingerprint TEXT NOT NULL UNIQUE REFERENCES work_unit_handler_decisions(decision_fingerprint) ON DELETE RESTRICT,
   capture_authorization_id TEXT NOT NULL UNIQUE REFERENCES file_review_git_capture_authorizations(capture_authorization_id) ON DELETE RESTRICT,
+  attempt_baseline_object_id TEXT,
   candidate_commit_id TEXT NOT NULL,
   candidate_tree_id TEXT NOT NULL,
   private_ref_name TEXT NOT NULL UNIQUE,
@@ -87,6 +88,7 @@ pub(crate) fn reconcile_accepted_candidate_authorities(
     connection
         .execute_batch(ACCEPTED_CANDIDATE_AUTHORITY_SCHEMA)
         .map_err(|e| e.to_string())?;
+    let _ = connection.execute("ALTER TABLE accepted_handler_candidates ADD COLUMN attempt_baseline_object_id TEXT", []);
     let rows = connection.prepare(
         "SELECT d.work_unit_id,a.sprint_id,a.authority_id,o.attempt_id,o.reporting_invocation_id,
                 d.review_invocation_id,d.decision_fingerprint,r.delivered_payload_fingerprint,o.evidence_manifest_json,
@@ -115,6 +117,15 @@ pub(crate) fn reconcile_accepted_candidate_authorities(
         reconcile_candidate(connection, row)?;
     }
     Ok(())
+}
+
+/// The only binding contract for a mutable Sprint target current.
+pub(crate) fn sprint_target_binding_fingerprint(
+    authority_id: &str,
+    target_ref_name: &str,
+    current_object_id: &str,
+) -> String {
+    fingerprint(&[authority_id, target_ref_name, current_object_id])
 }
 
 /// Application-only retained-candidate gate used by the integration drain.  It deliberately
@@ -147,6 +158,7 @@ pub(crate) fn revalidate_retained_accepted_candidate(
 
 fn reconcile_candidate(connection: &mut Connection, row: CandidateRow) -> Result<(), String> {
     let candidate_id = stable_id("accepted-handler-candidate", &row.decision);
+    connection.execute("UPDATE accepted_handler_candidates SET attempt_baseline_object_id=COALESCE(attempt_baseline_object_id,?2) WHERE candidate_id=?1",params![candidate_id,row.baseline]).map_err(|e|e.to_string())?;
     let private_ref = format!("refs/codex/orchestrator/accepted/{candidate_id}");
     let evidence = fingerprint(&[
         &row.work_unit_id,
@@ -237,7 +249,7 @@ fn reconcile_candidate(connection: &mut Connection, row: CandidateRow) -> Result
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| e.to_string())?;
-        tx.execute("INSERT INTO accepted_handler_candidates (candidate_id,work_unit_id,sprint_id,authority_id,attempt_id,reporting_invocation_id,review_invocation_id,decision_fingerprint,capture_authorization_id,candidate_commit_id,candidate_tree_id,private_ref_name,evidence_fingerprint,intent_recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",params![candidate_id,row.work_unit_id,row.sprint_id,row.authority_id,row.attempt_id,row.reporting,row.review,row.decision,row.capture_id,row.capture_commit,tree,private_ref,evidence,now]).map_err(|e|e.to_string())?;
+        tx.execute("INSERT INTO accepted_handler_candidates (candidate_id,work_unit_id,sprint_id,authority_id,attempt_id,reporting_invocation_id,review_invocation_id,decision_fingerprint,capture_authorization_id,attempt_baseline_object_id,candidate_commit_id,candidate_tree_id,private_ref_name,evidence_fingerprint,intent_recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",params![candidate_id,row.work_unit_id,row.sprint_id,row.authority_id,row.attempt_id,row.reporting,row.review,row.decision,row.capture_id,row.baseline,row.capture_commit,tree,private_ref,evidence,now]).map_err(|e|e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
     }
     // Database intent precedes the ref effect.  `update-ref <new> <old>` is absent-or-exact.
@@ -358,7 +370,7 @@ fn initialize_target(connection: &mut Connection, row: &CandidateRow) -> Result<
             && git_object(&current)
             && version >= 1
             && initialized <= updated
-            && binding == fingerprint(&[&row.authority_id, &reference, &current]);
+            && binding == sprint_target_binding_fingerprint(&row.authority_id, &reference, &current);
         return if exact {
             Ok(())
         } else {
@@ -396,7 +408,7 @@ fn initialize_target(connection: &mut Connection, row: &CandidateRow) -> Result<
     {
         return record_target_attention(connection, &row.authority_id, "target_worktree_drift");
     }
-    let fingerprint = fingerprint(&[&row.authority_id, &ref_name, &current]);
+    let fingerprint = sprint_target_binding_fingerprint(&row.authority_id, &ref_name, &current);
     let now = chrono::Utc::now().to_rfc3339();
     let tx = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
