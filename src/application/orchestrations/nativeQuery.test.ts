@@ -748,6 +748,10 @@ describe('orchestration native query v1', () => {
       (integration: Record<string, unknown>) => delete integration.success,
     ],
     [
+      'success without settlement',
+      (integration: Record<string, unknown>) => delete integration.settlement,
+    ],
+    [
       'contribution before settlement',
       (integration: Record<string, unknown>) => {
         (integration.settlement as Record<string, unknown>).settledAt =

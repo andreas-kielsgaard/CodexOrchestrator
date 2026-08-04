@@ -2260,6 +2260,8 @@ const workUnitIntegration = (value: unknown): NativeWorkUnitIntegrationV1 => {
         })();
   if (attention && (success || settlement || prerequisiteContribution))
     fail('Work Unit integration attention contradicts terminal facts');
+  if (success && !settlement)
+    fail('Work Unit integration success requires Work Unit settlement');
   if (settlement && !success) fail('Work Unit settlement requires integration success');
   if (prerequisiteContribution && (!success || !settlement))
     fail('Work Unit prerequisite contribution requires integration success and settlement');
