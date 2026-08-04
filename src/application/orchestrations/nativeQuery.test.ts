@@ -126,6 +126,26 @@ describe('orchestration native query v1', () => {
     expect(query.workSlicePlanningPointExecutionSettlements).toEqual([]);
   });
 
+  it.each(['waiting_on_prerequisites', 'ready'] as const)(
+    'decodes %s for every Work Unit without inventing terminal facts',
+    (state) => {
+      const value = fixture('valid-execution-graph.json') as Record<string, unknown>;
+      value.workSliceExecutionGraphCompletions = [];
+      value.workSliceExecutionSettlements = [];
+      value.workSlicePlanningPointExecutionSettlements = [];
+      for (const entry of value.workUnitExecutionStates as Array<Record<string, unknown>>)
+        entry.state = state;
+      const query = decodeOrchestrationNativeQueryV2(value);
+      expect(query.workUnitExecutionStates.map((entry) => entry.state)).toEqual([
+        state,
+        state,
+        state,
+        state,
+      ]);
+      expect(query.workSliceExecutionSettlements).toEqual([]);
+    },
+  );
+
   it('projects durable File Review ownership and rejects an unknown owner Sprint', () => {
     const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
     value.fileReviewDocuments = [
