@@ -465,4 +465,106 @@ describe('Sprint Runner Handback disclosure', () => {
     expect(region).toHaveTextContent('not final Sprint or Epic blockage');
     expect(region).toHaveTextContent('no Epic response is recorded here');
   });
+
+  it('separates local exhaustion intent from the later delivery request and keeps bounded movement neutral', () => {
+    render(
+      <SprintRunnerHandbackActivity
+        workUnits={[
+          {
+            workUnitId: 'unit-local-exhaustion',
+            title: 'Concern remains open',
+            attemptHistory: [
+              {
+                ordinal: 0,
+                attemptId: 'attempt-local-exhaustion',
+                incompleteDisposition: {
+                  attemptId: 'attempt-local-exhaustion',
+                  reviewInvocationId: 'review-local-exhaustion',
+                  decisionFingerprint: 'decision-local-exhaustion',
+                  classification: 'blocked',
+                  meaningfulProgress: false,
+                  recordedAt: '2026-08-04T00:00:00Z',
+                  noProgressHandback: {
+                    handbackId: 'handback-local-exhaustion',
+                    sourceAttemptId: 'attempt-local-exhaustion',
+                    sourceReviewInvocationId: 'review-local-exhaustion',
+                    contextFingerprint: 'context-local-exhaustion',
+                    persistedAt: '2026-08-04T00:00:01Z',
+                    deliveryIntendedAt: '2026-08-04T00:00:02Z',
+                    sprintRunnerDelivery: {
+                      deliveryRequestedAt: '2026-08-04T00:00:03Z',
+                      semanticReassessmentRecordedAt: '2026-08-04T00:00:04Z',
+                      selectedMovementKind: 'local_exhaustion_escalate',
+                      selectedMovement: {
+                        movementKind: 'local_exhaustion_escalate',
+                        rationale: 'No further local movement is recorded.',
+                        localExhaustionSummary: 'The concern remains unresolved locally.',
+                      },
+                      escalationIntentRecordedAt: '2026-08-04T00:00:05Z',
+                      escalationDeliveryRequestedAt: '2026-08-04T00:00:06Z',
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ] as never}
+      />,
+    );
+    const region = screen.getByRole('region', { name: 'Sprint Runner Handback reassessment' });
+    expect(region).toHaveTextContent('Local exhaustion recorded');
+    expect(region).toHaveTextContent('Escalation intent recorded upward');
+    expect(region).toHaveTextContent('Escalation delivery request recorded upward');
+    expect(region).not.toHaveTextContent('Escalation delivered');
+    expect(region).not.toHaveTextContent('final Sprint or Epic blockage');
+  });
+
+  it('labels an extensible bounded movement without implying progress or settlement', () => {
+    render(
+      <SprintRunnerHandbackActivity
+        workUnits={[
+          {
+            workUnitId: 'unit-bounded-movement',
+            title: 'Bounded movement concern',
+            attemptHistory: [
+              {
+                ordinal: 0,
+                attemptId: 'attempt-bounded-movement',
+                incompleteDisposition: {
+                  attemptId: 'attempt-bounded-movement',
+                  reviewInvocationId: 'review-bounded-movement',
+                  decisionFingerprint: 'decision-bounded-movement',
+                  classification: 'blocked',
+                  meaningfulProgress: false,
+                  recordedAt: '2026-08-04T00:00:00Z',
+                  noProgressHandback: {
+                    handbackId: 'handback-bounded-movement',
+                    sourceAttemptId: 'attempt-bounded-movement',
+                    sourceReviewInvocationId: 'review-bounded-movement',
+                    contextFingerprint: 'context-bounded-movement',
+                    persistedAt: '2026-08-04T00:00:01Z',
+                    deliveryIntendedAt: '2026-08-04T00:00:02Z',
+                    sprintRunnerDelivery: {
+                      deliveryRequestedAt: '2026-08-04T00:00:03Z',
+                      semanticReassessmentRecordedAt: '2026-08-04T00:00:04Z',
+                      selectedMovementKind: 'future_bounded_move',
+                      selectedMovement: {
+                        movementKind: 'future_bounded_move',
+                        rationale: 'The concern remains open.',
+                        boundedDetail: 'One bounded non-authoritative detail.',
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ] as never}
+      />,
+    );
+    const region = screen.getByRole('region', { name: 'Sprint Runner Handback reassessment' });
+    expect(region).toHaveTextContent('Bounded movement recorded: The concern remains open.');
+    expect(region).toHaveTextContent('One bounded non-authoritative detail.');
+    expect(region).toHaveTextContent('no settlement or blockage is implied');
+  });
 });

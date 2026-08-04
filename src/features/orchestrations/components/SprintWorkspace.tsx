@@ -597,7 +597,8 @@ function handbackActivityDetail(
   if (delivery.semanticReassessmentRecordedAt) stages.push('Semantic reassessment recorded');
   if (delivery.selectedMovement) stages.push(handbackMovementDetail(delivery.selectedMovement));
   else if (delivery.selectedMovementKind) stages.push(`Selected movement recorded: ${delivery.selectedMovementKind}`);
-  if (delivery.escalationDeliveryRequestedAt) stages.push('Escalation delivery requested upward');
+  if (delivery.escalationIntentRecordedAt) stages.push('Escalation intent recorded upward');
+  if (delivery.escalationDeliveryRequestedAt) stages.push('Escalation delivery request recorded upward');
   return `${stages.join('; ')}.`;
 }
 
@@ -614,9 +615,11 @@ function handbackMovementDetail(
     case 'continue_eligible_work':
       return `Alternate eligible work recorded: ${movement.eligibleWorkSummary}`;
     case 'wait_for_agent_dependency':
-      return `Agent-achievable dependency wait (${dependencyOwnerLabel(movement.dependencyOwnerClassification)}; owner: ${movement.dependencyOwner}; enabling result: ${movement.enablingResult}; resumption path: ${movement.resumptionPath})`;
+      return `Agent-achievable dependency wait (${movement.dependencyOwnerClassification ? dependencyOwnerLabel(movement.dependencyOwnerClassification) : 'qualified agent'}; owner: ${movement.dependencyOwner ?? 'not specified'}; enabling result: ${movement.enablingResult ?? 'not specified'}; resumption path: ${movement.resumptionPath ?? 'not specified'})`;
     case 'local_exhaustion_escalate':
       return `Local exhaustion recorded: ${movement.localExhaustionSummary}`;
+    default:
+      return `Bounded movement recorded: ${movement.rationale}${movement.boundedDetail ? ` (${movement.boundedDetail})` : ''}; no settlement or blockage is implied`;
   }
 }
 

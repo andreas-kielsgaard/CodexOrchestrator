@@ -910,6 +910,7 @@ describe('orchestration native query v1', () => {
           rationale: 'No further local Sprint movement is recorded.',
           localExhaustionSummary: 'Local Sprint Runner options are exhausted.',
         },
+        escalationIntentRecordedAt: '2026-08-04T00:00:27Z',
         escalationDeliveryRequestedAt: '2026-08-04T00:00:28Z',
       },
     ]) {
@@ -919,6 +920,7 @@ describe('orchestration native query v1', () => {
       const delivery = handback.sprintRunnerDelivery as Record<string, unknown>;
       delete delivery.selectedMovement;
       delete delivery.selectedMovementKind;
+      delete delivery.escalationIntentRecordedAt;
       delete delivery.escalationDeliveryRequestedAt;
       Object.assign(delivery, movement);
       const model = composeProductOrchestrationReadModels(
@@ -926,6 +928,31 @@ describe('orchestration native query v1', () => {
       ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
       expect(model.attemptHistory[0]!.incompleteDisposition?.noProgressHandback?.sprintRunnerDelivery).toMatchObject(movement);
     }
+
+    const boundedMovement = JSON.parse(JSON.stringify(reopened)) as Record<string, unknown>;
+    const boundedDelivery = (((boundedMovement.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>).noProgressHandback as Record<string, unknown>;
+    boundedDelivery.sprintRunnerDelivery = {
+      deliveryRequestedAt: '2026-08-04T00:00:21Z',
+      launchAcceptedAt: '2026-08-04T00:00:25Z',
+      semanticReassessmentRecordedAt: '2026-08-04T00:00:27Z',
+      selectedMovementKind: 'future_bounded_move',
+      selectedMovement: {
+        movementKind: 'future_bounded_move',
+        rationale: 'The concern remains open.',
+        boundedDetail: 'One bounded non-authoritative detail.',
+      },
+    };
+    expect(
+      composeProductOrchestrationReadModels(
+        nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(boundedMovement)),
+      ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!.attemptHistory[0]!.incompleteDisposition?.noProgressHandback?.sprintRunnerDelivery,
+    ).toMatchObject({
+      selectedMovement: {
+        movementKind: 'future_bounded_move',
+        rationale: 'The concern remains open.',
+        boundedDetail: 'One bounded non-authoritative detail.',
+      },
+    });
 
     const invalid = [
       (value: Record<string, unknown>) => {
@@ -943,6 +970,18 @@ describe('orchestration native query v1', () => {
       (value: Record<string, unknown>) => {
         const handback = (((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>).noProgressHandback as Record<string, unknown>;
         handback.receiverSessionId = 'private';
+      },
+      (value: Record<string, unknown>) => {
+        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovementKind: 'future_bounded_move', selectedMovement: { movementKind: 'future_bounded_move', rationale: 'x', dependencyOwner: 'bounded Work Unit Handler' } };
+      },
+      (value: Record<string, unknown>) => {
+        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovementKind: 'local_exhaustion_escalate', selectedMovement: { movementKind: 'local_exhaustion_escalate', rationale: 'x', localExhaustionSummary: 'x' }, escalationDeliveryRequestedAt: '2026-08-04T00:00:28Z' };
+      },
+      (value: Record<string, unknown>) => {
+        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovementKind: 'local_exhaustion_escalate', selectedMovement: { movementKind: 'local_exhaustion_escalate', rationale: 'x', localExhaustionSummary: 'x' }, escalationIntentRecordedAt: '2026-08-04T00:00:28Z', escalationDeliveryRequestedAt: '2026-08-04T00:00:27Z' };
       },
     ];
     for (const mutate of invalid) {

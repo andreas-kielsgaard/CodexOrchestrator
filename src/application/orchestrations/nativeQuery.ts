@@ -2326,13 +2326,15 @@ const sprintRunnerHandbackMovement = (value: unknown): ProductSprintRunnerHandba
       'enablingResult',
       'resumptionPath',
       'localExhaustionSummary',
+      'boundedDetail',
     ],
     'Sprint Runner Handback movement',
   );
   const movementKind = string(x.movementKind, 'Handback movementKind');
+  if (!/^[A-Za-z0-9_.-]+$/.test(movementKind) || movementKind.length > 96) fail('invalid Handback movementKind');
   const rationale = boundedString(x.rationale, 4000, 'Handback rationale');
   if (movementKind === 'continue_eligible_work') {
-    if (x.dependencyOwner !== undefined || x.dependencyOwnerClassification !== undefined || x.enablingResult !== undefined || x.resumptionPath !== undefined || x.localExhaustionSummary !== undefined)
+    if (x.dependencyOwner !== undefined || x.dependencyOwnerClassification !== undefined || x.enablingResult !== undefined || x.resumptionPath !== undefined || x.localExhaustionSummary !== undefined || x.boundedDetail !== undefined)
       fail('alternate Handback movement has contradictory detail');
     return { movementKind, rationale, eligibleWorkSummary: boundedString(x.eligibleWorkSummary, 4000, 'eligibleWorkSummary') };
   }
@@ -2343,7 +2345,7 @@ const sprintRunnerHandbackMovement = (value: unknown): ProductSprintRunnerHandba
     const owner = boundedString(x.dependencyOwner, 4000, 'dependencyOwner');
     if (['human', 'external', 'approval', 'manual', 'user'].some((term) => owner.toLowerCase().includes(term)))
       fail('dependency owner is outside the agent-achievable boundary');
-    if (x.eligibleWorkSummary !== undefined || x.localExhaustionSummary !== undefined)
+    if (x.eligibleWorkSummary !== undefined || x.localExhaustionSummary !== undefined || x.boundedDetail !== undefined)
       fail('dependency Handback movement has contradictory detail');
     return {
       movementKind,
@@ -2355,16 +2357,27 @@ const sprintRunnerHandbackMovement = (value: unknown): ProductSprintRunnerHandba
     };
   }
   if (movementKind === 'local_exhaustion_escalate') {
-    if (x.eligibleWorkSummary !== undefined || x.dependencyOwner !== undefined || x.dependencyOwnerClassification !== undefined || x.enablingResult !== undefined || x.resumptionPath !== undefined)
+    if (x.eligibleWorkSummary !== undefined || x.dependencyOwner !== undefined || x.dependencyOwnerClassification !== undefined || x.enablingResult !== undefined || x.resumptionPath !== undefined || x.boundedDetail !== undefined)
       fail('local exhaustion Handback movement has contradictory detail');
     return { movementKind, rationale, localExhaustionSummary: boundedString(x.localExhaustionSummary, 4000, 'localExhaustionSummary') };
   }
-  fail('unsupported Handback movement kind');
+  if (x.dependencyOwner !== undefined || x.dependencyOwnerClassification !== undefined)
+    fail('bounded Handback movement exposes contradictory or private detail');
+  const projectedBoundedDetail = x.boundedDetail === undefined ? undefined : boundedString(x.boundedDetail, 4000, 'boundedDetail');
+  const genericDetails = ['eligibleWorkSummary', 'enablingResult', 'resumptionPath', 'localExhaustionSummary']
+    .filter((key) => x[key] !== undefined)
+    .map((key) => boundedString(x[key], 4000, key));
+  if (genericDetails.length + (projectedBoundedDetail ? 1 : 0) > 1) fail('bounded Handback movement has contradictory detail');
+  return {
+    movementKind,
+    rationale,
+    ...((projectedBoundedDetail ?? genericDetails[0]) ? { boundedDetail: projectedBoundedDetail ?? genericDetails[0] } : {}),
+  };
 };
 
 const sprintRunnerHandbackDelivery = (value: unknown): ProductSprintRunnerHandbackDeliveryV1 => {
   const x = object(value, 'Sprint Runner Handback delivery');
-  keys(x, ['deliveryRequestedAt', 'deliveryPersistedAt', 'harnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt', 'providerActivationObservedAt', 'semanticReassessmentRecordedAt', 'selectedMovementKind', 'selectedMovement', 'escalationDeliveryRequestedAt'], 'Sprint Runner Handback delivery');
+  keys(x, ['deliveryRequestedAt', 'deliveryPersistedAt', 'harnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt', 'providerActivationObservedAt', 'semanticReassessmentRecordedAt', 'selectedMovementKind', 'selectedMovement', 'escalationIntentRecordedAt', 'escalationDeliveryRequestedAt'], 'Sprint Runner Handback delivery');
   const deliveryRequestedAt = timestamp(x.deliveryRequestedAt, 'deliveryRequestedAt');
   const optionalTime = (key: string) => x[key] === undefined ? undefined : timestamp(x[key], key);
   const deliveryPersistedAt = optionalTime('deliveryPersistedAt');
@@ -2373,6 +2386,7 @@ const sprintRunnerHandbackDelivery = (value: unknown): ProductSprintRunnerHandba
   const launchAcceptedAt = optionalTime('launchAcceptedAt');
   const providerActivationObservedAt = optionalTime('providerActivationObservedAt');
   const semanticReassessmentRecordedAt = optionalTime('semanticReassessmentRecordedAt');
+  const escalationIntentRecordedAt = optionalTime('escalationIntentRecordedAt');
   const escalationDeliveryRequestedAt = optionalTime('escalationDeliveryRequestedAt');
   phaseCoherence({ deliveryRequestedAt, deliveryPersistedAt, harnessBoundAt, launchRequestedAt, launchAcceptedAt }, ['deliveryRequestedAt', 'deliveryPersistedAt', 'harnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt'], 'Sprint Runner Handback delivery');
   if (providerActivationObservedAt) {
@@ -2391,10 +2405,16 @@ const sprintRunnerHandbackDelivery = (value: unknown): ProductSprintRunnerHandba
     fail('selected Handback movement lacks semantic reassessment');
   if (selectedMovementKind === 'wait_for_agent_dependency' && !selectedMovement)
     fail('dependency movement lacks structured route detail');
-  if (escalationDeliveryRequestedAt) {
+  if (escalationIntentRecordedAt || escalationDeliveryRequestedAt) {
     if (!selectedMovement || selectedMovement.movementKind !== 'local_exhaustion_escalate')
       fail('escalation delivery lacks selected local exhaustion movement');
-    timestampAtOrAfter(selectedMovement ? semanticReassessmentRecordedAt! : deliveryRequestedAt, escalationDeliveryRequestedAt, 'Handback escalation delivery');
+    if (!semanticReassessmentRecordedAt) fail('escalation intent lacks semantic reassessment');
+    if (!escalationIntentRecordedAt) fail('escalation delivery request lacks recorded intent');
+    timestampAtOrAfter(semanticReassessmentRecordedAt, escalationIntentRecordedAt, 'Handback escalation intent');
+    if (escalationDeliveryRequestedAt) {
+      timestampAtOrAfter(escalationIntentRecordedAt, escalationDeliveryRequestedAt, 'Handback escalation delivery');
+      timestampAtOrAfter(semanticReassessmentRecordedAt, escalationDeliveryRequestedAt, 'Handback escalation delivery');
+    }
   }
   return {
     deliveryRequestedAt,
@@ -2406,6 +2426,7 @@ const sprintRunnerHandbackDelivery = (value: unknown): ProductSprintRunnerHandba
     ...(semanticReassessmentRecordedAt ? { semanticReassessmentRecordedAt } : {}),
     ...(selectedMovementKind ? { selectedMovementKind } : {}),
     ...(selectedMovement ? { selectedMovement } : {}),
+    ...(escalationIntentRecordedAt ? { escalationIntentRecordedAt } : {}),
     ...(escalationDeliveryRequestedAt ? { escalationDeliveryRequestedAt } : {}),
   };
 };

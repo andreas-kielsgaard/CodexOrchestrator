@@ -435,6 +435,17 @@ export type ProductSprintRunnerHandbackMovementV1 = Readonly<
       readonly rationale: string;
       readonly localExhaustionSummary: string;
     }
+  | {
+      readonly movementKind: string;
+      readonly rationale: string;
+      readonly eligibleWorkSummary?: string;
+      readonly dependencyOwner?: string;
+      readonly dependencyOwnerClassification?: ProductSprintRunnerHandbackDependencyOwnerClassificationV1;
+      readonly enablingResult?: string;
+      readonly resumptionPath?: string;
+      readonly localExhaustionSummary?: string;
+      readonly boundedDetail?: string;
+    }
 >;
 
 export type ProductSprintRunnerHandbackDeliveryV1 = Readonly<{
@@ -447,6 +458,7 @@ export type ProductSprintRunnerHandbackDeliveryV1 = Readonly<{
   readonly semanticReassessmentRecordedAt?: string;
   readonly selectedMovementKind?: string;
   readonly selectedMovement?: ProductSprintRunnerHandbackMovementV1;
+  readonly escalationIntentRecordedAt?: string;
   readonly escalationDeliveryRequestedAt?: string;
 }>;
 

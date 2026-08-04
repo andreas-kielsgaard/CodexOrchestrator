@@ -3477,6 +3477,8 @@ struct SprintRunnerHandbackDeliveryDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     selected_movement: Option<SprintRunnerHandbackMovementDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    escalation_intent_recorded_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     escalation_delivery_requested_at: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -3496,6 +3498,8 @@ struct SprintRunnerHandbackMovementDto {
     resumption_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     local_exhaustion_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bounded_detail: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -4500,7 +4504,7 @@ fn incomplete_disposition_rows(
     let exists = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_handler_incomplete_dispositions')", [], |row| row.get::<_, bool>(0)).map_err(|error| error.to_string())?;
     if !exists { return Ok(std::collections::HashMap::new()); }
     let handback_delivery_exists = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sprint_runner_handback_deliveries')", [], |row| row.get::<_, bool>(0)).map_err(|error| error.to_string())?;
-    let delivery_fields = if handback_delivery_exists { "x.delivery_requested_at,x.delivery_persisted_at,x.harness_bound_at,x.launch_requested_at,x.launch_accepted_at,x.provider_activation_observed_at,x.semantic_reassessment_recorded_at,m.movement_kind,m.details_json,e.delivery_requested_at" } else { "NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL" };
+    let delivery_fields = if handback_delivery_exists { "x.delivery_requested_at,x.delivery_persisted_at,x.harness_bound_at,x.launch_requested_at,x.launch_accepted_at,x.provider_activation_observed_at,x.semantic_reassessment_recorded_at,m.movement_kind,m.details_json,e.requested_at,e.delivery_requested_at" } else { "NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL" };
     let delivery_joins = if handback_delivery_exists { " LEFT JOIN sprint_runner_handback_deliveries x ON x.handback_id=h.handback_id LEFT JOIN sprint_runner_handback_dispositions m ON m.handback_id=x.handback_id LEFT JOIN sprint_runner_handback_escalations e ON e.handback_id=x.handback_id" } else { "" };
     let query = format!("SELECT d.work_unit_id,d.attempt_id,d.review_invocation_id,d.decision_fingerprint,d.classification,d.meaningful_progress,d.recorded_at,d.next_attempt_authorized_at,h.handback_id,h.source_attempt_id,h.source_review_invocation_id,h.context_json,h.context_fingerprint,h.persisted_at,h.delivery_intended_at,h.sprint_runner_receiver_activated_at,h.sprint_runner_receiver_decision_at,{delivery_fields} FROM work_unit_handler_incomplete_dispositions d LEFT JOIN work_unit_no_progress_handbacks h ON h.source_attempt_id=d.attempt_id AND h.source_review_invocation_id=d.review_invocation_id AND h.decision_fingerprint=d.decision_fingerprint{delivery_joins}");
     let mut statement = connection.prepare(&query).map_err(|error| error.to_string())?;
@@ -4535,7 +4539,8 @@ fn incomplete_disposition_rows(
                             (None, Some(_)) => return Err(to_sql_error("Handback movement detail lacks its kind".into())),
                             (Some(kind), Some(details)) => Some(sprint_runner_handback_movement(&details, kind)?),
                         };
-                        let escalation_delivery_requested_at: Option<String> = row.get(26)?;
+                        let escalation_intent_recorded_at: Option<String> = row.get(26)?;
+                        let escalation_delivery_requested_at: Option<String> = row.get(27)?;
                         require_ordered_projected_phases(&[Some(delivery_requested_at.as_str()), delivery_persisted_at.as_deref(), harness_bound_at.as_deref(), launch_requested_at.as_deref(), launch_accepted_at.as_deref()], "Sprint Runner Handback delivery").map_err(to_sql_error)?;
                         if let Some(provider) = provider_activation_observed_at.as_deref() {
                             let launch_accepted = launch_accepted_at.as_deref().ok_or_else(|| to_sql_error("Handback provider observation lacks launch acceptance".into()))?;
@@ -4547,12 +4552,17 @@ fn incomplete_disposition_rows(
                         }
                         if selected_movement_kind.is_some() && semantic_reassessment_recorded_at.is_none() { return Err(to_sql_error("selected Handback movement lacks semantic reassessment".into())); }
                         if selected_movement_kind.as_deref() == Some("wait_for_agent_dependency") && selected_movement.is_none() { return Err(to_sql_error("dependency movement lacks structured route detail".into())); }
-                        if let Some(escalation) = escalation_delivery_requested_at.as_deref() {
+                        if escalation_intent_recorded_at.is_some() || escalation_delivery_requested_at.is_some() {
                             if selected_movement.as_ref().is_none_or(|movement| movement.movement_kind != "local_exhaustion_escalate") { return Err(to_sql_error("escalation delivery lacks selected local exhaustion movement".into())); }
                             let reassessment = semantic_reassessment_recorded_at.as_deref().ok_or_else(|| to_sql_error("escalation delivery lacks semantic reassessment".into()))?;
-                            require_timestamp_at_or_after(reassessment, escalation, "Handback escalation delivery").map_err(to_sql_error)?;
+                            let intent = escalation_intent_recorded_at.as_deref().ok_or_else(|| to_sql_error("escalation delivery request lacks recorded intent".into()))?;
+                            require_timestamp_at_or_after(reassessment, intent, "Handback escalation intent").map_err(to_sql_error)?;
+                            if let Some(escalation) = escalation_delivery_requested_at.as_deref() {
+                                require_timestamp_at_or_after(intent, escalation, "Handback escalation delivery").map_err(to_sql_error)?;
+                                require_timestamp_at_or_after(reassessment, escalation, "Handback escalation delivery").map_err(to_sql_error)?;
+                            }
                         }
-                        Some(SprintRunnerHandbackDeliveryDto { delivery_requested_at, delivery_persisted_at, harness_bound_at, launch_requested_at, launch_accepted_at, provider_activation_observed_at, semantic_reassessment_recorded_at, selected_movement_kind, selected_movement, escalation_delivery_requested_at })
+                        Some(SprintRunnerHandbackDeliveryDto { delivery_requested_at, delivery_persisted_at, harness_bound_at, launch_requested_at, launch_accepted_at, provider_activation_observed_at, semantic_reassessment_recorded_at, selected_movement_kind, selected_movement, escalation_intent_recorded_at, escalation_delivery_requested_at })
                     }
                 };
                 Some(WorkUnitNoProgressHandbackDto { handback_id, source_attempt_id, source_review_invocation_id, context_fingerprint, persisted_at, delivery_intended_at, sprint_runner_receiver_activated_at: receiver_activated, sprint_runner_receiver_decision_at: receiver_decision, sprint_runner_delivery: delivery })
@@ -4587,9 +4597,10 @@ struct PersistedSprintRunnerHandbackMovement {
 
 fn sprint_runner_handback_movement(details: &str, movement_kind: &str) -> Result<SprintRunnerHandbackMovementDto, rusqlite::Error> {
     let value: PersistedSprintRunnerHandbackMovement = serde_json::from_str(details).map_err(|error| to_sql_error(error.to_string()))?;
-    if value.movement_kind != movement_kind || value.rationale.trim().is_empty() || value.rationale.len() > 4_000 { return Err(to_sql_error("Handback movement detail is incoherent".into())); }
+    if value.movement_kind != movement_kind || movement_kind.is_empty() || movement_kind.len() > 96 || !movement_kind.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.')) || value.rationale.trim().is_empty() || value.rationale.len() > 4_000 { return Err(to_sql_error("Handback movement detail is incoherent".into())); }
     let text_ok = |value: &Option<String>| value.as_deref().is_none_or(|text| !text.trim().is_empty() && text.len() <= 4_000);
     if [&value.eligible_work_summary, &value.dependency_owner, &value.enabling_result, &value.resumption_path, &value.local_exhaustion_summary].iter().any(|text| !text_ok(text)) { return Err(to_sql_error("Handback movement text is incoherent".into())); }
+    let mut bounded_detail = None;
     match movement_kind {
         "continue_eligible_work" if value.eligible_work_summary.is_some() && value.dependency_owner.is_none() && value.dependency_owner_classification.is_none() && value.enabling_result.is_none() && value.resumption_path.is_none() && value.local_exhaustion_summary.is_none() => {}
         "wait_for_agent_dependency" => {
@@ -4598,9 +4609,14 @@ fn sprint_runner_handback_movement(details: &str, movement_kind: &str) -> Result
             if !["work_unit_handler", "work_unit_implementer", "work_slice_planner", "sprint_runner"].contains(&classification) || value.enabling_result.is_none() || value.resumption_path.is_none() || value.eligible_work_summary.is_some() || value.local_exhaustion_summary.is_some() || ["human", "external", "approval", "manual", "user"].iter().any(|term| owner.to_ascii_lowercase().contains(term)) { return Err(to_sql_error("dependency movement is outside the agent-achievable boundary".into())); }
         }
         "local_exhaustion_escalate" if value.local_exhaustion_summary.is_some() && value.eligible_work_summary.is_none() && value.dependency_owner.is_none() && value.dependency_owner_classification.is_none() && value.enabling_result.is_none() && value.resumption_path.is_none() => {}
-        _ => return Err(to_sql_error("Handback movement detail is contradictory".into())),
+        _ => {
+            if value.dependency_owner.is_some() || value.dependency_owner_classification.is_some() { return Err(to_sql_error("bounded Handback movement exposes dependency authority detail".into())); }
+            let generic_details = [value.eligible_work_summary.as_ref(), value.enabling_result.as_ref(), value.resumption_path.as_ref(), value.local_exhaustion_summary.as_ref()];
+            if generic_details.iter().filter(|detail| detail.is_some()).count() > 1 { return Err(to_sql_error("bounded Handback movement has contradictory detail".into())); }
+            bounded_detail = generic_details.into_iter().flatten().cloned().next();
+        }
     }
-    Ok(SprintRunnerHandbackMovementDto { movement_kind: value.movement_kind, rationale: value.rationale, eligible_work_summary: value.eligible_work_summary, dependency_owner: value.dependency_owner, dependency_owner_classification: value.dependency_owner_classification, enabling_result: value.enabling_result, resumption_path: value.resumption_path, local_exhaustion_summary: value.local_exhaustion_summary })
+    Ok(SprintRunnerHandbackMovementDto { movement_kind: value.movement_kind, rationale: value.rationale, eligible_work_summary: if movement_kind == "continue_eligible_work" { value.eligible_work_summary } else { None }, dependency_owner: if movement_kind == "wait_for_agent_dependency" { value.dependency_owner } else { None }, dependency_owner_classification: if movement_kind == "wait_for_agent_dependency" { value.dependency_owner_classification } else { None }, enabling_result: if movement_kind == "wait_for_agent_dependency" { value.enabling_result } else { None }, resumption_path: if movement_kind == "wait_for_agent_dependency" { value.resumption_path } else { None }, local_exhaustion_summary: if movement_kind == "local_exhaustion_escalate" { value.local_exhaustion_summary } else { None }, bounded_detail })
 }
 
 fn map_handler_review(row: &Row<'_>) -> Result<WorkUnitHandlerReviewDto, rusqlite::Error> {
