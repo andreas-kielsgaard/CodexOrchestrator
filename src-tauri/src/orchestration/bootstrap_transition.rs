@@ -6858,6 +6858,68 @@ CREATE TABLE work_unit_retry_attempts (
     }
 
     #[test]
+    fn incomplete_disposition_two_services_reopen_reuses_one_functional_no_progress_handback() {
+        let fixture = ReportingFixture::new();
+        let review = fixture.ready_review();
+        let reopened = fixture.reopened();
+        let disposition = crate::orchestration::sprint_runner_transition::HandlerReviewIncompleteDisposition {
+            code: "objective_not_satisfied".into(),
+            explanation: "the functional objective remains unsatisfied".into(),
+            classification: crate::orchestration::sprint_runner_transition::IncompleteAttemptClassification::FunctionalObjectiveNotSatisfied,
+            meaningful_progress: false,
+        };
+        let barrier = Arc::new(Barrier::new(2));
+        let calls = [fixture.transition.clone(), reopened.clone()].into_iter().map(|service| {
+            let invocation = review.clone();
+            let disposition = disposition.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || { barrier.wait(); service.record_handler_incomplete_disposition_for_test(&invocation, disposition) })
+        }).collect::<Vec<_>>();
+        assert!(calls.into_iter().all(|call| call.join().unwrap().is_ok()));
+        fixture.base.runtime.finish(&review, AgentInvocationTerminalStatus::Completed);
+        reopened.reconcile_handler_reviews_for_test().unwrap();
+        let durable = |fixture: &ReportingFixture| Connection::open(&fixture.base.database_path).unwrap().query_row(
+            "SELECT d.decision_fingerprint,h.handback_id,h.context_fingerprint FROM work_unit_handler_incomplete_dispositions d JOIN work_unit_no_progress_handbacks h ON h.source_attempt_id=d.attempt_id WHERE d.work_unit_id=?1 AND d.classification='functional_objective_not_satisfied' AND d.meaningful_progress=0 AND d.next_attempt_authorized_at IS NULL AND h.source_review_invocation_id=d.review_invocation_id AND h.sprint_runner_receiver_activated_at IS NULL AND h.sprint_runner_receiver_decision_at IS NULL",
+            [&fixture.work_unit_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        ).unwrap();
+        let before = durable(&fixture);
+        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_incomplete_dispositions", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_no_progress_handbacks", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_retry_attempts", [], |row| row.get(0)).unwrap(), 0);
+        let reopened_again = fixture.reopened();
+        reopened_again.reconcile_handler_reviews_for_test().unwrap();
+        assert_eq!(durable(&fixture), before);
+        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_no_progress_handbacks", [], |row| row.get(0)).unwrap(), 1);
+    }
+
+    #[test]
+    fn divergent_incomplete_disposition_replay_conflicts_without_contradictory_effects() {
+        let fixture = ReportingFixture::new();
+        let review = fixture.ready_review();
+        let reopened = fixture.reopened();
+        let barrier = Arc::new(Barrier::new(2));
+        let functional = {
+            let service = fixture.transition.clone(); let invocation = review.clone(); let barrier = barrier.clone();
+            std::thread::spawn(move || { barrier.wait(); service.record_handler_incomplete_disposition_for_test(&invocation, crate::orchestration::sprint_runner_transition::HandlerReviewIncompleteDisposition { code: "objective_not_satisfied".into(), explanation: "the functional objective remains unsatisfied".into(), classification: crate::orchestration::sprint_runner_transition::IncompleteAttemptClassification::FunctionalObjectiveNotSatisfied, meaningful_progress: true }) })
+        };
+        let blocked = {
+            let service = reopened.clone(); let invocation = review.clone(); let barrier = barrier.clone();
+            std::thread::spawn(move || { barrier.wait(); service.record_handler_incomplete_disposition_for_test(&invocation, crate::orchestration::sprint_runner_transition::HandlerReviewIncompleteDisposition { code: "blocked_input".into(), explanation: "a bounded input is unavailable".into(), classification: crate::orchestration::sprint_runner_transition::IncompleteAttemptClassification::Blocked, meaningful_progress: false }) })
+        };
+        let results = [functional.join().unwrap(), blocked.join().unwrap()];
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(results.iter().filter(|result| matches!(result, Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict))).count(), 1);
+        fixture.base.runtime.finish(&review, AgentInvocationTerminalStatus::Completed);
+        reopened.reconcile_handler_reviews_for_test().unwrap();
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        let facts: (i64,i64,i64,i64) = connection.query_row("SELECT (SELECT COUNT(*) FROM work_unit_handler_incomplete_dispositions), (SELECT COUNT(*) FROM work_unit_handler_incomplete_dispositions WHERE next_attempt_authorized_at IS NOT NULL), (SELECT COUNT(*) FROM work_unit_no_progress_handbacks), (SELECT COUNT(*) FROM work_unit_handler_reviews WHERE conflict_reason='divergent_review_judgment')", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
+        assert_eq!(facts.0, 1);
+        assert_eq!(facts.1 + facts.2, 1);
+        assert_eq!(facts.3, 1);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_retry_attempts", [], |row| row.get(0)).unwrap(), 0);
+    }
+
+    #[test]
     fn handler_review_concurrent_replays_and_divergent_race_converge_without_downstream_effects() {
         let downstream_effects = |fixture: &ReportingFixture| {
             Connection::open(&fixture.base.database_path)

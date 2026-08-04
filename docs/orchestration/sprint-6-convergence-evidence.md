@@ -628,3 +628,11 @@ existing seven dead-code warnings. Focused meaningful-progress and no-progress r
 passed **1 test / 337 filtered**. Frontend Vitest/type/build remains unproven because dependencies are absent;
 no live provider, Sprint Runner receiver, generalized attempt launch, ordinal-2 launch,
 integration, settlement, publication, or user acceptance was exercised.
+
+OPS-1 correction evidence: two independently opened services submitted the same
+`functional_objective_not_satisfied` no-progress disposition concurrently and converged on one
+judgment, disposition, and handback. A further reopened service reused the same decision and
+handback fingerprints without creating a retry or receiver effect. A separate two-service race
+between functional-objective/meaningful-progress and blocked/no-progress inputs produced one
+authoritative disposition and one conflict, with exactly one of authorization or handback and no
+retry. Each focused regression passed **1 test / 339 filtered**.
