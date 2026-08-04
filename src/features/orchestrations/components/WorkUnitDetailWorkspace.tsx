@@ -8,6 +8,7 @@ import { SharedAgentSessionPanel } from './SharedAgentSessionPanel';
 import type {
   ProductWorkUnitHandlerDecisionV1,
   ProductWorkUnitHandlerReviewV1,
+  ProductWorkUnitImplementerOutcomeV1,
   ProductWorkUnitRetryAttemptV1,
 } from '../../../application/orchestrations/productReadModels';
 import '../styles/orchestrationSubdetail.css';
@@ -99,9 +100,8 @@ export function WorkUnitDetailWorkspace({
           {(unit.handlerActivation ||
             unit.actionContinuation ||
             unit.implementerActivation ||
-            unit.implementerOutcome ||
-            unit.handlerReview ||
-            unit.handlerDecision) && (
+            unit.attemptHistory.length > 0 ||
+            unit.retryAttempt) && (
             <section className="work-unit-activation" aria-label="Work Unit activation activity">
               <h2>Activation activity</h2>
               {unit.handlerActivation && <p>{handlerActivity(unit.handlerActivation)}</p>}
@@ -111,21 +111,25 @@ export function WorkUnitDetailWorkspace({
               {unit.implementerActivation && (
                 <p>{implementerActivity(unit.implementerActivation)}</p>
               )}
-              {unit.implementerOutcome && (
-                <ImplementerOutcomeActivity outcome={unit.implementerOutcome} />
-              )}
-              {unit.handlerReview && (
-                <HandlerReviewActivity
-                  review={unit.handlerReview}
-                  decision={unit.handlerDecision}
-                  retryAttempt={unit.retryAttempt}
-                />
-              )}
-              {unit.retryAttempt && (
-                <RetryAttemptActivity
-                  retryAttempt={unit.retryAttempt}
-                  handlerDecision={unit.handlerDecision}
-                />
+              {unit.attemptHistory.map((attempt) => (
+                <section className="work-unit-attempt" key={attempt.attemptId}>
+                  <h3>Attempt ordinal {attempt.ordinal}</h3>
+                  {attempt.implementerOutcome && (
+                    <ImplementerOutcomeActivity outcome={attempt.implementerOutcome} />
+                  )}
+                  {attempt.handlerReview && (
+                    <HandlerReviewActivity
+                      review={attempt.handlerReview}
+                      decision={attempt.handlerDecision}
+                    />
+                  )}
+                  {unit.retryAttempt?.ordinal === attempt.ordinal && (
+                    <RetryAttemptActivity retryAttempt={unit.retryAttempt} />
+                  )}
+                </section>
+              ))}
+              {unit.retryAttempt && !unit.attemptHistory.some((attempt) => attempt.ordinal === unit.retryAttempt?.ordinal) && (
+                <RetryAttemptActivity retryAttempt={unit.retryAttempt} />
               )}
             </section>
           )}
@@ -363,9 +367,7 @@ function implementerActivity(
 function ImplementerOutcomeActivity({
   outcome,
 }: {
-  readonly outcome: NonNullable<
-    SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['implementerOutcome']
-  >;
+  readonly outcome: ProductWorkUnitImplementerOutcomeV1;
 }) {
   const reportingStage = outcome.reportingReadyAt
     ? 'Implementer reporting is application-ready.'
@@ -495,11 +497,9 @@ function ImplementerOutcomeActivity({
 function HandlerReviewActivity({
   review,
   decision,
-  retryAttempt,
 }: {
   readonly review: ProductWorkUnitHandlerReviewV1;
   readonly decision?: ProductWorkUnitHandlerDecisionV1;
-  readonly retryAttempt?: ProductWorkUnitRetryAttemptV1;
 }) {
   const reviewStage = review.reviewReadyAt
     ? 'Handler review is application-ready.'
@@ -594,8 +594,8 @@ function HandlerReviewActivity({
           {decision.implementationReturnedAt && (
             <p>Implementation returned by the Handler review at {decision.implementationReturnedAt}.</p>
           )}
-          {decision.retryRequiredAt && !retryAttempt && (
-            <p>Retry is required at {decision.retryRequiredAt}; no retry attempt is recorded.</p>
+          {decision.retryRequiredAt && (
+            <p>Retry is required at {decision.retryRequiredAt}.</p>
           )}
         </div>
       ) : review.lifecycle?.status === 'completed' && review.semanticJudgment ? (
@@ -608,19 +608,15 @@ function HandlerReviewActivity({
           Review conflict observed at {review.conflict.occurredAt}: {review.conflict.reason}.
         </p>
       )}
-      {!retryAttempt && (
-        <p>No retry attempt, settlement, dependent activation, or upward continuation is recorded.</p>
-      )}
+      <p>No settlement, dependent activation, or upward continuation is recorded.</p>
     </div>
   );
 }
 
 function RetryAttemptActivity({
   retryAttempt,
-  handlerDecision,
 }: {
   readonly retryAttempt: ProductWorkUnitRetryAttemptV1;
-  readonly handlerDecision?: ProductWorkUnitHandlerDecisionV1;
 }) {
   const status = retryAttempt.failureReason
     ? 'Retry attempt failed and needs attention. It is not ready; no relaunch or replacement is implied.'
@@ -649,12 +645,6 @@ function RetryAttemptActivity({
     <div className="work-unit-retry-attempt">
       <h3>Returned Work Unit retry</h3>
       <p>{status}</p>
-      {handlerDecision?.returnReason && (
-        <p>
-          This ordinal-1 retry addresses the Handler return reason:{' '}
-          {handlerDecision.returnReason.code} - {handlerDecision.returnReason.explanation}.
-        </p>
-      )}
       <dl>
         <RecordedFact label="Ordinal" value={String(retryAttempt.ordinal)} />
         <RecordedFact label="Origin Implementer attempt" value={retryAttempt.originAttemptId} />

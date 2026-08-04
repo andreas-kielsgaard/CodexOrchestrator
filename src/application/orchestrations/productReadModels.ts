@@ -169,9 +169,7 @@ export interface ProductReadReferenceIndexV1 {
     readonly handlerActivation?: ProductWorkUnitHandlerActivationV1;
     readonly actionContinuation?: ProductWorkUnitActionContinuationV1;
     readonly implementerActivation?: ProductWorkUnitImplementerActivationV1;
-    readonly implementerOutcome?: ProductWorkUnitImplementerOutcomeV1;
-    readonly handlerReview?: ProductWorkUnitHandlerReviewV1;
-    readonly handlerDecision?: ProductWorkUnitHandlerDecisionV1;
+    readonly attemptHistory: readonly ProductWorkUnitAttemptHistoryV1[];
     readonly retryAttempt?: ProductWorkUnitRetryAttemptV1;
   }[];
   readonly gates: readonly {
@@ -354,6 +352,7 @@ export type ProductWorkUnitHandlerReviewV1 = Readonly<{
 }>;
 
 export type ProductWorkUnitHandlerDecisionV1 = Readonly<{
+  readonly attemptId: string;
   readonly reviewInvocationId: string;
   readonly variant: 'accepted' | 'returned';
   readonly fingerprint: string;
@@ -433,6 +432,15 @@ export type ProductWorkUnitImplementerOutcomeV1 = Readonly<{
   readonly failureReason?: string;
 }>;
 
+/** Ordered application-owned history; ordinals are nonnegative and do not authorize later work. */
+export type ProductWorkUnitAttemptHistoryV1 = Readonly<{
+  readonly ordinal: number;
+  readonly attemptId: string;
+  readonly implementerOutcome?: ProductWorkUnitImplementerOutcomeV1;
+  readonly handlerReview?: ProductWorkUnitHandlerReviewV1;
+  readonly handlerDecision?: ProductWorkUnitHandlerDecisionV1;
+}>;
+
 export interface ProductContinuationReadModelV1 {
   readonly level: 'sprint' | 'epic';
   readonly policy: Readonly<{
@@ -505,9 +513,7 @@ export interface ProductSprintRevisionViewV1 {
     readonly handlerActivation?: ProductWorkUnitHandlerActivationV1;
     readonly actionContinuation?: ProductWorkUnitActionContinuationV1;
     readonly implementerActivation?: ProductWorkUnitImplementerActivationV1;
-    readonly implementerOutcome?: ProductWorkUnitImplementerOutcomeV1;
-    readonly handlerReview?: ProductWorkUnitHandlerReviewV1;
-    readonly handlerDecision?: ProductWorkUnitHandlerDecisionV1;
+    readonly attemptHistory: readonly ProductWorkUnitAttemptHistoryV1[];
     readonly retryAttempt?: ProductWorkUnitRetryAttemptV1;
     readonly workUnitScopeId: string;
     readonly sprintPlanRevisionId: string;

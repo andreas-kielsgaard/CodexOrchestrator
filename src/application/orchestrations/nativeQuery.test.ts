@@ -490,7 +490,7 @@ describe('orchestration native query v1', () => {
   it('projects Implementer reporting states and rejects malformed authority or readiness', () => {
     const absent = implementerOutcomeNativeFixture();
     const absentQuery = decodeOrchestrationNativeQueryV2(absent);
-    expect(absentQuery.workUnits[0]!.implementerOutcome).toBeUndefined();
+    expect(primaryAttempt(absentQuery.workUnits[0]!)?.implementerOutcome).toBeUndefined();
 
     const inProgress = implementerOutcomeNativeFixture();
     (inProgress.workUnits as Array<Record<string, unknown>>)[0]!.implementerOutcome =
@@ -498,11 +498,11 @@ describe('orchestration native query v1', () => {
     const inProgressInput = nativeQueryProductCompositionInputV2(
       decodeOrchestrationNativeQueryV2(inProgress),
     );
-    expect(inProgressInput.referenceIndex.workUnits[0]!.implementerOutcome).toMatchObject({
+    expect(primaryAttempt(inProgressInput.referenceIndex.workUnits[0]!)?.implementerOutcome).toMatchObject({
       reportingRequestedAt: '2026-08-04T00:00:00Z',
       reportingPreparedAt: '2026-08-04T00:00:01Z',
     });
-    expect(inProgressInput.referenceIndex.workUnits[0]!.implementerOutcome).not.toHaveProperty(
+    expect(primaryAttempt(inProgressInput.referenceIndex.workUnits[0]!)?.implementerOutcome).not.toHaveProperty(
       'submittedOutcome',
     );
 
@@ -511,7 +511,7 @@ describe('orchestration native query v1', () => {
       (terminal.workUnits as Array<Record<string, unknown>>)[0]!.implementerOutcome =
         implementerOutcomeFixture(status);
       expect(
-        decodeOrchestrationNativeQueryV2(terminal).workUnits[0]!.implementerOutcome
+        primaryAttempt(decodeOrchestrationNativeQueryV2(terminal).workUnits[0]!)?.implementerOutcome
           ?.terminalLifecycle,
       ).toMatchObject({ status });
     }
@@ -520,7 +520,7 @@ describe('orchestration native query v1', () => {
     (reviewReady.workUnits as Array<Record<string, unknown>>)[0]!.implementerOutcome =
       implementerOutcomeFixture('review_ready');
     const readyQuery = decodeOrchestrationNativeQueryV2(reviewReady);
-    const readyOutcome = readyQuery.workUnits[0]!.implementerOutcome!;
+    const readyOutcome = primaryAttempt(readyQuery.workUnits[0]!)!.implementerOutcome!;
     expect(readyOutcome.submittedOutcome).toMatchObject({
       variant: 'review_pending',
       summaryClaim: 'Implemented the bounded change.',
@@ -533,7 +533,7 @@ describe('orchestration native query v1', () => {
     expect(readyOutcome.handlerReviewReadyAt).toBe('2026-08-04T00:00:11Z');
     expect(
       composeProductOrchestrationReadModels(nativeQueryProductCompositionInputV2(readyQuery))
-        .epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!.implementerOutcome,
+        .epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!.attemptHistory[0]?.implementerOutcome,
     ).toEqual(readyOutcome);
 
     const malformed = [
@@ -581,15 +581,15 @@ describe('orchestration native query v1', () => {
     pendingUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
     pendingUnit.handlerReview = handlerReviewFixture('pending');
     const pendingQuery = decodeOrchestrationNativeQueryV2(pending);
-    expect(pendingQuery.workUnits[0]!.handlerReview).toMatchObject({
+    expect(primaryAttempt(pendingQuery.workUnits[0]!)?.handlerReview).toMatchObject({
       reviewReadyAt: '2026-08-04T00:00:11Z',
       delivered: { comparisonFingerprint: 'comparison-1' },
     });
     const pendingUnitModel = composeProductOrchestrationReadModels(
       nativeQueryProductCompositionInputV2(pendingQuery),
     ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
-    expect(pendingUnitModel.handlerReview?.semanticJudgment).toBeUndefined();
-    expect(pendingUnitModel.handlerDecision).toBeUndefined();
+    expect(primaryAttempt(pendingUnitModel)?.handlerReview?.semanticJudgment).toBeUndefined();
+    expect(primaryAttempt(pendingUnitModel)?.handlerDecision).toBeUndefined();
 
     for (const variant of ['accepted', 'returned'] as const) {
       const value = implementerOutcomeNativeFixture();
@@ -604,18 +604,18 @@ describe('orchestration native query v1', () => {
         };
       }
       const query = decodeOrchestrationNativeQueryV2(value);
-      expect(query.workUnits[0]!.handlerDecision?.variant).toBe(variant);
-      expect(query.workUnits[0]!.handlerReview?.semanticJudgment?.variant).toBe(
+      expect(primaryAttempt(query.workUnits[0]!)?.handlerDecision?.variant).toBe(variant);
+      expect(primaryAttempt(query.workUnits[0]!)?.handlerReview?.semanticJudgment?.variant).toBe(
         variant === 'accepted' ? 'accept' : 'return',
       );
-      expect(query.workUnits[0]!.handlerReview?.lifecycle?.status).toBe('completed');
+      expect(primaryAttempt(query.workUnits[0]!)?.handlerReview?.lifecycle?.status).toBe('completed');
     }
 
     const failed = implementerOutcomeNativeFixture();
     const failedUnit = (failed.workUnits as Array<Record<string, unknown>>)[0]!;
     failedUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
     failedUnit.handlerReview = handlerReviewFixture('failed');
-    expect(decodeOrchestrationNativeQueryV2(failed).workUnits[0]!.handlerDecision).toBeUndefined();
+    expect(primaryAttempt(decodeOrchestrationNativeQueryV2(failed).workUnits[0]!)?.handlerDecision).toBeUndefined();
 
     const malformed = [
       (() => {
@@ -1018,8 +1018,24 @@ function implementerOutcomeNativeFixture(): Record<string, unknown> {
         launchAcceptedAt: '2026-08-03T00:01:26Z',
         implementerReadyAt: '2026-08-03T00:01:27Z',
       },
+      attemptHistory: [],
     },
   ];
+  // Keep the old test call sites concise while exercising only the new serialized history shape.
+  const unit = (value.workUnits as Array<Record<string, unknown>>)[0]!;
+  const history = () => unit.attemptHistory as Array<Record<string, unknown>>;
+  const member = () => {
+    const existing = history()[0];
+    if (existing) return existing;
+    const created: Record<string, unknown> = { ordinal: 0, attemptId: 'attempt-1' };
+    history().push(created);
+    return created;
+  };
+  Object.defineProperties(unit, {
+    implementerOutcome: { enumerable: false, get: () => member().implementerOutcome, set: (value) => { member().implementerOutcome = value; } },
+    handlerReview: { enumerable: false, get: () => member().handlerReview, set: (value) => { member().handlerReview = value; } },
+    handlerDecision: { enumerable: false, get: () => member().handlerDecision, set: (value) => { member().handlerDecision = value; } },
+  });
   value.workUnitRelationships = [
     {
       relationshipId: 'point',
@@ -1053,6 +1069,10 @@ function implementerOutcomeNativeFixture(): Record<string, unknown> {
     },
   ];
   return value;
+}
+
+function primaryAttempt<U extends { readonly ordinal: number }, T extends { readonly attemptHistory: readonly U[] }>(unit: T): U | undefined {
+  return unit.attemptHistory.find((member) => member.ordinal === 0);
 }
 
 function implementerOutcomeFixture(
@@ -1174,6 +1194,7 @@ function handlerReviewFixture(
 function handlerDecisionFixture(variant: 'accepted' | 'returned'): Record<string, unknown> {
   return variant === 'accepted'
     ? {
+        attemptId: 'attempt-1',
         reviewInvocationId: 'review-invocation-1',
         variant,
         fingerprint: 'decision-1',
@@ -1181,6 +1202,7 @@ function handlerDecisionFixture(variant: 'accepted' | 'returned'): Record<string
         implementationAcceptedAt: '2026-08-04T00:00:19Z',
       }
     : {
+        attemptId: 'attempt-1',
         reviewInvocationId: 'review-invocation-1',
         variant,
         fingerprint: 'decision-1',

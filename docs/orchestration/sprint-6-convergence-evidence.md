@@ -547,3 +547,26 @@ exact checkpoint chain: `39c31075d3e0087cb978dd6febc9227ed9f2bc74`,
 Validation evidence is deterministic fake-runtime/local SQLite, not live provider or multi-process SQLite stress: seeded distinct-workspace **1 passed**; Handler-review/retry integration and Policy-B proof had multiple accepted focused runs, with the final independent corrective run **1 passed, 334 filtered, 315.43s**; two-independent-service race **1 passed, 33.88s**; crash adoption **1 passed, 82.64s**; divergence **1 passed, 80.26s**; returned-retry compatibility **3 passed, 111.48s**; expanded tamper/restoration **1 passed, 146.26s test body**; and Rust retry DTO coherence/privacy **1 passed, about 41s**. `cargo check` and `git diff --check` passed at accepted checkpoints. RT-02 added focused Vitest/type tests in source, but absent `node_modules` meant Vitest and TypeScript typecheck could not start and were not installed; live managed Rust-to-UI runtime query remains unproven.
 
 No retry outcome/reporting continuation, second Handler review, ordinal 2, integration, authority handoff, settlement, prerequisite satisfaction, dependent activation, planning-point/Work Slice/Sprint/Epic continuation, Pause/Restart, reattachment, push, publication, or user acceptance is proven. Candidate private-ref cleanup is deferred/unimplemented.
+
+## R1: Ordinal-1 outcome and independent Handler review
+
+This local checkpoint changes productive records from singular Work Unit rows to ordered
+application-owned attempt history. Legacy ordinal-0 outcome, review, and decision rows migrate
+losslessly; the active slice creates only ordinal 1 from an accepted ordinal-0 return. A retry
+reporting continuation is allowed only after the exact ready retry Implementer invocation has
+completed. Application-owned File Review evidence is captured and revalidated before acceptance.
+
+Ordinal-1 review uses a separate stable review invocation while retaining the original Handler
+Session and bounded ReadOnly review authority. Review judgment and the observed Completed
+lifecycle produce one attempt-correlated accepted or returned decision. A returned ordinal-1
+decision records retry-needed only; retry reconciliation is restricted to ordinal 0 and cannot
+create ordinal 2 or later effects. Native/read-model/UI history remains ordinal-extensible, while
+the separate retry activation projection remains the sole current ordinal-1 execution authority.
+
+Validation performed in this worktree: `cargo check -q` passed (only existing dead-code
+warnings); `git diff --check` passed at the same checkpoint. `cargo test -q --no-run` exceeded
+the foreground command limit and continued as a local background compile, so it is not recorded
+as passed. `npm run build` could not start because this checkout has no installed `tsc`; no
+dependencies were installed. Focused Vitest, desktop/frontend rendering, migration against a
+real retained database, and live/provider behavior remain unproven. No merge, push, integration,
+settlement, Sprint handback, provider reattachment, publication, or user acceptance occurred.

@@ -1157,28 +1157,38 @@ impl SqliteOrchestrationRepository {
         let action_continuations = activation_rows(&connection, "work_unit_handler_action_continuations", "attempt_id,handler_session_id,original_handler_invocation_id,action_invocation_id,action_harness_revision_id,action_harness_configuration_digest,action_harness_repository_commit_ref,requested_at,authorized_at,invocation_prepared_at,harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,action_ready_at,blocked_reason,failure_reason", |row| Ok(WorkUnitHandlerActionContinuationDto { attempt_id:row.get(1)?, handler_session_id:row.get(2)?, original_handler_invocation_id:row.get(3)?, action_invocation_id:row.get(4)?, action_harness_revision_id:row.get(5)?, action_harness_configuration_digest:row.get(6)?, action_harness_repository_commit_ref:row.get(7)?, requested_at:row.get(8)?, authorized_at:row.get(9)?, invocation_prepared_at:row.get(10)?, harness_bound_at:row.get(11)?, launch_requested_at:row.get(12)?, launch_accepted_at:row.get(13)?, provider_activation_observed_at:row.get(14)?, action_ready_at:row.get(15)?, blocked_reason:row.get(16)?, failure_reason:row.get(17)? }))?;
         let implementer_activations = activation_rows(&connection, "work_unit_implementer_activations", "attempt_id,handler_invocation_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at,authorized_at,execution_support_granted_at,isolated_worktree_ready_at,implementer_session_created_at,implementer_invocation_prepared_at,implementer_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,implementer_ready_at,failure_reason", map_implementer_activation)?;
         let mut implementer_outcomes = implementer_outcome_rows(&connection)?;
-        let handler_reviews = handler_review_rows(&connection)?;
-        let handler_decisions = handler_decision_rows(&connection)?;
+        let mut handler_reviews = handler_review_rows(&connection)?;
+        let mut handler_decisions = handler_decision_rows(&connection)?;
         let retry_attempts = if connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_retry_attempts')", [], |row| row.get::<_, bool>(0)).map_err(|error| error.to_string())? {
             activation_rows(&connection, "work_unit_retry_attempts", "ordinal,origin_attempt_id,retry_attempt_id,implementer_session_id,implementer_invocation_id,capture_requested_at,candidate_pinned_at,authorized_at,execution_support_granted_at,isolated_worktree_ready_at,implementer_session_created_at,implementer_invocation_prepared_at,implementer_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,retry_ready_at,failure_reason", map_retry_attempt)?
         } else { std::collections::HashMap::new() };
-        let mut work_units = if handler_activation_tables { collect(&connection, "SELECT u.work_unit_id,u.materialization_id,u.work_slice_id,u.accepted_revision_id,u.lane_ordinal,u.lane_title,u.specification,a.attempt_id,a.handler_session_id,a.handler_invocation_id,a.handler_harness_revision_id,a.handler_harness_configuration_digest,a.handler_harness_repository_commit_ref,a.eligibility_state,a.blocked_reason,a.requested_at,a.authorized_at,a.attempt_created_at,a.execution_support_granted_at,a.isolated_worktree_ready_at,a.handler_session_created_at,a.handler_invocation_prepared_at,a.handler_harness_bound_at,a.launch_requested_at,a.launch_accepted_at,a.provider_activation_observed_at,a.handler_ready_at FROM work_units u LEFT JOIN work_unit_handler_activations a ON a.work_unit_id=u.work_unit_id ORDER BY u.materialization_id,u.lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation: match row.get::<_,Option<String>>(7)? { Some(attempt_id) => Some(WorkUnitHandlerActivationDto { attempt_id, handler_session_id:row.get(8)?, handler_invocation_id:row.get(9)?, handler_harness_revision_id:row.get(10)?, handler_harness_configuration_digest:row.get(11)?, handler_harness_repository_commit_ref:row.get(12)?, eligibility_state:row.get(13)?, blocked_reason:row.get(14)?, requested_at:row.get(15)?, authorized_at:row.get(16)?, attempt_created_at:row.get(17)?, execution_support_granted_at:row.get(18)?, isolated_worktree_ready_at:row.get(19)?, handler_session_created_at:row.get(20)?, handler_invocation_prepared_at:row.get(21)?, handler_harness_bound_at:row.get(22)?, launch_requested_at:row.get(23)?, launch_accepted_at:row.get(24)?, provider_activation_observed_at:row.get(25)?, handler_ready_at:row.get(26)? }), None => None }, action_continuation:None, implementer_activation:None, implementer_outcome:None, handler_review:None, handler_decision:None, retry_attempt:None }))? } else if materialization_tables { collect(&connection, "SELECT work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification FROM work_units ORDER BY materialization_id,lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation:None, action_continuation:None, implementer_activation:None, implementer_outcome:None, handler_review:None, handler_decision:None, retry_attempt:None }))? } else { Vec::new() };
+        let mut work_units = if handler_activation_tables { collect(&connection, "SELECT u.work_unit_id,u.materialization_id,u.work_slice_id,u.accepted_revision_id,u.lane_ordinal,u.lane_title,u.specification,a.attempt_id,a.handler_session_id,a.handler_invocation_id,a.handler_harness_revision_id,a.handler_harness_configuration_digest,a.handler_harness_repository_commit_ref,a.eligibility_state,a.blocked_reason,a.requested_at,a.authorized_at,a.attempt_created_at,a.execution_support_granted_at,a.isolated_worktree_ready_at,a.handler_session_created_at,a.handler_invocation_prepared_at,a.handler_harness_bound_at,a.launch_requested_at,a.launch_accepted_at,a.provider_activation_observed_at,a.handler_ready_at FROM work_units u LEFT JOIN work_unit_handler_activations a ON a.work_unit_id=u.work_unit_id ORDER BY u.materialization_id,u.lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation: match row.get::<_,Option<String>>(7)? { Some(attempt_id) => Some(WorkUnitHandlerActivationDto { attempt_id, handler_session_id:row.get(8)?, handler_invocation_id:row.get(9)?, handler_harness_revision_id:row.get(10)?, handler_harness_configuration_digest:row.get(11)?, handler_harness_repository_commit_ref:row.get(12)?, eligibility_state:row.get(13)?, blocked_reason:row.get(14)?, requested_at:row.get(15)?, authorized_at:row.get(16)?, attempt_created_at:row.get(17)?, execution_support_granted_at:row.get(18)?, isolated_worktree_ready_at:row.get(19)?, handler_session_created_at:row.get(20)?, handler_invocation_prepared_at:row.get(21)?, handler_harness_bound_at:row.get(22)?, launch_requested_at:row.get(23)?, launch_accepted_at:row.get(24)?, provider_activation_observed_at:row.get(25)?, handler_ready_at:row.get(26)? }), None => None }, action_continuation:None, implementer_activation:None, attempt_history:Vec::new(), implementer_outcome:None, handler_review:None, handler_decision:None, retry_attempt:None }))? } else if materialization_tables { collect(&connection, "SELECT work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification FROM work_units ORDER BY materialization_id,lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation:None, action_continuation:None, implementer_activation:None, attempt_history:Vec::new(), implementer_outcome:None, handler_review:None, handler_decision:None, retry_attempt:None }))? } else { Vec::new() };
         for work_unit in &mut work_units {
             work_unit.action_continuation = action_continuations.get(&work_unit.work_unit_id).cloned();
             work_unit.implementer_activation = implementer_activations.get(&work_unit.work_unit_id).cloned();
-            work_unit.implementer_outcome = implementer_outcomes.remove(&work_unit.work_unit_id);
-            work_unit.handler_review = handler_reviews.get(&work_unit.work_unit_id).cloned();
-            work_unit.handler_decision = handler_decisions.get(&work_unit.work_unit_id).cloned();
+            work_unit.attempt_history = implementer_outcomes.remove(&work_unit.work_unit_id).unwrap_or_default().into_iter().map(|(ordinal, outcome)| WorkUnitAttemptHistoryDto { ordinal, attempt_id: outcome.attempt_id.clone(), implementer_outcome: Some(outcome), handler_review: None, handler_decision: None }).collect();
+            for review in handler_reviews.remove(&work_unit.work_unit_id).unwrap_or_default() {
+                let member = work_unit.attempt_history.iter_mut().find(|member| member.attempt_id == review.attempt_id).ok_or_else(|| "Handler review references an unknown Implementer attempt".to_string())?;
+                member.handler_review = Some(review);
+            }
+            for decision in handler_decisions.remove(&work_unit.work_unit_id).unwrap_or_default() {
+                let member = work_unit.attempt_history.iter_mut().find(|member| member.attempt_id == decision.attempt_id).ok_or_else(|| "Handler decision references an unknown Implementer attempt".to_string())?;
+                member.handler_decision = Some(decision);
+            }
+            work_unit.implementer_outcome = work_unit.attempt_history.iter().find(|member| member.ordinal == 0).and_then(|member| member.implementer_outcome.clone());
+            work_unit.handler_review = work_unit.attempt_history.iter().find(|member| member.ordinal == 0).and_then(|member| member.handler_review.clone());
+            work_unit.handler_decision = work_unit.attempt_history.iter().find(|member| member.ordinal == 0).and_then(|member| member.handler_decision.clone());
             work_unit.retry_attempt = retry_attempts.get(&work_unit.work_unit_id).cloned();
+            validate_attempt_history_projection(work_unit)?;
             validate_work_unit_activation_projection(work_unit)?;
         }
         if !implementer_outcomes.is_empty() {
             return Err("Implementer outcome references an unknown Work Unit".into());
         }
-        if handler_reviews.keys().any(|id| !work_units.iter().any(|unit| &unit.work_unit_id == id)) {
+        if !handler_reviews.is_empty() {
             return Err("Handler review references an unknown Work Unit".into());
         }
-        if handler_decisions.keys().any(|id| !work_units.iter().any(|unit| &unit.work_unit_id == id)) {
+        if !handler_decisions.is_empty() {
             return Err("Handler decision references an unknown Work Unit".into());
         }
         let work_unit_relationships = if materialization_tables { collect(&connection, "SELECT relationship_id,materialization_id,relationship_kind,from_id,to_id,ordinal FROM work_unit_relationships ORDER BY materialization_id,relationship_kind,from_id,to_id", |row| Ok(WorkUnitRelationshipDto { relationship_id:row.get(0)?, materialization_id:row.get(1)?, relationship_kind:row.get(2)?, from_id:row.get(3)?, to_id:row.get(4)?, ordinal:row.get(5)? }))? } else { Vec::new() };
@@ -2924,14 +2934,29 @@ struct WorkUnitDto {
     handler_activation: Option<WorkUnitHandlerActivationDto>,
     action_continuation: Option<WorkUnitHandlerActionContinuationDto>,
     implementer_activation: Option<WorkUnitImplementerActivationDto>,
+    attempt_history: Vec<WorkUnitAttemptHistoryDto>,
+    // These retained fields are validation-only compatibility views.  They are never emitted
+    // and therefore cannot compete with the ordered attempt-history contract.
+    #[serde(skip_serializing)]
+    implementer_outcome: Option<WorkUnitImplementerOutcomeDto>,
+    #[serde(skip_serializing)]
+    handler_review: Option<WorkUnitHandlerReviewDto>,
+    #[serde(skip_serializing)]
+    handler_decision: Option<WorkUnitHandlerDecisionDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry_attempt: Option<WorkUnitRetryAttemptDto>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitAttemptHistoryDto {
+    ordinal: i64,
+    attempt_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     implementer_outcome: Option<WorkUnitImplementerOutcomeDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     handler_review: Option<WorkUnitHandlerReviewDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     handler_decision: Option<WorkUnitHandlerDecisionDto>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    retry_attempt: Option<WorkUnitRetryAttemptDto>,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -3284,6 +3309,7 @@ enum WorkUnitHandlerDecisionVariantDto {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WorkUnitHandlerDecisionDto {
+    attempt_id: String,
     review_invocation_id: String,
     variant: WorkUnitHandlerDecisionVariantDto,
     fingerprint: String,
@@ -3512,6 +3538,60 @@ fn map_retry_attempt(row: &Row<'_>) -> Result<WorkUnitRetryAttemptDto, rusqlite:
         launch_requested_at: row.get(14)?, launch_accepted_at: row.get(15)?,
         provider_activation_observed_at: row.get(16)?, retry_ready_at: row.get(17)?, failure_reason: row.get(18)?,
     })
+}
+
+fn validate_attempt_history_projection(work_unit: &WorkUnitDto) -> Result<(), String> {
+    let mut previous_ordinal = None;
+    let mut attempt_ids = std::collections::HashSet::new();
+    for member in &work_unit.attempt_history {
+        if member.ordinal < 0 || !attempt_ids.insert(member.attempt_id.as_str()) {
+            return Err("attempt history has an invalid ordinal or duplicate attempt identity".into());
+        }
+        if previous_ordinal.is_some_and(|previous| member.ordinal <= previous) {
+            return Err("attempt history is not strictly ordered by ordinal".into());
+        }
+        previous_ordinal = Some(member.ordinal);
+        let outcome = member.implementer_outcome.as_ref().ok_or_else(|| "attempt history member lacks an Implementer outcome record".to_string())?;
+        if outcome.attempt_id != member.attempt_id || outcome.reporting_invocation_id != projection_stable_id("work-unit-implementer-reporting-invocation", &member.attempt_id) {
+            return Err("attempt history Implementer outcome correlation is incoherent".into());
+        }
+        if let Some(review) = &member.handler_review {
+            let handler = work_unit.handler_activation.as_ref().ok_or_else(|| "Handler review lacks the application-owned Handler authority".to_string())?;
+            let action = work_unit.action_continuation.as_ref().ok_or_else(|| "Handler review lacks Handler action authority".to_string())?;
+            if review.attempt_id != member.attempt_id || review.reporting_invocation_id != outcome.reporting_invocation_id
+                || review.review_invocation_id != projection_stable_id("work-unit-handler-review-invocation", &member.attempt_id)
+                || handler.handler_session_id.as_deref() != Some(review.handler_session_id.as_str())
+                || handler.handler_invocation_id.as_deref() != Some(review.original_handler_invocation_id.as_str())
+                || action.handler_session_id != review.handler_session_id || action.action_invocation_id != review.action_handler_invocation_id
+            {
+                return Err("Handler review has foreign attempt or Handler authority correlation".into());
+            }
+        }
+        if let Some(decision) = &member.handler_decision {
+            let review = member.handler_review.as_ref().ok_or_else(|| "Handler decision lacks its attempt review".to_string())?;
+            let judgment = review.semantic_judgment.as_ref().ok_or_else(|| "Handler decision lacks semantic judgment".to_string())?;
+            let lifecycle = review.lifecycle.as_ref().ok_or_else(|| "Handler decision lacks review lifecycle".to_string())?;
+            if decision.attempt_id != member.attempt_id || decision.review_invocation_id != review.review_invocation_id
+                || !matches!(lifecycle.status, WorkUnitHandlerReviewLifecycleStatusDto::Completed)
+            {
+                return Err("Handler decision lacks exact completed attempt-review correlation".into());
+            }
+            match (&judgment.variant, &decision.variant) {
+                (WorkUnitHandlerReviewJudgmentVariantDto::Accept, WorkUnitHandlerDecisionVariantDto::Accepted) => {}
+                (WorkUnitHandlerReviewJudgmentVariantDto::Return, WorkUnitHandlerDecisionVariantDto::Returned) => {}
+                _ => return Err("Handler decision contradicts its attempt judgment".into()),
+            }
+        }
+    }
+    if let Some(retry) = &work_unit.retry_attempt {
+        let origin = work_unit.attempt_history.iter().find(|member| member.attempt_id == retry.origin_attempt_id).ok_or_else(|| "retry activation lacks its origin history member".to_string())?;
+        let returned = origin.handler_decision.as_ref().is_some_and(|decision| matches!(decision.variant, WorkUnitHandlerDecisionVariantDto::Returned) && decision.retry_required_at.is_some());
+        let retry_member = work_unit.attempt_history.iter().find(|member| member.attempt_id == retry.retry_attempt_id && member.ordinal == retry.ordinal);
+        if retry.ordinal != 1 || !returned || retry_member.is_some_and(|member| member.ordinal != retry.ordinal) {
+            return Err("retry activation has invalid origin or ordinal correlation".into());
+        }
+    }
+    Ok(())
 }
 
 fn validate_work_unit_activation_projection(work_unit: &WorkUnitDto) -> Result<(), String> {
@@ -4010,7 +4090,7 @@ where
 
 fn implementer_outcome_rows(
     connection: &Connection,
-) -> Result<std::collections::HashMap<String, WorkUnitImplementerOutcomeDto>, String> {
+) -> Result<std::collections::HashMap<String, Vec<(i64, WorkUnitImplementerOutcomeDto)>>, String> {
     let exists = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_implementer_outcomes')",
         [],
@@ -4019,19 +4099,28 @@ fn implementer_outcome_rows(
     if !exists {
         return Ok(std::collections::HashMap::new());
     }
-    let mut statement = connection.prepare(
-        "SELECT work_unit_id,attempt_id,implementer_session_id,implementer_invocation_id,reporting_invocation_id,reporting_harness_revision_id,reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,reporting_requested_at,reporting_prepared_at,reporting_harness_bound_at,reporting_launch_requested_at,reporting_launch_accepted_at,reporting_ready_at,submitted_summary,outcome_variant,submitted_validation_statement,semantic_payload_json,submission_fingerprint,submitted_at,validation_at,validation_result,evidence_manifest_json,comparison_fingerprint,evidence_content_fingerprints_json,evidence_ready_at,semantic_completed_at,semantic_completion_invocation_id,lifecycle_observed_at,lifecycle_status,application_accepted_at,handler_review_ready_at,failure_reason FROM work_unit_implementer_outcomes"
-    ).map_err(|error| error.to_string())?;
+    let has_ordinal = connection.prepare("PRAGMA table_info(work_unit_implementer_outcomes)").and_then(|mut statement| statement.query_map([], |row| row.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>()).map_err(|error| error.to_string())?.iter().any(|column| column == "attempt_ordinal");
+    let ordinal = if has_ordinal { "attempt_ordinal" } else { "0" };
+    let mut statement = connection.prepare(&format!(
+        "SELECT work_unit_id,attempt_id,implementer_session_id,implementer_invocation_id,reporting_invocation_id,reporting_harness_revision_id,reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,reporting_requested_at,reporting_prepared_at,reporting_harness_bound_at,reporting_launch_requested_at,reporting_launch_accepted_at,reporting_ready_at,submitted_summary,outcome_variant,submitted_validation_statement,semantic_payload_json,submission_fingerprint,submitted_at,validation_at,validation_result,evidence_manifest_json,comparison_fingerprint,evidence_content_fingerprints_json,evidence_ready_at,semantic_completed_at,semantic_completion_invocation_id,lifecycle_observed_at,lifecycle_status,application_accepted_at,handler_review_ready_at,failure_reason,{ordinal} FROM work_unit_implementer_outcomes"
+    )).map_err(|error| error.to_string())?;
     let rows = statement.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, map_implementer_outcome(row)?))
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(33)?, map_implementer_outcome(row)?))
     }).map_err(|error| error.to_string())?;
-    rows.collect::<Result<std::collections::HashMap<_, _>, _>>()
-        .map_err(|error| error.to_string())
+    let mut result: std::collections::HashMap<String, Vec<(i64, WorkUnitImplementerOutcomeDto)>> = std::collections::HashMap::new();
+    for row in rows {
+        let (work_unit_id, ordinal, outcome) = row.map_err(|error| error.to_string())?;
+        let entries = result.entry(work_unit_id).or_insert_with(Vec::new);
+        if entries.iter().any(|(existing, value)| *existing == ordinal || value.attempt_id == outcome.attempt_id) { return Err("attempt-scoped Implementer history has duplicate ordinal or attempt identity".into()); }
+        entries.push((ordinal, outcome));
+    }
+    for entries in result.values_mut() { entries.sort_by_key(|(ordinal, _)| *ordinal); }
+    Ok(result)
 }
 
 fn handler_review_rows(
     connection: &Connection,
-) -> Result<std::collections::HashMap<String, WorkUnitHandlerReviewDto>, String> {
+) -> Result<std::collections::HashMap<String, Vec<WorkUnitHandlerReviewDto>>, String> {
     let exists = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_handler_reviews')",
         [],
@@ -4043,12 +4132,19 @@ fn handler_review_rows(
     ).map_err(|error| error.to_string())?;
     let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, map_handler_review(row)?)))
         .map_err(|error| error.to_string())?;
-    rows.collect::<Result<std::collections::HashMap<_, _>, _>>().map_err(|error| error.to_string())
+    let mut result = std::collections::HashMap::new();
+    for row in rows {
+        let (work_unit_id, review) = row.map_err(|error| error.to_string())?;
+        let entries = result.entry(work_unit_id).or_insert_with(Vec::new);
+        if entries.iter().any(|existing: &WorkUnitHandlerReviewDto| existing.attempt_id == review.attempt_id) { return Err("attempt-scoped Handler review history has duplicate attempt identity".into()); }
+        entries.push(review);
+    }
+    Ok(result)
 }
 
 fn handler_decision_rows(
     connection: &Connection,
-) -> Result<std::collections::HashMap<String, WorkUnitHandlerDecisionDto>, String> {
+) -> Result<std::collections::HashMap<String, Vec<WorkUnitHandlerDecisionDto>>, String> {
     let exists = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_handler_decisions')",
         [],
@@ -4056,11 +4152,18 @@ fn handler_decision_rows(
     ).map_err(|error| error.to_string())?;
     if !exists { return Ok(std::collections::HashMap::new()); }
     let mut statement = connection.prepare(
-        "SELECT work_unit_id,review_invocation_id,decision_variant,decision_fingerprint,return_reason_json,decision_recorded_at,implementation_accepted_at,implementation_returned_at,retry_required_at,settlement_ready_at FROM work_unit_handler_decisions"
+        "SELECT work_unit_id,review_invocation_id,decision_variant,decision_fingerprint,return_reason_json,decision_recorded_at,implementation_accepted_at,implementation_returned_at,retry_required_at,settlement_ready_at,attempt_id FROM work_unit_handler_decisions"
     ).map_err(|error| error.to_string())?;
     let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, map_handler_decision(row)?)))
         .map_err(|error| error.to_string())?;
-    rows.collect::<Result<std::collections::HashMap<_, _>, _>>().map_err(|error| error.to_string())
+    let mut result = std::collections::HashMap::new();
+    for row in rows {
+        let (work_unit_id, decision) = row.map_err(|error| error.to_string())?;
+        let entries = result.entry(work_unit_id).or_insert_with(Vec::new);
+        if entries.iter().any(|existing: &WorkUnitHandlerDecisionDto| existing.attempt_id == decision.attempt_id) { return Err("attempt-scoped Handler decision history has duplicate attempt identity".into()); }
+        entries.push(decision);
+    }
+    Ok(result)
 }
 
 fn map_handler_review(row: &Row<'_>) -> Result<WorkUnitHandlerReviewDto, rusqlite::Error> {
@@ -4208,7 +4311,7 @@ fn map_handler_decision(row: &Row<'_>) -> Result<WorkUnitHandlerDecisionDto, rus
         return Err(to_sql_error("Handler decision has forbidden settlement readiness".into()));
     }
     Ok(WorkUnitHandlerDecisionDto {
-        review_invocation_id: row.get(1)?, variant, fingerprint: row.get(3)?,
+        attempt_id: row.get(10)?, review_invocation_id: row.get(1)?, variant, fingerprint: row.get(3)?,
         return_reason: reason.map(parse_handler_review_reason).transpose()?, recorded_at: row.get(5)?,
         implementation_accepted_at: row.get(6)?, implementation_returned_at: row.get(7)?,
         retry_required_at: row.get(8)?, settlement_ready_at,

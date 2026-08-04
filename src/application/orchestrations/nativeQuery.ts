@@ -59,10 +59,15 @@ export interface NativeMaterializedWorkUnitV1 {
   readonly handlerActivation?: NativeWorkUnitHandlerActivationV1;
   readonly actionContinuation?: NativeWorkUnitHandlerActionContinuationV1;
   readonly implementerActivation?: NativeWorkUnitImplementerActivationV1;
+  readonly attemptHistory: readonly NativeWorkUnitAttemptHistoryV1[];
+  readonly retryAttempt?: NativeWorkUnitRetryAttemptV1;
+}
+export interface NativeWorkUnitAttemptHistoryV1 {
+  readonly ordinal: number;
+  readonly attemptId: string;
   readonly implementerOutcome?: NativeWorkUnitImplementerOutcomeV1;
   readonly handlerReview?: NativeWorkUnitHandlerReviewV1;
   readonly handlerDecision?: NativeWorkUnitHandlerDecisionV1;
-  readonly retryAttempt?: NativeWorkUnitRetryAttemptV1;
 }
 export interface NativeWorkUnitHandlerActivationV1 {
   readonly attemptId: string;
@@ -592,11 +597,15 @@ export function nativeQueryProductCompositionInputV2(
         ...(unit.implementerActivation
           ? { implementerActivation: implementerActivationPresentation(unit.implementerActivation) }
           : {}),
-        ...(unit.implementerOutcome
-          ? { implementerOutcome: implementerOutcomePresentation(unit.implementerOutcome) }
-          : {}),
-        ...(unit.handlerReview ? { handlerReview: { ...unit.handlerReview } } : {}),
-        ...(unit.handlerDecision ? { handlerDecision: { ...unit.handlerDecision } } : {}),
+        attemptHistory: unit.attemptHistory.map((attempt) => ({
+          ordinal: attempt.ordinal,
+          attemptId: attempt.attemptId,
+          ...(attempt.implementerOutcome
+            ? { implementerOutcome: implementerOutcomePresentation(attempt.implementerOutcome) }
+            : {}),
+          ...(attempt.handlerReview ? { handlerReview: { ...attempt.handlerReview } } : {}),
+          ...(attempt.handlerDecision ? { handlerDecision: { ...attempt.handlerDecision } } : {}),
+        })),
         ...(unit.retryAttempt ? { retryAttempt: { ...unit.retryAttempt } } : {}),
       })),
       gates: [],
@@ -1185,9 +1194,7 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
       'handlerActivation',
       'actionContinuation',
       'implementerActivation',
-      'implementerOutcome',
-      'handlerReview',
-      'handlerDecision',
+      'attemptHistory',
       'retryAttempt',
     ],
     'materialized Work Unit',
@@ -1211,6 +1218,22 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
     ...(x.implementerActivation === undefined
       ? {}
       : { implementerActivation: workUnitImplementerActivation(x.implementerActivation) }),
+    attemptHistory: array(x.attemptHistory, 'Work Unit attemptHistory').map(workUnitAttemptHistory),
+    ...(x.retryAttempt === undefined ? {} : { retryAttempt: workUnitRetryAttempt(x.retryAttempt) }),
+  };
+};
+const workUnitAttemptHistory = (value: unknown): NativeWorkUnitAttemptHistoryV1 => {
+  const x = object(value, 'Work Unit attempt history member');
+  keys(
+    x,
+    ['ordinal', 'attemptId', 'implementerOutcome', 'handlerReview', 'handlerDecision'],
+    'Work Unit attempt history member',
+  );
+  if (!Number.isSafeInteger(x.ordinal) || (x.ordinal as number) < 0)
+    fail('invalid Work Unit attempt history ordinal');
+  return {
+    ordinal: x.ordinal as number,
+    attemptId: boundedString(x.attemptId, 240, 'attempt history attemptId'),
     ...(x.implementerOutcome === undefined
       ? {}
       : { implementerOutcome: workUnitImplementerOutcome(x.implementerOutcome) }),
@@ -1218,7 +1241,6 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
     ...(x.handlerDecision === undefined
       ? {}
       : { handlerDecision: workUnitHandlerDecision(x.handlerDecision) }),
-    ...(x.retryAttempt === undefined ? {} : { retryAttempt: workUnitRetryAttempt(x.retryAttempt) }),
   };
 };
 const workUnitRetryAttempt = (value: unknown): NativeWorkUnitRetryAttemptV1 => {
@@ -2199,6 +2221,7 @@ const workUnitHandlerDecision = (value: unknown): NativeWorkUnitHandlerDecisionV
   keys(
     x,
     [
+      'attemptId',
       'reviewInvocationId',
       'variant',
       'fingerprint',
@@ -2220,6 +2243,7 @@ const workUnitHandlerDecision = (value: unknown): NativeWorkUnitHandlerDecisionV
   const optionalTime = (key: keyof typeof x) =>
     x[key] === undefined ? undefined : timestamp(x[key], key);
   const result: NativeWorkUnitHandlerDecisionV1 = {
+    attemptId: boundedString(x.attemptId, 240, 'Handler decision attemptId'),
     reviewInvocationId: boundedString(x.reviewInvocationId, 240, 'Handler decision reviewInvocationId'),
     variant: x.variant as 'accepted' | 'returned',
     fingerprint: boundedString(x.fingerprint, 240, 'Handler decision fingerprint'),
@@ -2574,7 +2598,9 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
   const handler = unit.handlerActivation;
   const continuation = unit.actionContinuation;
   const implementer = unit.implementerActivation;
-  const outcome = unit.implementerOutcome;
+  const history = unit.attemptHistory;
+  const originHistory = history.find((member) => member.ordinal === 0);
+  const outcome = originHistory?.implementerOutcome;
   const retry = unit.retryAttempt;
   if (continuation) {
     if (!handler || handler.attemptId !== continuation.attemptId)
@@ -2620,8 +2646,8 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
     )
       fail('Implementer outcome reuses the original Implementer Harness revision');
   }
-  const review = unit.handlerReview;
-  const decision = unit.handlerDecision;
+  const review = originHistory?.handlerReview;
+  const decision = originHistory?.handlerDecision;
   if (review) {
     if (!handler || handler.eligibilityState !== 'eligible')
       fail('Handler review requires an eligible Handler activation');
@@ -2722,6 +2748,45 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
       fail('retry readiness lacks launch acceptance');
     if (retry.failureReason && retry.retryReadyAt)
       fail('retry failure cannot be application-ready');
+  }
+  let priorOrdinal = -1;
+  const attemptIds = new Set<string>();
+  for (const member of history) {
+    if (member.ordinal <= priorOrdinal || attemptIds.has(member.attemptId))
+      fail('Work Unit attempt history must be strictly ordered with unique identities');
+    priorOrdinal = member.ordinal;
+    attemptIds.add(member.attemptId);
+    const memberOutcome = member.implementerOutcome;
+    if (!memberOutcome || memberOutcome.attemptId !== member.attemptId)
+      fail('Work Unit attempt history member lacks its exact Implementer outcome');
+    const memberReview = member.handlerReview;
+    if (memberReview) {
+      if (
+        memberReview.attemptId !== member.attemptId ||
+        memberReview.reportingInvocationId !== memberOutcome.reportingInvocationId ||
+        memberReview.handlerSessionId !== handler?.handlerSessionId ||
+        memberReview.originalHandlerInvocationId !== handler?.handlerInvocationId ||
+        memberReview.actionHandlerInvocationId !== continuation?.actionInvocationId
+      )
+        fail('Handler review does not match its attempt and application-owned Handler authority');
+    }
+    const memberDecision = member.handlerDecision;
+    if (memberDecision) {
+      if (
+        !memberReview ||
+        memberDecision.reviewInvocationId !== memberReview.reviewInvocationId ||
+        !memberReview.semanticJudgment ||
+        memberReview.lifecycle?.status !== 'completed'
+      )
+        fail('Handler decision lacks exact completed review correlation');
+    }
+  }
+  if (retry) {
+    const retryHistory = history.find(
+      (member) => member.ordinal === retry.ordinal && member.attemptId === retry.retryAttemptId,
+    );
+    if (retryHistory && retry.ordinal !== 1)
+      fail('current retry activation has an unauthorized ordinal');
   }
 }
 function validateMaterializationRelationships(

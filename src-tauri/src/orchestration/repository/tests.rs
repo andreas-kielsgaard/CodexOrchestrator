@@ -1878,7 +1878,7 @@ fn implementer_outcome_projection_serializes_authoritative_claim_evidence_and_re
     let submission_fingerprint = projection_stable_id("implementer-outcome", payload);
     connection.execute(
         "INSERT INTO work_unit_implementer_outcomes VALUES (
-          'unit',?1,'implementer-session','implementer-invocation',?2,
+          'unit',?1,0,'implementer-session','implementer-invocation',?2,
           'reporting-revision','reporting-digest','reporting-commit',
           '2026-08-04T00:00:00Z','2026-08-04T00:00:01Z','2026-08-04T00:00:02Z',
           '2026-08-04T00:00:03Z','2026-08-04T00:00:04Z','2026-08-04T00:00:05Z',
@@ -1898,7 +1898,7 @@ fn implementer_outcome_projection_serializes_authoritative_claim_evidence_and_re
     ).unwrap();
 
     let outcomes = implementer_outcome_rows(&connection).unwrap();
-    let value = serde_json::to_value(outcomes.get("unit").unwrap()).unwrap();
+    let value = serde_json::to_value(&outcomes.get("unit").unwrap()[0].1).unwrap();
     assert_eq!(value["submittedOutcome"]["variant"], "review_pending");
     assert_eq!(value["submittedOutcome"]["summaryClaim"], "Implemented the bounded change.");
     assert_eq!(value["submittedOutcome"]["validationStatementClaim"], "Focused checks passed.");
@@ -1916,11 +1916,11 @@ fn implementer_outcome_projection_rejects_partial_bundles_and_incoherent_authori
     let reporting = projection_stable_id("work-unit-implementer-reporting-invocation", "attempt");
     connection.execute(
         "INSERT INTO work_unit_implementer_outcomes (
-          work_unit_id,attempt_id,implementer_session_id,implementer_invocation_id,
+          work_unit_id,attempt_id,attempt_ordinal,implementer_session_id,implementer_invocation_id,
           reporting_invocation_id,reporting_harness_revision_id,
           reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,
           reporting_requested_at,submitted_summary
-        ) VALUES ('unit','attempt','implementer-session','implementer-invocation',?1,
+        ) VALUES ('unit','attempt',0,'implementer-session','implementer-invocation',?1,
           'reporting-revision','reporting-digest','reporting-commit','2026-08-04T00:00:00Z','partial')",
         [&reporting],
     ).unwrap();
@@ -1956,7 +1956,7 @@ fn implementer_outcome_projection_rejects_partial_bundles_and_incoherent_authori
 fn create_implementer_outcome_projection_table(connection: &rusqlite::Connection) {
     connection.execute_batch(
         "CREATE TABLE work_unit_implementer_outcomes (
-          work_unit_id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL,
+          work_unit_id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL, attempt_ordinal INTEGER NOT NULL DEFAULT 0,
           implementer_session_id TEXT NOT NULL, implementer_invocation_id TEXT NOT NULL,
           reporting_invocation_id TEXT NOT NULL, reporting_harness_revision_id TEXT NOT NULL,
           reporting_harness_configuration_digest TEXT NOT NULL,
@@ -2070,6 +2070,7 @@ fn handler_review_projection_preserves_judgment_decision_and_later_workflow_boun
         conflict: None,
     });
     work_unit.handler_decision = Some(WorkUnitHandlerDecisionDto {
+        attempt_id: "attempt".into(),
         review_invocation_id: projection_stable_id("work-unit-handler-review-invocation", "attempt"),
         variant: WorkUnitHandlerDecisionVariantDto::Accepted,
         fingerprint: "decision-fingerprint".into(),
@@ -2104,6 +2105,7 @@ fn retry_projection_exposes_only_semantic_stages_and_rejects_impossible_ordering
         lifecycle: Some(WorkUnitHandlerReviewLifecycleDto { status: WorkUnitHandlerReviewLifecycleStatusDto::Completed, observed_at: "2026-08-04T00:00:00Z".into() }), conflict: None,
     });
     work_unit.handler_decision = Some(WorkUnitHandlerDecisionDto {
+        attempt_id: "attempt".into(),
         review_invocation_id: projection_stable_id("work-unit-handler-review-invocation", "attempt"),
         variant: WorkUnitHandlerDecisionVariantDto::Returned,
         fingerprint: "returned-decision".into(),
@@ -2251,6 +2253,7 @@ fn valid_work_unit_activation_projection() -> WorkUnitDto {
             implementer_ready_at: timestamp(),
             failure_reason: None,
         }),
+        attempt_history: Vec::new(),
         implementer_outcome: None,
         handler_review: None,
         handler_decision: None,

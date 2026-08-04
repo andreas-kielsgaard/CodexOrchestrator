@@ -193,9 +193,9 @@ function presentedWorkUnit(
       sourceKind: 'repository',
       sourceReferences: ['materialization-1'],
     },
-    ...(outcome ? { implementerOutcome: outcome } : {}),
-    ...(handlerReview ? { handlerReview } : {}),
-    ...(handlerDecision ? { handlerDecision } : {}),
+    attemptHistory: outcome
+      ? [{ ordinal: 0, attemptId: outcome.attemptId, implementerOutcome: outcome, ...(handlerReview ? { handlerReview } : {}), ...(handlerDecision ? { handlerDecision } : {}) }]
+      : [],
     ...(retryAttempt ? { retryAttempt } : {}),
     workUnitScopeId: 'scope-1',
     sprintPlanRevisionId: 'revision-1',
@@ -330,6 +330,7 @@ function handlerDecision(
 ): ProductWorkUnitHandlerDecisionV1 {
   return variant === 'accepted'
     ? {
+        attemptId: 'attempt-1',
         reviewInvocationId: 'review-invocation-1',
         variant,
         fingerprint: 'decision-1',
@@ -337,6 +338,7 @@ function handlerDecision(
         implementationAcceptedAt: '2026-08-04T00:00:19Z',
       }
     : {
+        attemptId: 'attempt-1',
         reviewInvocationId: 'review-invocation-1',
         variant,
         fingerprint: 'decision-1',

@@ -5785,12 +5785,12 @@ mod tests {
             ).unwrap();
             connection.execute(
                 "INSERT INTO work_unit_implementer_outcomes (
-                    work_unit_id,attempt_id,implementer_session_id,implementer_invocation_id,
+                    work_unit_id,attempt_id,attempt_ordinal,implementer_session_id,implementer_invocation_id,
                     reporting_invocation_id,reporting_harness_revision_id,
                     reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,
                     reporting_requested_at,reporting_prepared_at,reporting_harness_bound_at,
                     reporting_launch_requested_at,reporting_launch_accepted_at,reporting_ready_at
-                 ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?9,?9,?9,?9,?9)",
+                 ) VALUES (?1,?2,0,?3,?4,?5,?6,?7,?8,?9,?9,?9,?9,?9,?9)",
                 params![
                     work_unit_id,
                     attempt_id,
@@ -6228,11 +6228,11 @@ mod tests {
         connection.pragma_update(None, "foreign_keys", false).unwrap();
         connection.execute(
             "INSERT INTO work_unit_implementer_outcomes (
-                work_unit_id,attempt_id,implementer_session_id,implementer_invocation_id,
+                work_unit_id,attempt_id,attempt_ordinal,implementer_session_id,implementer_invocation_id,
                 reporting_invocation_id,reporting_harness_revision_id,
                 reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,
                 reporting_requested_at
-             ) VALUES ('reserved-work-unit','reserved-attempt','reserved-session','reserved-original',
+             ) VALUES ('reserved-work-unit','reserved-attempt',0,'reserved-session','reserved-original',
                        'reserved-reporting','reserved-revision','reserved-digest','reserved-commit',
                        '2026-08-04T00:00:00Z')",
             [],
