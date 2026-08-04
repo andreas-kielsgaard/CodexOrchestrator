@@ -1243,6 +1243,28 @@ fn initiated_native_query_serialization_matches_the_frontend_golden_fixture() {
 }
 
 #[test]
+fn execution_fixture_is_a_nontrivial_canonical_graph() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../fixtures/orchestration-native-query-v2/valid-execution-graph.json"
+    ))
+    .expect("fixture");
+    assert_eq!(fixture["workUnits"].as_array().unwrap().len(), 4);
+    assert_eq!(fixture["workUnitExecutionStates"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        fixture["workUnitRelationships"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|relationship| relationship["relationshipKind"] == "depends_on")
+            .count(),
+        2
+    );
+    assert_eq!(fixture["workSliceExecutionGraphCompletions"].as_array().unwrap().len(), 1);
+    assert_eq!(fixture["workSliceExecutionSettlements"].as_array().unwrap().len(), 1);
+    assert_eq!(fixture["workSlicePlanningPointExecutionSettlements"].as_array().unwrap().len(), 1);
+}
+
+#[test]
 fn restart_preserves_query_without_product_acceptance_or_initiated_identity() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("unified.sqlite");

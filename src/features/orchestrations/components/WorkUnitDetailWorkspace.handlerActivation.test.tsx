@@ -10,6 +10,40 @@ import {
 import { WorkUnitDetailWorkspace } from './WorkUnitDetailWorkspace';
 
 describe('WorkUnitDetailWorkspace Handler activation detail', () => {
+  it('renders a settled Work Unit from the Rust-authored execution graph fixture', () => {
+    const value = JSON.parse(
+      readFileSync(
+        resolve(
+          'src-tauri/src/orchestration/fixtures/orchestration-native-query-v2',
+          'valid-execution-graph.json',
+        ),
+        'utf8',
+      ),
+    );
+    const workspace = projectSprintWorkspacePresentation(
+      composeProductOrchestrationReadModels(
+        nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(value)),
+      ).epics[0]!.sprints[0]!,
+    );
+    const unit = workspace.revisionViews[0]!.workUnits.find(
+      (candidate) => candidate.workUnitId === 'execution-leaf',
+    )!;
+
+    render(
+      <WorkUnitDetailWorkspace
+        unit={unit}
+        lifecycleEntries={[]}
+        workSlicePlanningPointGroupTitle="Execution planning point"
+        sessions={[]}
+        onBack={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText('Work Unit execution progress')).toHaveTextContent(
+      'Work Unit execution is settled.',
+    );
+  });
+
   it('shows launch acceptance without inventing Handler readiness', () => {
     const value = JSON.parse(
       readFileSync(

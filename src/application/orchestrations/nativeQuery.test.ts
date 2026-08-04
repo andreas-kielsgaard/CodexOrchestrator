@@ -69,6 +69,37 @@ describe('orchestration native query v1', () => {
     expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow('unknown field');
   });
 
+  it('decodes the Rust-authored settled multi-root execution graph into product read models', () => {
+    const query = decodeOrchestrationNativeQueryV2(fixture('valid-execution-graph.json'));
+    const sprint = composeProductOrchestrationReadModels(
+      nativeQueryProductCompositionInputV2(query),
+    ).epics[0]!.sprints[0]!;
+    const materialization = sprint.workUnitMaterializations[0]!;
+    expect(query.workUnits.map((unit) => unit.workUnitId)).toEqual([
+      'execution-root-a',
+      'execution-root-b',
+      'execution-middle',
+      'execution-leaf',
+    ]);
+    expect(sprint.revisionViews[0]!.workUnits).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          workUnitId: 'execution-root-a',
+          executionState: expect.objectContaining({ state: 'settled' }),
+        }),
+        expect.objectContaining({
+          workUnitId: 'execution-leaf',
+          executionState: expect.objectContaining({ state: 'settled' }),
+        }),
+      ]),
+    );
+    expect(materialization.execution).toMatchObject({
+      graphCompletion: { completedAt: '2026-08-05T00:00:00Z' },
+      settlement: { settledAt: '2026-08-05T00:00:00Z' },
+      planningPointSettlement: { settledAt: '2026-08-05T00:00:00Z' },
+    });
+  });
+
   it('projects durable File Review ownership and rejects an unknown owner Sprint', () => {
     const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
     value.fileReviewDocuments = [

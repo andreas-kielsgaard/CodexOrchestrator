@@ -3027,8 +3027,11 @@ struct WorkUnitDto {
     lane_ordinal: i64,
     lane_title: String,
     specification: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     handler_activation: Option<WorkUnitHandlerActivationDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     action_continuation: Option<WorkUnitHandlerActionContinuationDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     implementer_activation: Option<WorkUnitImplementerActivationDto>,
     attempt_history: Vec<WorkUnitAttemptHistoryDto>,
     retry_attempts: Vec<WorkUnitRetryAttemptDto>,
@@ -4674,6 +4677,7 @@ struct WorkUnitRelationshipDto {
     relationship_kind: String,
     from_id: String,
     to_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     ordinal: Option<i64>,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
