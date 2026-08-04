@@ -237,49 +237,72 @@ $selectedCacheDir = if ($ambientCacheDir) {
 
 # Keep all behavior inside this opt-in process. Passing the target on Cargo's command line is
 # intentional: sccache hashes CARGO_TARGET_DIR and would otherwise miss across worktrees.
-Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
-Remove-Item Env:SCCACHE_BASEDIRS -ErrorAction SilentlyContinue
-$env:CARGO_INCREMENTAL = '0'
-$env:RUSTC_WRAPPER = $sccachePath
-$env:SCCACHE_CLIENT_SIDE = '1'
-$env:SCCACHE_DIR = $selectedCacheDir
-
-$stats = Get-SccacheStatistics -SccachePath $sccachePath
-if ($stats.cache_location -notmatch '^Local disk: "(.+)"$') {
-    throw "Unexpected sccache cache location: $($stats.cache_location)"
+$scopedEnvironmentNames = @(
+    'CARGO_TARGET_DIR'
+    'SCCACHE_BASEDIRS'
+    'CARGO_INCREMENTAL'
+    'RUSTC_WRAPPER'
+    'SCCACHE_CLIENT_SIDE'
+    'SCCACHE_DIR'
+)
+$scopedEnvironmentSnapshot = foreach ($name in $scopedEnvironmentNames) {
+    $item = Get-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+    [pscustomobject]@{
+        Name    = $name
+        Present = $null -ne $item
+        Value   = if ($item) { $item.Value } else { $null }
+    }
 }
 
-$activeCacheDir = Normalize-ComparisonPath -Path $Matches[1]
-$expectedCacheDir = Normalize-ComparisonPath -Path $selectedCacheDir
-if ($activeCacheDir -ne $expectedCacheDir) {
-    throw "The active sccache server uses '$activeCacheDir', not '$expectedCacheDir'. After other cached builds finish, run 'sccache --stop-server' and retry."
-}
-
-Write-Host "sccache enabled: $versionOutput"
-Write-Host "sccache executable: $sccachePath"
-Write-Host "shared compiler cache: $activeCacheDir"
-Write-Host "isolated Cargo target: $selectedTargetDir"
-Write-Host "stable Cargo cwd: $stableCargoDirectory"
-Write-Host 'incremental compilation: disabled for this opt-in command only'
-
-Push-Location $stableCargoDirectory
+$cargoExitCode = $null
 try {
-    & $cargo.Source $CargoCommand --manifest-path $manifestPath --target-dir $selectedTargetDir @cargoArgumentsList
-    $cargoExitCode = $LASTEXITCODE
+    Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
+    Remove-Item Env:SCCACHE_BASEDIRS -ErrorAction SilentlyContinue
+    $env:CARGO_INCREMENTAL = '0'
+    $env:RUSTC_WRAPPER = $sccachePath
+    $env:SCCACHE_CLIENT_SIDE = '1'
+    $env:SCCACHE_DIR = $selectedCacheDir
+
+    $stats = Get-SccacheStatistics -SccachePath $sccachePath
+    if ($stats.cache_location -notmatch '^Local disk: "(.+)"$') {
+        throw "Unexpected sccache cache location: $($stats.cache_location)"
+    }
+
+    $activeCacheDir = Normalize-ComparisonPath -Path $Matches[1]
+    $expectedCacheDir = Normalize-ComparisonPath -Path $selectedCacheDir
+    if ($activeCacheDir -ne $expectedCacheDir) {
+        throw "The active sccache server uses '$activeCacheDir', not '$expectedCacheDir'. After other cached builds finish, run 'sccache --stop-server' and retry."
+    }
+
+    Write-Host "sccache enabled: $versionOutput"
+    Write-Host "sccache executable: $sccachePath"
+    Write-Host "shared compiler cache: $activeCacheDir"
+    Write-Host "isolated Cargo target: $selectedTargetDir"
+    Write-Host "stable Cargo cwd: $stableCargoDirectory"
+    Write-Host 'incremental compilation: disabled for this opt-in command only'
+
+    Push-Location $stableCargoDirectory
+    try {
+        & $cargo.Source $CargoCommand --manifest-path $manifestPath --target-dir $selectedTargetDir @cargoArgumentsList
+        $cargoExitCode = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+
+    try {
+        $statsAfter = Get-SccacheStatistics -SccachePath $sccachePath
+        Write-SccacheCounterDelta -Before $stats -After $statsAfter
+    } catch {
+        Write-Warning "Could not report sccache statistics after Cargo: $($_.Exception.Message)"
+    }
 } finally {
-    Pop-Location
+    foreach ($state in $scopedEnvironmentSnapshot) {
+        if ($state.Present) {
+            Set-Item -LiteralPath "Env:$($state.Name)" -Value $state.Value
+        } else {
+            Remove-Item -LiteralPath "Env:$($state.Name)" -ErrorAction SilentlyContinue
+        }
+    }
 }
 
-$statsExitCode = 0
-try {
-    $statsAfter = Get-SccacheStatistics -SccachePath $sccachePath
-    Write-SccacheCounterDelta -Before $stats -After $statsAfter
-} catch {
-    Write-Warning "Could not report sccache statistics after Cargo: $($_.Exception.Message)"
-    $statsExitCode = 1
-}
-
-if ($cargoExitCode -ne 0) {
-    exit $cargoExitCode
-}
-exit $statsExitCode
+exit $cargoExitCode

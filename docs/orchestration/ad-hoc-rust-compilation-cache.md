@@ -44,12 +44,13 @@ target, use `-TargetDir`:
 .\scripts\cargo-sccache.ps1 -TargetDir .dev\runtime-a\cargo-target check --locked
 ```
 
-The helper fails if `sccache` is missing, older than 0.17.0, cannot report statistics, or an
-existing server is using a different cache directory. It prints the resolved cache, target,
-stable Cargo working directory, scoped incremental setting, and executable path. After Cargo
-exits, it prints before/after counter deltas for hits, misses, non-cacheable requests,
-non-cacheable compilations, and cacheable-request hit rate. These are global server deltas for the
-command window and may include concurrent machine activity; the helper never zeroes global stats.
+The helper fails before Cargo if `sccache` is missing, older than 0.17.0, cannot report preflight
+statistics, or an existing server is using a different cache directory. It prints the resolved
+cache, target, stable Cargo working directory, scoped incremental setting, and executable path.
+After Cargo exits, it prints before/after counter deltas for hits, misses, non-cacheable requests,
+non-cacheable compilations, and cacheable-request hit rate. A post-run statistics failure warns but
+does not replace Cargo's exit code. These are global server deltas for the command window and may
+include concurrent machine activity; the helper never zeroes global stats.
 
 If `sccache` is absent from the inherited process `PATH`, the helper searches persisted user and
 machine `PATH` entries and calls the discovered executable by absolute path. It does not replace or
@@ -67,9 +68,10 @@ The helper therefore:
 
 - runs Cargo from `%LOCALAPPDATA%\CodexOrchestrator\cargo-sccache-cwd` in every worktree;
 - passes an absolute manifest and per-worktree target through Cargo's `--target-dir` option;
-- removes `CARGO_TARGET_DIR` from rustc's environment;
-- sets `RUSTC_WRAPPER`, `SCCACHE_CLIENT_SIDE=1`, and `CARGO_INCREMENTAL=0` only in the helper
-  process; and
+- temporarily removes `CARGO_TARGET_DIR` and `SCCACHE_BASEDIRS` from rustc's environment;
+- temporarily sets `RUSTC_WRAPPER`, `SCCACHE_CLIENT_SIDE=1`, `CARGO_INCREMENTAL=0`, and the selected
+  `SCCACHE_DIR`, restoring the exact prior presence and value of all six variables on every exit
+  path; and
 - uses the shared local sccache directory while leaving build outputs separate.
 
 The local product crate can still miss because its `CARGO_MANIFEST_DIR` differs, and its configured
@@ -125,6 +127,9 @@ server statistics, change Rust code or profiles, share a target directory, or ru
 Ignored logs, Cargo timings, independent clone worktrees, and fresh targets remain under
 `.dev\sccache-hardening-20260804`.
 
+The final lifecycle correction builds on commit `4774389e45c3d41c6bca3614c0ccce12211509c1` and uses
+fakes only; it does not add or repeat Rust compilation.
+
 ### Deterministic helper checks
 
 The focused test uses executable stubs for Cargo, `link.exe`, and controlled sccache counters:
@@ -133,14 +138,19 @@ The focused test uses executable stubs for Cargo, `link.exe`, and controlled scc
 .\scripts\cargo-sccache.tests.ps1
 ```
 
-All three checks passed:
+All six checks passed:
 
 1. With sccache removed from inherited `PATH` but present in persisted user `PATH`, the helper
    reported the persisted absolute executable. Stub Cargo observed the exact inherited `PATH`, and
    a current-only `link.exe` stub remained executable.
 2. Deterministic counters produced deltas of 3 hits, 2 misses, 3 non-cacheable requests, and 1
-   non-cacheable compilation, with a 60.00% hit rate.
-3. A simulated active-cache mismatch failed before the Cargo stub ran.
+   non-cacheable compilation, with a 60.00% hit rate, and restored six previously present values.
+3. A simulated active-cache mismatch failed before the Cargo stub ran and restored the prior
+   environment.
+4. A preflight statistics failure restored six previously absent variables without running Cargo.
+5. Successful fake Cargo plus failed post-run statistics exited successfully with a warning.
+6. Fake Cargo exit 37 remained 37 when post-run statistics also failed; all six prior environment
+   values were restored.
 
 The current shell did not expose a real `link.exe` through `Get-Command`, so a Visual Studio
 developer shell was not launched as a separate test. Exact PATH equality inside stub Cargo proves
