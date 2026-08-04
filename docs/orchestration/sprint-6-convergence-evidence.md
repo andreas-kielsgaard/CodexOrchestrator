@@ -598,21 +598,34 @@ than a later actionless revision.
 
 Current deterministic validation in this candidate checkout:
 
-- Full second-wave accepted/returned convergence: **1 passed, 369 filtered, 179.06s**
-  (Cargo elapsed **223.7s**, including **42.54s** compilation). A canonical root contribution
-  makes one dependent eligible; that dependent completes its original Handler, same-Session action,
-  one Implementer, reporting claims, application-owned File Review evidence, semantic completion,
-  terminal lifecycle, and independent Handler review. The accepted branch records one integration,
-  settlement, and exact outgoing contribution, then launches its next dependent exactly once. The
-  returned branch records its structured return and `retry_required` and records no accepted
-  candidate, integration, settlement, contribution, next activation, or replacement Implementer.
-  It also exercises concurrent identical final judgments, exact effect cardinalities, native
-  projection, and commit-reference/configuration-digest absence.
+- Full second-wave accepted/returned convergence: **1 passed, 369 filtered, 189.89s**
+  (Cargo elapsed **220.4s**, including **28.65s** compilation). Its Fixture supplies the complete
+  real initialized Sprint Git authority and worktree route before Planner persistence and launch,
+  submits a valid three-lane proposal through the Planner Session/invocation, records semantic
+  completion, observes the matching `Completed` lifecycle, and obtains the canonical
+  materialization, Work Unit, and relationship identities productively. The canonical root
+  contribution makes one dependent eligible; that dependent completes its original Handler,
+  same-Session action, one Implementer, reporting claims, application-owned File Review evidence,
+  semantic completion, terminal lifecycle, and independent Handler review. The accepted branch
+  records one integration, settlement, and exact outgoing contribution, then launches its next
+  dependent exactly once. The returned branch records its structured return and `retry_required`
+  and records no accepted candidate, integration, settlement, contribution, next activation, or
+  replacement Implementer. It also exercises concurrent identical final judgments, exact effect
+  cardinalities, native projection, and commit-reference/configuration-digest absence.
 - The same focused proof erases the second-wave accepted settlement and outgoing contribution and
-  replays the productive reconciliation. It restores the original integration, settlement, and
-  contribution without replacement Implementer identity or duplicate next Handler activation.
-- First-wave regression rerun: **1 passed, 369 filtered, 97.78s** (Cargo elapsed **126s**,
-  including **25.88s** compilation).
+  reconciles through a newly opened `SprintRunnerTransitionService` against the same SQLite
+  database and Agent Session application, followed by the supported test Harness attachment. It
+  restores the original integration, settlement, contribution, and next Handler identity without a
+  replacement attempt, Session, invocation, Harness identity, runtime relaunch, or duplicate
+  effect. Fresh open and supported Harness attachment are asserted separately from in-process
+  replay. The returned branch is also freshly opened and reattached and remains returned with its
+  `retry_required` boundary, without accepted candidate, integration, settlement, contribution, or
+  next activation.
+- First-wave regression rerun: **1 passed, 369 filtered, 92.87s** (Cargo elapsed **94s**,
+  including **0.74s** compilation).
+- Existing Planner preparation-wrapper regression: **1 passed, 369 filtered, 0.33s** (Cargo
+  elapsed **1.4s**). It continues to use the default fixture authority while the reporting fixture
+  supplies its real authority through the authority-aware seam.
 - Concurrent exact replay and accept-vs-return race: **1 passed, 368 filtered, 96.48s**.
 - Privacy-strengthened combined reruns: **1 passed, 368 filtered, 156.37s** for repository
   commit-reference absence and **1 passed, 368 filtered, 132.24s** for both commit-reference and
@@ -625,8 +638,7 @@ The existing native-query, strict frontend read-model, and Work Unit activity su
 inspected for the established safe projections, but frontend Vitest, TypeScript, and UI execution
 are **unrun by design in this Plan Step**: the checkout has no `node_modules`, dependencies were
 not installed, and runtime/type verification is separately gated. Broad Rust suites, live-provider
-receipt, provider activation/compliance, and human acceptance are likewise unproven. The focused
-second-wave fixture does not yet prove a fresh `SprintRunnerTransitionService::open` against its
-manually materialized canonical planning fixture; its recovery replay is in-process. That precise
-service-reopen gate remains unproven. This correction does not add retry, ordinal-1 authority,
-relaunch, planning-point/Work Slice/Sprint/Epic continuation, reattachment, push, or publication.
+receipt, provider activation/compliance, and human acceptance are likewise unproven. This
+deterministic local/fake proof does not establish live-provider receipt, provider-process
+reattachment, or broad-suite compliance. This correction does not add retry, ordinal-1 authority,
+relaunch, planning-point/Work Slice/Sprint/Epic continuation, push, or publication.

@@ -2181,7 +2181,10 @@ mod tests {
             self.service.query().unwrap().transitions[0].clone()
         }
 
-        fn prepare_work_slice_planner(&self) -> (
+        fn prepare_work_slice_planner_with_authority(
+            &self,
+            authority: InitiatedSprintGitAuthorityWrite,
+        ) -> (
             Arc<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>,
             AgentInvocationId,
             String,
@@ -2236,25 +2239,9 @@ mod tests {
                     ],
                 )
                 .unwrap();
-            let repository_root = self._directory.path().join("http-sprint-repository");
-            let worktree_root = repository_root.join("worktree");
-            fs::create_dir_all(&worktree_root).unwrap();
             SqliteOrchestrationRepository::open(&self.database_path)
                 .unwrap()
-                .store_initiated_sprint_git_authority(InitiatedSprintGitAuthorityWrite {
-                    sprint_id: sprint_id.clone(),
-                    idempotency_key: "wsp-http-route-authority".into(),
-                    repository_id: "wsp-http-repository".into(),
-                    repository_root: repository_root.to_string_lossy().into_owned(),
-                    repository_common_dir: repository_root.to_string_lossy().into_owned(),
-                    worktree_id: "wsp-http-worktree".into(),
-                    worktree_root: worktree_root.to_string_lossy().into_owned(),
-                    baseline_object_id: "a".repeat(40),
-                    current_object_id: "b".repeat(40),
-                    runtime_instance_ref: "wsp-http-runtime".into(),
-                    runtime_source_ref: "wsp-http-source".into(),
-                    source_fingerprint: "c".repeat(64),
-                })
+                .store_initiated_sprint_git_authority(authority)
                 .unwrap();
             let status = service
                 .request_work_slice_planner(
@@ -2268,6 +2255,38 @@ mod tests {
             .unwrap();
             self.notifier.set_sprint(&service);
             (service, planner_invocation, sprint_id)
+        }
+
+        fn prepare_work_slice_planner(&self) -> (
+            Arc<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>,
+            AgentInvocationId,
+            String,
+        ) {
+            let sprint_id: String = Connection::open(&self.database_path)
+                .unwrap()
+                .query_row(
+                    "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let repository_root = self._directory.path().join("http-sprint-repository");
+            let worktree_root = repository_root.join("worktree");
+            fs::create_dir_all(&worktree_root).unwrap();
+            self.prepare_work_slice_planner_with_authority(InitiatedSprintGitAuthorityWrite {
+                sprint_id,
+                idempotency_key: "wsp-http-route-authority".into(),
+                repository_id: "wsp-http-repository".into(),
+                repository_root: repository_root.to_string_lossy().into_owned(),
+                repository_common_dir: repository_root.to_string_lossy().into_owned(),
+                worktree_id: "wsp-http-worktree".into(),
+                worktree_root: worktree_root.to_string_lossy().into_owned(),
+                baseline_object_id: "a".repeat(40),
+                current_object_id: "b".repeat(40),
+                runtime_instance_ref: "wsp-http-runtime".into(),
+                runtime_source_ref: "wsp-http-source".into(),
+                source_fingerprint: "c".repeat(64),
+            })
         }
 
         fn materials() -> BootstrapMaterialInput {
@@ -5673,11 +5692,7 @@ mod tests {
 
     impl ReportingFixture {
         fn new() -> Self {
-            let base = Fixture::unstarted();
-            let transition = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-                &base.database_path,
-                base.sessions.clone(),
-            ).unwrap();
+            let base = Fixture::new();
             let sprint_id: String = Connection::open(&base.database_path).unwrap().query_row(
                 "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
                 [],
@@ -5720,26 +5735,94 @@ mod tests {
             let current = git(&sprint_root, &["rev-parse", "HEAD"]);
             let repository_root = repository_root.canonicalize().unwrap();
             let sprint_root = sprint_root.canonicalize().unwrap();
-            let repository = Arc::new(SqliteOrchestrationRepository::open(&base.database_path).unwrap());
-            let authority_id = match repository.store_initiated_sprint_git_authority(
-                InitiatedSprintGitAuthorityWrite {
-                    sprint_id,
-                    idempotency_key: "implementer-reporting-test-authority".into(),
-                    repository_id: "implementer-reporting-repository".into(),
-                    repository_root: repository_root.to_string_lossy().into_owned(),
-                    repository_common_dir: repository_root.join(".git").canonicalize().unwrap().to_string_lossy().into_owned(),
-                    worktree_id: "implementer-reporting-sprint-worktree".into(),
-                    worktree_root: sprint_root.to_string_lossy().into_owned(),
-                    baseline_object_id: initial,
-                    current_object_id: current,
-                    runtime_instance_ref: "implementer-reporting-runtime".into(),
-                    runtime_source_ref: "implementer-reporting-source".into(),
-                    source_fingerprint: "e".repeat(64),
-                },
-            ).unwrap() {
-                crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::Stored { authority_id }
-                | crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::IdempotentReplay { authority_id } => authority_id,
+            let authority = InitiatedSprintGitAuthorityWrite {
+                sprint_id: sprint_id.clone(),
+                idempotency_key: "implementer-reporting-test-authority".into(),
+                repository_id: "implementer-reporting-repository".into(),
+                repository_root: repository_root.to_string_lossy().into_owned(),
+                repository_common_dir: repository_root.join(".git").canonicalize().unwrap().to_string_lossy().into_owned(),
+                worktree_id: "implementer-reporting-sprint-worktree".into(),
+                worktree_root: sprint_root.to_string_lossy().into_owned(),
+                baseline_object_id: initial,
+                current_object_id: current,
+                runtime_instance_ref: "implementer-reporting-runtime".into(),
+                runtime_source_ref: "implementer-reporting-source".into(),
+                source_fingerprint: "e".repeat(64),
             };
+            let (transition, planner_invocation, prepared_sprint_id) =
+                base.prepare_work_slice_planner_with_authority(authority);
+            assert_eq!(prepared_sprint_id, sprint_id);
+            base.notifier.set_sprint_only(&transition);
+            let planner_proposal = crate::orchestration::sprint_runner_transition::WorkSliceProposal {
+                objective: "Converge the reporting dependency wave.".into(),
+                lanes: vec![
+                    crate::orchestration::sprint_runner_transition::WorkSliceLane {
+                        title: "Reporting root".into(),
+                        specification: "Produce the root reporting evidence.".into(),
+                        depends_on: vec![],
+                    },
+                    crate::orchestration::sprint_runner_transition::WorkSliceLane {
+                        title: "Dependent reporting".into(),
+                        specification: "Produce the newly eligible dependent evidence.".into(),
+                        depends_on: vec!["Reporting root".into()],
+                    },
+                    crate::orchestration::sprint_runner_transition::WorkSliceLane {
+                        title: "Next dependent reporting".into(),
+                        specification: "Receive the dependent contribution exactly once.".into(),
+                        depends_on: vec!["Dependent reporting".into()],
+                    },
+                ],
+            };
+            assert_eq!(
+                transition
+                    .submit_work_slice_proposal(&planner_invocation, planner_proposal)
+                    .unwrap()["status"],
+                "proposal_validated"
+            );
+            let (planning_point_id, revision_id, epic_id): (String, String, String) =
+                Connection::open(&base.database_path).unwrap().query_row(
+                    "SELECT request.planning_point_id,revision.revision_id,sprint.epic_id
+                     FROM work_slice_planning_requests request
+                     JOIN work_slice_proposal_revisions revision ON revision.planning_point_id=request.planning_point_id AND revision.is_current=1
+                     JOIN initiated_sprints sprint ON sprint.id=request.sprint_id
+                     WHERE request.sprint_id=?1 AND request.is_current=1",
+                    [&sprint_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                ).unwrap();
+            let product_stable_id = |prefix: &str, value: &str| {
+                let mut hash = Sha256::new();
+                hash.update(prefix.as_bytes());
+                hash.update([0]);
+                hash.update(value.as_bytes());
+                format!("{prefix}-{:x}", hash.finalize())
+            };
+            let materialization_id = product_stable_id(
+                "work-unit-materialization",
+                &format!("{epic_id}:{sprint_id}:{planning_point_id}:{revision_id}"),
+            );
+            let work_unit_id = product_stable_id("work-unit", &format!("{materialization_id}:0"));
+            transition.complete_work_slice_planning(
+                &planner_invocation,
+                crate::orchestration::sprint_runner_transition::WorkSliceCompletion {},
+            ).unwrap();
+            base.runtime.finish(
+                planner_invocation.as_str(),
+                AgentInvocationTerminalStatus::Completed,
+            );
+            assert_eq!(
+                Connection::open(&base.database_path).unwrap().query_row(
+                    "SELECT materialization_id FROM work_unit_materializations WHERE planning_point_id=?1",
+                    [&planning_point_id],
+                    |row| row.get::<_, String>(0),
+                ).unwrap(),
+                materialization_id,
+            );
+            let repository = Arc::new(SqliteOrchestrationRepository::open(&base.database_path).unwrap());
+            let authority_id: String = Connection::open(&base.database_path).unwrap().query_row(
+                "SELECT authority_id FROM initiated_sprint_git_authorities WHERE sprint_id=?1 AND idempotency_key='implementer-reporting-test-authority'",
+                [&sprint_id],
+                |row| row.get(0),
+            ).unwrap();
             let orchestration = Arc::new(OrchestrationApplication::new(repository.clone()));
             let support = ProductExecutionSupportState::new(
                 &base.database_path,
@@ -5751,7 +5834,6 @@ mod tests {
                 base.sessions.clone(),
                 orchestration,
             ));
-            let work_unit_id = "implementer-reporting-work-unit".to_string();
             let attempt_id = "implementer-reporting-attempt".to_string();
             handler.authorize_implementer_attempt(&attempt_id, &work_unit_id, &authority_id).unwrap();
             let original_revision = handler.current_implementer_revision().unwrap();
@@ -6012,8 +6094,7 @@ mod tests {
             let connection = Connection::open(&self.base.database_path).unwrap();
             connection.pragma_update(None, "foreign_keys", false).unwrap();
             let now = "2026-08-04T00:00:00Z";
-            connection.execute("INSERT OR IGNORE INTO work_units (work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification) VALUES (?1,'reporting-materialization','reporting-slice','reporting-revision',0,'Reporting','Handler review test')", [&self.work_unit_id]).unwrap();
-            connection.execute("INSERT INTO work_unit_handler_activations (work_unit_id,materialization_id,sprint_id,attempt_id,handler_session_id,handler_invocation_id,handler_harness_key,handler_harness_version,handler_harness_revision_id,handler_harness_configuration_digest,handler_harness_repository_commit_ref,eligibility_state,requested_at,authorized_at,attempt_created_at,execution_support_granted_at,isolated_worktree_ready_at,handler_session_created_at,handler_invocation_prepared_at,handler_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,handler_ready_at) VALUES (?1,'reporting-materialization','reporting-sprint',?2,?3,?4,?5,?6,?7,?8,?9,'eligible',?10,?10,?10,?10,?10,?10,?10,?10,?10,?10,?10,?10)", params![self.work_unit_id,self.attempt_id,self.handler_session_id,self.handler_invocation_id,original.profile.key,original.profile.version,original.revision_id,original.configuration_digest,original.repository_commit_ref,now]).unwrap();
+            connection.execute("INSERT INTO work_unit_handler_activations (work_unit_id,materialization_id,sprint_id,attempt_id,handler_session_id,handler_invocation_id,handler_harness_key,handler_harness_version,handler_harness_revision_id,handler_harness_configuration_digest,handler_harness_repository_commit_ref,eligibility_state,requested_at,authorized_at,attempt_created_at,execution_support_granted_at,isolated_worktree_ready_at,handler_session_created_at,handler_invocation_prepared_at,handler_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,handler_ready_at) SELECT ?1,unit.materialization_id,materialization.sprint_id,?2,?3,?4,?5,?6,?7,?8,?9,'eligible',?10,?10,?10,?10,?10,?10,?10,?10,?10,?10,?10,?10 FROM work_units unit JOIN work_unit_materializations materialization ON materialization.materialization_id=unit.materialization_id WHERE unit.work_unit_id=?1", params![self.work_unit_id,self.attempt_id,self.handler_session_id,self.handler_invocation_id,original.profile.key,original.profile.version,original.revision_id,original.configuration_digest,original.repository_commit_ref,now]).unwrap();
             connection.execute(
                 "UPDATE work_unit_implementer_activations
                  SET handler_attempt_id=?2,handler_invocation_id=?3
@@ -6025,6 +6106,7 @@ mod tests {
         }
 
         fn ready_review(&self) -> String {
+            self.establish_canonical_dependency_graph();
             self.enable_handler_review_route();
             self.transition.submit_implementation_outcome(&self.invocation(), self.claims()).unwrap();
             self.write_evidence("review evidence\n");
@@ -6036,85 +6118,57 @@ mod tests {
 
         fn establish_canonical_dependency_graph(&self) -> (String, String, String, String) {
             let connection = Connection::open(&self.base.database_path).unwrap();
-            let (sprint_id, epic_id): (String, String) = connection.query_row(
-                "SELECT id,epic_id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+            let (planning_point_id, sprint_id, planner_invocation_id): (String, String, String) =
+                connection.query_row(
+                    "SELECT planning_point_id,sprint_id,planner_invocation_id
+                     FROM work_slice_planning_requests WHERE is_current=1",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                ).unwrap();
+            let materialized: Option<String> = connection.query_row(
+                "SELECT materialization_id FROM work_unit_materializations WHERE planning_point_id=?1",
+                [&planning_point_id],
+                |row| row.get(0),
+            ).optional().unwrap();
+            drop(connection);
+            if materialized.is_none() {
+                self.transition.complete_work_slice_planning(
+                    &AgentInvocationId::new(planner_invocation_id.clone()).unwrap(),
+                    crate::orchestration::sprint_runner_transition::WorkSliceCompletion {},
+                ).unwrap();
+                self.base.runtime.finish(
+                    &planner_invocation_id,
+                    AgentInvocationTerminalStatus::Completed,
+                );
+            }
+            let connection = Connection::open(&self.base.database_path).unwrap();
+            let materialization: String = connection.query_row(
+                "SELECT materialization_id FROM work_unit_materializations WHERE planning_point_id=?1",
+                [&planning_point_id],
+                |row| row.get(0),
             ).unwrap();
-            let materialization = "implementer-reporting-materialization";
-            let revision = "implementer-reporting-revision";
-            let dependent = "implementer-reporting-dependent".to_string();
-            let relationship = "implementer-reporting-depends-on".to_string();
-            let next_dependent = "implementer-reporting-next-dependent".to_string();
-            let next_relationship = "implementer-reporting-next-depends-on".to_string();
-            let planner_harness = conversation_harness::profile(ConversationHarnessRole::WorkSlicePlanner).unwrap();
-            connection.pragma_update(None, "foreign_keys", false).unwrap();
-            connection.execute(
-                "INSERT INTO work_slice_planning_requests
-                 (planning_point_id,sprint_id,planning_episode,is_current,request_fact_id,parent_sprint_runner_session_id,
-                  parent_planning_control_invocation_id,authority_id,authority_epic_id,authority_provenance_id,
-                  authority_repository_id,authority_worktree_id,authority_baseline_object_id,authority_current_object_id,
-                  authority_source_fingerprint,repository_worktree_route,requested_at,authorized_at,planner_harness_key,
-                  planner_harness_version,planner_session_id,planner_invocation_id)
-                 VALUES ('implementer-reporting-point',?1,0,1,'implementer-reporting-request','parent-session',
-                  'parent-invocation',?2,?3,'provenance','repository','worktree','baseline','current','fingerprint','route',
-                  't','t','work_slice_planner',?4,'planner-session','planner-invocation')",
-                params![sprint_id, self.authority_id, epic_id, planner_harness.version],
+            let units = connection.prepare(
+                "SELECT work_unit_id FROM work_units WHERE materialization_id=?1 ORDER BY lane_ordinal",
+            ).unwrap().query_map([&materialization], |row| row.get::<_, String>(0)).unwrap()
+                .collect::<Result<Vec<_>, _>>().unwrap();
+            assert_eq!(units.len(), 3);
+            assert_eq!(units[0], self.work_unit_id);
+            let relationship = |from_id: &str, to_id: &str| connection.query_row(
+                "SELECT relationship_id FROM work_unit_relationships
+                 WHERE materialization_id=?1 AND relationship_kind='depends_on' AND from_id=?2 AND to_id=?3",
+                params![materialization, from_id, to_id],
+                |row| row.get::<_, String>(0),
             ).unwrap();
-            connection.execute(
-                "INSERT INTO work_slice_planning_episodes
-                 (planning_point_id,sprint_id,authority_id,planner_session_id,planner_invocation_id,harness_json,repository_worktree_route,created_at)
-                 VALUES ('implementer-reporting-point',?1,?2,'planner-session','planner-invocation','{}','route','t')",
-                params![sprint_id, self.authority_id],
-            ).unwrap();
-            connection.execute(
-                "INSERT INTO work_slice_proposal_revisions
-                 (revision_id,planning_point_id,revision_number,is_current,idempotency_key,content_fingerprint,proposal_json,
-                  submitted_at,validation_at,validation_result,semantic_completed_at,semantic_completion_invocation_id,
-                  lifecycle_observed_at,lifecycle_status,accepted_at,materialization_ready_at)
-                 VALUES (?1,'implementer-reporting-point',1,1,'implementer-reporting-revision','fingerprint','{}',
-                  't','t','valid','t','planner-invocation','t','completed','t','t')",
-                [revision],
-            ).unwrap();
-            connection.execute(
-                "INSERT INTO work_unit_materializations
-                 (materialization_id,planning_point_id,accepted_revision_id,epic_id,sprint_id,work_slice_id,
-                  authorization_recorded_at,attempt_recorded_at,work_units_created_at,relationships_completed_at,settled_at)
-                 VALUES (?1,'implementer-reporting-point',?2,?3,?4,'implementer-reporting-slice','t','t','t','t','t')",
-                params![materialization, revision, epic_id, sprint_id],
-            ).unwrap();
-            connection.execute(
-                "UPDATE work_units SET materialization_id=?2,work_slice_id='implementer-reporting-slice',accepted_revision_id=?3
-                 WHERE work_unit_id=?1",
-                params![self.work_unit_id, materialization, revision],
-            ).unwrap();
-            connection.execute(
-                "INSERT INTO work_units (work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification)
-                 VALUES (?1,?2,'implementer-reporting-slice',?3,1,'Dependent reporting','One bounded dependent.')",
-                params![dependent, materialization, revision],
-            ).unwrap();
-            connection.execute(
-                "INSERT INTO work_unit_relationships (relationship_id,materialization_id,relationship_kind,from_id,to_id,ordinal)
-                 VALUES (?1,?2,'depends_on',?3,?4,NULL)",
-                params![relationship, materialization, dependent, self.work_unit_id],
-            ).unwrap();
-            connection.execute(
-                "INSERT INTO work_units (work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification)
-                 VALUES (?1,?2,'implementer-reporting-slice',?3,2,'Next dependent reporting','One bounded next dependent.')",
-                params![next_dependent, materialization, revision],
-            ).unwrap();
-            connection.execute(
-                "INSERT INTO work_unit_relationships (relationship_id,materialization_id,relationship_kind,from_id,to_id,ordinal)
-                 VALUES (?1,?2,'depends_on',?3,?4,NULL)",
-                params![next_relationship, materialization, next_dependent, dependent],
-            ).unwrap();
+            let dependent = units[1].clone();
+            let next_dependent = units[2].clone();
+            let root_relationship = relationship(&dependent, &self.work_unit_id);
+            let dependent_relationship = relationship(&next_dependent, &dependent);
             connection.execute(
                 "UPDATE work_unit_handler_activations SET materialization_id=?2,sprint_id=?3
                  WHERE work_unit_id=?1",
                 params![self.work_unit_id, materialization, sprint_id],
             ).unwrap();
-            connection.pragma_update(None, "foreign_keys", true).unwrap();
-            (dependent, relationship, next_dependent, next_relationship)
+            (dependent, root_relationship, next_dependent, dependent_relationship)
         }
 
         fn drive_newly_eligible_work_unit_to_review(
@@ -6631,7 +6685,9 @@ mod tests {
         assert!(!native.to_string().contains("RepositoryCommitRef") && !native.to_string().contains("ConfigurationDigest"));
         drop(connection);
 
-        let reopened = accepted.transition.clone();
+        let launches_before_reopen = accepted.base.runtime.requests().len();
+        let reopened = accepted.reopened();
+        assert_eq!(accepted.base.runtime.requests().len(), launches_before_reopen);
         reopened.reconcile_handler_reviews_for_test().unwrap();
         let connection = Connection::open(&accepted.base.database_path).unwrap();
         connection.execute("DELETE FROM work_unit_prerequisite_contributions WHERE prerequisite_work_unit_id=?1", [&dependent]).unwrap();
@@ -6669,6 +6725,16 @@ mod tests {
         let returned_projection = returned_native["workUnits"].as_array().unwrap().iter().find(|unit| unit["workUnitId"] == returned_dependent).unwrap();
         assert_eq!(returned_projection["handlerDecision"]["variant"], "returned");
         assert!(!returned_native.to_string().contains("RepositoryCommitRef") && !returned_native.to_string().contains("ConfigurationDigest"));
+        let returned_launches_before_reopen = returned.base.runtime.requests().len();
+        let returned_reopened = returned.reopened();
+        assert_eq!(returned.base.runtime.requests().len(), returned_launches_before_reopen);
+        returned_reopened.reconcile_handler_reviews_for_test().unwrap();
+        let connection = Connection::open(&returned.base.database_path).unwrap();
+        for table in ["accepted_handler_candidates", "accepted_work_unit_integrations", "work_unit_settlements"] {
+            assert_eq!(connection.query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table} WHERE work_unit_id=?1"), [&returned_dependent], |row| row.get(0)).unwrap(), 0);
+        }
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_prerequisite_contributions WHERE prerequisite_work_unit_id=?1", [&returned_dependent], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1", [&returned_next], |row| row.get(0)).unwrap(), 0);
     }
 
     #[test]
