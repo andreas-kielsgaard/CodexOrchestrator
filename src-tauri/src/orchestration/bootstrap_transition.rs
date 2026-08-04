@@ -6302,6 +6302,90 @@ mod tests {
             assert_eq!(Connection::open(&terminal.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_decisions", [], |row| row.get(0)).unwrap(), 0);
         }
     }
+
+    #[test]
+    fn handler_review_concurrent_replays_and_divergent_race_converge_without_downstream_effects() {
+        let downstream_effects = |fixture: &ReportingFixture| {
+            Connection::open(&fixture.base.database_path)
+                .unwrap()
+                .query_row(
+                    "SELECT
+                       (SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1),
+                       (SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1),
+                       (SELECT COUNT(*) FROM work_unit_handler_action_continuations WHERE work_unit_id=?1),
+                       (SELECT COUNT(*) FROM work_unit_materializations),
+                       (SELECT COUNT(*) FROM work_units),
+                       (SELECT COUNT(*) FROM work_unit_relationships),
+                       (SELECT COUNT(*) FROM work_slice_planning_requests),
+                       (SELECT COUNT(*) FROM work_slice_planning_episodes),
+                       (SELECT COUNT(*) FROM work_slice_proposal_revisions),
+                       (SELECT COUNT(*) FROM sprint_runner_transitions WHERE parent_continuation_delivery_requested_at IS NOT NULL OR epic_continuation_invocation_id IS NOT NULL OR sprint_continuation_invocation_id IS NOT NULL)",
+                    [&fixture.work_unit_id],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, i64>(5)?, row.get::<_, i64>(6)?, row.get::<_, i64>(7)?, row.get::<_, i64>(8)?, row.get::<_, i64>(9)?)),
+                )
+                .unwrap()
+        };
+
+        let replay = ReportingFixture::new();
+        let replay_review = replay.ready_review();
+        let replay_effects = downstream_effects(&replay);
+        let barrier = Arc::new(Barrier::new(2));
+        let calls = (0..2).map(|_| {
+            let service = replay.transition.clone();
+            let invocation = replay_review.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                service.record_handler_review_judgment_for_test(&invocation, "accept", None)
+            })
+        }).collect::<Vec<_>>();
+        let results = calls.into_iter().map(|call| call.join().unwrap()).collect::<Vec<_>>();
+        assert!(results.iter().all(Result::is_ok));
+        let replay_connection = Connection::open(&replay.base.database_path).unwrap();
+        assert_eq!(replay_connection.query_row::<String, _, _>("SELECT semantic_judgment_variant FROM work_unit_handler_reviews WHERE work_unit_id=?1", [&replay.work_unit_id], |row| row.get(0)).unwrap(), "accept");
+        assert_eq!(replay_connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_reviews WHERE work_unit_id=?1 AND conflict_at IS NOT NULL", [&replay.work_unit_id], |row| row.get(0)).unwrap(), 0);
+        drop(replay_connection);
+        replay.base.runtime.finish(&replay_review, AgentInvocationTerminalStatus::Completed);
+        assert_eq!(Connection::open(&replay.base.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_decisions WHERE work_unit_id=?1 AND decision_variant='accepted'", [&replay.work_unit_id], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(downstream_effects(&replay), replay_effects);
+
+        let race = ReportingFixture::new();
+        let race_review = race.ready_review();
+        let race_effects = downstream_effects(&race);
+        let barrier = Arc::new(Barrier::new(2));
+        let accept = {
+            let service = race.transition.clone();
+            let invocation = race_review.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                service.record_handler_review_judgment_for_test(&invocation, "accept", None)
+            })
+        };
+        let returned = {
+            let service = race.transition.clone();
+            let invocation = race_review.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                service.record_handler_review_judgment_for_test(&invocation, "return", Some(crate::orchestration::sprint_runner_transition::HandlerReviewReturnReason {
+                    code: "review_failed".into(),
+                    explanation: "evidence requires correction".into(),
+                }))
+            })
+        };
+        let results = [accept.join().unwrap(), returned.join().unwrap()];
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(results.iter().filter(|result| matches!(result, Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict))).count(), 1);
+        let race_connection = Connection::open(&race.base.database_path).unwrap();
+        let judgment: String = race_connection.query_row("SELECT semantic_judgment_variant FROM work_unit_handler_reviews WHERE work_unit_id=?1", [&race.work_unit_id], |row| row.get(0)).unwrap();
+        assert!(judgment == "accept" || judgment == "return");
+        assert_eq!(race_connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_reviews WHERE work_unit_id=?1 AND conflict_reason='divergent_review_judgment'", [&race.work_unit_id], |row| row.get(0)).unwrap(), 1);
+        drop(race_connection);
+        race.base.runtime.finish(&race_review, AgentInvocationTerminalStatus::Completed);
+        assert_eq!(Connection::open(&race.base.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_decisions WHERE work_unit_id=?1", [&race.work_unit_id], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(downstream_effects(&race), race_effects);
+    }
 }
 
 fn read_transition(
