@@ -141,14 +141,14 @@ pub(crate) fn reconcile_work_slice_execution_settlement(
     ).map_err(|e| e.to_string())?.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))
         .map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
     for (materialization, planning_point, revision) in materializations {
-        let issue = match graph_issue(&tx, &materialization, &revision)? {
-            Some(issue) => Some(issue),
-            None => match execution_issue(&tx, &materialization, &revision)? {
-                Some(issue) => Some(issue),
-                None if stalled_generation(&tx, &materialization, &revision)? => Some("stalled_execution_generation".into()),
-                None => None,
-            },
-        };
+        let issue = existing_attention(&tx, &materialization)?
+            .or(graph_issue(&tx, &materialization, &revision)?)
+            .or(execution_issue(&tx, &materialization, &revision)?)
+            .or(if stalled_generation(&tx, &materialization, &revision)? {
+                Some("stalled_execution_generation".into())
+            } else {
+                None
+            });
         project_execution_states(&tx, &materialization, &revision, issue.as_deref())?;
         if let Some(code) = issue {
             exact_attention(&tx, &materialization, &code)?;
@@ -178,6 +178,19 @@ pub(crate) fn reconcile_work_slice_execution_settlement(
         )?;
     }
     tx.commit().map_err(|e| e.to_string())
+}
+
+fn existing_attention(
+    tx: &rusqlite::Transaction<'_>,
+    materialization: &str,
+) -> Result<Option<String>, String> {
+    tx.query_row(
+        "SELECT code FROM work_slice_execution_attentions WHERE materialization_id=?1",
+        [materialization],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|error| error.to_string())
 }
 
 fn exact_insert(tx: &rusqlite::Transaction<'_>, insert: &str, insert_params: impl rusqlite::Params, exact: &str, exact_params: impl rusqlite::Params) -> Result<(), String> {
@@ -240,15 +253,17 @@ fn graph_issue(tx: &rusqlite::Transaction<'_>, materialization: &str, revision: 
     let invalid_contribution: bool = tx.query_row(
         "SELECT EXISTS(
            SELECT 1 FROM work_unit_prerequisite_contributions c
-           JOIN work_units dependent ON dependent.work_unit_id=c.dependent_work_unit_id
+           LEFT JOIN work_units dependent ON dependent.work_unit_id=c.dependent_work_unit_id
            LEFT JOIN work_unit_relationships r ON r.relationship_id=c.relationship_id
            LEFT JOIN work_units prerequisite ON prerequisite.work_unit_id=c.prerequisite_work_unit_id
            LEFT JOIN accepted_work_unit_integrations i ON i.integration_id=c.integration_id
            LEFT JOIN work_unit_settlements s ON s.integration_id=c.integration_id AND s.work_unit_id=c.prerequisite_work_unit_id
-           WHERE dependent.materialization_id=?1
+           WHERE (r.materialization_id=?1 OR dependent.materialization_id=?1 OR prerequisite.materialization_id=?1)
              AND (r.relationship_id IS NULL OR r.materialization_id<>?1 OR r.relationship_kind<>'depends_on'
+                  OR dependent.work_unit_id IS NULL OR prerequisite.work_unit_id IS NULL
                   OR r.from_id<>c.dependent_work_unit_id OR r.to_id<>c.prerequisite_work_unit_id
                   OR prerequisite.materialization_id<>?1 OR prerequisite.accepted_revision_id<>?2
+                  OR dependent.materialization_id<>?1 OR dependent.accepted_revision_id<>?2
                   OR i.work_unit_id<>c.prerequisite_work_unit_id OR i.stage<>'settled' OR i.settled_at IS NULL
                   OR s.settlement_id IS NULL))",
         params![materialization, revision], |r| r.get(0),
@@ -278,6 +293,9 @@ fn execution_issue(tx: &rusqlite::Transaction<'_>, materialization: &str, _revis
 }
 
 fn graph_is_complete(tx: &rusqlite::Transaction<'_>, materialization: &str, revision: &str) -> Result<bool, String> {
+    if existing_attention(tx, materialization)?.is_some() {
+        return Ok(false);
+    }
     let unresolved_handback: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM work_unit_no_progress_handbacks h JOIN work_units u ON u.work_unit_id=h.work_unit_id WHERE u.materialization_id=?1 AND u.accepted_revision_id=?2)",
         params![materialization, revision], |r| r.get(0),
@@ -302,20 +320,23 @@ fn stalled_generation(tx: &rusqlite::Transaction<'_>, materialization: &str, rev
     let units: i64 = tx.query_row("SELECT COUNT(*) FROM work_units WHERE materialization_id=?1 AND accepted_revision_id=?2", params![materialization, revision], |r| r.get(0)).map_err(|e| e.to_string())?;
     let settled: i64 = tx.query_row("SELECT COUNT(*) FROM work_unit_settlements s JOIN work_units u ON u.work_unit_id=s.work_unit_id WHERE u.materialization_id=?1 AND u.accepted_revision_id=?2", params![materialization, revision], |r| r.get(0)).map_err(|e| e.to_string())?;
     if units == 0 || settled == units { return Ok(false); }
-    let intents: i64 = tx.query_row("SELECT COUNT(*) FROM work_unit_dependency_activation_intents i JOIN work_units u ON u.work_unit_id=i.work_unit_id WHERE u.materialization_id=?1 AND u.accepted_revision_id=?2", params![materialization, revision], |r| r.get(0)).map_err(|e| e.to_string())?;
-    if intents != units { return Ok(false); }
+    let evaluated: i64 = tx.query_row("SELECT COUNT(*) FROM work_unit_dependency_activation_intents i JOIN work_units u ON u.work_unit_id=i.work_unit_id WHERE u.materialization_id=?1 AND u.accepted_revision_id=?2 AND i.materialization_id=u.materialization_id AND i.accepted_revision_id=u.accepted_revision_id", params![materialization, revision], |r| r.get(0)).map_err(|e| e.to_string())?;
+    if evaluated != units { return Ok(false); }
     let handback: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_no_progress_handbacks h JOIN work_units u ON u.work_unit_id=h.work_unit_id WHERE u.materialization_id=?1 AND u.accepted_revision_id=?2)", params![materialization, revision], |r| r.get(0)).map_err(|e| e.to_string())?;
     if handback { return Ok(false); }
-    let can_progress: bool = tx.query_row(
-        "SELECT EXISTS(
-           SELECT 1 FROM work_unit_dependency_activation_intents i JOIN work_units u ON u.work_unit_id=i.work_unit_id
-             WHERE u.materialization_id=?1 AND u.accepted_revision_id=?2 AND i.eligibility_state='eligible'
-           UNION ALL
-           SELECT 1 FROM work_unit_retry_attempts r JOIN work_units u ON u.work_unit_id=r.work_unit_id
-             WHERE u.materialization_id=?1 AND u.accepted_revision_id=?2 AND r.retry_ready_at IS NOT NULL AND r.failure_reason IS NULL)",
+    let ready: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM work_units u JOIN work_unit_dependency_activation_intents i ON i.work_unit_id=u.work_unit_id AND i.materialization_id=u.materialization_id AND i.accepted_revision_id=u.accepted_revision_id LEFT JOIN work_unit_handler_activations h ON h.work_unit_id=u.work_unit_id AND h.materialization_id=u.materialization_id LEFT JOIN work_unit_settlements s ON s.work_unit_id=u.work_unit_id WHERE u.materialization_id=?1 AND u.accepted_revision_id=?2 AND s.settlement_id IS NULL AND i.eligibility_state='eligible' AND h.work_unit_id IS NULL",
         params![materialization, revision], |r| r.get(0),
     ).map_err(|e| e.to_string())?;
-    Ok(!can_progress)
+    let active: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM work_units u JOIN work_unit_handler_activations h ON h.work_unit_id=u.work_unit_id AND h.materialization_id=u.materialization_id LEFT JOIN work_unit_settlements s ON s.work_unit_id=u.work_unit_id WHERE u.materialization_id=?1 AND u.accepted_revision_id=?2 AND s.settlement_id IS NULL AND h.handler_ready_at IS NOT NULL",
+        params![materialization, revision], |r| r.get(0),
+    ).map_err(|e| e.to_string())?;
+    let retry: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM work_unit_retry_attempts r JOIN work_units u ON u.work_unit_id=r.work_unit_id LEFT JOIN work_unit_settlements s ON s.work_unit_id=u.work_unit_id WHERE u.materialization_id=?1 AND u.accepted_revision_id=?2 AND s.settlement_id IS NULL AND r.retry_ready_at IS NOT NULL AND r.failure_reason IS NULL",
+        params![materialization, revision], |r| r.get(0),
+    ).map_err(|e| e.to_string())?;
+    Ok(ready == 0 && active == 0 && retry == 0)
 }
 
 fn graph_fingerprint(tx: &rusqlite::Transaction<'_>, materialization: &str, revision: &str) -> Result<String, String> {
@@ -338,17 +359,31 @@ fn project_execution_states(tx: &rusqlite::Transaction<'_>, materialization: &st
         .map_err(|e| e.to_string())?.query_map(params![materialization, revision], |r| r.get::<_, String>(0))
         .map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
     for unit in units {
+        let existing: Option<(String, String)> = tx.query_row(
+            "SELECT materialization_id,accepted_revision_id FROM work_unit_execution_states WHERE work_unit_id=?1",
+            [&unit],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional().map_err(|e| e.to_string())?;
+        if let Some((stored_materialization, stored_revision)) = existing.as_ref() {
+            if stored_materialization != materialization || stored_revision != revision {
+                return Err("work_unit_execution_state_correlation_invalid".into());
+            }
+        }
         let (state, reason) = if let Some(reason) = graph_attention { ("attention", Some(reason.to_owned())) }
         else {
-            let settled: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_settlements s JOIN accepted_work_unit_integrations i ON i.integration_id=s.integration_id WHERE s.work_unit_id=?1 AND i.work_unit_id=?1 AND i.stage='settled' AND i.settled_at IS NOT NULL)", [&unit], |r| r.get(0)).map_err(|e| e.to_string())?;
-            let handed_back: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_no_progress_handbacks WHERE work_unit_id=?1)", [&unit], |r| r.get(0)).map_err(|e| e.to_string())?;
-            let retry: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND retry_ready_at IS NOT NULL AND failure_reason IS NULL)", [&unit], |r| r.get(0)).map_err(|e| e.to_string())?;
-            let active: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_handler_activations WHERE work_unit_id=?1 AND handler_ready_at IS NOT NULL)", [&unit], |r| r.get(0)).map_err(|e| e.to_string())?;
-            let intent: Option<(String, Option<String>)> = tx.query_row("SELECT eligibility_state,blocked_reason FROM work_unit_dependency_activation_intents WHERE work_unit_id=?1", [&unit], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(|e| e.to_string())?;
+            let settled: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_settlements s JOIN accepted_work_unit_integrations i ON i.integration_id=s.integration_id JOIN work_units u ON u.work_unit_id=s.work_unit_id WHERE s.work_unit_id=?1 AND u.materialization_id=?2 AND u.accepted_revision_id=?3 AND i.work_unit_id=?1 AND i.stage='settled' AND i.settled_at IS NOT NULL)", params![unit,materialization,revision], |r| r.get(0)).map_err(|e| e.to_string())?;
+            let handed_back: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_no_progress_handbacks h JOIN work_units u ON u.work_unit_id=h.work_unit_id WHERE h.work_unit_id=?1 AND u.materialization_id=?2 AND u.accepted_revision_id=?3)", params![unit,materialization,revision], |r| r.get(0)).map_err(|e| e.to_string())?;
+            let retry: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_retry_attempts r JOIN work_units u ON u.work_unit_id=r.work_unit_id LEFT JOIN work_unit_settlements s ON s.work_unit_id=u.work_unit_id WHERE r.work_unit_id=?1 AND u.materialization_id=?2 AND u.accepted_revision_id=?3 AND s.settlement_id IS NULL AND r.retry_ready_at IS NOT NULL AND r.failure_reason IS NULL)", params![unit,materialization,revision], |r| r.get(0)).map_err(|e| e.to_string())?;
+            let active: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_handler_activations h LEFT JOIN work_unit_settlements s ON s.work_unit_id=h.work_unit_id WHERE h.work_unit_id=?1 AND h.materialization_id=?2 AND s.settlement_id IS NULL AND h.handler_ready_at IS NOT NULL)", params![unit,materialization], |r| r.get(0)).map_err(|e| e.to_string())?;
+            let intent: Option<(String, Option<String>)> = tx.query_row("SELECT eligibility_state,blocked_reason FROM work_unit_dependency_activation_intents WHERE work_unit_id=?1 AND materialization_id=?2 AND accepted_revision_id=?3", params![unit,materialization,revision], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(|e| e.to_string())?;
             if settled { ("settled", None) } else if handed_back { ("handed_back", Some("work_unit_handed_back".into())) } else if retry { ("retry_authorized", None) } else if active { ("active", None) } else if matches!(intent.as_ref(), Some((state, _)) if state == "eligible") { ("ready", None) } else { ("waiting_on_prerequisites", intent.and_then(|(_, reason)| reason)) }
         };
         let at = chrono::Utc::now().to_rfc3339();
-        tx.execute("INSERT INTO work_unit_execution_states(work_unit_id,materialization_id,accepted_revision_id,execution_state,reason,recorded_at) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(work_unit_id) DO UPDATE SET execution_state=excluded.execution_state,reason=excluded.reason,recorded_at=excluded.recorded_at WHERE work_unit_execution_states.materialization_id=excluded.materialization_id AND work_unit_execution_states.accepted_revision_id=excluded.accepted_revision_id", params![unit,materialization,revision,state,reason,at]).map_err(|e| e.to_string())?;
+        if existing.is_some() {
+            tx.execute("UPDATE work_unit_execution_states SET execution_state=?4,reason=?5,recorded_at=?6 WHERE work_unit_id=?1 AND materialization_id=?2 AND accepted_revision_id=?3", params![unit,materialization,revision,state,reason,at]).map_err(|e| e.to_string())?;
+        } else {
+            tx.execute("INSERT INTO work_unit_execution_states(work_unit_id,materialization_id,accepted_revision_id,execution_state,reason,recorded_at) VALUES(?1,?2,?3,?4,?5,?6)", params![unit,materialization,revision,state,reason,at]).map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }
@@ -627,7 +662,7 @@ mod tests {
           CREATE TABLE work_unit_prerequisite_contributions(contribution_id TEXT PRIMARY KEY,prerequisite_work_unit_id TEXT,dependent_work_unit_id TEXT,integration_id TEXT,relationship_id TEXT);
           CREATE TABLE work_unit_no_progress_handbacks(work_unit_id TEXT);
           CREATE TABLE work_unit_retry_attempts(work_unit_id TEXT,retry_ready_at TEXT,failure_reason TEXT);
-          CREATE TABLE work_unit_handler_activations(work_unit_id TEXT,handler_ready_at TEXT);
+          CREATE TABLE work_unit_handler_activations(work_unit_id TEXT,materialization_id TEXT,handler_ready_at TEXT);
           INSERT INTO work_slice_proposal_revisions VALUES('revision');
           INSERT INTO work_unit_materializations VALUES('materialization','point','revision','sprint','t','t');
           INSERT INTO work_units VALUES('root-a','materialization','revision',0),('root-b','materialization','revision',1),('middle-a','materialization','revision',2),('middle-b','materialization','revision',3),('leaf','materialization','revision',4);
@@ -653,6 +688,14 @@ mod tests {
         for (edge, dependent) in edges {
             connection.execute("INSERT INTO work_unit_prerequisite_contributions VALUES(?1,?2,?3,?4,?5)", params![format!("contribution-{edge}"), unit, dependent, format!("integration-{unit}"), edge]).unwrap();
         }
+    }
+
+    fn intent(connection: &Connection, unit: &str, state: &str, reason: Option<&str>) {
+        connection.execute_batch(WORK_UNIT_DEPENDENCY_WAVE_SCHEMA).unwrap();
+        connection.execute(
+            "INSERT OR REPLACE INTO work_unit_dependency_activation_intents(work_unit_id,materialization_id,accepted_revision_id,eligibility_state,blocked_reason,eligibility_recorded_at,activation_intended_at) VALUES(?1,'materialization','revision',?2,?3,'t',CASE WHEN ?2='eligible' THEN 't' END)",
+            params![unit, state, reason],
+        ).unwrap();
     }
 
     #[test]
@@ -783,6 +826,81 @@ mod tests {
         reconcile_work_slice_execution_settlement(&mut reopened).unwrap();
         for table in ["work_slice_execution_graph_completions", "work_slice_execution_settlements", "work_slice_planning_point_execution_settlements"] {
             assert_eq!(reopened.query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0)).unwrap(), 1, "{table}");
+        }
+    }
+
+    #[test]
+    fn unresolved_attention_survives_replay_and_prevents_every_terminal_fact() {
+        let database = tempfile::NamedTempFile::new().unwrap();
+        let connection = Connection::open(database.path()).unwrap();
+        seed_settlement(&connection);
+        connection.execute_batch(WORK_UNIT_DEPENDENCY_WAVE_SCHEMA).unwrap();
+        connection.execute("INSERT INTO work_slice_execution_attentions VALUES('materialization','test_attention','t')", []).unwrap();
+        for unit in ["root-a", "root-b", "middle-a", "middle-b", "leaf"] { settle(&connection, unit); }
+        drop(connection);
+        let mut reopened = Connection::open(database.path()).unwrap();
+        reconcile_work_slice_execution_settlement(&mut reopened).unwrap();
+        reconcile_work_slice_execution_settlement(&mut reopened).unwrap();
+        for table in ["work_slice_execution_graph_completions", "work_slice_execution_settlements", "work_slice_planning_point_execution_settlements"] {
+            assert_eq!(reopened.query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0)).unwrap(), 0, "{table}");
+        }
+        assert_eq!(reopened.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id='root-a'", [], |r| r.get(0)).unwrap(), "attention");
+    }
+
+    #[test]
+    fn current_unresolved_facts_distinguish_ready_active_waiting_and_stall() {
+        let mut connection = settlement_fixture();
+        intent(&connection, "root-a", "eligible", None);
+        intent(&connection, "root-b", "eligible", None);
+        intent(&connection, "middle-a", "blocked", Some("missing_prerequisite_contributions:middle-a-root-a"));
+        intent(&connection, "middle-b", "blocked", Some("missing_prerequisite_contributions:middle-b-root-b"));
+        intent(&connection, "leaf", "blocked", Some("missing_prerequisite_contributions:leaf-middle-a"));
+        connection.execute("INSERT INTO work_unit_handler_activations VALUES('root-b','materialization','t')", []).unwrap();
+        reconcile_work_slice_execution_settlement(&mut connection).unwrap();
+        let states = connection.prepare("SELECT work_unit_id,execution_state FROM work_unit_execution_states ORDER BY work_unit_id").unwrap().query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        assert!(states.contains(&(String::from("root-a"), String::from("ready"))));
+        assert!(states.contains(&(String::from("root-b"), String::from("active"))));
+        assert!(states.contains(&(String::from("middle-a"), String::from("waiting_on_prerequisites"))));
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_attentions", [], |r| r.get(0)).unwrap(), 0);
+        connection.execute_batch("DELETE FROM work_unit_handler_activations; UPDATE work_unit_dependency_activation_intents SET eligibility_state='blocked',blocked_reason='activation_terminal_without_current_progress',activation_intended_at=NULL").unwrap();
+        let tx = connection.transaction().unwrap();
+        assert!(stalled_generation(&tx, "materialization", "revision").unwrap());
+        tx.rollback().unwrap();
+        reconcile_work_slice_execution_settlement(&mut connection).unwrap();
+        assert_eq!(connection.query_row::<String, _, _>("SELECT code FROM work_slice_execution_attentions", [], |r| r.get(0)).unwrap(), "stalled_execution_generation");
+    }
+
+    #[test]
+    fn foreign_or_missing_contribution_endpoint_and_state_correlation_fail_closed() {
+        let mut connection = settlement_fixture();
+        connection.execute("INSERT INTO work_unit_prerequisite_contributions VALUES('bad','ghost','middle-a','integration-ghost','middle-a-root-a')", []).unwrap();
+        reconcile_work_slice_execution_settlement(&mut connection).unwrap();
+        assert_eq!(connection.query_row::<String, _, _>("SELECT code FROM work_slice_execution_attentions", [], |r| r.get(0)).unwrap(), "prerequisite_contribution_correlation_invalid");
+        let mut foreign = settlement_fixture();
+        foreign.execute("INSERT INTO work_units VALUES('foreign-unit','foreign-materialization','foreign-revision',0)", []).unwrap();
+        foreign.execute("INSERT INTO work_unit_prerequisite_contributions VALUES('foreign','foreign-unit','middle-a','integration-foreign','middle-a-root-a')", []).unwrap();
+        reconcile_work_slice_execution_settlement(&mut foreign).unwrap();
+        assert_eq!(foreign.query_row::<String, _, _>("SELECT code FROM work_slice_execution_attentions", [], |r| r.get(0)).unwrap(), "prerequisite_contribution_correlation_invalid");
+        let mut correlation = settlement_fixture();
+        correlation.execute_batch(WORK_UNIT_DEPENDENCY_WAVE_SCHEMA).unwrap();
+        correlation.execute("INSERT INTO work_unit_execution_states VALUES('root-a','foreign-materialization','revision','ready',NULL,'t')", []).unwrap();
+        assert_eq!(reconcile_work_slice_execution_settlement(&mut correlation).unwrap_err(), "work_unit_execution_state_correlation_invalid");
+    }
+
+    #[test]
+    fn execution_states_prefer_current_settlement_retry_and_handback_facts() {
+        let mut connection = settlement_fixture();
+        intent(&connection, "root-a", "eligible", None);
+        intent(&connection, "root-b", "eligible", None);
+        intent(&connection, "middle-a", "blocked", Some("missing_prerequisite_contributions:middle-a-root-a"));
+        intent(&connection, "middle-b", "blocked", Some("missing_prerequisite_contributions:middle-b-root-b"));
+        intent(&connection, "leaf", "blocked", Some("missing_prerequisite_contributions:leaf-middle-a"));
+        connection.execute("INSERT INTO work_unit_retry_attempts VALUES('middle-a','t',NULL)", []).unwrap();
+        connection.execute("INSERT INTO work_unit_no_progress_handbacks VALUES('middle-b')", []).unwrap();
+        settle(&connection, "leaf");
+        reconcile_work_slice_execution_settlement(&mut connection).unwrap();
+        for (unit, expected) in [("root-a", "ready"), ("middle-a", "retry_authorized"), ("middle-b", "handed_back"), ("leaf", "settled")] {
+            assert_eq!(connection.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id=?1", [unit], |r| r.get(0)).unwrap(), expected, "{unit}");
         }
     }
 }

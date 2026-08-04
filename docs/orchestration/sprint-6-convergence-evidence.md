@@ -679,18 +679,25 @@ publication.
 
 ### GD-01 graph-drain checkpoint
 
-- The application now validates the complete canonical `depends_on` graph before treating any
-  Work Unit as eligible, records durable execution-state projections, and uses accepted
-  integration settlements plus exact prerequisite contributions as the only downstream
-  authority. Cycles, malformed or duplicate graph facts, bad contributions, integration
-  attention, impossible terminal mixtures, and a fully evaluated but non-progressing generation
-  fail closed; a no-progress handback remains a distinct unsettled Work Unit state.
+- The application drains at most one follow-up dependency generation after each durable
+  Handler/Implementer/review/integration pass. It validates the complete canonical `depends_on`
+  graph before treating a Work Unit as eligible, and accepted integration settlements plus exact
+  prerequisite contributions remain the only downstream authority. Cycles, malformed or
+  duplicate graph facts, missing or foreign contribution endpoints, integration attention,
+  impossible terminal mixtures, and a fully evaluated non-progressing generation fail closed; a
+  no-progress handback remains a distinct unsettled Work Unit state.
 - The three terminal facts are separate and idempotent: graph completion, Work Slice execution
   settlement, and planning-point execution settlement. They are written only when every
   canonical Work Unit has a coherent settled accepted integration and every canonical dependency
   has its exact contribution. No later planning point, Sprint, or Epic action follows.
+- A recorded execution attention has no resolution movement in this Slice and permanently blocks
+  graph completion and both settlement facts, including after a source repair or reopen. Current
+  execution-state projection validates stored Work Unit/materialization/revision correlation
+  before updating it; it distinguishes ready, active, retry-authorized, handed-back, settled,
+  and attention from exact current facts.
 - Local deterministic validation: `cargo test --lib work_unit_dependency_wave -- --nocapture`
-  passed **6 tests** (multi-root/multi-level exact terminal facts, cycle attention, malformed
-  contribution rejection, eligibility waves, activation replay, and concurrent reopen settlement
-  replay). `cargo check --lib` passed. These checks do not prove live-provider behavior, user
-  acceptance, or broad suite compliance.
+  passed **10 tests** (multi-root/multi-level exact terminal facts, cycle and reachable-stall
+  attention, foreign/missing contribution endpoints, exact state matrix/correlation mismatch,
+  eligibility waves, activation replay, unresolved-attention replay, and concurrent reopen
+  settlement replay). `cargo check --lib` passed. These checks do not prove live-provider
+  behavior, user acceptance, or broad suite compliance.

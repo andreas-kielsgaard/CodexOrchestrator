@@ -2077,19 +2077,30 @@ impl SprintRunnerTransitionService {
             reconcile_work_slice_execution_settlement(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
         }
         let Some(handler) = self.work_unit_handler.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Work Unit Handler registry is poisoned".into()))?.clone() else { return Ok(()) };
-        let units = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare(
-            "SELECT u.work_unit_id,u.materialization_id,m.sprint_id FROM work_units u JOIN work_unit_materializations m ON m.materialization_id=u.materialization_id WHERE m.settled_at IS NOT NULL ORDER BY m.sprint_id,u.lane_ordinal,u.work_unit_id"
-        ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?.query_map([], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?))).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?.collect::<Result<Vec<_>,_>>().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        for (work_unit, materialization, sprint) in units {
-            self.reconcile_work_unit_handler(&handler, &work_unit, &materialization, &sprint)?;
+        // A pass can settle accepted integration effects and make a later dependency generation
+        // eligible. Drain one follow-up generation in this activation; later asynchronous
+        // Handler/Implementer outcomes require their own durable notification or reopen pass.
+        for _generation in 0..2 {
+            let units = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare(
+                "SELECT u.work_unit_id,u.materialization_id,m.sprint_id FROM work_units u JOIN work_unit_materializations m ON m.materialization_id=u.materialization_id WHERE m.settled_at IS NOT NULL ORDER BY m.sprint_id,u.lane_ordinal,u.work_unit_id"
+            ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?.query_map([], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?))).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?.collect::<Result<Vec<_>,_>>().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+            for (work_unit, materialization, sprint) in units {
+                self.reconcile_work_unit_handler(&handler, &work_unit, &materialization, &sprint)?;
+            }
+            self.reconcile_implementer_activations()?;
+            self.reconcile_work_unit_retries()?;
+            let mut connection = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;
+            reconcile_accepted_candidate_authorities(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
+            reconcile_accepted_integrations(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
+            reconcile_work_unit_dependency_wave(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
+            reconcile_work_slice_execution_settlement(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
+            let next_generation: bool = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM work_unit_dependency_activation_intents i LEFT JOIN work_unit_handler_activations h ON h.work_unit_id=i.work_unit_id AND h.materialization_id=i.materialization_id WHERE i.eligibility_state='eligible' AND h.work_unit_id IS NULL)",
+                [], |row| row.get(0),
+            ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+            if !next_generation { break; }
         }
-        self.reconcile_implementer_activations()?;
-        self.reconcile_work_unit_retries()?;
-        let mut connection = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;
-        reconcile_accepted_candidate_authorities(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
-        reconcile_accepted_integrations(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
-        reconcile_work_unit_dependency_wave(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
-        reconcile_work_slice_execution_settlement(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)
+        Ok(())
     }
 
     /// A persisted request is replayed through the same authenticated continuation boundary.
