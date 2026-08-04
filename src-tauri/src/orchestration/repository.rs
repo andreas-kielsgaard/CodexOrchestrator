@@ -1161,6 +1161,8 @@ impl SqliteOrchestrationRepository {
         let materialization_tables = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_materializations')", [], |row| row.get::<_, bool>(0)).map_err(|e| e.to_string())?;
         let work_unit_materializations = if materialization_tables { collect(&connection, "SELECT materialization_id,planning_point_id,accepted_revision_id,epic_id,sprint_id,work_slice_id,authorization_recorded_at,attempt_recorded_at,work_units_created_at,relationships_completed_at,settled_at FROM work_unit_materializations ORDER BY authorization_recorded_at,materialization_id", |row| Ok(WorkUnitMaterializationDto { materialization_id:row.get(0)?, planning_point_id:row.get(1)?, accepted_revision_id:row.get(2)?, epic_id:row.get(3)?, sprint_id:row.get(4)?, work_slice_id:row.get(5)?, authorization_recorded_at:row.get(6)?, attempt_recorded_at:row.get(7)?, work_units_created_at:row.get(8)?, relationships_completed_at:row.get(9)?, settled_at:row.get(10)? }))? } else { Vec::new() };
         let handler_activation_tables = materialization_tables && connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_handler_activations')", [], |row| row.get::<_, bool>(0)).map_err(|e| e.to_string())?;
+        let dependency_intent_tables = materialization_tables && connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_dependency_activation_intents')", [], |row| row.get::<_, bool>(0)).map_err(|e| e.to_string())?;
+        let dependency_activation_intents = if dependency_intent_tables { collect(&connection, "SELECT work_unit_id,materialization_id,accepted_revision_id,eligibility_state,blocked_reason,eligibility_recorded_at,activation_intended_at FROM work_unit_dependency_activation_intents ORDER BY work_unit_id", |row| Ok(WorkUnitDependencyActivationIntentDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, accepted_revision_id:row.get(2)?, eligibility_state:row.get(3)?, blocked_reason:row.get(4)?, eligibility_recorded_at:row.get(5)?, activation_intended_at:row.get(6)? }))? } else { Vec::new() };
         let action_continuations = activation_rows(&connection, "work_unit_handler_action_continuations", "attempt_id,handler_session_id,original_handler_invocation_id,action_invocation_id,action_harness_revision_id,action_harness_configuration_digest,action_harness_repository_commit_ref,requested_at,authorized_at,invocation_prepared_at,harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,action_ready_at,blocked_reason,failure_reason", |row| Ok(WorkUnitHandlerActionContinuationDto { attempt_id:row.get(1)?, handler_session_id:row.get(2)?, original_handler_invocation_id:row.get(3)?, action_invocation_id:row.get(4)?, action_harness_revision_id:row.get(5)?, action_harness_configuration_digest:row.get(6)?, action_harness_repository_commit_ref:row.get(7)?, requested_at:row.get(8)?, authorized_at:row.get(9)?, invocation_prepared_at:row.get(10)?, harness_bound_at:row.get(11)?, launch_requested_at:row.get(12)?, launch_accepted_at:row.get(13)?, provider_activation_observed_at:row.get(14)?, action_ready_at:row.get(15)?, blocked_reason:row.get(16)?, failure_reason:row.get(17)? }))?;
         let implementer_activations = activation_rows(&connection, "work_unit_implementer_activations", "attempt_id,handler_invocation_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at,authorized_at,execution_support_granted_at,isolated_worktree_ready_at,implementer_session_created_at,implementer_invocation_prepared_at,implementer_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,implementer_ready_at,failure_reason", map_implementer_activation)?;
         let mut implementer_outcomes = implementer_outcome_rows(&connection)?;
@@ -1181,6 +1183,20 @@ impl SqliteOrchestrationRepository {
             work_unit.handler_decision = handler_decisions.get(&work_unit.work_unit_id).cloned();
             work_unit.integration = productive_integrations.remove(&work_unit.work_unit_id);
             validate_work_unit_activation_projection(work_unit)?;
+        }
+        if dependency_activation_intents.iter().any(|intent| !work_units.iter().any(|unit| unit.work_unit_id == intent.work_unit_id)) {
+            return Err("Dependency activation intent references an unknown Work Unit".into());
+        }
+        for intent in &dependency_activation_intents {
+            let unit = work_units.iter().find(|unit| unit.work_unit_id == intent.work_unit_id).unwrap();
+            if unit.materialization_id != intent.materialization_id || unit.accepted_revision_id != intent.accepted_revision_id {
+                return Err("Dependency activation intent has a foreign materialization or accepted revision".into());
+            }
+            match intent.eligibility_state.as_str() {
+                "blocked" if intent.blocked_reason.is_some() && intent.activation_intended_at.is_none() => {}
+                "eligible" if intent.blocked_reason.is_none() && intent.activation_intended_at.is_some() => {}
+                _ => return Err("Dependency activation intent has contradictory eligibility facts".into()),
+            }
         }
         if !implementer_outcomes.is_empty() {
             return Err("Implementer outcome references an unknown Work Unit".into());
@@ -1213,6 +1229,7 @@ impl SqliteOrchestrationRepository {
             work_unit_materializations,
             work_units,
             work_unit_relationships,
+            dependency_activation_intents,
         })
     }
 
@@ -2776,6 +2793,7 @@ pub(crate) struct NativeQueryV2 {
     work_unit_materializations: Vec<WorkUnitMaterializationDto>,
     work_units: Vec<WorkUnitDto>,
     work_unit_relationships: Vec<WorkUnitRelationshipDto>,
+    dependency_activation_intents: Vec<WorkUnitDependencyActivationIntentDto>,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2953,6 +2971,20 @@ struct WorkUnitDto {
     handler_decision: Option<WorkUnitHandlerDecisionDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     integration: Option<WorkUnitIntegrationDto>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitDependencyActivationIntentDto {
+    work_unit_id: String,
+    materialization_id: String,
+    accepted_revision_id: String,
+    eligibility_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    blocked_reason: Option<String>,
+    eligibility_recorded_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    activation_intended_at: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

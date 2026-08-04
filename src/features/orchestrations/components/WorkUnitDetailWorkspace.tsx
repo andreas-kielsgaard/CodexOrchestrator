@@ -97,6 +97,7 @@ export function WorkUnitDetailWorkspace({
           <p>{unit.summary}</p>
           <p>{unit.details}</p>
           {(unit.handlerActivation ||
+            unit.dependencyActivationIntent ||
             unit.actionContinuation ||
             unit.implementerActivation ||
             unit.implementerOutcome ||
@@ -105,6 +106,9 @@ export function WorkUnitDetailWorkspace({
             unit.integration) && (
             <section className="work-unit-activation" aria-label="Work Unit activation activity">
               <h2>Activation activity</h2>
+              {unit.dependencyActivationIntent && (
+                <p>{dependencyActivationActivity(unit.dependencyActivationIntent)}</p>
+              )}
               {unit.handlerActivation && <p>{handlerActivity(unit.handlerActivation)}</p>}
               {unit.actionContinuation && (
                 <p>{actionContinuationActivity(unit.actionContinuation)}</p>
@@ -302,6 +306,18 @@ function handlerActivity(
   return activation.providerActivityObserved
     ? `${detail} Provider activity is observed separately.`
     : detail;
+}
+
+function dependencyActivationActivity(
+  intent: NonNullable<
+    SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['dependencyActivationIntent']
+  >,
+) {
+  if (intent.eligibilityState === 'blocked')
+    return `Dependency activation is factually blocked: ${intent.blockedReason}.`;
+  return intent.activationIntendedAt
+    ? 'Dependencies are eligible and Handler activation intent is durably recorded.'
+    : 'Dependencies are eligible; activation intent is not recorded.';
 }
 
 function actionContinuationActivity(

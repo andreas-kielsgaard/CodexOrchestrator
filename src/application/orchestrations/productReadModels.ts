@@ -166,6 +166,11 @@ export interface ProductReadReferenceIndexV1 {
     readonly summary: string;
     readonly details: string;
     readonly source: ReadSourceAuthorityV1;
+    readonly dependencyActivationIntent?: {
+      readonly eligibilityState: 'blocked' | 'eligible';
+      readonly blockedReason?: string;
+      readonly activationIntendedAt?: string;
+    };
     readonly handlerActivation?: ProductWorkUnitHandlerActivationV1;
     readonly actionContinuation?: ProductWorkUnitActionContinuationV1;
     readonly implementerActivation?: ProductWorkUnitImplementerActivationV1;
@@ -502,6 +507,11 @@ export interface ProductSprintRevisionViewV1 {
     readonly summary: string;
     readonly details: string;
     readonly source: ReadSourceAuthorityV1;
+    readonly dependencyActivationIntent?: {
+      readonly eligibilityState: 'blocked' | 'eligible';
+      readonly blockedReason?: string;
+      readonly activationIntendedAt?: string;
+    };
     readonly handlerActivation?: ProductWorkUnitHandlerActivationV1;
     readonly actionContinuation?: ProductWorkUnitActionContinuationV1;
     readonly implementerActivation?: ProductWorkUnitImplementerActivationV1;

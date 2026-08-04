@@ -1668,6 +1668,7 @@ fn canonical_populated_query() -> NativeQueryV2 {
         work_unit_materializations: vec![],
         work_units: vec![],
         work_unit_relationships: vec![],
+        dependency_activation_intents: vec![],
     }
 }
 

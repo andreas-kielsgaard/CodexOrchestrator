@@ -34,6 +34,16 @@ export interface OrchestrationNativeQueryV2 {
   readonly workUnitMaterializations: readonly NativeWorkUnitMaterializationV1[];
   readonly workUnits: readonly NativeMaterializedWorkUnitV1[];
   readonly workUnitRelationships: readonly NativeWorkUnitRelationshipV1[];
+  readonly dependencyActivationIntents: readonly NativeWorkUnitDependencyActivationIntentV1[];
+}
+export interface NativeWorkUnitDependencyActivationIntentV1 {
+  readonly workUnitId: string;
+  readonly materializationId: string;
+  readonly acceptedRevisionId: string;
+  readonly eligibilityState: 'blocked' | 'eligible';
+  readonly blockedReason?: string;
+  readonly eligibilityRecordedAt: string;
+  readonly activationIntendedAt?: string;
 }
 export interface NativeWorkUnitMaterializationV1 {
   readonly materializationId: string;
@@ -291,6 +301,7 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
       'workUnitMaterializations',
       'workUnits',
       'workUnitRelationships',
+      'dependencyActivationIntents',
     ],
     'native query',
   );
@@ -332,6 +343,12 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
       root.workUnitRelationships === undefined
         ? []
         : array(root.workUnitRelationships, 'workUnitRelationships').map(workUnitRelationship),
+    dependencyActivationIntents:
+      root.dependencyActivationIntents === undefined
+        ? []
+        : array(root.dependencyActivationIntents, 'dependencyActivationIntents').map(
+            dependencyActivationIntent,
+          ),
   };
   validate(query);
   return query;
@@ -409,6 +426,9 @@ export function nativeQueryProductCompositionInputV2(
       materialization.materializationId,
       materialization,
     ]),
+  );
+  const dependencyIntentByWorkUnitId = new Map(
+    query.dependencyActivationIntents.map((intent) => [intent.workUnitId, intent]),
   );
   const events = {
     version: ORCHESTRATION_EVENTS_V1,
@@ -583,6 +603,9 @@ export function nativeQueryProductCompositionInputV2(
         summary: unit.specification,
         details: `Accepted Work Slice revision ${unit.acceptedRevisionId}; lane ${unit.laneOrdinal + 1}.${handlerActivationDetail(unit.handlerActivation)}`,
         source: source(unit.materializationId),
+        ...(dependencyIntentByWorkUnitId.has(unit.workUnitId)
+          ? { dependencyActivationIntent: dependencyIntentByWorkUnitId.get(unit.workUnitId) }
+          : {}),
         ...(unit.handlerActivation
           ? { handlerActivation: handlerActivationPresentation(unit.handlerActivation) }
           : {}),
@@ -1221,6 +1244,24 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
     ...(x.integration === undefined
       ? {}
       : { integration: workUnitIntegration(x.integration) }),
+  };
+};
+const dependencyActivationIntent = (value: unknown): NativeWorkUnitDependencyActivationIntentV1 => {
+  const x = object(value, 'dependency activation intent');
+  keys(x, ['workUnitId', 'materializationId', 'acceptedRevisionId', 'eligibilityState', 'blockedReason', 'eligibilityRecordedAt', 'activationIntendedAt'], 'dependency activation intent');
+  const state = x.eligibilityState === 'blocked' || x.eligibilityState === 'eligible' ? x.eligibilityState : fail('invalid dependency eligibility state');
+  const blockedReason = x.blockedReason === undefined ? undefined : string(x.blockedReason, 'blockedReason');
+  const activationIntendedAt = x.activationIntendedAt === undefined ? undefined : string(x.activationIntendedAt, 'activationIntendedAt');
+  if (state === 'blocked' && !blockedReason) fail('blocked dependency intent requires a reason');
+  if (state === 'eligible' && (blockedReason || !activationIntendedAt)) fail('eligible dependency intent requires activation intent without a blocked reason');
+  return {
+    workUnitId: string(x.workUnitId, 'workUnitId'),
+    materializationId: string(x.materializationId, 'materializationId'),
+    acceptedRevisionId: string(x.acceptedRevisionId, 'acceptedRevisionId'),
+    eligibilityState: state,
+    ...(blockedReason ? { blockedReason } : {}),
+    eligibilityRecordedAt: string(x.eligibilityRecordedAt, 'eligibilityRecordedAt'),
+    ...(activationIntendedAt ? { activationIntendedAt } : {}),
   };
 };
 const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivationV1 => {
@@ -2553,9 +2594,17 @@ function validate(query: OrchestrationNativeQueryV2) {
   );
   unique(query.workUnits, (x) => x.workUnitId, 'materialized Work Unit ID');
   unique(query.workUnitRelationships, (x) => x.relationshipId, 'Work Unit relationship ID');
+  unique(query.dependencyActivationIntents, (x) => x.workUnitId, 'dependency activation intent Work Unit ID');
   const materializations = new Map(
     query.workUnitMaterializations.map((x) => [x.materializationId, x]),
   );
+  const units = new Map(query.workUnits.map((unit) => [unit.workUnitId, unit]));
+  query.dependencyActivationIntents.forEach((intent) => {
+    const unit = units.get(intent.workUnitId);
+    const materialization = materializations.get(intent.materializationId);
+    if (!unit || !materialization || unit.materializationId !== intent.materializationId || unit.acceptedRevisionId !== intent.acceptedRevisionId || materialization.acceptedRevisionId !== intent.acceptedRevisionId)
+      fail('dependency activation intent has invalid Work Unit/materialization/revision correlation');
+  });
   query.workUnitMaterializations.forEach((materialization) => {
     if (!query.initiatedEpics.some((epic) => epic.epicId === materialization.epicId))
       fail('Work Unit materialization references unknown Epic');

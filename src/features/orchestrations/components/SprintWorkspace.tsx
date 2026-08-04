@@ -557,6 +557,9 @@ export function WorkSlicePlannerBoundary({
   const handlerActivityWorkUnits = workUnits.filter(
     ({ handlerActivation }) => handlerActivation !== undefined,
   );
+  const dependencyActivityWorkUnits = workUnits.filter(
+    ({ dependencyActivationIntent }) => dependencyActivationIntent !== undefined,
+  );
   const createdWorkUnits = hasCreatedWorkUnits(sprint);
   if (!transition?.workSlicePlannerRequestId) return null;
   const stage = (label: string, recorded: boolean) => (
@@ -613,10 +616,15 @@ export function WorkSlicePlannerBoundary({
               </li>
             ))}
           </ul>
-          {handlerActivityWorkUnits.length ? (
+          {handlerActivityWorkUnits.length || dependencyActivityWorkUnits.length ? (
             <section aria-label="Handler activation activity">
-              <h3>Handler activity</h3>
+              <h3>Dependency and Handler activity</h3>
               <ul>
+                {dependencyActivityWorkUnits.map((workUnit) => (
+                  <li key={`${workUnit.workUnitId}-dependency`}>
+                    {workUnit.title}: {dependencyActivationActivityDetail(workUnit.dependencyActivationIntent!)}
+                  </li>
+                ))}
                 {handlerActivityWorkUnits.map((workUnit) => (
                   <li key={workUnit.workUnitId}>
                     {workUnit.title}: {handlerActivationActivityDetail(workUnit.handlerActivation!)}
@@ -652,6 +660,18 @@ function handlerActivationActivityDetail(
     launch_accepted: `Handler launch accepted; application Handler readiness is not yet recorded.${providerObservation}`,
     handler_ready: `Handler launch accepted and application Handler readiness recorded.${providerObservation}`,
   }[activation.stage];
+}
+
+function dependencyActivationActivityDetail(
+  intent: NonNullable<
+    SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['dependencyActivationIntent']
+  >,
+) {
+  return intent.eligibilityState === 'blocked'
+    ? `Dependency activation blocked: ${intent.blockedReason}.`
+    : intent.activationIntendedAt
+      ? 'Dependencies eligible; Handler activation intent recorded.'
+      : 'Dependencies eligible; Handler activation intent not recorded.';
 }
 
 export function SprintRunnerActivationObservation({
