@@ -1159,12 +1159,13 @@ impl SqliteOrchestrationRepository {
         let mut implementer_outcomes = implementer_outcome_rows(&connection)?;
         let mut handler_reviews = handler_review_rows(&connection)?;
         let mut handler_decisions = handler_decision_rows(&connection)?;
+        let mut incomplete_dispositions = incomplete_disposition_rows(&connection)?;
         let mut retry_attempts = retry_attempt_rows(&connection)?;
         let mut work_units = if handler_activation_tables { collect(&connection, "SELECT u.work_unit_id,u.materialization_id,u.work_slice_id,u.accepted_revision_id,u.lane_ordinal,u.lane_title,u.specification,a.attempt_id,a.handler_session_id,a.handler_invocation_id,a.handler_harness_revision_id,a.handler_harness_configuration_digest,a.handler_harness_repository_commit_ref,a.eligibility_state,a.blocked_reason,a.requested_at,a.authorized_at,a.attempt_created_at,a.execution_support_granted_at,a.isolated_worktree_ready_at,a.handler_session_created_at,a.handler_invocation_prepared_at,a.handler_harness_bound_at,a.launch_requested_at,a.launch_accepted_at,a.provider_activation_observed_at,a.handler_ready_at FROM work_units u LEFT JOIN work_unit_handler_activations a ON a.work_unit_id=u.work_unit_id ORDER BY u.materialization_id,u.lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation: match row.get::<_,Option<String>>(7)? { Some(attempt_id) => Some(WorkUnitHandlerActivationDto { attempt_id, handler_session_id:row.get(8)?, handler_invocation_id:row.get(9)?, handler_harness_revision_id:row.get(10)?, handler_harness_configuration_digest:row.get(11)?, handler_harness_repository_commit_ref:row.get(12)?, eligibility_state:row.get(13)?, blocked_reason:row.get(14)?, requested_at:row.get(15)?, authorized_at:row.get(16)?, attempt_created_at:row.get(17)?, execution_support_granted_at:row.get(18)?, isolated_worktree_ready_at:row.get(19)?, handler_session_created_at:row.get(20)?, handler_invocation_prepared_at:row.get(21)?, handler_harness_bound_at:row.get(22)?, launch_requested_at:row.get(23)?, launch_accepted_at:row.get(24)?, provider_activation_observed_at:row.get(25)?, handler_ready_at:row.get(26)? }), None => None }, action_continuation:None, implementer_activation:None, attempt_history:Vec::new(), retry_attempts:Vec::new() }))? } else if materialization_tables { collect(&connection, "SELECT work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification FROM work_units ORDER BY materialization_id,lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation:None, action_continuation:None, implementer_activation:None, attempt_history:Vec::new(), retry_attempts:Vec::new() }))? } else { Vec::new() };
         for work_unit in &mut work_units {
             work_unit.action_continuation = action_continuations.get(&work_unit.work_unit_id).cloned();
             work_unit.implementer_activation = implementer_activations.get(&work_unit.work_unit_id).cloned();
-            work_unit.attempt_history = implementer_outcomes.remove(&work_unit.work_unit_id).unwrap_or_default().into_iter().map(|(ordinal, outcome)| WorkUnitAttemptHistoryDto { ordinal, attempt_id: outcome.attempt_id.clone(), implementer_outcome: Some(outcome), handler_review: None, handler_decision: None }).collect();
+            work_unit.attempt_history = implementer_outcomes.remove(&work_unit.work_unit_id).unwrap_or_default().into_iter().map(|(ordinal, outcome)| WorkUnitAttemptHistoryDto { ordinal, attempt_id: outcome.attempt_id.clone(), implementer_outcome: Some(outcome), handler_review: None, handler_decision: None, incomplete_disposition: None }).collect();
             for review in handler_reviews.remove(&work_unit.work_unit_id).unwrap_or_default() {
                 let member = work_unit.attempt_history.iter_mut().find(|member| member.attempt_id == review.attempt_id).ok_or_else(|| "Handler review references an unknown Implementer attempt".to_string())?;
                 member.handler_review = Some(review);
@@ -1172,6 +1173,10 @@ impl SqliteOrchestrationRepository {
             for decision in handler_decisions.remove(&work_unit.work_unit_id).unwrap_or_default() {
                 let member = work_unit.attempt_history.iter_mut().find(|member| member.attempt_id == decision.attempt_id).ok_or_else(|| "Handler decision references an unknown Implementer attempt".to_string())?;
                 member.handler_decision = Some(decision);
+            }
+            for disposition in incomplete_dispositions.remove(&work_unit.work_unit_id).unwrap_or_default() {
+                let member = work_unit.attempt_history.iter_mut().find(|member| member.attempt_id == disposition.attempt_id).ok_or_else(|| "incomplete disposition references an unknown Implementer attempt".to_string())?;
+                member.incomplete_disposition = Some(disposition);
             }
             work_unit.retry_attempts = retry_attempts.remove(&work_unit.work_unit_id).unwrap_or_default();
             validate_attempt_history_projection(work_unit)?;
@@ -1185,6 +1190,9 @@ impl SqliteOrchestrationRepository {
         }
         if !handler_decisions.is_empty() {
             return Err("Handler decision references an unknown Work Unit".into());
+        }
+        if !incomplete_dispositions.is_empty() {
+            return Err("incomplete disposition references an unknown Work Unit".into());
         }
         if !retry_attempts.is_empty() {
             return Err("retry attempt references an unknown Work Unit".into());
@@ -2946,6 +2954,8 @@ struct WorkUnitAttemptHistoryDto {
     handler_review: Option<WorkUnitHandlerReviewDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     handler_decision: Option<WorkUnitHandlerDecisionDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    incomplete_disposition: Option<WorkUnitIncompleteDispositionDto>,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -3315,6 +3325,38 @@ struct WorkUnitHandlerDecisionDto {
     settlement_ready_at: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkUnitIncompleteDispositionClassificationDto { RefinementNeeded, FunctionalObjectiveNotSatisfied, Blocked }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitNoProgressHandbackDto {
+    handback_id: String,
+    source_attempt_id: String,
+    source_review_invocation_id: String,
+    context_fingerprint: String,
+    persisted_at: String,
+    delivery_intended_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sprint_runner_receiver_activated_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sprint_runner_receiver_decision_at: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitIncompleteDispositionDto {
+    attempt_id: String,
+    review_invocation_id: String,
+    decision_fingerprint: String,
+    classification: WorkUnitIncompleteDispositionClassificationDto,
+    meaningful_progress: bool,
+    recorded_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_attempt_authorized_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    no_progress_handback: Option<WorkUnitNoProgressHandbackDto>,
+}
+
 fn map_implementer_outcome(row: &Row<'_>) -> Result<WorkUnitImplementerOutcomeDto, rusqlite::Error> {
     let summary: Option<String> = row.get(14)?;
     let variant: Option<String> = row.get(15)?;
@@ -3569,6 +3611,18 @@ fn validate_attempt_history_projection(work_unit: &WorkUnitDto) -> Result<(), St
                 (WorkUnitHandlerReviewJudgmentVariantDto::Accept, WorkUnitHandlerDecisionVariantDto::Accepted) => {}
                 (WorkUnitHandlerReviewJudgmentVariantDto::Return, WorkUnitHandlerDecisionVariantDto::Returned) => {}
                 _ => return Err("Handler decision contradicts its attempt judgment".into()),
+            }
+        }
+        if let Some(disposition) = &member.incomplete_disposition {
+            let review = member.handler_review.as_ref().ok_or_else(|| "incomplete disposition lacks its attempt review".to_string())?;
+            let decision = member.handler_decision.as_ref().ok_or_else(|| "incomplete disposition lacks its final decision".to_string())?;
+            if disposition.attempt_id != member.attempt_id || disposition.review_invocation_id != review.review_invocation_id || disposition.decision_fingerprint != decision.fingerprint || !matches!(decision.variant, WorkUnitHandlerDecisionVariantDto::Returned) {
+                return Err("incomplete disposition has foreign attempt-review-decision correlation".into());
+            }
+            if disposition.meaningful_progress {
+                if disposition.next_attempt_authorized_at.is_none() || disposition.no_progress_handback.is_some() { return Err("meaningful-progress disposition has incoherent later effects".into()); }
+            } else if disposition.next_attempt_authorized_at.is_some() || disposition.no_progress_handback.is_none() {
+                return Err("no-progress disposition has incoherent authorization or handback".into());
             }
         }
     }
@@ -4185,6 +4239,45 @@ fn handler_decision_rows(
     Ok(result)
 }
 
+fn incomplete_disposition_rows(
+    connection: &Connection,
+) -> Result<std::collections::HashMap<String, Vec<WorkUnitIncompleteDispositionDto>>, String> {
+    let exists = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_handler_incomplete_dispositions')", [], |row| row.get::<_, bool>(0)).map_err(|error| error.to_string())?;
+    if !exists { return Ok(std::collections::HashMap::new()); }
+    let mut statement = connection.prepare(
+        "SELECT d.work_unit_id,d.attempt_id,d.review_invocation_id,d.decision_fingerprint,d.classification,d.meaningful_progress,d.recorded_at,d.next_attempt_authorized_at,h.handback_id,h.source_attempt_id,h.source_review_invocation_id,h.context_json,h.context_fingerprint,h.persisted_at,h.delivery_intended_at,h.sprint_runner_receiver_activated_at,h.sprint_runner_receiver_decision_at FROM work_unit_handler_incomplete_dispositions d LEFT JOIN work_unit_no_progress_handbacks h ON h.source_attempt_id=d.attempt_id AND h.source_review_invocation_id=d.review_invocation_id AND h.decision_fingerprint=d.decision_fingerprint"
+    ).map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| {
+        let classification = match row.get::<_, String>(4)?.as_str() {
+            "refinement_needed" => WorkUnitIncompleteDispositionClassificationDto::RefinementNeeded,
+            "functional_objective_not_satisfied" => WorkUnitIncompleteDispositionClassificationDto::FunctionalObjectiveNotSatisfied,
+            "blocked" => WorkUnitIncompleteDispositionClassificationDto::Blocked,
+            _ => return Err(to_sql_error("invalid incomplete disposition classification".into())),
+        };
+        let meaningful_progress = match row.get::<_, i64>(5)? { 0 => false, 1 => true, _ => return Err(to_sql_error("invalid incomplete disposition progress judgment".into())) };
+        let next_attempt_authorized_at: Option<String> = row.get(7)?;
+        if meaningful_progress != next_attempt_authorized_at.is_some() { return Err(to_sql_error("incomplete disposition authorization contradicts progress judgment".into())); }
+        let handback = match (row.get::<_, Option<String>>(8)?, row.get::<_, Option<String>>(9)?, row.get::<_, Option<String>>(10)?, row.get::<_, Option<String>>(11)?, row.get::<_, Option<String>>(12)?, row.get::<_, Option<String>>(13)?, row.get::<_, Option<String>>(14)?, row.get::<_, Option<String>>(15)?, row.get::<_, Option<String>>(16)?) {
+            (None,None,None,None,None,None,None,None,None) => None,
+            (Some(handback_id),Some(source_attempt_id),Some(source_review_invocation_id),Some(context_json),Some(context_fingerprint),Some(persisted_at),Some(delivery_intended_at),receiver_activated,receiver_decision) => {
+                if meaningful_progress || receiver_activated.is_some() || receiver_decision.is_some() || source_attempt_id != row.get::<_, String>(1)? || source_review_invocation_id != row.get::<_, String>(2)? || context_fingerprint != projection_stable_id("work-unit-no-progress-handback-context", &context_json) || serde_json::from_str::<serde_json::Value>(&context_json).is_err() { return Err(to_sql_error("no-progress handback is incoherent".into())); }
+                Some(WorkUnitNoProgressHandbackDto { handback_id, source_attempt_id, source_review_invocation_id, context_fingerprint, persisted_at, delivery_intended_at, sprint_runner_receiver_activated_at: receiver_activated, sprint_runner_receiver_decision_at: receiver_decision })
+            }
+            _ => return Err(to_sql_error("no-progress handback bundle is partial".into())),
+        };
+        if !meaningful_progress && handback.is_none() { return Err(to_sql_error("no-progress disposition lacks its Work Unit handback".into())); }
+        Ok((row.get::<_, String>(0)?, WorkUnitIncompleteDispositionDto { attempt_id: row.get(1)?, review_invocation_id: row.get(2)?, decision_fingerprint: row.get(3)?, classification, meaningful_progress, recorded_at: row.get(6)?, next_attempt_authorized_at, no_progress_handback: handback }))
+    }).map_err(|error| error.to_string())?;
+    let mut result = std::collections::HashMap::new();
+    for row in rows {
+        let (work_unit_id, disposition) = row.map_err(|error| error.to_string())?;
+        let entries = result.entry(work_unit_id).or_insert_with(Vec::new);
+        if entries.iter().any(|existing: &WorkUnitIncompleteDispositionDto| existing.attempt_id == disposition.attempt_id) { return Err("incomplete disposition history has duplicate attempt identity".into()); }
+        entries.push(disposition);
+    }
+    Ok(result)
+}
+
 fn map_handler_review(row: &Row<'_>) -> Result<WorkUnitHandlerReviewDto, rusqlite::Error> {
     let payload_json: String = row.get(16)?;
     let payload: PersistedHandlerReviewPayload = serde_json::from_str(&payload_json)
@@ -4320,7 +4413,7 @@ fn map_handler_decision(row: &Row<'_>) -> Result<WorkUnitHandlerDecisionDto, rus
             && row.get::<_, Option<String>>(7)?.is_none() && row.get::<_, Option<String>>(8)?.is_none() =>
             WorkUnitHandlerDecisionVariantDto::Accepted,
         "returned" if reason.is_some() && row.get::<_, Option<String>>(6)?.is_none()
-            && row.get::<_, Option<String>>(7)?.is_some() && row.get::<_, Option<String>>(8)?.is_some() =>
+            && row.get::<_, Option<String>>(7)?.is_some() =>
             WorkUnitHandlerDecisionVariantDto::Returned,
         "accepted" | "returned" => return Err(to_sql_error("Handler decision facts contradict their variant".into())),
         _ => return Err(to_sql_error("invalid Handler decision variant".into())),

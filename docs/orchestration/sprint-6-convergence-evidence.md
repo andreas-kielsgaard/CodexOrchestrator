@@ -604,3 +604,27 @@ Frontend Vitest/type/build execution remains unproven because this checkout has 
 local fake runtime and SQLite connections. Live provider/desktop behavior, multi-process SQLite
 stress, integration, publication, and user acceptance remain unproven. No merge, push,
 settlement, Sprint Runner handback, or downstream activation occurred.
+
+## OPS-1: Durable incomplete disposition and Work Unit handback
+
+An incomplete Handler review now retains separate application-owned facts for its semantic
+return, bounded classification, meaningful-progress judgment, next-attempt authorization, and
+no-progress Work Unit handback. Classifications are `refinement_needed`,
+`functional_objective_not_satisfied`, or `blocked`. A meaningful-progress disposition may record
+one authorization for a later bounded attempt; it does not create, prepare, or launch one. A
+no-progress disposition records exactly one handback with its Work Unit, source attempt and
+review, bounded reason, progress judgment, and delivered evidence context. Its persistence and
+delivery intent are distinct from—and do not imply—Sprint Runner receiver activation or decision.
+
+Legacy ordinal-0/ordinal-1 return records retain their existing retry-required meaning during
+lossless decision-contract migration. New dispositions do not use that legacy retry trigger.
+Duplicate and concurrent matching submissions converge on the same judgment, disposition, and
+where applicable handback; divergent submissions conflict. Foreign correlations and partial or
+tampered durable bundles fail closed. The native query/read model rejects incoherent disposition,
+authorization, handback, or receiver-effect combinations.
+
+Validation in this worktree: `cargo check --manifest-path src-tauri/Cargo.toml` passed with the
+existing seven dead-code warnings. Focused meaningful-progress and no-progress regressions each
+passed **1 test / 337 filtered**. Frontend Vitest/type/build remains unproven because dependencies are absent;
+no live provider, Sprint Runner receiver, generalized attempt launch, ordinal-2 launch,
+integration, settlement, publication, or user acceptance was exercised.

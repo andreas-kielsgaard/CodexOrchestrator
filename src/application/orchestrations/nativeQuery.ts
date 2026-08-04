@@ -7,6 +7,7 @@ import type {
   ProductWorkUnitActionContinuationV1,
   ProductWorkUnitHandlerActivationV1,
   ProductWorkUnitHandlerDecisionV1,
+  ProductWorkUnitIncompleteDispositionV1,
   ProductWorkUnitHandlerReviewV1,
   ProductWorkUnitImplementerActivationV1,
   ProductWorkUnitImplementerOutcomeV1,
@@ -68,6 +69,7 @@ export interface NativeWorkUnitAttemptHistoryV1 {
   readonly implementerOutcome?: NativeWorkUnitImplementerOutcomeV1;
   readonly handlerReview?: NativeWorkUnitHandlerReviewV1;
   readonly handlerDecision?: NativeWorkUnitHandlerDecisionV1;
+  readonly incompleteDisposition?: NativeWorkUnitIncompleteDispositionV1;
 }
 export interface NativeWorkUnitHandlerActivationV1 {
   readonly attemptId: string;
@@ -134,6 +136,7 @@ export interface NativeWorkUnitImplementerActivationV1 {
 export type NativeWorkUnitImplementerOutcomeV1 = ProductWorkUnitImplementerOutcomeV1;
 export type NativeWorkUnitHandlerReviewV1 = ProductWorkUnitHandlerReviewV1;
 export type NativeWorkUnitHandlerDecisionV1 = ProductWorkUnitHandlerDecisionV1;
+export type NativeWorkUnitIncompleteDispositionV1 = ProductWorkUnitIncompleteDispositionV1;
 export type NativeWorkUnitRetryAttemptV1 = ProductWorkUnitRetryAttemptV1;
 export interface NativeWorkUnitRelationshipV1 {
   readonly relationshipId: string;
@@ -1226,7 +1229,7 @@ const workUnitAttemptHistory = (value: unknown): NativeWorkUnitAttemptHistoryV1 
   const x = object(value, 'Work Unit attempt history member');
   keys(
     x,
-    ['ordinal', 'attemptId', 'implementerOutcome', 'handlerReview', 'handlerDecision'],
+    ['ordinal', 'attemptId', 'implementerOutcome', 'handlerReview', 'handlerDecision', 'incompleteDisposition'],
     'Work Unit attempt history member',
   );
   if (!Number.isSafeInteger(x.ordinal) || (x.ordinal as number) < 0)
@@ -1241,6 +1244,9 @@ const workUnitAttemptHistory = (value: unknown): NativeWorkUnitAttemptHistoryV1 
     ...(x.handlerDecision === undefined
       ? {}
       : { handlerDecision: workUnitHandlerDecision(x.handlerDecision) }),
+    ...(x.incompleteDisposition === undefined
+      ? {}
+      : { incompleteDisposition: workUnitIncompleteDisposition(x.incompleteDisposition) }),
   };
 };
 const workUnitRetryAttempt = (value: unknown): NativeWorkUnitRetryAttemptV1 => {
@@ -2260,12 +2266,24 @@ const workUnitHandlerDecision = (value: unknown): NativeWorkUnitHandlerDecisionV
   if (result.variant === 'accepted') {
     if (returnReason || !result.implementationAcceptedAt || result.implementationReturnedAt || result.retryRequiredAt)
       fail('accepted Handler decision facts contradict their variant');
-  } else if (
-    !returnReason || !result.implementationReturnedAt || !result.retryRequiredAt || result.implementationAcceptedAt
-  ) {
+  } else if (!returnReason || !result.implementationReturnedAt || result.implementationAcceptedAt) {
     fail('returned Handler decision facts contradict their variant');
   }
   return result;
+};
+const workUnitIncompleteDisposition = (value: unknown): NativeWorkUnitIncompleteDispositionV1 => {
+  const x = object(value, 'Work Unit incomplete disposition');
+  keys(x, ['attemptId', 'reviewInvocationId', 'decisionFingerprint', 'classification', 'meaningfulProgress', 'recordedAt', 'nextAttemptAuthorizedAt', 'noProgressHandback'], 'Work Unit incomplete disposition');
+  if (!['refinement_needed', 'functional_objective_not_satisfied', 'blocked'].includes(x.classification as string) || typeof x.meaningfulProgress !== 'boolean') fail('invalid Work Unit incomplete disposition');
+  const nextAttemptAuthorizedAt = x.nextAttemptAuthorizedAt === undefined ? undefined : timestamp(x.nextAttemptAuthorizedAt, 'nextAttemptAuthorizedAt');
+  const noProgressHandback = x.noProgressHandback === undefined ? undefined : (() => {
+    const handback = object(x.noProgressHandback, 'no-progress Work Unit handback');
+    keys(handback, ['handbackId', 'sourceAttemptId', 'sourceReviewInvocationId', 'contextFingerprint', 'persistedAt', 'deliveryIntendedAt', 'sprintRunnerReceiverActivatedAt', 'sprintRunnerReceiverDecisionAt'], 'no-progress Work Unit handback');
+    if (handback.sprintRunnerReceiverActivatedAt !== undefined || handback.sprintRunnerReceiverDecisionAt !== undefined) fail('no-progress Work Unit handback has forbidden receiver effects');
+    return { handbackId: boundedString(handback.handbackId, 240, 'handbackId'), sourceAttemptId: boundedString(handback.sourceAttemptId, 240, 'sourceAttemptId'), sourceReviewInvocationId: boundedString(handback.sourceReviewInvocationId, 240, 'sourceReviewInvocationId'), contextFingerprint: boundedString(handback.contextFingerprint, 240, 'contextFingerprint'), persistedAt: timestamp(handback.persistedAt, 'persistedAt'), deliveryIntendedAt: timestamp(handback.deliveryIntendedAt, 'deliveryIntendedAt') };
+  })();
+  if (x.meaningfulProgress ? !nextAttemptAuthorizedAt || noProgressHandback : nextAttemptAuthorizedAt !== undefined || !noProgressHandback) fail('incomplete disposition has incoherent later effects');
+  return { attemptId: boundedString(x.attemptId, 240, 'incomplete disposition attemptId'), reviewInvocationId: boundedString(x.reviewInvocationId, 240, 'incomplete disposition reviewInvocationId'), decisionFingerprint: boundedString(x.decisionFingerprint, 240, 'incomplete disposition decisionFingerprint'), classification: x.classification as NativeWorkUnitIncompleteDispositionV1['classification'], meaningfulProgress: x.meaningfulProgress as boolean, recordedAt: timestamp(x.recordedAt, 'incomplete disposition recordedAt'), ...(nextAttemptAuthorizedAt ? { nextAttemptAuthorizedAt } : {}), ...(noProgressHandback ? { noProgressHandback } : {}) };
 };
 const workUnitRelationship = (value: unknown): NativeWorkUnitRelationshipV1 => {
   const x = object(value, 'Work Unit relationship');
@@ -2648,6 +2666,7 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
   }
   const review = originHistory?.handlerReview;
   const decision = originHistory?.handlerDecision;
+  const incompleteDisposition = originHistory?.incompleteDisposition;
   if (review) {
     if (!handler || handler.eligibilityState !== 'eligible')
       fail('Handler review requires an eligible Handler activation');
@@ -2696,6 +2715,22 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
       decision.recordedAt,
       'Handler decision',
     );
+  }
+  if (incompleteDisposition) {
+    if (!review || !decision || decision.variant !== 'returned')
+      fail('incomplete disposition requires a returned Handler decision');
+    if (
+      incompleteDisposition.attemptId !== originHistory?.attemptId ||
+      incompleteDisposition.reviewInvocationId !== review.reviewInvocationId ||
+      incompleteDisposition.decisionFingerprint !== decision.fingerprint
+    )
+      fail('incomplete disposition does not match its attempt, review, and decision');
+    if (incompleteDisposition.meaningfulProgress) {
+      if (!incompleteDisposition.nextAttemptAuthorizedAt || incompleteDisposition.noProgressHandback)
+        fail('meaningful-progress disposition has incoherent later effects');
+    } else if (incompleteDisposition.nextAttemptAuthorizedAt || !incompleteDisposition.noProgressHandback) {
+      fail('no-progress disposition has incoherent authorization or handback');
+    }
   }
   const retryOrdinals = new Set<number>();
   const retryAttemptIds = new Set<string>();

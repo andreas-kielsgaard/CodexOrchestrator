@@ -364,6 +364,26 @@ export type ProductWorkUnitHandlerDecisionV1 = Readonly<{
   readonly settlementReadyAt?: string;
 }>;
 
+export type ProductWorkUnitIncompleteDispositionV1 = Readonly<{
+  readonly attemptId: string;
+  readonly reviewInvocationId: string;
+  readonly decisionFingerprint: string;
+  readonly classification: 'refinement_needed' | 'functional_objective_not_satisfied' | 'blocked';
+  readonly meaningfulProgress: boolean;
+  readonly recordedAt: string;
+  readonly nextAttemptAuthorizedAt?: string;
+  readonly noProgressHandback?: Readonly<{
+    readonly handbackId: string;
+    readonly sourceAttemptId: string;
+    readonly sourceReviewInvocationId: string;
+    readonly contextFingerprint: string;
+    readonly persistedAt: string;
+    readonly deliveryIntendedAt: string;
+    readonly sprintRunnerReceiverActivatedAt?: string;
+    readonly sprintRunnerReceiverDecisionAt?: string;
+  }>;
+}>;
+
 export type ProductWorkUnitRetryAttemptV1 = Readonly<{
   readonly ordinal: number;
   readonly originAttemptId: string;
@@ -439,6 +459,7 @@ export type ProductWorkUnitAttemptHistoryV1 = Readonly<{
   readonly implementerOutcome?: ProductWorkUnitImplementerOutcomeV1;
   readonly handlerReview?: ProductWorkUnitHandlerReviewV1;
   readonly handlerDecision?: ProductWorkUnitHandlerDecisionV1;
+  readonly incompleteDisposition?: ProductWorkUnitIncompleteDispositionV1;
 }>;
 
 export interface ProductContinuationReadModelV1 {

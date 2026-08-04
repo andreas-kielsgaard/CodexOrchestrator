@@ -6010,6 +6010,44 @@ mod tests {
     }
 
     #[test]
+    fn meaningful_progress_disposition_authorizes_without_launching_later_work() {
+        let meaningful = ReportingFixture::new();
+        let review = meaningful.ready_review();
+        meaningful.transition.record_handler_incomplete_disposition_for_test(&review, crate::orchestration::sprint_runner_transition::HandlerReviewIncompleteDisposition {
+            code: "needs_refinement".into(), explanation: "the attempted approach can be refined".into(),
+            classification: crate::orchestration::sprint_runner_transition::IncompleteAttemptClassification::RefinementNeeded,
+            meaningful_progress: true,
+        }).unwrap();
+        meaningful.base.runtime.finish(&review, AgentInvocationTerminalStatus::Completed);
+        meaningful.transition.reconcile_handler_reviews_for_test().unwrap();
+        let connection = Connection::open(&meaningful.base.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_incomplete_dispositions WHERE meaningful_progress=1 AND next_attempt_authorized_at IS NOT NULL", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_retry_attempts", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_no_progress_handbacks", [], |row| row.get(0)).unwrap(), 0);
+
+    }
+
+    #[test]
+    fn no_progress_disposition_persists_one_handback_without_receiver_effects() {
+        let no_progress = ReportingFixture::new();
+        let review = no_progress.ready_review();
+        let disposition = crate::orchestration::sprint_runner_transition::HandlerReviewIncompleteDisposition {
+            code: "blocked_by_missing_input".into(), explanation: "a bounded input is unavailable".into(),
+            classification: crate::orchestration::sprint_runner_transition::IncompleteAttemptClassification::Blocked,
+            meaningful_progress: false,
+        };
+        no_progress.transition.record_handler_incomplete_disposition_for_test(&review, disposition.clone()).unwrap();
+        no_progress.transition.record_handler_incomplete_disposition_for_test(&review, disposition).unwrap();
+        no_progress.base.runtime.finish(&review, AgentInvocationTerminalStatus::Completed);
+        no_progress.transition.reconcile_handler_reviews_for_test().unwrap();
+        no_progress.transition.reconcile_handler_reviews_for_test().unwrap();
+        let connection = Connection::open(&no_progress.base.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_incomplete_dispositions WHERE meaningful_progress=0 AND next_attempt_authorized_at IS NULL", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_no_progress_handbacks WHERE sprint_runner_receiver_activated_at IS NULL AND sprint_runner_receiver_decision_at IS NULL", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_retry_attempts", [], |row| row.get(0)).unwrap(), 0);
+    }
+
+    #[test]
     fn implementer_reporting_exact_retries_replay_without_replacement_and_divergence_conflicts() {
         let fixture = ReportingFixture::new();
         let barrier = Arc::new(Barrier::new(2));

@@ -388,8 +388,44 @@ CREATE TABLE IF NOT EXISTS work_unit_handler_decisions (
   implementation_returned_at TEXT,
   retry_required_at TEXT,
   settlement_ready_at TEXT,
-  CHECK ((decision_variant='accepted' AND implementation_accepted_at IS NOT NULL AND implementation_returned_at IS NULL AND retry_required_at IS NULL) OR (decision_variant='returned' AND implementation_returned_at IS NOT NULL AND retry_required_at IS NOT NULL AND implementation_accepted_at IS NULL)),
+  CHECK ((decision_variant='accepted' AND implementation_accepted_at IS NOT NULL AND implementation_returned_at IS NULL AND retry_required_at IS NULL) OR (decision_variant='returned' AND implementation_returned_at IS NOT NULL AND implementation_accepted_at IS NULL)),
   CHECK (settlement_ready_at IS NULL)
+);
+-- A returned review is not itself a retry launch.  These facts are deliberately separate so a
+-- later bounded attempt or an upward reassessment cannot be inferred from Handler prose.
+CREATE TABLE IF NOT EXISTS work_unit_handler_incomplete_dispositions (
+  attempt_id TEXT PRIMARY KEY REFERENCES work_unit_implementer_outcomes(attempt_id) ON DELETE RESTRICT,
+  work_unit_id TEXT NOT NULL REFERENCES work_units(work_unit_id) ON DELETE RESTRICT,
+  review_invocation_id TEXT NOT NULL UNIQUE REFERENCES work_unit_handler_reviews(review_invocation_id) ON DELETE RESTRICT,
+  decision_fingerprint TEXT NOT NULL UNIQUE,
+  classification TEXT NOT NULL CHECK (classification IN ('refinement_needed','functional_objective_not_satisfied','blocked')),
+  meaningful_progress INTEGER NOT NULL CHECK (meaningful_progress IN (0,1)),
+  recorded_at TEXT NOT NULL,
+  next_attempt_authorized_at TEXT,
+  CHECK ((meaningful_progress=1 AND next_attempt_authorized_at IS NOT NULL) OR (meaningful_progress=0 AND next_attempt_authorized_at IS NULL))
+);
+CREATE TABLE IF NOT EXISTS work_unit_handler_incomplete_judgments (
+  review_invocation_id TEXT PRIMARY KEY REFERENCES work_unit_handler_reviews(review_invocation_id) ON DELETE RESTRICT,
+  attempt_id TEXT NOT NULL UNIQUE REFERENCES work_unit_implementer_outcomes(attempt_id) ON DELETE RESTRICT,
+  classification TEXT NOT NULL CHECK (classification IN ('refinement_needed','functional_objective_not_satisfied','blocked')),
+  meaningful_progress INTEGER NOT NULL CHECK (meaningful_progress IN (0,1)),
+  judgment_fingerprint TEXT NOT NULL UNIQUE,
+  recorded_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS work_unit_no_progress_handbacks (
+  handback_id TEXT PRIMARY KEY,
+  work_unit_id TEXT NOT NULL REFERENCES work_units(work_unit_id) ON DELETE RESTRICT,
+  source_attempt_id TEXT NOT NULL UNIQUE REFERENCES work_unit_implementer_outcomes(attempt_id) ON DELETE RESTRICT,
+  source_review_invocation_id TEXT NOT NULL UNIQUE REFERENCES work_unit_handler_reviews(review_invocation_id) ON DELETE RESTRICT,
+  decision_fingerprint TEXT NOT NULL UNIQUE,
+  classification TEXT NOT NULL CHECK (classification IN ('refinement_needed','functional_objective_not_satisfied','blocked')),
+  context_json TEXT NOT NULL CHECK (json_valid(context_json)),
+  context_fingerprint TEXT NOT NULL UNIQUE,
+  persisted_at TEXT NOT NULL,
+  delivery_intended_at TEXT NOT NULL,
+  sprint_runner_receiver_activated_at TEXT,
+  sprint_runner_receiver_decision_at TEXT,
+  CHECK (sprint_runner_receiver_activated_at IS NULL AND sprint_runner_receiver_decision_at IS NULL)
 );
 -- A returned ordinal-0 outcome can authorize exactly one correction attempt.  The private ref
 -- name and object ids never cross the native-query boundary.
@@ -713,6 +749,43 @@ CREATE TABLE work_unit_retry_attempts_history (
     }
 }
 
+fn migrate_handler_decision_retry_contract(connection: &Connection) -> Result<(), String> {
+    let schema: Option<String> = connection.query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name='work_unit_handler_decisions'", [], |row| row.get(0)).optional().map_err(|error| format!("inspect Handler decision schema: {error}"))?;
+    let Some(schema) = schema else { return Ok(()); };
+    if !schema.contains("retry_required_at IS NOT NULL") { return Ok(()); }
+    connection.execute_batch("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE;").map_err(|error| format!("begin Handler decision migration: {error}"))?;
+    let migrated = (|| -> Result<(), String> {
+        let count: i64 = connection.query_row("SELECT COUNT(*) FROM work_unit_handler_decisions", [], |row| row.get(0)).map_err(|error| format!("count Handler decisions: {error}"))?;
+        connection.execute_batch(r#"
+CREATE TABLE work_unit_handler_decisions_contract_history (
+  review_invocation_id TEXT PRIMARY KEY REFERENCES work_unit_handler_reviews(review_invocation_id) ON DELETE RESTRICT,
+  attempt_id TEXT NOT NULL UNIQUE REFERENCES work_unit_implementer_outcomes(attempt_id) ON DELETE RESTRICT,
+  work_unit_id TEXT NOT NULL REFERENCES work_units(work_unit_id) ON DELETE RESTRICT,
+  decision_variant TEXT NOT NULL CHECK (decision_variant IN ('accepted','returned')),
+  decision_fingerprint TEXT NOT NULL UNIQUE,
+  return_reason_json TEXT CHECK (return_reason_json IS NULL OR json_valid(return_reason_json)),
+  decision_recorded_at TEXT NOT NULL,
+  implementation_accepted_at TEXT,
+  implementation_returned_at TEXT,
+  retry_required_at TEXT,
+  settlement_ready_at TEXT,
+  CHECK ((decision_variant='accepted' AND implementation_accepted_at IS NOT NULL AND implementation_returned_at IS NULL AND retry_required_at IS NULL) OR (decision_variant='returned' AND implementation_returned_at IS NOT NULL AND implementation_accepted_at IS NULL)),
+  CHECK (settlement_ready_at IS NULL)
+);
+INSERT INTO work_unit_handler_decisions_contract_history SELECT review_invocation_id,attempt_id,work_unit_id,decision_variant,decision_fingerprint,return_reason_json,decision_recorded_at,implementation_accepted_at,implementation_returned_at,retry_required_at,settlement_ready_at FROM work_unit_handler_decisions;
+DROP TABLE work_unit_handler_decisions;
+ALTER TABLE work_unit_handler_decisions_contract_history RENAME TO work_unit_handler_decisions;
+"#).map_err(|error| format!("rebuild Handler decision schema: {error}"))?;
+        let copied: i64 = connection.query_row("SELECT COUNT(*) FROM work_unit_handler_decisions", [], |row| row.get(0)).map_err(|error| format!("count rebuilt Handler decisions: {error}"))?;
+        if copied != count { return Err("Handler decision migration copy was incomplete".into()); }
+        Ok(())
+    })();
+    match migrated {
+        Ok(()) => connection.execute_batch("COMMIT; PRAGMA foreign_keys=ON;").map_err(|error| format!("commit Handler decision migration: {error}")),
+        Err(error) => { let _ = connection.execute_batch("ROLLBACK; PRAGMA foreign_keys=ON;"); Err(error) }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SprintRunnerSelection {
@@ -778,6 +851,20 @@ struct ImplementationEvidenceSnapshot { manifest_json: String, comparison_finger
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct HandlerReviewReturnReason { pub(crate) code: String, pub(crate) explanation: String }
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum IncompleteAttemptClassification { RefinementNeeded, FunctionalObjectiveNotSatisfied, Blocked }
+impl IncompleteAttemptClassification {
+    fn as_str(&self) -> &'static str { match self { Self::RefinementNeeded => "refinement_needed", Self::FunctionalObjectiveNotSatisfied => "functional_objective_not_satisfied", Self::Blocked => "blocked" } }
+}
+#[derive(Clone, Debug, Deserialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct HandlerReviewIncompleteDisposition {
+    pub(crate) code: String,
+    pub(crate) explanation: String,
+    pub(crate) classification: IncompleteAttemptClassification,
+    pub(crate) meaningful_progress: bool,
+}
 #[derive(Clone)]
 struct HandlerReviewContext { work_unit_id:String, attempt_id:String, handler_authority_attempt_id:String, session_id:String, review_invocation_id:String, revision_id:String, configuration_digest:String, repository_commit_ref:String, delivered_payload_json:String, delivered_payload_fingerprint:String }
 #[derive(Clone)]
@@ -1042,6 +1129,8 @@ impl SprintRunnerTransitionService {
             .map_err(SprintRunnerTransitionError::Unavailable)?;
         migrate_work_unit_retry_attempt_history(&connection)
             .map_err(SprintRunnerTransitionError::Unavailable)?;
+        migrate_handler_decision_retry_contract(&connection)
+            .map_err(SprintRunnerTransitionError::Unavailable)?;
         let authority_repository = SqliteOrchestrationRepository::open(path)
             .map_err(|error| SprintRunnerTransitionError::Unavailable(format!("open Sprint Git authority repository: {error}")))?;
         let service = Arc::new(Self {
@@ -1113,6 +1202,16 @@ impl SprintRunnerTransitionService {
         let invocation = AgentInvocationId::new(invocation_id.to_owned())
             .map_err(|_| SprintRunnerTransitionError::Forbidden)?;
         self.record_handler_review_judgment(&invocation, variant, reason)
+    }
+    #[cfg(test)]
+    pub(crate) fn record_handler_incomplete_disposition_for_test(
+        &self,
+        invocation_id: &str,
+        disposition: HandlerReviewIncompleteDisposition,
+    ) -> Result<(), SprintRunnerTransitionError> {
+        let invocation = AgentInvocationId::new(invocation_id.to_owned())
+            .map_err(|_| SprintRunnerTransitionError::Forbidden)?;
+        self.record_handler_incomplete_disposition(&invocation, disposition)
     }
 
     #[cfg(test)]
@@ -2178,20 +2277,40 @@ impl SprintRunnerTransitionService {
     }
 
     fn record_handler_review_judgment(&self, invocation: &AgentInvocationId, variant: &str, reason: Option<HandlerReviewReturnReason>) -> Result<(), SprintRunnerTransitionError> {
+        self.record_handler_review_judgment_inner(invocation, variant, reason, None)
+    }
+
+    fn record_handler_incomplete_disposition(&self, invocation: &AgentInvocationId, disposition: HandlerReviewIncompleteDisposition) -> Result<(), SprintRunnerTransitionError> {
+        validate_handler_review_return(&HandlerReviewReturnReason { code: disposition.code.clone(), explanation: disposition.explanation.clone() })?;
+        self.record_handler_review_judgment_inner(invocation, "return", Some(HandlerReviewReturnReason { code: disposition.code, explanation: disposition.explanation }), Some((disposition.classification, disposition.meaningful_progress)))
+    }
+
+    fn record_handler_review_judgment_inner(&self, invocation: &AgentInvocationId, variant: &str, reason: Option<HandlerReviewReturnReason>, incomplete: Option<(IncompleteAttemptClassification, bool)>) -> Result<(), SprintRunnerTransitionError> {
+        if (variant == "return" && reason.is_none()) || (variant != "return" && (reason.is_some() || incomplete.is_some())) { return Err(SprintRunnerTransitionError::Invalid); }
         let context = self.handler_review_context(invocation, true)?;
         let reason = reason.map(|value| serde_json::to_string(&value).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))).transpose()?;
+        let incomplete_fingerprint = incomplete.as_ref().map(|(classification, meaningful_progress)| stable_id("work-unit-handler-incomplete-judgment", &format!("{}:{}:{}", context.review_invocation_id, classification.as_str(), meaningful_progress)));
         let fingerprint = stable_id("work-unit-handler-review-judgment", &format!("{}:{variant}:{}", context.review_invocation_id, reason.as_deref().unwrap_or("")));
         let mut connection = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         let existing: Option<(Option<String>, Option<String>, Option<String>)> = transaction.query_row("SELECT semantic_judgment_variant,semantic_return_reason_json,semantic_judgment_fingerprint FROM work_unit_handler_reviews WHERE attempt_id=?1 AND review_invocation_id=?2", params![context.attempt_id,invocation.as_str()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional().map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         let Some((old_variant, old_reason, old_fingerprint)) = existing else { return Err(SprintRunnerTransitionError::Forbidden); };
         if let Some(old_variant) = old_variant {
-            if old_variant == variant && old_reason == reason && old_fingerprint.as_deref() == Some(&fingerprint) { transaction.commit().map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?; return Ok(()); }
+            let exact_incomplete = match (&incomplete, &incomplete_fingerprint) {
+                (Some((classification, meaningful_progress)), Some(fingerprint)) => transaction.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_handler_incomplete_judgments WHERE review_invocation_id=?1 AND attempt_id=?2 AND classification=?3 AND meaningful_progress=?4 AND judgment_fingerprint=?5)", params![context.review_invocation_id,context.attempt_id,classification.as_str(),*meaningful_progress as i64,fingerprint], |row| row.get::<_,bool>(0)).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?,
+                (None, None) => true,
+                _ => false,
+            };
+            if old_variant == variant && old_reason == reason && old_fingerprint.as_deref() == Some(&fingerprint) && exact_incomplete { transaction.commit().map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?; return Ok(()); }
             transaction.execute("UPDATE work_unit_handler_reviews SET conflict_at=COALESCE(conflict_at,?2),conflict_reason=COALESCE(conflict_reason,'divergent_review_judgment') WHERE attempt_id=?1", params![context.attempt_id,chrono::Utc::now().to_rfc3339()]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
             transaction.commit().map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
             return Err(SprintRunnerTransitionError::Conflict);
         }
-        transaction.execute("UPDATE work_unit_handler_reviews SET semantic_judgment_variant=?2,semantic_return_reason_json=?3,semantic_judgment_fingerprint=?4,semantic_judgment_at=?5 WHERE attempt_id=?1 AND review_invocation_id=?6 AND semantic_judgment_at IS NULL", params![context.attempt_id,variant,reason,fingerprint,chrono::Utc::now().to_rfc3339(),invocation.as_str()]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        let now = chrono::Utc::now().to_rfc3339();
+        transaction.execute("UPDATE work_unit_handler_reviews SET semantic_judgment_variant=?2,semantic_return_reason_json=?3,semantic_judgment_fingerprint=?4,semantic_judgment_at=?5 WHERE attempt_id=?1 AND review_invocation_id=?6 AND semantic_judgment_at IS NULL", params![context.attempt_id,variant,reason,fingerprint,now,invocation.as_str()]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        if let (Some((classification, meaningful_progress)), Some(incomplete_fingerprint)) = (incomplete, incomplete_fingerprint) {
+            transaction.execute("INSERT INTO work_unit_handler_incomplete_judgments (review_invocation_id,attempt_id,classification,meaningful_progress,judgment_fingerprint,recorded_at) VALUES (?1,?2,?3,?4,?5,?6)", params![context.review_invocation_id,context.attempt_id,classification.as_str(),meaningful_progress as i64,incomplete_fingerprint,now]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        }
         transaction.commit().map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         Ok(())
     }
@@ -2207,22 +2326,50 @@ impl SprintRunnerTransitionService {
     }
 
     fn finalize_handler_review_decisions(&self) -> Result<(), SprintRunnerTransitionError> {
-        let rows: Vec<(String, String, String, String, Option<String>, String)> = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?
-            .prepare("SELECT work_unit_id,attempt_id,review_invocation_id,semantic_judgment_variant,semantic_return_reason_json,semantic_judgment_fingerprint FROM work_unit_handler_reviews WHERE semantic_judgment_at IS NOT NULL AND lifecycle_observed_at IS NOT NULL AND lifecycle_status='completed' ORDER BY work_unit_id,attempt_id")
-            .and_then(|mut statement| statement.query_map([], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)))?.collect::<Result<Vec<_>, _>>())
+        let rows: Vec<(String, String, String, String, Option<String>, String, String, Option<String>, Option<i64>)> = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?
+            .prepare("SELECT r.work_unit_id,r.attempt_id,r.review_invocation_id,r.semantic_judgment_variant,r.semantic_return_reason_json,r.semantic_judgment_fingerprint,r.delivered_payload_json,j.classification,j.meaningful_progress FROM work_unit_handler_reviews r LEFT JOIN work_unit_handler_incomplete_judgments j ON j.review_invocation_id=r.review_invocation_id AND j.attempt_id=r.attempt_id WHERE r.semantic_judgment_at IS NOT NULL AND r.lifecycle_observed_at IS NOT NULL AND r.lifecycle_status='completed' ORDER BY r.work_unit_id,r.attempt_id")
+            .and_then(|mut statement| statement.query_map([], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?)))?.collect::<Result<Vec<_>, _>>())
             .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
-        for (work_unit, attempt, review, judgment, reason, fingerprint) in rows {
+        for (work_unit, attempt, review, judgment, reason, fingerprint, delivered_payload, classification, meaningful_progress) in rows {
             let decision = match judgment.as_str() { "accept" => "accepted", "return" => "returned", _ => return Err(SprintRunnerTransitionError::Conflict) };
+            let incomplete = match (decision, classification, meaningful_progress) {
+                ("accepted", None, None) => None,
+                ("returned", Some(classification), Some(progress @ (0 | 1))) => Some((classification, progress == 1)),
+                // Historical ordinal-0/ordinal-1 returns retain their accepted retry-required
+                // meaning; only the new MCP contract creates a generalized disposition.
+                ("returned", None, None) => None,
+                _ => return Err(SprintRunnerTransitionError::Conflict),
+            };
             let decision_fingerprint = stable_id("work-unit-handler-decision", &format!("{review}:{fingerprint}"));
             let now = chrono::Utc::now().to_rfc3339();
             let mut connection = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;
             let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
-            let changed = transaction.execute("INSERT OR IGNORE INTO work_unit_handler_decisions (attempt_id,work_unit_id,review_invocation_id,decision_variant,decision_fingerprint,return_reason_json,decision_recorded_at,implementation_accepted_at,implementation_returned_at,retry_required_at,settlement_ready_at) VALUES (?1,?2,?3,?4,?5,?6,?7,CASE WHEN ?4='accepted' THEN ?7 END,CASE WHEN ?4='returned' THEN ?7 END,CASE WHEN ?4='returned' THEN ?7 END,NULL)", params![attempt,work_unit,review,decision,decision_fingerprint,reason,now]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+            let legacy_retry_required = decision == "returned" && incomplete.is_none();
+            let changed = transaction.execute("INSERT OR IGNORE INTO work_unit_handler_decisions (attempt_id,work_unit_id,review_invocation_id,decision_variant,decision_fingerprint,return_reason_json,decision_recorded_at,implementation_accepted_at,implementation_returned_at,retry_required_at,settlement_ready_at) VALUES (?1,?2,?3,?4,?5,?6,?7,CASE WHEN ?4='accepted' THEN ?7 END,CASE WHEN ?4='returned' THEN ?7 END,CASE WHEN ?8 THEN ?7 END,NULL)", params![attempt,work_unit,review,decision,decision_fingerprint,reason,now,legacy_retry_required]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
             if changed == 0 {
                 let exact: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_handler_decisions WHERE attempt_id=?1 AND review_invocation_id=?2 AND decision_variant=?3 AND decision_fingerprint=?4)", params![attempt,review,decision,decision_fingerprint], |row| row.get(0)).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
                 if !exact {
                     transaction.execute("UPDATE work_unit_handler_reviews SET conflict_at=COALESCE(conflict_at,?2),conflict_reason=COALESCE(conflict_reason,'divergent_final_decision') WHERE attempt_id=?1", params![attempt,now]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
                     return Err(SprintRunnerTransitionError::Conflict);
+                }
+            }
+            if let Some((classification, meaningful_progress)) = incomplete {
+                let authorized_at = meaningful_progress.then_some(now.as_str());
+                let changed = transaction.execute("INSERT OR IGNORE INTO work_unit_handler_incomplete_dispositions (attempt_id,work_unit_id,review_invocation_id,decision_fingerprint,classification,meaningful_progress,recorded_at,next_attempt_authorized_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)", params![attempt,work_unit,review,decision_fingerprint,classification,meaningful_progress as i64,now,authorized_at]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+                if changed == 0 {
+                    let exact: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_handler_incomplete_dispositions WHERE attempt_id=?1 AND work_unit_id=?2 AND review_invocation_id=?3 AND decision_fingerprint=?4 AND classification=?5 AND meaningful_progress=?6 AND ((?6=1 AND next_attempt_authorized_at IS NOT NULL) OR (?6=0 AND next_attempt_authorized_at IS NULL)))", params![attempt,work_unit,review,decision_fingerprint,classification,meaningful_progress as i64], |row| row.get(0)).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+                    if !exact { return Err(SprintRunnerTransitionError::Conflict); }
+                }
+                if !meaningful_progress {
+                    let reason = reason.clone().ok_or(SprintRunnerTransitionError::Conflict)?;
+                    let context = serde_json::json!({"sourceAttemptId": attempt, "sourceReviewInvocationId": review, "classification": classification, "meaningfulProgress": false, "reason": serde_json::from_str::<serde_json::Value>(&reason).map_err(|_| SprintRunnerTransitionError::Conflict)?, "evidence": serde_json::from_str::<serde_json::Value>(&delivered_payload).map_err(|_| SprintRunnerTransitionError::Conflict)?}).to_string();
+                    let handback_id = stable_id("work-unit-no-progress-handback", &format!("{attempt}:{review}"));
+                    let context_fingerprint = stable_id("work-unit-no-progress-handback-context", &context);
+                    let changed = transaction.execute("INSERT OR IGNORE INTO work_unit_no_progress_handbacks (handback_id,work_unit_id,source_attempt_id,source_review_invocation_id,decision_fingerprint,classification,context_json,context_fingerprint,persisted_at,delivery_intended_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?9)", params![handback_id,work_unit,attempt,review,decision_fingerprint,classification,context,context_fingerprint,now]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+                    if changed == 0 {
+                        let exact: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_no_progress_handbacks WHERE handback_id=?1 AND work_unit_id=?2 AND source_attempt_id=?3 AND source_review_invocation_id=?4 AND decision_fingerprint=?5 AND classification=?6 AND context_fingerprint=?7 AND sprint_runner_receiver_activated_at IS NULL AND sprint_runner_receiver_decision_at IS NULL)", params![handback_id,work_unit,attempt,review,decision_fingerprint,classification,context_fingerprint], |row| row.get(0)).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+                        if !exact { return Err(SprintRunnerTransitionError::Conflict); }
+                    }
                 }
             }
             transaction.commit().map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
@@ -3390,7 +3537,7 @@ impl WorkUnitImplementerReportingMcp { fn new(service:Arc<SprintRunnerTransition
 
 struct WorkUnitHandlerReviewMcp { service:Arc<SprintRunnerTransitionService>,invocation_id:AgentInvocationId,tool_router:ToolRouter<Self> }
 impl WorkUnitHandlerReviewMcp { fn new(service:Arc<SprintRunnerTransitionService>,invocation_id:AgentInvocationId)->Self{Self{service,invocation_id,tool_router:Self::tool_router()}} fn result(result:Result<(),SprintRunnerTransitionError>,status:&str)->CallToolResult{match result{Ok(())=>CallToolResult::success(vec![ContentBlock::text(serde_json::json!({"status":status,"accepted":false}).to_string())]),Err(SprintRunnerTransitionError::Conflict)=>CallToolResult::success(vec![ContentBlock::text("{\"status\":\"rejected\",\"code\":\"conflict\"}")]),Err(SprintRunnerTransitionError::Forbidden)=>CallToolResult::success(vec![ContentBlock::text("{\"status\":\"rejected\",\"code\":\"forbidden\"}")]),Err(_)=>CallToolResult::success(vec![ContentBlock::text("{\"status\":\"rejected\",\"code\":\"invalid_or_unavailable\"}")] )}} }
-#[tool_router] impl WorkUnitHandlerReviewMcp { #[tool(description="Read the exact application-delivered claims and bounded evidence for this review invocation. Input is ONLY {}.")] fn read_handler_review_evidence(&self)->CallToolResult{match self.service.handler_review_context(&self.invocation_id,true){Ok(context)=>CallToolResult::success(vec![ContentBlock::text(context.delivered_payload_json)]),Err(error)=>Self::result(Err(error),"review_evidence")}} #[tool(description="Accept the exact application-bound implementation outcome. Input is ONLY {} and acceptance remains pending until this exact review invocation is observed Completed.")] fn accept_implementation_outcome(&self)->CallToolResult{Self::result(self.service.record_handler_review_judgment(&self.invocation_id,"accept",None),"review_acceptance_recorded")} #[tool(description="Return the exact application-bound implementation outcome with only {code,explanation}. This records no retry or later workflow.")] fn return_implementation_outcome(&self,Parameters(reason):Parameters<HandlerReviewReturnReason>)->CallToolResult{let result=validate_handler_review_return(&reason).and_then(|_|self.service.record_handler_review_judgment(&self.invocation_id,"return",Some(reason)));Self::result(result,"review_return_recorded")} }
+#[tool_router] impl WorkUnitHandlerReviewMcp { #[tool(description="Read the exact application-delivered claims and bounded evidence for this review invocation. Input is ONLY {}.")] fn read_handler_review_evidence(&self)->CallToolResult{match self.service.handler_review_context(&self.invocation_id,true){Ok(context)=>CallToolResult::success(vec![ContentBlock::text(context.delivered_payload_json)]),Err(error)=>Self::result(Err(error),"review_evidence")}} #[tool(description="Accept the exact application-bound implementation outcome. Input is ONLY {} and acceptance remains pending until this exact review invocation is observed Completed.")] fn accept_implementation_outcome(&self)->CallToolResult{Self::result(self.service.record_handler_review_judgment(&self.invocation_id,"accept",None),"review_acceptance_recorded")} #[tool(description="Return the exact application-bound incomplete outcome with {code,explanation,classification,meaningfulProgress}. This records a disposition only; it never launches a later attempt or contacts an upward receiver.")] fn return_implementation_outcome(&self,Parameters(disposition):Parameters<HandlerReviewIncompleteDisposition>)->CallToolResult{Self::result(self.service.record_handler_incomplete_disposition(&self.invocation_id,disposition),"incomplete_disposition_recorded")} }
 #[tool_handler(router=self.tool_router)] impl ServerHandler for WorkUnitHandlerReviewMcp { fn get_info(&self)->ServerInfo{ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions("Only bounded application-delivered evidence and one identity-free accept or structured return judgment are available. Neither action settles work, creates a retry, or activates dependents.")} }
 
 struct ManagedEpicRunnerAction {

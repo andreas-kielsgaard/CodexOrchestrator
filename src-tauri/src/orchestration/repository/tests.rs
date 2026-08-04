@@ -2029,6 +2029,7 @@ fn valid_work_unit_outcome_projection() -> WorkUnitDto {
         implementer_outcome: Some(outcome),
         handler_review: None,
         handler_decision: None,
+        incomplete_disposition: None,
     }];
     work_unit
 }
