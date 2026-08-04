@@ -2753,7 +2753,7 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
         fail('Handler review does not match its attempt and application-owned Handler authority');
       if (!handler || handler.eligibilityState !== 'eligible')
         fail('Handler review requires an eligible Handler activation');
-      if (!continuation || continuation.stage === 'blocked')
+      if (!continuation || continuation.blockedReason)
         fail('Handler review requires an unblocked Handler action continuation');
       if (!memberOutcome.submittedOutcome || !memberOutcome.evidence)
         fail('Handler review requires the accepted Implementer claims and evidence');

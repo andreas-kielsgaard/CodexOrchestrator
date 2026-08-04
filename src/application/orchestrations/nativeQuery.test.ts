@@ -260,6 +260,8 @@ describe('orchestration native query v1', () => {
           providerActivationObservedAt: '2026-08-02T00:01:29Z',
           implementerReadyAt: '2026-08-02T00:01:30Z',
         },
+        attemptHistory: [],
+        retryAttempts: [],
       },
       {
         workUnitId: 'unit-2',
@@ -275,6 +277,8 @@ describe('orchestration native query v1', () => {
           blockedReason: 'prerequisite_satisfaction_not_authoritative',
           requestedAt: '2026-08-02T00:01:00Z',
         },
+        attemptHistory: [],
+        retryAttempts: [],
       },
     ];
     value.workUnitRelationships = [
@@ -582,7 +586,7 @@ describe('orchestration native query v1', () => {
     pendingUnit.handlerReview = handlerReviewFixture('pending');
     const pendingQuery = decodeOrchestrationNativeQueryV2(pending);
     expect(primaryAttempt(pendingQuery.workUnits[0]!)?.handlerReview).toMatchObject({
-      reviewReadyAt: '2026-08-04T00:00:11Z',
+      reviewReadyAt: '2026-08-04T00:00:16Z',
       delivered: { comparisonFingerprint: 'comparison-1' },
     });
     const pendingUnitModel = composeProductOrchestrationReadModels(
@@ -1128,7 +1132,9 @@ function implementerOutcomeNativeFixture(): Record<string, unknown> {
   return value;
 }
 
-function primaryAttempt<U extends { readonly ordinal: number }, T extends { readonly attemptHistory: readonly U[] }>(unit: T): U | undefined {
+function primaryAttempt<T extends { readonly attemptHistory: readonly { readonly ordinal: number }[] }>(
+  unit: T,
+): T['attemptHistory'][number] | undefined {
   return unit.attemptHistory.find((member) => member.ordinal === 0);
 }
 

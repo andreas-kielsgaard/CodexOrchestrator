@@ -236,6 +236,8 @@ function sprintReadModel(): ProductSprintReadModelV1 {
             fixedExecutionScopeIds: ['scope-1'],
             dependencies: [],
             gateIds: ['gate-1'],
+            attemptHistory: [],
+            retryAttempts: [],
             attempts: [
               { attemptId: 'attempt-1', workUnitExecutionId: 'execution-1', returned: true },
             ],
@@ -381,6 +383,8 @@ function sprintReadModel(): ProductSprintReadModelV1 {
             fixedExecutionScopeIds: [],
             dependencies: [{ workUnitScopeId: 'scope-2a', workUnitId: 'work-unit-2' }],
             gateIds: [],
+            attemptHistory: [],
+            retryAttempts: [],
             attempts: [],
             reviews: [],
             observed: {

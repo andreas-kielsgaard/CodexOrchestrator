@@ -73,6 +73,11 @@ describe('WorkUnitDetailWorkspace Handler activation detail', () => {
         },
       },
     ];
+    value.workUnits = (value.workUnits as Array<Record<string, unknown>>).map((workUnit) => ({
+      ...workUnit,
+      attemptHistory: [],
+      retryAttempts: [],
+    }));
     value.workUnitRelationships = [
       {
         relationshipId: 'point',

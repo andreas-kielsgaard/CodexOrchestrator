@@ -78,7 +78,7 @@ describe('WorkUnitDetailWorkspace Implementer outcome activity', () => {
     expect(detail).toHaveTextContent('Handler semantic judgment is pending');
     expect(detail).toHaveTextContent('Application-bound claims and evidence');
     expect(detail).toHaveTextContent('src/feature.ts');
-    expect(detail).toHaveTextContent('No retry attempt, settlement, dependent activation, or upward continuation is recorded.');
+    expect(detail).toHaveTextContent('No settlement, dependent activation, or upward continuation is recorded.');
 
     rendered.rerender(workspace(reviewReadyOutcome(), handlerReview('failed')));
     detail = screen.getByLabelText('Work Unit context');
@@ -122,8 +122,7 @@ describe('WorkUnitDetailWorkspace Implementer outcome activity', () => {
     );
     let detail = screen.getByLabelText('Work Unit context');
     expect(detail).toHaveTextContent('Returned Work Unit retry');
-    expect(detail).toHaveTextContent('Ordinal 1');
-    expect(detail).toHaveTextContent('This ordinal-1 retry addresses the Handler return reason');
+    expect(detail).toHaveTextContent('Attempt ordinal 1');
     expect(detail).toHaveTextContent('Candidate pinned');
     expect(detail).toHaveTextContent('Implementer Harness bound');
     expect(detail).toHaveTextContent('Retry readiness is not yet recorded');
@@ -146,7 +145,8 @@ describe('WorkUnitDetailWorkspace Implementer outcome activity', () => {
     expect(detail).toHaveTextContent('Retry attempt failed and needs attention');
     expect(detail).toHaveTextContent('It is not ready');
     expect(detail).toHaveTextContent('No provider activation is recorded');
-    expect(detail).not.toHaveTextContent(/recovering|relaunch|replacement/);
+    expect(detail).toHaveTextContent('no relaunch or replacement is implied');
+    expect(detail).not.toHaveTextContent(/recovering/i);
     expect(detail).not.toHaveTextContent('Retry attempt is application-ready');
     expect(detail).toHaveTextContent('Handler decision: returned');
   });
@@ -179,7 +179,7 @@ describe('WorkUnitDetailWorkspace Implementer outcome activity', () => {
     const detail = screen.getByLabelText('Work Unit context');
     expect(detail).toHaveTextContent('Incomplete Handler disposition');
     expect(detail).toHaveTextContent('Blocked');
-    expect(detail).toHaveTextContent('Meaningful progress Not recorded');
+    expect(detail).toHaveTextContent(/Meaningful progress\s*Not recorded/);
     expect(detail).toHaveTextContent('Work Unit handback persistence and delivery intent');
     expect(detail).toHaveTextContent('Handback persisted');
     expect(detail).toHaveTextContent('Delivery intent recorded');

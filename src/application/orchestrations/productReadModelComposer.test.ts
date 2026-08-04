@@ -326,6 +326,8 @@ describe('product read-model composer', () => {
         summary: 'Summary',
         details: 'Details',
         source: source(),
+        attemptHistory: [],
+        retryAttempts: [],
       },
       {
         workUnitId: 'work-unit-5b',
@@ -333,6 +335,8 @@ describe('product read-model composer', () => {
         summary: 'Summary',
         details: 'Details',
         source: source(),
+        attemptHistory: [],
+        retryAttempts: [],
       },
     );
     input.referenceIndex.gates.push({
@@ -1214,6 +1218,8 @@ function addSecondSprint(input: Mutable<ProductReadCompositionInputV1>) {
     summary: 'Second work summary',
     details: 'Second work details',
     source: source(),
+    attemptHistory: [],
+    retryAttempts: [],
   });
   input.referenceIndex.artifactOwnership.push({
     artifactId: 'artifact-2',
