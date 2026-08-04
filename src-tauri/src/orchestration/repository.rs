@@ -3453,6 +3453,29 @@ struct WorkUnitNoProgressHandbackDto {
     sprint_runner_receiver_activated_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sprint_runner_receiver_decision_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sprint_runner_delivery: Option<SprintRunnerHandbackDeliveryDto>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SprintRunnerHandbackDeliveryDto {
+    delivery_requested_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    delivery_persisted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    harness_bound_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    launch_requested_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    launch_accepted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider_activation_observed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    semantic_reassessment_recorded_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selected_movement_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    escalation_delivery_requested_at: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -4456,9 +4479,11 @@ fn incomplete_disposition_rows(
 ) -> Result<std::collections::HashMap<String, Vec<WorkUnitIncompleteDispositionDto>>, String> {
     let exists = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_handler_incomplete_dispositions')", [], |row| row.get::<_, bool>(0)).map_err(|error| error.to_string())?;
     if !exists { return Ok(std::collections::HashMap::new()); }
-    let mut statement = connection.prepare(
-        "SELECT d.work_unit_id,d.attempt_id,d.review_invocation_id,d.decision_fingerprint,d.classification,d.meaningful_progress,d.recorded_at,d.next_attempt_authorized_at,h.handback_id,h.source_attempt_id,h.source_review_invocation_id,h.context_json,h.context_fingerprint,h.persisted_at,h.delivery_intended_at,h.sprint_runner_receiver_activated_at,h.sprint_runner_receiver_decision_at FROM work_unit_handler_incomplete_dispositions d LEFT JOIN work_unit_no_progress_handbacks h ON h.source_attempt_id=d.attempt_id AND h.source_review_invocation_id=d.review_invocation_id AND h.decision_fingerprint=d.decision_fingerprint"
-    ).map_err(|error| error.to_string())?;
+    let handback_delivery_exists = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sprint_runner_handback_deliveries')", [], |row| row.get::<_, bool>(0)).map_err(|error| error.to_string())?;
+    let delivery_fields = if handback_delivery_exists { "x.delivery_requested_at,x.delivery_persisted_at,x.harness_bound_at,x.launch_requested_at,x.launch_accepted_at,x.provider_activation_observed_at,x.semantic_reassessment_recorded_at,m.movement_kind,e.delivery_requested_at" } else { "NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL" };
+    let delivery_joins = if handback_delivery_exists { " LEFT JOIN sprint_runner_handback_deliveries x ON x.handback_id=h.handback_id LEFT JOIN sprint_runner_handback_dispositions m ON m.handback_id=x.handback_id LEFT JOIN sprint_runner_handback_escalations e ON e.handback_id=x.handback_id" } else { "" };
+    let query = format!("SELECT d.work_unit_id,d.attempt_id,d.review_invocation_id,d.decision_fingerprint,d.classification,d.meaningful_progress,d.recorded_at,d.next_attempt_authorized_at,h.handback_id,h.source_attempt_id,h.source_review_invocation_id,h.context_json,h.context_fingerprint,h.persisted_at,h.delivery_intended_at,h.sprint_runner_receiver_activated_at,h.sprint_runner_receiver_decision_at,{delivery_fields} FROM work_unit_handler_incomplete_dispositions d LEFT JOIN work_unit_no_progress_handbacks h ON h.source_attempt_id=d.attempt_id AND h.source_review_invocation_id=d.review_invocation_id AND h.decision_fingerprint=d.decision_fingerprint{delivery_joins}");
+    let mut statement = connection.prepare(&query).map_err(|error| error.to_string())?;
     let rows = statement.query_map([], |row| {
         let classification = match row.get::<_, String>(4)?.as_str() {
             "refinement_needed" => WorkUnitIncompleteDispositionClassificationDto::RefinementNeeded,
@@ -4473,7 +4498,8 @@ fn incomplete_disposition_rows(
             (None,None,None,None,None,None,None,None,None) => None,
             (Some(handback_id),Some(source_attempt_id),Some(source_review_invocation_id),Some(context_json),Some(context_fingerprint),Some(persisted_at),Some(delivery_intended_at),receiver_activated,receiver_decision) => {
                 if meaningful_progress || receiver_activated.is_some() || receiver_decision.is_some() || source_attempt_id != row.get::<_, String>(1)? || source_review_invocation_id != row.get::<_, String>(2)? || context_fingerprint != projection_stable_id("work-unit-no-progress-handback-context", &context_json) || serde_json::from_str::<serde_json::Value>(&context_json).is_err() { return Err(to_sql_error("no-progress handback is incoherent".into())); }
-                Some(WorkUnitNoProgressHandbackDto { handback_id, source_attempt_id, source_review_invocation_id, context_fingerprint, persisted_at, delivery_intended_at, sprint_runner_receiver_activated_at: receiver_activated, sprint_runner_receiver_decision_at: receiver_decision })
+                let delivery = match row.get::<_, Option<String>>(17)? { None => None, Some(delivery_requested_at) => Some(SprintRunnerHandbackDeliveryDto { delivery_requested_at, delivery_persisted_at: row.get(18)?, harness_bound_at: row.get(19)?, launch_requested_at: row.get(20)?, launch_accepted_at: row.get(21)?, provider_activation_observed_at: row.get(22)?, semantic_reassessment_recorded_at: row.get(23)?, selected_movement_kind: row.get(24)?, escalation_delivery_requested_at: row.get(25)? }) };
+                Some(WorkUnitNoProgressHandbackDto { handback_id, source_attempt_id, source_review_invocation_id, context_fingerprint, persisted_at, delivery_intended_at, sprint_runner_receiver_activated_at: receiver_activated, sprint_runner_receiver_decision_at: receiver_decision, sprint_runner_delivery: delivery })
             }
             _ => return Err(to_sql_error("no-progress handback bundle is partial".into())),
         };

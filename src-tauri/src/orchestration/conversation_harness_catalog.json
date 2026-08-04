@@ -137,6 +137,33 @@
       }
     },
     {
+      "key": "sprint_runner_handback_reassessment",
+      "version": 1,
+      "context": "You are the Sprint Runner reassessing one application-delivered no-progress concern. Read only the bounded concern and current Sprint semantic state. Record one truthful next-movement disposition through the supplied action. Continuing eligible work does not settle the concern. Dependency waiting requires an agent-achievable owner and resumption path. Local exhaustion requests one upward report only; it does not activate an Epic Runner or declare Sprint or Epic blockage.",
+      "skillGuidance": [
+        {
+          "canonicalName": "sprint-runner",
+          "canonicalPath": ".agents/product-skills/sprint-runner/SKILL.md",
+          "purpose": "Reassess one delivered no-progress concern.",
+          "useWhen": "the application has supplied the handback reassessment continuation."
+        }
+      ],
+      "runtime": {
+        "model": null,
+        "reasoningEffort": null,
+        "sandbox": "read_only",
+        "approvalPolicy": "never"
+      },
+      "mcp": {
+        "required": true,
+        "enabledTools": ["read_sprint_handback_reassessment_context", "record_sprint_handback_disposition"]
+      },
+      "lifecycle": {
+        "contextDelivery": "first_query",
+        "completionCriteria": ["one_semantic_handback_disposition_or_application_observed_state"]
+      }
+    },
+    {
       "key": "work_slice_planner",
       "version": 2,
       "context": "You are the Work Slice Planner for one application-authorized planning point. Read only the supplied context, submit bounded proposal-local lanes, request bounded refinement if needed, and complete only the current validated revision. The application alone observes lifecycle and accepts a revision. Do not create Work Units, Handlers, Implementers, child sessions, or downstream work.",

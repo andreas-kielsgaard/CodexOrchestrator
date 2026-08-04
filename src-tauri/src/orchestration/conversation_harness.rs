@@ -25,6 +25,7 @@ pub(crate) enum ConversationHarnessRole {
     EpicRunner,
     SprintRunner,
     SprintRunnerPlanningControl,
+    SprintRunnerHandbackReassessment,
     WorkSlicePlanner,
     WorkUnitHandler,
     WorkUnitImplementer,
@@ -38,6 +39,7 @@ impl ConversationHarnessRole {
             Self::EpicRunner => "epic_runner",
             Self::SprintRunner => "sprint_runner",
             Self::SprintRunnerPlanningControl => "sprint_runner_planning_control",
+            Self::SprintRunnerHandbackReassessment => "sprint_runner_handback_reassessment",
             Self::WorkSlicePlanner => "work_slice_planner",
             Self::WorkUnitHandler => "work_unit_handler",
             Self::WorkUnitImplementer => "work_unit_implementer",
@@ -529,6 +531,7 @@ pub(crate) fn role_discovery_root(role: ConversationHarnessRole) -> Result<Strin
         ConversationHarnessRole::EpicRunner => "epic-runner",
         ConversationHarnessRole::SprintRunner => "sprint-runner",
         ConversationHarnessRole::SprintRunnerPlanningControl => "sprint-runner",
+        ConversationHarnessRole::SprintRunnerHandbackReassessment => "sprint-runner",
         ConversationHarnessRole::WorkSlicePlanner => "work-slice-planner",
         ConversationHarnessRole::WorkUnitHandler => "work-unit-handler",
         ConversationHarnessRole::WorkUnitImplementer => "work-unit-implementer",
@@ -586,6 +589,8 @@ mod tests {
         let sprint_runner = profile(ConversationHarnessRole::SprintRunner).unwrap();
         let planning_control =
             profile(ConversationHarnessRole::SprintRunnerPlanningControl).unwrap();
+        let handback_reassessment =
+            profile(ConversationHarnessRole::SprintRunnerHandbackReassessment).unwrap();
         let planner = profile(ConversationHarnessRole::WorkSlicePlanner).unwrap();
         let handler = profile(ConversationHarnessRole::WorkUnitHandler).unwrap();
         let implementer = profile(ConversationHarnessRole::WorkUnitImplementer).unwrap();
@@ -600,6 +605,11 @@ mod tests {
             ["request_work_slice_planner"]
         );
         assert!(planning_control.mcp.required);
+        assert_eq!(
+            handback_reassessment.mcp.enabled_tools,
+            ["read_sprint_handback_reassessment_context", "record_sprint_handback_disposition"]
+        );
+        assert!(handback_reassessment.mcp.required);
         assert_eq!(planner.key, "work_slice_planner");
         assert_eq!(handler.key, "work_unit_handler");
         assert_eq!(implementer.key, "work_unit_implementer");
