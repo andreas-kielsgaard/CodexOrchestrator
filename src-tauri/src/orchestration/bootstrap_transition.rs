@@ -6062,12 +6062,19 @@ mod tests {
         let recovered: (Option<String>,Option<String>,Option<String>,i64) = Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT d.harness_bound_at,d.launch_requested_at,d.launch_accepted_at,(SELECT COUNT(*) FROM sprint_runner_handback_deliveries WHERE handback_id=d.handback_id) FROM sprint_runner_handback_deliveries d WHERE d.handback_id=?1",[&handback],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
         assert!(recovered.0.is_some() && recovered.1.is_some() && recovered.2.is_some() && recovered.3 == 1);
         assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE epic_continuation_invocation_id IS NOT NULL OR epic_start_semantic_authorization_recorded_at IS NOT NULL OR sprint_start_persisted_at IS NOT NULL",[],|row|row.get(0)).unwrap(),0);
-        let alternate = crate::orchestration::sprint_runner_transition::SprintHandbackDisposition { movement_kind: "continue_eligible_work".into(), rationale: "another bounded Work Unit may continue".into(), eligible_work_summary: Some("one eligible Work Unit remains".into()), dependency_owner: None, dependency_owner_classification: None, enabling_result: None, resumption_path: None, local_exhaustion_summary: None };
-        reopened.record_handback_disposition_for_test(&invocation, alternate.clone()).unwrap();
-        reopened.record_handback_disposition_for_test(&invocation, alternate).unwrap();
+        let dependency = crate::orchestration::sprint_runner_transition::SprintHandbackDisposition { movement_kind: "wait_for_agent_dependency".into(), rationale: "this bounded concern awaits its agent route".into(), eligible_work_summary: None, dependency_owner: Some("bounded Work Unit Handler".into()), dependency_owner_classification: Some(crate::orchestration::sprint_runner_transition::AgentAchievableDependencyOwner::WorkUnitHandler), enabling_result: Some("persisted Handler result".into()), resumption_path: Some("reconcile this exact Handback after that result".into()), local_exhaustion_summary: None };
+        reopened.record_handback_disposition_for_test(&invocation, dependency.clone()).unwrap();
+        reopened.record_handback_disposition_for_test(&invocation, dependency).unwrap();
         let connection = Connection::open(&fixture.base.database_path).unwrap();
-        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_handback_dispositions WHERE handback_id=?1 AND movement_kind='continue_eligible_work' AND preserves_handback=1",[&handback],|row|row.get(0)).unwrap(),1);
+        let details: String = connection.query_row("SELECT details_json FROM sprint_runner_handback_dispositions WHERE handback_id=?1 AND movement_kind='wait_for_agent_dependency' AND preserves_handback=1",[&handback],|row|row.get(0)).unwrap();
+        assert!(details.contains("work_unit_handler") && details.contains("bounded Work Unit Handler") && details.contains("persisted Handler result") && details.contains("reconcile this exact Handback"));
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_handback_escalations WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap(),0);
+        let before: i64 = connection.query_row("SELECT COUNT(*) FROM sprint_runner_handback_dispositions WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap();
+        drop(connection);
+        let invalid = crate::orchestration::sprint_runner_transition::SprintHandbackDisposition { movement_kind: "wait_for_agent_dependency".into(), rationale: "human gate".into(), eligible_work_summary: None, dependency_owner: Some("human approval".into()), dependency_owner_classification: None, enabling_result: Some("approval".into()), resumption_path: Some("resume later".into()), local_exhaustion_summary: None };
+        assert!(matches!(reopened.record_handback_disposition_for_test(&invocation, invalid), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Invalid)));
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_handback_dispositions WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap(),before);
     }
 
     #[test]
