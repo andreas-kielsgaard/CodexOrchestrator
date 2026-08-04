@@ -7,10 +7,12 @@ import type {
   ProductWorkUnitActionContinuationV1,
   ProductWorkUnitHandlerActivationV1,
   ProductWorkUnitHandlerDecisionV1,
-  ProductWorkUnitHandlerReviewV1,
+  ProductWorkUnitIncompleteDispositionV1,
   ProductWorkUnitIntegrationV1,
+  ProductWorkUnitHandlerReviewV1,
   ProductWorkUnitImplementerActivationV1,
   ProductWorkUnitImplementerOutcomeV1,
+  ProductWorkUnitRetryAttemptV1,
 } from './productReadModels';
 
 export const ORCHESTRATION_NATIVE_QUERY_V2 = 'orchestration-native-query/v2' as const;
@@ -69,10 +71,17 @@ export interface NativeMaterializedWorkUnitV1 {
   readonly handlerActivation?: NativeWorkUnitHandlerActivationV1;
   readonly actionContinuation?: NativeWorkUnitHandlerActionContinuationV1;
   readonly implementerActivation?: NativeWorkUnitImplementerActivationV1;
+  readonly attemptHistory: readonly NativeWorkUnitAttemptHistoryV1[];
+  readonly retryAttempts: readonly NativeWorkUnitRetryAttemptV1[];
+  readonly integration?: NativeWorkUnitIntegrationV1;
+}
+export interface NativeWorkUnitAttemptHistoryV1 {
+  readonly ordinal: number;
+  readonly attemptId: string;
   readonly implementerOutcome?: NativeWorkUnitImplementerOutcomeV1;
   readonly handlerReview?: NativeWorkUnitHandlerReviewV1;
   readonly handlerDecision?: NativeWorkUnitHandlerDecisionV1;
-  readonly integration?: NativeWorkUnitIntegrationV1;
+  readonly incompleteDisposition?: NativeWorkUnitIncompleteDispositionV1;
 }
 export interface NativeWorkUnitHandlerActivationV1 {
   readonly attemptId: string;
@@ -133,6 +142,8 @@ export interface NativeWorkUnitImplementerActivationV1 {
 export type NativeWorkUnitImplementerOutcomeV1 = ProductWorkUnitImplementerOutcomeV1;
 export type NativeWorkUnitHandlerReviewV1 = ProductWorkUnitHandlerReviewV1;
 export type NativeWorkUnitHandlerDecisionV1 = ProductWorkUnitHandlerDecisionV1;
+export type NativeWorkUnitIncompleteDispositionV1 = ProductWorkUnitIncompleteDispositionV1;
+export type NativeWorkUnitRetryAttemptV1 = ProductWorkUnitRetryAttemptV1;
 export type NativeWorkUnitIntegrationV1 = ProductWorkUnitIntegrationV1;
 export interface NativeWorkUnitRelationshipV1 {
   readonly relationshipId: string;
@@ -609,11 +620,19 @@ export function nativeQueryProductCompositionInputV2(
         ...(unit.implementerActivation
           ? { implementerActivation: implementerActivationPresentation(unit.implementerActivation) }
           : {}),
-        ...(unit.implementerOutcome
-          ? { implementerOutcome: implementerOutcomePresentation(unit.implementerOutcome) }
-          : {}),
-        ...(unit.handlerReview ? { handlerReview: { ...unit.handlerReview } } : {}),
-        ...(unit.handlerDecision ? { handlerDecision: { ...unit.handlerDecision } } : {}),
+        attemptHistory: unit.attemptHistory.map((attempt) => ({
+          ordinal: attempt.ordinal,
+          attemptId: attempt.attemptId,
+          ...(attempt.implementerOutcome
+            ? { implementerOutcome: implementerOutcomePresentation(attempt.implementerOutcome) }
+            : {}),
+          ...(attempt.handlerReview ? { handlerReview: { ...attempt.handlerReview } } : {}),
+          ...(attempt.handlerDecision ? { handlerDecision: { ...attempt.handlerDecision } } : {}),
+          ...(attempt.incompleteDisposition
+            ? { incompleteDisposition: { ...attempt.incompleteDisposition } }
+            : {}),
+        })),
+        retryAttempts: unit.retryAttempts.map((retry) => ({ ...retry })),
         ...(unit.integration ? { integration: { ...unit.integration } } : {}),
       })),
       gates: [],
@@ -1202,9 +1221,8 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
       'handlerActivation',
       'actionContinuation',
       'implementerActivation',
-      'implementerOutcome',
-      'handlerReview',
-      'handlerDecision',
+      'attemptHistory',
+      'retryAttempts',
       'integration',
     ],
     'materialized Work Unit',
@@ -1228,6 +1246,23 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
     ...(x.implementerActivation === undefined
       ? {}
       : { implementerActivation: workUnitImplementerActivation(x.implementerActivation) }),
+    attemptHistory: array(x.attemptHistory, 'Work Unit attemptHistory').map(workUnitAttemptHistory),
+    retryAttempts: array(x.retryAttempts, 'Work Unit retryAttempts').map(workUnitRetryAttempt),
+    ...(x.integration === undefined ? {} : { integration: workUnitIntegration(x.integration) }),
+  };
+};
+const workUnitAttemptHistory = (value: unknown): NativeWorkUnitAttemptHistoryV1 => {
+  const x = object(value, 'Work Unit attempt history member');
+  keys(
+    x,
+    ['ordinal', 'attemptId', 'implementerOutcome', 'handlerReview', 'handlerDecision', 'incompleteDisposition'],
+    'Work Unit attempt history member',
+  );
+  if (!Number.isSafeInteger(x.ordinal) || (x.ordinal as number) < 0)
+    fail('invalid Work Unit attempt history ordinal');
+  return {
+    ordinal: x.ordinal as number,
+    attemptId: boundedString(x.attemptId, 240, 'attempt history attemptId'),
     ...(x.implementerOutcome === undefined
       ? {}
       : { implementerOutcome: workUnitImplementerOutcome(x.implementerOutcome) }),
@@ -1235,26 +1270,125 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
     ...(x.handlerDecision === undefined
       ? {}
       : { handlerDecision: workUnitHandlerDecision(x.handlerDecision) }),
-    ...(x.integration === undefined
+    ...(x.incompleteDisposition === undefined
       ? {}
-      : { integration: workUnitIntegration(x.integration) }),
+      : { incompleteDisposition: workUnitIncompleteDisposition(x.incompleteDisposition) }),
   };
+};
+const workUnitRetryAttempt = (value: unknown): NativeWorkUnitRetryAttemptV1 => {
+  const x = object(value, 'Work Unit retry attempt');
+  keys(
+    x,
+    [
+      'ordinal',
+      'originAttemptId',
+      'retryAttemptId',
+      'implementerSessionId',
+      'implementerInvocationId',
+      'captureRequestedAt',
+      'candidatePinnedAt',
+      'authorizedAt',
+      'executionSupportGrantedAt',
+      'isolatedWorktreeReadyAt',
+      'implementerSessionCreatedAt',
+      'implementerInvocationPreparedAt',
+      'implementerHarnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+      'providerActivationObservedAt',
+      'retryReadyAt',
+      'failureReason',
+    ],
+    'Work Unit retry attempt',
+  );
+  if (!Number.isSafeInteger(x.ordinal) || (x.ordinal as number) < 0)
+    fail('Work Unit retry attempt ordinal must be a nonnegative integer');
+  const optionalTime = (key: keyof typeof x) =>
+    x[key] === undefined ? undefined : timestamp(x[key], key);
+  const failureReason =
+    x.failureReason === undefined
+      ? undefined
+      : boundedString(x.failureReason, 4000, 'retry failureReason');
+  return {
+    ordinal: x.ordinal as number,
+    originAttemptId: boundedString(x.originAttemptId, 240, 'retry originAttemptId'),
+    retryAttemptId: boundedString(x.retryAttemptId, 240, 'retry retryAttemptId'),
+    implementerSessionId: boundedString(
+      x.implementerSessionId,
+      240,
+      'retry implementerSessionId',
+    ),
+    implementerInvocationId: boundedString(
+      x.implementerInvocationId,
+      240,
+      'retry implementerInvocationId',
+    ),
+    captureRequestedAt: timestamp(x.captureRequestedAt, 'retry captureRequestedAt'),
+    ...(optionalTime('candidatePinnedAt')
+      ? { candidatePinnedAt: optionalTime('candidatePinnedAt') }
+      : {}),
+    ...(optionalTime('authorizedAt') ? { authorizedAt: optionalTime('authorizedAt') } : {}),
+    ...(optionalTime('executionSupportGrantedAt')
+      ? { executionSupportGrantedAt: optionalTime('executionSupportGrantedAt') }
+      : {}),
+    ...(optionalTime('isolatedWorktreeReadyAt')
+      ? { isolatedWorktreeReadyAt: optionalTime('isolatedWorktreeReadyAt') }
+      : {}),
+    ...(optionalTime('implementerSessionCreatedAt')
+      ? { implementerSessionCreatedAt: optionalTime('implementerSessionCreatedAt') }
+      : {}),
+    ...(optionalTime('implementerInvocationPreparedAt')
+      ? { implementerInvocationPreparedAt: optionalTime('implementerInvocationPreparedAt') }
+      : {}),
+    ...(optionalTime('implementerHarnessBoundAt')
+      ? { implementerHarnessBoundAt: optionalTime('implementerHarnessBoundAt') }
+      : {}),
+    ...(optionalTime('launchRequestedAt')
+      ? { launchRequestedAt: optionalTime('launchRequestedAt') }
+      : {}),
+    ...(optionalTime('launchAcceptedAt')
+      ? { launchAcceptedAt: optionalTime('launchAcceptedAt') }
+      : {}),
+    ...(optionalTime('providerActivationObservedAt')
+      ? { providerActivationObservedAt: optionalTime('providerActivationObservedAt') }
+      : {}),
+    ...(optionalTime('retryReadyAt') ? { retryReadyAt: optionalTime('retryReadyAt') } : {}),
+    ...(failureReason ? { failureReason } : {}),
+  };
+};
+const workUnitIntegration = (value: unknown): NativeWorkUnitIntegrationV1 => {
+  const x = object(value, 'Work Unit integration');
+  keys(x, ['requestedAt', 'authorizedAt', 'progress', 'attention', 'success', 'settlement', 'prerequisiteContribution'], 'Work Unit integration');
+  const requestedAt = timestamp(x.requestedAt, 'Work Unit integration requestedAt');
+  const authorizedAt = timestamp(x.authorizedAt, 'Work Unit integration authorizedAt');
+  timestampAtOrAfter(requestedAt, authorizedAt, 'Work Unit integration authorization');
+  const progress = x.progress === undefined ? undefined : (() => { const entry = object(x.progress, 'Work Unit integration progress'); keys(entry, ['phase', 'recordedAt'], 'Work Unit integration progress'); if (!['preparing', 'applying', 'recording'].includes(entry.phase as string)) fail('invalid Work Unit integration progress phase'); const recordedAt = timestamp(entry.recordedAt, 'Work Unit integration progress recordedAt'); timestampAtOrAfter(authorizedAt, recordedAt, 'Work Unit integration progress'); return { phase: entry.phase as 'preparing' | 'applying' | 'recording', recordedAt }; })();
+  const attention = x.attention === undefined ? undefined : (() => { const entry = object(x.attention, 'Work Unit integration attention'); keys(entry, ['kind', 'safeCode', 'recordedAt'], 'Work Unit integration attention'); if (!['conflict', 'failure'].includes(entry.kind as string)) fail('invalid Work Unit integration attention kind'); const safeCode = entry.kind === 'conflict' ? 'integration_conflict' : 'integration_failure'; if (entry.safeCode !== safeCode) fail('invalid Work Unit integration attention code'); const recordedAt = timestamp(entry.recordedAt, 'Work Unit integration attention recordedAt'); timestampAtOrAfter(progress?.recordedAt ?? authorizedAt, recordedAt, 'Work Unit integration attention'); return { kind: entry.kind as 'conflict' | 'failure', safeCode: safeCode as 'integration_conflict' | 'integration_failure', recordedAt }; })();
+  const success = x.success === undefined ? undefined : (() => { const entry = object(x.success, 'Work Unit integration success'); keys(entry, ['recordedAt'], 'Work Unit integration success'); const recordedAt = timestamp(entry.recordedAt, 'Work Unit integration success recordedAt'); timestampAtOrAfter(progress?.recordedAt ?? authorizedAt, recordedAt, 'Work Unit integration success'); return { recordedAt }; })();
+  const settlement = x.settlement === undefined ? undefined : (() => { const entry = object(x.settlement, 'Work Unit settlement'); keys(entry, ['settledAt'], 'Work Unit settlement'); const settledAt = timestamp(entry.settledAt, 'Work Unit settlement settledAt'); if (!success) fail('Work Unit settlement requires integration success'); timestampAtOrAfter(success.recordedAt, settledAt, 'Work Unit settlement'); return { settledAt }; })();
+  const prerequisiteContribution = x.prerequisiteContribution === undefined ? undefined : (() => { const entry = object(x.prerequisiteContribution, 'Work Unit prerequisite contribution'); keys(entry, ['recordedAt', 'dependentCount'], 'Work Unit prerequisite contribution'); if (!Number.isSafeInteger(entry.dependentCount) || (entry.dependentCount as number) < 0) fail('invalid Work Unit prerequisite contribution count'); if (!settlement) fail('Work Unit prerequisite contribution requires settlement'); const recordedAt = timestamp(entry.recordedAt, 'Work Unit prerequisite contribution recordedAt'); timestampAtOrAfter(settlement.settledAt, recordedAt, 'Work Unit prerequisite contribution'); return { recordedAt, dependentCount: entry.dependentCount as number }; })();
+  if (attention && (success || settlement || prerequisiteContribution)) fail('Work Unit integration attention contradicts terminal facts');
+  return { requestedAt, authorizedAt, ...(progress ? { progress } : {}), ...(attention ? { attention } : {}), ...(success ? { success } : {}), ...(settlement ? { settlement } : {}), ...(prerequisiteContribution ? { prerequisiteContribution } : {}) };
 };
 const dependencyActivationIntent = (value: unknown): NativeWorkUnitDependencyActivationIntentV1 => {
   const x = object(value, 'dependency activation intent');
   keys(x, ['workUnitId', 'materializationId', 'acceptedRevisionId', 'eligibilityState', 'blockedReason', 'eligibilityRecordedAt', 'activationIntendedAt'], 'dependency activation intent');
-  const state = x.eligibilityState === 'blocked' || x.eligibilityState === 'eligible' ? x.eligibilityState : fail('invalid dependency eligibility state');
+  const eligibilityState = x.eligibilityState === 'blocked' || x.eligibilityState === 'eligible'
+    ? x.eligibilityState
+    : fail('invalid dependency eligibility state');
   const blockedReason = x.blockedReason === undefined ? undefined : string(x.blockedReason, 'blockedReason');
-  const activationIntendedAt = x.activationIntendedAt === undefined ? undefined : string(x.activationIntendedAt, 'activationIntendedAt');
-  if (state === 'blocked' && !blockedReason) fail('blocked dependency intent requires a reason');
-  if (state === 'eligible' && (blockedReason || !activationIntendedAt)) fail('eligible dependency intent requires activation intent without a blocked reason');
+  const activationIntendedAt = x.activationIntendedAt === undefined ? undefined : timestamp(x.activationIntendedAt, 'activationIntendedAt');
+  if (eligibilityState === 'blocked' && !blockedReason)
+    fail('blocked dependency intent requires a reason');
+  if (eligibilityState === 'eligible' && (blockedReason || !activationIntendedAt))
+    fail('eligible dependency intent requires activation intent without a blocked reason');
   return {
     workUnitId: string(x.workUnitId, 'workUnitId'),
     materializationId: string(x.materializationId, 'materializationId'),
     acceptedRevisionId: string(x.acceptedRevisionId, 'acceptedRevisionId'),
-    eligibilityState: state,
+    eligibilityState,
     ...(blockedReason ? { blockedReason } : {}),
-    eligibilityRecordedAt: string(x.eligibilityRecordedAt, 'eligibilityRecordedAt'),
+    eligibilityRecordedAt: timestamp(x.eligibilityRecordedAt, 'eligibilityRecordedAt'),
     ...(activationIntendedAt ? { activationIntendedAt } : {}),
   };
 };
@@ -1265,8 +1399,8 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
     [
       'attemptId',
       'handlerSessionId',
-      'handlerInvocationId',
-      'handlerHarnessRevisionId',
+        'handlerInvocationId',
+        'handlerHarnessRevisionId',
       'eligibilityState',
       'blockedReason',
       'requestedAt',
@@ -2099,6 +2233,7 @@ const workUnitHandlerDecision = (value: unknown): NativeWorkUnitHandlerDecisionV
   keys(
     x,
     [
+      'attemptId',
       'reviewInvocationId',
       'variant',
       'fingerprint',
@@ -2120,6 +2255,7 @@ const workUnitHandlerDecision = (value: unknown): NativeWorkUnitHandlerDecisionV
   const optionalTime = (key: keyof typeof x) =>
     x[key] === undefined ? undefined : timestamp(x[key], key);
   const result: NativeWorkUnitHandlerDecisionV1 = {
+    attemptId: boundedString(x.attemptId, 240, 'Handler decision attemptId'),
     reviewInvocationId: boundedString(x.reviewInvocationId, 240, 'Handler decision reviewInvocationId'),
     variant: x.variant as 'accepted' | 'returned',
     fingerprint: boundedString(x.fingerprint, 240, 'Handler decision fingerprint'),
@@ -2136,123 +2272,24 @@ const workUnitHandlerDecision = (value: unknown): NativeWorkUnitHandlerDecisionV
   if (result.variant === 'accepted') {
     if (returnReason || !result.implementationAcceptedAt || result.implementationReturnedAt || result.retryRequiredAt)
       fail('accepted Handler decision facts contradict their variant');
-  } else if (
-    !returnReason || !result.implementationReturnedAt || !result.retryRequiredAt || result.implementationAcceptedAt
-  ) {
+  } else if (!returnReason || !result.implementationReturnedAt || result.implementationAcceptedAt) {
     fail('returned Handler decision facts contradict their variant');
   }
   return result;
 };
-const workUnitIntegration = (value: unknown): NativeWorkUnitIntegrationV1 => {
-  const x = object(value, 'Work Unit integration');
-  keys(
-    x,
-    [
-      'requestedAt',
-      'authorizedAt',
-      'progress',
-      'attention',
-      'success',
-      'settlement',
-      'prerequisiteContribution',
-    ],
-    'Work Unit integration',
-  );
-  const requestedAt = timestamp(x.requestedAt, 'Work Unit integration requestedAt');
-  const authorizedAt = timestamp(x.authorizedAt, 'Work Unit integration authorizedAt');
-  timestampAtOrAfter(requestedAt, authorizedAt, 'Work Unit integration authorization');
-
-  const progress = x.progress === undefined ? undefined : (() => {
-    const value = object(x.progress, 'Work Unit integration progress');
-    keys(value, ['phase', 'recordedAt'], 'Work Unit integration progress');
-    if (!['preparing', 'applying', 'recording'].includes(value.phase as string))
-      fail('invalid Work Unit integration progress phase');
-    const recordedAt = timestamp(value.recordedAt, 'Work Unit integration progress recordedAt');
-    timestampAtOrAfter(authorizedAt, recordedAt, 'Work Unit integration progress');
-    return {
-      phase: value.phase as 'preparing' | 'applying' | 'recording',
-      recordedAt,
-    };
+const workUnitIncompleteDisposition = (value: unknown): NativeWorkUnitIncompleteDispositionV1 => {
+  const x = object(value, 'Work Unit incomplete disposition');
+  keys(x, ['attemptId', 'reviewInvocationId', 'decisionFingerprint', 'classification', 'meaningfulProgress', 'recordedAt', 'nextAttemptAuthorizedAt', 'noProgressHandback'], 'Work Unit incomplete disposition');
+  if (!['refinement_needed', 'functional_objective_not_satisfied', 'blocked'].includes(x.classification as string) || typeof x.meaningfulProgress !== 'boolean') fail('invalid Work Unit incomplete disposition');
+  const nextAttemptAuthorizedAt = x.nextAttemptAuthorizedAt === undefined ? undefined : timestamp(x.nextAttemptAuthorizedAt, 'nextAttemptAuthorizedAt');
+  const noProgressHandback = x.noProgressHandback === undefined ? undefined : (() => {
+    const handback = object(x.noProgressHandback, 'no-progress Work Unit handback');
+    keys(handback, ['handbackId', 'sourceAttemptId', 'sourceReviewInvocationId', 'contextFingerprint', 'persistedAt', 'deliveryIntendedAt', 'sprintRunnerReceiverActivatedAt', 'sprintRunnerReceiverDecisionAt'], 'no-progress Work Unit handback');
+    if (handback.sprintRunnerReceiverActivatedAt !== undefined || handback.sprintRunnerReceiverDecisionAt !== undefined) fail('no-progress Work Unit handback has forbidden receiver effects');
+    return { handbackId: boundedString(handback.handbackId, 240, 'handbackId'), sourceAttemptId: boundedString(handback.sourceAttemptId, 240, 'sourceAttemptId'), sourceReviewInvocationId: boundedString(handback.sourceReviewInvocationId, 240, 'sourceReviewInvocationId'), contextFingerprint: boundedString(handback.contextFingerprint, 240, 'contextFingerprint'), persistedAt: timestamp(handback.persistedAt, 'persistedAt'), deliveryIntendedAt: timestamp(handback.deliveryIntendedAt, 'deliveryIntendedAt') };
   })();
-  const attention = x.attention === undefined ? undefined : (() => {
-    const value = object(x.attention, 'Work Unit integration attention');
-    keys(value, ['kind', 'safeCode', 'recordedAt'], 'Work Unit integration attention');
-    if (value.kind !== 'conflict' && value.kind !== 'failure')
-      fail('invalid Work Unit integration attention kind');
-    const expectedCode = value.kind === 'conflict' ? 'integration_conflict' : 'integration_failure';
-    if (value.safeCode !== expectedCode) fail('invalid Work Unit integration attention code');
-    const recordedAt = timestamp(value.recordedAt, 'Work Unit integration attention recordedAt');
-    timestampAtOrAfter(
-      progress?.recordedAt ?? authorizedAt,
-      recordedAt,
-      'Work Unit integration attention',
-    );
-    return { kind: value.kind, safeCode: expectedCode, recordedAt } as const;
-  })();
-  const success = x.success === undefined ? undefined : (() => {
-    const value = object(x.success, 'Work Unit integration success');
-    keys(value, ['recordedAt'], 'Work Unit integration success');
-    const recordedAt = timestamp(value.recordedAt, 'Work Unit integration success recordedAt');
-    timestampAtOrAfter(
-      progress?.recordedAt ?? authorizedAt,
-      recordedAt,
-      'Work Unit integration success',
-    );
-    return { recordedAt };
-  })();
-  const settlement = x.settlement === undefined ? undefined : (() => {
-    const value = object(x.settlement, 'Work Unit settlement');
-    keys(value, ['settledAt'], 'Work Unit settlement');
-    const settledAt = timestamp(value.settledAt, 'Work Unit settlement settledAt');
-    timestampAtOrAfter(
-      success?.recordedAt ?? authorizedAt,
-      settledAt,
-      'Work Unit settlement',
-    );
-    return { settledAt };
-  })();
-  const prerequisiteContribution =
-    x.prerequisiteContribution === undefined
-      ? undefined
-      : (() => {
-          const value = object(
-            x.prerequisiteContribution,
-            'Work Unit prerequisite contribution',
-          );
-          keys(
-            value,
-            ['recordedAt', 'dependentCount'],
-            'Work Unit prerequisite contribution',
-          );
-          if (!Number.isSafeInteger(value.dependentCount) || (value.dependentCount as number) < 1)
-            fail('invalid Work Unit prerequisite contribution dependent count');
-          const recordedAt = timestamp(
-            value.recordedAt,
-            'Work Unit prerequisite contribution recordedAt',
-          );
-          timestampAtOrAfter(
-            settlement?.settledAt ?? success?.recordedAt ?? authorizedAt,
-            recordedAt,
-            'Work Unit prerequisite contribution',
-          );
-          return { recordedAt, dependentCount: value.dependentCount as number };
-        })();
-  if (attention && (success || settlement || prerequisiteContribution))
-    fail('Work Unit integration attention contradicts terminal facts');
-  if (success && !settlement)
-    fail('Work Unit integration success requires Work Unit settlement');
-  if (settlement && !success) fail('Work Unit settlement requires integration success');
-  if (prerequisiteContribution && (!success || !settlement))
-    fail('Work Unit prerequisite contribution requires integration success and settlement');
-  return {
-    requestedAt,
-    authorizedAt,
-    ...(progress ? { progress } : {}),
-    ...(attention ? { attention } : {}),
-    ...(success ? { success } : {}),
-    ...(settlement ? { settlement } : {}),
-    ...(prerequisiteContribution ? { prerequisiteContribution } : {}),
-  };
+  if (x.meaningfulProgress ? !nextAttemptAuthorizedAt || noProgressHandback : nextAttemptAuthorizedAt !== undefined || !noProgressHandback) fail('incomplete disposition has incoherent later effects');
+  return { attemptId: boundedString(x.attemptId, 240, 'incomplete disposition attemptId'), reviewInvocationId: boundedString(x.reviewInvocationId, 240, 'incomplete disposition reviewInvocationId'), decisionFingerprint: boundedString(x.decisionFingerprint, 240, 'incomplete disposition decisionFingerprint'), classification: x.classification as NativeWorkUnitIncompleteDispositionV1['classification'], meaningfulProgress: x.meaningfulProgress as boolean, recordedAt: timestamp(x.recordedAt, 'incomplete disposition recordedAt'), ...(nextAttemptAuthorizedAt ? { nextAttemptAuthorizedAt } : {}), ...(noProgressHandback ? { noProgressHandback } : {}) };
 };
 const workUnitRelationship = (value: unknown): NativeWorkUnitRelationshipV1 => {
   const x = object(value, 'Work Unit relationship');
@@ -2536,9 +2573,9 @@ function validate(query: OrchestrationNativeQueryV2) {
   const materializations = new Map(
     query.workUnitMaterializations.map((x) => [x.materializationId, x]),
   );
-  const units = new Map(query.workUnits.map((unit) => [unit.workUnitId, unit]));
+  const unitsById = new Map(query.workUnits.map((unit) => [unit.workUnitId, unit]));
   query.dependencyActivationIntents.forEach((intent) => {
-    const unit = units.get(intent.workUnitId);
+    const unit = unitsById.get(intent.workUnitId);
     const materialization = materializations.get(intent.materializationId);
     if (!unit || !materialization || unit.materializationId !== intent.materializationId || unit.acceptedRevisionId !== intent.acceptedRevisionId || materialization.acceptedRevisionId !== intent.acceptedRevisionId)
       fail('dependency activation intent has invalid Work Unit/materialization/revision correlation');
@@ -2581,7 +2618,7 @@ function validate(query: OrchestrationNativeQueryV2) {
         unit.acceptedRevisionId !== materialization.acceptedRevisionId
       )
         fail('materialized Work Unit does not match its materialization');
-      validateActivationCorrelations(unit, relationships);
+      validateActivationCorrelations(unit);
     });
   });
   if (query.workUnits.some((unit) => !materializations.has(unit.materializationId)))
@@ -2589,14 +2626,19 @@ function validate(query: OrchestrationNativeQueryV2) {
   if (query.workUnitRelationships.some((item) => !materializations.has(item.materializationId)))
     fail('Work Unit relationship references unknown materialization');
 }
-function validateActivationCorrelations(
-  unit: NativeMaterializedWorkUnitV1,
-  relationships: readonly NativeWorkUnitRelationshipV1[],
-) {
+function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
   const handler = unit.handlerActivation;
   const continuation = unit.actionContinuation;
   const implementer = unit.implementerActivation;
-  const outcome = unit.implementerOutcome;
+  const history = unit.attemptHistory;
+  const originHistory = history.find((member) => member.ordinal === 0);
+  const outcome = originHistory?.implementerOutcome;
+  const retries = unit.retryAttempts;
+  if (unit.integration) {
+    const terminal = history.at(-1);
+    if (!terminal?.handlerDecision || terminal.handlerDecision.variant !== 'accepted' || terminal.incompleteDisposition)
+      fail('productive integration requires the final attempt to be accepted');
+  }
   if (continuation) {
     if (!handler || handler.attemptId !== continuation.attemptId)
       fail('Handler action continuation does not share the Handler attempt');
@@ -2637,87 +2679,151 @@ function validateActivationCorrelations(
     if (outcome.reportingHarnessRevisionId === implementer.implementerHarnessRevisionId)
       fail('Implementer outcome reuses the original Implementer Harness revision');
   }
-  const review = unit.handlerReview;
-  const decision = unit.handlerDecision;
-  if (review) {
-    if (!handler || handler.eligibilityState !== 'eligible')
-      fail('Handler review requires an eligible Handler activation');
+  const retryOrdinals = new Set<number>();
+  const retryAttemptIds = new Set<string>();
+  for (const retry of retries) {
+    if (!retryOrdinals.add(retry.ordinal) || !retryAttemptIds.add(retry.retryAttemptId))
+      fail('retry attempts must have unique ordinals and identities');
+    const origin = history.find((member) => member.attemptId === retry.originAttemptId);
+    const originOutcome = origin?.implementerOutcome;
+    const predecessor = history.find((member) => member.ordinal === retry.ordinal - 1);
+    const disposition = predecessor?.incompleteDisposition;
+    const legacyOrdinalOne =
+      origin?.ordinal === 0 &&
+      retry.ordinal === 1 &&
+      origin.incompleteDisposition === undefined &&
+      origin.handlerDecision?.variant === 'returned' &&
+      origin.handlerDecision.retryRequiredAt !== undefined;
+    if (!origin || !predecessor || predecessor.attemptId !== origin.attemptId || !originOutcome || retry.ordinal !== origin.ordinal + 1)
+      fail('retry attempt does not match its exact predecessor history member');
+    if (!legacyOrdinalOne && (!disposition || !disposition.meaningfulProgress || !disposition.nextAttemptAuthorizedAt))
+      fail('retry attempt requires a returned Handler decision or exact meaningful-progress authorization from its predecessor');
     if (
-      !continuation ||
-      continuation.blockedReason ||
-      continuation.failureReason ||
-      !continuation.actionReadyAt
+      retry.implementerSessionId === originOutcome.implementerSessionId ||
+      retry.implementerInvocationId === originOutcome.originalImplementerInvocationId
     )
-      fail(
-        'Handler review requires an unblocked, nonfailed, application-ready Handler action continuation',
-      );
-    if (
-      review.attemptId !== handler.attemptId ||
-      review.handlerSessionId !== handler.handlerSessionId ||
-      review.originalHandlerInvocationId !== handler.handlerInvocationId ||
-      review.attemptId !== continuation.attemptId ||
-      review.handlerSessionId !== continuation.handlerSessionId ||
-      review.originalHandlerInvocationId !== continuation.originalHandlerInvocationId ||
-      review.actionHandlerInvocationId !== continuation.actionInvocationId
-    )
-      fail('Handler review does not match the original Handler Session and action continuation');
-    if (!outcome || outcome.attemptId !== review.attemptId || outcome.reportingInvocationId !== review.reportingInvocationId)
-      fail('Handler review does not match the Implementer reporting outcome');
-    if (!outcome.submittedOutcome || !outcome.evidence)
-      fail('Handler review requires the accepted Implementer claims and evidence');
-    if (
-      review.delivered.summaryClaim !== outcome.submittedOutcome.summaryClaim ||
-      review.delivered.validationStatementClaim !== outcome.submittedOutcome.validationStatementClaim ||
-      review.delivered.comparisonFingerprint !== outcome.evidence.comparisonFingerprint ||
-      JSON.stringify(review.delivered.changedFiles) !== JSON.stringify(outcome.evidence.changedFiles)
-    )
-      fail('Handler review delivered evidence differs from the Implementer outcome');
-    if (review.semanticJudgment && !review.launchAcceptedAt)
-      fail('Handler review judgment requires launch acceptance');
-  }
-  if (decision) {
-    if (!review || decision.reviewInvocationId !== review.reviewInvocationId)
-      fail('Handler decision does not match the Handler review invocation');
-    if (!review.semanticJudgment || review.lifecycle?.status !== 'completed')
-      fail('Handler decision requires exact Completed Handler review judgment');
-    const expectedVariant = review.semanticJudgment.variant === 'accept' ? 'accepted' : 'returned';
-    if (decision.variant !== expectedVariant)
-      fail('Handler decision contradicts semantic judgment');
-    if (decision.variant === 'returned') {
-      if (JSON.stringify(decision.returnReason) !== JSON.stringify(review.semanticJudgment.reason))
-        fail('Handler decision return reason differs from semantic judgment');
-    } else if (decision.returnReason) {
-      fail('accepted Handler decision cannot have a return reason');
+      fail('retry attempt must use distinct Implementer Session and invocation identities');
+    timestampAtOrAfter(
+      legacyOrdinalOne
+        ? origin.handlerDecision!.retryRequiredAt!
+        : disposition!.nextAttemptAuthorizedAt!,
+      retry.captureRequestedAt,
+      'retry capture request',
+    );
+    phaseCoherence(
+      retry,
+      [
+        'captureRequestedAt', 'candidatePinnedAt', 'authorizedAt',
+        'executionSupportGrantedAt', 'isolatedWorktreeReadyAt', 'implementerSessionCreatedAt',
+        'implementerInvocationPreparedAt', 'implementerHarnessBoundAt', 'launchRequestedAt',
+        'launchAcceptedAt', 'retryReadyAt',
+      ],
+      'retry Implementer activation',
+    );
+    if (retry.providerActivationObservedAt) {
+      if (!retry.launchRequestedAt)
+        fail('retry provider observation lacks launch request');
+      timestampAtOrAfter(retry.launchRequestedAt, retry.providerActivationObservedAt, 'retry provider observation');
+      if (retry.launchAcceptedAt)
+        timestampAtOrAfter(retry.launchAcceptedAt, retry.providerActivationObservedAt, 'retry provider observation');
     }
-    timestampAtOrAfter(
-      review.lifecycle.observedAt,
-      decision.recordedAt,
-      'Handler decision',
-    );
+    if (retry.retryReadyAt && !retry.launchAcceptedAt)
+      fail('retry readiness lacks launch acceptance');
+    if (retry.failureReason && retry.retryReadyAt)
+      fail('retry failure cannot be application-ready');
+    const retryHistory = history.find((member) => member.ordinal === retry.ordinal);
+    if (retryHistory && retryHistory.attemptId !== retry.retryAttemptId)
+      fail('retry activation does not match its attempt-history identity');
+    if (
+      retryHistory?.implementerOutcome &&
+      (retryHistory.implementerOutcome.implementerSessionId !== retry.implementerSessionId ||
+        retryHistory.implementerOutcome.originalImplementerInvocationId !== retry.implementerInvocationId)
+    )
+      fail('retry attempt history does not match its exact Session and invocation');
+    if (!retryHistory && history.some((member) => member.attemptId === retry.retryAttemptId))
+      fail('retry activation reuses a foreign attempt-history identity');
   }
-  const integration = unit.integration;
-  if (integration) {
-    if (!decision || decision.variant !== 'accepted')
-      fail('Productive integration requires an accepted Handler decision');
-    timestampAtOrAfter(
-      decision.recordedAt,
-      integration.requestedAt,
-      'Productive integration request',
-    );
-    const dependents = relationships.filter(
-      (relationship) =>
-        relationship.relationshipKind === 'depends_on' && relationship.toId === unit.workUnitId,
-    );
-    if (integration.settlement) {
-      if (dependents.length === 0 && integration.prerequisiteContribution)
-        fail('Work Unit without dependents has a prerequisite contribution');
+  let expectedOrdinal = 0;
+  const attemptIds = new Set<string>();
+  for (const member of history) {
+    if (member.ordinal !== expectedOrdinal || attemptIds.has(member.attemptId))
+      fail('Work Unit attempt history must be strictly ordered without gaps and use unique identities');
+    expectedOrdinal += 1;
+    attemptIds.add(member.attemptId);
+    const memberOutcome = member.implementerOutcome;
+    if (!memberOutcome || memberOutcome.attemptId !== member.attemptId)
+      fail('Work Unit attempt history member lacks its exact Implementer outcome');
+    const memberReview = member.handlerReview;
+    if (memberReview) {
       if (
-        dependents.length > 0 &&
-        integration.prerequisiteContribution?.dependentCount !== dependents.length
+        memberReview.attemptId !== member.attemptId ||
+        memberReview.reportingInvocationId !== memberOutcome.reportingInvocationId ||
+        memberReview.handlerSessionId !== handler?.handlerSessionId ||
+        memberReview.originalHandlerInvocationId !== handler?.handlerInvocationId ||
+        memberReview.actionHandlerInvocationId !== continuation?.actionInvocationId
       )
-        fail('Prerequisite contribution does not match exact dependent Work Units');
-    } else if (integration.prerequisiteContribution) {
-      fail('Prerequisite contribution exists without Work Unit settlement');
+        fail('Handler review does not match its attempt and application-owned Handler authority');
+      if (!handler || handler.eligibilityState !== 'eligible')
+        fail('Handler review requires an eligible Handler activation');
+      if (!continuation || continuation.blockedReason)
+        fail('Handler review requires an unblocked Handler action continuation');
+      if (!memberOutcome.submittedOutcome || !memberOutcome.evidence)
+        fail('Handler review requires the accepted Implementer claims and evidence');
+      if (
+        memberReview.delivered.summaryClaim !== memberOutcome.submittedOutcome.summaryClaim ||
+        memberReview.delivered.validationStatementClaim !== memberOutcome.submittedOutcome.validationStatementClaim ||
+        memberReview.delivered.comparisonFingerprint !== memberOutcome.evidence.comparisonFingerprint ||
+        JSON.stringify(memberReview.delivered.changedFiles) !== JSON.stringify(memberOutcome.evidence.changedFiles)
+      )
+        fail('Handler review delivered evidence differs from the Implementer outcome');
+      if (memberReview.semanticJudgment && !memberReview.launchAcceptedAt)
+        fail('Handler review judgment requires launch acceptance');
+    }
+    const memberDecision = member.handlerDecision;
+    if (memberDecision) {
+      if (
+        !memberReview ||
+        memberDecision.reviewInvocationId !== memberReview.reviewInvocationId ||
+        !memberReview.semanticJudgment ||
+        memberReview.lifecycle?.status !== 'completed'
+      )
+        fail('Handler decision lacks exact completed review correlation');
+      const expectedVariant = memberReview.semanticJudgment.variant === 'accept' ? 'accepted' : 'returned';
+      if (memberDecision.variant !== expectedVariant)
+        fail('Handler decision contradicts semantic judgment');
+      if (memberDecision.variant === 'returned') {
+        if (JSON.stringify(memberDecision.returnReason) !== JSON.stringify(memberReview.semanticJudgment.reason))
+          fail('Handler decision return reason differs from semantic judgment');
+      } else if (memberDecision.returnReason) {
+        fail('accepted Handler decision cannot have a return reason');
+      }
+      timestampAtOrAfter(memberReview.lifecycle.observedAt, memberDecision.recordedAt, 'Handler decision');
+    }
+    const memberDisposition = member.incompleteDisposition;
+    if (memberDisposition) {
+      if (!memberReview || !memberDecision || memberDecision.variant !== 'returned')
+        fail('incomplete disposition requires a returned Handler decision');
+      if (
+        memberDisposition.attemptId !== member.attemptId ||
+        memberDisposition.reviewInvocationId !== memberReview.reviewInvocationId ||
+        memberDisposition.decisionFingerprint !== memberDecision.fingerprint
+      )
+        fail('incomplete disposition does not match its attempt, review, and decision');
+      const handback = memberDisposition.noProgressHandback;
+      if (memberDisposition.meaningfulProgress) {
+        if (!memberDisposition.nextAttemptAuthorizedAt || handback)
+          fail('meaningful-progress disposition has incoherent later effects');
+      } else {
+        if (memberDisposition.nextAttemptAuthorizedAt || !handback)
+          fail('no-progress disposition has incoherent authorization or handback');
+        if (
+          handback.sourceAttemptId !== member.attemptId ||
+          handback.sourceReviewInvocationId !== memberReview.reviewInvocationId ||
+          handback.sprintRunnerReceiverActivatedAt !== undefined ||
+          handback.sprintRunnerReceiverDecisionAt !== undefined
+        )
+          fail('no-progress handback has foreign or forbidden receiver effects');
+      }
     }
   }
 }

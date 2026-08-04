@@ -4,6 +4,22 @@ Status: **partial**. Deterministic convergence and isolated installed-Codex Plan
 Bootstrap Generator, and Epic Runner paths pass. The production user-confirmation click and the
 integrated post-click chain remain a manual gate; no confirmation was bypassed.
 
+## CPS-1: dependent execution and generalized attempts convergence
+
+This local checkpoint combines the accepted dependent-cycle and generalized-attempt lines without
+making either line authority for the other. The productive projection keeps accepted integration,
+settlement, prerequisite contribution, and one dependent activation intent separately correlated;
+returned, retry-required, and no-progress outcomes project none of those effects. Attempt history
+is contiguous and ordinal-extensible, retaining legacy ordinal-1 retry facts, while a no-progress
+decision records one Work Unit handback and no Sprint Runner receiver effect.
+
+Captured local evidence: the Sprint Runner transition group passed **8/8**; the accepted dependent
+gateway passed **1/1**; and the no-progress handback boundary passed **1/1**. Rust `cargo check`
+passed with an isolated CPS-1 target directory. TypeScript build evidence remains unavailable in
+this checkout because `node_modules` is absent (`tsc` is not installed). These are local,
+deterministic proofs only; they do not establish live-provider behavior, production authority,
+integration publication, receiver activation, or user acceptance.
+
 ## Independent corrections
 
 - User-authored managed Plan Builder queries retain `user` transcript provenance, while the

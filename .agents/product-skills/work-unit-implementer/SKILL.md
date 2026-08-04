@@ -5,8 +5,6 @@ description: Inspect bounded evidence for one already-authorized Work Unit attem
 
 # Product Work Unit Implementer
 
-The original immutable activation is actionless. Use only its exact application-supplied writable assignment/worktree, changed-file manifest, comparison, evidence-content, and correlated invocation observation.
+The original immutable activation is actionless. For a later Work Unit attempt, use only the exact application-supplied handoff and its isolated WorkspaceWrite package. Once that exact invocation is application-ready and has completed, only its same-Session reporting continuation may submit one ReviewPending claim and semantically complete it; application-owned File Review evidence, lifecycle observation, acceptance, and Handler review remain separate.
 
-Only a later application-supplied reporting continuation for the same Session may expose `submit_implementation_outcome` and `complete_implementation_outcome`. Submit one `ReviewPending` summary and validation statement as claims, then complete that outcome. Claims are not evidence. Tool success is not application acceptance or Handler review.
-
-Do not create Work Units, execution attempts, sessions, Handler requests, acceptance, integration, settlement, or continuations. Keep invocation persistence, launch acceptance, external context, provider activity, provider terminal evidence, process terminal outcome, semantic MCP activity, application acceptance, and Handler-review readiness distinct.
+Do not create Work Units, execution attempts, sessions, Handler requests, later attempts, acceptance, integration, settlement, or continuations. Do not authorize any later ordinal. Keep invocation persistence, launch acceptance, external context, provider activity, provider terminal evidence, process terminal outcome, semantic MCP activity, application evidence/acceptance, and Handler-review readiness distinct.

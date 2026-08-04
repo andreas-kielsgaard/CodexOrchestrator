@@ -2,8 +2,9 @@ import { render, screen } from '@testing-library/react';
 import type {
   ProductWorkUnitHandlerDecisionV1,
   ProductWorkUnitHandlerReviewV1,
+  ProductWorkUnitIncompleteDispositionV1,
   ProductWorkUnitImplementerOutcomeV1,
-  ProductWorkUnitIntegrationV1,
+  ProductWorkUnitRetryAttemptV1,
   SprintWorkspacePresentationV1,
 } from '../../../application/orchestrations';
 import { WorkUnitDetailWorkspace } from './WorkUnitDetailWorkspace';
@@ -77,9 +78,7 @@ describe('WorkUnitDetailWorkspace Implementer outcome activity', () => {
     expect(detail).toHaveTextContent('Handler semantic judgment is pending');
     expect(detail).toHaveTextContent('Application-bound claims and evidence');
     expect(detail).toHaveTextContent('src/feature.ts');
-    expect(detail).toHaveTextContent(
-      'The Handler review and decision do not themselves create a retry attempt, Work Unit settlement, dependent activation, or upward continuation.',
-    );
+    expect(detail).toHaveTextContent('No settlement, dependent activation, or upward continuation is recorded.');
 
     rendered.rerender(workspace(reviewReadyOutcome(), handlerReview('failed')));
     detail = screen.getByLabelText('Work Unit context');
@@ -91,9 +90,6 @@ describe('WorkUnitDetailWorkspace Implementer outcome activity', () => {
     detail = screen.getByLabelText('Work Unit context');
     expect(detail).toHaveTextContent('Handler semantic judgment was recorded as accept');
     expect(detail).toHaveTextContent('Handler decision: accepted');
-    expect(detail).toHaveTextContent(
-      'The Handler review and decision do not themselves create a retry attempt, Work Unit settlement, dependent activation, or upward continuation.',
-    );
     expect(detail).not.toHaveTextContent('Structured return reason:');
 
     rendered.rerender(
@@ -112,71 +108,83 @@ describe('WorkUnitDetailWorkspace Implementer outcome activity', () => {
     expect(detail).toHaveTextContent('Structured return reason: review_failed');
     expect(detail).toHaveTextContent('Retry is required');
     expect(detail).toHaveTextContent('Review conflict observed at');
-    expect(detail).toHaveTextContent(
-      'The Handler review and decision do not themselves create a retry attempt, Work Unit settlement, dependent activation, or upward continuation.',
-    );
     expect(detail).not.toHaveTextContent(/implementation approved|Work Unit accepted|settled|Sprint continuation/i);
   });
 
-  it('shows progressive, attention, success, settlement, and contribution facts after Handler review', () => {
-    const review = handlerReview('accepted');
-    const decision = handlerDecision('accepted');
-    const rendered = renderWorkspace(reviewReadyOutcome(), review, decision, {
-      requestedAt: '2026-08-04T00:00:20Z',
-      authorizedAt: '2026-08-04T00:00:20Z',
-      progress: { phase: 'applying', recordedAt: '2026-08-04T00:00:22Z' },
-    });
+  it('shows retry partial, ready, and terminal launch failure facts without raw fields or later workflow', () => {
+    const returnedReview = handlerReview('returned');
+    const returnedDecision = handlerDecision('returned');
+    const rendered = renderWorkspace(
+      reviewReadyOutcome(),
+      returnedReview,
+      returnedDecision,
+      retryAttempt('partial'),
+    );
     let detail = screen.getByLabelText('Work Unit context');
-    const reviewHeading = screen.getByText('Handler review');
-    const integrationHeading = screen.getByText('Integration and settlement');
-    expect(
-      reviewHeading.compareDocumentPosition(integrationHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(detail).toHaveTextContent('explicitly authorized');
-    expect(detail).toHaveTextContent('Integration is in progress: applying the integration');
-    expect(detail).not.toHaveTextContent('Integration success was recorded');
+    expect(detail).toHaveTextContent('Returned Work Unit retry');
+    expect(detail).toHaveTextContent('Attempt ordinal 1');
+    expect(detail).toHaveTextContent('Candidate pinned');
+    expect(detail).toHaveTextContent('Implementer Harness bound');
+    expect(detail).toHaveTextContent('Retry readiness is not yet recorded');
+    expect(detail).not.toHaveTextContent(/candidateCommitId|candidateTreeId|privateRefName|worktreePath/i);
 
     rendered.rerender(
-      workspace(reviewReadyOutcome(), review, decision, {
-        requestedAt: '2026-08-04T00:00:20Z',
-        authorizedAt: '2026-08-04T00:00:20Z',
-        progress: { phase: 'preparing', recordedAt: '2026-08-04T00:00:21Z' },
-        attention: {
-          kind: 'conflict',
-          safeCode: 'integration_conflict',
-          recordedAt: '2026-08-04T00:00:22Z',
-        },
-      }),
+      workspace(reviewReadyOutcome(), returnedReview, returnedDecision, retryAttempt('ready')),
     );
     detail = screen.getByLabelText('Work Unit context');
-    expect(detail).toHaveTextContent('Integration needs attention: conflict');
-    expect(detail).toHaveTextContent('No integration success or Work Unit settlement is recorded');
+    expect(detail).toHaveTextContent('Retry attempt is application-ready');
+    expect(detail).toHaveTextContent('Launch accepted');
+    expect(detail).toHaveTextContent('Provider activation observed separately');
+    expect(detail).toHaveTextContent('Retry ready');
+    expect(detail).not.toHaveTextContent(/relaunch|replacement/i);
 
     rendered.rerender(
-      workspace(reviewReadyOutcome(), review, decision, {
-        requestedAt: '2026-08-04T00:00:20Z',
-        authorizedAt: '2026-08-04T00:00:20Z',
-        progress: { phase: 'recording', recordedAt: '2026-08-04T00:00:24Z' },
-        success: { recordedAt: '2026-08-04T00:00:25Z' },
-        settlement: { settledAt: '2026-08-04T00:00:25Z' },
-        prerequisiteContribution: {
-          recordedAt: '2026-08-04T00:00:25Z',
-          dependentCount: 2,
-        },
-      }),
+      workspace(reviewReadyOutcome(), returnedReview, returnedDecision, retryAttempt('failed')),
     );
     detail = screen.getByLabelText('Work Unit context');
-    expect(detail).toHaveTextContent('Integration success was recorded');
-    expect(detail).toHaveTextContent('Work Unit settlement was recorded');
-    expect(detail).toHaveTextContent(
-      'The Handler review and decision do not themselves create a retry attempt, Work Unit settlement, dependent activation, or upward continuation.',
+    expect(detail).toHaveTextContent('Retry attempt failed and needs attention');
+    expect(detail).toHaveTextContent('It is not ready');
+    expect(detail).toHaveTextContent('No provider activation is recorded');
+    expect(detail).toHaveTextContent('no relaunch or replacement is implied');
+    expect(detail).not.toHaveTextContent(/recovering/i);
+    expect(detail).not.toHaveTextContent('Retry attempt is application-ready');
+    expect(detail).toHaveTextContent('Handler decision: returned');
+  });
+
+  it('shows incomplete classification, progress, and handback intent without receiver effects', () => {
+    render(
+      workspace(
+        reviewReadyOutcome(),
+        handlerReview('returned'),
+        handlerDecision('returned'),
+        undefined,
+        {
+          attemptId: 'attempt-1',
+          reviewInvocationId: 'review-invocation-1',
+          decisionFingerprint: 'decision-1',
+          classification: 'blocked',
+          meaningfulProgress: false,
+          recordedAt: '2026-08-04T00:00:20Z',
+          noProgressHandback: {
+            handbackId: 'handback-1',
+            sourceAttemptId: 'attempt-1',
+            sourceReviewInvocationId: 'review-invocation-1',
+            contextFingerprint: 'context-1',
+            persistedAt: '2026-08-04T00:00:21Z',
+            deliveryIntendedAt: '2026-08-04T00:00:22Z',
+          },
+        },
+      ),
     );
-    expect(detail).not.toHaveTextContent(/No [^.]*settlement[^.]*is recorded/i);
-    expect(detail).toHaveTextContent('for 2 dependent Work Units');
-    expect(detail).toHaveTextContent('This does not activate dependent work');
-    expect(detail).not.toHaveTextContent(
-      /dependent work (?:is|was) active|Sprint settlement|Work Slice settlement|Epic settlement|published|user accepted/i,
-    );
+    const detail = screen.getByLabelText('Work Unit context');
+    expect(detail).toHaveTextContent('Incomplete Handler disposition');
+    expect(detail).toHaveTextContent('Blocked');
+    expect(detail).toHaveTextContent(/Meaningful progress\s*Not recorded/);
+    expect(detail).toHaveTextContent('Work Unit handback persistence and delivery intent');
+    expect(detail).toHaveTextContent('Handback persisted');
+    expect(detail).toHaveTextContent('Delivery intent recorded');
+    expect(detail).toHaveTextContent('Sprint Runner receiver activation or decision');
+    expect(detail).not.toHaveTextContent(/receiver activated|receiver decision|integrated/i);
   });
 });
 
@@ -184,20 +192,22 @@ function renderWorkspace(
   outcome?: ProductWorkUnitImplementerOutcomeV1,
   handlerReview?: ProductWorkUnitHandlerReviewV1,
   handlerDecision?: ProductWorkUnitHandlerDecisionV1,
-  integration?: ProductWorkUnitIntegrationV1,
+  retryAttempt?: ProductWorkUnitRetryAttemptV1,
+  incompleteDisposition?: ProductWorkUnitIncompleteDispositionV1,
 ) {
-  return render(workspace(outcome, handlerReview, handlerDecision, integration));
+  return render(workspace(outcome, handlerReview, handlerDecision, retryAttempt, incompleteDisposition));
 }
 
 function workspace(
   outcome?: ProductWorkUnitImplementerOutcomeV1,
   handlerReview?: ProductWorkUnitHandlerReviewV1,
   handlerDecision?: ProductWorkUnitHandlerDecisionV1,
-  integration?: ProductWorkUnitIntegrationV1,
+  retryAttempt?: ProductWorkUnitRetryAttemptV1,
+  incompleteDisposition?: ProductWorkUnitIncompleteDispositionV1,
 ) {
   return (
     <WorkUnitDetailWorkspace
-      unit={presentedWorkUnit(outcome, handlerReview, handlerDecision, integration)}
+      unit={presentedWorkUnit(outcome, handlerReview, handlerDecision, retryAttempt, incompleteDisposition)}
       lifecycleEntries={[]}
       workSlicePlanningPointGroupTitle="Planning point"
       sessions={[]}
@@ -210,7 +220,8 @@ function presentedWorkUnit(
   outcome?: ProductWorkUnitImplementerOutcomeV1,
   handlerReview?: ProductWorkUnitHandlerReviewV1,
   handlerDecision?: ProductWorkUnitHandlerDecisionV1,
-  integration?: ProductWorkUnitIntegrationV1,
+  retryAttempt?: ProductWorkUnitRetryAttemptV1,
+  incompleteDisposition?: ProductWorkUnitIncompleteDispositionV1,
 ): PresentedWorkUnit {
   return {
     workUnitId: 'unit-1',
@@ -222,10 +233,10 @@ function presentedWorkUnit(
       sourceKind: 'repository',
       sourceReferences: ['materialization-1'],
     },
-    ...(outcome ? { implementerOutcome: outcome } : {}),
-    ...(handlerReview ? { handlerReview } : {}),
-    ...(handlerDecision ? { handlerDecision } : {}),
-    ...(integration ? { integration } : {}),
+    attemptHistory: outcome
+      ? [{ ordinal: 0, attemptId: outcome.attemptId, implementerOutcome: outcome, ...(handlerReview ? { handlerReview } : {}), ...(handlerDecision ? { handlerDecision } : {}), ...(incompleteDisposition ? { incompleteDisposition } : {}) }]
+      : [],
+    retryAttempts: retryAttempt ? [retryAttempt] : [],
     workUnitScopeId: 'scope-1',
     sprintPlanRevisionId: 'revision-1',
     fixedExecutionScopeIds: [],
@@ -251,6 +262,8 @@ function reportingOutcome(): ProductWorkUnitImplementerOutcomeV1 {
     originalImplementerInvocationId: 'implementer-invocation-1',
     reportingInvocationId: 'reporting-invocation-1',
     reportingHarnessRevisionId: 'reporting-revision-1',
+    reportingHarnessConfigurationDigest: 'reporting-digest-1',
+    reportingHarnessRepositoryCommitRef: 'reporting-commit-1',
     reportingRequestedAt: '2026-08-04T00:00:00Z',
     reportingPreparedAt: '2026-08-04T00:00:01Z',
   };
@@ -312,6 +325,8 @@ function handlerReview(
     actionHandlerInvocationId: 'handler-action-1',
     reviewInvocationId: 'review-invocation-1',
     reviewHarnessRevisionId: 'review-revision-1',
+    reviewHarnessConfigurationDigest: 'review-digest-1',
+    reviewHarnessRepositoryCommitRef: 'review-commit-1',
     deliveryRequestedAt: '2026-08-04T00:00:12Z',
     deliveryPersistedAt: '2026-08-04T00:00:12Z',
     harnessBoundAt: '2026-08-04T00:00:13Z',
@@ -355,6 +370,7 @@ function handlerDecision(
 ): ProductWorkUnitHandlerDecisionV1 {
   return variant === 'accepted'
     ? {
+        attemptId: 'attempt-1',
         reviewInvocationId: 'review-invocation-1',
         variant,
         fingerprint: 'decision-1',
@@ -362,6 +378,7 @@ function handlerDecision(
         implementationAcceptedAt: '2026-08-04T00:00:19Z',
       }
     : {
+        attemptId: 'attempt-1',
         reviewInvocationId: 'review-invocation-1',
         variant,
         fingerprint: 'decision-1',
@@ -370,4 +387,33 @@ function handlerDecision(
         implementationReturnedAt: '2026-08-04T00:00:19Z',
         retryRequiredAt: '2026-08-04T00:00:19Z',
       };
+}
+
+function retryAttempt(state: 'partial' | 'ready' | 'failed'): ProductWorkUnitRetryAttemptV1 {
+  const retry: ProductWorkUnitRetryAttemptV1 = {
+    ordinal: 1,
+    originAttemptId: 'attempt-1',
+    retryAttemptId: 'retry-attempt-1',
+    implementerSessionId: 'retry-implementer-session-1',
+    implementerInvocationId: 'retry-implementer-invocation-1',
+    captureRequestedAt: '2026-08-04T00:00:20Z',
+    candidatePinnedAt: '2026-08-04T00:00:21Z',
+    authorizedAt: '2026-08-04T00:00:22Z',
+    executionSupportGrantedAt: '2026-08-04T00:00:23Z',
+    isolatedWorktreeReadyAt: '2026-08-04T00:00:24Z',
+    implementerSessionCreatedAt: '2026-08-04T00:00:25Z',
+    implementerInvocationPreparedAt: '2026-08-04T00:00:26Z',
+    implementerHarnessBoundAt: '2026-08-04T00:00:27Z',
+  };
+  if (state === 'ready')
+    return {
+      ...retry,
+      launchRequestedAt: '2026-08-04T00:00:29Z',
+      launchAcceptedAt: '2026-08-04T00:00:30Z',
+      providerActivationObservedAt: '2026-08-04T00:00:31Z',
+      retryReadyAt: '2026-08-04T00:00:32Z',
+    };
+  if (state === 'failed')
+    return { ...retry, launchRequestedAt: '2026-08-04T00:00:29Z', failureReason: 'retry_terminal_launch_failed' };
+  return retry;
 }

@@ -160,9 +160,9 @@ impl FullGatewayFixture {
                         'action-invocation','review','review-revision','review-digest','review-commit',
                         't','{}','delivery','accept','completed');
                  INSERT INTO work_unit_handler_decisions
-                   (work_unit_id,review_invocation_id,decision_variant,decision_fingerprint,
+                   (work_unit_id,attempt_id,review_invocation_id,decision_variant,decision_fingerprint,
                     decision_recorded_at,implementation_accepted_at)
-                 VALUES('unit','review','accepted','decision','t','t');
+                 VALUES('unit','attempt','review','accepted','decision','t','t');
                  INSERT INTO execution_support_grants
                    (attempt_id,capability_ref,epic_id,sprint_id,work_unit_id,repository_id,role_id,
                     workspace_id,workspace_fingerprint,correlation_fingerprint,recorded_at)
@@ -241,13 +241,13 @@ impl FullGatewayFixture {
         connection
             .execute(
                 "INSERT INTO work_unit_implementer_outcomes
-                   (work_unit_id,attempt_id,implementer_session_id,implementer_invocation_id,
+                   (work_unit_id,attempt_id,attempt_ordinal,implementer_session_id,implementer_invocation_id,
                     reporting_invocation_id,reporting_harness_revision_id,
                     reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,
                     reporting_requested_at,evidence_manifest_json,comparison_fingerprint,
                     evidence_content_fingerprints_json,file_review_capture_authorization_id,
                     evidence_ready_at,application_accepted_at)
-                 VALUES('unit','attempt','implementer-session','implementer-invocation','reporting',
+                 VALUES('unit','attempt',0,'implementer-session','implementer-invocation','reporting',
                         'reporting-revision','reporting-digest','reporting-commit','t',?1,?2,?3,
                         'capture','t','t')",
                 params![manifest, comparison, content_fingerprints],

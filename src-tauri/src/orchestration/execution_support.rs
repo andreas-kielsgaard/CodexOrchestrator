@@ -163,6 +163,9 @@ pub(crate) struct AuthorizeExistingWorkUnitExecutionAttempt {
     pub(crate) work_unit_id: String,
     pub(crate) role: WorkUnitExecutionRole,
     pub(crate) sprint_git_authority_id: String,
+    /// A retry coordinator may supply only an application-derived, already-pinned commit. The
+    /// durable Sprint authority remains the source of repository routing.
+    pub(crate) execution_seed_object_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -517,7 +520,10 @@ impl SqliteExecutionSupportRepository {
             .load_initiated_sprint_git_authority(&request.sprint_git_authority_id)
             .map_err(|_| ExecutionSupportError::Unavailable)?
             .ok_or(ExecutionSupportError::Denied)?;
-        let baseline = self.current_target_object_id(&authority)?;
+        if !git_object_id(&authority.current_object_id) {
+            return Err(ExecutionSupportError::CorrelationMismatch);
+        }
+        let baseline = request.execution_seed_object_id.clone().unwrap_or(authority.current_object_id);
         if !git_object_id(&baseline) {
             return Err(ExecutionSupportError::CorrelationMismatch);
         }
@@ -1107,6 +1113,7 @@ mod tests {
                     work_unit_id: work_unit_id.into(),
                     role: WorkUnitExecutionRole::Implementer,
                     sprint_git_authority_id: self.authority_id.clone(),
+                    execution_seed_object_id: None,
                 }).unwrap(),
                 AuthorizeExistingWorkUnitExecutionAttemptResult::Authorized { ref baseline_object_id } if baseline_object_id == &self.baseline
             ));

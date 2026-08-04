@@ -9,6 +9,9 @@ import type {
   ProductWorkUnitHandlerDecisionV1,
   ProductWorkUnitHandlerReviewV1,
   ProductWorkUnitIntegrationV1,
+  ProductWorkUnitIncompleteDispositionV1,
+  ProductWorkUnitImplementerOutcomeV1,
+  ProductWorkUnitRetryAttemptV1,
 } from '../../../application/orchestrations/productReadModels';
 import '../styles/orchestrationSubdetail.css';
 import type { ReactNode } from 'react';
@@ -58,6 +61,10 @@ export function WorkUnitDetailWorkspace({
   const [focusTarget, setFocusTarget] = useState<SessionFocusTarget | null>(null);
   const primarySession =
     sessions.find(({ sessionId }) => sessionId === primarySessionId) ?? handler ?? workSlicePlanner;
+  const activityOrdinals = [...new Set([
+    ...unit.attemptHistory.map((attempt) => attempt.ordinal),
+    ...unit.retryAttempts.map((retry) => retry.ordinal),
+  ])].sort((left, right) => left - right);
 
   const navigateToLifecycleTurn = (
     entry: SprintWorkspacePresentationV1['workUnitLifecycle'][number],
@@ -97,18 +104,14 @@ export function WorkUnitDetailWorkspace({
           <p>{unit.summary}</p>
           <p>{unit.details}</p>
           {(unit.handlerActivation ||
-            unit.dependencyActivationIntent ||
             unit.actionContinuation ||
             unit.implementerActivation ||
-            unit.implementerOutcome ||
-            unit.handlerReview ||
-            unit.handlerDecision ||
-            unit.integration) && (
+            unit.attemptHistory.length > 0 ||
+            unit.retryAttempts.length > 0 ||
+            unit.integration ||
+            unit.dependencyActivationIntent) && (
             <section className="work-unit-activation" aria-label="Work Unit activation activity">
               <h2>Activation activity</h2>
-              {unit.dependencyActivationIntent && (
-                <p>{dependencyActivationActivity(unit.dependencyActivationIntent)}</p>
-              )}
               {unit.handlerActivation && <p>{handlerActivity(unit.handlerActivation)}</p>}
               {unit.actionContinuation && (
                 <p>{actionContinuationActivity(unit.actionContinuation)}</p>
@@ -116,13 +119,45 @@ export function WorkUnitDetailWorkspace({
               {unit.implementerActivation && (
                 <p>{implementerActivity(unit.implementerActivation)}</p>
               )}
-              {unit.implementerOutcome && (
-                <ImplementerOutcomeActivity outcome={unit.implementerOutcome} />
+              {activityOrdinals.map((ordinal) => {
+                const attempt = unit.attemptHistory.find((member) => member.ordinal === ordinal);
+                return (
+                  <section className="work-unit-attempt" key={`attempt-${ordinal}`}>
+                    <h3>Attempt ordinal {ordinal}</h3>
+                    {attempt?.implementerOutcome && (
+                      <ImplementerOutcomeActivity outcome={attempt.implementerOutcome} />
+                    )}
+                    {attempt?.handlerReview && (
+                      <HandlerReviewActivity
+                        review={attempt.handlerReview}
+                        decision={attempt.handlerDecision}
+                      />
+                    )}
+                    {attempt?.incompleteDisposition && (
+                      <IncompleteDispositionActivity disposition={attempt.incompleteDisposition} />
+                    )}
+                    {unit.retryAttempts
+                      .filter((retry) => retry.ordinal === ordinal)
+                      .map((retry) => (
+                        <RetryAttemptActivity key={retry.retryAttemptId} retryAttempt={retry} />
+                      ))}
+                  </section>
+                );
+              })}
+              {unit.integration && <IntegrationActivity integration={unit.integration} />}
+              {unit.dependencyActivationIntent && (
+                <div className="work-unit-dependency-activation">
+                  <h3>Dependent activation</h3>
+                  <p>
+                    {unit.dependencyActivationIntent.eligibilityState === 'eligible'
+                      ? 'One dependent Work Unit is eligible for activation.'
+                      : 'Dependent activation remains blocked.'}
+                  </p>
+                  {unit.dependencyActivationIntent.blockedReason && (
+                    <p>Reason: {unit.dependencyActivationIntent.blockedReason}.</p>
+                  )}
+                </div>
               )}
-              {unit.handlerReview && (
-                <HandlerReviewActivity review={unit.handlerReview} decision={unit.handlerDecision} />
-              )}
-              {unit.integration && <IntegrationAndSettlement integration={unit.integration} />}
             </section>
           )}
           <section className="work-unit-lifecycle" aria-label="Work Unit lifecycle turn log">
@@ -308,18 +343,6 @@ function handlerActivity(
     : detail;
 }
 
-function dependencyActivationActivity(
-  intent: NonNullable<
-    SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['dependencyActivationIntent']
-  >,
-) {
-  if (intent.eligibilityState === 'blocked')
-    return `Dependency activation is factually blocked: ${intent.blockedReason}.`;
-  return intent.activationIntendedAt
-    ? 'Dependencies are eligible and Handler activation intent is durably recorded.'
-    : 'Dependencies are eligible; activation intent is not recorded.';
-}
-
 function actionContinuationActivity(
   continuation: NonNullable<
     SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['actionContinuation']
@@ -371,9 +394,7 @@ function implementerActivity(
 function ImplementerOutcomeActivity({
   outcome,
 }: {
-  readonly outcome: NonNullable<
-    SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['implementerOutcome']
-  >;
+  readonly outcome: ProductWorkUnitImplementerOutcomeV1;
 }) {
   const reportingStage = outcome.reportingReadyAt
     ? 'Implementer reporting is application-ready.'
@@ -590,7 +611,12 @@ function HandlerReviewActivity({
           {decision.implementationReturnedAt && (
             <p>Implementation returned by the Handler review at {decision.implementationReturnedAt}.</p>
           )}
-          {decision.retryRequiredAt && <p>Retry is required at {decision.retryRequiredAt}; no retry attempt is recorded.</p>}
+          {decision.retryRequiredAt && (
+            <p>
+              Retry is required at {decision.retryRequiredAt}. This is a legacy ordinal-1
+              compatibility fact only; it is not generalized retry authorization.
+            </p>
+          )}
         </div>
       ) : review.lifecycle?.status === 'completed' && review.semanticJudgment ? (
         <p>No final Handler decision is recorded yet.</p>
@@ -602,60 +628,197 @@ function HandlerReviewActivity({
           Review conflict observed at {review.conflict.occurredAt}: {review.conflict.reason}.
         </p>
       )}
-      <p>
-        The Handler review and decision do not themselves create a retry attempt, Work Unit
-        settlement, dependent activation, or upward continuation.
-      </p>
+      <p>No settlement, dependent activation, or upward continuation is recorded.</p>
     </div>
   );
 }
 
-function IntegrationAndSettlement({
-  integration,
-}: {
-  readonly integration: ProductWorkUnitIntegrationV1;
-}) {
-  const phase = integration.progress
-    ? {
-        preparing: 'preparing the integration',
-        applying: 'applying the integration',
-        recording: 'recording the integration result',
-      }[integration.progress.phase]
-    : undefined;
+function IntegrationActivity({ integration }: { readonly integration: ProductWorkUnitIntegrationV1 }) {
   return (
     <div className="work-unit-integration">
       <h3>Integration and settlement</h3>
+      <p>Integration was requested at {integration.requestedAt} and authorized at {integration.authorizedAt}.</p>
+      {integration.progress && <p>Integration progress: {integration.progress.phase} at {integration.progress.recordedAt}.</p>}
+      {integration.attention && <p>Integration needs attention: {integration.attention.safeCode.replaceAll('_', ' ')}. No settlement or contribution is recorded.</p>}
+      {integration.success && <p>Integration success was recorded at {integration.success.recordedAt}.</p>}
+      {integration.settlement && <p>Work Unit settlement was recorded at {integration.settlement.settledAt}.</p>}
+      {integration.prerequisiteContribution && <p>Prerequisite contribution was recorded for {integration.prerequisiteContribution.dependentCount} dependent Work Unit{integration.prerequisiteContribution.dependentCount === 1 ? '' : 's'}.</p>}
+    </div>
+  );
+}
+
+function IncompleteDispositionActivity({
+  disposition,
+}: {
+  readonly disposition: ProductWorkUnitIncompleteDispositionV1;
+}) {
+  const classification = {
+    refinement_needed: 'Refinement needed',
+    functional_objective_not_satisfied: 'Functional objective not satisfied',
+    blocked: 'Blocked',
+  }[disposition.classification];
+  return (
+    <div className="work-unit-incomplete-disposition">
+      <h3>Incomplete Handler disposition</h3>
       <p>
-        Integration was requested at {integration.requestedAt} and explicitly authorized at{' '}
-        {integration.authorizedAt}.
+        {classification}; meaningful progress was{' '}
+        {disposition.meaningfulProgress ? 'recorded' : 'not recorded'}.
       </p>
-      {integration.progress && (integration.attention || integration.success) ? (
-        <p>Durable progress was recorded while {phase} at {integration.progress.recordedAt}.</p>
-      ) : integration.progress ? (
-        <p>Integration is in progress: {phase} at {integration.progress.recordedAt}.</p>
-      ) : null}
-      {integration.attention && (
+      <dl>
+        <RecordedFact label="Classification" value={classification} />
+        <RecordedFact
+          label="Meaningful progress"
+          value={disposition.meaningfulProgress ? 'Recorded' : 'Not recorded'}
+        />
+        <RecordedFact label="Disposition recorded" value={disposition.recordedAt} />
+        {disposition.nextAttemptAuthorizedAt && (
+          <RecordedFact
+            label="Next attempt authorization"
+            value={disposition.nextAttemptAuthorizedAt}
+          />
+        )}
+      </dl>
+      {disposition.noProgressHandback ? (
+        <>
+          <p>
+            No meaningful progress was recorded. Work Unit handback persistence and delivery intent
+            are recorded separately from Sprint Runner receiver activation or decision.
+          </p>
+          <dl>
+            <RecordedFact label="Handback" value={disposition.noProgressHandback.handbackId} />
+            <RecordedFact
+              label="Source attempt"
+              value={disposition.noProgressHandback.sourceAttemptId}
+            />
+            <RecordedFact
+              label="Source review"
+              value={disposition.noProgressHandback.sourceReviewInvocationId}
+            />
+            <RecordedFact
+              label="Handback persisted"
+              value={disposition.noProgressHandback.persistedAt}
+            />
+            <RecordedFact
+              label="Delivery intent recorded"
+              value={disposition.noProgressHandback.deliveryIntendedAt}
+            />
+          </dl>
+        </>
+      ) : (
         <p>
-          Integration needs attention: {integration.attention.kind} (
-          {integration.attention.safeCode.replaceAll('_', ' ')}) recorded at{' '}
-          {integration.attention.recordedAt}. No integration success or Work Unit settlement is
-          recorded.
+          The authorized next attempt is a recorded application fact; no launch, receiver
+          activation, settlement, integration, or dependent activation is recorded here.
         </p>
       )}
-      {integration.success && (
-        <p>Integration success was recorded at {integration.success.recordedAt}.</p>
-      )}
-      {integration.settlement && (
-        <p>Work Unit settlement was recorded at {integration.settlement.settledAt}.</p>
-      )}
-      {integration.prerequisiteContribution && (
+      <p>No user acceptance is recorded by this disposition.</p>
+    </div>
+  );
+}
+
+function RetryAttemptActivity({
+  retryAttempt,
+}: {
+  readonly retryAttempt: ProductWorkUnitRetryAttemptV1;
+}) {
+  const status = retryAttempt.failureReason
+    ? 'Retry attempt failed and needs attention. It is not ready; no relaunch or replacement is implied.'
+    : retryAttempt.retryReadyAt
+      ? 'Retry attempt is application-ready.'
+      : retryAttempt.launchAcceptedAt
+        ? 'Retry launch was accepted; retry readiness is not yet recorded.'
+        : retryAttempt.launchRequestedAt
+          ? 'Retry launch was requested; launch acceptance is not yet recorded.'
+          : retryAttempt.implementerHarnessBoundAt
+            ? 'Retry Implementer Harness is bound.'
+            : retryAttempt.implementerInvocationPreparedAt
+              ? 'Retry Implementer invocation is prepared.'
+              : retryAttempt.implementerSessionCreatedAt
+                ? 'Retry Implementer Session is created.'
+                : retryAttempt.isolatedWorktreeReadyAt
+                  ? 'Retry isolated WorkspaceWrite package is ready.'
+                  : retryAttempt.executionSupportGrantedAt
+                    ? 'Retry execution support is granted.'
+                    : retryAttempt.authorizedAt
+                      ? 'Retry attempt is authorized.'
+                      : retryAttempt.candidatePinnedAt
+                        ? 'Retry candidate is pinned.'
+                        : 'Retry capture was requested.';
+  return (
+    <div className="work-unit-retry-attempt">
+      <h3>Returned Work Unit retry</h3>
+      <p>{status}</p>
+      <dl>
+        <RecordedFact label="Ordinal" value={String(retryAttempt.ordinal)} />
+        <RecordedFact label="Origin Implementer attempt" value={retryAttempt.originAttemptId} />
+        <RecordedFact label="Retry attempt" value={retryAttempt.retryAttemptId} />
+        <RecordedFact label="Retry Implementer Session" value={retryAttempt.implementerSessionId} />
+        <RecordedFact
+          label="Retry Implementer invocation"
+          value={retryAttempt.implementerInvocationId}
+        />
+        <RecordedFact label="Capture requested" value={retryAttempt.captureRequestedAt} />
+        {retryAttempt.candidatePinnedAt && (
+          <RecordedFact label="Candidate pinned" value={retryAttempt.candidatePinnedAt} />
+        )}
+        {retryAttempt.authorizedAt && (
+          <RecordedFact label="Authorized" value={retryAttempt.authorizedAt} />
+        )}
+        {retryAttempt.executionSupportGrantedAt && (
+          <RecordedFact
+            label="Execution support granted"
+            value={retryAttempt.executionSupportGrantedAt}
+          />
+        )}
+        {retryAttempt.isolatedWorktreeReadyAt && (
+          <RecordedFact
+            label="Isolated WorkspaceWrite package ready"
+            value={retryAttempt.isolatedWorktreeReadyAt}
+          />
+        )}
+        {retryAttempt.implementerSessionCreatedAt && (
+          <RecordedFact
+            label="Implementer Session created"
+            value={retryAttempt.implementerSessionCreatedAt}
+          />
+        )}
+        {retryAttempt.implementerInvocationPreparedAt && (
+          <RecordedFact
+            label="Implementer invocation prepared"
+            value={retryAttempt.implementerInvocationPreparedAt}
+          />
+        )}
+        {retryAttempt.implementerHarnessBoundAt && (
+          <RecordedFact
+            label="Implementer Harness bound"
+            value={retryAttempt.implementerHarnessBoundAt}
+          />
+        )}
+        {retryAttempt.launchRequestedAt && (
+          <RecordedFact label="Launch requested" value={retryAttempt.launchRequestedAt} />
+        )}
+        {retryAttempt.launchAcceptedAt && (
+          <RecordedFact label="Launch accepted" value={retryAttempt.launchAcceptedAt} />
+        )}
+        {retryAttempt.providerActivationObservedAt && (
+          <RecordedFact
+            label="Provider activation observed separately"
+            value={retryAttempt.providerActivationObservedAt}
+          />
+        )}
+        {retryAttempt.retryReadyAt && (
+          <RecordedFact label="Retry ready" value={retryAttempt.retryReadyAt} />
+        )}
+      </dl>
+      {retryAttempt.failureReason && (
         <p>
-          Prerequisite contribution was recorded at{' '}
-          {integration.prerequisiteContribution.recordedAt} for{' '}
-          {integration.prerequisiteContribution.dependentCount} dependent Work{' '}
-          {integration.prerequisiteContribution.dependentCount === 1 ? 'Unit' : 'Units'}. This does
-          not activate dependent work.
+          Retry failed and needs attention: {retryAttempt.failureReason}. It is not ready.{' '}
+          {retryAttempt.providerActivationObservedAt
+            ? 'Provider activation was observed separately.'
+            : 'No provider activation is recorded.'}
         </p>
+      )}
+      {!retryAttempt.failureReason && !retryAttempt.retryReadyAt && (
+        <p>Retry readiness is not yet recorded. This surface does not imply recovery or relaunch.</p>
       )}
     </div>
   );

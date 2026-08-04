@@ -166,18 +166,18 @@ export interface ProductReadReferenceIndexV1 {
     readonly summary: string;
     readonly details: string;
     readonly source: ReadSourceAuthorityV1;
-    readonly dependencyActivationIntent?: {
-      readonly eligibilityState: 'blocked' | 'eligible';
-      readonly blockedReason?: string;
-      readonly activationIntendedAt?: string;
-    };
     readonly handlerActivation?: ProductWorkUnitHandlerActivationV1;
     readonly actionContinuation?: ProductWorkUnitActionContinuationV1;
     readonly implementerActivation?: ProductWorkUnitImplementerActivationV1;
-    readonly implementerOutcome?: ProductWorkUnitImplementerOutcomeV1;
-    readonly handlerReview?: ProductWorkUnitHandlerReviewV1;
-    readonly handlerDecision?: ProductWorkUnitHandlerDecisionV1;
+    readonly attemptHistory: readonly ProductWorkUnitAttemptHistoryV1[];
+    readonly retryAttempts: readonly ProductWorkUnitRetryAttemptV1[];
     readonly integration?: ProductWorkUnitIntegrationV1;
+    readonly dependencyActivationIntent?: {
+      readonly eligibilityState: 'blocked' | 'eligible';
+      readonly blockedReason?: string;
+      readonly eligibilityRecordedAt: string;
+      readonly activationIntendedAt?: string;
+    };
   }[];
   readonly gates: readonly {
     readonly gateId: string;
@@ -357,6 +357,7 @@ export type ProductWorkUnitHandlerReviewV1 = Readonly<{
 }>;
 
 export type ProductWorkUnitHandlerDecisionV1 = Readonly<{
+  readonly attemptId: string;
   readonly reviewInvocationId: string;
   readonly variant: 'accepted' | 'returned';
   readonly fingerprint: string;
@@ -368,7 +369,6 @@ export type ProductWorkUnitHandlerDecisionV1 = Readonly<{
   readonly settlementReadyAt?: string;
 }>;
 
-/** Productive integration facts remain separate from legacy observed lifecycle events. */
 export type ProductWorkUnitIntegrationV1 = Readonly<{
   readonly requestedAt: string;
   readonly authorizedAt: string;
@@ -387,6 +387,47 @@ export type ProductWorkUnitIntegrationV1 = Readonly<{
     readonly recordedAt: string;
     readonly dependentCount: number;
   }>;
+}>;
+
+export type ProductWorkUnitIncompleteDispositionV1 = Readonly<{
+  readonly attemptId: string;
+  readonly reviewInvocationId: string;
+  readonly decisionFingerprint: string;
+  readonly classification: 'refinement_needed' | 'functional_objective_not_satisfied' | 'blocked';
+  readonly meaningfulProgress: boolean;
+  readonly recordedAt: string;
+  readonly nextAttemptAuthorizedAt?: string;
+  readonly noProgressHandback?: Readonly<{
+    readonly handbackId: string;
+    readonly sourceAttemptId: string;
+    readonly sourceReviewInvocationId: string;
+    readonly contextFingerprint: string;
+    readonly persistedAt: string;
+    readonly deliveryIntendedAt: string;
+    readonly sprintRunnerReceiverActivatedAt?: string;
+    readonly sprintRunnerReceiverDecisionAt?: string;
+  }>;
+}>;
+
+export type ProductWorkUnitRetryAttemptV1 = Readonly<{
+  readonly ordinal: number;
+  readonly originAttemptId: string;
+  readonly retryAttemptId: string;
+  readonly implementerSessionId: string;
+  readonly implementerInvocationId: string;
+  readonly captureRequestedAt: string;
+  readonly candidatePinnedAt?: string;
+  readonly authorizedAt?: string;
+  readonly executionSupportGrantedAt?: string;
+  readonly isolatedWorktreeReadyAt?: string;
+  readonly implementerSessionCreatedAt?: string;
+  readonly implementerInvocationPreparedAt?: string;
+  readonly implementerHarnessBoundAt?: string;
+  readonly launchRequestedAt?: string;
+  readonly launchAcceptedAt?: string;
+  readonly providerActivationObservedAt?: string;
+  readonly retryReadyAt?: string;
+  readonly failureReason?: string;
 }>;
 
 /** Application-recorded reporting facts; submitted prose remains explicitly claim-only. */
@@ -432,6 +473,16 @@ export type ProductWorkUnitImplementerOutcomeV1 = Readonly<{
   readonly applicationAcceptedAt?: string;
   readonly handlerReviewReadyAt?: string;
   readonly failureReason?: string;
+}>;
+
+/** Ordered application-owned history; ordinals are nonnegative and do not authorize later work. */
+export type ProductWorkUnitAttemptHistoryV1 = Readonly<{
+  readonly ordinal: number;
+  readonly attemptId: string;
+  readonly implementerOutcome?: ProductWorkUnitImplementerOutcomeV1;
+  readonly handlerReview?: ProductWorkUnitHandlerReviewV1;
+  readonly handlerDecision?: ProductWorkUnitHandlerDecisionV1;
+  readonly incompleteDisposition?: ProductWorkUnitIncompleteDispositionV1;
 }>;
 
 export interface ProductContinuationReadModelV1 {
@@ -503,18 +554,18 @@ export interface ProductSprintRevisionViewV1 {
     readonly summary: string;
     readonly details: string;
     readonly source: ReadSourceAuthorityV1;
-    readonly dependencyActivationIntent?: {
-      readonly eligibilityState: 'blocked' | 'eligible';
-      readonly blockedReason?: string;
-      readonly activationIntendedAt?: string;
-    };
     readonly handlerActivation?: ProductWorkUnitHandlerActivationV1;
     readonly actionContinuation?: ProductWorkUnitActionContinuationV1;
     readonly implementerActivation?: ProductWorkUnitImplementerActivationV1;
-    readonly implementerOutcome?: ProductWorkUnitImplementerOutcomeV1;
-    readonly handlerReview?: ProductWorkUnitHandlerReviewV1;
-    readonly handlerDecision?: ProductWorkUnitHandlerDecisionV1;
+    readonly attemptHistory: readonly ProductWorkUnitAttemptHistoryV1[];
+    readonly retryAttempts: readonly ProductWorkUnitRetryAttemptV1[];
     readonly integration?: ProductWorkUnitIntegrationV1;
+    readonly dependencyActivationIntent?: {
+      readonly eligibilityState: 'blocked' | 'eligible';
+      readonly blockedReason?: string;
+      readonly eligibilityRecordedAt: string;
+      readonly activationIntendedAt?: string;
+    };
     readonly workUnitScopeId: string;
     readonly sprintPlanRevisionId: string;
     readonly fixedExecutionScopeIds: readonly string[];

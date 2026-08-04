@@ -60,7 +60,7 @@ describe('Sprint workspace presentation projector', () => {
       ],
       gates: [{ gateId: 'gate-2', presentationRole: { kind: 'accepted_review_marker' } }],
     });
-    expect(presentation.revisionViews[1].workUnits[0].implementerOutcome).toMatchObject({
+    expect(presentation.revisionViews[1].workUnits[0].attemptHistory[0]?.implementerOutcome).toMatchObject({
       submittedOutcome: {
         summaryClaim: 'Implemented the bounded change.',
         validationStatementClaim: 'Focused checks passed.',
@@ -236,6 +236,8 @@ function sprintReadModel(): ProductSprintReadModelV1 {
             fixedExecutionScopeIds: ['scope-1'],
             dependencies: [],
             gateIds: ['gate-1'],
+            attemptHistory: [],
+            retryAttempts: [],
             attempts: [
               { attemptId: 'attempt-1', workUnitExecutionId: 'execution-1', returned: true },
             ],
@@ -303,7 +305,11 @@ function sprintReadModel(): ProductSprintReadModelV1 {
             summary: 'Summary',
             details: 'Details',
             source: source(),
-            implementerOutcome: {
+            retryAttempts: [],
+            attemptHistory: [{
+              ordinal: 0,
+              attemptId: 'attempt-1',
+              implementerOutcome: {
               attemptId: 'attempt-1',
               implementerSessionId: 'implementer-session-1',
               originalImplementerInvocationId: 'implementer-invocation-1',
@@ -346,7 +352,8 @@ function sprintReadModel(): ProductSprintReadModelV1 {
               },
               applicationAcceptedAt: '2026-08-04T00:00:10Z',
               handlerReviewReadyAt: '2026-08-04T00:00:11Z',
-            },
+              },
+            }],
             workUnitScopeId: 'scope-2a',
             sprintPlanRevisionId: 'revision-2',
             fixedExecutionScopeIds: [],
@@ -374,6 +381,8 @@ function sprintReadModel(): ProductSprintReadModelV1 {
             fixedExecutionScopeIds: [],
             dependencies: [{ workUnitScopeId: 'scope-2a', workUnitId: 'work-unit-2' }],
             gateIds: [],
+            attemptHistory: [],
+            retryAttempts: [],
             attempts: [],
             reviews: [],
             observed: {

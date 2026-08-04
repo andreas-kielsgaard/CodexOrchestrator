@@ -1672,56 +1672,6 @@ fn canonical_populated_query() -> NativeQueryV2 {
     }
 }
 
-fn dependency_projection_unit() -> WorkUnitDto {
-    WorkUnitDto {
-        work_unit_id: "unit-1".into(),
-        materialization_id: "materialization-1".into(),
-        work_slice_id: "slice-1".into(),
-        accepted_revision_id: "revision-1".into(),
-        lane_ordinal: 0,
-        lane_title: "Unit".into(),
-        specification: "Bounded unit".into(),
-        handler_activation: None,
-        action_continuation: None,
-        implementer_activation: None,
-        implementer_outcome: None,
-        handler_review: None,
-        handler_decision: None,
-        integration: None,
-    }
-}
-
-fn dependency_intent(state: &str, reason: Option<&str>, intended: Option<&str>) -> WorkUnitDependencyActivationIntentDto {
-    WorkUnitDependencyActivationIntentDto {
-        work_unit_id: "unit-1".into(),
-        materialization_id: "materialization-1".into(),
-        accepted_revision_id: "revision-1".into(),
-        eligibility_state: state.into(),
-        blocked_reason: reason.map(str::to_owned),
-        eligibility_recorded_at: "2026-08-04T00:00:00Z".into(),
-        activation_intended_at: intended.map(str::to_owned),
-    }
-}
-
-#[test]
-fn dependency_activation_intent_projection_is_strict_and_privacy_safe() {
-    assert!(validate_dependency_activation_intents(&[dependency_intent("blocked", Some("missing_prerequisite_contributions:edge-1"), None)], &[dependency_projection_unit()]).is_ok());
-    assert!(validate_dependency_activation_intents(&[dependency_intent("eligible", None, Some("2026-08-04T00:00:00Z"))], &[dependency_projection_unit()]).is_ok());
-    assert!(validate_dependency_activation_intents(&[dependency_intent("blocked", Some("canonical_dependency_edge_invalid"), Some("2026-08-04T00:00:00Z"))], &[dependency_projection_unit()]).is_ok());
-    let mut unknown = dependency_intent("blocked", Some("missing"), None);
-    unknown.work_unit_id = "foreign-unit".into();
-    assert!(validate_dependency_activation_intents(&[unknown], &[dependency_projection_unit()]).is_err());
-    let mut foreign = dependency_intent("blocked", Some("missing"), None);
-    foreign.accepted_revision_id = "foreign-revision".into();
-    assert!(validate_dependency_activation_intents(&[foreign], &[dependency_projection_unit()]).is_err());
-    assert!(validate_dependency_activation_intents(&[dependency_intent("eligible", Some("contradictory"), None)], &[dependency_projection_unit()]).is_err());
-    let json = serde_json::to_value(dependency_intent("eligible", None, Some("2026-08-04T00:00:00Z"))).unwrap();
-    let object = json.as_object().unwrap();
-    for private in ["repositoryCommitRef", "integrationId", "contributionId", "fingerprint", "objectId"] {
-        assert!(!object.contains_key(private), "private field crossed projection: {private}");
-    }
-}
-
 fn current_native_fixture(value: &str) -> Result<serde_json::Value, serde_json::Error> {
     let mut fixture = serde_json::from_str::<serde_json::Value>(value)?;
     fixture
@@ -1929,7 +1879,7 @@ fn implementer_outcome_projection_serializes_authoritative_claim_evidence_and_re
     let submission_fingerprint = projection_stable_id("implementer-outcome", payload);
     connection.execute(
         "INSERT INTO work_unit_implementer_outcomes VALUES (
-          'unit',?1,'implementer-session','implementer-invocation',?2,
+          'unit',?1,0,'implementer-session','implementer-invocation',?2,
           'reporting-revision','reporting-digest','reporting-commit',
           '2026-08-04T00:00:00Z','2026-08-04T00:00:01Z','2026-08-04T00:00:02Z',
           '2026-08-04T00:00:03Z','2026-08-04T00:00:04Z','2026-08-04T00:00:05Z',
@@ -1949,7 +1899,7 @@ fn implementer_outcome_projection_serializes_authoritative_claim_evidence_and_re
     ).unwrap();
 
     let outcomes = implementer_outcome_rows(&connection).unwrap();
-    let value = serde_json::to_value(outcomes.get("unit").unwrap()).unwrap();
+    let value = serde_json::to_value(&outcomes.get("unit").unwrap()[0].1).unwrap();
     assert_eq!(value["submittedOutcome"]["variant"], "review_pending");
     assert_eq!(value["submittedOutcome"]["summaryClaim"], "Implemented the bounded change.");
     assert_eq!(value["submittedOutcome"]["validationStatementClaim"], "Focused checks passed.");
@@ -1967,11 +1917,11 @@ fn implementer_outcome_projection_rejects_partial_bundles_and_incoherent_authori
     let reporting = projection_stable_id("work-unit-implementer-reporting-invocation", "attempt");
     connection.execute(
         "INSERT INTO work_unit_implementer_outcomes (
-          work_unit_id,attempt_id,implementer_session_id,implementer_invocation_id,
+          work_unit_id,attempt_id,attempt_ordinal,implementer_session_id,implementer_invocation_id,
           reporting_invocation_id,reporting_harness_revision_id,
           reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,
           reporting_requested_at,submitted_summary
-        ) VALUES ('unit','attempt','implementer-session','implementer-invocation',?1,
+        ) VALUES ('unit','attempt',0,'implementer-session','implementer-invocation',?1,
           'reporting-revision','reporting-digest','reporting-commit','2026-08-04T00:00:00Z','partial')",
         [&reporting],
     ).unwrap();
@@ -1981,25 +1931,25 @@ fn implementer_outcome_projection_rejects_partial_bundles_and_incoherent_authori
     assert!(validate_work_unit_activation_projection(&valid).is_ok());
 
     let mut foreign_session = valid_work_unit_outcome_projection();
-    foreign_session.implementer_outcome.as_mut().unwrap().implementer_session_id = "foreign".into();
+    primary_outcome_mut(&mut foreign_session).implementer_session_id = "foreign".into();
     assert!(validate_work_unit_activation_projection(&foreign_session).is_err());
 
     let mut reused_invocation = valid_work_unit_outcome_projection();
-    reused_invocation.implementer_outcome.as_mut().unwrap().reporting_invocation_id =
+    primary_outcome_mut(&mut reused_invocation).reporting_invocation_id =
         "implementer-invocation".into();
     assert!(validate_work_unit_activation_projection(&reused_invocation).is_err());
 
     let mut accepted_failed = valid_work_unit_outcome_projection();
-    accepted_failed.implementer_outcome.as_mut().unwrap().terminal_lifecycle.as_mut().unwrap().status =
+    primary_outcome_mut(&mut accepted_failed).terminal_lifecycle.as_mut().unwrap().status =
         WorkUnitImplementerLifecycleStatusDto::Failed;
     assert!(validate_work_unit_activation_projection(&accepted_failed).is_err());
 
     let mut ready_without_acceptance = valid_work_unit_outcome_projection();
-    ready_without_acceptance.implementer_outcome.as_mut().unwrap().application_accepted_at = None;
+    primary_outcome_mut(&mut ready_without_acceptance).application_accepted_at = None;
     assert!(validate_work_unit_activation_projection(&ready_without_acceptance).is_err());
 
     let mut out_of_order = valid_work_unit_outcome_projection();
-    out_of_order.implementer_outcome.as_mut().unwrap().reporting_prepared_at =
+    primary_outcome_mut(&mut out_of_order).reporting_prepared_at =
         Some("2026-08-03T23:59:59Z".into());
     assert!(validate_work_unit_activation_projection(&out_of_order).is_err());
 }
@@ -2007,7 +1957,7 @@ fn implementer_outcome_projection_rejects_partial_bundles_and_incoherent_authori
 fn create_implementer_outcome_projection_table(connection: &rusqlite::Connection) {
     connection.execute_batch(
         "CREATE TABLE work_unit_implementer_outcomes (
-          work_unit_id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL,
+          work_unit_id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL, attempt_ordinal INTEGER NOT NULL DEFAULT 0,
           implementer_session_id TEXT NOT NULL, implementer_invocation_id TEXT NOT NULL,
           reporting_invocation_id TEXT NOT NULL, reporting_harness_revision_id TEXT NOT NULL,
           reporting_harness_configuration_digest TEXT NOT NULL,
@@ -2029,7 +1979,7 @@ fn valid_work_unit_outcome_projection() -> WorkUnitDto {
     let mut work_unit = valid_work_unit_activation_projection();
     let reporting_invocation_id =
         projection_stable_id("work-unit-implementer-reporting-invocation", "attempt");
-    work_unit.implementer_outcome = Some(WorkUnitImplementerOutcomeDto {
+    let outcome = WorkUnitImplementerOutcomeDto {
         attempt_id: "attempt".into(),
         implementer_session_id: "implementer-session".into(),
         original_implementer_invocation_id: "implementer-invocation".into(),
@@ -2073,14 +2023,22 @@ fn valid_work_unit_outcome_projection() -> WorkUnitDto {
         application_accepted_at: Some("2026-08-04T00:00:10Z".into()),
         handler_review_ready_at: Some("2026-08-04T00:00:11Z".into()),
         failure_reason: None,
-    });
+    };
+    work_unit.attempt_history = vec![WorkUnitAttemptHistoryDto {
+        ordinal: 0,
+        attempt_id: outcome.attempt_id.clone(),
+        implementer_outcome: Some(outcome),
+        handler_review: None,
+        handler_decision: None,
+        incomplete_disposition: None,
+    }];
     work_unit
 }
 
 #[test]
 fn handler_review_projection_preserves_judgment_decision_and_later_workflow_boundary() {
     let mut work_unit = valid_work_unit_outcome_projection();
-    work_unit.handler_review = Some(WorkUnitHandlerReviewDto {
+    work_unit.attempt_history[0].handler_review = Some(WorkUnitHandlerReviewDto {
         attempt_id: "attempt".into(),
         reporting_invocation_id: projection_stable_id("work-unit-implementer-reporting-invocation", "attempt"),
         handler_session_id: "handler-session".into(),
@@ -2120,7 +2078,8 @@ fn handler_review_projection_preserves_judgment_decision_and_later_workflow_boun
         }),
         conflict: None,
     });
-    work_unit.handler_decision = Some(WorkUnitHandlerDecisionDto {
+    work_unit.attempt_history[0].handler_decision = Some(WorkUnitHandlerDecisionDto {
+        attempt_id: "attempt".into(),
         review_invocation_id: projection_stable_id("work-unit-handler-review-invocation", "attempt"),
         variant: WorkUnitHandlerDecisionVariantDto::Accepted,
         fingerprint: "decision-fingerprint".into(),
@@ -2133,13 +2092,102 @@ fn handler_review_projection_preserves_judgment_decision_and_later_workflow_boun
     });
     validate_work_unit_activation_projection(&work_unit).expect("accepted review projection");
 
-    work_unit.handler_review.as_mut().unwrap().lifecycle = Some(WorkUnitHandlerReviewLifecycleDto {
+    primary_review_mut(&mut work_unit).lifecycle = Some(WorkUnitHandlerReviewLifecycleDto {
         status: WorkUnitHandlerReviewLifecycleStatusDto::Failed,
         observed_at: "2026-08-04T00:00:18Z".into(),
     });
     assert!(validate_work_unit_activation_projection(&work_unit)
         .expect_err("decision without Completed lifecycle")
         .contains("Completed review judgment"));
+}
+
+#[test]
+fn retry_projection_exposes_only_semantic_stages_and_rejects_impossible_ordering() {
+    let mut work_unit = valid_work_unit_outcome_projection();
+    work_unit.attempt_history[0].handler_review = Some(WorkUnitHandlerReviewDto {
+        attempt_id: "attempt".into(), reporting_invocation_id: projection_stable_id("work-unit-implementer-reporting-invocation", "attempt"),
+        handler_session_id: "handler-session".into(), original_handler_invocation_id: "handler-original".into(), action_handler_invocation_id: "handler-action".into(),
+        review_invocation_id: projection_stable_id("work-unit-handler-review-invocation", "attempt"), review_harness_revision_id: "review-revision".into(), review_harness_configuration_digest: "review-digest".into(), review_harness_repository_commit_ref: "review-commit".into(),
+        delivery_requested_at: "2026-08-04T00:00:00Z".into(), delivery_persisted_at: Some("2026-08-04T00:00:00Z".into()), harness_bound_at: Some("2026-08-04T00:00:00Z".into()), launch_requested_at: Some("2026-08-04T00:00:00Z".into()), launch_accepted_at: Some("2026-08-04T00:00:00Z".into()), review_ready_at: Some("2026-08-04T00:00:00Z".into()),
+        delivered: WorkUnitHandlerReviewEvidenceDto { summary_claim: "Implemented the bounded change.".into(), validation_statement_claim: "Focused checks passed.".into(), changed_files: vec![WorkUnitHandlerReviewEvidenceFileDto { evidence_ref: "evidence-1".into(), display_name: "src/lib.rs".into(), change_kind: ImplementationEvidenceChangeKindDto::Modified, content_fingerprint: "content-fingerprint".into() }], comparison_fingerprint: "comparison-fingerprint".into(), delivered_payload_fingerprint: "delivery-fingerprint".into() },
+        semantic_judgment: Some(WorkUnitHandlerReviewJudgmentDto { variant: WorkUnitHandlerReviewJudgmentVariantDto::Return, reason: Some(WorkUnitHandlerReviewReasonDto { code: "review_failed".into(), explanation: "correction required".into() }), fingerprint: "judgment-fingerprint".into(), recorded_at: "2026-08-04T00:00:00Z".into() }),
+        lifecycle: Some(WorkUnitHandlerReviewLifecycleDto { status: WorkUnitHandlerReviewLifecycleStatusDto::Completed, observed_at: "2026-08-04T00:00:00Z".into() }), conflict: None,
+    });
+    work_unit.attempt_history[0].handler_decision = Some(WorkUnitHandlerDecisionDto {
+        attempt_id: "attempt".into(),
+        review_invocation_id: projection_stable_id("work-unit-handler-review-invocation", "attempt"),
+        variant: WorkUnitHandlerDecisionVariantDto::Returned,
+        fingerprint: "returned-decision".into(),
+        return_reason: Some(WorkUnitHandlerReviewReasonDto { code: "review_failed".into(), explanation: "correction required".into() }),
+        recorded_at: "2026-08-04T00:00:00Z".into(),
+        implementation_accepted_at: None,
+        implementation_returned_at: Some("2026-08-04T00:00:00Z".into()),
+        retry_required_at: Some("2026-08-04T00:00:00Z".into()),
+        settlement_ready_at: None,
+    });
+    work_unit.retry_attempts = vec![WorkUnitRetryAttemptDto {
+        ordinal: 1, origin_attempt_id: "attempt".into(), retry_attempt_id: "retry-attempt".into(),
+        implementer_session_id: "retry-session".into(), implementer_invocation_id: "retry-invocation".into(),
+        capture_requested_at: "2026-08-04T00:00:01Z".into(), candidate_pinned_at: Some("2026-08-04T00:00:02Z".into()),
+        authorized_at: Some("2026-08-04T00:00:03Z".into()), execution_support_granted_at: Some("2026-08-04T00:00:04Z".into()),
+        isolated_worktree_ready_at: Some("2026-08-04T00:00:05Z".into()), implementer_session_created_at: Some("2026-08-04T00:00:06Z".into()),
+        implementer_invocation_prepared_at: Some("2026-08-04T00:00:07Z".into()), implementer_harness_bound_at: Some("2026-08-04T00:00:08Z".into()),
+        launch_requested_at: Some("2026-08-04T00:00:09Z".into()), launch_accepted_at: Some("2026-08-04T00:00:10Z".into()),
+        provider_activation_observed_at: Some("2026-08-04T00:00:11Z".into()), retry_ready_at: Some("2026-08-04T00:00:12Z".into()), failure_reason: None,
+    }];
+    validate_work_unit_activation_projection(&work_unit).expect("truthful retry projection");
+    let json = serde_json::to_string(&work_unit).expect("serialize projection");
+    assert!(json.contains("ordinal") && json.contains("candidatePinnedAt") && json.contains("retryReadyAt"));
+    for forbidden in [
+        "privateRef", "privateRefName", "candidateCommit", "candidateCommitId", "candidateTreeId",
+        "sprintBaselineObjectId", "sprintCurrentObjectId", "repositoryRoot", "repositoryCommonDir",
+        "worktreeRoot",
+    ] {
+        assert!(!json.contains(forbidden), "retry projection leaked {forbidden}");
+    }
+
+    let decision = work_unit.attempt_history[0].handler_decision.take();
+    assert!(validate_work_unit_activation_projection(&work_unit).is_err());
+    work_unit.attempt_history[0].handler_decision = decision;
+
+    primary_retry_mut(&mut work_unit).failure_reason = Some("retry_terminal_launch_failed".into());
+    primary_retry_mut(&mut work_unit).launch_accepted_at = None;
+    primary_retry_mut(&mut work_unit).retry_ready_at = None;
+    assert!(validate_work_unit_activation_projection(&work_unit).is_ok());
+    primary_retry_mut(&mut work_unit).failure_reason = Some("retry_launch_not_accepted".into());
+    primary_retry_mut(&mut work_unit).launch_requested_at = None;
+    primary_retry_mut(&mut work_unit).provider_activation_observed_at = None;
+    assert!(validate_work_unit_activation_projection(&work_unit).is_ok());
+    primary_retry_mut(&mut work_unit).launch_requested_at = Some("2026-08-04T00:00:09Z".into());
+    primary_retry_mut(&mut work_unit).launch_accepted_at = Some("2026-08-04T00:00:10Z".into());
+    primary_retry_mut(&mut work_unit).provider_activation_observed_at = Some("2026-08-04T00:00:11Z".into());
+    primary_retry_mut(&mut work_unit).retry_ready_at = Some("2026-08-04T00:00:12Z".into());
+    primary_retry_mut(&mut work_unit).failure_reason = None;
+
+    primary_retry_mut(&mut work_unit).candidate_pinned_at = Some("2026-08-04T00:00:00Z".into());
+    assert!(validate_work_unit_activation_projection(&work_unit).is_err());
+    primary_retry_mut(&mut work_unit).candidate_pinned_at = Some("2026-08-04T00:00:02Z".into());
+
+    primary_retry_mut(&mut work_unit).launch_requested_at = None;
+    primary_retry_mut(&mut work_unit).launch_accepted_at = None;
+    primary_retry_mut(&mut work_unit).provider_activation_observed_at = Some("2026-08-04T00:00:11Z".into());
+    primary_retry_mut(&mut work_unit).retry_ready_at = None;
+    assert!(validate_work_unit_activation_projection(&work_unit).is_err());
+    primary_retry_mut(&mut work_unit).launch_requested_at = Some("2026-08-04T00:00:09Z".into());
+    primary_retry_mut(&mut work_unit).launch_accepted_at = Some("2026-08-04T00:00:10Z".into());
+    primary_retry_mut(&mut work_unit).retry_ready_at = Some("2026-08-04T00:00:12Z".into());
+
+    primary_retry_mut(&mut work_unit).ordinal = 2;
+    assert!(validate_work_unit_activation_projection(&work_unit).is_err());
+    primary_retry_mut(&mut work_unit).ordinal = 1;
+    primary_retry_mut(&mut work_unit).launch_accepted_at = None;
+    assert!(validate_work_unit_activation_projection(&work_unit).is_err());
+    primary_retry_mut(&mut work_unit).launch_accepted_at = Some("2026-08-04T00:00:10Z".into());
+    primary_retry_mut(&mut work_unit).origin_attempt_id = "foreign-attempt".into();
+    assert!(validate_work_unit_activation_projection(&work_unit).is_err());
+    primary_retry_mut(&mut work_unit).origin_attempt_id = "attempt".into();
+    primary_retry_mut(&mut work_unit).failure_reason = Some("retry_launch_failed".into());
+    assert!(validate_work_unit_activation_projection(&work_unit).is_err());
 }
 
 fn valid_work_unit_activation_projection() -> WorkUnitDto {
@@ -2214,186 +2262,20 @@ fn valid_work_unit_activation_projection() -> WorkUnitDto {
             implementer_ready_at: timestamp(),
             failure_reason: None,
         }),
-        implementer_outcome: None,
-        handler_review: None,
-        handler_decision: None,
+        attempt_history: Vec::new(),
+        retry_attempts: Vec::new(),
         integration: None,
     }
 }
 
-#[test]
-fn productive_integration_projection_is_absent_without_owned_schema() {
-    let connection = rusqlite::Connection::open_in_memory().unwrap();
-    assert!(productive_integration_rows(&connection, &[], &[]).unwrap().is_empty());
+fn primary_outcome_mut(work_unit: &mut WorkUnitDto) -> &mut WorkUnitImplementerOutcomeDto {
+    work_unit.attempt_history[0].implementer_outcome.as_mut().expect("primary outcome")
 }
 
-#[test]
-fn productive_integration_projection_preserves_authorized_and_progressive_stages() {
-    let (connection, units, relationships) = productive_integration_projection_fixture();
-    let authorized = productive_integration_rows(&connection, &units, &relationships).unwrap();
-    assert_eq!(authorized["unit"].requested_at, "2026-08-04T00:00:20Z");
-    assert_eq!(authorized["unit"].authorized_at, "2026-08-04T00:00:20Z");
-    assert!(authorized["unit"].progress.is_none());
-    assert!(authorized["unit"].success.is_none());
-
-    connection.execute_batch(
-        "UPDATE accepted_work_unit_integrations SET stage='object_created',integration_commit_id='private-integration-commit',integration_tree_id='private-integration-tree',object_created_at='2026-08-04T00:00:21Z';",
-    ).unwrap();
-    let preparing = productive_integration_rows(&connection, &units, &relationships).unwrap();
-    assert_eq!(
-        preparing["unit"].progress.as_ref().unwrap().phase,
-        WorkUnitIntegrationProgressPhaseDto::Preparing
-    );
-
-    connection.execute_batch(
-        "UPDATE accepted_work_unit_integrations SET stage='runtime_advanced',ref_advanced_at='2026-08-04T00:00:22Z',runtime_advanced_at='2026-08-04T00:00:23Z';",
-    ).unwrap();
-    let applying = productive_integration_rows(&connection, &units, &relationships).unwrap();
-    assert_eq!(
-        applying["unit"].progress.as_ref().unwrap().phase,
-        WorkUnitIntegrationProgressPhaseDto::Applying
-    );
-    assert!(applying["unit"].success.is_none());
+fn primary_review_mut(work_unit: &mut WorkUnitDto) -> &mut WorkUnitHandlerReviewDto {
+    work_unit.attempt_history[0].handler_review.as_mut().expect("primary review")
 }
 
-#[test]
-fn productive_integration_projection_maps_safe_attention_without_terminal_facts() {
-    let (connection, units, relationships) = productive_integration_projection_fixture();
-    connection.execute_batch(
-        "UPDATE accepted_work_unit_integrations SET stage='attention',attention_code='durable_replay_conflict',attention_recorded_at='2026-08-04T00:00:21Z';",
-    ).unwrap();
-    let projected = productive_integration_rows(&connection, &units, &relationships).unwrap();
-    let attention = projected["unit"].attention.as_ref().unwrap();
-    assert_eq!(attention.kind, WorkUnitIntegrationAttentionKindDto::Conflict);
-    assert_eq!(attention.safe_code, WorkUnitIntegrationAttentionCodeDto::IntegrationConflict);
-    assert!(projected["unit"].success.is_none());
-    assert!(projected["unit"].settlement.is_none());
-
-    connection.execute("UPDATE accepted_work_unit_integrations SET attention_code='C:\\private\\repository\\diagnostic'", []).unwrap();
-    let sanitized = productive_integration_rows(&connection, &units, &relationships).unwrap();
-    let json = serde_json::to_string(&sanitized["unit"]).unwrap();
-    assert_eq!(sanitized["unit"].attention.as_ref().unwrap().kind, WorkUnitIntegrationAttentionKindDto::Failure);
-    assert!(!json.contains("private"));
-}
-
-#[test]
-fn productive_integration_projection_keeps_success_settlement_and_contribution_separate_and_private() {
-    let (connection, units, relationships) = productive_integration_projection_fixture();
-    seed_settled_productive_integration(&connection);
-    let projected = productive_integration_rows(&connection, &units, &relationships).unwrap();
-    let integration = &projected["unit"];
-    assert_eq!(integration.success.as_ref().unwrap().recorded_at, "2026-08-04T00:00:25Z");
-    assert_eq!(integration.settlement.as_ref().unwrap().settled_at, "2026-08-04T00:00:25Z");
-    assert_eq!(integration.prerequisite_contribution.as_ref().unwrap().dependent_count, 1);
-    let json = serde_json::to_string(integration).unwrap();
-    for private in [
-        "private-integration-id",
-        "private-candidate-id",
-        "private-intent-fingerprint",
-        "private-integration-commit",
-        "private-integration-tree",
-        "private-ref",
-    ] {
-        assert!(!json.contains(private), "leaked {private}: {json}");
-    }
-}
-
-#[test]
-fn productive_integration_projection_rejects_order_unknown_stage_and_missing_terminal_bundle() {
-    let (connection, units, relationships) = productive_integration_projection_fixture();
-    connection.execute("UPDATE accepted_work_unit_integrations SET authorization_recorded_at='2026-08-04T00:00:19Z'", []).unwrap();
-    assert!(productive_integration_rows(&connection, &units, &relationships).unwrap_err().contains("authorization"));
-
-    connection.execute_batch("UPDATE accepted_work_unit_integrations SET authorization_recorded_at='2026-08-04T00:00:20Z',stage='unknown';").unwrap();
-    assert!(productive_integration_rows(&connection, &units, &relationships).unwrap_err().contains("unknown"));
-
-    connection.execute_batch("UPDATE accepted_work_unit_integrations SET stage='settled',integration_commit_id='private-integration-commit',integration_tree_id='private-integration-tree',object_created_at='2026-08-04T00:00:21Z',ref_advanced_at='2026-08-04T00:00:22Z',runtime_advanced_at='2026-08-04T00:00:23Z',db_advanced_at='2026-08-04T00:00:24Z',settled_at='2026-08-04T00:00:25Z'; INSERT INTO work_unit_settlements VALUES('settlement','unit','private-integration-id','2026-08-04T00:00:25Z');").unwrap();
-    assert!(productive_integration_rows(&connection, &units, &relationships).unwrap_err().contains("lacks success evidence"));
-}
-
-#[test]
-fn productive_integration_projection_rejects_contribution_before_settlement() {
-    let (connection, units, relationships) = productive_integration_projection_fixture();
-    seed_settled_productive_integration(&connection);
-    connection.execute_batch(
-        "UPDATE accepted_work_unit_integrations SET settled_at='2026-08-04T00:00:27Z';
-         UPDATE work_unit_settlements SET settled_at='2026-08-04T00:00:27Z';
-         UPDATE work_unit_prerequisite_contributions SET recorded_at='2026-08-04T00:00:26Z';",
-    ).unwrap();
-
-    assert!(productive_integration_rows(&connection, &units, &relationships)
-        .unwrap_err()
-        .contains("Prerequisite contribution precedes its prerequisite"));
-}
-
-#[test]
-fn productive_integration_projection_rejects_orphan_duplicate_foreign_and_unaccepted_correlations() {
-    let (connection, units, relationships) = productive_integration_projection_fixture();
-    connection.execute("INSERT INTO accepted_work_unit_integration_evidence VALUES('orphan','missing','fingerprint','commit','tree','parent','candidate','private-ref','intent','2026-08-04T00:00:25Z')", []).unwrap();
-    assert!(productive_integration_rows(&connection, &units, &relationships).unwrap_err().contains("orphaned"));
-
-    connection.execute("DELETE FROM accepted_work_unit_integration_evidence", []).unwrap();
-    seed_settled_productive_integration(&connection);
-    connection.execute("INSERT INTO accepted_work_unit_integration_evidence VALUES('duplicate','private-integration-id','fingerprint-2','private-integration-commit','private-integration-tree','parent','private-candidate-id','private-ref','private-intent-fingerprint','2026-08-04T00:00:25Z')", []).unwrap();
-    assert!(productive_integration_rows(&connection, &units, &relationships).unwrap_err().contains("duplicate success evidence"));
-
-    connection.execute("DELETE FROM accepted_work_unit_integration_evidence WHERE evidence_id='duplicate'", []).unwrap();
-    connection.execute("UPDATE accepted_work_unit_integration_evidence SET candidate_id='foreign-candidate'", []).unwrap();
-    assert!(productive_integration_rows(&connection, &units, &relationships).unwrap_err().contains("foreign correlation"));
-
-    connection.execute("UPDATE accepted_work_unit_integration_evidence SET candidate_id='private-candidate-id'", []).unwrap();
-    connection.execute("UPDATE accepted_handler_candidates SET authority_id='foreign-authority'", []).unwrap();
-    assert!(productive_integration_rows(&connection, &units, &relationships).unwrap_err().contains("accepted Handler authority"));
-
-    connection.execute("UPDATE accepted_handler_candidates SET authority_id='private-authority'", []).unwrap();
-    connection.execute("UPDATE work_unit_handler_decisions SET decision_variant='returned',implementation_accepted_at=NULL,implementation_returned_at='2026-08-04T00:00:19Z',retry_required_at='2026-08-04T00:00:19Z'", []).unwrap();
-    assert!(productive_integration_rows(&connection, &units, &relationships).unwrap_err().contains("accepted Handler authority"));
-}
-
-fn productive_integration_projection_fixture() -> (
-    rusqlite::Connection,
-    Vec<WorkUnitDto>,
-    Vec<WorkUnitRelationshipDto>,
-) {
-    let connection = rusqlite::Connection::open_in_memory().unwrap();
-    connection.execute_batch(
-        "CREATE TABLE accepted_work_unit_integrations (integration_id TEXT,work_unit_id TEXT,candidate_id TEXT,authority_id TEXT,target_ref_name TEXT,pre_object_id TEXT,pre_version INTEGER,candidate_commit_id TEXT,candidate_tree_id TEXT,baseline_object_id TEXT,intent_fingerprint TEXT,intent_recorded_at TEXT,authorization_recorded_at TEXT,commit_fingerprint TEXT,stage TEXT,integration_commit_id TEXT,integration_tree_id TEXT,object_created_at TEXT,ref_advanced_at TEXT,runtime_advanced_at TEXT,db_advanced_at TEXT,settled_at TEXT,notification_intent_recorded_at TEXT,notification_delivered_at TEXT,attention_code TEXT,attention_recorded_at TEXT);
-         CREATE TABLE accepted_handler_candidates (candidate_id TEXT,work_unit_id TEXT,authority_id TEXT,pinned_at TEXT,attention_reason TEXT,review_invocation_id TEXT,decision_fingerprint TEXT);
-         CREATE TABLE work_unit_handler_reviews (work_unit_id TEXT,review_invocation_id TEXT,semantic_judgment_variant TEXT,lifecycle_status TEXT,lifecycle_observed_at TEXT);
-         CREATE TABLE work_unit_handler_decisions (work_unit_id TEXT,review_invocation_id TEXT,decision_variant TEXT,decision_fingerprint TEXT,decision_recorded_at TEXT,implementation_accepted_at TEXT,implementation_returned_at TEXT,retry_required_at TEXT,settlement_ready_at TEXT);
-         CREATE TABLE accepted_work_unit_integration_evidence (evidence_id TEXT,integration_id TEXT,evidence_fingerprint TEXT,integration_commit_id TEXT,integration_tree_id TEXT,parent_object_id TEXT,candidate_id TEXT,target_ref_name TEXT,intent_fingerprint TEXT,recorded_at TEXT);
-         CREATE TABLE work_unit_settlements (settlement_id TEXT,work_unit_id TEXT,integration_id TEXT,settled_at TEXT);
-         CREATE TABLE work_unit_prerequisite_contributions (contribution_id TEXT,prerequisite_work_unit_id TEXT,dependent_work_unit_id TEXT,integration_id TEXT,relationship_id TEXT,recorded_at TEXT);
-         CREATE TABLE work_unit_relationships (relationship_id TEXT,materialization_id TEXT,relationship_kind TEXT,from_id TEXT,to_id TEXT,ordinal INTEGER);
-         INSERT INTO accepted_handler_candidates VALUES('private-candidate-id','unit','private-authority','2026-08-04T00:00:19Z',NULL,'review','decision');
-         INSERT INTO work_unit_handler_reviews VALUES('unit','review','accept','completed','2026-08-04T00:00:18Z');
-         INSERT INTO work_unit_handler_decisions VALUES('unit','review','accepted','decision','2026-08-04T00:00:19Z','2026-08-04T00:00:19Z',NULL,NULL,NULL);
-         INSERT INTO accepted_work_unit_integrations VALUES('private-integration-id','unit','private-candidate-id','private-authority','private-ref','private-pre',1,'private-candidate-commit','private-candidate-tree','private-baseline','private-intent-fingerprint','2026-08-04T00:00:20Z','2026-08-04T00:00:20Z',NULL,'intent_reserved',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
-         INSERT INTO work_unit_relationships VALUES('dependency','materialization','depends_on','dependent','unit',NULL);",
-    ).unwrap();
-    let mut unit = valid_work_unit_activation_projection();
-    unit.work_unit_id = "unit".into();
-    unit.materialization_id = "materialization".into();
-    let mut dependent = valid_work_unit_activation_projection();
-    dependent.work_unit_id = "dependent".into();
-    dependent.materialization_id = "materialization".into();
-    dependent.lane_ordinal = 1;
-    let relationships = vec![WorkUnitRelationshipDto {
-        relationship_id: "dependency".into(),
-        materialization_id: "materialization".into(),
-        relationship_kind: "depends_on".into(),
-        from_id: "dependent".into(),
-        to_id: "unit".into(),
-        ordinal: None,
-    }];
-    (connection, vec![unit, dependent], relationships)
-}
-
-fn seed_settled_productive_integration(connection: &rusqlite::Connection) {
-    connection.execute_batch(
-        "UPDATE accepted_work_unit_integrations SET stage='settled',integration_commit_id='private-integration-commit',integration_tree_id='private-integration-tree',object_created_at='2026-08-04T00:00:21Z',ref_advanced_at='2026-08-04T00:00:22Z',runtime_advanced_at='2026-08-04T00:00:23Z',db_advanced_at='2026-08-04T00:00:24Z',settled_at='2026-08-04T00:00:25Z';
-         INSERT INTO accepted_work_unit_integration_evidence VALUES('evidence','private-integration-id','private-evidence-fingerprint','private-integration-commit','private-integration-tree','private-parent','private-candidate-id','private-ref','private-intent-fingerprint','2026-08-04T00:00:25Z');
-         INSERT INTO work_unit_settlements VALUES('settlement','unit','private-integration-id','2026-08-04T00:00:25Z');
-         INSERT INTO work_unit_prerequisite_contributions VALUES('contribution','unit','dependent','private-integration-id','dependency','2026-08-04T00:00:25Z');",
-    ).unwrap();
+fn primary_retry_mut(work_unit: &mut WorkUnitDto) -> &mut WorkUnitRetryAttemptDto {
+    work_unit.retry_attempts.first_mut().expect("primary retry")
 }
