@@ -570,3 +570,37 @@ as passed. `npm run build` could not start because this checkout has no installe
 dependencies were installed. Focused Vitest, desktop/frontend rendering, migration against a
 real retained database, and live/provider behavior remain unproven. No merge, push, integration,
 settlement, Sprint handback, provider reattachment, publication, or user acceptance occurred.
+
+## R1.1: Retry convergence and ordinal-extensible history correction
+
+This correction keeps the R1 current-effect boundary unchanged while removing a durable
+ordinal-one storage ceiling. Retry records now use their application-owned retry attempt ID as
+their primary identity, retain a unique `(work_unit_id, ordinal)` correlation, and accept only
+nonnegative numeric ordinals structurally. The current reconciler still derives a retry only from
+the accepted ordinal-0 returned decision and writes ordinal 1; it does not create ordinal 2 or
+any later workflow effect.
+
+Independent service instances sharing one local SQLite database serialize Handler-review
+reconciliation by canonical database path. Exact replays converge on the persisted review,
+decision, retry, Session, invocation, and launch identities. Semantic disagreement remains a
+conflict rather than a replacement or second decision. Ordered native-query/read-model/UI retry
+history now carries numeric ordinals, while retry activation/readiness remains a separate
+projection correlated to its attempt.
+
+A populated legacy-schema regression rebuilds the singular ordinal-0 outcome/review/decision
+tables and the old ordinal-1 retry table, then proves preservation of the original attempt,
+review, final returned decision, and retry correlation after migration and reopen. It also proves
+the rebuilt retry schema has no ordinal-one `CHECK` ceiling.
+
+Validation in this worktree:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml returned_retry_two_independent_services_converge_on_one_ordinal_one_launch -- --nocapture`: **1 passed, 335 filtered, 293.24s**.
+- `cargo test --manifest-path src-tauri/Cargo.toml populated_legacy_attempt_history_and_retry_migrate_without_overwriting_ordinal_zero -- --nocapture`: **1 passed, 335 filtered, 3.32s**.
+- `scripts/cargo-test-fast.ps1 retry_projection_exposes_only_semantic_stages_and_rejects_impossible_ordering`: **1 passed, 335 filtered**; the helper's first reduced-debug build took **4m 10s**.
+- `cargo check --manifest-path src-tauri/Cargo.toml`: passed in **33.02s** with the existing seven dead-code warnings.
+
+Frontend Vitest/type/build execution remains unproven because this checkout has no installed
+`node_modules/.bin/tsc` or `vitest`; no dependencies were installed. The deterministic tests use
+local fake runtime and SQLite connections. Live provider/desktop behavior, multi-process SQLite
+stress, integration, publication, and user acceptance remain unproven. No merge, push,
+settlement, Sprint Runner handback, or downstream activation occurred.

@@ -32,7 +32,7 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     process::Command,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     thread,
 };
 use tokio_util::sync::CancellationToken;
@@ -394,15 +394,15 @@ CREATE TABLE IF NOT EXISTS work_unit_handler_decisions (
 -- A returned ordinal-0 outcome can authorize exactly one correction attempt.  The private ref
 -- name and object ids never cross the native-query boundary.
 CREATE TABLE IF NOT EXISTS work_unit_retry_attempts (
-  work_unit_id TEXT PRIMARY KEY REFERENCES work_units(work_unit_id) ON DELETE RESTRICT,
-  ordinal INTEGER NOT NULL CHECK (ordinal=1),
+  retry_attempt_id TEXT PRIMARY KEY,
+  work_unit_id TEXT NOT NULL REFERENCES work_units(work_unit_id) ON DELETE RESTRICT,
+  ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
   origin_attempt_id TEXT NOT NULL UNIQUE REFERENCES work_unit_implementer_outcomes(attempt_id) ON DELETE RESTRICT,
   review_invocation_id TEXT NOT NULL UNIQUE REFERENCES work_unit_handler_reviews(review_invocation_id) ON DELETE RESTRICT,
   decision_fingerprint TEXT NOT NULL UNIQUE,
   sprint_git_authority_id TEXT NOT NULL REFERENCES initiated_sprint_git_authorities(authority_id) ON DELETE RESTRICT,
   sprint_baseline_object_id TEXT NOT NULL,
   sprint_current_object_id TEXT NOT NULL,
-  retry_attempt_id TEXT NOT NULL UNIQUE,
   implementer_session_id TEXT NOT NULL UNIQUE,
   implementer_invocation_id TEXT NOT NULL UNIQUE,
   implementer_harness_revision_id TEXT NOT NULL,
@@ -428,6 +428,7 @@ CREATE TABLE IF NOT EXISTS work_unit_retry_attempts (
   provider_activation_observed_at TEXT,
   retry_ready_at TEXT,
   failure_reason TEXT,
+  UNIQUE(work_unit_id, ordinal),
   CHECK ((retry_ready_at IS NULL) OR (launch_accepted_at IS NOT NULL))
 );
 "#;
@@ -627,6 +628,89 @@ CREATE TABLE work_unit_handler_decisions_history (
         Ok(())
     })();
     match migrated { Ok(()) => connection.execute_batch("COMMIT; PRAGMA foreign_keys=ON;").map_err(|error| format!("commit attempt-history migration: {error}")), Err(error) => { let _ = connection.execute_batch("ROLLBACK; PRAGMA foreign_keys=ON;"); Err(error) } }
+}
+
+/// Retry activation used to be a one-row ordinal-1 record.  Keep the current authorizer
+/// narrow, but make durable recovery address records by their application-owned ordinal.
+fn migrate_work_unit_retry_attempt_history(connection: &Connection) -> Result<(), String> {
+    let schema: Option<String> = connection
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='work_unit_retry_attempts'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("inspect retry-attempt schema: {error}"))?;
+    let Some(schema) = schema else { return Ok(()); };
+    if schema.contains("retry_attempt_id TEXT PRIMARY KEY")
+        && schema.contains("CHECK (ordinal >= 0)")
+        && schema.contains("UNIQUE(work_unit_id, ordinal)")
+    {
+        return Ok(());
+    }
+    if !schema.contains("work_unit_id TEXT PRIMARY KEY") || !schema.contains("CHECK (ordinal=1)") {
+        return Err("retry-attempt history has an unknown primary key or ordinal constraint".into());
+    }
+    connection.execute_batch("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE;")
+        .map_err(|error| format!("begin retry-attempt migration: {error}"))?;
+    let migrated = (|| -> Result<(), String> {
+        let count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM work_unit_retry_attempts", [], |row| row.get(0))
+            .map_err(|error| format!("count legacy retry attempts: {error}"))?;
+        connection.execute_batch(r#"
+CREATE TABLE work_unit_retry_attempts_history (
+  retry_attempt_id TEXT PRIMARY KEY,
+  work_unit_id TEXT NOT NULL REFERENCES work_units(work_unit_id) ON DELETE RESTRICT,
+  ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+  origin_attempt_id TEXT NOT NULL UNIQUE REFERENCES work_unit_implementer_outcomes(attempt_id) ON DELETE RESTRICT,
+  review_invocation_id TEXT NOT NULL UNIQUE REFERENCES work_unit_handler_reviews(review_invocation_id) ON DELETE RESTRICT,
+  decision_fingerprint TEXT NOT NULL UNIQUE,
+  sprint_git_authority_id TEXT NOT NULL REFERENCES initiated_sprint_git_authorities(authority_id) ON DELETE RESTRICT,
+  sprint_baseline_object_id TEXT NOT NULL,
+  sprint_current_object_id TEXT NOT NULL,
+  implementer_session_id TEXT NOT NULL UNIQUE,
+  implementer_invocation_id TEXT NOT NULL UNIQUE,
+  implementer_harness_revision_id TEXT NOT NULL,
+  implementer_harness_configuration_digest TEXT NOT NULL,
+  implementer_harness_repository_commit_ref TEXT NOT NULL,
+  capture_intent_id TEXT NOT NULL UNIQUE,
+  capture_fingerprint TEXT NOT NULL UNIQUE,
+  handoff_json TEXT NOT NULL CHECK(json_valid(handoff_json)),
+  handoff_fingerprint TEXT NOT NULL UNIQUE,
+  candidate_commit_id TEXT NOT NULL,
+  candidate_tree_id TEXT NOT NULL,
+  private_ref_name TEXT NOT NULL UNIQUE,
+  capture_requested_at TEXT NOT NULL,
+  candidate_pinned_at TEXT,
+  authorized_at TEXT,
+  execution_support_granted_at TEXT,
+  isolated_worktree_ready_at TEXT,
+  implementer_session_created_at TEXT,
+  implementer_invocation_prepared_at TEXT,
+  implementer_harness_bound_at TEXT,
+  launch_requested_at TEXT,
+  launch_accepted_at TEXT,
+  provider_activation_observed_at TEXT,
+  retry_ready_at TEXT,
+  failure_reason TEXT,
+  UNIQUE(work_unit_id, ordinal),
+  CHECK ((retry_ready_at IS NULL) OR (launch_accepted_at IS NOT NULL))
+);
+"#).map_err(|error| format!("create retry-attempt history table: {error}"))?;
+        let copied = connection.execute(
+            "INSERT INTO work_unit_retry_attempts_history SELECT retry_attempt_id,work_unit_id,ordinal,origin_attempt_id,review_invocation_id,decision_fingerprint,sprint_git_authority_id,sprint_baseline_object_id,sprint_current_object_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,capture_intent_id,capture_fingerprint,handoff_json,handoff_fingerprint,candidate_commit_id,candidate_tree_id,private_ref_name,capture_requested_at,candidate_pinned_at,authorized_at,execution_support_granted_at,isolated_worktree_ready_at,implementer_session_created_at,implementer_invocation_prepared_at,implementer_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,retry_ready_at,failure_reason FROM work_unit_retry_attempts",
+            [],
+        ).map_err(|error| format!("copy legacy retry attempts: {error}"))?;
+        if copied as i64 != count { return Err("retry-attempt migration copy was incomplete".into()); }
+        connection.execute_batch("DROP TABLE work_unit_retry_attempts; ALTER TABLE work_unit_retry_attempts_history RENAME TO work_unit_retry_attempts;")
+            .map_err(|error| format!("replace retry-attempt table: {error}"))?;
+        Ok(())
+    })();
+    match migrated {
+        Ok(()) => connection.execute_batch("COMMIT; PRAGMA foreign_keys=ON;")
+            .map_err(|error| format!("commit retry-attempt migration: {error}")),
+        Err(error) => { let _ = connection.execute_batch("ROLLBACK; PRAGMA foreign_keys=ON;"); Err(error) }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -845,6 +929,7 @@ struct CurrentPlanningRequest {
 
 pub(crate) struct SprintRunnerTransitionService {
     connection: Mutex<Connection>,
+    database_lock_key: String,
     authority_repository: SqliteOrchestrationRepository,
     sessions: Arc<AgentSessionApplication>,
     work_unit_handler: Mutex<Option<Arc<WorkUnitExecutionHarnessService>>>,
@@ -863,6 +948,11 @@ impl SprintRunnerTransitionService {
         sessions: Arc<AgentSessionApplication>,
     ) -> Result<Arc<Self>, SprintRunnerTransitionError> {
         let path = path.as_ref();
+        let database_lock_key = path
+            .canonicalize()
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .into_owned();
         let connection = Connection::open(path).map_err(|e| {
             SprintRunnerTransitionError::Unavailable(format!(
                 "open Sprint Runner transition database: {e}"
@@ -950,10 +1040,13 @@ impl SprintRunnerTransitionService {
             .map_err(SprintRunnerTransitionError::Unavailable)?;
         migrate_work_unit_attempt_history(&connection)
             .map_err(SprintRunnerTransitionError::Unavailable)?;
+        migrate_work_unit_retry_attempt_history(&connection)
+            .map_err(SprintRunnerTransitionError::Unavailable)?;
         let authority_repository = SqliteOrchestrationRepository::open(path)
             .map_err(|error| SprintRunnerTransitionError::Unavailable(format!("open Sprint Git authority repository: {error}")))?;
         let service = Arc::new(Self {
             connection: Mutex::new(connection),
+            database_lock_key,
             authority_repository,
             sessions,
             work_unit_handler: Mutex::new(None),
@@ -1965,6 +2058,10 @@ impl SprintRunnerTransitionService {
     }
 
     fn reconcile_handler_reviews(self: &Arc<Self>) -> Result<(), SprintRunnerTransitionError> {
+        let reconciliation_lock = handler_review_reconciliation_lock(&self.database_lock_key)?;
+        let _reconciliation_guard = reconciliation_lock
+            .lock()
+            .map_err(|_| SprintRunnerTransitionError::Unavailable("Handler review reconciliation lock is poisoned".into()))?;
         let ready: Vec<(String, String)> = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?
             .prepare("SELECT o.work_unit_id,o.attempt_id FROM work_unit_implementer_outcomes o LEFT JOIN work_unit_handler_reviews r ON r.attempt_id=o.attempt_id WHERE o.handler_review_ready_at IS NOT NULL AND o.application_accepted_at IS NOT NULL AND r.attempt_id IS NULL ORDER BY o.work_unit_id,o.attempt_ordinal")
             .and_then(|mut statement| statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<Vec<_>, _>>())
@@ -2170,7 +2267,7 @@ impl SprintRunnerTransitionService {
         let lock = self.transition_lock(&source.sprint_id)?;
         let _guard = lock.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Work Unit retry lock is poisoned".into()))?;
         let retry_exists: bool = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
-            "SELECT EXISTS(SELECT 1 FROM work_unit_retry_attempts WHERE work_unit_id=?1)",
+            "SELECT EXISTS(SELECT 1 FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=1)",
             [&source.work_unit_id],
             |row| row.get(0),
         ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
@@ -2248,7 +2345,7 @@ impl SprintRunnerTransitionService {
                     params![source.work_unit_id,source.origin_attempt_id,source.review_invocation_id,source.decision_fingerprint,source.authority_id,authority.baseline_object_id,authority.current_object_id,retry_attempt,session_id,invocation_id,desired.revision_id,desired.configuration_digest,desired.repository_commit_ref,capture_intent,capture_fingerprint,handoff,handoff_fingerprint,candidate_commit,candidate_tree,private_ref], |row| row.get(0)
                 ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
                 if !exact {
-                    transaction.execute("UPDATE work_unit_retry_attempts SET failure_reason='retry_immutable_lineage_mismatch' WHERE work_unit_id=?1", [&source.work_unit_id]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+                    transaction.execute("UPDATE work_unit_retry_attempts SET failure_reason='retry_immutable_lineage_mismatch' WHERE work_unit_id=?1 AND ordinal=1", [&source.work_unit_id]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
                     transaction.commit().map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
                     return Err(SprintRunnerTransitionError::Conflict);
                 }
@@ -2271,7 +2368,7 @@ impl SprintRunnerTransitionService {
 
     fn launch_retry_implementer(self: &Arc<Self>, handler: &Arc<WorkUnitExecutionHarnessService>, work_unit_id: &str) -> Result<(), SprintRunnerTransitionError> {
         let row: (String,String,String,String,String,String,String,String,String,String,String) = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
-            "SELECT retry_attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,sprint_git_authority_id,candidate_commit_id,candidate_tree_id,handoff_json,private_ref_name FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND candidate_pinned_at IS NOT NULL", [work_unit_id],
+            "SELECT retry_attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,sprint_git_authority_id,candidate_commit_id,candidate_tree_id,handoff_json,private_ref_name FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=1 AND candidate_pinned_at IS NOT NULL", [work_unit_id],
             |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?,row.get(9)?,row.get(10)?))
         ).map_err(|_| SprintRunnerTransitionError::Conflict)?;
         let (attempt,session_id,invocation_id,revision,digest,commit,authority,seed,tree,handoff,private_ref) = row;
@@ -2353,11 +2450,11 @@ impl SprintRunnerTransitionService {
     fn mark_retry(&self, work_unit_id: &str, column: &str) -> Result<(), SprintRunnerTransitionError> { self.mark_retry_at(work_unit_id, column, chrono::Utc::now().to_rfc3339()) }
     fn mark_retry_at(&self, work_unit_id: &str, column: &str, at: String) -> Result<(), SprintRunnerTransitionError> {
         if !["candidate_pinned_at","authorized_at","execution_support_granted_at","isolated_worktree_ready_at","implementer_session_created_at","implementer_invocation_prepared_at","implementer_harness_bound_at","launch_requested_at","launch_accepted_at","provider_activation_observed_at","retry_ready_at"].contains(&column) { return Err(SprintRunnerTransitionError::Unavailable("invalid retry stage".into())); }
-        self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute(&format!("UPDATE work_unit_retry_attempts SET {column}=COALESCE({column},?2) WHERE work_unit_id=?1"), params![work_unit_id,at]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute(&format!("UPDATE work_unit_retry_attempts SET {column}=COALESCE({column},?2) WHERE work_unit_id=?1 AND ordinal=1"), params![work_unit_id,at]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         Ok(())
     }
     fn record_retry_failure(&self, work_unit_id: &str, reason: &str) -> Result<(), SprintRunnerTransitionError> {
-        self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_retry_attempts SET failure_reason=?2 WHERE work_unit_id=?1", params![work_unit_id,reason]).map_err(|database_error| SprintRunnerTransitionError::Unavailable(database_error.to_string()))?;
+        self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_retry_attempts SET failure_reason=?2 WHERE work_unit_id=?1 AND ordinal=1", params![work_unit_id,reason]).map_err(|database_error| SprintRunnerTransitionError::Unavailable(database_error.to_string()))?;
         Ok(())
     }
     fn fail_retry_for_invocation<T>(&self, invocation: &AgentInvocationId, reason: &str) -> Result<T, SprintRunnerTransitionError> {
@@ -2371,7 +2468,7 @@ impl SprintRunnerTransitionService {
         self.record_retry_failure(work_unit_id, reason)?;
         Err(error)
     }
-    fn clear_retry_failure(&self, work_unit_id: &str) -> Result<(), SprintRunnerTransitionError> { self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_retry_attempts SET failure_reason=NULL WHERE work_unit_id=?1", [work_unit_id]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?; Ok(()) }
+    fn clear_retry_failure(&self, work_unit_id: &str) -> Result<(), SprintRunnerTransitionError> { self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_retry_attempts SET failure_reason=NULL WHERE work_unit_id=?1 AND ordinal=1", [work_unit_id]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?; Ok(()) }
 
     fn reconcile_work_unit_handler(
         self: &Arc<Self>,
@@ -3021,6 +3118,20 @@ impl SprintRunnerTransitionService {
         };
         if let Some(hook) = hook { hook(); }
     }
+}
+
+fn handler_review_reconciliation_lock(
+    database_lock_key: &str,
+) -> Result<Arc<Mutex<()>>, SprintRunnerTransitionError> {
+    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+    let mut locks = LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| SprintRunnerTransitionError::Unavailable("Handler review lock registry is poisoned".into()))?;
+    Ok(locks
+        .entry(database_lock_key.to_owned())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone())
 }
 
 #[derive(Default)]

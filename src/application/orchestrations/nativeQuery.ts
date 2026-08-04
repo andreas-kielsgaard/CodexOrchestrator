@@ -60,7 +60,7 @@ export interface NativeMaterializedWorkUnitV1 {
   readonly actionContinuation?: NativeWorkUnitHandlerActionContinuationV1;
   readonly implementerActivation?: NativeWorkUnitImplementerActivationV1;
   readonly attemptHistory: readonly NativeWorkUnitAttemptHistoryV1[];
-  readonly retryAttempt?: NativeWorkUnitRetryAttemptV1;
+  readonly retryAttempts: readonly NativeWorkUnitRetryAttemptV1[];
 }
 export interface NativeWorkUnitAttemptHistoryV1 {
   readonly ordinal: number;
@@ -606,7 +606,7 @@ export function nativeQueryProductCompositionInputV2(
           ...(attempt.handlerReview ? { handlerReview: { ...attempt.handlerReview } } : {}),
           ...(attempt.handlerDecision ? { handlerDecision: { ...attempt.handlerDecision } } : {}),
         })),
-        ...(unit.retryAttempt ? { retryAttempt: { ...unit.retryAttempt } } : {}),
+        retryAttempts: unit.retryAttempts.map((retry) => ({ ...retry })),
       })),
       gates: [],
       concerns: [],
@@ -1195,7 +1195,7 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
       'actionContinuation',
       'implementerActivation',
       'attemptHistory',
-      'retryAttempt',
+      'retryAttempts',
     ],
     'materialized Work Unit',
   );
@@ -1219,7 +1219,7 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
       ? {}
       : { implementerActivation: workUnitImplementerActivation(x.implementerActivation) }),
     attemptHistory: array(x.attemptHistory, 'Work Unit attemptHistory').map(workUnitAttemptHistory),
-    ...(x.retryAttempt === undefined ? {} : { retryAttempt: workUnitRetryAttempt(x.retryAttempt) }),
+    retryAttempts: array(x.retryAttempts, 'Work Unit retryAttempts').map(workUnitRetryAttempt),
   };
 };
 const workUnitAttemptHistory = (value: unknown): NativeWorkUnitAttemptHistoryV1 => {
@@ -1269,8 +1269,8 @@ const workUnitRetryAttempt = (value: unknown): NativeWorkUnitRetryAttemptV1 => {
     ],
     'Work Unit retry attempt',
   );
-  if (!Number.isSafeInteger(x.ordinal) || x.ordinal !== 1)
-    fail('Work Unit retry attempt ordinal must be 1');
+  if (!Number.isSafeInteger(x.ordinal) || (x.ordinal as number) < 0)
+    fail('Work Unit retry attempt ordinal must be a nonnegative integer');
   const optionalTime = (key: keyof typeof x) =>
     x[key] === undefined ? undefined : timestamp(x[key], key);
   const failureReason =
@@ -1278,7 +1278,7 @@ const workUnitRetryAttempt = (value: unknown): NativeWorkUnitRetryAttemptV1 => {
       ? undefined
       : boundedString(x.failureReason, 4000, 'retry failureReason');
   return {
-    ordinal: 1,
+    ordinal: x.ordinal as number,
     originAttemptId: boundedString(x.originAttemptId, 240, 'retry originAttemptId'),
     retryAttemptId: boundedString(x.retryAttemptId, 240, 'retry retryAttemptId'),
     implementerSessionId: boundedString(
@@ -2601,7 +2601,7 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
   const history = unit.attemptHistory;
   const originHistory = history.find((member) => member.ordinal === 0);
   const outcome = originHistory?.implementerOutcome;
-  const retry = unit.retryAttempt;
+  const retries = unit.retryAttempts;
   if (continuation) {
     if (!handler || handler.attemptId !== continuation.attemptId)
       fail('Handler action continuation does not share the Handler attempt');
@@ -2697,57 +2697,48 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
       'Handler decision',
     );
   }
-  if (retry) {
-    if (!implementer || retry.originAttemptId !== implementer.attemptId)
-      fail('retry attempt does not match the original Implementer attempt');
-    if (!decision || decision.variant !== 'returned' || !decision.retryRequiredAt)
+  const retryOrdinals = new Set<number>();
+  const retryAttemptIds = new Set<string>();
+  for (const retry of retries) {
+    if (!retryOrdinals.add(retry.ordinal) || !retryAttemptIds.add(retry.retryAttemptId))
+      fail('retry attempts must have unique ordinals and identities');
+    const origin = history.find((member) => member.attemptId === retry.originAttemptId);
+    const originOutcome = origin?.implementerOutcome;
+    const originDecision = origin?.handlerDecision;
+    if (!origin || retry.ordinal <= origin.ordinal || !originOutcome)
+      fail('retry attempt does not match an earlier Implementer attempt');
+    if (!originDecision || originDecision.variant !== 'returned' || !originDecision.retryRequiredAt)
       fail('retry attempt requires a returned Handler decision with retryRequiredAt');
     if (
-      retry.implementerSessionId === implementer.implementerSessionId ||
-      retry.implementerInvocationId === implementer.implementerInvocationId
+      retry.implementerSessionId === originOutcome.implementerSessionId ||
+      retry.implementerInvocationId === originOutcome.originalImplementerInvocationId
     )
       fail('retry attempt must use distinct Implementer Session and invocation identities');
-    timestampAtOrAfter(
-      decision.retryRequiredAt,
-      retry.captureRequestedAt,
-      'retry capture request',
-    );
+    timestampAtOrAfter(originDecision.retryRequiredAt, retry.captureRequestedAt, 'retry capture request');
     phaseCoherence(
       retry,
       [
-        'captureRequestedAt',
-        'candidatePinnedAt',
-        'authorizedAt',
-        'executionSupportGrantedAt',
-        'isolatedWorktreeReadyAt',
-        'implementerSessionCreatedAt',
-        'implementerInvocationPreparedAt',
-        'implementerHarnessBoundAt',
-        'launchRequestedAt',
-        'launchAcceptedAt',
-        'retryReadyAt',
+        'captureRequestedAt', 'candidatePinnedAt', 'authorizedAt',
+        'executionSupportGrantedAt', 'isolatedWorktreeReadyAt', 'implementerSessionCreatedAt',
+        'implementerInvocationPreparedAt', 'implementerHarnessBoundAt', 'launchRequestedAt',
+        'launchAcceptedAt', 'retryReadyAt',
       ],
       'retry Implementer activation',
     );
     if (retry.providerActivationObservedAt) {
       if (!retry.launchRequestedAt)
         fail('retry provider observation lacks launch request');
-      timestampAtOrAfter(
-        retry.launchRequestedAt,
-        retry.providerActivationObservedAt,
-        'retry provider observation',
-      );
+      timestampAtOrAfter(retry.launchRequestedAt, retry.providerActivationObservedAt, 'retry provider observation');
       if (retry.launchAcceptedAt)
-        timestampAtOrAfter(
-          retry.launchAcceptedAt,
-          retry.providerActivationObservedAt,
-          'retry provider observation',
-        );
+        timestampAtOrAfter(retry.launchAcceptedAt, retry.providerActivationObservedAt, 'retry provider observation');
     }
     if (retry.retryReadyAt && !retry.launchAcceptedAt)
       fail('retry readiness lacks launch acceptance');
     if (retry.failureReason && retry.retryReadyAt)
       fail('retry failure cannot be application-ready');
+    const retryHistory = history.find((member) => member.ordinal === retry.ordinal);
+    if (retryHistory && retryHistory.attemptId !== retry.retryAttemptId)
+      fail('retry activation does not match its attempt-history identity');
   }
   let priorOrdinal = -1;
   const attemptIds = new Set<string>();
@@ -2780,13 +2771,6 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
       )
         fail('Handler decision lacks exact completed review correlation');
     }
-  }
-  if (retry) {
-    const retryHistory = history.find(
-      (member) => member.ordinal === retry.ordinal && member.attemptId === retry.retryAttemptId,
-    );
-    if (retryHistory && retry.ordinal !== 1)
-      fail('current retry activation has an unauthorized ordinal');
   }
 }
 function validateMaterializationRelationships(

@@ -170,7 +170,7 @@ export interface ProductReadReferenceIndexV1 {
     readonly actionContinuation?: ProductWorkUnitActionContinuationV1;
     readonly implementerActivation?: ProductWorkUnitImplementerActivationV1;
     readonly attemptHistory: readonly ProductWorkUnitAttemptHistoryV1[];
-    readonly retryAttempt?: ProductWorkUnitRetryAttemptV1;
+    readonly retryAttempts: readonly ProductWorkUnitRetryAttemptV1[];
   }[];
   readonly gates: readonly {
     readonly gateId: string;
@@ -365,7 +365,7 @@ export type ProductWorkUnitHandlerDecisionV1 = Readonly<{
 }>;
 
 export type ProductWorkUnitRetryAttemptV1 = Readonly<{
-  readonly ordinal: 1;
+  readonly ordinal: number;
   readonly originAttemptId: string;
   readonly retryAttemptId: string;
   readonly implementerSessionId: string;
@@ -514,7 +514,7 @@ export interface ProductSprintRevisionViewV1 {
     readonly actionContinuation?: ProductWorkUnitActionContinuationV1;
     readonly implementerActivation?: ProductWorkUnitImplementerActivationV1;
     readonly attemptHistory: readonly ProductWorkUnitAttemptHistoryV1[];
-    readonly retryAttempt?: ProductWorkUnitRetryAttemptV1;
+    readonly retryAttempts: readonly ProductWorkUnitRetryAttemptV1[];
     readonly workUnitScopeId: string;
     readonly sprintPlanRevisionId: string;
     readonly fixedExecutionScopeIds: readonly string[];

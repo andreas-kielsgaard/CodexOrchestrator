@@ -59,6 +59,10 @@ export function WorkUnitDetailWorkspace({
   const [focusTarget, setFocusTarget] = useState<SessionFocusTarget | null>(null);
   const primarySession =
     sessions.find(({ sessionId }) => sessionId === primarySessionId) ?? handler ?? workSlicePlanner;
+  const activityOrdinals = [...new Set([
+    ...unit.attemptHistory.map((attempt) => attempt.ordinal),
+    ...unit.retryAttempts.map((retry) => retry.ordinal),
+  ])].sort((left, right) => left - right);
 
   const navigateToLifecycleTurn = (
     entry: SprintWorkspacePresentationV1['workUnitLifecycle'][number],
@@ -101,7 +105,7 @@ export function WorkUnitDetailWorkspace({
             unit.actionContinuation ||
             unit.implementerActivation ||
             unit.attemptHistory.length > 0 ||
-            unit.retryAttempt) && (
+            unit.retryAttempts.length > 0) && (
             <section className="work-unit-activation" aria-label="Work Unit activation activity">
               <h2>Activation activity</h2>
               {unit.handlerActivation && <p>{handlerActivity(unit.handlerActivation)}</p>}
@@ -111,26 +115,28 @@ export function WorkUnitDetailWorkspace({
               {unit.implementerActivation && (
                 <p>{implementerActivity(unit.implementerActivation)}</p>
               )}
-              {unit.attemptHistory.map((attempt) => (
-                <section className="work-unit-attempt" key={attempt.attemptId}>
-                  <h3>Attempt ordinal {attempt.ordinal}</h3>
-                  {attempt.implementerOutcome && (
-                    <ImplementerOutcomeActivity outcome={attempt.implementerOutcome} />
-                  )}
-                  {attempt.handlerReview && (
-                    <HandlerReviewActivity
-                      review={attempt.handlerReview}
-                      decision={attempt.handlerDecision}
-                    />
-                  )}
-                  {unit.retryAttempt?.ordinal === attempt.ordinal && (
-                    <RetryAttemptActivity retryAttempt={unit.retryAttempt} />
-                  )}
-                </section>
-              ))}
-              {unit.retryAttempt && !unit.attemptHistory.some((attempt) => attempt.ordinal === unit.retryAttempt?.ordinal) && (
-                <RetryAttemptActivity retryAttempt={unit.retryAttempt} />
-              )}
+              {activityOrdinals.map((ordinal) => {
+                const attempt = unit.attemptHistory.find((member) => member.ordinal === ordinal);
+                return (
+                  <section className="work-unit-attempt" key={`attempt-${ordinal}`}>
+                    <h3>Attempt ordinal {ordinal}</h3>
+                    {attempt?.implementerOutcome && (
+                      <ImplementerOutcomeActivity outcome={attempt.implementerOutcome} />
+                    )}
+                    {attempt?.handlerReview && (
+                      <HandlerReviewActivity
+                        review={attempt.handlerReview}
+                        decision={attempt.handlerDecision}
+                      />
+                    )}
+                    {unit.retryAttempts
+                      .filter((retry) => retry.ordinal === ordinal)
+                      .map((retry) => (
+                        <RetryAttemptActivity key={retry.retryAttemptId} retryAttempt={retry} />
+                      ))}
+                  </section>
+                );
+              })}
             </section>
           )}
           <section className="work-unit-lifecycle" aria-label="Work Unit lifecycle turn log">

@@ -668,10 +668,10 @@ describe('orchestration native query v1', () => {
     unit.implementerOutcome = implementerOutcomeFixture('review_ready');
     unit.handlerReview = handlerReviewFixture('returned');
     unit.handlerDecision = handlerDecisionFixture('returned');
-    unit.retryAttempt = retryAttemptFixture('ready');
+    unit.retryAttempts = [retryAttemptFixture('ready')];
 
     const query = decodeOrchestrationNativeQueryV2(value);
-    expect(query.workUnits[0]!.retryAttempt).toMatchObject({
+    expect(query.workUnits[0]!.retryAttempts[0]).toMatchObject({
       ordinal: 1,
       originAttemptId: 'attempt-1',
       retryAttemptId: 'retry-attempt-1',
@@ -681,18 +681,18 @@ describe('orchestration native query v1', () => {
     const model = composeProductOrchestrationReadModels(
       nativeQueryProductCompositionInputV2(query),
     ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
-    expect(model.retryAttempt).toEqual(query.workUnits[0]!.retryAttempt);
-    expect(model.retryAttempt).not.toHaveProperty('candidateCommitId');
-    expect(model.retryAttempt).not.toHaveProperty('candidateTreeId');
-    expect(model.retryAttempt).not.toHaveProperty('privateRefName');
+    expect(model.retryAttempts).toEqual(query.workUnits[0]!.retryAttempts);
+    expect(model.retryAttempts[0]).not.toHaveProperty('candidateCommitId');
+    expect(model.retryAttempts[0]).not.toHaveProperty('candidateTreeId');
+    expect(model.retryAttempts[0]).not.toHaveProperty('privateRefName');
 
     const partial = implementerOutcomeNativeFixture();
     const partialUnit = (partial.workUnits as Array<Record<string, unknown>>)[0]!;
     partialUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
     partialUnit.handlerReview = handlerReviewFixture('returned');
     partialUnit.handlerDecision = handlerDecisionFixture('returned');
-    partialUnit.retryAttempt = retryAttemptFixture('partial');
-    expect(decodeOrchestrationNativeQueryV2(partial).workUnits[0]!.retryAttempt).toMatchObject({
+    partialUnit.retryAttempts = [retryAttemptFixture('partial')];
+    expect(decodeOrchestrationNativeQueryV2(partial).workUnits[0]!.retryAttempts[0]).toMatchObject({
       candidatePinnedAt: '2026-08-04T00:00:21Z',
       implementerHarnessBoundAt: '2026-08-04T00:00:27Z',
     });
@@ -702,17 +702,24 @@ describe('orchestration native query v1', () => {
     failedUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
     failedUnit.handlerReview = handlerReviewFixture('returned');
     failedUnit.handlerDecision = handlerDecisionFixture('returned');
-    failedUnit.retryAttempt = retryAttemptFixture('failed');
-    expect(decodeOrchestrationNativeQueryV2(failed).workUnits[0]!.retryAttempt).toMatchObject({
+    failedUnit.retryAttempts = [retryAttemptFixture('failed')];
+    expect(decodeOrchestrationNativeQueryV2(failed).workUnits[0]!.retryAttempts[0]).toMatchObject({
       launchRequestedAt: '2026-08-04T00:00:29Z',
       failureReason: 'retry_terminal_launch_failed',
     });
 
     const absent = implementerOutcomeNativeFixture();
-    expect(decodeOrchestrationNativeQueryV2(absent).workUnits[0]!.retryAttempt).toBeUndefined();
+    expect(decodeOrchestrationNativeQueryV2(absent).workUnits[0]!.retryAttempts).toEqual([]);
+
+    const structurallyExtensible = implementerOutcomeNativeFixture();
+    const extensibleUnit = (structurallyExtensible.workUnits as Array<Record<string, unknown>>)[0]!;
+    extensibleUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
+    extensibleUnit.handlerReview = handlerReviewFixture('returned');
+    extensibleUnit.handlerDecision = handlerDecisionFixture('returned');
+    extensibleUnit.retryAttempts = [{ ...retryAttemptFixture('partial'), ordinal: 2, retryAttemptId: 'retry-attempt-2' }];
+    expect(decodeOrchestrationNativeQueryV2(structurallyExtensible).workUnits[0]!.retryAttempts[0]!.ordinal).toBe(2);
 
     const malformed = [
-      { ...retryAttemptFixture('ready'), ordinal: 2 },
       { ...retryAttemptFixture('ready'), originAttemptId: 'foreign-attempt' },
       { ...retryAttemptFixture('ready'), candidateCommitId: 'private-candidate' },
       { ...retryAttemptFixture('ready'), inventedField: true },
@@ -734,7 +741,7 @@ describe('orchestration native query v1', () => {
       malformedUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
       malformedUnit.handlerReview = handlerReviewFixture('returned');
       malformedUnit.handlerDecision = handlerDecisionFixture('returned');
-      malformedUnit.retryAttempt = retryAttempt;
+      malformedUnit.retryAttempts = [retryAttempt];
       expect(() => decodeOrchestrationNativeQueryV2(malformedValue)).toThrow(
         'Invalid orchestration native query',
       );
@@ -743,7 +750,7 @@ describe('orchestration native query v1', () => {
     const missingDecision = implementerOutcomeNativeFixture();
     const missingDecisionUnit = (missingDecision.workUnits as Array<Record<string, unknown>>)[0]!;
     missingDecisionUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
-    missingDecisionUnit.retryAttempt = retryAttemptFixture('partial');
+    missingDecisionUnit.retryAttempts = [retryAttemptFixture('partial')];
     expect(() => decodeOrchestrationNativeQueryV2(missingDecision)).toThrow(
       'retry attempt requires a returned Handler decision',
     );
@@ -753,7 +760,7 @@ describe('orchestration native query v1', () => {
     acceptedDecisionUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
     acceptedDecisionUnit.handlerReview = handlerReviewFixture('accepted');
     acceptedDecisionUnit.handlerDecision = handlerDecisionFixture('accepted');
-    acceptedDecisionUnit.retryAttempt = retryAttemptFixture('partial');
+    acceptedDecisionUnit.retryAttempts = [retryAttemptFixture('partial')];
     expect(() => decodeOrchestrationNativeQueryV2(acceptedDecision)).toThrow(
       'retry attempt requires a returned Handler decision',
     );
@@ -1019,6 +1026,7 @@ function implementerOutcomeNativeFixture(): Record<string, unknown> {
         implementerReadyAt: '2026-08-03T00:01:27Z',
       },
       attemptHistory: [],
+      retryAttempts: [],
     },
   ];
   // Keep the old test call sites concise while exercising only the new serialized history shape.

@@ -303,6 +303,7 @@ function sprintReadModel(): ProductSprintReadModelV1 {
             summary: 'Summary',
             details: 'Details',
             source: source(),
+            retryAttempts: [],
             attemptHistory: [{
               ordinal: 0,
               attemptId: 'attempt-1',

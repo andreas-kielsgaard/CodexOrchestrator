@@ -6497,6 +6497,108 @@ mod tests {
     }
 
     #[test]
+    fn populated_legacy_attempt_history_and_retry_migrate_without_overwriting_ordinal_zero() {
+        let fixture = ReportingFixture::new();
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        connection.pragma_update(None, "foreign_keys", false).unwrap();
+        connection.execute_batch(r#"
+DROP TABLE work_unit_handler_decisions;
+DROP TABLE work_unit_handler_reviews;
+DROP TABLE work_unit_implementer_outcomes;
+DROP TABLE work_unit_retry_attempts;
+CREATE TABLE work_unit_implementer_outcomes (
+  work_unit_id TEXT PRIMARY KEY, attempt_id TEXT, attempt_ordinal INTEGER, implementer_session_id TEXT, implementer_invocation_id TEXT,
+  reporting_invocation_id TEXT, reporting_harness_revision_id TEXT, reporting_harness_configuration_digest TEXT, reporting_harness_repository_commit_ref TEXT,
+  reporting_requested_at TEXT, reporting_prepared_at TEXT, reporting_harness_bound_at TEXT, reporting_launch_requested_at TEXT, reporting_launch_accepted_at TEXT,
+  reporting_ready_at TEXT, submitted_summary TEXT, outcome_variant TEXT, submitted_validation_statement TEXT, semantic_payload_json TEXT,
+  submission_fingerprint TEXT, submitted_at TEXT, validation_at TEXT, validation_result TEXT, evidence_manifest_json TEXT, comparison_fingerprint TEXT,
+  evidence_content_fingerprints_json TEXT, evidence_ready_at TEXT, semantic_completed_at TEXT, semantic_completion_invocation_id TEXT,
+  lifecycle_observed_at TEXT, lifecycle_status TEXT, application_accepted_at TEXT, handler_review_ready_at TEXT, failure_reason TEXT
+);
+CREATE TABLE work_unit_handler_reviews (
+  work_unit_id TEXT PRIMARY KEY, attempt_id TEXT, reporting_invocation_id TEXT, handler_session_id TEXT, original_handler_invocation_id TEXT,
+  action_handler_invocation_id TEXT, review_invocation_id TEXT, review_harness_revision_id TEXT, review_harness_configuration_digest TEXT,
+  review_harness_repository_commit_ref TEXT, delivery_requested_at TEXT, delivery_persisted_at TEXT, harness_bound_at TEXT, launch_requested_at TEXT,
+  launch_accepted_at TEXT, review_ready_at TEXT, delivered_payload_json TEXT, delivered_payload_fingerprint TEXT, semantic_judgment_variant TEXT,
+  semantic_return_reason_json TEXT, semantic_judgment_fingerprint TEXT, semantic_judgment_at TEXT, lifecycle_observed_at TEXT, lifecycle_status TEXT,
+  conflict_at TEXT, conflict_reason TEXT
+);
+CREATE TABLE work_unit_handler_decisions (
+  review_invocation_id TEXT PRIMARY KEY, work_unit_id TEXT, decision_variant TEXT, decision_fingerprint TEXT, return_reason_json TEXT,
+  decision_recorded_at TEXT, implementation_accepted_at TEXT, implementation_returned_at TEXT, retry_required_at TEXT, settlement_ready_at TEXT
+);
+CREATE TABLE work_unit_retry_attempts (
+  work_unit_id TEXT PRIMARY KEY, ordinal INTEGER NOT NULL CHECK (ordinal=1), origin_attempt_id TEXT, review_invocation_id TEXT,
+  decision_fingerprint TEXT, sprint_git_authority_id TEXT, sprint_baseline_object_id TEXT, sprint_current_object_id TEXT, retry_attempt_id TEXT,
+  implementer_session_id TEXT, implementer_invocation_id TEXT, implementer_harness_revision_id TEXT, implementer_harness_configuration_digest TEXT,
+  implementer_harness_repository_commit_ref TEXT, capture_intent_id TEXT, capture_fingerprint TEXT, handoff_json TEXT, handoff_fingerprint TEXT,
+  candidate_commit_id TEXT, candidate_tree_id TEXT, private_ref_name TEXT, capture_requested_at TEXT, candidate_pinned_at TEXT, authorized_at TEXT,
+  execution_support_granted_at TEXT, isolated_worktree_ready_at TEXT, implementer_session_created_at TEXT, implementer_invocation_prepared_at TEXT,
+  implementer_harness_bound_at TEXT, launch_requested_at TEXT, launch_accepted_at TEXT, provider_activation_observed_at TEXT, retry_ready_at TEXT,
+  failure_reason TEXT
+);
+"#).unwrap();
+        let time = "2026-08-04T00:00:00Z";
+        let outcome = ("legacy-attempt-0", "legacy-session-0", "legacy-original-0", "legacy-reporting-0");
+        connection.execute(
+            "INSERT INTO work_unit_implementer_outcomes VALUES (?1,?2,0,?3,?4,?5,'reporting-revision','reporting-digest','reporting-commit',?6,?6,?6,?6,?6,?6,'legacy summary','review_pending','legacy validation','{}','submission',?6,?6,'valid','[]','comparison','[]',?6,?6,?5,?6,'completed',?6,?6,NULL)",
+            params![fixture.work_unit_id, outcome.0, outcome.1, outcome.2, outcome.3, time],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO work_unit_handler_reviews VALUES (?1,?2,?3,'legacy-handler-session','legacy-handler-original','legacy-handler-action','legacy-review','review-revision','review-digest','review-commit',?4,?4,?4,?4,?4,?4,'{\"summary\":\"legacy summary\",\"validationStatement\":\"legacy validation\",\"changedFiles\":[],\"comparisonFingerprint\":\"comparison\",\"evidenceContentFingerprints\":[]}','delivery','return','{\"code\":\"review_failed\",\"explanation\":\"legacy return\"}','judgment',?4,?4,'completed',NULL,NULL)",
+            params![fixture.work_unit_id, outcome.0, outcome.3, time],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO work_unit_handler_decisions VALUES ('legacy-review',?1,'returned','legacy-decision','{\"code\":\"review_failed\",\"explanation\":\"legacy return\"}',?2,NULL,?2,?2,NULL)",
+            params![fixture.work_unit_id, time],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO work_unit_retry_attempts VALUES (?1,1,?2,'legacy-review','legacy-decision','legacy-authority','baseline','current','legacy-retry-1','legacy-retry-session','legacy-retry-invocation','retry-revision','retry-digest','retry-commit','capture','capture-fingerprint','{}','handoff-fingerprint','candidate','tree','refs/private',?3,?3,?3,?3,?3,?3,?3,?3,?3,?3,?3,?3,NULL)",
+            params![fixture.work_unit_id, outcome.0, time],
+        ).unwrap();
+        connection.pragma_update(None, "foreign_keys", true).unwrap();
+        drop(connection);
+
+        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.base.database_path,
+            fixture.base.sessions.clone(),
+        ).unwrap();
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        assert_eq!(connection.query_row::<(String, i64, String, String), _, _>(
+            "SELECT attempt_id,attempt_ordinal,submitted_summary,reporting_invocation_id FROM work_unit_implementer_outcomes WHERE work_unit_id=?1",
+            [&fixture.work_unit_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).unwrap(), (outcome.0.into(), 0, "legacy summary".into(), outcome.3.into()));
+        assert_eq!(connection.query_row::<(String, String), _, _>(
+            "SELECT attempt_id,review_invocation_id FROM work_unit_handler_reviews WHERE work_unit_id=?1",
+            [&fixture.work_unit_id], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap(), (outcome.0.into(), "legacy-review".into()));
+        assert_eq!(connection.query_row::<(String, String, String), _, _>(
+            "SELECT attempt_id,review_invocation_id,decision_variant FROM work_unit_handler_decisions WHERE work_unit_id=?1",
+            [&fixture.work_unit_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap(), (outcome.0.into(), "legacy-review".into(), "returned".into()));
+        assert_eq!(connection.query_row::<(i64, String, String), _, _>(
+            "SELECT ordinal,origin_attempt_id,retry_attempt_id FROM work_unit_retry_attempts WHERE work_unit_id=?1",
+            [&fixture.work_unit_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap(), (1, outcome.0.into(), "legacy-retry-1".into()));
+        let retry_schema: String = connection.query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='work_unit_retry_attempts'", [], |row| row.get(0),
+        ).unwrap();
+        assert!(retry_schema.contains("retry_attempt_id TEXT PRIMARY KEY"));
+        assert!(retry_schema.contains("CHECK (ordinal >= 0)"));
+        assert!(!retry_schema.contains("CHECK (ordinal=1)"));
+        drop(connection);
+        drop(reopened);
+        let reopened_again = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.base.database_path,
+            fixture.base.sessions.clone(),
+        ).unwrap();
+        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id='legacy-attempt-0'", [], |row| row.get(0),
+        ).unwrap(), 1);
+        drop(reopened_again);
+    }
+
+    #[test]
     fn returned_retry_adopts_each_exact_effect_after_its_intent_crash_window() {
         let fixture = ReportingFixture::new();
         let (attempt, session, invocation, private_ref) = fixture.return_one_retry();

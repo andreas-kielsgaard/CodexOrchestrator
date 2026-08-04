@@ -1930,25 +1930,25 @@ fn implementer_outcome_projection_rejects_partial_bundles_and_incoherent_authori
     assert!(validate_work_unit_activation_projection(&valid).is_ok());
 
     let mut foreign_session = valid_work_unit_outcome_projection();
-    foreign_session.implementer_outcome.as_mut().unwrap().implementer_session_id = "foreign".into();
+    primary_outcome_mut(&mut foreign_session).implementer_session_id = "foreign".into();
     assert!(validate_work_unit_activation_projection(&foreign_session).is_err());
 
     let mut reused_invocation = valid_work_unit_outcome_projection();
-    reused_invocation.implementer_outcome.as_mut().unwrap().reporting_invocation_id =
+    primary_outcome_mut(&mut reused_invocation).reporting_invocation_id =
         "implementer-invocation".into();
     assert!(validate_work_unit_activation_projection(&reused_invocation).is_err());
 
     let mut accepted_failed = valid_work_unit_outcome_projection();
-    accepted_failed.implementer_outcome.as_mut().unwrap().terminal_lifecycle.as_mut().unwrap().status =
+    primary_outcome_mut(&mut accepted_failed).terminal_lifecycle.as_mut().unwrap().status =
         WorkUnitImplementerLifecycleStatusDto::Failed;
     assert!(validate_work_unit_activation_projection(&accepted_failed).is_err());
 
     let mut ready_without_acceptance = valid_work_unit_outcome_projection();
-    ready_without_acceptance.implementer_outcome.as_mut().unwrap().application_accepted_at = None;
+    primary_outcome_mut(&mut ready_without_acceptance).application_accepted_at = None;
     assert!(validate_work_unit_activation_projection(&ready_without_acceptance).is_err());
 
     let mut out_of_order = valid_work_unit_outcome_projection();
-    out_of_order.implementer_outcome.as_mut().unwrap().reporting_prepared_at =
+    primary_outcome_mut(&mut out_of_order).reporting_prepared_at =
         Some("2026-08-03T23:59:59Z".into());
     assert!(validate_work_unit_activation_projection(&out_of_order).is_err());
 }
@@ -1978,7 +1978,7 @@ fn valid_work_unit_outcome_projection() -> WorkUnitDto {
     let mut work_unit = valid_work_unit_activation_projection();
     let reporting_invocation_id =
         projection_stable_id("work-unit-implementer-reporting-invocation", "attempt");
-    work_unit.implementer_outcome = Some(WorkUnitImplementerOutcomeDto {
+    let outcome = WorkUnitImplementerOutcomeDto {
         attempt_id: "attempt".into(),
         implementer_session_id: "implementer-session".into(),
         original_implementer_invocation_id: "implementer-invocation".into(),
@@ -2022,14 +2022,21 @@ fn valid_work_unit_outcome_projection() -> WorkUnitDto {
         application_accepted_at: Some("2026-08-04T00:00:10Z".into()),
         handler_review_ready_at: Some("2026-08-04T00:00:11Z".into()),
         failure_reason: None,
-    });
+    };
+    work_unit.attempt_history = vec![WorkUnitAttemptHistoryDto {
+        ordinal: 0,
+        attempt_id: outcome.attempt_id.clone(),
+        implementer_outcome: Some(outcome),
+        handler_review: None,
+        handler_decision: None,
+    }];
     work_unit
 }
 
 #[test]
 fn handler_review_projection_preserves_judgment_decision_and_later_workflow_boundary() {
     let mut work_unit = valid_work_unit_outcome_projection();
-    work_unit.handler_review = Some(WorkUnitHandlerReviewDto {
+    work_unit.attempt_history[0].handler_review = Some(WorkUnitHandlerReviewDto {
         attempt_id: "attempt".into(),
         reporting_invocation_id: projection_stable_id("work-unit-implementer-reporting-invocation", "attempt"),
         handler_session_id: "handler-session".into(),
@@ -2069,7 +2076,7 @@ fn handler_review_projection_preserves_judgment_decision_and_later_workflow_boun
         }),
         conflict: None,
     });
-    work_unit.handler_decision = Some(WorkUnitHandlerDecisionDto {
+    work_unit.attempt_history[0].handler_decision = Some(WorkUnitHandlerDecisionDto {
         attempt_id: "attempt".into(),
         review_invocation_id: projection_stable_id("work-unit-handler-review-invocation", "attempt"),
         variant: WorkUnitHandlerDecisionVariantDto::Accepted,
@@ -2083,7 +2090,7 @@ fn handler_review_projection_preserves_judgment_decision_and_later_workflow_boun
     });
     validate_work_unit_activation_projection(&work_unit).expect("accepted review projection");
 
-    work_unit.handler_review.as_mut().unwrap().lifecycle = Some(WorkUnitHandlerReviewLifecycleDto {
+    primary_review_mut(&mut work_unit).lifecycle = Some(WorkUnitHandlerReviewLifecycleDto {
         status: WorkUnitHandlerReviewLifecycleStatusDto::Failed,
         observed_at: "2026-08-04T00:00:18Z".into(),
     });
@@ -2095,7 +2102,7 @@ fn handler_review_projection_preserves_judgment_decision_and_later_workflow_boun
 #[test]
 fn retry_projection_exposes_only_semantic_stages_and_rejects_impossible_ordering() {
     let mut work_unit = valid_work_unit_outcome_projection();
-    work_unit.handler_review = Some(WorkUnitHandlerReviewDto {
+    work_unit.attempt_history[0].handler_review = Some(WorkUnitHandlerReviewDto {
         attempt_id: "attempt".into(), reporting_invocation_id: projection_stable_id("work-unit-implementer-reporting-invocation", "attempt"),
         handler_session_id: "handler-session".into(), original_handler_invocation_id: "handler-original".into(), action_handler_invocation_id: "handler-action".into(),
         review_invocation_id: projection_stable_id("work-unit-handler-review-invocation", "attempt"), review_harness_revision_id: "review-revision".into(), review_harness_configuration_digest: "review-digest".into(), review_harness_repository_commit_ref: "review-commit".into(),
@@ -2104,7 +2111,7 @@ fn retry_projection_exposes_only_semantic_stages_and_rejects_impossible_ordering
         semantic_judgment: Some(WorkUnitHandlerReviewJudgmentDto { variant: WorkUnitHandlerReviewJudgmentVariantDto::Return, reason: Some(WorkUnitHandlerReviewReasonDto { code: "review_failed".into(), explanation: "correction required".into() }), fingerprint: "judgment-fingerprint".into(), recorded_at: "2026-08-04T00:00:00Z".into() }),
         lifecycle: Some(WorkUnitHandlerReviewLifecycleDto { status: WorkUnitHandlerReviewLifecycleStatusDto::Completed, observed_at: "2026-08-04T00:00:00Z".into() }), conflict: None,
     });
-    work_unit.handler_decision = Some(WorkUnitHandlerDecisionDto {
+    work_unit.attempt_history[0].handler_decision = Some(WorkUnitHandlerDecisionDto {
         attempt_id: "attempt".into(),
         review_invocation_id: projection_stable_id("work-unit-handler-review-invocation", "attempt"),
         variant: WorkUnitHandlerDecisionVariantDto::Returned,
@@ -2116,7 +2123,7 @@ fn retry_projection_exposes_only_semantic_stages_and_rejects_impossible_ordering
         retry_required_at: Some("2026-08-04T00:00:00Z".into()),
         settlement_ready_at: None,
     });
-    work_unit.retry_attempt = Some(WorkUnitRetryAttemptDto {
+    work_unit.retry_attempts = vec![WorkUnitRetryAttemptDto {
         ordinal: 1, origin_attempt_id: "attempt".into(), retry_attempt_id: "retry-attempt".into(),
         implementer_session_id: "retry-session".into(), implementer_invocation_id: "retry-invocation".into(),
         capture_requested_at: "2026-08-04T00:00:01Z".into(), candidate_pinned_at: Some("2026-08-04T00:00:02Z".into()),
@@ -2125,7 +2132,7 @@ fn retry_projection_exposes_only_semantic_stages_and_rejects_impossible_ordering
         implementer_invocation_prepared_at: Some("2026-08-04T00:00:07Z".into()), implementer_harness_bound_at: Some("2026-08-04T00:00:08Z".into()),
         launch_requested_at: Some("2026-08-04T00:00:09Z".into()), launch_accepted_at: Some("2026-08-04T00:00:10Z".into()),
         provider_activation_observed_at: Some("2026-08-04T00:00:11Z".into()), retry_ready_at: Some("2026-08-04T00:00:12Z".into()), failure_reason: None,
-    });
+    }];
     validate_work_unit_activation_projection(&work_unit).expect("truthful retry projection");
     let json = serde_json::to_string(&work_unit).expect("serialize projection");
     assert!(json.contains("ordinal") && json.contains("candidatePinnedAt") && json.contains("retryReadyAt"));
@@ -2137,47 +2144,47 @@ fn retry_projection_exposes_only_semantic_stages_and_rejects_impossible_ordering
         assert!(!json.contains(forbidden), "retry projection leaked {forbidden}");
     }
 
-    let decision = work_unit.handler_decision.take();
+    let decision = work_unit.attempt_history[0].handler_decision.take();
     assert!(validate_work_unit_activation_projection(&work_unit).is_err());
-    work_unit.handler_decision = decision;
+    work_unit.attempt_history[0].handler_decision = decision;
 
-    work_unit.retry_attempt.as_mut().unwrap().failure_reason = Some("retry_terminal_launch_failed".into());
-    work_unit.retry_attempt.as_mut().unwrap().launch_accepted_at = None;
-    work_unit.retry_attempt.as_mut().unwrap().retry_ready_at = None;
+    primary_retry_mut(&mut work_unit).failure_reason = Some("retry_terminal_launch_failed".into());
+    primary_retry_mut(&mut work_unit).launch_accepted_at = None;
+    primary_retry_mut(&mut work_unit).retry_ready_at = None;
     assert!(validate_work_unit_activation_projection(&work_unit).is_ok());
-    work_unit.retry_attempt.as_mut().unwrap().failure_reason = Some("retry_launch_not_accepted".into());
-    work_unit.retry_attempt.as_mut().unwrap().launch_requested_at = None;
-    work_unit.retry_attempt.as_mut().unwrap().provider_activation_observed_at = None;
+    primary_retry_mut(&mut work_unit).failure_reason = Some("retry_launch_not_accepted".into());
+    primary_retry_mut(&mut work_unit).launch_requested_at = None;
+    primary_retry_mut(&mut work_unit).provider_activation_observed_at = None;
     assert!(validate_work_unit_activation_projection(&work_unit).is_ok());
-    work_unit.retry_attempt.as_mut().unwrap().launch_requested_at = Some("2026-08-04T00:00:09Z".into());
-    work_unit.retry_attempt.as_mut().unwrap().launch_accepted_at = Some("2026-08-04T00:00:10Z".into());
-    work_unit.retry_attempt.as_mut().unwrap().provider_activation_observed_at = Some("2026-08-04T00:00:11Z".into());
-    work_unit.retry_attempt.as_mut().unwrap().retry_ready_at = Some("2026-08-04T00:00:12Z".into());
-    work_unit.retry_attempt.as_mut().unwrap().failure_reason = None;
+    primary_retry_mut(&mut work_unit).launch_requested_at = Some("2026-08-04T00:00:09Z".into());
+    primary_retry_mut(&mut work_unit).launch_accepted_at = Some("2026-08-04T00:00:10Z".into());
+    primary_retry_mut(&mut work_unit).provider_activation_observed_at = Some("2026-08-04T00:00:11Z".into());
+    primary_retry_mut(&mut work_unit).retry_ready_at = Some("2026-08-04T00:00:12Z".into());
+    primary_retry_mut(&mut work_unit).failure_reason = None;
 
-    work_unit.retry_attempt.as_mut().unwrap().candidate_pinned_at = Some("2026-08-04T00:00:00Z".into());
+    primary_retry_mut(&mut work_unit).candidate_pinned_at = Some("2026-08-04T00:00:00Z".into());
     assert!(validate_work_unit_activation_projection(&work_unit).is_err());
-    work_unit.retry_attempt.as_mut().unwrap().candidate_pinned_at = Some("2026-08-04T00:00:02Z".into());
+    primary_retry_mut(&mut work_unit).candidate_pinned_at = Some("2026-08-04T00:00:02Z".into());
 
-    work_unit.retry_attempt.as_mut().unwrap().launch_requested_at = None;
-    work_unit.retry_attempt.as_mut().unwrap().launch_accepted_at = None;
-    work_unit.retry_attempt.as_mut().unwrap().provider_activation_observed_at = Some("2026-08-04T00:00:11Z".into());
-    work_unit.retry_attempt.as_mut().unwrap().retry_ready_at = None;
+    primary_retry_mut(&mut work_unit).launch_requested_at = None;
+    primary_retry_mut(&mut work_unit).launch_accepted_at = None;
+    primary_retry_mut(&mut work_unit).provider_activation_observed_at = Some("2026-08-04T00:00:11Z".into());
+    primary_retry_mut(&mut work_unit).retry_ready_at = None;
     assert!(validate_work_unit_activation_projection(&work_unit).is_err());
-    work_unit.retry_attempt.as_mut().unwrap().launch_requested_at = Some("2026-08-04T00:00:09Z".into());
-    work_unit.retry_attempt.as_mut().unwrap().launch_accepted_at = Some("2026-08-04T00:00:10Z".into());
-    work_unit.retry_attempt.as_mut().unwrap().retry_ready_at = Some("2026-08-04T00:00:12Z".into());
+    primary_retry_mut(&mut work_unit).launch_requested_at = Some("2026-08-04T00:00:09Z".into());
+    primary_retry_mut(&mut work_unit).launch_accepted_at = Some("2026-08-04T00:00:10Z".into());
+    primary_retry_mut(&mut work_unit).retry_ready_at = Some("2026-08-04T00:00:12Z".into());
 
-    work_unit.retry_attempt.as_mut().unwrap().ordinal = 2;
+    primary_retry_mut(&mut work_unit).ordinal = 2;
+    assert!(validate_work_unit_activation_projection(&work_unit).is_ok());
+    primary_retry_mut(&mut work_unit).ordinal = 1;
+    primary_retry_mut(&mut work_unit).launch_accepted_at = None;
     assert!(validate_work_unit_activation_projection(&work_unit).is_err());
-    work_unit.retry_attempt.as_mut().unwrap().ordinal = 1;
-    work_unit.retry_attempt.as_mut().unwrap().launch_accepted_at = None;
+    primary_retry_mut(&mut work_unit).launch_accepted_at = Some("2026-08-04T00:00:10Z".into());
+    primary_retry_mut(&mut work_unit).origin_attempt_id = "foreign-attempt".into();
     assert!(validate_work_unit_activation_projection(&work_unit).is_err());
-    work_unit.retry_attempt.as_mut().unwrap().launch_accepted_at = Some("2026-08-04T00:00:10Z".into());
-    work_unit.retry_attempt.as_mut().unwrap().origin_attempt_id = "foreign-attempt".into();
-    assert!(validate_work_unit_activation_projection(&work_unit).is_err());
-    work_unit.retry_attempt.as_mut().unwrap().origin_attempt_id = "attempt".into();
-    work_unit.retry_attempt.as_mut().unwrap().failure_reason = Some("retry_launch_failed".into());
+    primary_retry_mut(&mut work_unit).origin_attempt_id = "attempt".into();
+    primary_retry_mut(&mut work_unit).failure_reason = Some("retry_launch_failed".into());
     assert!(validate_work_unit_activation_projection(&work_unit).is_err());
 }
 
@@ -2254,9 +2261,18 @@ fn valid_work_unit_activation_projection() -> WorkUnitDto {
             failure_reason: None,
         }),
         attempt_history: Vec::new(),
-        implementer_outcome: None,
-        handler_review: None,
-        handler_decision: None,
-        retry_attempt: None,
+        retry_attempts: Vec::new(),
     }
+}
+
+fn primary_outcome_mut(work_unit: &mut WorkUnitDto) -> &mut WorkUnitImplementerOutcomeDto {
+    work_unit.attempt_history[0].implementer_outcome.as_mut().expect("primary outcome")
+}
+
+fn primary_review_mut(work_unit: &mut WorkUnitDto) -> &mut WorkUnitHandlerReviewDto {
+    work_unit.attempt_history[0].handler_review.as_mut().expect("primary review")
+}
+
+fn primary_retry_mut(work_unit: &mut WorkUnitDto) -> &mut WorkUnitRetryAttemptDto {
+    work_unit.retry_attempts.first_mut().expect("primary retry")
 }

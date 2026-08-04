@@ -196,7 +196,7 @@ function presentedWorkUnit(
     attemptHistory: outcome
       ? [{ ordinal: 0, attemptId: outcome.attemptId, implementerOutcome: outcome, ...(handlerReview ? { handlerReview } : {}), ...(handlerDecision ? { handlerDecision } : {}) }]
       : [],
-    ...(retryAttempt ? { retryAttempt } : {}),
+    retryAttempts: retryAttempt ? [retryAttempt] : [],
     workUnitScopeId: 'scope-1',
     sprintPlanRevisionId: 'revision-1',
     fixedExecutionScopeIds: [],
