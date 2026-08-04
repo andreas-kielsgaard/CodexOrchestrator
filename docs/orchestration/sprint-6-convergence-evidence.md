@@ -576,3 +576,27 @@ Frontend Vitest, TypeScript, and ESLint execution remains unproven because this 
 Hard downstream stop: no retry creation, Implementer relaunch, dependent activation, planning-point,
 Work Slice, Sprint, or Epic settlement, continuation, push, publication, provider acceptance, or
 user acceptance occurred or is authorized by this record.
+
+## DWE-01: dependent Work Unit execution-cycle convergence
+
+The productive Handler-review terminal notification now enters the same ordered downstream drain
+as startup reconciliation: finalize the completed accept-or-return decision, reconcile accepted
+candidate and integration facts, then recompute dependency eligibility only when a settled
+prerequisite contribution leaves a dependent absent, blocked, or not launch-accepted. Thus an
+accepted root can make its exact dependent eligible without a separate manual replay. A return
+cannot create an accepted candidate, integration, contribution, retry, or later attempt.
+
+Current deterministic validation in this candidate checkout:
+
+- Handler-review terminal notification: **1 passed, 367 filtered**.
+- Concurrent exact replay and accept-vs-return race: **1 passed, 367 filtered**.
+- `git diff --check` passed. The first attempted focused selector matched no test; it is not a
+  passing gate. Two earlier compilation attempts timed out while building the isolated Cargo
+  target; the completed reruns above are the recorded results.
+
+The existing native-query, strict frontend read-model, and Work Unit activity surfaces were
+inspected for the established safe projections, but frontend Vitest, TypeScript, and UI execution
+are **unrun** here because this clean routed checkout has no `node_modules`; dependencies were not
+installed. Broad Rust suites, live-provider receipt, provider activation/compliance, and human
+acceptance are likewise unproven. This correction does not add retry, ordinal-1 authority,
+relaunch, planning-point/Work Slice/Sprint/Epic continuation, reattachment, push, or publication.
