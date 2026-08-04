@@ -526,3 +526,24 @@ Validation evidence for this checkpoint:
 
 No retry, downstream activation, settlement, continuation, provider observation, process
 reattachment, authority expansion, or user acceptance is proven by this record.
+
+## RT-04: Returned Work Unit retry-attempt activation
+
+The accepted returned-retry movement starts at `06769488643ea8272c03671c0988f0e5f7e6ef59`
+and reaches independently audited `15cde4bc2a763a35b4268d93e841eab2b2d3d2a1` through this
+exact checkpoint chain: `39c31075d3e0087cb978dd6febc9227ed9f2bc74`,
+`d2bbd6769f1da66f58b02fff1fa867ea6968e8c0`, `24c5d116da34c2ebf293190d43d331aa54e7cc81`,
+`5dc2f20fda636a38490c6a198d8d2b917268041e`, `eee5f1ed064609777f88d9f8a7d2b63eb0a026b4`,
+`f8a331d469614763be2042ac0cadc7b88be0b66f`, and
+`c63c0b40fcd7426117eafbbd27db0a2fe90348d9`.
+
+- Eligibility requires exact accepted ordinal-0 evidence, completed Handler return review, the returned final decision, `retry_required_at`, and originating application execution authorization. One stable ordinal-1 attempt captures and privately pins the clean verified candidate commit/tree while retaining Sprint baseline/current separately; pinning is not integration, acceptance, or settlement.
+- Candidate/handoff lineage carries the exact reason, prior claims, manifest/comparison/content fingerprints. Identities are application-owned: no agent-supplied identities and no raw ref, path, or object IDs cross the query/UI boundary.
+- The distinct deterministic retry worktree is seeded at the pinned candidate, with a WorkspaceWrite Implementer package, immutable revision, Session/prepared invocation/Harness binding, and separate launch, request, acceptance, provider, readiness, and failure stages.
+- Policy B makes a runtime launch `Err` terminal for the exact invocation: it remains unready and is never relaunched or replaced; no global Agent Session retryable disposition is created.
+- Duplicate/two-service concurrency, reopen/crash adoption, immutable replay, ref/workspace/Session/invocation divergence, and dirty, wrong-HEAD/tree/common/top-level, non-descendant, or evidence drift all converge or fail closed with one identity.
+- Rust native query, strict TypeScript decoder/read model, Work Unit UI, and Handler/Implementer skills agree semantically. The UI retains ordinal-0 history and shows partial, ready, and terminal-failure states without raw authority or false recovery/provider claims. Independent audit corrections at `15cde4b` include complete immutable replay comparison with durable mismatch reporting and TypeScript provider timestamp ordering.
+
+Validation evidence is deterministic fake-runtime/local SQLite, not live provider or multi-process SQLite stress: seeded distinct-workspace **1 passed**; Handler-review/retry integration and Policy-B proof had multiple accepted focused runs, with the final independent corrective run **1 passed, 334 filtered, 315.43s**; two-independent-service race **1 passed, 33.88s**; crash adoption **1 passed, 82.64s**; divergence **1 passed, 80.26s**; returned-retry compatibility **3 passed, 111.48s**; expanded tamper/restoration **1 passed, 146.26s test body**; and Rust retry DTO coherence/privacy **1 passed, about 41s**. `cargo check` and `git diff --check` passed at accepted checkpoints. RT-02 added focused Vitest/type tests in source, but absent `node_modules` meant Vitest and TypeScript typecheck could not start and were not installed; live managed Rust-to-UI runtime query remains unproven.
+
+No retry outcome/reporting continuation, second Handler review, ordinal 2, integration, authority handoff, settlement, prerequisite satisfaction, dependent activation, planning-point/Work Slice/Sprint/Epic continuation, Pause/Restart, reattachment, push, publication, or user acceptance is proven. Candidate private-ref cleanup is deferred/unimplemented.
