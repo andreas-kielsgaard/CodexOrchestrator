@@ -1,6 +1,7 @@
 //! Durable Epic Plan Proposal and initiation facts. Execution, scheduling, and acceptance remain out of scope.
 
 pub(crate) mod application;
+pub(crate) mod accepted_candidate_authority;
 pub(crate) mod bootstrap_transition;
 pub(crate) mod confirmation;
 pub(crate) mod conversation_harness;
