@@ -35,9 +35,138 @@ function Normalize-ComparisonPath {
     return [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
 }
 
+function Find-ExecutableInPathValues {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FileName,
+
+        [string[]]$PathValues
+    )
+
+    $seenDirectories = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+
+    foreach ($pathValue in @($PathValues)) {
+        if ([string]::IsNullOrWhiteSpace($pathValue)) {
+            continue
+        }
+
+        foreach ($rawEntry in $pathValue.Split(';')) {
+            $entry = [Environment]::ExpandEnvironmentVariables($rawEntry.Trim().Trim('"'))
+            if ([string]::IsNullOrWhiteSpace($entry)) {
+                continue
+            }
+
+            try {
+                $directory = [System.IO.Path]::GetFullPath($entry)
+            } catch {
+                continue
+            }
+
+            if (-not $seenDirectories.Add($directory)) {
+                continue
+            }
+
+            $candidate = Join-Path $directory $FileName
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                return [System.IO.Path]::GetFullPath($candidate)
+            }
+        }
+    }
+
+    return $null
+}
+
+function Get-SccacheStatistics {
+    param([Parameter(Mandatory = $true)][string]$SccachePath)
+
+    $statsJson = ((& $SccachePath --show-stats --stats-format json 2>&1) -join "`n").Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "sccache could not start or report statistics: $statsJson"
+    }
+
+    return $statsJson | ConvertFrom-Json
+}
+
+function Get-CountSum {
+    param($Counts)
+
+    $total = [long]0
+    if ($null -eq $Counts) {
+        return $total
+    }
+
+    foreach ($property in $Counts.PSObject.Properties) {
+        $total += [long]$property.Value
+    }
+
+    return $total
+}
+
+function Get-SccacheCounterSummary {
+    param([Parameter(Mandatory = $true)]$Statistics)
+
+    return [pscustomobject]@{
+        Hits                     = Get-CountSum -Counts $Statistics.stats.cache_hits.counts
+        Misses                   = Get-CountSum -Counts $Statistics.stats.cache_misses.counts
+        NonCacheableRequests     = [long]$Statistics.stats.requests_not_cacheable
+        NonCacheableCompilations = [long]$Statistics.stats.non_cacheable_compilations
+    }
+}
+
+function Write-SccacheCounterDelta {
+    param(
+        [Parameter(Mandatory = $true)]$Before,
+        [Parameter(Mandatory = $true)]$After
+    )
+
+    $beforeSummary = Get-SccacheCounterSummary -Statistics $Before
+    $afterSummary = Get-SccacheCounterSummary -Statistics $After
+    $counterNames = @('Hits', 'Misses', 'NonCacheableRequests', 'NonCacheableCompilations')
+    $countersDecreased = $counterNames | Where-Object {
+        $afterSummary.$_ -lt $beforeSummary.$_
+    }
+
+    Write-Host 'sccache activity during this command window (global deltas may include concurrent machine activity):'
+    if ($countersDecreased) {
+        Write-Host '  unavailable: the sccache server counters restarted or decreased during the command'
+        return
+    }
+
+    $hitDelta = $afterSummary.Hits - $beforeSummary.Hits
+    $missDelta = $afterSummary.Misses - $beforeSummary.Misses
+    $nonCacheableRequestDelta = $afterSummary.NonCacheableRequests - $beforeSummary.NonCacheableRequests
+    $nonCacheableCompilationDelta = $afterSummary.NonCacheableCompilations - $beforeSummary.NonCacheableCompilations
+    $cacheableRequestDelta = $hitDelta + $missDelta
+
+    Write-Host "  cache hits: +$hitDelta"
+    Write-Host "  cache misses: +$missDelta"
+    Write-Host "  non-cacheable requests: +$nonCacheableRequestDelta"
+    Write-Host "  non-cacheable compilations: +$nonCacheableCompilationDelta"
+    if ($cacheableRequestDelta -gt 0) {
+        $hitRate = (100.0 * $hitDelta / $cacheableRequestDelta).ToString(
+            '0.00',
+            [System.Globalization.CultureInfo]::InvariantCulture
+        )
+        Write-Host "  cache hit rate: $hitRate% ($hitDelta/$cacheableRequestDelta cacheable requests)"
+    } else {
+        Write-Host '  cache hit rate: n/a (no cacheable requests)'
+    }
+
+    Write-Host (
+        'sccache server totals after the command: ' +
+        "hits=$($afterSummary.Hits), misses=$($afterSummary.Misses), " +
+        "non-cacheable requests=$($afterSummary.NonCacheableRequests), " +
+        "non-cacheable compilations=$($afterSummary.NonCacheableCompilations)"
+    )
+}
+
 $invocationDirectory = (Get-Location).Path
 $repositoryCandidate = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$repositoryRoot = ((& git -C $repositoryCandidate rev-parse --show-toplevel 2>&1) -join "`n").Trim()
+$git = Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1
+$cargo = Get-Command cargo -CommandType Application -ErrorAction Stop | Select-Object -First 1
+$repositoryRoot = ((& $git.Source -C $repositoryCandidate rev-parse --show-toplevel 2>&1) -join "`n").Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($repositoryRoot)) {
     throw 'Could not resolve the repository root.'
 }
@@ -47,19 +176,21 @@ if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
     throw "Codex Orchestrator Cargo manifest is unavailable: $manifestPath"
 }
 
-$sccache = Get-Command sccache -CommandType Application -ErrorAction SilentlyContinue
-if (-not $sccache) {
+$sccache = Get-Command sccache -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+$sccachePath = if ($sccache) { $sccache.Source } else { $null }
+if (-not $sccachePath) {
     $persistedMachinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $persistedUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    $env:Path = @($persistedMachinePath, $persistedUserPath) -join ';'
-    $sccache = Get-Command sccache -CommandType Application -ErrorAction SilentlyContinue
+    $sccachePath = Find-ExecutableInPathValues -FileName 'sccache.exe' -PathValues @(
+        $persistedUserPath
+        $persistedMachinePath
+    )
 }
-if (-not $sccache) {
+if (-not $sccachePath) {
     throw 'sccache is required. Install the prebuilt package with: winget install --exact --id Mozilla.sccache --scope user'
 }
-$cargo = Get-Command cargo -CommandType Application -ErrorAction Stop
 
-$versionOutput = ((& $sccache.Source --version 2>&1) -join "`n").Trim()
+$versionOutput = ((& $sccachePath --version 2>&1) -join "`n").Trim()
 if ($LASTEXITCODE -ne 0 -or $versionOutput -notmatch '^sccache\s+(\d+\.\d+\.\d+)') {
     throw "Could not verify sccache: $versionOutput"
 }
@@ -109,16 +240,11 @@ $selectedCacheDir = if ($ambientCacheDir) {
 Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
 Remove-Item Env:SCCACHE_BASEDIRS -ErrorAction SilentlyContinue
 $env:CARGO_INCREMENTAL = '0'
-$env:RUSTC_WRAPPER = $sccache.Source
+$env:RUSTC_WRAPPER = $sccachePath
 $env:SCCACHE_CLIENT_SIDE = '1'
 $env:SCCACHE_DIR = $selectedCacheDir
 
-$statsJson = ((& $sccache.Source --show-stats --stats-format json 2>&1) -join "`n").Trim()
-if ($LASTEXITCODE -ne 0) {
-    throw "sccache could not start or report statistics: $statsJson"
-}
-
-$stats = $statsJson | ConvertFrom-Json
+$stats = Get-SccacheStatistics -SccachePath $sccachePath
 if ($stats.cache_location -notmatch '^Local disk: "(.+)"$') {
     throw "Unexpected sccache cache location: $($stats.cache_location)"
 }
@@ -130,6 +256,7 @@ if ($activeCacheDir -ne $expectedCacheDir) {
 }
 
 Write-Host "sccache enabled: $versionOutput"
+Write-Host "sccache executable: $sccachePath"
 Write-Host "shared compiler cache: $activeCacheDir"
 Write-Host "isolated Cargo target: $selectedTargetDir"
 Write-Host "stable Cargo cwd: $stableCargoDirectory"
@@ -143,9 +270,14 @@ try {
     Pop-Location
 }
 
-Write-Host 'sccache server totals after the command (may include concurrent callers):'
-& $sccache.Source --show-stats
-$statsExitCode = $LASTEXITCODE
+$statsExitCode = 0
+try {
+    $statsAfter = Get-SccacheStatistics -SccachePath $sccachePath
+    Write-SccacheCounterDelta -Before $stats -After $statsAfter
+} catch {
+    Write-Warning "Could not report sccache statistics after Cargo: $($_.Exception.Message)"
+    $statsExitCode = 1
+}
 
 if ($cargoExitCode -ne 0) {
     exit $cargoExitCode
