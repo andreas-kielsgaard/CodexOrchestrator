@@ -598,13 +598,21 @@ than a later actionless revision.
 
 Current deterministic validation in this candidate checkout:
 
-- Combined accepted/returned convergence: **1 passed, 368 filtered, 92.98s**. It records a
-  canonical blocked dependent, accepts and integrates its exact settled prerequisite, records one
-  contribution and one stable dependent ordinal-0 Handler activation, checks native projection and
-  the absence of the Handler Harness commit reference, repairs a representative erased
-  settlement/contribution partial effect without replacement Handler identities or duplicate
-  effects, and proves the corresponding returned root records `retry_required` with no candidate,
-  integration, settlement, contribution, dependent activation, or replacement Implementer attempt.
+- Full second-wave accepted/returned convergence: **1 passed, 369 filtered, 179.06s**
+  (Cargo elapsed **223.7s**, including **42.54s** compilation). A canonical root contribution
+  makes one dependent eligible; that dependent completes its original Handler, same-Session action,
+  one Implementer, reporting claims, application-owned File Review evidence, semantic completion,
+  terminal lifecycle, and independent Handler review. The accepted branch records one integration,
+  settlement, and exact outgoing contribution, then launches its next dependent exactly once. The
+  returned branch records its structured return and `retry_required` and records no accepted
+  candidate, integration, settlement, contribution, next activation, or replacement Implementer.
+  It also exercises concurrent identical final judgments, exact effect cardinalities, native
+  projection, and commit-reference/configuration-digest absence.
+- The same focused proof erases the second-wave accepted settlement and outgoing contribution and
+  replays the productive reconciliation. It restores the original integration, settlement, and
+  contribution without replacement Implementer identity or duplicate next Handler activation.
+- First-wave regression rerun: **1 passed, 369 filtered, 97.78s** (Cargo elapsed **126s**,
+  including **25.88s** compilation).
 - Concurrent exact replay and accept-vs-return race: **1 passed, 368 filtered, 96.48s**.
 - Privacy-strengthened combined reruns: **1 passed, 368 filtered, 156.37s** for repository
   commit-reference absence and **1 passed, 368 filtered, 132.24s** for both commit-reference and
@@ -615,10 +623,10 @@ Current deterministic validation in this candidate checkout:
 
 The existing native-query, strict frontend read-model, and Work Unit activity surfaces were
 inspected for the established safe projections, but frontend Vitest, TypeScript, and UI execution
-are **unrun** here because this clean routed checkout has no `node_modules`; dependencies were not
-installed. Broad Rust suites, live-provider receipt, provider activation/compliance, and human
-acceptance are likewise unproven. The combined proof stops after the newly eligible dependent's
-ordinal-0 Handler activation; its own Implementer/reporting/review/integration/outgoing-
-contribution path remains an explicit unproven acceptance gap. This correction does not add retry,
-ordinal-1 authority, relaunch, planning-point/Work Slice/Sprint/Epic continuation, reattachment,
-push, or publication.
+are **unrun by design in this Plan Step**: the checkout has no `node_modules`, dependencies were
+not installed, and runtime/type verification is separately gated. Broad Rust suites, live-provider
+receipt, provider activation/compliance, and human acceptance are likewise unproven. The focused
+second-wave fixture does not yet prove a fresh `SprintRunnerTransitionService::open` against its
+manually materialized canonical planning fixture; its recovery replay is in-process. That precise
+service-reopen gate remains unproven. This correction does not add retry, ordinal-1 authority,
+relaunch, planning-point/Work Slice/Sprint/Epic continuation, reattachment, push, or publication.

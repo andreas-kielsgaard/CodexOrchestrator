@@ -1914,6 +1914,14 @@ mod tests {
         ) {
             *self.sprint.lock().unwrap() = Some(Arc::downgrade(service));
         }
+
+        fn set_sprint_only(
+            &self,
+            service: &Arc<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>,
+        ) {
+            *self.service.lock().unwrap() = None;
+            self.set_sprint(service);
+        }
     }
 
     impl AgentSessionNotifier for TransitionNotifier {
@@ -5961,7 +5969,7 @@ mod tests {
         }
 
         fn enable_notifications(&self) {
-            self.base.notifier.set_sprint(&self.transition);
+            self.base.notifier.set_sprint_only(&self.transition);
         }
 
         fn finish(&self, status: AgentInvocationTerminalStatus) {
@@ -6026,7 +6034,7 @@ mod tests {
             Connection::open(&self.base.database_path).unwrap().query_row("SELECT review_invocation_id FROM work_unit_handler_reviews WHERE work_unit_id=?1", [&self.work_unit_id], |row| row.get(0)).unwrap()
         }
 
-        fn establish_canonical_dependency_graph(&self) -> (String, String) {
+        fn establish_canonical_dependency_graph(&self) -> (String, String, String, String) {
             let connection = Connection::open(&self.base.database_path).unwrap();
             let (sprint_id, epic_id): (String, String) = connection.query_row(
                 "SELECT id,epic_id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
@@ -6037,6 +6045,8 @@ mod tests {
             let revision = "implementer-reporting-revision";
             let dependent = "implementer-reporting-dependent".to_string();
             let relationship = "implementer-reporting-depends-on".to_string();
+            let next_dependent = "implementer-reporting-next-dependent".to_string();
+            let next_relationship = "implementer-reporting-next-depends-on".to_string();
             let planner_harness = conversation_harness::profile(ConversationHarnessRole::WorkSlicePlanner).unwrap();
             connection.pragma_update(None, "foreign_keys", false).unwrap();
             connection.execute(
@@ -6089,12 +6099,84 @@ mod tests {
                 params![relationship, materialization, dependent, self.work_unit_id],
             ).unwrap();
             connection.execute(
+                "INSERT INTO work_units (work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification)
+                 VALUES (?1,?2,'implementer-reporting-slice',?3,2,'Next dependent reporting','One bounded next dependent.')",
+                params![next_dependent, materialization, revision],
+            ).unwrap();
+            connection.execute(
+                "INSERT INTO work_unit_relationships (relationship_id,materialization_id,relationship_kind,from_id,to_id,ordinal)
+                 VALUES (?1,?2,'depends_on',?3,?4,NULL)",
+                params![next_relationship, materialization, next_dependent, dependent],
+            ).unwrap();
+            connection.execute(
                 "UPDATE work_unit_handler_activations SET materialization_id=?2,sprint_id=?3
                  WHERE work_unit_id=?1",
                 params![self.work_unit_id, materialization, sprint_id],
             ).unwrap();
             connection.pragma_update(None, "foreign_keys", true).unwrap();
-            (dependent, relationship)
+            (dependent, relationship, next_dependent, next_relationship)
+        }
+
+        fn drive_newly_eligible_work_unit_to_review(
+            &self,
+            work_unit_id: &str,
+        ) -> (String, String, String, String, String, String, String, String) {
+            let (handler_attempt, handler_session, handler_invocation): (String, String, String) = Connection::open(&self.base.database_path).unwrap().query_row(
+                "SELECT attempt_id,handler_session_id,handler_invocation_id FROM work_unit_handler_activations WHERE work_unit_id=?1",
+                [work_unit_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).unwrap();
+            self.base.runtime.finish(&handler_invocation, AgentInvocationTerminalStatus::Completed);
+            let handler_action: String = Connection::open(&self.base.database_path).unwrap().query_row(
+                "SELECT action_invocation_id FROM work_unit_handler_action_continuations WHERE work_unit_id=?1 AND attempt_id=?2 AND handler_session_id=?3",
+                params![work_unit_id, handler_attempt, handler_session],
+                |row| row.get(0),
+            ).unwrap();
+            let action_facts: (String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>) = Connection::open(&self.base.database_path).unwrap().query_row(
+                "SELECT action_invocation_id,authorized_at,invocation_prepared_at,harness_bound_at,launch_accepted_at,action_ready_at FROM work_unit_handler_action_continuations WHERE work_unit_id=?1",
+                [work_unit_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+            ).unwrap();
+            self.transition.request_work_unit_implementer_from_authenticated_continuation(&handler_action).unwrap_or_else(|error| panic!("dependent action request {action_facts:?}: {error:?}"));
+            self.base.runtime.finish(&handler_action, AgentInvocationTerminalStatus::Completed);
+            let (implementer_session, implementer_invocation): (String, String) = Connection::open(&self.base.database_path).unwrap().query_row(
+                "SELECT implementer_session_id,implementer_invocation_id FROM work_unit_implementer_activations WHERE work_unit_id=?1 AND attempt_id=?2 AND handler_invocation_id=?3",
+                params![work_unit_id, handler_attempt, handler_action],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            ).unwrap();
+            self.base.runtime.finish(&implementer_invocation, AgentInvocationTerminalStatus::Completed);
+            let (reporting_invocation, revision, digest, commit): (String, String, String, String) = Connection::open(&self.base.database_path).unwrap().query_row(
+                "SELECT reporting_invocation_id,reporting_harness_revision_id,reporting_harness_configuration_digest,reporting_harness_repository_commit_ref FROM work_unit_implementer_outcomes WHERE work_unit_id=?1 AND attempt_id=?2",
+                params![work_unit_id, handler_attempt],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            ).unwrap();
+            let pinned = self.handler.load_pinned_implementer_revision(&revision, &digest, &commit).unwrap();
+            let package = self.handler.construct_for_pinned_profile(&handler_attempt, WorkUnitHarnessRole::Implementer, pinned.profile).unwrap();
+            fs::write(Path::new(package.working_directory()).join("README.md"), format!("{work_unit_id} review evidence\n")).unwrap();
+            let evidence_commit = std::process::Command::new("git")
+                .args(["-c", "user.email=reporting@example.test", "-c", "user.name=Reporting Test", "add", "README.md"])
+                .current_dir(package.working_directory())
+                .output().unwrap();
+            assert!(evidence_commit.status.success(), "{evidence_commit:?}");
+            let evidence_commit = std::process::Command::new("git")
+                .args(["-c", "user.email=reporting@example.test", "-c", "user.name=Reporting Test", "commit", "-m", "dependent review evidence"])
+                .current_dir(package.working_directory())
+                .output().unwrap();
+            assert!(evidence_commit.status.success(), "{evidence_commit:?}");
+            let reporting = AgentInvocationId::new(reporting_invocation.clone()).unwrap();
+            self.transition.submit_implementation_outcome(&reporting, crate::orchestration::sprint_runner_transition::ImplementationOutcomeClaims {
+                outcome: crate::orchestration::sprint_runner_transition::ImplementationOutcomeVariant::ReviewPending,
+                summary: format!("Implemented {work_unit_id}."),
+                validation_statement: "Focused deterministic proof passed.".into(),
+            }).unwrap();
+            self.transition.complete_implementation_outcome(&reporting).unwrap();
+            self.base.runtime.finish(&reporting_invocation, AgentInvocationTerminalStatus::Completed);
+            let review: String = Connection::open(&self.base.database_path).unwrap().query_row(
+                "SELECT review_invocation_id FROM work_unit_handler_reviews WHERE work_unit_id=?1 AND attempt_id=?2",
+                params![work_unit_id, handler_attempt],
+                |row| row.get(0),
+            ).unwrap();
+            (handler_attempt, handler_session, handler_invocation, handler_action, implementer_session, implementer_invocation, reporting_invocation, review)
         }
 
         fn assert_no_submission_evidence_or_completion(&self) {
@@ -6434,7 +6516,7 @@ mod tests {
     fn completed_handler_review_drains_one_canonical_dependent_cycle_and_return_stops() {
         let accepted = ReportingFixture::new();
         let accepted_review = accepted.ready_review();
-        let (dependent, relationship) = accepted.establish_canonical_dependency_graph();
+        let (dependent, relationship, _next_dependent, _next_relationship) = accepted.establish_canonical_dependency_graph();
         accepted.transition.record_handler_review_judgment_for_test(&accepted_review, "accept", None).unwrap();
         accepted.base.runtime.finish(&accepted_review, AgentInvocationTerminalStatus::Completed);
 
@@ -6495,7 +6577,7 @@ mod tests {
 
         let returned = ReportingFixture::new();
         let returned_review = returned.ready_review();
-        let (returned_dependent, _) = returned.establish_canonical_dependency_graph();
+        let (returned_dependent, _, _returned_next_dependent, _returned_next_relationship) = returned.establish_canonical_dependency_graph();
         returned.transition.record_handler_review_judgment_for_test(&returned_review, "return", Some(crate::orchestration::sprint_runner_transition::HandlerReviewReturnReason { code: "review_failed".into(), explanation: "evidence requires correction".into() })).unwrap();
         returned.base.runtime.finish(&returned_review, AgentInvocationTerminalStatus::Completed);
         let connection = Connection::open(&returned.base.database_path).unwrap();
@@ -6507,6 +6589,86 @@ mod tests {
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1", [&returned_dependent], |row| row.get(0)).unwrap(), 0);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1", [&returned.work_unit_id], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1 AND attempt_id<>?2", params![returned.work_unit_id, returned.attempt_id], |row| row.get(0)).unwrap(), 0);
+    }
+
+    #[test]
+    fn dependent_second_wave_converges_or_returns_without_later_authority() {
+        let accepted = ReportingFixture::new();
+        let root_review = accepted.ready_review();
+        let (dependent, root_relationship, next, dependent_relationship) = accepted.establish_canonical_dependency_graph();
+        accepted.transition.record_handler_review_judgment_for_test(&root_review, "accept", None).unwrap();
+        accepted.base.runtime.finish(&root_review, AgentInvocationTerminalStatus::Completed);
+        assert_eq!(Connection::open(&accepted.base.database_path).unwrap().query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM work_unit_prerequisite_contributions WHERE prerequisite_work_unit_id=?1 AND dependent_work_unit_id=?2 AND relationship_id=?3",
+            params![accepted.work_unit_id, dependent, root_relationship], |row| row.get(0),
+        ).unwrap(), 1);
+        let identities = accepted.drive_newly_eligible_work_unit_to_review(&dependent);
+        for identity in [&identities.0, &identities.1, &identities.2, &identities.3, &identities.4, &identities.5, &identities.6, &identities.7] {
+            assert!(identity.contains("-"));
+        }
+        let barrier = Arc::new(Barrier::new(2));
+        let decisions = (0..2).map(|_| {
+            let service = accepted.transition.clone();
+            let review = identities.7.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || { barrier.wait(); service.record_handler_review_judgment_for_test(&review, "accept", None) })
+        }).collect::<Vec<_>>();
+        assert!(decisions.into_iter().all(|decision| decision.join().unwrap().is_ok()));
+        accepted.base.runtime.finish(&identities.7, AgentInvocationTerminalStatus::Completed);
+        let connection = Connection::open(&accepted.base.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_decisions WHERE work_unit_id=?1 AND decision_variant='accepted'", [&dependent], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM accepted_work_unit_integrations WHERE work_unit_id=?1 AND stage='settled'", [&dependent], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_settlements WHERE work_unit_id=?1", [&dependent], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_prerequisite_contributions WHERE prerequisite_work_unit_id=?1 AND dependent_work_unit_id=?2 AND relationship_id=?3", params![dependent, next, dependent_relationship], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1 AND eligibility_state='eligible' AND launch_accepted_at IS NOT NULL", [&next], |row| row.get(0)).unwrap(), 1);
+        for (table, column) in [("work_unit_handler_activations", "attempt_id"), ("work_unit_handler_action_continuations", "attempt_id"), ("work_unit_implementer_activations", "attempt_id"), ("work_unit_implementer_outcomes", "attempt_id"), ("work_unit_handler_reviews", "attempt_id")] {
+            assert_eq!(connection.query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table} WHERE work_unit_id=?1 AND {column}=?2"), params![dependent, identities.0], |row| row.get(0)).unwrap(), 1);
+        }
+        let native = serde_json::to_value(SqliteOrchestrationRepository::open(&accepted.base.database_path).unwrap().native_query().unwrap()).unwrap();
+        let projected = native["workUnits"].as_array().unwrap().iter().find(|unit| unit["workUnitId"] == dependent).unwrap();
+        assert_eq!(projected["integration"]["settlement"]["settledAt"].is_string(), true);
+        assert!(projected["handlerActivation"].get("handlerHarnessRepositoryCommitRef").is_none());
+        assert!(!native.to_string().contains("RepositoryCommitRef") && !native.to_string().contains("ConfigurationDigest"));
+        drop(connection);
+
+        let reopened = accepted.transition.clone();
+        reopened.reconcile_handler_reviews_for_test().unwrap();
+        let connection = Connection::open(&accepted.base.database_path).unwrap();
+        connection.execute("DELETE FROM work_unit_prerequisite_contributions WHERE prerequisite_work_unit_id=?1", [&dependent]).unwrap();
+        connection.execute("DELETE FROM work_unit_settlements WHERE work_unit_id=?1", [&dependent]).unwrap();
+        connection.execute("UPDATE accepted_work_unit_integrations SET stage='db_advanced',settled_at=NULL WHERE work_unit_id=?1", [&dependent]).unwrap();
+        drop(connection);
+        reopened.reconcile_handler_reviews_for_test().unwrap();
+        let connection = Connection::open(&accepted.base.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM accepted_work_unit_integrations WHERE work_unit_id=?1", [&dependent], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_settlements WHERE work_unit_id=?1", [&dependent], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_prerequisite_contributions WHERE prerequisite_work_unit_id=?1 AND dependent_work_unit_id=?2", params![dependent, next], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1", [&next], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1 AND attempt_id<>?2", params![dependent, identities.0], |row| row.get(0)).unwrap(), 0);
+        drop(connection);
+
+        let returned = ReportingFixture::new();
+        let returned_root_review = returned.ready_review();
+        let (returned_dependent, _, returned_next, _) = returned.establish_canonical_dependency_graph();
+        returned.transition.record_handler_review_judgment_for_test(&returned_root_review, "accept", None).unwrap();
+        returned.base.runtime.finish(&returned_root_review, AgentInvocationTerminalStatus::Completed);
+        let returned_identities = returned.drive_newly_eligible_work_unit_to_review(&returned_dependent);
+        let reason = crate::orchestration::sprint_runner_transition::HandlerReviewReturnReason { code: "review_failed".into(), explanation: "evidence requires correction".into() };
+        returned.transition.record_handler_review_judgment_for_test(&returned_identities.7, "return", Some(reason.clone())).unwrap();
+        returned.transition.record_handler_review_judgment_for_test(&returned_identities.7, "return", Some(reason)).unwrap();
+        returned.base.runtime.finish(&returned_identities.7, AgentInvocationTerminalStatus::Completed);
+        let connection = Connection::open(&returned.base.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_decisions WHERE work_unit_id=?1 AND decision_variant='returned' AND retry_required_at IS NOT NULL", [&returned_dependent], |row| row.get(0)).unwrap(), 1);
+        for table in ["accepted_handler_candidates", "accepted_work_unit_integrations", "work_unit_settlements"] {
+            assert_eq!(connection.query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table} WHERE work_unit_id=?1"), [&returned_dependent], |row| row.get(0)).unwrap(), 0);
+        }
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_prerequisite_contributions WHERE prerequisite_work_unit_id=?1", [&returned_dependent], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1", [&returned_next], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1 AND attempt_id<>?2", params![returned_dependent, returned_identities.0], |row| row.get(0)).unwrap(), 0);
+        let returned_native = serde_json::to_value(SqliteOrchestrationRepository::open(&returned.base.database_path).unwrap().native_query().unwrap()).unwrap();
+        let returned_projection = returned_native["workUnits"].as_array().unwrap().iter().find(|unit| unit["workUnitId"] == returned_dependent).unwrap();
+        assert_eq!(returned_projection["handlerDecision"]["variant"], "returned");
+        assert!(!returned_native.to_string().contains("RepositoryCommitRef") && !returned_native.to_string().contains("ConfigurationDigest"));
     }
 
     #[test]
