@@ -1867,7 +1867,6 @@ impl SprintRunnerTransitionService {
         let authority: Option<String> = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
             "SELECT authority_id FROM initiated_sprint_git_authorities WHERE sprint_id=?1 ORDER BY recorded_at,authority_id LIMIT 1", [sprint_id], |row| row.get(0)
         ).optional().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        if eligible != authority.is_some() { return Err(SprintRunnerTransitionError::Conflict); }
         let attempt_id = stable_id("work-unit-handler-attempt", work_unit_id);
         let session_id = stable_id("work-unit-handler-session", work_unit_id);
         let invocation_id = stable_id("work-unit-handler-invocation", work_unit_id);
@@ -1889,6 +1888,7 @@ impl SprintRunnerTransitionService {
             ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         }
         if !eligible { return Ok(()) }
+        let Some(authority) = authority else { return Ok(()) };
         let (harness_key, harness_version, revision_id, configuration_digest, repository_commit_ref): (String, i64, Option<String>, Option<String>, Option<String>) = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
             "SELECT handler_harness_key,handler_harness_version,handler_harness_revision_id,handler_harness_configuration_digest,handler_harness_repository_commit_ref FROM work_unit_handler_activations WHERE work_unit_id=?1", [work_unit_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
         ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
@@ -1904,7 +1904,6 @@ impl SprintRunnerTransitionService {
         {
             return Err(SprintRunnerTransitionError::Conflict);
         }
-        let authority = authority.expect("eligible activation has authority");
         self.mark_handler(work_unit_id, "authorized_at")?;
         self.mark_handler(work_unit_id, "attempt_created_at")?;
         handler.authorize_handler_attempt(&attempt_id, work_unit_id, &authority)

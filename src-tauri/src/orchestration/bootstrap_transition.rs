@@ -4914,13 +4914,57 @@ mod tests {
         assert!(root.7.as_deref().is_some_and(|value| value.len() == 64));
         assert!(root.8.as_deref().is_some_and(|value| value.contains("harness-revision-commit/v1")));
         let dependent = activations.iter().find(|row| row.4 == "blocked").unwrap();
-        assert_eq!(dependent.5.as_deref(), Some("prerequisite_satisfaction_not_authoritative"));
+        assert!(dependent.5.as_deref().is_some_and(|reason| reason.starts_with("missing_prerequisite_contributions:")));
+        let dependent_identity = (dependent.0.clone(), dependent.1.clone(), dependent.2.clone(), dependent.3.clone());
         for timestamp in [&dependent.9,&dependent.10,&dependent.11,&dependent.12,&dependent.13,&dependent.14,&dependent.15,&dependent.16,&dependent.17,&dependent.18,&dependent.19] { assert!(timestamp.is_none()); }
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_sessions WHERE id LIKE 'work-unit-handler-session-%'", [], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_session_invocations WHERE id LIKE 'work-unit-handler-invocation-%' AND input_provenance='application'", [], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM execution_support_attempt_authorizations WHERE role_kind='implementer'", [], |row| row.get(0)).unwrap(), 0);
         drop(connection);
         assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 1);
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        connection.pragma_update(None, "foreign_keys", false).unwrap();
+        let (relationship_id, prerequisite_work_unit_id, authority_id): (String,String,String) = connection.query_row(
+            "SELECT r.relationship_id,r.to_id,a.authority_id
+             FROM work_unit_relationships r
+             JOIN initiated_sprint_git_authorities a ON a.sprint_id=?1
+             WHERE r.relationship_kind='depends_on' AND r.from_id=?2",
+            params![sprint_id, dependent_identity.0], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO accepted_work_unit_integrations
+             (integration_id,work_unit_id,candidate_id,authority_id,target_ref_name,pre_object_id,pre_version,candidate_commit_id,candidate_tree_id,baseline_object_id,intent_fingerprint,intent_recorded_at,authorization_recorded_at,stage,settled_at)
+             VALUES ('dependency-wave-integration',?1,'dependency-wave-candidate',?2,'refs/heads/handler-sprint','dependency-wave-pre',1,'dependency-wave-commit','dependency-wave-tree','dependency-wave-baseline','dependency-wave-intent','t','t','settled','t')",
+            params![prerequisite_work_unit_id, authority_id],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO work_unit_settlements (settlement_id,work_unit_id,integration_id,settled_at)
+             VALUES ('dependency-wave-settlement',?1,'dependency-wave-integration','t')",
+            [&prerequisite_work_unit_id],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO work_unit_prerequisite_contributions
+             (contribution_id,prerequisite_work_unit_id,dependent_work_unit_id,integration_id,relationship_id,recorded_at)
+             VALUES ('dependency-wave-contribution',?1,?2,'dependency-wave-integration',?3,'t')",
+            params![prerequisite_work_unit_id, dependent_identity.0, relationship_id],
+        ).unwrap();
+        drop(connection);
+        handler_runner.attach_work_unit_handler_activation(handler.clone()).unwrap();
+        let activated_dependent: (String,String,String,String,String,Option<String>,Option<String>,Option<String>,Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
+            "SELECT work_unit_id,attempt_id,handler_session_id,handler_invocation_id,eligibility_state,blocked_reason,authorized_at,launch_accepted_at,handler_ready_at
+             FROM work_unit_handler_activations WHERE work_unit_id=?1", [&dependent_identity.0],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?)),
+        ).unwrap();
+        assert_eq!((activated_dependent.0.clone(),activated_dependent.1.clone(),activated_dependent.2.clone(),activated_dependent.3.clone()), dependent_identity);
+        assert_eq!(activated_dependent.4, "eligible");
+        assert!(activated_dependent.5.is_none());
+        assert!(activated_dependent.6.is_some() && activated_dependent.7.is_some() && activated_dependent.8.is_some());
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 2);
+        handler_runner.attach_work_unit_handler_activation(handler.clone()).unwrap();
+        let reopened_handler_runner = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        reopened_handler_runner.attach_work_unit_handler_activation(handler.clone()).unwrap();
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 2);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1 AND attempt_id=?2 AND handler_session_id=?3 AND handler_invocation_id=?4", params![dependent_identity.0,dependent_identity.1,dependent_identity.2,dependent_identity.3], |row| row.get(0)).unwrap(), 1);
         fixture.runtime.finish(&root.3, AgentInvocationTerminalStatus::Completed);
         let continuation: (String,String,String,String,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
             "SELECT attempt_id,handler_session_id,original_handler_invocation_id,action_invocation_id,
@@ -4934,7 +4978,7 @@ mod tests {
         assert!(continuation.3.starts_with("work-unit-handler-action-invocation-"));
         assert!(continuation.4.is_none());
         for timestamp in [&continuation.5,&continuation.6,&continuation.7,&continuation.8,&continuation.9] { assert!(timestamp.is_some()); }
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 2);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
         assert!(matches!(handler_runner.request_work_unit_implementer_from_authenticated_continuation(&root.3), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_implementer_activations", [], |row| row.get(0)).unwrap(), 0);
         // Every rejected caller fails before it can record an Implementer request or grant.
@@ -5175,20 +5219,20 @@ mod tests {
         assert!(persisted_directories
             .iter()
             .all(|(_, directory)| directory == shared_working_directory));
-        // The valid action creates only its own continuation/Implementer boundary for the eligible
-        // root. The dependency remains blocked and has no action continuation or Implementer.
+        // The valid action creates only its own Implementer boundary for the eligible root. The
+        // newly eligible dependent has its original Handler only; its action remains blocked.
         let action_continuations = Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
             "SELECT COUNT(*) FROM work_unit_handler_action_continuations", [], |row| row.get(0),
         ).unwrap();
         let implementer_activations = Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
             "SELECT COUNT(*) FROM work_unit_implementer_activations", [], |row| row.get(0),
         ).unwrap();
-        assert_eq!(action_continuations, 1);
+        assert_eq!(action_continuations, 2);
         assert_eq!(implementer_activations, 1);
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
             "SELECT COUNT(*) FROM work_unit_handler_action_continuations WHERE work_unit_id=?1",
             [&dependent.0], |row| row.get(0),
-        ).unwrap(), 0);
+        ).unwrap(), 1);
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
             "SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1",
             [&dependent.0], |row| row.get(0),
@@ -5196,7 +5240,7 @@ mod tests {
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<String, _, _>(
             "SELECT eligibility_state FROM work_unit_handler_activations WHERE work_unit_id=?1",
             [&dependent.0], |row| row.get(0),
-        ).unwrap(), "blocked");
+        ).unwrap(), "eligible");
         let upstream_after: (Option<String>, Option<String>, Option<String>, Option<String>, Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
             "SELECT epic_continuation_invocation_id,epic_continuation_launch_accepted_at,
                     sprint_continuation_invocation_id,sprint_continuation_launch_accepted_at,
@@ -5215,11 +5259,17 @@ mod tests {
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN (
                 'work_unit_implementation_outputs','work_unit_implementation_feedback',
-                'work_unit_handler_reviews','work_unit_handler_acceptances','work_unit_handler_returns',
-                'work_unit_retry_attempts','work_unit_settlements','work_unit_integrations',
+                'work_unit_handler_acceptances','work_unit_handler_returns',
+                'work_unit_retry_attempts','work_unit_integrations',
                 'work_unit_handoffs','work_unit_executions')",
             [], |row| row.get(0),
         ).unwrap(), 0);
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        connection.pragma_update(None, "foreign_keys", false).unwrap();
+        connection.execute("DELETE FROM work_unit_prerequisite_contributions WHERE integration_id='dependency-wave-integration'", []).unwrap();
+        connection.execute("DELETE FROM work_unit_settlements WHERE integration_id='dependency-wave-integration'", []).unwrap();
+        connection.execute("DELETE FROM accepted_work_unit_integrations WHERE integration_id='dependency-wave-integration'", []).unwrap();
+        drop(connection);
         let projected = serde_json::to_value(
             SqliteOrchestrationRepository::open(&fixture.database_path).unwrap().native_query().unwrap(),
         ).unwrap();
@@ -5232,7 +5282,7 @@ mod tests {
         assert_eq!(projected_unit["implementerActivation"]["handlerActionInvocationId"], continuation.3);
         assert!(projected_unit["implementerActivation"]["launchAcceptedAt"].is_string());
         assert!(projected_unit["implementerActivation"]["implementerReadyAt"].is_string());
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 4);
         let concurrent_requests = (0..2).map(|_| {
             let service = handler_runner.clone();
             let invocation = continuation.3.clone();
@@ -5240,7 +5290,7 @@ mod tests {
         }).collect::<Vec<_>>();
         assert!(concurrent_requests.into_iter().all(|request| request.join().unwrap().is_ok()));
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1", [&root.0], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 4);
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE work_unit_implementer_activations
              SET implementer_harness_bound_at=NULL,launch_accepted_at=NULL,implementer_ready_at=NULL
@@ -5260,7 +5310,7 @@ mod tests {
         assert_eq!(recovered_implementer.2, implementer.2);
         assert_eq!(recovered_implementer.3, implementer.3);
         for timestamp in [&recovered_implementer.4,&recovered_implementer.5,&recovered_implementer.6] { assert!(timestamp.is_some()); }
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 4);
         Connection::open(&fixture.database_path).unwrap().execute(
             "INSERT INTO agent_session_runtime_events (id,invocation_id,sequence,source,raw_payload_json,normalized_json,recorded_at) VALUES (?1,?2,0,'runtime','{}',?3,?4)",
             params!["implementer-provider-activity", implementer.2, r#"{"kind":"processing_started","text":null,"externalContextId":null,"usage":null,"details":null}"#, chrono::Utc::now().to_rfc3339()],
@@ -5272,7 +5322,7 @@ mod tests {
             [&root.0], |row| Ok((row.get(0)?,row.get(1)?)),
         ).unwrap();
         assert!(observation.0.is_some() && observation.1.is_some());
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 4);
         // Once the authenticated action has recorded the Implementer request it may terminate.
         // Reopen drains only that persisted request, does not recreate the terminal action MCP
         // server, and does not make the public action callable from a terminal invocation.
@@ -5287,7 +5337,7 @@ mod tests {
             terminal_action_reopen.request_work_unit_implementer_from_authenticated_continuation(&continuation.3),
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
         ));
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 4);
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE agent_session_invocations SET status='running',completed_at=NULL WHERE id=?1",
             [&continuation.3],
@@ -5338,7 +5388,7 @@ mod tests {
         ).unwrap();
         let replayed_handlers = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
         replayed_handlers.attach_work_unit_handler_activation(handler.clone()).unwrap();
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 4);
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<String,_,_>("SELECT handler_harness_revision_id FROM work_unit_handler_activations WHERE work_unit_id=?1", [&root.0], |row| row.get(0)).unwrap(), root.6.clone().unwrap());
         assert!(Connection::open(&fixture.database_path).unwrap().query_row::<Option<String>,_,_>("SELECT provider_activation_observed_at FROM work_unit_handler_activations WHERE work_unit_id=?1", [&root.0], |row| row.get(0)).unwrap().is_some());
         // Recover durable partial stages without replacing any identity or starting another
@@ -5355,14 +5405,14 @@ mod tests {
         ).unwrap();
         assert_eq!(recovered.0, root.1); assert_eq!(recovered.1, root.2); assert_eq!(recovered.2, root.3);
         assert!(recovered.3.is_some() && recovered.4.is_some() && recovered.5.is_some());
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 4);
         // Missing immutable evidence fails closed and never falls forward to newly published B.
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE work_unit_handler_activations SET handler_harness_revision_id='harness-revision-00000000-0000-0000-0000-000000000000' WHERE work_unit_id=?1", [&root.0],
         ).unwrap();
         let missing_pinned = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
         assert!(missing_pinned.attach_work_unit_handler_activation(handler.clone()).is_err());
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 4);
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE work_unit_handler_activations SET handler_harness_revision_id=?2 WHERE work_unit_id=?1", params![root.0, root.6],
         ).unwrap();
@@ -5379,7 +5429,7 @@ mod tests {
             })
         }).collect::<Vec<_>>();
         assert!(concurrent_handler_services.into_iter().all(|call| call.join().unwrap().is_ok()));
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 4);
         let concurrent = (0..2).map(|_| { let service = replayed.clone(); let path = fixture.database_path.clone(); let sessions = fixture.sessions.clone(); std::thread::spawn(move || { drop(service); crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(path, sessions) }) }).collect::<Vec<_>>();
         assert!(concurrent.into_iter().all(|call| call.join().unwrap().is_ok()));
         // A retryable pre-terminal failure retains the prepared identity. Restoring the durable
@@ -5426,7 +5476,7 @@ mod tests {
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<String, _, _>(
             "SELECT status FROM agent_session_invocations WHERE id=?1", [&implementer.2], |row| row.get(0),
         ).unwrap(), "pending");
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 4);
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE agent_sessions SET working_directory=?2 WHERE id=?1",
             params![implementer.1, shared_working_directory],
@@ -5444,7 +5494,7 @@ mod tests {
         assert_eq!(recovered_retryable.2, retryable_failure.2);
         assert!(recovered_retryable.3.is_none());
         assert!(recovered_retryable.4.is_some() && recovered_retryable.5.is_some());
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 4);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 5);
         // A failed start terminalizes this exact persisted Implementer invocation. Reopen and
         // replay preserve the row and all correlations, keep readiness absent, and never launch
         // a replacement or retry the terminal process.
@@ -5489,7 +5539,7 @@ mod tests {
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<String, _, _>(
             "SELECT status FROM agent_session_invocations WHERE id=?1", [&implementer.2], |row| row.get(0),
         ).unwrap(), "failed");
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 5);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 6);
         let terminal_reopen = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
         assert!(terminal_reopen.attach_work_unit_handler_activation(handler.clone()).is_err());
         assert!(matches!(
@@ -5508,7 +5558,7 @@ mod tests {
         assert_eq!(replayed_terminal_failure.2, terminal_failure.2);
         assert_eq!(replayed_terminal_failure.3, terminal_failure.3);
         assert!(replayed_terminal_failure.4.is_none() && replayed_terminal_failure.5.is_none());
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 5);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 6);
 
         // A terminal failure of the same-Session Handler action continuation is also durable and
         // factual. Reopen keeps the pinned action identity, projects the failure reason, and does
@@ -5551,7 +5601,7 @@ mod tests {
         assert_eq!(action_terminal_failure.1, "handler_action_launch_not_accepted");
         assert_eq!(action_terminal_failure.2, "failed");
         assert!(action_terminal_failure.3.is_none() && action_terminal_failure.4.is_none());
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 6);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 7);
         let failed_action_reopen = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
             &fixture.database_path, fixture.sessions.clone(),
         ).unwrap();
@@ -5560,7 +5610,7 @@ mod tests {
             "SELECT failure_reason FROM work_unit_handler_action_continuations WHERE work_unit_id=?1",
             [&root.0], |row| row.get(0),
         ).unwrap(), action_terminal_failure.1);
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 6);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 7);
         let failed_action_projection = serde_json::to_value(
             SqliteOrchestrationRepository::open(&fixture.database_path).unwrap().native_query().unwrap(),
         ).unwrap();
@@ -5574,7 +5624,7 @@ mod tests {
         connection.execute("UPDATE work_slice_proposal_revisions SET is_current=0 WHERE revision_id=?1", [&materialization.2]).unwrap();
         drop(connection);
         assert!(matches!(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 6);
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 7);
     }
 
     #[derive(Clone, Debug, Eq, PartialEq)]
