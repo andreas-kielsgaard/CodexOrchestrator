@@ -5769,6 +5769,19 @@ mod tests {
                 .unwrap(),
             1
         );
+        for unit in [&middle, &leaf] {
+            assert_eq!(
+                connection
+                    .query_row::<String, _, _>(
+                        "SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id=?1",
+                        [unit],
+                        |row| row.get(0),
+                    )
+                    .unwrap(),
+                "waiting_on_prerequisites",
+                "{unit}"
+            );
+        }
         drop(connection);
 
         // Model an already accepted integration boundary after the two application-owned root
@@ -5823,6 +5836,8 @@ mod tests {
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1 AND eligibility_state='eligible' AND handler_ready_at IS NOT NULL", [&middle], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_attentions", [], |row| row.get(0)).unwrap(), 0);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id IN (?1,?2)", params![root_a, root_b], |row| row.get(0)).unwrap(), 2);
+        assert_eq!(connection.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id=?1", [&middle], |row| row.get(0)).unwrap(), "active");
+        assert_eq!(connection.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id=?1", [&leaf], |row| row.get(0)).unwrap(), "waiting_on_prerequisites");
         drop(connection);
 
         seed_accepted_generation(&middle, &leaf);
@@ -5844,6 +5859,7 @@ mod tests {
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_settlements", [], |row| row.get(0)).unwrap(), 2);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_prerequisite_contributions", [], |row| row.get(0)).unwrap(), 2);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1", [&leaf], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id=?1", [&leaf], |row| row.get(0)).unwrap(), "active");
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sprint_settlements','epic_settlements')", [], |row| row.get(0)).unwrap(), 0);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_settlements", [], |row| row.get(0)).unwrap(), 0);
         assert_eq!(connection.query_row::<String, _, _>("SELECT accepted_revision_id FROM work_unit_execution_states WHERE work_unit_id=?1", [&leaf], |row| row.get(0)).unwrap(), materialization.1);

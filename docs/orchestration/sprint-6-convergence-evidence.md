@@ -682,10 +682,11 @@ publication.
 - The application drains at most one follow-up dependency generation after each durable
   Handler/Implementer/review/integration pass. It validates the complete canonical `depends_on`
   graph before treating a Work Unit as eligible, and accepted integration settlements plus exact
-  prerequisite contributions remain the only downstream authority. A partial persisted Handler
-  activation is current recoverable progress, not a stall. Cycles, malformed or duplicate graph
-  facts, missing or foreign contribution endpoints, integration attention, current-attempt
-  terminal failures or review conflicts, impossible terminal mixtures, and a fully evaluated
+  prerequisite contributions remain the only downstream authority. A partial persisted eligible
+  Handler activation is current recoverable progress, while a blocked activation remains waiting
+  on prerequisites and cannot mask a factual stall. Cycles, malformed or duplicate graph facts,
+  missing or foreign contribution endpoints, integration attention, current-attempt terminal
+  failures or review conflicts, impossible terminal mixtures, and a fully evaluated
   non-progressing generation fail closed; a no-progress handback remains a distinct unsettled
   Work Unit state.
 - The three terminal facts are separate and idempotent: graph completion, Work Slice execution
@@ -693,17 +694,19 @@ publication.
   canonical Work Unit has a coherent settled accepted integration and every canonical dependency
   has its exact contribution. No later planning point, Sprint, or Epic action follows.
 - A recorded execution attention has no resolution movement in this Slice and permanently blocks
-  graph completion and both settlement facts, including after a source repair or reopen. Current
-  execution-state projection validates stored Work Unit/materialization/revision correlation
-  before updating it; it distinguishes ready, active, retry-authorized, handed-back, settled,
-  and attention from the latest exact attempt rather than historical Handler readiness.
+  graph completion and both settlement facts, including after a source repair or reopen. A
+  terminal Work Unit failure or review conflict is projected only onto its exact Work Unit;
+  independent lanes retain their factual ready/active/waiting/settled state. Structural graph
+  corruption and graph-wide stall remain graph-wide attention. Current execution-state projection
+  validates stored Work Unit/materialization/revision correlation before updating it and derives
+  retry-authorized versus active from the latest retry's actual runtime progression.
 - Local deterministic validation: `handler_drain_advances_independent_generations_from_durable_accepted_contributions`
   exercises the service-owned Handler reconciler with two independent roots, a partial-effect
   reopen, and two later durable contribution generations; Handler attempts are exact-once and no
   Work Slice execution settlement, Sprint settlement, or Epic settlement follows. Its accepted
-  integration/settlement/contribution facts are fixture-owned pre-existing durable boundaries, not a proof of live
-  provider or Git integration. `cargo test --lib work_unit_dependency_wave -- --nocapture` passed
-  **13 tests** (including current-attempt failure/review-conflict attention, recoverable partial
-  activation, reachable stall, state correlation, contribution correlation, replay, and exact
-  terminal facts). These checks do not prove live-provider behavior, user acceptance, or broad
-  suite compliance.
+  integration/settlement/contribution facts are fixture-owned pre-existing durable boundaries,
+  not a proof of live provider or Git integration. `cargo test --lib work_unit_dependency_wave -- --nocapture` passed
+  **15 tests** (including target-specific current-attempt failure/review-conflict attention,
+  blocked-activation stall, recoverable partial activation, retry progression, state correlation,
+  contribution correlation, replay, and exact terminal facts). These checks do not prove
+  live-provider behavior, user acceptance, or broad suite compliance.
