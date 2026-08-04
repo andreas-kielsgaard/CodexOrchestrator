@@ -1035,6 +1035,8 @@ pub(crate) struct SprintRunnerTransitionService {
     test_reconcile_snapshot_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     #[cfg(test)]
     test_origin_snapshot_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    #[cfg(test)]
+    test_work_unit_handler_post_pass_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl SprintRunnerTransitionService {
@@ -1156,6 +1158,8 @@ impl SprintRunnerTransitionService {
             test_reconcile_snapshot_hook: Mutex::new(None),
             #[cfg(test)]
             test_origin_snapshot_hook: Mutex::new(None),
+            #[cfg(test)]
+            test_work_unit_handler_post_pass_hook: Mutex::new(None),
         });
         service.reconcile_work_slice_planners()?;
         service.reconcile_materializations()?;
@@ -2089,13 +2093,22 @@ impl SprintRunnerTransitionService {
             }
             self.reconcile_implementer_activations()?;
             self.reconcile_work_unit_retries()?;
+            #[cfg(test)]
+            if let Some(hook) = self
+                .test_work_unit_handler_post_pass_hook
+                .lock()
+                .expect("test work unit handler post-pass hook")
+                .take()
+            {
+                hook();
+            }
             let mut connection = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;
             reconcile_accepted_candidate_authorities(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
             reconcile_accepted_integrations(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
             reconcile_work_unit_dependency_wave(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
             reconcile_work_slice_execution_settlement(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
             let next_generation: bool = connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM work_unit_dependency_activation_intents i LEFT JOIN work_unit_handler_activations h ON h.work_unit_id=i.work_unit_id AND h.materialization_id=i.materialization_id WHERE i.eligibility_state='eligible' AND h.work_unit_id IS NULL)",
+                "SELECT EXISTS(SELECT 1 FROM work_unit_dependency_activation_intents i LEFT JOIN work_unit_handler_activations h ON h.work_unit_id=i.work_unit_id AND h.materialization_id=i.materialization_id WHERE i.eligibility_state='eligible' AND (h.work_unit_id IS NULL OR h.launch_accepted_at IS NULL))",
                 [], |row| row.get(0),
             ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
             if !next_generation { break; }
@@ -3330,6 +3343,17 @@ impl SprintRunnerTransitionService {
     #[cfg(test)]
     pub(crate) fn set_test_origin_snapshot_hook(&self, hook: Arc<dyn Fn() + Send + Sync>) {
         *self.test_origin_snapshot_hook.lock().expect("test origin hook") = Some(hook);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_test_work_unit_handler_post_pass_hook(
+        &self,
+        hook: Arc<dyn Fn() + Send + Sync>,
+    ) {
+        *self
+            .test_work_unit_handler_post_pass_hook
+            .lock()
+            .expect("test work unit handler post-pass hook") = Some(hook);
     }
 
     #[cfg(test)]

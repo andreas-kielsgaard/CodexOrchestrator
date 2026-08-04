@@ -701,11 +701,12 @@ publication.
   validates stored Work Unit/materialization/revision correlation before updating it and derives
   retry-authorized versus active from the latest retry's actual runtime progression.
 - Local deterministic validation: `handler_drain_advances_independent_generations_from_durable_accepted_contributions`
-  exercises the service-owned Handler reconciler with two independent roots, a partial-effect
-  reopen, and two later durable contribution generations; Handler attempts are exact-once and no
-  Work Slice execution settlement, Sprint settlement, or Epic settlement follows. Its accepted
-  integration/settlement/contribution facts are fixture-owned pre-existing durable boundaries,
-  not a proof of live provider or Git integration. `cargo test --lib work_unit_dependency_wave -- --nocapture` passed
+  exercises the service-owned Handler reconciler with two independent roots. Its first fixture-owned
+  accepted integration/settlement/contribution becomes durable in the initial Handler post-pass,
+  and the same bounded activation upgrades and launches the pre-existing blocked middle Handler
+  row exactly once; it also covers partial-effect reopen and a missed-notification later generation.
+  No Work Slice execution settlement, Sprint settlement, or Epic settlement follows. The fixture
+  facts do not prove live provider or Git integration. `cargo test --lib work_unit_dependency_wave -- --nocapture` passed
   **15 tests** (including target-specific current-attempt failure/review-conflict attention,
   blocked-activation stall, recoverable partial activation, retry progression, state correlation,
   contribution correlation, replay, and exact terminal facts). These checks do not prove

@@ -5699,6 +5699,66 @@ mod tests {
             fixture.sessions.clone(),
             Arc::new(OrchestrationApplication::new(repository)),
         ));
+        let materialization: (String, String) = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT materialization_id,accepted_revision_id FROM work_unit_materializations",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let units = Connection::open(&fixture.database_path)
+            .unwrap()
+            .prepare("SELECT work_unit_id,lane_title FROM work_units WHERE materialization_id=?1")
+            .unwrap()
+            .query_map([&materialization.0], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .unwrap()
+            .collect::<Result<HashMap<_, _>, _>>()
+            .unwrap();
+        let root_a = units
+            .iter()
+            .find_map(|(id, title)| (title == "root-a").then_some(id.clone()))
+            .unwrap();
+        let middle = units
+            .iter()
+            .find_map(|(id, title)| (title == "middle").then_some(id.clone()))
+            .unwrap();
+        let post_pass_calls = Arc::new(AtomicUsize::new(0));
+        service.set_test_work_unit_handler_post_pass_hook(Arc::new({
+            let database_path = fixture.database_path.clone();
+            let materialization_id = materialization.0.clone();
+            let authority = authority.clone();
+            let initial = initial.clone();
+            let root_a = root_a.clone();
+            let middle = middle.clone();
+            let post_pass_calls = post_pass_calls.clone();
+            move || {
+                assert_eq!(post_pass_calls.fetch_add(1, Ordering::SeqCst), 0);
+                let connection = Connection::open(&database_path).unwrap();
+                connection.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
+                let integration = format!("drain-integration-{root_a}");
+                connection.execute(
+                    "INSERT INTO accepted_work_unit_integrations (integration_id,work_unit_id,candidate_id,authority_id,target_ref_name,pre_object_id,pre_version,candidate_commit_id,candidate_tree_id,baseline_object_id,intent_fingerprint,intent_recorded_at,authorization_recorded_at,stage,integration_commit_id,integration_tree_id,object_created_at,ref_advanced_at,runtime_advanced_at,db_advanced_at,settled_at,notification_intent_recorded_at) VALUES (?1,?2,?3,?4,'refs/heads/drain',?5,1,?5,?6,?5,?7,'t','t','settled',?5,?6,'t','t','t','t','t','t')",
+                    params![integration, root_a, format!("drain-candidate-{root_a}"), authority, initial, "e".repeat(40), format!("drain-intent-{root_a}")],
+                ).unwrap();
+                connection.execute(
+                    "INSERT INTO work_unit_settlements(settlement_id,work_unit_id,integration_id,settled_at) VALUES(?1,?2,?3,'t')",
+                    params![format!("drain-settlement-{root_a}"), root_a, integration],
+                ).unwrap();
+                let edge: String = connection.query_row(
+                    "SELECT relationship_id FROM work_unit_relationships WHERE materialization_id=?1 AND relationship_kind='depends_on' AND from_id=?2 AND to_id=?3",
+                    params![materialization_id, middle, root_a],
+                    |row| row.get(0),
+                ).unwrap();
+                connection.execute(
+                    "INSERT INTO work_unit_prerequisite_contributions(contribution_id,prerequisite_work_unit_id,dependent_work_unit_id,integration_id,relationship_id,recorded_at) VALUES(?1,?2,?3,?4,?5,'t')",
+                    params![format!("drain-contribution-{root_a}"), root_a, middle, integration, edge],
+                ).unwrap();
+                connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+            }
+        }));
         fixture.notifier.set_sprint(&service);
         service
             .attach_work_unit_handler_activation(handler.clone())
@@ -5747,7 +5807,7 @@ mod tests {
                     |row| row.get(0),
                 )
                 .unwrap(),
-            2
+            3
         );
         assert_eq!(
             connection
@@ -5763,13 +5823,34 @@ mod tests {
             connection
                 .query_row::<i64, _, _>(
                     "SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1 AND eligibility_state='blocked'",
+                    [&leaf],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(post_pass_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1 AND eligibility_state='eligible' AND launch_accepted_at IS NOT NULL AND handler_ready_at IS NOT NULL",
                     [&middle],
                     |row| row.get(0),
                 )
                 .unwrap(),
             1
         );
-        for unit in [&middle, &leaf] {
+        assert_eq!(
+            connection
+                .query_row::<String, _, _>(
+                    "SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id=?1",
+                    [&middle],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            "active"
+        );
+        for unit in [&leaf] {
             assert_eq!(
                 connection
                     .query_row::<String, _, _>(
@@ -5784,9 +5865,9 @@ mod tests {
         }
         drop(connection);
 
-        // Model an already accepted integration boundary after the two application-owned root
-        // Handler activations. The service must consume these durable facts rather than a
-        // notification payload and must not duplicate either root activation on reopen.
+        // The first root contribution became durable inside the prior Handler reconciliation
+        // post-pass. The second durable generation below remains the missed-notification reopen
+        // proof; neither boundary duplicates the existing root or middle Handler activations.
         let seed_accepted_generation = |unit: &str, dependent: &str| {
             let connection = Connection::open(&fixture.database_path).unwrap();
             connection.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
@@ -5810,11 +5891,8 @@ mod tests {
             ).unwrap();
             connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         };
-        seed_accepted_generation(&root_a, &middle);
-
         // Simulate a crash after the root-b activation persisted but before its final readiness
-        // projection. Reopen must adopt that partial effect, keep it out of attention, and
-        // advance the independently unlocked middle generation exactly once.
+        // projection. Reopen must adopt that partial effect and keep it out of attention.
         Connection::open(&fixture.database_path)
             .unwrap()
             .execute(
