@@ -545,14 +545,17 @@ reserve, integrate, settle, or contribute a prerequisite effect.
 
 For an accepted candidate, the application derives target-scoped reservation and effects from
 durable authority and the bound target. Under the target lock, one deterministic single-parent
-integration commit is created; an advanced parent delta is applied to the target; and replay
-reconciles the exact candidate, target, commit, runtime, and database state. The durable sequence
+integration commit is created or exactly adopted for the conflict-free accepted candidate, never
+duplicated; an advanced parent delta is applied to the target; and replay reconciles the exact
+candidate, target, commit, runtime, and database state. The durable sequence
 keeps request, authorization, reservation, object creation, ref advancement, runtime advancement,
 database advancement, evidence, terminal attention, Work Unit settlement, and each per-edge
 prerequisite contribution as separate facts. A same-candidate replay reuses the settled route and
-does not create a second commit or settlement. Different candidates serialize on the target and
-each receives its own parent-linked integration commit and effects. Conflicts or invalid retained
-lineage settle as terminal attention rather than being silently retried.
+does not create a second commit or settlement. Different accepted candidates serialize on the
+target, but only a conflict-free candidate receives its parent-linked integration commit, evidence,
+and settlement; a conflicting candidate ends in durable terminal attention and remains unsettled.
+Invalid retained lineage likewise ends in durable terminal attention and remains unsettled rather
+than being silently retried.
 
 The productive Rust, TypeScript, and UI projection exposes only safe semantic integration facts:
 progress, terminal attention, success, settlement, and prerequisite contribution. Private candidate,
