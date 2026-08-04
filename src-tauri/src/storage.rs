@@ -123,8 +123,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         transaction
             .execute_batch(crate::orchestration::accepted_candidate_authority::ACCEPTED_CANDIDATE_AUTHORITY_SCHEMA)
             .map_err(|error| format!("Unable to migrate accepted-candidate authority schema: {error}"))?;
-        transaction
-            .execute_batch(crate::orchestration::accepted_integration::ACCEPTED_INTEGRATION_SCHEMA)
+        crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
             .map_err(|error| format!("Unable to migrate accepted-integration schema: {error}"))?;
         if current_version == 14 {
             transaction
@@ -204,8 +203,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     transaction
         .execute_batch(crate::orchestration::accepted_candidate_authority::ACCEPTED_CANDIDATE_AUTHORITY_SCHEMA)
         .map_err(|error| format!("Unable to initialize accepted-candidate authority schema: {error}"))?;
-    transaction
-        .execute_batch(crate::orchestration::accepted_integration::ACCEPTED_INTEGRATION_SCHEMA)
+    crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
         .map_err(|error| format!("Unable to initialize accepted-integration schema: {error}"))?;
     transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
@@ -511,6 +509,7 @@ mod tests {
         ] {
             assert!(table_exists(&reopened, table), "missing {table}");
         }
+        assert!(reopened.execute("INSERT INTO accepted_work_unit_integrations (integration_id,work_unit_id,candidate_id,authority_id,target_ref_name,pre_object_id,pre_version,candidate_commit_id,candidate_tree_id,baseline_object_id,intent_fingerprint,intent_recorded_at,stage) VALUES ('bad','unit','candidate','authority','refs/heads/main','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','intent','t','unknown')", []).is_err());
         assert_eq!(pragma_i64(&reopened, "user_version"), ACTIVE_SCHEMA_VERSION);
     }
 

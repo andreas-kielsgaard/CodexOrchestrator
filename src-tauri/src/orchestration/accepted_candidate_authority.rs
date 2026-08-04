@@ -88,7 +88,17 @@ pub(crate) fn reconcile_accepted_candidate_authorities(
     connection
         .execute_batch(ACCEPTED_CANDIDATE_AUTHORITY_SCHEMA)
         .map_err(|e| e.to_string())?;
-    let _ = connection.execute("ALTER TABLE accepted_handler_candidates ADD COLUMN attempt_baseline_object_id TEXT", []);
+    let has_attempt_baseline = connection
+        .prepare("PRAGMA table_info(accepted_handler_candidates)")
+        .and_then(|mut statement| statement.query_map([], |row| row.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>())
+        .map_err(|error| error.to_string())?
+        .iter()
+        .any(|column| column == "attempt_baseline_object_id");
+    if !has_attempt_baseline {
+        connection
+            .execute("ALTER TABLE accepted_handler_candidates ADD COLUMN attempt_baseline_object_id TEXT", [])
+            .map_err(|error| format!("Unable to migrate accepted candidate baseline: {error}"))?;
+    }
     let rows = connection.prepare(
         "SELECT d.work_unit_id,a.sprint_id,a.authority_id,o.attempt_id,o.reporting_invocation_id,
                 d.review_invocation_id,d.decision_fingerprint,r.delivered_payload_fingerprint,o.evidence_manifest_json,
