@@ -160,6 +160,10 @@ pub(crate) struct AuthorizeExistingWorkUnitExecutionAttempt {
     pub(crate) work_unit_id: String,
     pub(crate) role: WorkUnitExecutionRole,
     pub(crate) sprint_git_authority_id: String,
+    /// A retry coordinator may supply only an application-derived, already-pinned commit.  The
+    /// durable Sprint authority remains the source of repository routing; this seed changes only
+    /// the detached execution workspace baseline.
+    pub(crate) execution_seed_object_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -341,9 +345,12 @@ impl ProductExecutionWorkspaceResolver {
         let authority = &attempt.authority;
         let repository_root = canonical_authorized_root(&authority.repository_root)?;
         let authority_root = canonical_authorized_root(&authority.worktree_root)?;
+        // A retry seed is intentionally distinct from the unchanged Sprint authority head.  The
+        // authority worktree must still be clean at its own current object; only the new detached
+        // attempt workspace starts at the application-pinned seed.
         if !git_text(&authority_root, &["status", "--porcelain"])?.is_empty()
             || git_text(&authority_root, &["rev-parse", "--verify", "HEAD^{commit}"])?
-                != attempt.baseline_object_id
+                != attempt.authority.current_object_id
         {
             return Err(ExecutionSupportError::Unavailable);
         }
@@ -515,7 +522,13 @@ impl SqliteExecutionSupportRepository {
         if !git_object_id(&authority.current_object_id) {
             return Err(ExecutionSupportError::CorrelationMismatch);
         }
-        let baseline = authority.current_object_id;
+        let baseline = request
+            .execution_seed_object_id
+            .clone()
+            .unwrap_or(authority.current_object_id);
+        if !git_object_id(&baseline) {
+            return Err(ExecutionSupportError::CorrelationMismatch);
+        }
         let role_kind = request.role.as_str();
         let fingerprint = authorization_fingerprint(
             &request.attempt_id,
@@ -605,9 +618,9 @@ impl SqliteExecutionSupportRepository {
             .load_initiated_sprint_git_authority(&authority_id)
             .map_err(|_| ExecutionSupportError::Unavailable)?
             .ok_or(ExecutionSupportError::Denied)?;
-        if authority.current_object_id != baseline_object_id {
-            return Err(ExecutionSupportError::CorrelationMismatch);
-        }
+        // `baseline_object_id` is the execution seed.  For ordinal-0 it equals the current
+        // Sprint authority object; for an application-owned retry it is the separately pinned
+        // candidate while the authority itself remains unchanged.
         Ok(AuthorizedExecutionAttempt {
             attempt_id: attempt_id.into(),
             work_unit_id,
@@ -1072,6 +1085,7 @@ mod tests {
                     work_unit_id: work_unit_id.into(),
                     role: WorkUnitExecutionRole::Implementer,
                     sprint_git_authority_id: self.authority_id.clone(),
+                    execution_seed_object_id: None,
                 }).unwrap(),
                 AuthorizeExistingWorkUnitExecutionAttemptResult::Authorized { ref baseline_object_id } if baseline_object_id == &self.baseline
             ));
@@ -1226,6 +1240,25 @@ mod tests {
         assert!(
             matches!(reopened.consume(&reference.capability_ref, ExecutionSupportIntent::ChangedFileManifest), Ok(ExecutionSupportResponse::ChangedFileManifest(files)) if files.is_empty())
         );
+    }
+
+    #[test]
+    fn application_derived_retry_seed_creates_a_distinct_workspace_without_moving_sprint_authority() {
+        let fixture = fixture();
+        let tree = fixture.git(&fixture.repository_root, &["rev-parse", "HEAD^{tree}"]);
+        let seed = fixture.git(&fixture.repository_root, &["commit-tree", &tree, "-p", &fixture.baseline, "-m", "retry seed"]);
+        let service = fixture.service();
+        service.authorize_existing_attempt(AuthorizeExistingWorkUnitExecutionAttempt {
+            attempt_id: "retry-attempt".into(), work_unit_id: "retry-unit".into(),
+            role: WorkUnitExecutionRole::Implementer, sprint_git_authority_id: fixture.authority_id.clone(),
+            execution_seed_object_id: Some(seed.clone()),
+        }).unwrap();
+        let grant = service.grant_for_role("retry-attempt", WorkUnitExecutionRole::Implementer).unwrap();
+        let retry_root = PathBuf::from(grant.working_directory);
+        assert_ne!(retry_root, fixture.sprint_root);
+        assert_eq!(fixture.git(&retry_root, &["rev-parse", "HEAD"]), seed);
+        assert_eq!(fixture.git(&fixture.sprint_root, &["rev-parse", "HEAD"]), fixture.baseline);
+        assert_eq!(fixture.git(&retry_root, &["status", "--porcelain"]), "");
     }
 
     #[test]

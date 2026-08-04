@@ -6282,12 +6282,27 @@ mod tests {
         returned.transition.record_handler_review_judgment_for_test(&returned_review, "return", Some(reason.clone())).unwrap();
         assert!(matches!(returned.transition.record_handler_review_judgment_for_test(&returned_review, "accept", None), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
         returned.base.runtime.finish(&returned_review, AgentInvocationTerminalStatus::Completed);
+        returned.transition.reconcile_handler_reviews_for_test().unwrap();
         let return_decision:(String,String,Option<String>,Option<String>) = Connection::open(&returned.base.database_path).unwrap().query_row("SELECT decision_variant,return_reason_json,settlement_ready_at,retry_required_at FROM work_unit_handler_decisions WHERE work_unit_id=?1", [&returned.work_unit_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
         assert_eq!(return_decision.0, "returned");
         assert_eq!(serde_json::from_str::<serde_json::Value>(&return_decision.1).unwrap()["code"], "review_failed");
         assert!(return_decision.2.is_none());
         assert!(return_decision.3.is_some());
         assert_eq!(Connection::open(&returned.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1", [&returned.work_unit_id], |row| row.get(0)).unwrap(), 1);
+        let retry: (i64,String,String,String,String,Option<String>,Option<String>,Option<String>,Option<String>,String) = Connection::open(&returned.base.database_path).unwrap().query_row(
+            "SELECT ordinal,origin_attempt_id,retry_attempt_id,implementer_session_id,implementer_invocation_id,candidate_pinned_at,launch_accepted_at,retry_ready_at,failure_reason,handoff_json FROM work_unit_retry_attempts WHERE work_unit_id=?1",
+            [&returned.work_unit_id],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?,row.get(9)?)),
+        ).unwrap();
+        assert_eq!(retry.0, 1);
+        assert_eq!(retry.1, returned.attempt_id);
+        assert_ne!(retry.2, returned.attempt_id);
+        assert_ne!(retry.4, returned.implementer_invocation_id);
+        assert!(retry.5.is_some() && retry.6.is_some() && retry.7.is_some());
+        assert!(retry.8.is_none());
+        let handoff: serde_json::Value = serde_json::from_str(&retry.9).unwrap();
+        assert_eq!(handoff["handlerReturnReason"]["code"], "review_failed");
+        assert!(handoff.get("privateRef").is_none() && handoff.get("candidateCommitId").is_none());
 
         let without_judgment = ReportingFixture::new();
         let without_judgment_review = without_judgment.ready_review();

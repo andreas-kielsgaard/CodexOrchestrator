@@ -30,7 +30,8 @@ use std::{
     collections::HashMap,
     io,
     net::SocketAddr,
-    path::Path,
+    path::{Path, PathBuf},
+    process::Command,
     sync::{Arc, Mutex},
     thread,
 };
@@ -385,6 +386,45 @@ CREATE TABLE IF NOT EXISTS work_unit_handler_decisions (
   CHECK ((decision_variant='accepted' AND implementation_accepted_at IS NOT NULL AND implementation_returned_at IS NULL AND retry_required_at IS NULL) OR (decision_variant='returned' AND implementation_returned_at IS NOT NULL AND retry_required_at IS NOT NULL AND implementation_accepted_at IS NULL)),
   CHECK (settlement_ready_at IS NULL)
 );
+-- A returned ordinal-0 outcome can authorize exactly one correction attempt.  The private ref
+-- name and object ids never cross the native-query boundary.
+CREATE TABLE IF NOT EXISTS work_unit_retry_attempts (
+  work_unit_id TEXT PRIMARY KEY REFERENCES work_units(work_unit_id) ON DELETE RESTRICT,
+  ordinal INTEGER NOT NULL CHECK (ordinal=1),
+  origin_attempt_id TEXT NOT NULL UNIQUE REFERENCES work_unit_implementer_outcomes(attempt_id) ON DELETE RESTRICT,
+  review_invocation_id TEXT NOT NULL UNIQUE REFERENCES work_unit_handler_reviews(review_invocation_id) ON DELETE RESTRICT,
+  decision_fingerprint TEXT NOT NULL UNIQUE,
+  sprint_git_authority_id TEXT NOT NULL REFERENCES initiated_sprint_git_authorities(authority_id) ON DELETE RESTRICT,
+  sprint_baseline_object_id TEXT NOT NULL,
+  sprint_current_object_id TEXT NOT NULL,
+  retry_attempt_id TEXT NOT NULL UNIQUE,
+  implementer_session_id TEXT NOT NULL UNIQUE,
+  implementer_invocation_id TEXT NOT NULL UNIQUE,
+  implementer_harness_revision_id TEXT NOT NULL,
+  implementer_harness_configuration_digest TEXT NOT NULL,
+  implementer_harness_repository_commit_ref TEXT NOT NULL,
+  capture_intent_id TEXT NOT NULL UNIQUE,
+  capture_fingerprint TEXT NOT NULL UNIQUE,
+  handoff_json TEXT NOT NULL CHECK(json_valid(handoff_json)),
+  handoff_fingerprint TEXT NOT NULL UNIQUE,
+  candidate_commit_id TEXT NOT NULL,
+  candidate_tree_id TEXT NOT NULL,
+  private_ref_name TEXT NOT NULL UNIQUE,
+  capture_requested_at TEXT NOT NULL,
+  candidate_pinned_at TEXT,
+  authorized_at TEXT,
+  execution_support_granted_at TEXT,
+  isolated_worktree_ready_at TEXT,
+  implementer_session_created_at TEXT,
+  implementer_invocation_prepared_at TEXT,
+  implementer_harness_bound_at TEXT,
+  launch_requested_at TEXT,
+  launch_accepted_at TEXT,
+  provider_activation_observed_at TEXT,
+  retry_ready_at TEXT,
+  failure_reason TEXT,
+  CHECK ((retry_ready_at IS NULL) OR (launch_accepted_at IS NOT NULL))
+);
 "#;
 
 const SHARED_IMPLEMENTER_ACTIVATION_TABLE: &str = r#"
@@ -578,6 +618,25 @@ struct ImplementationEvidenceSnapshot { manifest_json: String, comparison_finger
 pub(crate) struct HandlerReviewReturnReason { pub(crate) code: String, pub(crate) explanation: String }
 #[derive(Clone)]
 struct HandlerReviewContext { work_unit_id:String, attempt_id:String, session_id:String, review_invocation_id:String, revision_id:String, configuration_digest:String, repository_commit_ref:String, delivered_payload_json:String, delivered_payload_fingerprint:String }
+#[derive(Clone)]
+struct RetrySource {
+    work_unit_id: String,
+    sprint_id: String,
+    authority_id: String,
+    origin_attempt_id: String,
+    reporting_invocation_id: String,
+    reporting_revision_id: String,
+    reporting_configuration_digest: String,
+    reporting_repository_commit_ref: String,
+    review_invocation_id: String,
+    decision_fingerprint: String,
+    return_reason_json: String,
+    summary: String,
+    validation: String,
+    manifest_json: String,
+    comparison_fingerprint: String,
+    content_fingerprints_json: String,
+}
 
 fn handler_review_payload(
     summary: &str,
@@ -1107,6 +1166,7 @@ impl SprintRunnerTransitionService {
         self.reconcile_work_unit_handlers()?;
         self.reconcile_implementer_outcomes_v3()?;
         self.reconcile_handler_reviews()?;
+        self.reconcile_work_unit_retries()?;
         Ok(ids.len())
     }
 
@@ -1260,7 +1320,7 @@ impl SprintRunnerTransitionService {
         let status = lifecycle_status(invocation.status);
         if self.record_reporting_lifecycle_v3(&invocation.id, status)? { self.reconcile_implementer_outcome_acceptance_v2()?; return self.reconcile_handler_reviews(); }
         let review:bool=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_handler_reviews WHERE review_invocation_id=?1)",[invocation.id.as_str()],|row|row.get(0)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        if review { self.record_handler_review_lifecycle(&invocation.id,status)?; return self.finalize_handler_review_decisions(); }
+        if review { self.record_handler_review_lifecycle(&invocation.id,status)?; self.finalize_handler_review_decisions()?; return self.reconcile_work_unit_retries(); }
         let sprint: Option<String> = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?.query_row(
             "SELECT sprint_id FROM sprint_runner_transitions WHERE epic_runner_invocation_id=?1 OR sprint_runner_invocation_id=?1 OR pre_start_upgrade_invocation_id=?1 OR epic_continuation_invocation_id=?1 OR sprint_continuation_invocation_id=?1 OR planning_control_invocation_id=?1 UNION SELECT sprint_id FROM work_slice_planning_requests WHERE planner_invocation_id=?1",
             [invocation.id.as_str()], |row| row.get(0),
@@ -1701,6 +1761,7 @@ impl SprintRunnerTransitionService {
             self.reconcile_work_unit_handler(&handler, &work_unit, &materialization, &sprint)?;
         }
         self.reconcile_implementer_activations()?;
+        self.reconcile_work_unit_retries()?;
         Ok(())
     }
 
@@ -1791,7 +1852,7 @@ impl SprintRunnerTransitionService {
     fn record_reporting_lifecycle_v3(&self,invocation:&AgentInvocationId,status:&str)->Result<bool,SprintRunnerTransitionError>{let exists:bool=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_implementer_outcomes WHERE reporting_invocation_id=?1)",[invocation.as_str()],|r|r.get(0)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if !exists{return Ok(false)}let context=self.reporting_context(invocation,false)?;let history=self.sessions.load_session(&AgentSessionId::new(context.session_id).map_err(|_|SprintRunnerTransitionError::Forbidden)?).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let observed=history.invocations.iter().find(|entry|entry.invocation.id==*invocation).ok_or(SprintRunnerTransitionError::Forbidden)?;if !observed.invocation.status.is_terminal()||lifecycle_status(observed.invocation.status)!=status{return Err(SprintRunnerTransitionError::Conflict)}let changed=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_implementer_outcomes SET lifecycle_observed_at=COALESCE(lifecycle_observed_at,?2),lifecycle_status=COALESCE(lifecycle_status,?3) WHERE work_unit_id=?1 AND reporting_invocation_id=?4 AND (lifecycle_status IS NULL OR lifecycle_status=?3)",params![context.work_unit_id,chrono::Utc::now().to_rfc3339(),status,invocation.as_str()]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if changed!=1{return Err(SprintRunnerTransitionError::Conflict)}Ok(true)}
     fn reconcile_implementer_outcomes_v3(&self)->Result<(),SprintRunnerTransitionError>{let candidates:Vec<String>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare("SELECT o.reporting_invocation_id FROM work_unit_implementer_outcomes o JOIN work_unit_implementer_activations a ON a.work_unit_id=o.work_unit_id AND a.attempt_id=o.attempt_id AND a.implementer_session_id=o.implementer_session_id AND a.implementer_invocation_id=o.implementer_invocation_id WHERE o.lifecycle_observed_at IS NULL AND a.launch_accepted_at IS NOT NULL AND a.implementer_ready_at IS NOT NULL AND o.reporting_prepared_at IS NOT NULL AND o.reporting_harness_bound_at IS NOT NULL AND o.reporting_launch_accepted_at IS NOT NULL AND o.reporting_ready_at IS NOT NULL ORDER BY o.work_unit_id").and_then(|mut s|s.query_map([],|r|r.get(0))?.collect::<Result<Vec<_>,_>>()).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;for candidate in candidates{let invocation=AgentInvocationId::new(candidate).map_err(|_|SprintRunnerTransitionError::Conflict)?;let context=self.reporting_context(&invocation,false)?;let history=self.sessions.load_session(&AgentSessionId::new(context.session_id).map_err(|_|SprintRunnerTransitionError::Forbidden)?).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if let Some(entry)=history.invocations.iter().find(|entry|entry.invocation.id==invocation&&entry.invocation.status.is_terminal()){self.record_reporting_lifecycle_v3(&invocation,lifecycle_status(entry.invocation.status))?;}}self.reconcile_implementer_outcome_acceptance_v2()}
 
-    fn reconcile_handler_reviews(self:&Arc<Self>)->Result<(),SprintRunnerTransitionError>{let ready:Vec<String>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare("SELECT o.work_unit_id FROM work_unit_implementer_outcomes o LEFT JOIN work_unit_handler_reviews r ON r.work_unit_id=o.work_unit_id WHERE o.handler_review_ready_at IS NOT NULL AND o.application_accepted_at IS NOT NULL AND r.work_unit_id IS NULL ORDER BY o.work_unit_id").and_then(|mut s|s.query_map([],|r|r.get(0))?.collect::<Result<Vec<_>,_>>()).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;for unit in ready{self.prepare_handler_review(&unit)?}let incomplete:Vec<(String,String)>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare("SELECT work_unit_id,review_invocation_id FROM work_unit_handler_reviews WHERE review_ready_at IS NULL AND lifecycle_observed_at IS NULL ORDER BY delivery_requested_at,work_unit_id").and_then(|mut s|s.query_map([],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;for(unit,review)in incomplete{self.launch_handler_review(&unit,&review)?}let reviews:Vec<(String,String)>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare("SELECT handler_session_id,review_invocation_id FROM work_unit_handler_reviews WHERE lifecycle_observed_at IS NULL AND review_ready_at IS NOT NULL ORDER BY delivery_requested_at,work_unit_id").and_then(|mut s|s.query_map([],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;for(session,review)in reviews{let session=AgentSessionId::new(session).map_err(|_|SprintRunnerTransitionError::Conflict)?;let invocation=AgentInvocationId::new(review).map_err(|_|SprintRunnerTransitionError::Conflict)?;let history=self.sessions.load_session(&session).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if let Some(entry)=history.invocations.iter().find(|entry|entry.invocation.id==invocation&&entry.invocation.status.is_terminal()){self.record_handler_review_lifecycle(&invocation,lifecycle_status(entry.invocation.status))?;}}self.finalize_handler_review_decisions()}
+    fn reconcile_handler_reviews(self:&Arc<Self>)->Result<(),SprintRunnerTransitionError>{let ready:Vec<String>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare("SELECT o.work_unit_id FROM work_unit_implementer_outcomes o LEFT JOIN work_unit_handler_reviews r ON r.work_unit_id=o.work_unit_id WHERE o.handler_review_ready_at IS NOT NULL AND o.application_accepted_at IS NOT NULL AND r.work_unit_id IS NULL ORDER BY o.work_unit_id").and_then(|mut s|s.query_map([],|r|r.get(0))?.collect::<Result<Vec<_>,_>>()).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;for unit in ready{self.prepare_handler_review(&unit)?}let incomplete:Vec<(String,String)>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare("SELECT work_unit_id,review_invocation_id FROM work_unit_handler_reviews WHERE review_ready_at IS NULL AND lifecycle_observed_at IS NULL ORDER BY delivery_requested_at,work_unit_id").and_then(|mut s|s.query_map([],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;for(unit,review)in incomplete{self.launch_handler_review(&unit,&review)?}let reviews:Vec<(String,String)>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare("SELECT handler_session_id,review_invocation_id FROM work_unit_handler_reviews WHERE lifecycle_observed_at IS NULL AND review_ready_at IS NOT NULL ORDER BY delivery_requested_at,work_unit_id").and_then(|mut s|s.query_map([],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;for(session,review)in reviews{let session=AgentSessionId::new(session).map_err(|_|SprintRunnerTransitionError::Conflict)?;let invocation=AgentInvocationId::new(review).map_err(|_|SprintRunnerTransitionError::Conflict)?;let history=self.sessions.load_session(&session).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if let Some(entry)=history.invocations.iter().find(|entry|entry.invocation.id==invocation&&entry.invocation.status.is_terminal()){self.record_handler_review_lifecycle(&invocation,lifecycle_status(entry.invocation.status))?;}}self.finalize_handler_review_decisions()?;self.reconcile_work_unit_retries()}
 
     fn prepare_handler_review(self:&Arc<Self>,work_unit:&str)->Result<(),SprintRunnerTransitionError>{let row:Option<(String,String,String,String,String,String,String,String,String,String)>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT o.attempt_id,o.reporting_invocation_id,o.submitted_summary,o.submitted_validation_statement,o.evidence_manifest_json,o.comparison_fingerprint,o.evidence_content_fingerprints_json,h.handler_session_id,h.handler_invocation_id,a.action_invocation_id FROM work_unit_implementer_outcomes o JOIN work_unit_handler_activations h ON h.work_unit_id=o.work_unit_id AND h.attempt_id=o.attempt_id JOIN work_unit_handler_action_continuations a ON a.work_unit_id=o.work_unit_id AND a.attempt_id=o.attempt_id AND a.handler_session_id=h.handler_session_id AND a.original_handler_invocation_id=h.handler_invocation_id WHERE o.work_unit_id=?1 AND o.application_accepted_at IS NOT NULL AND o.handler_review_ready_at IS NOT NULL AND h.handler_ready_at IS NOT NULL AND a.action_ready_at IS NOT NULL",[work_unit],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?))).optional().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let Some((attempt,reporting,summary,validation,manifest,comparison,contents,session,original,action))=row else{return Ok(())};let reporting_id=AgentInvocationId::new(reporting.clone()).map_err(|_|SprintRunnerTransitionError::Conflict)?;if !self.valid_accepted_outcome(work_unit,&reporting_id)?{return Err(SprintRunnerTransitionError::Conflict)}let(_,actual)=self.evidence_snapshot(&reporting_id,false)?;if actual.manifest_json!=manifest||actual.comparison_fingerprint!=comparison||actual.content_fingerprints_json!=contents{return Err(SprintRunnerTransitionError::Conflict)}let handler=self.work_unit_handler.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("Work Unit Handler registry is poisoned".into()))?.clone().ok_or(SprintRunnerTransitionError::Forbidden)?;let revision=handler.current_handler_review_revision().map_err(|_|SprintRunnerTransitionError::Unavailable("immutable Handler review Harness revision unavailable".into()))?;let review=stable_id("work-unit-handler-review-invocation",&attempt);let payload=serde_json::json!({"summary":summary,"validationStatement":validation,"changedFiles":serde_json::from_str::<serde_json::Value>(&manifest).map_err(|_|SprintRunnerTransitionError::Conflict)?,"comparisonFingerprint":comparison,"evidenceContentFingerprints":serde_json::from_str::<serde_json::Value>(&contents).map_err(|_|SprintRunnerTransitionError::Conflict)?}).to_string();let fingerprint=stable_id("work-unit-handler-review-delivery",&payload);let mut connection=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;let tx=connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let changed=tx.execute("INSERT OR IGNORE INTO work_unit_handler_reviews (work_unit_id,attempt_id,reporting_invocation_id,handler_session_id,original_handler_invocation_id,action_handler_invocation_id,review_invocation_id,review_harness_revision_id,review_harness_configuration_digest,review_harness_repository_commit_ref,delivery_requested_at,delivered_payload_json,delivered_payload_fingerprint) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",params![work_unit,attempt,reporting,session,original,action,review,revision.revision_id,revision.configuration_digest,revision.repository_commit_ref,chrono::Utc::now().to_rfc3339(),payload,fingerprint]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if changed==0{let exact:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_handler_reviews WHERE work_unit_id=?1 AND attempt_id=?2 AND reporting_invocation_id=?3 AND review_invocation_id=?4 AND delivered_payload_fingerprint=?5)",params![work_unit,attempt,reporting,review,fingerprint],|r|r.get(0)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if !exact{return Err(SprintRunnerTransitionError::Conflict)}}tx.commit().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;drop(connection);self.launch_handler_review(work_unit,&review)}
 
@@ -1823,6 +1884,139 @@ impl SprintRunnerTransitionService {
     fn record_handler_review_lifecycle(&self,invocation:&AgentInvocationId,status:&str)->Result<bool,SprintRunnerTransitionError>{let context=self.handler_review_context(invocation,false)?;let history=self.sessions.load_session(&AgentSessionId::new(context.session_id).map_err(|_|SprintRunnerTransitionError::Conflict)?).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let entry=history.invocations.iter().find(|entry|entry.invocation.id==*invocation).ok_or(SprintRunnerTransitionError::Forbidden)?;if !entry.invocation.status.is_terminal()||lifecycle_status(entry.invocation.status)!=status{return Err(SprintRunnerTransitionError::Conflict)}let changed=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_handler_reviews SET lifecycle_observed_at=COALESCE(lifecycle_observed_at,?2),lifecycle_status=COALESCE(lifecycle_status,?3) WHERE work_unit_id=?1 AND review_invocation_id=?4 AND (lifecycle_status IS NULL OR lifecycle_status=?3)",params![context.work_unit_id,chrono::Utc::now().to_rfc3339(),status,invocation.as_str()]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if changed!=1{return Err(SprintRunnerTransitionError::Conflict)}Ok(true)}
 
     fn finalize_handler_review_decisions(&self)->Result<(),SprintRunnerTransitionError>{let rows:Vec<(String,String,String,Option<String>,String)>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare("SELECT work_unit_id,review_invocation_id,semantic_judgment_variant,semantic_return_reason_json,semantic_judgment_fingerprint FROM work_unit_handler_reviews WHERE semantic_judgment_at IS NOT NULL AND lifecycle_observed_at IS NOT NULL AND lifecycle_status='completed' ORDER BY work_unit_id").and_then(|mut s|s.query_map([],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)))?.collect::<Result<Vec<_>,_>>()).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;for(unit,review,judgment,reason,fingerprint)in rows{let decision=match judgment.as_str(){"accept"=>"accepted","return"=>"returned",_=>return Err(SprintRunnerTransitionError::Conflict)};let decision_fingerprint=stable_id("work-unit-handler-decision",&format!("{review}:{fingerprint}"));let now=chrono::Utc::now().to_rfc3339();let mut connection=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;let tx=connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let changed=tx.execute("INSERT OR IGNORE INTO work_unit_handler_decisions (work_unit_id,review_invocation_id,decision_variant,decision_fingerprint,return_reason_json,decision_recorded_at,implementation_accepted_at,implementation_returned_at,retry_required_at,settlement_ready_at) VALUES (?1,?2,?3,?4,?5,?6,CASE WHEN ?3='accepted' THEN ?6 END,CASE WHEN ?3='returned' THEN ?6 END,CASE WHEN ?3='returned' THEN ?6 END,NULL)",params![unit,review,decision,decision_fingerprint,reason,now]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if changed==0{let exact:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_handler_decisions WHERE work_unit_id=?1 AND review_invocation_id=?2 AND decision_variant=?3 AND decision_fingerprint=?4)",params![unit,review,decision,decision_fingerprint],|r|r.get(0)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if !exact{tx.execute("UPDATE work_unit_handler_reviews SET conflict_at=COALESCE(conflict_at,?2),conflict_reason=COALESCE(conflict_reason,'divergent_final_decision') WHERE work_unit_id=?1",params![unit,now]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;return Err(SprintRunnerTransitionError::Conflict)}}tx.commit().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?}Ok(())}
+
+    /// The return decision is application authority for one correction attempt.  This path is
+    /// intentionally separate from Handler review finalization: a retry is neither acceptance nor
+    /// an update to Sprint Git authority.
+    fn reconcile_work_unit_retries(self: &Arc<Self>) -> Result<(), SprintRunnerTransitionError> {
+        let Some(handler) = self.work_unit_handler.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Work Unit Handler registry is poisoned".into()))?.clone() else { return Ok(()); };
+        let sources = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare(
+            "SELECT o.work_unit_id,h.sprint_id,a.sprint_git_authority_id,o.attempt_id,o.reporting_invocation_id,
+                    o.reporting_harness_revision_id,o.reporting_harness_configuration_digest,o.reporting_harness_repository_commit_ref,
+                    d.review_invocation_id,d.decision_fingerprint,d.return_reason_json,
+                    o.submitted_summary,o.submitted_validation_statement,o.evidence_manifest_json,
+                    o.comparison_fingerprint,o.evidence_content_fingerprints_json
+             FROM work_unit_implementer_outcomes o
+             JOIN work_unit_handler_activations h ON h.work_unit_id=o.work_unit_id AND h.attempt_id=o.attempt_id
+             JOIN work_unit_handler_reviews r ON r.work_unit_id=o.work_unit_id AND r.attempt_id=o.attempt_id AND r.reporting_invocation_id=o.reporting_invocation_id
+             JOIN execution_support_attempt_authorizations a ON a.attempt_id=o.attempt_id AND a.work_unit_id=o.work_unit_id AND a.role_kind='work_unit_implementer'
+             JOIN work_unit_handler_decisions d ON d.work_unit_id=o.work_unit_id AND d.review_invocation_id=r.review_invocation_id
+             WHERE d.decision_variant='returned' AND d.retry_required_at IS NOT NULL
+               AND r.semantic_judgment_variant='return' AND r.semantic_judgment_at IS NOT NULL
+               AND r.lifecycle_observed_at IS NOT NULL AND r.lifecycle_status='completed'
+               AND o.application_accepted_at IS NOT NULL AND o.handler_review_ready_at IS NOT NULL
+               AND o.evidence_ready_at IS NOT NULL AND o.semantic_completed_at IS NOT NULL
+             ORDER BY h.sprint_id,o.work_unit_id"
+        ).and_then(|mut statement| statement.query_map([], |row| Ok(RetrySource {
+            work_unit_id: row.get(0)?, sprint_id: row.get(1)?, authority_id: row.get(2)?, origin_attempt_id: row.get(3)?, reporting_invocation_id: row.get(4)?,
+            reporting_revision_id: row.get(5)?, reporting_configuration_digest: row.get(6)?, reporting_repository_commit_ref: row.get(7)?,
+            review_invocation_id: row.get(8)?, decision_fingerprint: row.get(9)?, return_reason_json: row.get(10)?,
+            summary: row.get(11)?, validation: row.get(12)?, manifest_json: row.get(13)?, comparison_fingerprint: row.get(14)?, content_fingerprints_json: row.get(15)?,
+        }))?.collect::<Result<Vec<_>, _>>()).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        for source in sources { self.reconcile_work_unit_retry(&handler, source)?; }
+        Ok(())
+    }
+
+    fn reconcile_work_unit_retry(self: &Arc<Self>, handler: &Arc<WorkUnitExecutionHarnessService>, source: RetrySource) -> Result<(), SprintRunnerTransitionError> {
+        let lock = self.transition_lock(&source.sprint_id)?;
+        let _guard = lock.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Work Unit retry lock is poisoned".into()))?;
+        let reporting = AgentInvocationId::new(source.reporting_invocation_id.clone()).map_err(|_| SprintRunnerTransitionError::Conflict)?;
+        let (_, snapshot) = self.evidence_snapshot(&reporting, false)?;
+        if snapshot.manifest_json != source.manifest_json || snapshot.comparison_fingerprint != source.comparison_fingerprint || snapshot.content_fingerprints_json != source.content_fingerprints_json { return Err(SprintRunnerTransitionError::Conflict); }
+        let authority = self.authority_repository.load_initiated_sprint_git_authority(&source.authority_id)
+            .map_err(|_| SprintRunnerTransitionError::Unavailable("load retry Sprint Git authority".into()))?.ok_or(SprintRunnerTransitionError::Forbidden)?;
+        let pinned_reporting = handler.load_pinned_implementer_revision(&source.reporting_revision_id, &source.reporting_configuration_digest, &source.reporting_repository_commit_ref).map_err(|_| SprintRunnerTransitionError::Conflict)?;
+        let origin_package = handler.construct_for_pinned_profile(&source.origin_attempt_id, WorkUnitHarnessRole::Implementer, pinned_reporting.profile).map_err(|_| SprintRunnerTransitionError::Conflict)?;
+        let source_root = PathBuf::from(origin_package.working_directory());
+        let (candidate_commit, candidate_tree) = retry_git_candidate_facts(&authority, &source_root)?;
+        let retry_attempt = stable_id("work-unit-retry-attempt", &source.origin_attempt_id);
+        let session_id = stable_id("work-unit-retry-implementer-session", &retry_attempt);
+        let invocation_id = stable_id("work-unit-retry-implementer-invocation", &retry_attempt);
+        let capture_intent = stable_id("work-unit-retry-capture", &source.origin_attempt_id);
+        let private_ref = format!("refs/codex-orchestrator/retry/{}", stable_id("work-unit-retry-ref", &retry_attempt));
+        let handoff = serde_json::json!({
+            "handlerReturnReason": serde_json::from_str::<serde_json::Value>(&source.return_reason_json).map_err(|_| SprintRunnerTransitionError::Conflict)?,
+            "priorClaims": {"summary": source.summary, "validationStatement": source.validation},
+            "evidence": {"changedFiles": serde_json::from_str::<serde_json::Value>(&source.manifest_json).map_err(|_| SprintRunnerTransitionError::Conflict)?, "comparisonFingerprint": source.comparison_fingerprint, "contentFingerprints": serde_json::from_str::<serde_json::Value>(&source.content_fingerprints_json).map_err(|_| SprintRunnerTransitionError::Conflict)?}
+        }).to_string();
+        let handoff_fingerprint = stable_id("work-unit-retry-handoff", &handoff);
+        let capture_fingerprint = stable_id("work-unit-retry-capture-lineage", &format!("{}:{}:{}:{}:{}", source.origin_attempt_id, source.review_invocation_id, source.decision_fingerprint, candidate_commit, candidate_tree));
+        let desired = handler.current_implementer_revision().map_err(|_| SprintRunnerTransitionError::Unavailable("immutable retry Implementer Harness revision unavailable".into()))?;
+        let now = chrono::Utc::now().to_rfc3339();
+        {
+            let mut connection = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;
+            let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+            let changed = transaction.execute(
+                "INSERT OR IGNORE INTO work_unit_retry_attempts (work_unit_id,ordinal,origin_attempt_id,review_invocation_id,decision_fingerprint,sprint_git_authority_id,sprint_baseline_object_id,sprint_current_object_id,retry_attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,capture_intent_id,capture_fingerprint,handoff_json,handoff_fingerprint,candidate_commit_id,candidate_tree_id,private_ref_name,capture_requested_at) VALUES (?1,1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)",
+                params![source.work_unit_id,source.origin_attempt_id,source.review_invocation_id,source.decision_fingerprint,source.authority_id,authority.baseline_object_id,authority.current_object_id,retry_attempt,session_id,invocation_id,desired.revision_id,desired.configuration_digest,desired.repository_commit_ref,capture_intent,capture_fingerprint,handoff,handoff_fingerprint,candidate_commit,candidate_tree,private_ref,now]
+            ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+            if changed == 0 {
+                let exact: bool = transaction.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=1 AND origin_attempt_id=?2 AND review_invocation_id=?3 AND decision_fingerprint=?4 AND sprint_git_authority_id=?5 AND retry_attempt_id=?6 AND capture_fingerprint=?7 AND handoff_fingerprint=?8 AND candidate_commit_id=?9 AND candidate_tree_id=?10 AND private_ref_name=?11)",
+                    params![source.work_unit_id,source.origin_attempt_id,source.review_invocation_id,source.decision_fingerprint,source.authority_id,retry_attempt,capture_fingerprint,handoff_fingerprint,candidate_commit,candidate_tree,private_ref], |row| row.get(0)
+                ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+                if !exact { return Err(SprintRunnerTransitionError::Conflict); }
+            }
+            transaction.commit().map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        }
+        let (verified_commit, verified_tree) = retry_git_candidate_facts(&authority, &source_root)?;
+        if verified_commit != candidate_commit || verified_tree != candidate_tree { return self.fail_retry(&source.work_unit_id, "retry_candidate_drift", SprintRunnerTransitionError::Conflict); }
+        ensure_private_retry_ref(Path::new(&authority.repository_root), &private_ref, &candidate_commit)?;
+        self.mark_retry(&source.work_unit_id, "candidate_pinned_at")?;
+        self.launch_retry_implementer(handler, &source.work_unit_id)
+    }
+
+    fn launch_retry_implementer(self: &Arc<Self>, handler: &Arc<WorkUnitExecutionHarnessService>, work_unit_id: &str) -> Result<(), SprintRunnerTransitionError> {
+        let row: (String,String,String,String,String,String,String,String,String,String) = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
+            "SELECT retry_attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,sprint_git_authority_id,candidate_commit_id,handoff_json,private_ref_name FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND candidate_pinned_at IS NOT NULL", [work_unit_id],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?,row.get(9)?))
+        ).map_err(|_| SprintRunnerTransitionError::Conflict)?;
+        let (attempt,session_id,invocation_id,revision,digest,commit,authority,seed,handoff,private_ref) = row;
+        let git_authority = self.authority_repository.load_initiated_sprint_git_authority(&authority).map_err(|_| SprintRunnerTransitionError::Unavailable("load retry Sprint Git authority".into()))?.ok_or(SprintRunnerTransitionError::Conflict)?;
+        if private_retry_ref_target(Path::new(&git_authority.repository_root), &private_ref)? != seed { return self.fail_retry(work_unit_id, "retry_private_ref_mismatch", SprintRunnerTransitionError::Conflict); }
+        let pinned = handler.load_pinned_implementer_revision(&revision, &digest, &commit).map_err(|_| SprintRunnerTransitionError::Conflict)?;
+        handler.authorize_implementer_attempt_at_seed(&attempt, work_unit_id, &authority, Some(seed.clone())).map_err(|_| SprintRunnerTransitionError::Conflict)?;
+        self.mark_retry(work_unit_id, "authorized_at")?;
+        let package = handler.construct_for_pinned_profile(&attempt, WorkUnitHarnessRole::Implementer, pinned.profile).map_err(|_| SprintRunnerTransitionError::Unavailable("retry execution-support grant failed".into()))?;
+        self.mark_retry(work_unit_id, "execution_support_granted_at")?;
+        self.mark_retry(work_unit_id, "isolated_worktree_ready_at")?;
+        let session = AgentSessionId::new(session_id).map_err(|_| SprintRunnerTransitionError::Conflict)?;
+        let invocation = AgentInvocationId::new(invocation_id).map_err(|_| SprintRunnerTransitionError::Conflict)?;
+        let runtime = package.runtime_launch_configuration();
+        if let Err(error) = self.sessions.create_application_session(CreateApplicationAgentSessionCommand { session_id: session.clone(), session: CreateAgentSessionCommand { title: Some("Work Unit Retry Implementer".into()), working_directory: Some(package.working_directory().into()), requested_options: runtime.requested_options.clone() }}) { return self.fail_retry(work_unit_id, "retry_session_creation_failed", SprintRunnerTransitionError::Unavailable(error.to_string())); }
+        self.mark_retry(work_unit_id, "implementer_session_created_at")?;
+        let prompt = format!("Work Unit Implementer correction attempt. Work only in the application-provided isolated retry workspace. The bounded correction handoff is below; it contains no private route, path, ref, or object id. Do not accept, review, retry, settle, activate dependents, or continue Sprint or Epic work.\n\n{handoff}");
+        if let Err(error) = self.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: prompt.clone(), title: None, working_directory: Some(package.working_directory().into()), requested_options: Some(runtime.requested_options.clone()) }}) { return self.fail_retry(work_unit_id, "retry_invocation_preparation_failed", SprintRunnerTransitionError::Unavailable(error.to_string())); }
+        self.mark_retry(work_unit_id, "implementer_invocation_prepared_at")?;
+        package.bind_correlated_invocation(session.clone(), invocation.clone()).map_err(|_| SprintRunnerTransitionError::Conflict)?;
+        self.mark_retry(work_unit_id, "implementer_harness_bound_at")?;
+        // This intent precedes inspecting or requesting launch so a reopen that observes an
+        // accepted prepared invocation still has a truthful launch-request stage.
+        self.mark_retry(work_unit_id, "launch_requested_at")?;
+        match self.sessions.application_invocation_launch_evidence(&invocation, &session).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))? {
+            ApplicationInvocationLaunchEvidence::LaunchAccepted => { self.mark_retry(work_unit_id, "launch_accepted_at")?; self.mark_retry(work_unit_id, "retry_ready_at")?; }
+            ApplicationInvocationLaunchEvidence::PersistedNotAccepted => {
+                let launch = match self.sessions.launch_prepared_application_invocation_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: prompt, title: None, working_directory: Some(package.working_directory().into()), requested_options: Some(runtime.requested_options) }}, Some(runtime.extension)) { Ok(launch) => launch, Err(error) => return self.fail_retry(work_unit_id, "retry_launch_failed", SprintRunnerTransitionError::Unavailable(error.to_string())), };
+                if launch.launch_accepted { self.mark_retry(work_unit_id, "launch_accepted_at")?; self.mark_retry(work_unit_id, "retry_ready_at")?; } else { return self.fail_retry(work_unit_id, "retry_launch_not_accepted", SprintRunnerTransitionError::Unavailable("retry Implementer launch was not accepted".into())); }
+            }
+            ApplicationInvocationLaunchEvidence::NeverPersisted => return self.fail_retry(work_unit_id, "retry_launch_missing_prepared_invocation", SprintRunnerTransitionError::Conflict),
+        }
+        self.clear_retry_failure(work_unit_id)?;
+        if let Ok(observation) = package.observe_correlated_invocation() { if let Some(activity) = observation.provider_activity { self.mark_retry_at(work_unit_id, "provider_activation_observed_at", activity.recorded_at.to_rfc3339())?; } }
+        Ok(())
+    }
+
+    fn mark_retry(&self, work_unit_id: &str, column: &str) -> Result<(), SprintRunnerTransitionError> { self.mark_retry_at(work_unit_id, column, chrono::Utc::now().to_rfc3339()) }
+    fn mark_retry_at(&self, work_unit_id: &str, column: &str, at: String) -> Result<(), SprintRunnerTransitionError> {
+        if !["candidate_pinned_at","authorized_at","execution_support_granted_at","isolated_worktree_ready_at","implementer_session_created_at","implementer_invocation_prepared_at","implementer_harness_bound_at","launch_requested_at","launch_accepted_at","provider_activation_observed_at","retry_ready_at"].contains(&column) { return Err(SprintRunnerTransitionError::Unavailable("invalid retry stage".into())); }
+        self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute(&format!("UPDATE work_unit_retry_attempts SET {column}=COALESCE({column},?2) WHERE work_unit_id=?1"), params![work_unit_id,at]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        Ok(())
+    }
+    fn fail_retry<T>(&self, work_unit_id: &str, reason: &str, error: SprintRunnerTransitionError) -> Result<T, SprintRunnerTransitionError> {
+        self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_retry_attempts SET failure_reason=?2 WHERE work_unit_id=?1", params![work_unit_id,reason]).map_err(|database_error| SprintRunnerTransitionError::Unavailable(database_error.to_string()))?;
+        Err(error)
+    }
+    fn clear_retry_failure(&self, work_unit_id: &str) -> Result<(), SprintRunnerTransitionError> { self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_retry_attempts SET failure_reason=NULL WHERE work_unit_id=?1", [work_unit_id]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?; Ok(()) }
 
     fn reconcile_work_unit_handler(
         self: &Arc<Self>,
@@ -2533,6 +2727,44 @@ fn stable_id(prefix: &str, value: &str) -> String {
     format!("{prefix}-{:x}", h.finalize())
 }
 fn fingerprint_bytes(prefix: &str,value:&[u8])->String{stable_id(prefix,&value.iter().map(|byte|format!("{byte:02x}")).collect::<String>())}
+
+fn retry_git_text(root: &Path, arguments: &[&str]) -> Result<String, SprintRunnerTransitionError> {
+    let output = Command::new("git").args(arguments).current_dir(root).env("GIT_TERMINAL_PROMPT", "0").output()
+        .map_err(|error| SprintRunnerTransitionError::Unavailable(format!("retry Git invocation failed: {error}")))?;
+    if !output.status.success() || output.stdout.len() > 256_000 || output.stderr.len() > 256_000 { return Err(SprintRunnerTransitionError::Conflict); }
+    String::from_utf8(output.stdout).map(|value| value.trim().to_owned()).map_err(|_| SprintRunnerTransitionError::Conflict)
+}
+fn retry_git_candidate_facts(authority: &InitiatedSprintGitAuthority, root: &Path) -> Result<(String, String), SprintRunnerTransitionError> {
+    let root = root.canonicalize().map_err(|_| SprintRunnerTransitionError::Conflict)?;
+    let authority_root = PathBuf::from(&authority.worktree_root).canonicalize().map_err(|_| SprintRunnerTransitionError::Conflict)?;
+    let repository_root = PathBuf::from(&authority.repository_root).canonicalize().map_err(|_| SprintRunnerTransitionError::Conflict)?;
+    let expected_common = PathBuf::from(&authority.repository_common_dir).canonicalize().map_err(|_| SprintRunnerTransitionError::Conflict)?;
+    if root == authority_root || root == repository_root || retry_git_text(&root, &["status", "--porcelain"])? != "" { return Err(SprintRunnerTransitionError::Conflict); }
+    let top = PathBuf::from(retry_git_text(&root, &["rev-parse", "--show-toplevel"])?).canonicalize().map_err(|_| SprintRunnerTransitionError::Conflict)?;
+    let common = PathBuf::from(retry_git_text(&root, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?).canonicalize().map_err(|_| SprintRunnerTransitionError::Conflict)?;
+    if top != root || common != expected_common { return Err(SprintRunnerTransitionError::Conflict); }
+    let commit = retry_git_text(&root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    let tree = retry_git_text(&root, &["rev-parse", "--verify", "HEAD^{tree}"])?;
+    if commit.len() != 40 || tree.len() != 40 || retry_git_text(&root, &["merge-base", "--is-ancestor", &authority.current_object_id, &commit]).is_err() { return Err(SprintRunnerTransitionError::Conflict); }
+    Ok((commit, tree))
+}
+fn private_retry_ref_target(repository_root: &Path, private_ref: &str) -> Result<String, SprintRunnerTransitionError> {
+    if !private_ref.starts_with("refs/codex-orchestrator/retry/") || !safe_id(private_ref.rsplit('/').next().unwrap_or("")) { return Err(SprintRunnerTransitionError::Conflict); }
+    retry_git_text(repository_root, &["rev-parse", "--verify", &format!("{private_ref}^{{commit}}")])
+}
+fn ensure_private_retry_ref(repository_root: &Path, private_ref: &str, commit: &str) -> Result<(), SprintRunnerTransitionError> {
+    if !private_ref.starts_with("refs/codex-orchestrator/retry/") || !safe_id(private_ref.rsplit('/').next().unwrap_or("")) || commit.len() != 40 { return Err(SprintRunnerTransitionError::Conflict); }
+    let existing = Command::new("git").args(["show-ref", "--verify", "--quiet", private_ref]).current_dir(repository_root).env("GIT_TERMINAL_PROMPT", "0").output()
+        .map_err(|error| SprintRunnerTransitionError::Unavailable(format!("inspect retry candidate pin: {error}")))?;
+    if existing.status.success() { return if private_retry_ref_target(repository_root, private_ref)? == commit { Ok(()) } else { Err(SprintRunnerTransitionError::Conflict) }; }
+    if existing.status.code() != Some(1) { return Err(SprintRunnerTransitionError::Conflict); }
+    // The all-zero old value atomically proves absence.  A concurrent or foreign pin therefore
+    // fails closed instead of being overwritten or adopted by name alone.
+    let output = Command::new("git").args(["update-ref", private_ref, commit, "0000000000000000000000000000000000000000"]).current_dir(repository_root).env("GIT_TERMINAL_PROMPT", "0").output()
+        .map_err(|error| SprintRunnerTransitionError::Unavailable(format!("pin retry candidate: {error}")))?;
+    if !output.status.success() || private_retry_ref_target(repository_root, private_ref)? != commit { return Err(SprintRunnerTransitionError::Conflict); }
+    Ok(())
+}
 
 fn handler_activation_blocked_reason(
     dependency_count: i64,

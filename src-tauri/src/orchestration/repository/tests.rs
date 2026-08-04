@@ -2166,5 +2166,6 @@ fn valid_work_unit_activation_projection() -> WorkUnitDto {
         implementer_outcome: None,
         handler_review: None,
         handler_decision: None,
+        retry_attempt: None,
     }
 }
