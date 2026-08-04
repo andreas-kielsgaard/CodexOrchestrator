@@ -6030,6 +6030,42 @@ mod tests {
     }
 
     #[test]
+    fn no_progress_handback_reaches_one_sprint_runner_reassessment_without_epic_effects() {
+        let fixture = ReportingFixture::new();
+        let review = fixture.ready_review();
+        let sprint_id: String = Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1", [], |row| row.get(0)).unwrap();
+        let runner_session = AgentSessionId::new("handback-sprint-runner-session").unwrap();
+        let handback_harness = conversation_harness::profile(ConversationHarnessRole::SprintRunnerHandbackReassessment).unwrap();
+        let handback_root = conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunnerHandbackReassessment).unwrap();
+        fixture.base.sessions.create_application_session(CreateApplicationAgentSessionCommand { session_id: runner_session.clone(), session: CreateAgentSessionCommand { title: Some("Handback Sprint Runner".into()), working_directory: Some(handback_root), requested_options: handback_harness.runtime_options() } }).unwrap();
+        let now = "2026-08-04T00:00:00Z";
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        connection.execute("UPDATE work_unit_handler_activations SET sprint_id=?2 WHERE work_unit_id=?1", params![fixture.work_unit_id,sprint_id]).unwrap();
+        connection.execute("INSERT INTO sprint_runner_transitions (sprint_id,epic_id,request_id,epic_runner_session_id,epic_runner_invocation_id,epic_runner_harness_key,epic_runner_harness_version,sprint_runner_harness_key,sprint_runner_harness_version,sprint_runner_session_id,sprint_runner_invocation_id,requested_at,authorized_at) VALUES (?1,'handback-epic','handback-request','handback-epic-session','handback-epic-invocation','epic_runner',3,'sprint_runner',2,?2,'handback-original-runner',?3,?3)",params![sprint_id,runner_session.as_str(),now]).unwrap();
+        drop(connection);
+        fixture.transition.record_handler_incomplete_disposition_for_test(&review, crate::orchestration::sprint_runner_transition::HandlerReviewIncompleteDisposition { code: "no_progress".into(), explanation: "the bounded concern did not progress".into(), classification: crate::orchestration::sprint_runner_transition::IncompleteAttemptClassification::FunctionalObjectiveNotSatisfied, meaningful_progress: false }).unwrap();
+        fixture.base.runtime.finish(&review, AgentInvocationTerminalStatus::Completed);
+        fixture.transition.reconcile_handler_reviews_for_test().unwrap();
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        let (handback, invocation, persisted, bound, requested, accepted): (String,String,Option<String>,Option<String>,Option<String>,Option<String>) = connection.query_row("SELECT h.handback_id,d.reassessment_invocation_id,d.delivery_persisted_at,d.harness_bound_at,d.launch_requested_at,d.launch_accepted_at FROM work_unit_no_progress_handbacks h JOIN sprint_runner_handback_deliveries d ON d.handback_id=h.handback_id WHERE h.work_unit_id=?1",[&fixture.work_unit_id],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?))).unwrap();
+        assert!(persisted.is_some() && bound.is_some() && requested.is_some() && accepted.is_some());
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_handback_deliveries WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap(),1);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE epic_continuation_invocation_id IS NOT NULL OR epic_start_semantic_authorization_recorded_at IS NOT NULL",[],|row|row.get(0)).unwrap(),0);
+        connection.execute("UPDATE sprint_runner_handback_deliveries SET harness_bound_at=NULL,launch_requested_at=NULL,launch_accepted_at=NULL WHERE handback_id=?1", [&handback]).unwrap();
+        drop(connection);
+        let reopened = fixture.reopened();
+        reopened.reconcile_no_progress_handbacks_for_test().unwrap();
+        let recovered: (Option<String>,Option<String>,Option<String>) = Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT harness_bound_at,launch_requested_at,launch_accepted_at FROM sprint_runner_handback_deliveries WHERE handback_id=?1",[&handback],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
+        assert!(recovered.0.is_some() && recovered.1.is_some() && recovered.2.is_some());
+        let alternate = crate::orchestration::sprint_runner_transition::SprintHandbackDisposition { movement_kind: "continue_eligible_work".into(), rationale: "another bounded Work Unit may continue".into(), eligible_work_summary: Some("one eligible Work Unit remains".into()), dependency_owner: None, dependency_owner_classification: None, enabling_result: None, resumption_path: None, local_exhaustion_summary: None };
+        reopened.record_handback_disposition_for_test(&invocation, alternate.clone()).unwrap();
+        reopened.record_handback_disposition_for_test(&invocation, alternate).unwrap();
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_handback_dispositions WHERE handback_id=?1 AND movement_kind='continue_eligible_work' AND preserves_handback=1",[&handback],|row|row.get(0)).unwrap(),1);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_handback_escalations WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap(),0);
+    }
+
+    #[test]
     fn implementer_reporting_exact_retries_replay_without_replacement_and_divergence_conflicts() {
         let fixture = ReportingFixture::new();
         let barrier = Arc::new(Barrier::new(2));

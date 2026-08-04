@@ -920,9 +920,18 @@ pub(crate) struct SprintHandbackDisposition {
     pub(crate) rationale: String,
     pub(crate) eligible_work_summary: Option<String>,
     pub(crate) dependency_owner: Option<String>,
+    pub(crate) dependency_owner_classification: Option<AgentAchievableDependencyOwner>,
     pub(crate) enabling_result: Option<String>,
     pub(crate) resumption_path: Option<String>,
     pub(crate) local_exhaustion_summary: Option<String>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AgentAchievableDependencyOwner {
+    WorkUnitHandler,
+    WorkUnitImplementer,
+    WorkSlicePlanner,
+    SprintRunner,
 }
 #[derive(Clone)]
 struct HandlerReviewContext { work_unit_id:String, attempt_id:String, handler_authority_attempt_id:String, session_id:String, review_invocation_id:String, revision_id:String, configuration_digest:String, repository_commit_ref:String, delivered_payload_json:String, delivered_payload_fingerprint:String }
@@ -1243,6 +1252,10 @@ impl SprintRunnerTransitionService {
     pub(crate) fn reconcile_handler_reviews_for_test(self: &Arc<Self>) -> Result<(), SprintRunnerTransitionError> {
         self.reconcile_handler_reviews()
     }
+    #[cfg(test)]
+    pub(crate) fn reconcile_no_progress_handbacks_for_test(self: &Arc<Self>) -> Result<(), SprintRunnerTransitionError> {
+        self.reconcile_no_progress_handbacks()
+    }
 
     #[cfg(test)]
     pub(crate) fn prepare_later_attempt_reporting_for_test(self: &Arc<Self>) -> Result<(), SprintRunnerTransitionError> {
@@ -1285,6 +1298,16 @@ impl SprintRunnerTransitionService {
         let invocation = AgentInvocationId::new(invocation_id.to_owned())
             .map_err(|_| SprintRunnerTransitionError::Forbidden)?;
         self.record_handler_incomplete_disposition(&invocation, disposition)
+    }
+    #[cfg(test)]
+    pub(crate) fn record_handback_disposition_for_test(
+        &self,
+        invocation_id: &str,
+        disposition: SprintHandbackDisposition,
+    ) -> Result<(), SprintRunnerTransitionError> {
+        let invocation = AgentInvocationId::new(invocation_id.to_owned())
+            .map_err(|_| SprintRunnerTransitionError::Forbidden)?;
+        self.record_handback_disposition(&invocation, disposition)
     }
 
     #[cfg(test)]
@@ -2282,7 +2305,8 @@ impl SprintRunnerTransitionService {
             }
         }
         self.finalize_handler_review_decisions()?;
-        self.reconcile_work_unit_retries()
+        self.reconcile_work_unit_retries()?;
+        self.reconcile_no_progress_handbacks()
     }
 
     fn prepare_handler_review(self: &Arc<Self>, work_unit: &str, attempt: &str) -> Result<(), SprintRunnerTransitionError> {
@@ -2551,11 +2575,25 @@ impl SprintRunnerTransitionService {
         let invocation = AgentInvocationId::new(invocation).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         match self.sessions.application_invocation_launch_evidence(&invocation, &session).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))? {
             ApplicationInvocationLaunchEvidence::LaunchAccepted => {
+                let _ = self.prepare_handback_reassessment_action(invocation.clone())?;
                 self.mark_handback_delivery(handback, "delivery_persisted_at")?;
+                self.mark_handback_delivery(handback, "harness_bound_at")?;
                 self.mark_handback_delivery(handback, "launch_requested_at")?;
                 self.mark_handback_delivery(handback, "launch_accepted_at")?;
             }
-            ApplicationInvocationLaunchEvidence::PersistedNotAccepted => self.mark_handback_delivery(handback, "delivery_persisted_at")?,
+            ApplicationInvocationLaunchEvidence::PersistedNotAccepted => {
+                // A reopen has durable application provenance but not the ephemeral action
+                // server. Recreate the scoped server, re-bind the catalog revision, and launch
+                // the exact prepared invocation; merely restamping delivery would strand it.
+                let injection = self.prepare_handback_reassessment_action(invocation.clone())?;
+                let mut args = harness.runtime_configuration_args();
+                args.extend(injection.configuration_args);
+                self.mark_handback_delivery(handback, "delivery_persisted_at")?;
+                self.mark_handback_delivery(handback, "harness_bound_at")?;
+                self.mark_handback_delivery(handback, "launch_requested_at")?;
+                let launch = self.sessions.launch_prepared_application_invocation_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation, message: SendAgentSessionMessageCommand { session_id: Some(session), submitted_text: "The application delivered one exact no-progress Work Unit concern. Read only the supplied reassessment context, record one truthful next movement, then stop. Continuing eligible work does not settle the concern; do not contact an Epic Runner or declare Sprint/Epic blockage.".into(), title: None, working_directory: Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunnerHandbackReassessment).map_err(SprintRunnerTransitionError::Unavailable)?), requested_options: Some(harness.runtime_options()) } }, Some(RuntimeLaunchExtension { additional_args: args, environment: vec![injection.environment], initial_prompt_prefix: Some(harness.initial_prompt_prefix()) })).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+                if launch.launch_accepted { self.mark_handback_delivery(handback, "launch_accepted_at")?; }
+            }
             ApplicationInvocationLaunchEvidence::NeverPersisted => {
                 let injection = self.prepare_handback_reassessment_action(invocation.clone())?;
                 let mut args = harness.runtime_configuration_args();
@@ -3531,9 +3569,15 @@ fn validate_handback_disposition(value:&SprintHandbackDisposition)->Result<(),Sp
     if !safe_id(&value.movement_kind) || value.movement_kind.len()>96 { return Err(SprintRunnerTransitionError::Invalid); }
     validate_outcome(&value.rationale)?;
     match value.movement_kind.as_str() {
-        "continue_eligible_work" => if value.eligible_work_summary.as_deref().map(validate_outcome).transpose()?.is_none() || value.dependency_owner.is_some() || value.enabling_result.is_some() || value.resumption_path.is_some() || value.local_exhaustion_summary.is_some() { return Err(SprintRunnerTransitionError::Invalid); },
-        "wait_for_agent_dependency" => if value.dependency_owner.as_deref().map(validate_outcome).transpose()?.is_none() || value.enabling_result.as_deref().map(validate_outcome).transpose()?.is_none() || value.resumption_path.as_deref().map(validate_outcome).transpose()?.is_none() || value.eligible_work_summary.is_some() || value.local_exhaustion_summary.is_some() { return Err(SprintRunnerTransitionError::Invalid); },
-        "local_exhaustion_escalate" => if value.local_exhaustion_summary.as_deref().map(validate_outcome).transpose()?.is_none() || value.eligible_work_summary.is_some() || value.dependency_owner.is_some() || value.enabling_result.is_some() || value.resumption_path.is_some() { return Err(SprintRunnerTransitionError::Invalid); },
+        "continue_eligible_work" => if value.eligible_work_summary.as_deref().map(validate_outcome).transpose()?.is_none() || value.dependency_owner.is_some() || value.dependency_owner_classification.is_some() || value.enabling_result.is_some() || value.resumption_path.is_some() || value.local_exhaustion_summary.is_some() { return Err(SprintRunnerTransitionError::Invalid); },
+        "wait_for_agent_dependency" => {
+            let Some(owner) = value.dependency_owner.as_deref() else { return Err(SprintRunnerTransitionError::Invalid); };
+            validate_outcome(owner)?;
+            if value.dependency_owner_classification.is_none() || value.enabling_result.as_deref().map(validate_outcome).transpose()?.is_none() || value.resumption_path.as_deref().map(validate_outcome).transpose()?.is_none() || value.eligible_work_summary.is_some() || value.local_exhaustion_summary.is_some() { return Err(SprintRunnerTransitionError::Invalid); }
+            let lowered = owner.to_ascii_lowercase();
+            if ["human", "external", "approval", "manual", "user"].iter().any(|term| lowered.contains(term)) { return Err(SprintRunnerTransitionError::Invalid); }
+        },
+        "local_exhaustion_escalate" => if value.local_exhaustion_summary.as_deref().map(validate_outcome).transpose()?.is_none() || value.eligible_work_summary.is_some() || value.dependency_owner.is_some() || value.dependency_owner_classification.is_some() || value.enabling_result.is_some() || value.resumption_path.is_some() { return Err(SprintRunnerTransitionError::Invalid); },
         _ => { for text in [&value.eligible_work_summary,&value.dependency_owner,&value.enabling_result,&value.resumption_path,&value.local_exhaustion_summary] { if let Some(text)=text { validate_outcome(text)?; } } }
     }
     Ok(())
@@ -3952,5 +3996,44 @@ mod handler_review_payload_tests {
 
         assert_ne!(sqlite_payload, canonical);
         assert_eq!(serde_json::from_str::<serde_json::Value>(&sqlite_payload).unwrap(), expected);
+    }
+}
+
+#[cfg(test)]
+mod handback_disposition_tests {
+    use super::{validate_handback_disposition, AgentAchievableDependencyOwner, SprintHandbackDisposition, SprintRunnerTransitionError};
+
+    fn disposition(kind: &str) -> SprintHandbackDisposition {
+        SprintHandbackDisposition { movement_kind: kind.into(), rationale: "bounded current concern".into(), eligible_work_summary: None, dependency_owner: None, dependency_owner_classification: None, enabling_result: None, resumption_path: None, local_exhaustion_summary: None }
+    }
+
+    #[test]
+    fn known_handback_movements_preserve_a_bounded_non_human_route() {
+        let mut alternate = disposition("continue_eligible_work");
+        alternate.eligible_work_summary = Some("another eligible Work Unit remains authorized".into());
+        assert!(validate_handback_disposition(&alternate).is_ok());
+
+        let mut dependency = disposition("wait_for_agent_dependency");
+        dependency.dependency_owner = Some("bounded Work Unit Handler".into());
+        dependency.dependency_owner_classification = Some(AgentAchievableDependencyOwner::WorkUnitHandler);
+        dependency.enabling_result = Some("a persisted handler result".into());
+        dependency.resumption_path = Some("reconcile this exact Handback after that result".into());
+        assert!(validate_handback_disposition(&dependency).is_ok());
+
+        let mut exhaustion = disposition("local_exhaustion_escalate");
+        exhaustion.local_exhaustion_summary = Some("all local Sprint-runner movements are exhausted".into());
+        assert!(validate_handback_disposition(&exhaustion).is_ok());
+    }
+
+    #[test]
+    fn dependency_wait_rejects_human_external_and_unclassified_gates() {
+        for owner in ["human approval", "external vendor", "manual confirmation"] {
+            let mut value = disposition("wait_for_agent_dependency");
+            value.dependency_owner = Some(owner.into());
+            value.dependency_owner_classification = Some(AgentAchievableDependencyOwner::WorkUnitHandler);
+            value.enabling_result = Some("a result".into());
+            value.resumption_path = Some("resume here".into());
+            assert!(matches!(validate_handback_disposition(&value), Err(SprintRunnerTransitionError::Invalid)));
+        }
     }
 }
