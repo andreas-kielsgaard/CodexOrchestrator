@@ -30,5 +30,6 @@
   "initiationProvenance": [],
   "materialSnapshots": [],
   "initiatedEpics": [],
-  "initiatedSprints": []
+  "initiatedSprints": [],
+  "dependencyActivationIntents": []
 }

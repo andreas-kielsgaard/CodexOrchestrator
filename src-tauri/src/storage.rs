@@ -359,6 +359,7 @@ mod tests {
                 "sprint_target_current_attentions",
                 "sprint_target_currents",
                 "stored_file_review_artifacts",
+                "work_unit_dependency_activation_intents",
                 "work_unit_prerequisite_contributions",
                 "work_unit_settlements",
             ]
