@@ -634,11 +634,29 @@ Current deterministic validation in this candidate checkout:
 - `git diff --check` passed. Earlier selector/compilation attempts that matched zero tests or
   timed out are not passing gates.
 
-The existing native-query, strict frontend read-model, and Work Unit activity surfaces were
-inspected for the established safe projections, but frontend Vitest, TypeScript, and UI execution
-are **unrun by design in this Plan Step**: the checkout has no `node_modules`, dependencies were
-not installed, and runtime/type verification is separately gated. Broad Rust suites, live-provider
-receipt, provider activation/compliance, and human acceptance are likewise unproven. This
-deterministic local/fake proof does not establish live-provider receipt, provider-process
-reattachment, or broad-suite compliance. This correction does not add retry, ordinal-1 authority,
-relaunch, planning-point/Work Slice/Sprint/Epic continuation, push, or publication.
+### Frontend convergence correction
+
+- The focused strict frontend boundary now passes **8 files / 119 tests** in **7.45s**. It fixes
+  the Handler-review fixture's truthful `reviewReadyAt` (`00:00:16Z`), rejects every removed
+  `RepositoryCommitRef` and `ConfigurationDigest` field at Handler activation/action, Implementer
+  activation/reporting, and Handler review payload boundaries, and retains the exact unknown-field
+  fail-closed decoder behavior. The run emitted existing React `act(...)` warnings but no test
+  failure.
+- `npm run build` passed: `tsc --noEmit` and production Vite build both completed (Cargo is not
+  involved). The native correlation rule now requires the exact unblocked, nonfailed,
+  application-ready action continuation facts; it no longer reads a presentation-only `stage` from
+  the native contract. `npm run lint` passed.
+- This checkout has no own `node_modules`; validation used a matching already-installed local
+  dependency tree whose `package.json` and lockfile hashes matched, through a temporary local
+  junction. No dependency or lockfile was installed or changed. An initial Vitest invocation with
+  unsupported `--runInBand` performed no tests and is not recorded as a passing gate.
+- Scoped correction hunks match resolved Prettier output and `git diff --check` passed. The broad
+  `npm run format:check` gate **failed** on exactly **44 pre-existing files**, including the two
+  long-drift native-query files; it was not rewritten. This is a broad pre-existing formatting gap,
+  not a passing gate or a change in this correction.
+
+Broad Rust suites, live-provider receipt, provider activation/compliance, and human acceptance are
+unproven. This deterministic local/fake proof does not establish live-provider receipt,
+provider-process reattachment, or broad-suite compliance. This correction does not add retry,
+ordinal-1 authority, relaunch, planning-point/Work Slice/Sprint/Epic continuation, push, or
+publication.

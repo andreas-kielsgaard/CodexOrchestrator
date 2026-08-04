@@ -578,7 +578,7 @@ describe('orchestration native query v1', () => {
     pendingUnit.handlerReview = handlerReviewFixture('pending');
     const pendingQuery = decodeOrchestrationNativeQueryV2(pending);
     expect(pendingQuery.workUnits[0]!.handlerReview).toMatchObject({
-      reviewReadyAt: '2026-08-04T00:00:11Z',
+      reviewReadyAt: '2026-08-04T00:00:16Z',
       delivered: { comparisonFingerprint: 'comparison-1' },
     });
     const pendingUnitModel = composeProductOrchestrationReadModels(
@@ -658,6 +658,26 @@ describe('orchestration native query v1', () => {
     );
   });
 
+  it.each([
+    ['Handler activation', 'handlerActivation', 'handlerHarnessRepositoryCommitRef'],
+    ['Handler activation', 'handlerActivation', 'handlerHarnessConfigurationDigest'],
+    ['Handler action', 'actionContinuation', 'actionHarnessRepositoryCommitRef'],
+    ['Handler action', 'actionContinuation', 'actionHarnessConfigurationDigest'],
+    ['Implementer activation', 'implementerActivation', 'implementerHarnessRepositoryCommitRef'],
+    ['Implementer activation', 'implementerActivation', 'implementerHarnessConfigurationDigest'],
+    ['Implementer reporting outcome', 'implementerOutcome', 'reportingHarnessRepositoryCommitRef'],
+    ['Implementer reporting outcome', 'implementerOutcome', 'reportingHarnessConfigurationDigest'],
+    ['Handler review', 'handlerReview', 'reviewHarnessRepositoryCommitRef'],
+    ['Handler review', 'handlerReview', 'reviewHarnessConfigurationDigest'],
+  ] as const)('rejects private %s payload field %s', (_boundary, payloadKey, privateField) => {
+    const value = productiveIntegrationNativeFixture();
+    const unit = (value.workUnits as Array<Record<string, unknown>>)[0]!;
+    (unit[payloadKey] as Record<string, unknown>)[privateField] = 'private-harness-routing-value';
+    expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow(
+      'Invalid orchestration native query',
+    );
+  });
+
   it('projects productive integration and settlement without populating legacy observed events', () => {
     const value = productiveIntegrationNativeFixture();
     const query = decodeOrchestrationNativeQueryV2(value);
@@ -714,7 +734,10 @@ describe('orchestration native query v1', () => {
     });
   });
 
-  it.each([
+  const productiveIntegrationMutations: readonly [
+    string,
+    (integration: Record<string, unknown>) => void,
+  ][] = [
     [
       'unknown field',
       (integration: Record<string, unknown>) =>
@@ -761,7 +784,8 @@ describe('orchestration native query v1', () => {
       (integration: Record<string, unknown>) =>
         ((integration.prerequisiteContribution as Record<string, unknown>).dependentCount = 2),
     ],
-  ] as const)('rejects productive integration %s', (_label, mutate) => {
+  ];
+  it.each(productiveIntegrationMutations)('rejects productive integration %s', (_label, mutate) => {
     const value = productiveIntegrationNativeFixture();
     const unit = (value.workUnits as Array<Record<string, unknown>>)[0]!;
     mutate(unit.integration as Record<string, unknown>);

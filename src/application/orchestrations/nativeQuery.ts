@@ -2642,8 +2642,15 @@ function validateActivationCorrelations(
   if (review) {
     if (!handler || handler.eligibilityState !== 'eligible')
       fail('Handler review requires an eligible Handler activation');
-    if (!continuation || continuation.stage === 'blocked')
-      fail('Handler review requires an unblocked Handler action continuation');
+    if (
+      !continuation ||
+      continuation.blockedReason ||
+      continuation.failureReason ||
+      !continuation.actionReadyAt
+    )
+      fail(
+        'Handler review requires an unblocked, nonfailed, application-ready Handler action continuation',
+      );
     if (
       review.attemptId !== handler.attemptId ||
       review.handlerSessionId !== handler.handlerSessionId ||
