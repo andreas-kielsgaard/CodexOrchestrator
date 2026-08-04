@@ -526,3 +526,50 @@ Validation evidence for this checkpoint:
 
 No retry, downstream activation, settlement, continuation, provider observation, process
 reattachment, authority expansion, or user acceptance is proven by this record.
+
+## AIS-06: Accepted Work Unit integration and settlement convergence
+
+This final documentation records the accepted Work Unit integration and settlement Slice at
+clean detached checkpoint `85a1ace2ea3a1a3eca7d66e7c35806552094fb2c`. It supersedes the earlier
+Handler-review wording above only for the later boundary; that wording remains historically
+accurate at its older checkpoint.
+
+The authoritative chain is distinct from retry-only capture. The Handler-review baseline is
+`06769488643ea8272c03671c0988f0e5f7e6ef59`. Policy A selects authoritative Git integration. The
+accepted-candidate authority and target-binding chain is `2453a68`, `8a69194`, `1edbbe3`; the
+integration/recovery/migration chain is `36f3eeb`, `5d55978`, `5d035be`, `e140457`, `3461a1b`,
+`00143a1`, `9e3110a`, `2e22390`, `9fb3e94`; productive projection and boundary correction are
+`98722a4`, `ba893de`; and the independent audit corrections are `a5f102a`, `85a1ace`.
+Retry-only capture retains a candidate for retry or attention and does not itself authorize,
+reserve, integrate, settle, or contribute a prerequisite effect.
+
+For an accepted candidate, the application derives target-scoped reservation and effects from
+durable authority and the bound target. Under the target lock, one deterministic single-parent
+integration commit is created; an advanced parent delta is applied to the target; and replay
+reconciles the exact candidate, target, commit, runtime, and database state. The durable sequence
+keeps request, authorization, reservation, object creation, ref advancement, runtime advancement,
+database advancement, evidence, terminal attention, Work Unit settlement, and each per-edge
+prerequisite contribution as separate facts. A same-candidate replay reuses the settled route and
+does not create a second commit or settlement. Different candidates serialize on the target and
+each receives its own parent-linked integration commit and effects. Conflicts or invalid retained
+lineage settle as terminal attention rather than being silently retried.
+
+The productive Rust, TypeScript, and UI projection exposes only safe semantic integration facts:
+progress, terminal attention, success, settlement, and prerequisite contribution. Private candidate,
+authority, intent, ref, integration identity, commit, tree, and repository-path values remain out
+of the projection. Legacy observed integration, completion, and handoff events remain empty; their
+historical/materialization settlement is separate from productive integration settlement and does
+not imply receiver delivery, provider activation, Work Unit acceptance, or later workflow state.
+
+The accepted evidence is deterministic local proof: isolated Git and temporary SQLite fixtures,
+reopen/recovery, same-candidate replay, different-candidate serialization, exact CAS/runtime/DB
+convergence, terminal attention, projection privacy, Work Unit settlement, and per-edge prerequisite
+contribution. It does not prove a live provider effect, receiver activation, provider acceptance,
+or user acceptance. The focused Cargo rerun attempted for this documentation did not complete within
+the bounded 120-second command window and is therefore not recorded as a passing current gate.
+Frontend Vitest, TypeScript, and ESLint execution remains unproven because this worktree has no
+`node_modules`; nothing was installed. Static or syntax review is not frontend runtime proof.
+
+Hard downstream stop: no retry creation, Implementer relaunch, dependent activation, planning-point,
+Work Slice, Sprint, or Epic settlement, continuation, push, publication, provider acceptance, or
+user acceptance occurred or is authorized by this record.
