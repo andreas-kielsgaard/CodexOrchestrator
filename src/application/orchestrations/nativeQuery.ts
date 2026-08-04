@@ -2252,7 +2252,7 @@ const workUnitIntegration = (value: unknown): NativeWorkUnitIntegrationV1 => {
             'Work Unit prerequisite contribution recordedAt',
           );
           timestampAtOrAfter(
-            success?.recordedAt ?? authorizedAt,
+            settlement?.settledAt ?? success?.recordedAt ?? authorizedAt,
             recordedAt,
             'Work Unit prerequisite contribution',
           );

@@ -77,7 +77,9 @@ describe('WorkUnitDetailWorkspace Implementer outcome activity', () => {
     expect(detail).toHaveTextContent('Handler semantic judgment is pending');
     expect(detail).toHaveTextContent('Application-bound claims and evidence');
     expect(detail).toHaveTextContent('src/feature.ts');
-    expect(detail).toHaveTextContent('No retry attempt, settlement, dependent activation, or upward continuation is recorded.');
+    expect(detail).toHaveTextContent(
+      'The Handler review and decision do not themselves create a retry attempt, Work Unit settlement, dependent activation, or upward continuation.',
+    );
 
     rendered.rerender(workspace(reviewReadyOutcome(), handlerReview('failed')));
     detail = screen.getByLabelText('Work Unit context');
@@ -89,6 +91,9 @@ describe('WorkUnitDetailWorkspace Implementer outcome activity', () => {
     detail = screen.getByLabelText('Work Unit context');
     expect(detail).toHaveTextContent('Handler semantic judgment was recorded as accept');
     expect(detail).toHaveTextContent('Handler decision: accepted');
+    expect(detail).toHaveTextContent(
+      'The Handler review and decision do not themselves create a retry attempt, Work Unit settlement, dependent activation, or upward continuation.',
+    );
     expect(detail).not.toHaveTextContent('Structured return reason:');
 
     rendered.rerender(
@@ -107,6 +112,9 @@ describe('WorkUnitDetailWorkspace Implementer outcome activity', () => {
     expect(detail).toHaveTextContent('Structured return reason: review_failed');
     expect(detail).toHaveTextContent('Retry is required');
     expect(detail).toHaveTextContent('Review conflict observed at');
+    expect(detail).toHaveTextContent(
+      'The Handler review and decision do not themselves create a retry attempt, Work Unit settlement, dependent activation, or upward continuation.',
+    );
     expect(detail).not.toHaveTextContent(/implementation approved|Work Unit accepted|settled|Sprint continuation/i);
   });
 
@@ -160,6 +168,10 @@ describe('WorkUnitDetailWorkspace Implementer outcome activity', () => {
     detail = screen.getByLabelText('Work Unit context');
     expect(detail).toHaveTextContent('Integration success was recorded');
     expect(detail).toHaveTextContent('Work Unit settlement was recorded');
+    expect(detail).toHaveTextContent(
+      'The Handler review and decision do not themselves create a retry attempt, Work Unit settlement, dependent activation, or upward continuation.',
+    );
+    expect(detail).not.toHaveTextContent(/No [^.]*settlement[^.]*is recorded/i);
     expect(detail).toHaveTextContent('for 2 dependent Work Units');
     expect(detail).toHaveTextContent('This does not activate dependent work');
     expect(detail).not.toHaveTextContent(

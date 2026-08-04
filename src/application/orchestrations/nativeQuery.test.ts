@@ -748,6 +748,15 @@ describe('orchestration native query v1', () => {
       (integration: Record<string, unknown>) => delete integration.success,
     ],
     [
+      'contribution before settlement',
+      (integration: Record<string, unknown>) => {
+        (integration.settlement as Record<string, unknown>).settledAt =
+          '2026-08-04T00:00:27Z';
+        (integration.prerequisiteContribution as Record<string, unknown>).recordedAt =
+          '2026-08-04T00:00:26Z';
+      },
+    ],
+    [
       'foreign dependent count',
       (integration: Record<string, unknown>) =>
         ((integration.prerequisiteContribution as Record<string, unknown>).dependentCount = 2),

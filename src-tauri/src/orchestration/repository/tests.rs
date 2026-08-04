@@ -2261,6 +2261,21 @@ fn productive_integration_projection_rejects_order_unknown_stage_and_missing_ter
 }
 
 #[test]
+fn productive_integration_projection_rejects_contribution_before_settlement() {
+    let (connection, units, relationships) = productive_integration_projection_fixture();
+    seed_settled_productive_integration(&connection);
+    connection.execute_batch(
+        "UPDATE accepted_work_unit_integrations SET settled_at='2026-08-04T00:00:27Z';
+         UPDATE work_unit_settlements SET settled_at='2026-08-04T00:00:27Z';
+         UPDATE work_unit_prerequisite_contributions SET recorded_at='2026-08-04T00:00:26Z';",
+    ).unwrap();
+
+    assert!(productive_integration_rows(&connection, &units, &relationships)
+        .unwrap_err()
+        .contains("Prerequisite contribution precedes its prerequisite"));
+}
+
+#[test]
 fn productive_integration_projection_rejects_orphan_duplicate_foreign_and_unaccepted_correlations() {
     let (connection, units, relationships) = productive_integration_projection_fixture();
     connection.execute("INSERT INTO accepted_work_unit_integration_evidence VALUES('orphan','missing','fingerprint','commit','tree','parent','candidate','private-ref','intent','2026-08-04T00:00:25Z')", []).unwrap();

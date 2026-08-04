@@ -4303,7 +4303,7 @@ fn productive_integration_row(
             "Work Unit settlement",
         )?;
         if let Some(recorded_at) = contribution_recorded_at {
-            require_timestamp_at_or_after(evidence_recorded_at, recorded_at, "Prerequisite contribution")?;
+            require_timestamp_at_or_after(settlement_recorded_at, recorded_at, "Prerequisite contribution")?;
         }
         (
             Some(WorkUnitIntegrationSuccessDto { recorded_at: evidence_recorded_at.to_owned() }),

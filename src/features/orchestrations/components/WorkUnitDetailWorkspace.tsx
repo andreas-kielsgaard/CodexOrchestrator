@@ -596,7 +596,10 @@ function HandlerReviewActivity({
           Review conflict observed at {review.conflict.occurredAt}: {review.conflict.reason}.
         </p>
       )}
-      <p>No retry attempt, settlement, dependent activation, or upward continuation is recorded.</p>
+      <p>
+        The Handler review and decision do not themselves create a retry attempt, Work Unit
+        settlement, dependent activation, or upward continuation.
+      </p>
     </div>
   );
 }
