@@ -4,7 +4,7 @@ use super::conversation_harness::{self, ConversationHarnessRole};
 use super::accepted_candidate_authority::{reconcile_accepted_candidate_authorities, ACCEPTED_CANDIDATE_AUTHORITY_SCHEMA};
 use super::accepted_integration::reconcile_accepted_integrations;
 use super::work_unit_execution_harness::{WorkUnitExecutionHarnessService, WorkUnitHarnessRole};
-use super::work_unit_dependency_wave::reconcile_work_unit_dependency_wave;
+use super::work_unit_dependency_wave::{reconcile_work_slice_execution_settlement, reconcile_work_unit_dependency_wave};
 use super::mcp::CodexMcpInjection;
 use super::repository::{InitiatedSprintGitAuthority, InitiatedSprintGitAuthorityError, SqliteOrchestrationRepository};
 use crate::agent_sessions::{
@@ -1465,6 +1465,7 @@ impl SprintRunnerTransitionService {
             reconcile_accepted_candidate_authorities(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
             reconcile_accepted_integrations(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
             reconcile_work_unit_dependency_wave(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
+            reconcile_work_slice_execution_settlement(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
         }
         self.reconcile_work_unit_handlers()?;
         Ok(ids.len())
@@ -1629,7 +1630,15 @@ impl SprintRunnerTransitionService {
         }
         if self.record_reporting_lifecycle_v3(&invocation.id, status)? { self.reconcile_implementer_outcome_acceptance_v2()?; return self.reconcile_handler_reviews(); }
         let review:bool=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_handler_reviews WHERE review_invocation_id=?1)",[invocation.id.as_str()],|row|row.get(0)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        if review { self.record_handler_review_lifecycle(&invocation.id,status)?; self.finalize_handler_review_decisions()?; return self.reconcile_work_unit_retries(); }
+        if review {
+            self.record_handler_review_lifecycle(&invocation.id,status)?;
+            self.finalize_handler_review_decisions()?;
+            self.reconcile_work_unit_retries()?;
+            // A completed accepted review can have made a candidate integrable. Reconcile that
+            // durable generation before returning so its exact contribution becomes the sole
+            // authority for later eligible work; no transcript or terminal event is used.
+            return self.reconcile_work_unit_handlers();
+        }
         let sprint: Option<String> = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?.query_row(
             "SELECT sprint_id FROM sprint_runner_transitions WHERE epic_runner_invocation_id=?1 OR sprint_runner_invocation_id=?1 OR pre_start_upgrade_invocation_id=?1 OR epic_continuation_invocation_id=?1 OR sprint_continuation_invocation_id=?1 OR planning_control_invocation_id=?1 UNION SELECT sprint_id FROM work_slice_planning_requests WHERE planner_invocation_id=?1",
             [invocation.id.as_str()], |row| row.get(0),
@@ -2065,6 +2074,7 @@ impl SprintRunnerTransitionService {
         {
             let mut connection = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;
             reconcile_work_unit_dependency_wave(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
+            reconcile_work_slice_execution_settlement(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
         }
         let Some(handler) = self.work_unit_handler.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Work Unit Handler registry is poisoned".into()))?.clone() else { return Ok(()) };
         let units = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare(
@@ -2078,7 +2088,8 @@ impl SprintRunnerTransitionService {
         let mut connection = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;
         reconcile_accepted_candidate_authorities(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
         reconcile_accepted_integrations(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
-        reconcile_work_unit_dependency_wave(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)
+        reconcile_work_unit_dependency_wave(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
+        reconcile_work_slice_execution_settlement(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)
     }
 
     /// A persisted request is replayed through the same authenticated continuation boundary.
@@ -2412,7 +2423,8 @@ impl SprintRunnerTransitionService {
         let mut connection = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;
         reconcile_accepted_candidate_authorities(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
         reconcile_accepted_integrations(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
-        reconcile_work_unit_dependency_wave(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)
+        reconcile_work_unit_dependency_wave(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
+        reconcile_work_slice_execution_settlement(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)
     }
 
     /// A completed meaningful-progress disposition is application authority for exactly one
@@ -2677,17 +2689,19 @@ impl SprintRunnerTransitionService {
     ) -> Result<(), SprintRunnerTransitionError> {
         let lock = self.transition_lock(sprint_id)?;
         let _guard = lock.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Work Unit activation lock is poisoned".into()))?;
-        let dependency_count: i64 = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
-            "SELECT COUNT(*) FROM work_unit_relationships r WHERE r.materialization_id=?1 AND r.relationship_kind='depends_on' AND r.from_id=?2",
-            params![materialization_id, work_unit_id], |row| row.get(0)
-        ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         let authority: Option<String> = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
             "SELECT authority_id FROM initiated_sprint_git_authorities WHERE sprint_id=?1 ORDER BY recorded_at,authority_id LIMIT 1", [sprint_id], |row| row.get(0)
         ).optional().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        // A Handler's readiness is a launch fact, never satisfaction of a plan dependency.
-        // This boundary has no authoritative prerequisite-satisfaction fact, so dependents stay
-        // blocked even after a prerequisite Handler is launch-accepted or provider-observed.
-        let blocked = handler_activation_blocked_reason(dependency_count, authority.is_some());
+        let eligibility: Option<(String, Option<String>)> = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
+            "SELECT eligibility_state,blocked_reason FROM work_unit_dependency_activation_intents WHERE work_unit_id=?1 AND materialization_id=?2",
+            params![work_unit_id, materialization_id], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let blocked = match eligibility {
+            Some((state, None)) if state == "eligible" && authority.is_some() => None,
+            Some((state, Some(reason))) if state == "blocked" => Some(reason),
+            Some(_) => return Err(SprintRunnerTransitionError::Conflict),
+            None => Some("dependency_eligibility_not_recorded".into()),
+        };
         let attempt_id = stable_id("work-unit-handler-attempt", work_unit_id);
         let session_id = stable_id("work-unit-handler-session", work_unit_id);
         let invocation_id = stable_id("work-unit-handler-invocation", work_unit_id);
@@ -2698,14 +2712,14 @@ impl SprintRunnerTransitionService {
         if existing {
             self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute(
                 "UPDATE work_unit_handler_activations SET eligibility_state=?2,blocked_reason=?3 WHERE work_unit_id=?1 AND launch_accepted_at IS NULL",
-                params![work_unit_id,if blocked.is_some(){"blocked"}else{"eligible"},blocked]
+                params![work_unit_id,if blocked.is_some(){"blocked"}else{"eligible"},blocked.as_deref()]
             ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         } else {
             let desired = handler.current_handler_revision()
                 .map_err(|_| SprintRunnerTransitionError::Unavailable("load current immutable Handler revision".into()))?;
             self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute(
                 "INSERT OR IGNORE INTO work_unit_handler_activations (work_unit_id,materialization_id,sprint_id,attempt_id,handler_session_id,handler_invocation_id,handler_harness_key,handler_harness_version,handler_harness_revision_id,handler_harness_configuration_digest,handler_harness_repository_commit_ref,eligibility_state,blocked_reason,requested_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
-                params![work_unit_id,materialization_id,sprint_id,attempt_id,session_id,invocation_id,desired.harness_key,desired.profile.version,desired.revision_id,desired.configuration_digest,desired.repository_commit_ref,if blocked.is_some(){"blocked"}else{"eligible"},blocked,now]
+                params![work_unit_id,materialization_id,sprint_id,attempt_id,session_id,invocation_id,desired.harness_key,desired.profile.version,desired.revision_id,desired.configuration_digest,desired.repository_commit_ref,if blocked.is_some(){"blocked"}else{"eligible"},blocked.as_deref(),now]
             ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         }
         if blocked.is_some() { return Ok(()) }

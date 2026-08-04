@@ -676,3 +676,21 @@ unproven. This deterministic local/fake proof does not establish live-provider r
 provider-process reattachment, or broad-suite compliance. This correction does not add retry,
 ordinal-1 authority, relaunch, planning-point/Work Slice/Sprint/Epic continuation, push, or
 publication.
+
+### GD-01 graph-drain checkpoint
+
+- The application now validates the complete canonical `depends_on` graph before treating any
+  Work Unit as eligible, records durable execution-state projections, and uses accepted
+  integration settlements plus exact prerequisite contributions as the only downstream
+  authority. Cycles, malformed or duplicate graph facts, bad contributions, integration
+  attention, impossible terminal mixtures, and a fully evaluated but non-progressing generation
+  fail closed; a no-progress handback remains a distinct unsettled Work Unit state.
+- The three terminal facts are separate and idempotent: graph completion, Work Slice execution
+  settlement, and planning-point execution settlement. They are written only when every
+  canonical Work Unit has a coherent settled accepted integration and every canonical dependency
+  has its exact contribution. No later planning point, Sprint, or Epic action follows.
+- Local deterministic validation: `cargo test --lib work_unit_dependency_wave -- --nocapture`
+  passed **6 tests** (multi-root/multi-level exact terminal facts, cycle attention, malformed
+  contribution rejection, eligibility waves, activation replay, and concurrent reopen settlement
+  replay). `cargo check --lib` passed. These checks do not prove live-provider behavior, user
+  acceptance, or broad suite compliance.
