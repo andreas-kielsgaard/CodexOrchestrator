@@ -6282,10 +6282,11 @@ mod tests {
         returned.transition.record_handler_review_judgment_for_test(&returned_review, "return", Some(reason.clone())).unwrap();
         assert!(matches!(returned.transition.record_handler_review_judgment_for_test(&returned_review, "accept", None), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
         returned.base.runtime.finish(&returned_review, AgentInvocationTerminalStatus::Completed);
-        let return_decision:(String,String,Option<String>) = Connection::open(&returned.base.database_path).unwrap().query_row("SELECT decision_variant,return_reason_json,settlement_ready_at FROM work_unit_handler_decisions WHERE work_unit_id=?1", [&returned.work_unit_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
+        let return_decision:(String,String,Option<String>,Option<String>) = Connection::open(&returned.base.database_path).unwrap().query_row("SELECT decision_variant,return_reason_json,settlement_ready_at,retry_required_at FROM work_unit_handler_decisions WHERE work_unit_id=?1", [&returned.work_unit_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
         assert_eq!(return_decision.0, "returned");
         assert_eq!(serde_json::from_str::<serde_json::Value>(&return_decision.1).unwrap()["code"], "review_failed");
         assert!(return_decision.2.is_none());
+        assert!(return_decision.3.is_some());
         assert_eq!(Connection::open(&returned.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1", [&returned.work_unit_id], |row| row.get(0)).unwrap(), 1);
 
         let without_judgment = ReportingFixture::new();
