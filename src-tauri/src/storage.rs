@@ -496,15 +496,25 @@ mod tests {
                  DROP TABLE accepted_work_unit_integrations;
                  DROP TABLE accepted_handler_candidates;
                  CREATE TABLE accepted_handler_candidates (candidate_id TEXT PRIMARY KEY,work_unit_id TEXT,authority_id TEXT,pinned_at TEXT,attention_reason TEXT,candidate_commit_id TEXT,candidate_tree_id TEXT,private_ref_name TEXT,evidence_fingerprint TEXT);
-                 INSERT INTO accepted_handler_candidates VALUES ('candidate','unit','authority','t',NULL,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','refs/codex/orchestrator/accepted/candidate','evidence');
+                 INSERT INTO accepted_handler_candidates VALUES
+                   ('candidate','unit','authority','t',NULL,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','refs/codex/orchestrator/accepted/candidate','evidence'),
+                   ('terminal-candidate','terminal-unit','authority','t',NULL,'cccccccccccccccccccccccccccccccccccccccc','dddddddddddddddddddddddddddddddddddddddd','refs/codex/orchestrator/accepted/terminal-candidate','terminal-evidence');
                  CREATE TABLE accepted_work_unit_integrations (integration_id TEXT PRIMARY KEY,work_unit_id TEXT,candidate_id TEXT,authority_id TEXT,target_ref_name TEXT,pre_object_id TEXT,pre_version INTEGER,candidate_commit_id TEXT,candidate_tree_id TEXT,baseline_object_id TEXT,intent_fingerprint TEXT,intent_recorded_at TEXT,integration_commit_id TEXT,integration_tree_id TEXT,settled_at TEXT,attention_code TEXT,attention_recorded_at TEXT);
-                 INSERT INTO accepted_work_unit_integrations VALUES ('integration','unit','candidate','authority','refs/heads/main','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','intent','t',NULL,NULL,NULL,NULL,NULL);
+                 INSERT INTO accepted_work_unit_integrations VALUES
+                   ('integration','unit','candidate','authority','refs/heads/main','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','intent','t',NULL,NULL,NULL,NULL,NULL),
+                   ('terminal-integration','terminal-unit','terminal-candidate','authority','refs/heads/main','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',2,'cccccccccccccccccccccccccccccccccccccccc','dddddddddddddddddddddddddddddddddddddddd','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','terminal-intent','terminal-intent-at','eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee','ffffffffffffffffffffffffffffffffffffffff','terminal-settled-at',NULL,NULL);
+                 CREATE TABLE accepted_work_unit_integration_evidence (evidence_id TEXT PRIMARY KEY,integration_id TEXT,evidence_fingerprint TEXT,integration_commit_id TEXT,integration_tree_id TEXT,parent_object_id TEXT,candidate_id TEXT,target_ref_name TEXT,intent_fingerprint TEXT,recorded_at TEXT);
+                 INSERT INTO accepted_work_unit_integration_evidence VALUES ('terminal-evidence-id','terminal-integration','terminal-evidence-fingerprint','eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee','ffffffffffffffffffffffffffffffffffffffff','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','terminal-candidate','refs/heads/main','terminal-intent','terminal-evidence-at');
+                 CREATE TABLE work_unit_settlements (settlement_id TEXT PRIMARY KEY,work_unit_id TEXT,integration_id TEXT,settled_at TEXT);
+                 INSERT INTO work_unit_settlements VALUES ('terminal-settlement-id','terminal-unit','terminal-integration','terminal-settled-at');
+                 CREATE TABLE work_unit_prerequisite_contributions (contribution_id TEXT PRIMARY KEY,prerequisite_work_unit_id TEXT,dependent_work_unit_id TEXT,integration_id TEXT,relationship_id TEXT,recorded_at TEXT);
+                 INSERT INTO work_unit_prerequisite_contributions VALUES ('terminal-contribution-id','terminal-unit','dependent-unit','terminal-integration','terminal-edge','terminal-contribution-at');
                  PRAGMA user_version=18;",
             )
             .expect("v18 predecessor");
         initialize_active_database(&connection).expect("migrate v18");
         drop(connection);
-        let reopened = open_active_database(&path).expect("reopen v19");
+        let mut reopened = open_active_database(&path).expect("reopen v19");
         for table in [
             "accepted_work_unit_integrations",
             "accepted_work_unit_integration_evidence",
@@ -515,8 +525,21 @@ mod tests {
         }
         assert_eq!(reopened.query_row("SELECT candidate_id FROM accepted_handler_candidates WHERE candidate_id='candidate'", [], |row| row.get::<_, String>(0)).expect("preserved candidate"), "candidate");
         assert_eq!(reopened.query_row("SELECT attempt_baseline_object_id FROM accepted_handler_candidates WHERE candidate_id='candidate'", [], |row| row.get::<_, Option<String>>(0)).expect("preserved missing baseline"), None);
+        assert_eq!(reopened.query_row("SELECT attempt_baseline_object_id FROM accepted_handler_candidates WHERE candidate_id='terminal-candidate'", [], |row| row.get::<_, Option<String>>(0)).expect("preserved terminal missing baseline"), None);
         assert_eq!(reopened.query_row("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='integration'", [], |row| row.get::<_, String>(0)).expect("open stage"), "intent_reserved");
+        assert_eq!(reopened.query_row("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| row.get::<_, String>(0)).expect("terminal stage"), "settled");
+        let evolved_columns = reopened.prepare("PRAGMA table_info(accepted_work_unit_integrations)").unwrap().query_map([], |row| row.get::<_, String>(1)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        for column in ["stage","commit_fingerprint","object_created_at","ref_advanced_at","runtime_advanced_at","db_advanced_at","notification_intent_recorded_at","notification_delivered_at"] { assert!(evolved_columns.contains(&column.to_string()), "missing {column}"); }
+        let terminal: (String, Option<String>, Option<String>) = reopened.query_row("SELECT notification_intent_recorded_at,notification_delivered_at,commit_fingerprint FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
+        assert_eq!(terminal, ("terminal-settled-at".into(), None, None));
+        assert_eq!(reopened.query_row::<String, _, _>("SELECT evidence_id FROM accepted_work_unit_integration_evidence", [], |row| row.get(0)).unwrap(), "terminal-evidence-id");
+        assert_eq!(reopened.query_row::<String, _, _>("SELECT settlement_id FROM work_unit_settlements", [], |row| row.get(0)).unwrap(), "terminal-settlement-id");
+        assert_eq!(reopened.query_row::<String, _, _>("SELECT contribution_id FROM work_unit_prerequisite_contributions", [], |row| row.get(0)).unwrap(), "terminal-contribution-id");
         assert!(reopened.execute("INSERT INTO accepted_work_unit_integrations (integration_id,work_unit_id,candidate_id,authority_id,target_ref_name,pre_object_id,pre_version,candidate_commit_id,candidate_tree_id,baseline_object_id,intent_fingerprint,intent_recorded_at,stage) VALUES ('bad','unit','candidate','authority','refs/heads/main','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','intent','t','unknown')", []).is_err());
+        assert!(reopened.execute("UPDATE accepted_work_unit_integrations SET stage='unknown' WHERE integration_id='integration'", []).is_err());
+        crate::orchestration::accepted_integration::reconcile_accepted_integrations(&mut reopened).expect("NULL baseline remains non-integratable");
+        assert_eq!(reopened.query_row::<String, _, _>("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='integration'", [], |row| row.get(0)).unwrap(), "intent_reserved");
+        assert_eq!(reopened.query_row::<String, _, _>("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| row.get(0)).unwrap(), "settled");
         assert_eq!(pragma_i64(&reopened, "user_version"), ACTIVE_SCHEMA_VERSION);
     }
 

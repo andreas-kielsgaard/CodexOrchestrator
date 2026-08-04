@@ -5,6 +5,9 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
 use std::{fs, fs::{File, OpenOptions}, io::Write, path::{Path, PathBuf}, process::{Command, Stdio}};
 
+#[cfg(test)]
+mod accepted_integration_proof_tests;
+
 pub(crate) const ACCEPTED_INTEGRATION_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS accepted_work_unit_integrations (
  integration_id TEXT PRIMARY KEY, work_unit_id TEXT NOT NULL UNIQUE REFERENCES work_units(work_unit_id), candidate_id TEXT NOT NULL UNIQUE REFERENCES accepted_handler_candidates(candidate_id), authority_id TEXT NOT NULL REFERENCES initiated_sprint_git_authorities(authority_id), target_ref_name TEXT NOT NULL, pre_object_id TEXT NOT NULL, pre_version INTEGER NOT NULL, candidate_commit_id TEXT NOT NULL, candidate_tree_id TEXT NOT NULL, baseline_object_id TEXT NOT NULL, intent_fingerprint TEXT NOT NULL UNIQUE, intent_recorded_at TEXT NOT NULL, commit_fingerprint TEXT, stage TEXT NOT NULL DEFAULT 'intent_reserved' CHECK(stage IN ('intent_reserved','object_created','ref_advanced','runtime_advanced','db_advanced','settled','attention')), integration_commit_id TEXT, integration_tree_id TEXT, object_created_at TEXT, ref_advanced_at TEXT, runtime_advanced_at TEXT, db_advanced_at TEXT, settled_at TEXT, notification_intent_recorded_at TEXT, notification_delivered_at TEXT, attention_code TEXT, attention_recorded_at TEXT, CHECK ((attention_code IS NULL) = (attention_recorded_at IS NULL))
@@ -45,8 +48,32 @@ pub(crate) fn initialize_accepted_integration_schema(c: &Connection) -> Result<(
 
 fn ensure_columns(c: &Connection) -> Result<(), String> {
     let columns = c.prepare("PRAGMA table_info(accepted_work_unit_integrations)").and_then(|mut s| s.query_map([], |r| r.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>()).map_err(|e| e.to_string())?;
-    for (name, definition) in [("stage", "TEXT NOT NULL DEFAULT 'intent_reserved'"), ("commit_fingerprint", "TEXT")] {
+    let added_stage = !columns.iter().any(|column| column == "stage");
+    for (name, definition) in [
+        ("stage", "TEXT NOT NULL DEFAULT 'intent_reserved'"),
+        ("commit_fingerprint", "TEXT"),
+        ("object_created_at", "TEXT"),
+        ("ref_advanced_at", "TEXT"),
+        ("runtime_advanced_at", "TEXT"),
+        ("db_advanced_at", "TEXT"),
+        ("notification_intent_recorded_at", "TEXT"),
+        ("notification_delivered_at", "TEXT"),
+    ] {
         if !columns.iter().any(|column| column == name) { c.execute_batch(&format!("ALTER TABLE accepted_work_unit_integrations ADD COLUMN {name} {definition}")).map_err(|e| e.to_string())?; }
+    }
+    if added_stage {
+        c.execute_batch(
+            "UPDATE accepted_work_unit_integrations
+             SET stage=CASE
+               WHEN attention_code IS NOT NULL THEN 'attention'
+               WHEN settled_at IS NOT NULL THEN 'settled'
+               WHEN integration_commit_id IS NOT NULL AND integration_tree_id IS NOT NULL THEN 'object_created'
+               ELSE 'intent_reserved'
+             END;
+             UPDATE accepted_work_unit_integrations
+             SET notification_intent_recorded_at=settled_at
+             WHERE stage='settled' AND notification_intent_recorded_at IS NULL;",
+        ).map_err(|e| e.to_string())?;
     }
     c.execute_batch("CREATE TRIGGER IF NOT EXISTS accepted_work_unit_integrations_stage_insert BEFORE INSERT ON accepted_work_unit_integrations WHEN NEW.stage NOT IN ('intent_reserved','object_created','ref_advanced','runtime_advanced','db_advanced','settled','attention') BEGIN SELECT RAISE(ABORT,'invalid accepted integration stage'); END; CREATE TRIGGER IF NOT EXISTS accepted_work_unit_integrations_stage_update BEFORE UPDATE OF stage ON accepted_work_unit_integrations WHEN NEW.stage NOT IN ('intent_reserved','object_created','ref_advanced','runtime_advanced','db_advanced','settled','attention') BEGIN SELECT RAISE(ABORT,'invalid accepted integration stage'); END;").map_err(|e| e.to_string())?;
     Ok(())
@@ -103,7 +130,10 @@ fn reserve(c: &mut Connection, r: &Row) -> Result<(), String> {
 
 fn validate_integration_correlations(c: &Connection, r: &Row, i: &Integration) -> Result<(), String> {
     let exact: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM accepted_work_unit_integrations WHERE integration_id=?1 AND candidate_id=?2 AND work_unit_id=?3 AND authority_id=?4 AND target_ref_name=?5 AND candidate_commit_id=?6 AND candidate_tree_id=?7 AND baseline_object_id=?8)", params![i.id,r.candidate,r.unit,r.authority,i.reference,r.commit,r.tree,r.baseline], |x| x.get(0)).map_err(|e|e.to_string())?;
-    if exact { Ok(()) } else { Err("durable_integration_correlation_mismatch".into()) }
+    let target = target(c, &r.authority)?;
+    let id = stable_id("accepted-work-unit-integration", &r.candidate);
+    let intent = fingerprint(&[POLICY_VERSION, &id, &r.unit, &r.candidate, &r.authority, &i.reference, &i.pre, &i.version.to_string(), &r.baseline, &r.commit, &r.tree, &r.evidence]);
+    if exact && i.id == id && i.reference == target.reference && i.intent == intent { Ok(()) } else { Err("durable_integration_correlation_mismatch".into()) }
 }
 
 fn recover_and_advance(c: &mut Connection, r: &Row, i: &Integration, commit: &str) -> Result<(), String> {
@@ -207,6 +237,10 @@ fn persist_evidence_and_settlement(c: &mut Connection, r: &Row, i: &Integration,
     let settlement_id=stable_id("work-unit-settlement",&i.id); exact_insert(&tx, "INSERT INTO work_unit_settlements(settlement_id,work_unit_id,integration_id,settled_at) VALUES(?1,?2,?3,?4)", params![settlement_id,r.unit,i.id,timestamp], "SELECT EXISTS(SELECT 1 FROM work_unit_settlements WHERE settlement_id=?1 AND work_unit_id=?2 AND integration_id=?3)", params![settlement_id,r.unit,i.id])?;
     let edges = tx.prepare("SELECT relationship_id,from_id FROM work_unit_relationships WHERE relationship_kind='depends_on' AND to_id=?1 ORDER BY relationship_id").map_err(|e|e.to_string())?.query_map([&r.unit], |x| Ok((x.get::<_,String>(0)?,x.get::<_,String>(1)?))).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
     for (edge, dependent) in edges { let contribution_id=stable_id("work-unit-prerequisite-contribution",&format!("{}:{edge}",i.id)); exact_insert(&tx, "INSERT INTO work_unit_prerequisite_contributions(contribution_id,prerequisite_work_unit_id,dependent_work_unit_id,integration_id,relationship_id,recorded_at) VALUES(?1,?2,?3,?4,?5,?6)", params![contribution_id,r.unit,dependent,i.id,edge,timestamp], "SELECT EXISTS(SELECT 1 FROM work_unit_prerequisite_contributions WHERE contribution_id=?1 AND relationship_id=?2 AND prerequisite_work_unit_id=?3 AND dependent_work_unit_id=?4 AND integration_id=?5)", params![contribution_id,edge,r.unit,dependent,i.id])?; }
+    let expected_contributions:i64=tx.query_row("SELECT COUNT(*) FROM work_unit_relationships WHERE relationship_kind='depends_on' AND to_id=?1",[&r.unit],|x|x.get(0)).map_err(|e|e.to_string())?;
+    let actual_contributions:i64=tx.query_row("SELECT COUNT(*) FROM work_unit_prerequisite_contributions WHERE integration_id=?1",[&i.id],|x|x.get(0)).map_err(|e|e.to_string())?;
+    let divergent_contribution:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_prerequisite_contributions p WHERE p.integration_id=?1 AND NOT EXISTS(SELECT 1 FROM work_unit_relationships e WHERE e.relationship_kind='depends_on' AND e.relationship_id=p.relationship_id AND e.to_id=?2 AND e.from_id=p.dependent_work_unit_id AND p.prerequisite_work_unit_id=?2))",params![i.id,r.unit],|x|x.get(0)).map_err(|e|e.to_string())?;
+    if actual_contributions!=expected_contributions||divergent_contribution{return Err("durable_replay_conflict".into())}
     tx.execute("UPDATE accepted_work_unit_integrations SET settled_at=COALESCE(settled_at,?2),notification_intent_recorded_at=COALESCE(notification_intent_recorded_at,?2),stage='settled' WHERE integration_id=?1",params![i.id,timestamp]).map_err(|e|e.to_string())?;
     tx.commit().map_err(|e|e.to_string())
 }
@@ -221,8 +255,11 @@ fn verify_settled(c: &mut Connection, r: &Row, i: &Integration, t: &Target) -> R
     let exact_evidence: bool=c.query_row("SELECT EXISTS(SELECT 1 FROM accepted_work_unit_integration_evidence WHERE evidence_id=?1 AND integration_id=?2 AND evidence_fingerprint=?3 AND integration_commit_id=?4 AND integration_tree_id=?5 AND parent_object_id=?6 AND candidate_id=?7 AND target_ref_name=?8 AND intent_fingerprint=?9)",params![stable_id("accepted-integration-evidence",&i.id),i.id,evidence,commit,tree,i.pre,r.candidate,i.reference,i.intent],|x|x.get(0)).map_err(|e|e.to_string())?;
     let settlement:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_settlements WHERE settlement_id=?1 AND work_unit_id=?2 AND integration_id=?3)",params![stable_id("work-unit-settlement",&i.id),r.unit,i.id],|x|x.get(0)).map_err(|e|e.to_string())?;
     let missing:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_relationships e WHERE e.relationship_kind='depends_on' AND e.to_id=?1 AND NOT EXISTS(SELECT 1 FROM work_unit_prerequisite_contributions p WHERE p.relationship_id=e.relationship_id AND p.prerequisite_work_unit_id=?1 AND p.dependent_work_unit_id=e.from_id AND p.integration_id=?2))",params![r.unit,i.id],|x|x.get(0)).map_err(|e|e.to_string())?;
-    let extra:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_prerequisite_contributions p WHERE p.integration_id=?1 AND NOT EXISTS(SELECT 1 FROM work_unit_relationships e WHERE e.relationship_kind='depends_on' AND e.relationship_id=p.relationship_id AND e.to_id=?2 AND e.from_id=p.dependent_work_unit_id))",params![i.id,r.unit],|x|x.get(0)).map_err(|e|e.to_string())?;
-    if !exact_evidence||!settlement||missing||extra { return Err("settled_evidence_or_settlement_missing".into()) } Ok(())
+    let extra:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_prerequisite_contributions p WHERE p.integration_id=?1 AND NOT EXISTS(SELECT 1 FROM work_unit_relationships e WHERE e.relationship_kind='depends_on' AND e.relationship_id=p.relationship_id AND e.to_id=?2 AND e.from_id=p.dependent_work_unit_id AND p.prerequisite_work_unit_id=?2))",params![i.id,r.unit],|x|x.get(0)).map_err(|e|e.to_string())?;
+    let expected_contributions:i64=c.query_row("SELECT COUNT(*) FROM work_unit_relationships WHERE relationship_kind='depends_on' AND to_id=?1",[&r.unit],|x|x.get(0)).map_err(|e|e.to_string())?;
+    let actual_contributions:i64=c.query_row("SELECT COUNT(*) FROM work_unit_prerequisite_contributions WHERE integration_id=?1",[&i.id],|x|x.get(0)).map_err(|e|e.to_string())?;
+    let notification_intent:Option<String>=c.query_row("SELECT notification_intent_recorded_at FROM accepted_work_unit_integrations WHERE integration_id=?1",[&i.id],|x|x.get(0)).map_err(|e|e.to_string())?;
+    if !exact_evidence||!settlement||missing||extra||actual_contributions!=expected_contributions||notification_intent.is_none() { return Err("settled_evidence_or_settlement_missing".into()) } Ok(())
 }
 
 fn merged_tree(r: &Row, pre: &str) -> Result<String, String> { let dir=std::env::temp_dir().join(format!("codex-integration-{}",uuid::Uuid::new_v4())); fs::create_dir_all(&dir).map_err(|_|"temporary_index_unavailable".to_string())?; let index=dir.join("index"); let result=git_index(&r.repo,&["read-tree","-m",&r.baseline,pre,&r.commit],&index).and_then(|_|git_index(&r.repo,&["write-tree"],&index)); let _=fs::remove_dir_all(dir); result.map_err(|_|"integration_conflict".into()) }

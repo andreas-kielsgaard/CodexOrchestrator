@@ -39,6 +39,9 @@ use std::{
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
+#[cfg(test)]
+mod accepted_integration_gateway_tests;
+
 pub(crate) const SPRINT_RUNNER_QUERY_CONTRACT: &str = "sprint-runner-transition-query/v1";
 
 const SCHEMA: &str = r#"

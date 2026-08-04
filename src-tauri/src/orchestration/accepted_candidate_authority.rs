@@ -74,6 +74,13 @@ struct CandidateRow {
     baseline: String,
     authority_current: String,
     capture_id: String,
+    capture_key: String,
+    capture_fingerprint: String,
+    capture_epic: String,
+    capture_provenance: String,
+    capture_repository: String,
+    capture_repository_root: String,
+    capture_worktree: String,
     document_id: String,
     artifact_id: String,
     capture_root: String,
@@ -91,7 +98,9 @@ pub(crate) fn reconcile_accepted_candidate_authorities(
                 d.review_invocation_id,d.decision_fingerprint,r.delivered_payload_fingerprint,o.evidence_manifest_json,
                 o.comparison_fingerprint,o.evidence_content_fingerprints_json,
                 a.repository_root,a.repository_common_dir,a.worktree_root,x.baseline_object_id,a.current_object_id,
-                c.capture_authorization_id,l.document_ref_id,l.artifact_id,c.worktree_root,c.current_object_id
+                c.capture_authorization_id,c.idempotency_key,c.payload_fingerprint,c.epic_id,
+                c.provenance_id,c.repository_id,c.repository_root,c.worktree_id,
+                l.document_ref_id,l.artifact_id,c.worktree_root,c.current_object_id
          FROM work_unit_handler_decisions d
          JOIN work_unit_handler_reviews r ON r.review_invocation_id=d.review_invocation_id
          JOIN work_unit_implementer_outcomes o ON o.work_unit_id=d.work_unit_id
@@ -108,7 +117,7 @@ pub(crate) fn reconcile_accepted_candidate_authorities(
            AND o.evidence_ready_at IS NOT NULL AND o.application_accepted_at IS NOT NULL
          ORDER BY d.work_unit_id"
     ).map_err(|e| e.to_string())?
-    .query_map([], |r| Ok(CandidateRow { work_unit_id:r.get(0)?, sprint_id:r.get(1)?, authority_id:r.get(2)?, attempt_id:r.get(3)?, reporting:r.get(4)?, review:r.get(5)?, decision:r.get(6)?,delivered_evidence:r.get(7)?, manifest:r.get(8)?, comparison:r.get(9)?, contents:r.get(10)?, repo:r.get(11)?, common:r.get(12)?, authority_root:r.get(13)?, baseline:r.get(14)?, authority_current:r.get(15)?, capture_id:r.get(16)?, document_id:r.get(17)?,artifact_id:r.get(18)?,capture_root:r.get(19)?, capture_commit:r.get(20)? }))
+    .query_map([], |r| Ok(CandidateRow { work_unit_id:r.get(0)?, sprint_id:r.get(1)?, authority_id:r.get(2)?, attempt_id:r.get(3)?, reporting:r.get(4)?, review:r.get(5)?, decision:r.get(6)?,delivered_evidence:r.get(7)?, manifest:r.get(8)?, comparison:r.get(9)?, contents:r.get(10)?, repo:r.get(11)?, common:r.get(12)?, authority_root:r.get(13)?, baseline:r.get(14)?, authority_current:r.get(15)?, capture_id:r.get(16)?, capture_key:r.get(17)?, capture_fingerprint:r.get(18)?, capture_epic:r.get(19)?, capture_provenance:r.get(20)?, capture_repository:r.get(21)?, capture_repository_root:r.get(22)?, capture_worktree:r.get(23)?, document_id:r.get(24)?,artifact_id:r.get(25)?,capture_root:r.get(26)?, capture_commit:r.get(27)? }))
     .map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
     for row in rows {
         reconcile_candidate(connection, row)?;
@@ -183,9 +192,9 @@ fn reconcile_candidate(connection: &mut Connection, row: CandidateRow) -> Result
         &row.contents,
         &row.capture_id,
     ]);
-    let retained:Option<(String,String,String,Option<String>)>=connection.query_row("SELECT candidate_commit_id,candidate_tree_id,evidence_fingerprint,pinned_at FROM accepted_handler_candidates WHERE candidate_id=?1",[&candidate_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|e|e.to_string())?;
-    if let Some((commit, tree, stored, Some(_))) = retained {
-        if commit != row.capture_commit || stored != evidence {
+    let retained:Option<(String,String,String,Option<String>,Option<String>)>=connection.query_row("SELECT candidate_commit_id,candidate_tree_id,evidence_fingerprint,pinned_at,attempt_baseline_object_id FROM accepted_handler_candidates WHERE candidate_id=?1",[&candidate_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional().map_err(|e|e.to_string())?;
+    if let Some((commit, tree, stored, Some(_), retained_baseline)) = retained {
+        if commit != row.capture_commit || stored != evidence || retained_baseline.as_deref() != Some(row.baseline.as_str()) {
             return record_attention(
                 connection,
                 &candidate_id,
@@ -288,13 +297,13 @@ fn validate_candidate(connection: &Connection, row: &CandidateRow) -> Result<Str
     if !root.is_dir() || git(&root, &["status", "--porcelain"])? != "" {
         return Err("candidate_worktree_dirty".into());
     }
-    if git(&root, &["rev-parse", "--show-toplevel"])? != canonical(&root)?
-        || git(&repo, &["rev-parse", "--show-toplevel"])? != canonical(&repo)?
+    if git_path(&root, "--show-toplevel")? != canonical(&root)?
+        || git_path(&repo, "--show-toplevel")? != canonical(&repo)?
     {
         return Err("repository_root_drift".into());
     }
-    if git(&root, &["rev-parse", "--git-common-dir"])? != canonical(&PathBuf::from(&row.common))?
-        || git(&repo, &["rev-parse", "--git-common-dir"])?
+    if git_path(&root, "--git-common-dir")? != canonical(&PathBuf::from(&row.common))?
+        || git_path(&repo, "--git-common-dir")?
             != canonical(&PathBuf::from(&row.common))?
     {
         return Err("repository_common_dir_drift".into());
@@ -330,6 +339,9 @@ fn validate_candidate(connection: &Connection, row: &CandidateRow) -> Result<Str
 /// Revalidates every durable File Review/outcome/review/decision linkage without reading an
 /// attempt workspace. Retained reopen uses this after the private object check.
 fn validate_durable_lineage(connection: &Connection, row: &CandidateRow) -> Result<(), String> {
+    if capture_authorization_fingerprint(row) != row.capture_fingerprint {
+        return Err("capture_authorization_fingerprint_mismatch".into());
+    }
     let direct:Option<i64>=connection.query_row("SELECT 1 FROM file_review_git_capture_documents l JOIN file_review_git_capture_authorizations c ON c.capture_authorization_id=l.capture_authorization_id WHERE l.capture_authorization_id=?1 AND l.document_ref_id=?2 AND l.artifact_id=?3 AND c.current_object_id=?4 AND c.baseline_object_id=?5",params![row.capture_id,row.document_id,row.artifact_id,row.capture_commit,row.baseline],|r|r.get(0)).optional().map_err(|e|e.to_string())?;
     if direct.is_none() {
         return Err("capture_document_artifact_mismatch".into());
@@ -368,6 +380,22 @@ fn validate_durable_lineage(connection: &Connection, row: &CandidateRow) -> Resu
     Ok(())
 }
 
+fn capture_authorization_fingerprint(row: &CandidateRow) -> String {
+    fingerprint(&[
+        &row.capture_id,
+        &row.capture_key,
+        &row.capture_epic,
+        &row.sprint_id,
+        &row.capture_provenance,
+        &row.capture_repository,
+        &row.capture_repository_root,
+        &row.capture_worktree,
+        &row.capture_root,
+        &row.baseline,
+        &row.capture_commit,
+    ])
+}
+
 fn initialize_target(connection: &mut Connection, row: &CandidateRow) -> Result<(), String> {
     let existing:Option<(String,String,String,String,i64,String,String)>=connection.query_row("SELECT sprint_id,target_ref_name,current_object_id,binding_fingerprint,version,initialized_at,updated_at FROM sprint_target_currents WHERE authority_id=?1",[&row.authority_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).optional().map_err(|e|e.to_string())?;
     if let Some((sprint, reference, current, binding, version, initialized, updated)) = existing {
@@ -403,13 +431,13 @@ fn initialize_target(connection: &mut Connection, row: &CandidateRow) -> Result<
         return record_target_attention(connection, &row.authority_id, "target_worktree_dirty");
     };
     let current = git(&worktree, &["rev-parse", "--verify", "HEAD^{commit}"])?;
-    if git(&worktree, &["rev-parse", "--show-toplevel"])? != canonical(&worktree)?
+    if git_path(&worktree, "--show-toplevel")? != canonical(&worktree)?
         || git(
             &worktree,
             &["rev-parse", "--verify", &format!("{ref_name}^{{commit}}")],
         )? != current
         || current != row.authority_current
-        || git(&worktree, &["rev-parse", "--git-common-dir"])?
+        || git_path(&worktree, "--git-common-dir")?
             != canonical(&PathBuf::from(&row.common))?
     {
         return record_target_attention(connection, &row.authority_id, "target_worktree_drift");
@@ -452,10 +480,18 @@ fn canonical(path: &Path) -> Result<String, String> {
     path.canonicalize()
         .map_err(|_| "path_unavailable".to_string())
         .map(|p| {
-            p.to_string_lossy()
+            let normalized = p.to_string_lossy().replace('\\', "/");
+            normalized
+                .strip_prefix("//?/")
+                .unwrap_or(&normalized)
                 .trim_end_matches(['\\', '/'])
                 .to_string()
         })
+}
+fn git_path(root: &Path, argument: &str) -> Result<String, String> {
+    let path = PathBuf::from(git(root, &["rev-parse", argument])?);
+    let resolved = if path.is_absolute() { path } else { root.join(path) };
+    canonical(&resolved)
 }
 fn safe_ref(value: &str) -> bool {
     value.starts_with("refs/")
@@ -500,13 +536,11 @@ fn fingerprint(parts: &[&str]) -> String {
     format!("{:x}", h.finalize())
 }
 fn fingerprint_bytes(prefix: &str, value: &[u8]) -> String {
-    stable_id(
-        prefix,
-        &value
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>(),
-    )
+    let mut h = Sha256::new();
+    h.update(prefix.as_bytes());
+    h.update([0]);
+    h.update(value.iter().map(|byte| format!("{byte:02x}")).collect::<String>());
+    format!("{prefix}-{:x}", h.finalize())
 }
 
 #[cfg(test)]
@@ -518,7 +552,7 @@ mod tests {
         let file = &artifact["files"][0];
         let manifest=serde_json::json!([{"evidenceRef":"e1","displayName":"one.rs","changeKind":"modified"}]).to_string();
         let contents=serde_json::json!([{"evidenceRef":"e1","contentFingerprint":fingerprint_bytes("implementer-evidence-content",&serde_json::to_vec(file).unwrap())}]).to_string();
-        CandidateRow {
+        let mut row = CandidateRow {
             work_unit_id: "unit".into(),
             sprint_id: "sprint".into(),
             authority_id: "authority".into(),
@@ -536,16 +570,25 @@ mod tests {
             baseline: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
             authority_current: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
             capture_id: "capture".into(),
+            capture_key: "capture-key".into(),
+            capture_fingerprint: String::new(),
+            capture_epic: "epic".into(),
+            capture_provenance: "provenance".into(),
+            capture_repository: "repository".into(),
+            capture_repository_root: "x".into(),
+            capture_worktree: "worktree".into(),
             document_id: "document".into(),
             artifact_id: "artifact".into(),
             capture_root: "x".into(),
             capture_commit: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
-        }
+        };
+        row.capture_fingerprint = capture_authorization_fingerprint(&row);
+        row
     }
 
     fn durable_connection(payload: &[u8]) -> Connection {
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch("CREATE TABLE initiated_sprints(id TEXT PRIMARY KEY);CREATE TABLE initiated_sprint_git_authorities(authority_id TEXT PRIMARY KEY);CREATE TABLE work_units(work_unit_id TEXT PRIMARY KEY);CREATE TABLE work_unit_handler_reviews(review_invocation_id TEXT PRIMARY KEY);CREATE TABLE work_unit_handler_decisions(decision_fingerprint TEXT PRIMARY KEY);CREATE TABLE file_review_git_capture_authorizations(capture_authorization_id TEXT PRIMARY KEY,current_object_id TEXT,baseline_object_id TEXT);CREATE TABLE file_review_git_capture_documents(capture_authorization_id TEXT,document_ref_id TEXT,artifact_id TEXT);CREATE TABLE stored_file_review_artifacts(artifact_id TEXT,document_ref_id TEXT,payload BLOB);CREATE TABLE file_review_changed_files(document_ref_id TEXT,changed_file_reference_id TEXT,display_name TEXT,change_kind TEXT,ordinal INTEGER);").unwrap();
+        connection.execute_batch("CREATE TABLE initiated_sprints(id TEXT PRIMARY KEY);CREATE TABLE initiated_sprint_git_authorities(authority_id TEXT PRIMARY KEY);CREATE TABLE work_units(work_unit_id TEXT PRIMARY KEY);CREATE TABLE work_unit_handler_reviews(review_invocation_id TEXT PRIMARY KEY);CREATE TABLE work_unit_handler_decisions(decision_fingerprint TEXT PRIMARY KEY);CREATE TABLE file_review_git_capture_authorizations(capture_authorization_id TEXT PRIMARY KEY,idempotency_key TEXT,payload_fingerprint TEXT,epic_id TEXT,provenance_id TEXT,repository_id TEXT,repository_root TEXT,worktree_id TEXT,worktree_root TEXT,current_object_id TEXT,baseline_object_id TEXT);CREATE TABLE file_review_git_capture_documents(capture_authorization_id TEXT,document_ref_id TEXT,artifact_id TEXT);CREATE TABLE stored_file_review_artifacts(artifact_id TEXT,document_ref_id TEXT,payload BLOB);CREATE TABLE file_review_changed_files(document_ref_id TEXT,changed_file_reference_id TEXT,display_name TEXT,change_kind TEXT,ordinal INTEGER);").unwrap();
         connection
             .execute("INSERT INTO initiated_sprints VALUES('sprint')", [])
             .unwrap();
@@ -557,8 +600,9 @@ mod tests {
             .unwrap();
         connection
             .execute(
-                "INSERT INTO file_review_git_capture_authorizations VALUES('capture',?1,?2)",
+                "INSERT INTO file_review_git_capture_authorizations VALUES('capture','capture-key',?1,'epic','provenance','repository','x','worktree','x',?2,?3)",
                 params![
+                    row(payload).capture_fingerprint,
                     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                 ],
