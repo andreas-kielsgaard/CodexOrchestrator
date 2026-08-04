@@ -106,8 +106,13 @@ fn validate_integration_correlations(c: &Connection, r: &Row, i: &Integration) -
 fn recover_and_advance(c: &mut Connection, r: &Row, i: &Integration, commit: &str) -> Result<(), String> {
     let t = target(c, &r.authority)?;
     match i.stage.as_str() {
-        "intent_reserved" | "object_created" => require_pre_state(r, &t, i)?,
-        "ref_advanced" => { require_ref_advanced(r, i, commit, &t)?; return converge_runtime(c, r, i, commit); }
+        "intent_reserved" | "object_created" => {
+            if git(&r.worktree, &["show-ref", "--verify", "--hash", &t.reference])? == commit {
+                return adopt_owned_ref_effect(c, r, i, commit, &t);
+            }
+            require_pre_state(r, &t, i)?
+        }
+        "ref_advanced" => return adopt_owned_ref_effect(c, r, i, commit, &t),
         "runtime_advanced" => { require_ref_and_runtime(r, i, commit, &t, false)?; advance_database(c, r, i, commit)?; return persist_evidence_and_settlement(c, r, i, commit); }
         "db_advanced" => { require_ref_and_runtime(r, i, commit, &t, true)?; return persist_evidence_and_settlement(c, r, i, commit); }
         _ => return Err("unknown_integration_stage".into()),
@@ -117,6 +122,21 @@ fn recover_and_advance(c: &mut Connection, r: &Row, i: &Integration, commit: &st
     else if ref_value != commit { return Err("target_ref_advanced_or_foreign".into()) }
     c.execute("UPDATE accepted_work_unit_integrations SET ref_advanced_at=COALESCE(ref_advanced_at,?2),stage='ref_advanced' WHERE integration_id=?1", params![i.id, now()]).map_err(|e|e.to_string())?;
     converge_runtime(c, r, i, commit)
+}
+
+/// Adopt an exact owned ref effect when the effect completed before its durable stage write.
+/// The only recoverable states are the old index/worktree or the clean integration runtime.
+fn adopt_owned_ref_effect(c: &mut Connection, r: &Row, i: &Integration, commit: &str, t: &Target) -> Result<(), String> {
+    if require_ref_advanced(r, i, commit, t).is_ok() {
+        c.execute("UPDATE accepted_work_unit_integrations SET ref_advanced_at=COALESCE(ref_advanced_at,?2),stage='ref_advanced' WHERE integration_id=?1", params![i.id,now()]).map_err(|e|e.to_string())?;
+        return converge_runtime(c,r,i,commit);
+    }
+    if require_ref_and_runtime(r,i,commit,t,false).is_ok() {
+        c.execute("UPDATE accepted_work_unit_integrations SET ref_advanced_at=COALESCE(ref_advanced_at,?2),runtime_advanced_at=COALESCE(runtime_advanced_at,?2),stage='runtime_advanced' WHERE integration_id=?1",params![i.id,now()]).map_err(|e|e.to_string())?;
+        advance_database(c,r,i,commit)?;
+        return persist_evidence_and_settlement(c,r,i,commit);
+    }
+    Err("owned_ref_effect_state_ambiguous".into())
 }
 
 fn converge_runtime(c: &mut Connection, r: &Row, i: &Integration, commit: &str) -> Result<(), String> {
@@ -229,4 +249,6 @@ fn canon(path:&Path)->Result<String,String>{path.canonicalize().map_err(|_|"path
  #[test] fn lock_contention_stays_pending_then_converges(){let(_d,mut c,row)=fixture();let held=Lock::take(&row.common,"refs/heads/main").unwrap();reconcile_accepted_integrations(&mut c).unwrap();assert_eq!(c.query_row::<i64,_,_>("SELECT COUNT(*) FROM accepted_work_unit_integrations",[],|r|r.get(0)).unwrap(),1);assert_eq!(c.query_row::<Option<String>,_,_>("SELECT attention_code FROM accepted_work_unit_integrations",[],|r|r.get(0)).unwrap(),None);drop(held);reconcile_accepted_integrations(&mut c).unwrap();assert_eq!(c.query_row::<String,_,_>("SELECT stage FROM accepted_work_unit_integrations",[],|r|r.get(0)).unwrap(),"settled");}
  #[test] fn divergent_evidence_replay_is_rejected(){let(_d,mut c,_row)=fixture();reconcile_accepted_integrations(&mut c).unwrap();c.execute_batch("UPDATE accepted_work_unit_integration_evidence SET evidence_fingerprint='forged';UPDATE accepted_work_unit_integrations SET stage='db_advanced',settled_at=NULL;").unwrap();reconcile_accepted_integrations(&mut c).unwrap();assert_eq!(c.query_row::<String,_,_>("SELECT attention_code FROM accepted_work_unit_integrations",[],|r|r.get(0)).unwrap(),"durable_replay_conflict");}
  #[test] fn ref_before_runtime_reopen_converges_once(){let(_d,mut c,row)=fixture();reconcile_accepted_integrations(&mut c).unwrap();let commit:String=c.query_row("SELECT integration_commit_id FROM accepted_work_unit_integrations",[],|r|r.get(0)).unwrap();run(&row.repo,&["read-tree","--reset","-u",&row.baseline]);let binding=sprint_target_binding_fingerprint(&row.authority,"refs/heads/main",&row.baseline);c.execute_batch("DELETE FROM accepted_work_unit_integration_evidence;DELETE FROM work_unit_settlements;").unwrap();c.execute("UPDATE sprint_target_currents SET current_object_id=?1,binding_fingerprint=?2,version=1",params![row.baseline,binding]).unwrap();c.execute("UPDATE accepted_work_unit_integrations SET stage='ref_advanced',settled_at=NULL",[]).unwrap();reconcile_accepted_integrations(&mut c).unwrap();assert_eq!(git(&row.repo,&["rev-parse","HEAD"]).unwrap(),commit);assert_eq!(c.query_row::<String,_,_>("SELECT stage FROM accepted_work_unit_integrations",[],|r|r.get(0)).unwrap(),"settled");assert_eq!(c.query_row::<i64,_,_>("SELECT COUNT(*) FROM accepted_work_unit_integrations",[],|r|r.get(0)).unwrap(),1);}
+ #[test] fn ref_cas_before_stage_reopen_adopts_owned_pre_runtime(){let(_d,mut c,row)=fixture();reconcile_accepted_integrations(&mut c).unwrap();run(&row.repo,&["read-tree","--reset","-u",&row.baseline]);let binding=sprint_target_binding_fingerprint(&row.authority,"refs/heads/main",&row.baseline);c.execute_batch("DELETE FROM accepted_work_unit_integration_evidence;DELETE FROM work_unit_settlements;").unwrap();c.execute("UPDATE sprint_target_currents SET current_object_id=?1,binding_fingerprint=?2,version=1",params![row.baseline,binding]).unwrap();c.execute("UPDATE accepted_work_unit_integrations SET stage='object_created',settled_at=NULL",[]).unwrap();reconcile_accepted_integrations(&mut c).unwrap();assert_eq!(c.query_row::<String,_,_>("SELECT stage FROM accepted_work_unit_integrations",[],|r|r.get(0)).unwrap(),"settled");assert_eq!(c.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_settlements",[],|r|r.get(0)).unwrap(),1);}
+ #[test] fn runtime_before_stage_reopen_adopts_owned_clean_runtime(){let(_d,mut c,row)=fixture();reconcile_accepted_integrations(&mut c).unwrap();let binding=sprint_target_binding_fingerprint(&row.authority,"refs/heads/main",&row.baseline);c.execute_batch("DELETE FROM accepted_work_unit_integration_evidence;DELETE FROM work_unit_settlements;").unwrap();c.execute("UPDATE sprint_target_currents SET current_object_id=?1,binding_fingerprint=?2,version=1",params![row.baseline,binding]).unwrap();c.execute("UPDATE accepted_work_unit_integrations SET stage='ref_advanced',settled_at=NULL",[]).unwrap();reconcile_accepted_integrations(&mut c).unwrap();assert_eq!(c.query_row::<String,_,_>("SELECT stage FROM accepted_work_unit_integrations",[],|r|r.get(0)).unwrap(),"settled");assert_eq!(c.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_settlements",[],|r|r.get(0)).unwrap(),1);}
 }
