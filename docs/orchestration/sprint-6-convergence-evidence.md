@@ -676,3 +676,42 @@ unproven. This deterministic local/fake proof does not establish live-provider r
 provider-process reattachment, or broad-suite compliance. This correction does not add retry,
 ordinal-1 authority, relaunch, planning-point/Work Slice/Sprint/Epic continuation, push, or
 publication.
+
+## SRH-03: independent Handback/reassessment convergence audit
+
+Audit baseline: clean detached `8e4faddf6fbe21bb8bb7289fa3dbba7faeb3d78a`, with the SRH-01
+backend chain ending at `6ced5e4bc4cb6f8d6d9c5325c0a7b7e7072721aa` and the SRH-02 projection
+chain ending at the audit baseline. This audit made no product-code correction: the inspected
+cross-stack route is internally coherent at the source and strict-decoder boundaries below. This
+record is nevertheless **partial**, because current Rust completion status and any frontend runtime
+or TypeScript compilation result were not observed in this routed checkout.
+
+| Required boundary | Independent audit result | Evidence level |
+| --- | --- | --- |
+| Exact, once-only Handback route to the owning Sprint Runner | The delivery identity, reassessment invocation, and delivery fact are deterministically derived from the Handback; conflicting route rows fail. Persisted-not-accepted recovery rebinds the same Harness/invocation before launching, and an active different invocation leaves the route pending. | Source inspection of `reconcile_no_progress_handback`; available implementation report: Rust Handback suite **8/8**. |
+| Fact separation and reopen convergence | Delivery request/persistence, Harness binding, launch request/acceptance, provider observation, semantic reassessment, selected movement, escalation intent, and escalation delivery request are separate nullable facts. Reassessment requires persisted, bound, launch-accepted delivery; movement is idempotent by its Handback fingerprint. | Source inspection of transition storage/reconciliation and repository projection. |
+| Concern-preserving movement | Known alternate-work, agent-achievable dependency, and local-exhaustion paths require their bounded details. Unknown safe movement kinds remain projection-extensible without granting authority. Local exhaustion records only one upward intent and one delivery request. | Rust/TypeScript validator and projection inspection. |
+| Strict privacy and correlation projection | The Rust projection rejects partial/corrupt Handback bundles, forbidden receiver effects, incoherent phases, unmatched movement detail, invalid escalation order, and private fields. The TypeScript decoder independently rejects the same higher-effect, foreign, private, and contradictory shapes. | Source inspection; focused native-query Vitest was not runnable. |
+| Sprint Workspace checkpoint | The UI retains the concern as unresolved, labels delivery/request stages precisely, and says local exhaustion is an upward request rather than final Sprint/Epic blockage. It contains no Epic response, settlement, or completion claim. | Source inspection of presentation and component tests; runtime UI test was not runnable. |
+| Higher-effect absence | No inspected Handback path activates an Epic Runner, records Epic reassessment/decision, declares final Sprint/Epic blockage, settles, starts a new Sprint, grants raw route/Git authority, or creates later continuation. | Source inspection only; not a live-provider or human-observation claim. |
+
+Current audit checks:
+
+- `git status --short` and detached `HEAD` confirmed the clean baseline before this evidence edit;
+  `git diff --check` passed before the edit.
+- The routed availability report records the focused Rust Handback suite as **8/8** and `cargo
+  check` as passed with **seven pre-existing dead-code warnings**. Those reports are retained as
+  implementation evidence, not relabelled as a successful SRH-03 rerun.
+- Two serial attempts to run `cargo test --manifest-path src-tauri/Cargo.toml --lib handback --
+  --test-threads=1` reached the test executable but did not return within the host command windows
+  (about 124 seconds and 64 seconds). The second audit-spawned process was stopped after its
+  timeout. Neither attempt is counted as a pass or failure.
+- `node_modules`, local `tsc`, and local `vitest` are absent. No dependency was installed, linked,
+  or borrowed. Vitest and `tsc --noEmit` therefore remain unproven; esbuild/syntax transformation
+  is not substituted for either gate.
+
+Residual gates: a completing serial focused Rust Handback run; a frontend dependency environment
+authorized for the routed checkout, followed by focused Handback Vitest and `tsc --noEmit`; and
+any separately authorized live-provider/human observation. This record neither requests nor
+claims Epic receiver activation, Epic response, final blockage, settlement, new Sprint start,
+higher continuation, raw route/Git authority, publication, or user acceptance.
