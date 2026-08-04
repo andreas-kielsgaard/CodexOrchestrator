@@ -6303,6 +6303,39 @@ mod tests {
         let handoff: serde_json::Value = serde_json::from_str(&retry.9).unwrap();
         assert_eq!(handoff["handlerReturnReason"]["code"], "review_failed");
         assert!(handoff.get("privateRef").is_none() && handoff.get("candidateCommitId").is_none());
+        let retry_before_reopen = (retry.2.clone(), retry.3.clone(), retry.4.clone());
+        let launches_before_reopen = returned.base.runtime.requests().len();
+        let reopened_retry = returned.reopened();
+        reopened_retry.reconcile_handler_reviews_for_test().unwrap();
+        assert_eq!(returned.base.runtime.requests().len(), launches_before_reopen);
+        let retry_after_reopen: (String,String,String,String,String,String) = Connection::open(&returned.base.database_path).unwrap().query_row(
+            "SELECT retry_attempt_id,implementer_session_id,implementer_invocation_id,private_ref_name,candidate_commit_id,sprint_current_object_id FROM work_unit_retry_attempts WHERE work_unit_id=?1", [&returned.work_unit_id],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)),
+        ).unwrap();
+        assert_eq!((retry_after_reopen.0.clone(), retry_after_reopen.1.clone(), retry_after_reopen.2.clone()), retry_before_reopen);
+        let authority_root: String = Connection::open(&returned.base.database_path).unwrap().query_row(
+            "SELECT repository_root FROM initiated_sprint_git_authorities WHERE authority_id=?1", [&returned.authority_id], |row| row.get(0),
+        ).unwrap();
+        let retarget = std::process::Command::new("git").args(["update-ref", &retry_after_reopen.3, &retry_after_reopen.5])
+            .current_dir(&authority_root).output().unwrap();
+        assert!(retarget.status.success());
+        assert!(matches!(reopened_retry.reconcile_handler_reviews_for_test(), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
+        assert_eq!(Connection::open(&returned.base.database_path).unwrap().query_row::<String,_,_>(
+            "SELECT failure_reason FROM work_unit_retry_attempts WHERE work_unit_id=?1", [&returned.work_unit_id], |row| row.get(0),
+        ).unwrap(), "retry_private_ref_pin_failed");
+        let restore = std::process::Command::new("git").args(["update-ref", &retry_after_reopen.3, &retry_after_reopen.4])
+            .current_dir(&authority_root).output().unwrap();
+        assert!(restore.status.success());
+        reopened_retry.reconcile_handler_reviews_for_test().unwrap();
+        let recovered: (String,String,String,Option<String>,Option<String>) = Connection::open(&returned.base.database_path).unwrap().query_row(
+            "SELECT retry_attempt_id,implementer_session_id,implementer_invocation_id,failure_reason,retry_ready_at FROM work_unit_retry_attempts WHERE work_unit_id=?1", [&returned.work_unit_id],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)),
+        ).unwrap();
+        assert_eq!((recovered.0,recovered.1,recovered.2), retry_before_reopen);
+        assert!(recovered.3.is_none() && recovered.4.is_some());
+        assert_eq!(Connection::open(&returned.base.database_path).unwrap().query_row::<i64,_,_>(
+            "SELECT COUNT(*) FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=1", [&returned.work_unit_id], |row| row.get(0),
+        ).unwrap(), 1);
 
         let without_judgment = ReportingFixture::new();
         let without_judgment_review = without_judgment.ready_review();
