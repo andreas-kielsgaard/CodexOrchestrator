@@ -256,6 +256,13 @@ CREATE TABLE IF NOT EXISTS file_review_git_capture_authorizations (
  FOREIGN KEY (sprint_id) REFERENCES initiated_sprints(id) ON DELETE RESTRICT,
  FOREIGN KEY (provenance_id) REFERENCES epic_initiation_provenance(id) ON DELETE RESTRICT
 );
+CREATE TABLE IF NOT EXISTS file_review_git_capture_documents (
+ capture_authorization_id TEXT PRIMARY KEY REFERENCES file_review_git_capture_authorizations(capture_authorization_id) ON DELETE RESTRICT,
+ document_ref_id TEXT NOT NULL UNIQUE REFERENCES file_review_documents(document_ref_id) ON DELETE RESTRICT,
+ artifact_id TEXT NOT NULL UNIQUE REFERENCES stored_file_review_artifacts(artifact_id) ON DELETE RESTRICT,
+ linkage_fingerprint TEXT NOT NULL UNIQUE,
+ recorded_at TEXT NOT NULL
+);
 "#;
 pub(crate) const FILE_REVIEW_FACTS_IDEMPOTENCY_SCHEMA: &str = r#"
 ALTER TABLE file_review_documents ADD COLUMN payload_fingerprint TEXT NOT NULL DEFAULT '';
@@ -1738,6 +1745,15 @@ impl SqliteOrchestrationRepository {
             .lock()
             .map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)?;
         connection.query_row("SELECT authorization.capture_authorization_id, authorization.epic_id, authorization.sprint_id, authorization.provenance_id, authorization.repository_id, authorization.repository_root, authorization.worktree_id, authorization.worktree_root, authorization.baseline_object_id, authorization.current_object_id FROM file_review_git_capture_authorizations authorization JOIN initiated_sprints sprint ON sprint.id=authorization.sprint_id AND sprint.epic_id=authorization.epic_id JOIN epic_initiations epic ON epic.epic_id=authorization.epic_id AND epic.provenance_id=authorization.provenance_id WHERE authorization.capture_authorization_id=?1", params![capture_authorization_id], |r| Ok(FileReviewGitCaptureAuthorization { capture_authorization_id:r.get(0)?, epic_id:r.get(1)?, sprint_id:r.get(2)?, provenance_id:r.get(3)?, repository_id:r.get(4)?, repository_root:r.get(5)?, worktree_id:r.get(6)?, worktree_root:r.get(7)?, baseline_object_id:r.get(8)?, current_object_id:r.get(9)? })).optional().map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)
+    }
+
+    /// Producer-only durable linkage; an authorization can produce exactly one immutable review.
+    pub(crate) fn store_file_review_git_capture_document_link(&self,capture_authorization_id:&str,document_ref_id:&str,artifact_id:&str)->Result<(),FileReviewFactsError>{
+        let mut connection=self.connection.lock().map_err(|_|FileReviewFactsError::Unavailable("database lock is poisoned".into()))?;let tx=connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|FileReviewFactsError::Unavailable(e.to_string()))?;
+        let fingerprint=format!("{:x}",Sha256::digest(format!("{capture_authorization_id}\0{document_ref_id}\0{artifact_id}").as_bytes()));
+        let valid:Option<i64>=tx.query_row("SELECT 1 FROM file_review_git_capture_authorizations c JOIN file_review_documents d ON d.epic_id=c.epic_id AND d.sprint_id=c.sprint_id AND d.provenance_id=c.provenance_id JOIN stored_file_review_artifacts a ON a.artifact_id=?3 AND a.document_ref_id=d.document_ref_id WHERE c.capture_authorization_id=?1 AND d.document_ref_id=?2",params![capture_authorization_id,document_ref_id,artifact_id],|r|r.get(0)).optional().map_err(|e|FileReviewFactsError::Unavailable(e.to_string()))?;if valid.is_none(){return Err(FileReviewFactsError::Forbidden)}
+        let existing:Option<String>=tx.query_row("SELECT linkage_fingerprint FROM file_review_git_capture_documents WHERE capture_authorization_id=?1 OR document_ref_id=?2 OR artifact_id=?3",params![capture_authorization_id,document_ref_id,artifact_id],|r|r.get(0)).optional().map_err(|e|FileReviewFactsError::Unavailable(e.to_string()))?;if let Some(existing)=existing{if existing==fingerprint{tx.commit().map_err(|e|FileReviewFactsError::Unavailable(e.to_string()))?;return Ok(())}return Err(FileReviewFactsError::Conflict)}
+        tx.execute("INSERT INTO file_review_git_capture_documents(capture_authorization_id,document_ref_id,artifact_id,linkage_fingerprint,recorded_at) VALUES(?1,?2,?3,?4,?5)",params![capture_authorization_id,document_ref_id,artifact_id,fingerprint,timestamp(self.clock.now())]).map_err(|e|FileReviewFactsError::Unavailable(e.to_string()))?;tx.commit().map_err(|e|FileReviewFactsError::Unavailable(e.to_string()))?;Ok(())
     }
 
     /// Application-only transition store. Runtime and Git facts are supplied by an internal port.

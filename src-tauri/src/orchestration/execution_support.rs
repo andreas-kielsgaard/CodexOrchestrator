@@ -107,6 +107,7 @@ struct ExecutionWorkspaceBinding {
 struct CapturedInspection {
     manifest: Vec<ChangedFileManifestEntry>,
     comparison: Option<Vec<u8>>,
+    capture_authorization_id: Option<String>,
 }
 
 /// The only reference a later Harness action may retain for this capability.
@@ -129,6 +130,7 @@ pub(crate) enum ExecutionSupportIntent {
     ChangedFileManifest,
     Comparison,
     EvidenceContent { evidence_ref: String },
+    CaptureAuthorization,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -136,6 +138,7 @@ pub(crate) enum ExecutionSupportResponse {
     ChangedFileManifest(Vec<ChangedFileManifestEntry>),
     Comparison(Vec<u8>),
     EvidenceContent(Vec<u8>),
+    CaptureAuthorization(String),
 }
 
 /// The only roles the application can authorize for a future execution attempt.
@@ -400,6 +403,7 @@ impl ExecutionWorkspaceResolver for ProductExecutionWorkspaceResolver {
             return Ok(CapturedInspection {
                 manifest: vec![],
                 comparison: None,
+                capture_authorization_id: None,
             });
         }
         let snapshot = stable_id(
@@ -424,7 +428,7 @@ impl ExecutionWorkspaceResolver for ProductExecutionWorkspaceResolver {
         let produced = produce_file_review_from_git(
             &self.repository,
             ProduceFileReviewFromGit {
-                capture_authorization_id: snapshot,
+                capture_authorization_id: snapshot.clone(),
             },
         )
         .map_err(|_| ExecutionSupportError::Unavailable)?;
@@ -452,6 +456,7 @@ impl ExecutionWorkspaceResolver for ProductExecutionWorkspaceResolver {
         Ok(CapturedInspection {
             manifest,
             comparison: Some(document.payload),
+            capture_authorization_id: Some(snapshot),
         })
     }
 
@@ -753,6 +758,7 @@ impl ExecutionSupportService {
                 )
                 .map(ExecutionSupportResponse::EvidenceContent)
             }
+            ExecutionSupportIntent::CaptureAuthorization => inspection.capture_authorization_id.map(ExecutionSupportResponse::CaptureAuthorization).ok_or(ExecutionSupportError::Denied),
         }
     }
 }

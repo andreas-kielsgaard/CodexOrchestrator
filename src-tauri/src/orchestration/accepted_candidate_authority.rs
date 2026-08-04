@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS sprint_target_currents (
   target_ref_name TEXT NOT NULL,
   current_object_id TEXT NOT NULL,
   binding_fingerprint TEXT NOT NULL UNIQUE,
+  version INTEGER NOT NULL DEFAULT 1,
   initialized_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
   attention_reason TEXT,
   attention_recorded_at TEXT,
   CHECK ((attention_reason IS NULL) = (attention_recorded_at IS NULL))
@@ -61,6 +63,7 @@ struct CandidateRow {
     reporting: String,
     review: String,
     decision: String,
+    delivered_evidence: String,
     manifest: String,
     comparison: String,
     contents: String,
@@ -70,6 +73,8 @@ struct CandidateRow {
     baseline: String,
     authority_current: String,
     capture_id: String,
+    document_id: String,
+    artifact_id: String,
     capture_root: String,
     capture_commit: String,
 }
@@ -84,10 +89,10 @@ pub(crate) fn reconcile_accepted_candidate_authorities(
         .map_err(|e| e.to_string())?;
     let rows = connection.prepare(
         "SELECT d.work_unit_id,a.sprint_id,a.authority_id,o.attempt_id,o.reporting_invocation_id,
-                d.review_invocation_id,d.decision_fingerprint,o.evidence_manifest_json,
+                d.review_invocation_id,d.decision_fingerprint,r.delivered_payload_fingerprint,o.evidence_manifest_json,
                 o.comparison_fingerprint,o.evidence_content_fingerprints_json,
-                a.repository_root,a.repository_common_dir,a.worktree_root,a.baseline_object_id,a.current_object_id,
-                c.capture_authorization_id,c.worktree_root,c.current_object_id
+                a.repository_root,a.repository_common_dir,a.worktree_root,x.baseline_object_id,a.current_object_id,
+                c.capture_authorization_id,l.document_ref_id,l.artifact_id,c.worktree_root,c.current_object_id
          FROM work_unit_handler_decisions d
          JOIN work_unit_handler_reviews r ON r.review_invocation_id=d.review_invocation_id
          JOIN work_unit_implementer_outcomes o ON o.work_unit_id=d.work_unit_id
@@ -95,14 +100,16 @@ pub(crate) fn reconcile_accepted_candidate_authorities(
          JOIN work_unit_handler_activations h ON h.work_unit_id=d.work_unit_id AND h.attempt_id=o.attempt_id
          JOIN work_unit_materializations m ON m.materialization_id=h.materialization_id
          JOIN initiated_sprint_git_authorities a ON a.sprint_id=m.sprint_id
-         JOIN file_review_git_capture_authorizations c ON c.sprint_id=m.sprint_id
-           AND c.repository_id=a.repository_id AND c.baseline_object_id=a.baseline_object_id
+         JOIN execution_support_attempt_authorizations x ON x.attempt_id=o.attempt_id AND x.work_unit_id=d.work_unit_id AND x.role_kind='work_unit_implementer' AND x.sprint_git_authority_id=a.authority_id
+         JOIN execution_support_grants g ON g.attempt_id=o.attempt_id AND g.role_id='work_unit_implementer'
+         JOIN file_review_git_capture_authorizations c ON c.capture_authorization_id=o.file_review_capture_authorization_id AND c.worktree_id=g.workspace_id AND c.repository_id=a.repository_id AND c.baseline_object_id=x.baseline_object_id
+         JOIN file_review_git_capture_documents l ON l.capture_authorization_id=c.capture_authorization_id
          WHERE d.decision_variant='accepted' AND d.implementation_accepted_at IS NOT NULL
            AND r.lifecycle_status='completed' AND r.semantic_judgment_variant='accept'
            AND o.evidence_ready_at IS NOT NULL AND o.application_accepted_at IS NOT NULL
-         ORDER BY d.work_unit_id,c.recorded_at"
+         ORDER BY d.work_unit_id"
     ).map_err(|e| e.to_string())?
-    .query_map([], |r| Ok(CandidateRow { work_unit_id:r.get(0)?, sprint_id:r.get(1)?, authority_id:r.get(2)?, attempt_id:r.get(3)?, reporting:r.get(4)?, review:r.get(5)?, decision:r.get(6)?, manifest:r.get(7)?, comparison:r.get(8)?, contents:r.get(9)?, repo:r.get(10)?, common:r.get(11)?, authority_root:r.get(12)?, baseline:r.get(13)?, authority_current:r.get(14)?, capture_id:r.get(15)?, capture_root:r.get(16)?, capture_commit:r.get(17)? }))
+    .query_map([], |r| Ok(CandidateRow { work_unit_id:r.get(0)?, sprint_id:r.get(1)?, authority_id:r.get(2)?, attempt_id:r.get(3)?, reporting:r.get(4)?, review:r.get(5)?, decision:r.get(6)?,delivered_evidence:r.get(7)?, manifest:r.get(8)?, comparison:r.get(9)?, contents:r.get(10)?, repo:r.get(11)?, common:r.get(12)?, authority_root:r.get(13)?, baseline:r.get(14)?, authority_current:r.get(15)?, capture_id:r.get(16)?, document_id:r.get(17)?,artifact_id:r.get(18)?,capture_root:r.get(19)?, capture_commit:r.get(20)? }))
     .map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
     for row in rows {
         reconcile_candidate(connection, row)?;
@@ -114,11 +121,54 @@ fn reconcile_candidate(connection: &mut Connection, row: CandidateRow) -> Result
     let candidate_id = stable_id("accepted-handler-candidate", &row.decision);
     let private_ref = format!("refs/codex/orchestrator/accepted/{candidate_id}");
     let evidence = fingerprint(&[
+        &row.work_unit_id,
+        &row.attempt_id,
+        &row.authority_id,
+        &row.baseline,
+        &row.capture_commit,
+        &row.reporting,
+        &row.review,
+        &row.decision,
+        &row.delivered_evidence,
+        &row.document_id,
+        &row.artifact_id,
         &row.manifest,
         &row.comparison,
         &row.contents,
         &row.capture_id,
     ]);
+    let retained:Option<(String,String,String,Option<String>)>=connection.query_row("SELECT candidate_commit_id,candidate_tree_id,evidence_fingerprint,pinned_at FROM accepted_handler_candidates WHERE candidate_id=?1",[&candidate_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|e|e.to_string())?;
+    if let Some((commit, tree, stored, Some(_))) = retained {
+        if commit != row.capture_commit || stored != evidence {
+            return record_attention(
+                connection,
+                &candidate_id,
+                "retained_durable_lineage_mismatch",
+            );
+        }
+        let repository = PathBuf::from(&row.repo);
+        let actual = git(
+            &repository,
+            &["show-ref", "--verify", "--hash", &private_ref],
+        );
+        if actual.as_deref() != Ok(commit.as_str()) {
+            return record_attention(connection, &candidate_id, "private_ref_divergent");
+        }
+        if git(
+            &repository,
+            &["rev-parse", "--verify", &format!("{commit}^{{tree}}")],
+        )
+        .as_deref()
+            != Ok(tree.as_str())
+        {
+            return record_attention(
+                connection,
+                &candidate_id,
+                "retained_candidate_tree_mismatch",
+            );
+        }
+        return initialize_target(connection, &row);
+    }
     let valid = validate_candidate(connection, &row).and_then(|tree| {
         let ref_value = git(
             &PathBuf::from(&row.capture_root),
@@ -176,7 +226,7 @@ fn reconcile_candidate(connection: &mut Connection, row: CandidateRow) -> Result
     });
     match pinned {
         Ok(_) => {
-            connection.execute("UPDATE accepted_handler_candidates SET pinned_at=COALESCE(pinned_at,?2),attention_reason=NULL,attention_recorded_at=NULL WHERE candidate_id=?1",params![candidate_id,chrono::Utc::now().to_rfc3339()]).map_err(|e|e.to_string())?;
+            connection.execute("UPDATE accepted_handler_candidates SET pinned_at=COALESCE(pinned_at,?2) WHERE candidate_id=?1",params![candidate_id,chrono::Utc::now().to_rfc3339()]).map_err(|e|e.to_string())?;
             initialize_target(connection, &row)
         }
         Err(reason) => record_attention(connection, &candidate_id, &reason),
@@ -224,51 +274,53 @@ fn validate_candidate(connection: &Connection, row: &CandidateRow) -> Result<Str
             &format!("{}^{{tree}}", row.capture_commit),
         ],
     )?;
-    // Correlate the stored content and membership, not an Implementer claim, to exactly one
-    // producer-owned File Review document for this Sprint/candidate capture.
-    let expected: Vec<String> = serde_json::from_str::<Vec<serde_json::Value>>(&row.manifest)
-        .map_err(|_| "evidence_manifest_invalid".to_string())?
-        .into_iter()
-        .map(|v| {
-            v.get("evidenceRef")
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-                .ok_or_else(|| "evidence_manifest_invalid".to_string())
-        })
-        .collect::<Result<_, _>>()?;
-    let mut matched = 0usize;
-    let mut statement=connection.prepare("SELECT a.payload,d.document_ref_id FROM stored_file_review_artifacts a JOIN file_review_documents d ON d.document_ref_id=a.document_ref_id WHERE d.sprint_id=?1").map_err(|e|e.to_string())?;
-    let artifacts = statement
-        .query_map([&row.sprint_id], |r| {
-            Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, String>(1)?))
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-    for (payload, document) in artifacts {
-        if fingerprint_bytes("implementer-evidence-comparison", &payload) != row.comparison {
-            continue;
-        }
-        let mut files=connection.prepare("SELECT changed_file_reference_id FROM file_review_changed_files WHERE document_ref_id=?1 ORDER BY changed_file_reference_id").map_err(|e|e.to_string())?.query_map([&document],|r|r.get::<_,String>(0)).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
-        let mut expected = expected.clone();
-        files.sort();
-        expected.sort();
-        if files == expected {
-            matched += 1;
-        }
+    let payload:Vec<u8>=connection.query_row("SELECT payload FROM stored_file_review_artifacts WHERE artifact_id=?1 AND document_ref_id=?2",params![row.artifact_id,row.document_id],|r|r.get(0)).map_err(|_|"capture_document_artifact_mismatch".to_string())?;
+    if fingerprint_bytes("implementer-evidence-comparison", &payload) != row.comparison {
+        return Err("comparison_fingerprint_mismatch".into());
     }
-    if matched != 1 {
-        return Err(if matched == 0 {
-            "evidence_membership_mismatch"
-        } else {
-            "evidence_correlation_ambiguous"
-        }
-        .into());
+    let db_manifest=connection.prepare("SELECT changed_file_reference_id,display_name,change_kind FROM file_review_changed_files WHERE document_ref_id=?1 ORDER BY ordinal").map_err(|e|e.to_string())?.query_map([&row.document_id],|r|Ok(serde_json::json!({"evidenceRef":r.get::<_,String>(0)?,"displayName":r.get::<_,String>(1)?,"changeKind":r.get::<_,String>(2)?}))).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
+    if serde_json::to_string(&db_manifest).map_err(|e| e.to_string())? != row.manifest {
+        return Err("manifest_metadata_mismatch".into());
+    }
+    let artifact: serde_json::Value =
+        serde_json::from_slice(&payload).map_err(|_| "artifact_invalid".to_string())?;
+    let mut actual_contents = Vec::new();
+    for entry in db_manifest {
+        let reference = entry
+            .get("evidenceRef")
+            .and_then(|v| v.as_str())
+            .ok_or("manifest_metadata_mismatch")?;
+        let file = artifact
+            .get("files")
+            .and_then(|v| v.as_array())
+            .and_then(|files| {
+                files.iter().find(|file| {
+                    file.get("changedFileReferenceId").and_then(|v| v.as_str()) == Some(reference)
+                })
+            })
+            .ok_or("artifact_membership_mismatch")?;
+        actual_contents.push(serde_json::json!({"evidenceRef":reference,"contentFingerprint":fingerprint_bytes("implementer-evidence-content",&serde_json::to_vec(file).map_err(|e|e.to_string())?)}));
+    }
+    actual_contents.sort_by(|a, b| a["evidenceRef"].as_str().cmp(&b["evidenceRef"].as_str()));
+    if serde_json::to_string(&actual_contents).map_err(|e| e.to_string())? != row.contents {
+        return Err("evidence_content_fingerprint_mismatch".into());
     }
     Ok(tree)
 }
 
 fn initialize_target(connection: &mut Connection, row: &CandidateRow) -> Result<(), String> {
+    if connection
+        .query_row(
+            "SELECT 1 FROM sprint_target_currents WHERE authority_id=?1",
+            [&row.authority_id],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        return Ok(());
+    }
     let root = PathBuf::from(&row.repo);
     let worktree = PathBuf::from(&row.authority_root);
     let ref_name = match git(&worktree, &["symbolic-ref", "--quiet", "HEAD"]) {
@@ -296,14 +348,7 @@ fn initialize_target(connection: &mut Connection, row: &CandidateRow) -> Result<
     let tx = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| e.to_string())?;
-    let existing:Option<(String,String,String)>=tx.query_row("SELECT target_ref_name,current_object_id,binding_fingerprint FROM sprint_target_currents WHERE authority_id=?1",[&row.authority_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e|e.to_string())?;
-    if let Some(existing) = existing {
-        if existing != (ref_name, current, fingerprint) {
-            return Err("sprint_target_current_conflict".into());
-        }
-    } else {
-        tx.execute("INSERT INTO sprint_target_currents(authority_id,sprint_id,target_ref_name,current_object_id,binding_fingerprint,initialized_at) VALUES(?1,?2,?3,?4,?5,?6)",params![row.authority_id,row.sprint_id,ref_name,current,fingerprint,now]).map_err(|e|e.to_string())?;
-    }
+    tx.execute("INSERT INTO sprint_target_currents(authority_id,sprint_id,target_ref_name,current_object_id,binding_fingerprint,version,initialized_at,updated_at) VALUES(?1,?2,?3,?4,?5,1,?6,?6)",params![row.authority_id,row.sprint_id,ref_name,current,fingerprint,now]).map_err(|e|e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     connection
         .execute(

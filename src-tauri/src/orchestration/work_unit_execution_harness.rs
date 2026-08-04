@@ -546,6 +546,13 @@ impl WorkUnitExecutionHarnessPackage {
         }
     }
 
+    pub(crate) fn capture_authorization_id(&self) -> Result<String, WorkUnitHarnessError> {
+        match self.execution_support.consume(&self.reference.capability_ref, ExecutionSupportIntent::CaptureAuthorization)? {
+            ExecutionSupportResponse::CaptureAuthorization(value) => Ok(value),
+            _ => Err(WorkUnitHarnessError::Unavailable),
+        }
+    }
+
     pub(crate) fn evidence_content(
         &self,
         evidence_ref: &str,
