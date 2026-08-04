@@ -6336,6 +6336,28 @@ mod tests {
         assert_eq!(Connection::open(&returned.base.database_path).unwrap().query_row::<i64,_,_>(
             "SELECT COUNT(*) FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=1", [&returned.work_unit_id], |row| row.get(0),
         ).unwrap(), 1);
+        // Policy B: a runtime start error terminally fails this exact ordinal-1 invocation.  The
+        // retry row remains factual and unready; reopen only observes it and never relaunches.
+        let connection = Connection::open(&returned.base.database_path).unwrap();
+        connection.execute("DELETE FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1", [&retry_before_reopen.2]).unwrap();
+        connection.execute("UPDATE agent_session_invocations SET status='pending',effective_options_json=NULL,started_at=NULL,completed_at=NULL,exit_code=NULL,signal=NULL,runtime_error_json=NULL WHERE id=?1", [&retry_before_reopen.2]).unwrap();
+        connection.execute("UPDATE work_unit_retry_attempts SET launch_accepted_at=NULL,provider_activation_observed_at=NULL,retry_ready_at=NULL,failure_reason=NULL WHERE work_unit_id=?1", [&returned.work_unit_id]).unwrap();
+        drop(connection);
+        let launches_before_terminal_failure = returned.base.runtime.requests().len();
+        returned.base.runtime.fail_next_launch();
+        assert!(reopened_retry.reconcile_handler_reviews_for_test().is_err());
+        let terminal_failure: (String,String,String,String,Option<String>,Option<String>,Option<String>,String) = Connection::open(&returned.base.database_path).unwrap().query_row(
+            "SELECT retry_attempt_id,implementer_session_id,implementer_invocation_id,failure_reason,launch_accepted_at,provider_activation_observed_at,retry_ready_at,(SELECT status FROM agent_session_invocations WHERE id=implementer_invocation_id) FROM work_unit_retry_attempts WHERE work_unit_id=?1", [&returned.work_unit_id],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?)),
+        ).unwrap();
+        assert_eq!((terminal_failure.0.clone(),terminal_failure.1.clone(),terminal_failure.2.clone()), retry_before_reopen);
+        assert_eq!(terminal_failure.3, "retry_terminal_launch_failed");
+        assert!(terminal_failure.4.is_none() && terminal_failure.5.is_none() && terminal_failure.6.is_none());
+        assert_eq!(terminal_failure.7, "failed");
+        let terminal_reopen = returned.reopened();
+        terminal_reopen.reconcile_handler_reviews_for_test().unwrap();
+        assert_eq!(returned.base.runtime.requests().len(), launches_before_terminal_failure + 1);
+        assert_eq!(Connection::open(&returned.base.database_path).unwrap().query_row::<String,_,_>("SELECT failure_reason FROM work_unit_retry_attempts WHERE work_unit_id=?1", [&returned.work_unit_id], |row| row.get(0)).unwrap(), "retry_terminal_launch_failed");
 
         let without_judgment = ReportingFixture::new();
         let without_judgment_review = without_judgment.ready_review();

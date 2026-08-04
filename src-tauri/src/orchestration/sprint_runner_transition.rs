@@ -2012,6 +2012,18 @@ impl SprintRunnerTransitionService {
         let runtime = package.runtime_launch_configuration();
         if let Err(error) = self.sessions.create_application_session(CreateApplicationAgentSessionCommand { session_id: session.clone(), session: CreateAgentSessionCommand { title: Some("Work Unit Retry Implementer".into()), working_directory: Some(package.working_directory().into()), requested_options: runtime.requested_options.clone() }}) { return self.fail_retry(work_unit_id, "retry_session_creation_failed", SprintRunnerTransitionError::Unavailable(error.to_string())); }
         self.mark_retry(work_unit_id, "implementer_session_created_at")?;
+        // Policy B: a runtime launch error terminally fails this exact prepared invocation.  A
+        // reopen observes that durable fact; it neither launches it again nor allocates another.
+        let existing_history = self.sessions.load_session(&session).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        if let Some(existing) = existing_history.invocations.iter().find(|entry| entry.invocation.id == invocation) {
+            if existing.invocation.status == AgentInvocationStatus::Failed {
+                self.record_retry_failure(work_unit_id, "retry_terminal_launch_failed")?;
+                return Ok(());
+            }
+            if existing.invocation.status.is_terminal() {
+                return self.fail_retry(work_unit_id, "retry_terminal_invocation_incompatible", SprintRunnerTransitionError::Conflict);
+            }
+        }
         let prompt = format!("Work Unit Implementer correction attempt. Work only in the application-provided isolated retry workspace. The bounded correction handoff is below; it contains no private route, path, ref, or object id. Do not accept, review, retry, settle, activate dependents, or continue Sprint or Epic work.\n\n{handoff}");
         if let Err(error) = self.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: prompt.clone(), title: None, working_directory: Some(package.working_directory().into()), requested_options: Some(runtime.requested_options.clone()) }}) { return self.fail_retry(work_unit_id, "retry_invocation_preparation_failed", SprintRunnerTransitionError::Unavailable(error.to_string())); }
         self.mark_retry(work_unit_id, "implementer_invocation_prepared_at")?;
@@ -2028,7 +2040,11 @@ impl SprintRunnerTransitionService {
             Ok(ApplicationInvocationLaunchEvidence::LaunchAccepted) => { self.mark_retry(work_unit_id, "launch_accepted_at")?; self.mark_retry(work_unit_id, "retry_ready_at")?; }
             Ok(ApplicationInvocationLaunchEvidence::PersistedNotAccepted) => {
                 let launch = match self.sessions.launch_prepared_application_invocation_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: prompt, title: None, working_directory: Some(package.working_directory().into()), requested_options: Some(runtime.requested_options) }}, Some(runtime.extension)) { Ok(launch) => launch, Err(error) => return self.fail_retry(work_unit_id, "retry_launch_failed", SprintRunnerTransitionError::Unavailable(error.to_string())), };
-                if launch.launch_accepted { self.mark_retry(work_unit_id, "launch_accepted_at")?; self.mark_retry(work_unit_id, "retry_ready_at")?; } else { return self.fail_retry(work_unit_id, "retry_launch_not_accepted", SprintRunnerTransitionError::Unavailable("retry Implementer launch was not accepted".into())); }
+                if launch.launch_accepted { self.mark_retry(work_unit_id, "launch_accepted_at")?; self.mark_retry(work_unit_id, "retry_ready_at")?; } else {
+                    let history = self.sessions.load_session(&session).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+                    let terminal = history.invocations.iter().find(|entry| entry.invocation.id == invocation).is_some_and(|entry| entry.invocation.status == AgentInvocationStatus::Failed);
+                    return self.fail_retry(work_unit_id, if terminal { "retry_terminal_launch_failed" } else { "retry_launch_not_accepted" }, SprintRunnerTransitionError::Unavailable("retry Implementer launch was not accepted".into()));
+                }
             }
             Ok(ApplicationInvocationLaunchEvidence::NeverPersisted) => return self.fail_retry(work_unit_id, "retry_launch_missing_prepared_invocation", SprintRunnerTransitionError::Conflict),
         }
@@ -2043,8 +2059,12 @@ impl SprintRunnerTransitionService {
         self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute(&format!("UPDATE work_unit_retry_attempts SET {column}=COALESCE({column},?2) WHERE work_unit_id=?1"), params![work_unit_id,at]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         Ok(())
     }
-    fn fail_retry<T>(&self, work_unit_id: &str, reason: &str, error: SprintRunnerTransitionError) -> Result<T, SprintRunnerTransitionError> {
+    fn record_retry_failure(&self, work_unit_id: &str, reason: &str) -> Result<(), SprintRunnerTransitionError> {
         self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_retry_attempts SET failure_reason=?2 WHERE work_unit_id=?1", params![work_unit_id,reason]).map_err(|database_error| SprintRunnerTransitionError::Unavailable(database_error.to_string()))?;
+        Ok(())
+    }
+    fn fail_retry<T>(&self, work_unit_id: &str, reason: &str, error: SprintRunnerTransitionError) -> Result<T, SprintRunnerTransitionError> {
+        self.record_retry_failure(work_unit_id, reason)?;
         Err(error)
     }
     fn clear_retry_failure(&self, work_unit_id: &str) -> Result<(), SprintRunnerTransitionError> { self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_retry_attempts SET failure_reason=NULL WHERE work_unit_id=?1", [work_unit_id]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?; Ok(()) }
