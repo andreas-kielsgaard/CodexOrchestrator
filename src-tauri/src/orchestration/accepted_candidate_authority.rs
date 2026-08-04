@@ -117,6 +117,34 @@ pub(crate) fn reconcile_accepted_candidate_authorities(
     Ok(())
 }
 
+/// Application-only retained-candidate gate used by the integration drain.  It deliberately
+/// reruns the same durable review/evidence/capture checks as retention; no attempt worktree is
+/// consulted after the candidate was pinned.
+pub(crate) fn revalidate_retained_accepted_candidate(
+    connection: &mut Connection,
+    candidate_id: &str,
+) -> Result<(), String> {
+    let has_decisions: bool = connection
+        .query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_handler_decisions')", [], |row| row.get(0))
+        .map_err(|error| error.to_string())?;
+    if has_decisions {
+        reconcile_accepted_candidate_authorities(connection)?;
+    }
+    let row: Option<(Option<String>, Option<String>)> = connection
+        .query_row(
+            "SELECT pinned_at,attention_reason FROM accepted_handler_candidates WHERE candidate_id=?1",
+            [candidate_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    match row {
+        Some((Some(_), None)) => Ok(()),
+        Some((_, Some(reason))) => Err(format!("candidate_revalidation:{reason}")),
+        _ => Err("candidate_revalidation:not_retained".into()),
+    }
+}
+
 fn reconcile_candidate(connection: &mut Connection, row: CandidateRow) -> Result<(), String> {
     let candidate_id = stable_id("accepted-handler-candidate", &row.decision);
     let private_ref = format!("refs/codex/orchestrator/accepted/{candidate_id}");
