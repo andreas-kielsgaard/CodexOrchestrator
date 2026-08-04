@@ -612,7 +612,7 @@ export function WorkSlicePlannerBoundary({
             {materializations.map((materialization) => (
               <li key={materialization.materializationId}>
                 Accepted revision {materialization.acceptedRevisionId}:{' '}
-                {materializationLabel(materialization.stage)}.
+                {materializationLabel(materialization.stage)}. {executionSummary(materialization.execution)}
               </li>
             ))}
           </ul>
@@ -715,6 +715,19 @@ function materializationLabel(
     relationships_complete: 'relationships complete; settlement not recorded',
     settled: 'Work Units and relationships settled',
   }[stage];
+}
+
+function executionSummary(
+  execution: SprintWorkspacePresentationV1['sprint']['workUnitMaterializations'] extends readonly (infer T)[]
+    ? T extends { readonly execution?: infer E } ? E : never
+    : never,
+) {
+  if (!execution) return 'Execution progress is not recorded.';
+  if (execution.attention) return 'Execution needs attention; no Work Slice settlement is recorded.';
+  if (execution.planningPointSettlement) return 'Planning-point execution settlement is recorded.';
+  if (execution.settlement) return 'Work Slice execution settlement is recorded.';
+  if (execution.graphCompletion) return 'Graph completion is recorded; Work Slice execution settlement is not recorded.';
+  return 'Execution progress is not recorded.';
 }
 
 function plannerObservationSummary(

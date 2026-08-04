@@ -172,6 +172,7 @@ export interface ProductReadReferenceIndexV1 {
     readonly attemptHistory: readonly ProductWorkUnitAttemptHistoryV1[];
     readonly retryAttempts: readonly ProductWorkUnitRetryAttemptV1[];
     readonly integration?: ProductWorkUnitIntegrationV1;
+    readonly executionState?: ProductWorkUnitExecutionStateV1;
     readonly dependencyActivationIntent?: {
       readonly eligibilityState: 'blocked' | 'eligible';
       readonly blockedReason?: string;
@@ -243,6 +244,12 @@ export interface ProductReadCompositionInputV1 {
       | 'relationships_complete'
       | 'settled';
     readonly source: ReadSourceAuthorityV1;
+    readonly execution?: Readonly<{
+      readonly graphCompletion?: Readonly<{ readonly completedAt: string }>;
+      readonly settlement?: Readonly<{ readonly settledAt: string }>;
+      readonly planningPointSettlement?: Readonly<{ readonly settledAt: string }>;
+      readonly attention?: Readonly<{ readonly recordedAt: string }>;
+    }>;
   }[];
   readonly selection?: ProductReadSelectionV1;
   readonly bootstrapTransition?: Readonly<{
@@ -387,6 +394,10 @@ export type ProductWorkUnitIntegrationV1 = Readonly<{
     readonly recordedAt: string;
     readonly dependentCount: number;
   }>;
+}>;
+export type ProductWorkUnitExecutionStateV1 = Readonly<{
+  readonly state: 'waiting_on_prerequisites' | 'ready' | 'active' | 'retry_authorized' | 'handed_back' | 'settled' | 'attention';
+  readonly recordedAt: string;
 }>;
 
 export type ProductWorkUnitIncompleteDispositionV1 = Readonly<{
@@ -560,6 +571,7 @@ export interface ProductSprintRevisionViewV1 {
     readonly attemptHistory: readonly ProductWorkUnitAttemptHistoryV1[];
     readonly retryAttempts: readonly ProductWorkUnitRetryAttemptV1[];
     readonly integration?: ProductWorkUnitIntegrationV1;
+    readonly executionState?: ProductWorkUnitExecutionStateV1;
     readonly dependencyActivationIntent?: {
       readonly eligibilityState: 'blocked' | 'eligible';
       readonly blockedReason?: string;
@@ -632,6 +644,12 @@ export interface ProductSprintReadModelV1 {
       | 'relationships_complete'
       | 'settled';
     readonly source: ReadSourceAuthorityV1;
+    readonly execution?: Readonly<{
+      readonly graphCompletion?: Readonly<{ readonly completedAt: string }>;
+      readonly settlement?: Readonly<{ readonly settledAt: string }>;
+      readonly planningPointSettlement?: Readonly<{ readonly settledAt: string }>;
+      readonly attention?: Readonly<{ readonly recordedAt: string }>;
+    }>;
   }[];
   readonly sprintPlan: {
     readonly sprintPlanId: string;

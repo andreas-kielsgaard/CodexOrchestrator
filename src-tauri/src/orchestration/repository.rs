@@ -1163,6 +1163,14 @@ impl SqliteOrchestrationRepository {
         let handler_activation_tables = materialization_tables && connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_handler_activations')", [], |row| row.get::<_, bool>(0)).map_err(|e| e.to_string())?;
         let dependency_intent_tables = materialization_tables && connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_dependency_activation_intents')", [], |row| row.get::<_, bool>(0)).map_err(|e| e.to_string())?;
         let dependency_activation_intents = if dependency_intent_tables { collect(&connection, "SELECT work_unit_id,materialization_id,accepted_revision_id,eligibility_state,blocked_reason,eligibility_recorded_at,activation_intended_at FROM work_unit_dependency_activation_intents ORDER BY work_unit_id", |row| Ok(WorkUnitDependencyActivationIntentDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, accepted_revision_id:row.get(2)?, eligibility_state:row.get(3)?, blocked_reason:row.get(4)?, eligibility_recorded_at:row.get(5)?, activation_intended_at:row.get(6)? }))? } else { Vec::new() };
+        let execution_tables: i64 = connection.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_unit_execution_states','work_slice_execution_graph_completions','work_slice_execution_settlements','work_slice_planning_point_execution_settlements','work_slice_execution_attentions')", [], |row| row.get(0)).map_err(|e| e.to_string())?;
+        if execution_tables != 0 && execution_tables != 5 { return Err("Productive execution projection tables are incomplete".into()); }
+        let execution_enabled = execution_tables == 5;
+        let work_unit_execution_states = if execution_enabled { collect(&connection, "SELECT work_unit_id,materialization_id,accepted_revision_id,execution_state,recorded_at FROM work_unit_execution_states ORDER BY work_unit_id", |row| Ok(WorkUnitExecutionStateDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, accepted_revision_id:row.get(2)?, state:row.get(3)?, recorded_at:row.get(4)? }))? } else { Vec::new() };
+        let work_slice_execution_graph_completions = if execution_enabled { collect(&connection, "SELECT materialization_id,accepted_revision_id,completed_at FROM work_slice_execution_graph_completions ORDER BY materialization_id", |row| Ok(WorkSliceExecutionGraphCompletionDto { materialization_id:row.get(0)?, accepted_revision_id:row.get(1)?, completed_at:row.get(2)? }))? } else { Vec::new() };
+        let work_slice_execution_settlements = if execution_enabled { collect(&connection, "SELECT materialization_id,graph_completion_materialization_id,settled_at FROM work_slice_execution_settlements ORDER BY materialization_id", |row| Ok(WorkSliceExecutionSettlementDto { materialization_id:row.get(0)?, graph_completion_materialization_id:row.get(1)?, settled_at:row.get(2)? }))? } else { Vec::new() };
+        let work_slice_planning_point_execution_settlements = if execution_enabled { collect(&connection, "SELECT planning_point_id,materialization_id,work_slice_execution_materialization_id,settled_at FROM work_slice_planning_point_execution_settlements ORDER BY planning_point_id", |row| Ok(WorkSlicePlanningPointExecutionSettlementDto { planning_point_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_execution_materialization_id:row.get(2)?, settled_at:row.get(3)? }))? } else { Vec::new() };
+        let work_slice_execution_attentions = if execution_enabled { collect(&connection, "SELECT materialization_id,recorded_at FROM work_slice_execution_attentions ORDER BY materialization_id", |row| Ok(WorkSliceExecutionAttentionDto { materialization_id:row.get(0)?, recorded_at:row.get(1)? }))? } else { Vec::new() };
         let action_continuations = activation_rows(&connection, "work_unit_handler_action_continuations", "attempt_id,handler_session_id,original_handler_invocation_id,action_invocation_id,action_harness_revision_id,action_harness_configuration_digest,action_harness_repository_commit_ref,requested_at,authorized_at,invocation_prepared_at,harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,action_ready_at,blocked_reason,failure_reason", |row| Ok(WorkUnitHandlerActionContinuationDto { attempt_id:row.get(1)?, handler_session_id:row.get(2)?, original_handler_invocation_id:row.get(3)?, action_invocation_id:row.get(4)?, action_harness_revision_id:row.get(5)?, action_harness_configuration_digest:row.get(6)?, action_harness_repository_commit_ref:row.get(7)?, requested_at:row.get(8)?, authorized_at:row.get(9)?, invocation_prepared_at:row.get(10)?, harness_bound_at:row.get(11)?, launch_requested_at:row.get(12)?, launch_accepted_at:row.get(13)?, provider_activation_observed_at:row.get(14)?, action_ready_at:row.get(15)?, blocked_reason:row.get(16)?, failure_reason:row.get(17)? }))?;
         let implementer_activations = activation_rows(&connection, "work_unit_implementer_activations", "attempt_id,handler_invocation_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at,authorized_at,execution_support_granted_at,isolated_worktree_ready_at,implementer_session_created_at,implementer_invocation_prepared_at,implementer_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,implementer_ready_at,failure_reason", map_implementer_activation)?;
         let mut implementer_outcomes = implementer_outcome_rows(&connection)?;
@@ -1195,6 +1203,7 @@ impl SqliteOrchestrationRepository {
             validate_work_unit_activation_projection(work_unit)?;
         }
         validate_dependency_activation_intents(&dependency_activation_intents, &work_units)?;
+        validate_execution_projection(&work_unit_execution_states, &work_slice_execution_graph_completions, &work_slice_execution_settlements, &work_slice_planning_point_execution_settlements, &work_slice_execution_attentions, &work_unit_materializations, &work_units)?;
         if !implementer_outcomes.is_empty() {
             return Err("Implementer outcome references an unknown Work Unit".into());
         }
@@ -1233,6 +1242,7 @@ impl SqliteOrchestrationRepository {
             work_units,
             work_unit_relationships,
             dependency_activation_intents,
+            work_unit_execution_states, work_slice_execution_graph_completions, work_slice_execution_settlements, work_slice_planning_point_execution_settlements, work_slice_execution_attentions,
         })
     }
 
@@ -2797,6 +2807,7 @@ pub(crate) struct NativeQueryV2 {
     work_units: Vec<WorkUnitDto>,
     work_unit_relationships: Vec<WorkUnitRelationshipDto>,
     dependency_activation_intents: Vec<WorkUnitDependencyActivationIntentDto>,
+    work_unit_execution_states: Vec<WorkUnitExecutionStateDto>, work_slice_execution_graph_completions: Vec<WorkSliceExecutionGraphCompletionDto>, work_slice_execution_settlements: Vec<WorkSliceExecutionSettlementDto>, work_slice_planning_point_execution_settlements: Vec<WorkSlicePlanningPointExecutionSettlementDto>, work_slice_execution_attentions: Vec<WorkSliceExecutionAttentionDto>,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2966,6 +2977,20 @@ struct WorkUnitDependencyActivationIntentDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     activation_intended_at: Option<String>,
 }
+#[derive(Debug, PartialEq, Eq, Serialize)] #[serde(rename_all = "camelCase")]
+struct WorkUnitExecutionStateDto { work_unit_id: String, materialization_id: String, accepted_revision_id: String, state: String, recorded_at: String }
+#[derive(Debug, PartialEq, Eq, Serialize)] #[serde(rename_all = "camelCase")]
+struct WorkSliceExecutionGraphCompletionDto { materialization_id: String, accepted_revision_id: String, completed_at: String }
+#[derive(Debug, PartialEq, Eq, Serialize)] #[serde(rename_all = "camelCase")]
+struct WorkSliceExecutionSettlementDto { materialization_id: String, graph_completion_materialization_id: String, settled_at: String }
+#[derive(Debug, PartialEq, Eq, Serialize)] #[serde(rename_all = "camelCase")]
+struct WorkSlicePlanningPointExecutionSettlementDto { planning_point_id: String, materialization_id: String, work_slice_execution_materialization_id: String, settled_at: String }
+#[derive(Debug, PartialEq, Eq, Serialize)] #[serde(rename_all = "camelCase")]
+struct WorkSliceExecutionAttentionDto { materialization_id: String, recorded_at: String }
+fn validate_execution_projection(states:&[WorkUnitExecutionStateDto], completions:&[WorkSliceExecutionGraphCompletionDto], settlements:&[WorkSliceExecutionSettlementDto], planning:&[WorkSlicePlanningPointExecutionSettlementDto], attentions:&[WorkSliceExecutionAttentionDto], materializations:&[WorkUnitMaterializationDto], units:&[WorkUnitDto])->Result<(),String>{
+ let mut seen=std::collections::HashSet::new(); for state in states { if !seen.insert(&state.work_unit_id)||!matches!(state.state.as_str(),"waiting_on_prerequisites"|"ready"|"active"|"retry_authorized"|"handed_back"|"settled"|"attention"){return Err("Productive Work Unit execution state is duplicate or unknown".into())} let unit=units.iter().find(|u|u.work_unit_id==state.work_unit_id).ok_or_else(||"Productive Work Unit execution state references an unknown Work Unit".to_string())?; if unit.materialization_id!=state.materialization_id||unit.accepted_revision_id!=state.accepted_revision_id{return Err("Productive Work Unit execution state has foreign correlation".into())} }
+ if !states.is_empty()&&states.len()!=units.len(){return Err("Productive execution state is incomplete".into())} for c in completions {let m=materializations.iter().find(|m|m.materialization_id==c.materialization_id).ok_or_else(||"Productive graph completion references an unknown materialization".to_string())?;if m.accepted_revision_id!=c.accepted_revision_id||attentions.iter().any(|a|a.materialization_id==c.materialization_id)||units.iter().filter(|u|u.materialization_id==c.materialization_id).any(|u|!states.iter().any(|s|s.work_unit_id==u.work_unit_id&&s.state=="settled")){return Err("Productive graph completion is incoherent".into())}}
+ for s in settlements {if s.graph_completion_materialization_id!=s.materialization_id||!completions.iter().any(|c|c.materialization_id==s.materialization_id){return Err("Productive Work Slice execution settlement is incoherent".into())}} for p in planning {let m=materializations.iter().find(|m|m.materialization_id==p.materialization_id).ok_or_else(||"Productive planning-point execution settlement references an unknown materialization".to_string())?;if m.planning_point_id!=p.planning_point_id||p.work_slice_execution_materialization_id!=p.materialization_id||!settlements.iter().any(|s|s.materialization_id==p.materialization_id){return Err("Productive planning-point execution settlement is incoherent".into())}} Ok(()) }
 
 fn validate_dependency_activation_intents(
     intents: &[WorkUnitDependencyActivationIntentDto],

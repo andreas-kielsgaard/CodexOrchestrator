@@ -103,6 +103,12 @@ export function WorkUnitDetailWorkspace({
           <h1>{unit.title}</h1>
           <p>{unit.summary}</p>
           <p>{unit.details}</p>
+          {unit.executionState && (
+            <section className="work-unit-execution-progress" aria-label="Work Unit execution progress">
+              <h2>Execution progress</h2>
+              <p>{executionStateDetail(unit.executionState.state)}</p>
+            </section>
+          )}
           {(unit.handlerActivation ||
             unit.actionContinuation ||
             unit.implementerActivation ||
@@ -343,6 +349,20 @@ function handlerActivity(
   return activation.providerActivityObserved
     ? `${detail} Provider activity is observed separately.`
     : detail;
+}
+
+function executionStateDetail(
+  state: NonNullable<SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['executionState']>['state'],
+) {
+  return {
+    waiting_on_prerequisites: 'Waiting on recorded prerequisite work.',
+    ready: 'Ready for the recorded next work.',
+    active: 'Work is active.',
+    retry_authorized: 'A retry is authorized.',
+    handed_back: 'Work was handed back; no replacement is implied.',
+    settled: 'Work Unit execution is settled.',
+    attention: 'This Work Unit needs attention. Other lanes retain their own recorded state.',
+  }[state];
 }
 
 function actionContinuationActivity(

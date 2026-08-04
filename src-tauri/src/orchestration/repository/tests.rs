@@ -1669,6 +1669,7 @@ fn canonical_populated_query() -> NativeQueryV2 {
         work_units: vec![],
         work_unit_relationships: vec![],
         dependency_activation_intents: vec![],
+        work_unit_execution_states: vec![], work_slice_execution_graph_completions: vec![], work_slice_execution_settlements: vec![], work_slice_planning_point_execution_settlements: vec![], work_slice_execution_attentions: vec![],
     }
 }
 
@@ -1690,6 +1691,7 @@ fn current_native_fixture(value: &str) -> Result<serde_json::Value, serde_json::
         .as_object_mut()
         .unwrap()
         .insert("workUnitRelationships".into(), serde_json::json!([]));
+    for field in ["workUnitExecutionStates", "workSliceExecutionGraphCompletions", "workSliceExecutionSettlements", "workSlicePlanningPointExecutionSettlements", "workSliceExecutionAttentions"] { fixture.as_object_mut().unwrap().entry(field).or_insert(serde_json::json!([])); }
     Ok(fixture)
 }
 

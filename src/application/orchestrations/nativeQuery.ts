@@ -37,7 +37,23 @@ export interface OrchestrationNativeQueryV2 {
   readonly workUnits: readonly NativeMaterializedWorkUnitV1[];
   readonly workUnitRelationships: readonly NativeWorkUnitRelationshipV1[];
   readonly dependencyActivationIntents: readonly NativeWorkUnitDependencyActivationIntentV1[];
+  readonly workUnitExecutionStates: readonly NativeWorkUnitExecutionStateV1[];
+  readonly workSliceExecutionGraphCompletions: readonly NativeWorkSliceExecutionGraphCompletionV1[];
+  readonly workSliceExecutionSettlements: readonly NativeWorkSliceExecutionSettlementV1[];
+  readonly workSlicePlanningPointExecutionSettlements: readonly NativeWorkSlicePlanningPointExecutionSettlementV1[];
+  readonly workSliceExecutionAttentions: readonly NativeWorkSliceExecutionAttentionV1[];
 }
+export interface NativeWorkUnitExecutionStateV1 {
+  readonly workUnitId: string;
+  readonly materializationId: string;
+  readonly acceptedRevisionId: string;
+  readonly state: 'waiting_on_prerequisites' | 'ready' | 'active' | 'retry_authorized' | 'handed_back' | 'settled' | 'attention';
+  readonly recordedAt: string;
+}
+export interface NativeWorkSliceExecutionGraphCompletionV1 { readonly materializationId: string; readonly acceptedRevisionId: string; readonly completedAt: string; }
+export interface NativeWorkSliceExecutionSettlementV1 { readonly materializationId: string; readonly graphCompletionMaterializationId: string; readonly settledAt: string; }
+export interface NativeWorkSlicePlanningPointExecutionSettlementV1 { readonly planningPointId: string; readonly materializationId: string; readonly workSliceExecutionMaterializationId: string; readonly settledAt: string; }
+export interface NativeWorkSliceExecutionAttentionV1 { readonly materializationId: string; readonly recordedAt: string; }
 export interface NativeWorkUnitDependencyActivationIntentV1 {
   readonly workUnitId: string;
   readonly materializationId: string;
@@ -307,6 +323,11 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
       'workUnits',
       'workUnitRelationships',
       'dependencyActivationIntents',
+      'workUnitExecutionStates',
+      'workSliceExecutionGraphCompletions',
+      'workSliceExecutionSettlements',
+      'workSlicePlanningPointExecutionSettlements',
+      'workSliceExecutionAttentions',
     ],
     'native query',
   );
@@ -354,6 +375,11 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
         : array(root.dependencyActivationIntents, 'dependencyActivationIntents').map(
             dependencyActivationIntent,
           ),
+    workUnitExecutionStates: root.workUnitExecutionStates === undefined ? [] : array(root.workUnitExecutionStates, 'workUnitExecutionStates').map(workUnitExecutionState),
+    workSliceExecutionGraphCompletions: root.workSliceExecutionGraphCompletions === undefined ? [] : array(root.workSliceExecutionGraphCompletions, 'workSliceExecutionGraphCompletions').map(workSliceExecutionGraphCompletion),
+    workSliceExecutionSettlements: root.workSliceExecutionSettlements === undefined ? [] : array(root.workSliceExecutionSettlements, 'workSliceExecutionSettlements').map(workSliceExecutionSettlement),
+    workSlicePlanningPointExecutionSettlements: root.workSlicePlanningPointExecutionSettlements === undefined ? [] : array(root.workSlicePlanningPointExecutionSettlements, 'workSlicePlanningPointExecutionSettlements').map(workSlicePlanningPointExecutionSettlement),
+    workSliceExecutionAttentions: root.workSliceExecutionAttentions === undefined ? [] : array(root.workSliceExecutionAttentions, 'workSliceExecutionAttentions').map(workSliceExecutionAttention),
   };
   validate(query);
   return query;
@@ -416,14 +442,13 @@ export function nativeQueryProductCompositionInputV2(
     sourceKind: 'application_interpretation' as const,
     sourceReferences: [id],
   });
-  const settledMaterializations = query.workUnitMaterializations.filter(
-    (materialization) => materialization.settledAt !== undefined,
-  );
-  const materializedUnits = settledMaterializations.flatMap((materialization) =>
+  const materializedUnits = query.workUnitMaterializations
+    .filter((materialization) => materialization.settledAt !== undefined)
+    .flatMap((materialization) =>
     query.workUnits
       .filter((unit) => unit.materializationId === materialization.materializationId)
       .sort((left, right) => left.laneOrdinal - right.laneOrdinal),
-  );
+    );
   const scopeId = (unit: NativeMaterializedWorkUnitV1) =>
     `materialized-work-unit-scope:${unit.materializationId}:${unit.workUnitId}`;
   const materializationById = new Map(
@@ -435,6 +460,13 @@ export function nativeQueryProductCompositionInputV2(
   const dependencyIntentByWorkUnitId = new Map(
     query.dependencyActivationIntents.map((intent) => [intent.workUnitId, intent]),
   );
+  const executionStateByWorkUnitId = new Map(query.workUnitExecutionStates.map((state) => [state.workUnitId, state]));
+  const executionByMaterializationId = new Map(query.workUnitMaterializations.map((materialization) => [materialization.materializationId, {
+    graphCompletion: query.workSliceExecutionGraphCompletions.find((item) => item.materializationId === materialization.materializationId),
+    settlement: query.workSliceExecutionSettlements.find((item) => item.materializationId === materialization.materializationId),
+    planningPointSettlement: query.workSlicePlanningPointExecutionSettlements.find((item) => item.materializationId === materialization.materializationId),
+    attention: query.workSliceExecutionAttentions.find((item) => item.materializationId === materialization.materializationId),
+  }]));
   const events = {
     version: ORCHESTRATION_EVENTS_V1,
     epics: initiated.map((x) => ({ epicId: x.epicId })),
@@ -467,7 +499,7 @@ export function nativeQueryProductCompositionInputV2(
         ),
       gateIds: [],
     })),
-    workSlicePlanningPoints: settledMaterializations.map((materialization) => ({
+    workSlicePlanningPoints: query.workUnitMaterializations.filter((materialization) => materialization.settledAt !== undefined).map((materialization) => ({
       workSlicePlanningPointId: materialization.planningPointId,
       sprintPlanId: query.initiatedSprints.find(
         (sprint) => sprint.sprintId === materialization.sprintId,
@@ -596,7 +628,7 @@ export function nativeQueryProductCompositionInputV2(
         summary: 'Preparatory initial Sprint Plan revision.',
         source: source(initiated.find((e) => e.epicId === x.epicId)!.provenanceId),
       })),
-      workSlicePlanningPoints: settledMaterializations.map((materialization) => ({
+      workSlicePlanningPoints: query.workUnitMaterializations.filter((materialization) => materialization.settledAt !== undefined).map((materialization) => ({
         workSlicePlanningPointId: materialization.planningPointId,
         title: 'Accepted Work Slice',
         purpose: `Accepted immutable revision ${materialization.acceptedRevisionId}.`,
@@ -610,6 +642,9 @@ export function nativeQueryProductCompositionInputV2(
         source: source(unit.materializationId),
         ...(dependencyIntentByWorkUnitId.has(unit.workUnitId)
           ? { dependencyActivationIntent: dependencyIntentByWorkUnitId.get(unit.workUnitId) }
+          : {}),
+        ...(executionStateByWorkUnitId.has(unit.workUnitId)
+          ? { executionState: executionStateByWorkUnitId.get(unit.workUnitId) }
           : {}),
         ...(unit.handlerActivation
           ? { handlerActivation: handlerActivationPresentation(unit.handlerActivation) }
@@ -653,7 +688,7 @@ export function nativeQueryProductCompositionInputV2(
         source: source(x.provenanceId),
       })),
       sprintWorkspacePresentation: {
-        workSlicePlanningPointMembership: settledMaterializations.map((materialization) => ({
+        workSlicePlanningPointMembership: query.workUnitMaterializations.filter((materialization) => materialization.settledAt !== undefined).map((materialization) => ({
           workSlicePlanningPointId: materialization.planningPointId,
           sprintPlanRevisionId: query.initiatedSprints.find(
             (sprint) => sprint.sprintId === materialization.sprintId,
@@ -684,6 +719,7 @@ export function nativeQueryProductCompositionInputV2(
       acceptedRevisionId: materialization.acceptedRevisionId,
       sprintId: materialization.sprintId,
       stage: materializationStage(materialization),
+      ...(executionByMaterializationId.get(materialization.materializationId) ? { execution: executionByMaterializationId.get(materialization.materializationId) } : {}),
       source: source(materialization.materializationId),
     })),
     ...(transitionQuery
@@ -1205,6 +1241,32 @@ const workUnitMaterialization = (value: unknown): NativeWorkUnitMaterializationV
       : {}),
     ...(optionalTime('settledAt') ? { settledAt: optionalTime('settledAt') } : {}),
   };
+};
+const workUnitExecutionState = (value: unknown): NativeWorkUnitExecutionStateV1 => {
+  const x = object(value, 'Work Unit execution state');
+  keys(x, ['workUnitId', 'materializationId', 'acceptedRevisionId', 'state', 'recordedAt'], 'Work Unit execution state');
+  if (!['waiting_on_prerequisites', 'ready', 'active', 'retry_authorized', 'handed_back', 'settled', 'attention'].includes(x.state as string)) fail('invalid Work Unit execution state');
+  return { workUnitId: string(x.workUnitId, 'workUnitId'), materializationId: string(x.materializationId, 'materializationId'), acceptedRevisionId: string(x.acceptedRevisionId, 'acceptedRevisionId'), state: x.state as NativeWorkUnitExecutionStateV1['state'], recordedAt: timestamp(x.recordedAt, 'Work Unit execution state recordedAt') };
+};
+const workSliceExecutionGraphCompletion = (value: unknown): NativeWorkSliceExecutionGraphCompletionV1 => {
+  const x = object(value, 'Work Slice graph completion');
+  keys(x, ['materializationId', 'acceptedRevisionId', 'completedAt'], 'Work Slice graph completion');
+  return { materializationId: string(x.materializationId, 'materializationId'), acceptedRevisionId: string(x.acceptedRevisionId, 'acceptedRevisionId'), completedAt: timestamp(x.completedAt, 'Work Slice graph completion completedAt') };
+};
+const workSliceExecutionSettlement = (value: unknown): NativeWorkSliceExecutionSettlementV1 => {
+  const x = object(value, 'Work Slice execution settlement');
+  keys(x, ['materializationId', 'graphCompletionMaterializationId', 'settledAt'], 'Work Slice execution settlement');
+  return { materializationId: string(x.materializationId, 'materializationId'), graphCompletionMaterializationId: string(x.graphCompletionMaterializationId, 'graphCompletionMaterializationId'), settledAt: timestamp(x.settledAt, 'Work Slice execution settlement settledAt') };
+};
+const workSlicePlanningPointExecutionSettlement = (value: unknown): NativeWorkSlicePlanningPointExecutionSettlementV1 => {
+  const x = object(value, 'Work Slice planning-point execution settlement');
+  keys(x, ['planningPointId', 'materializationId', 'workSliceExecutionMaterializationId', 'settledAt'], 'Work Slice planning-point execution settlement');
+  return { planningPointId: string(x.planningPointId, 'planningPointId'), materializationId: string(x.materializationId, 'materializationId'), workSliceExecutionMaterializationId: string(x.workSliceExecutionMaterializationId, 'workSliceExecutionMaterializationId'), settledAt: timestamp(x.settledAt, 'Work Slice planning-point execution settlement settledAt') };
+};
+const workSliceExecutionAttention = (value: unknown): NativeWorkSliceExecutionAttentionV1 => {
+  const x = object(value, 'Work Slice execution attention');
+  keys(x, ['materializationId', 'recordedAt'], 'Work Slice execution attention');
+  return { materializationId: string(x.materializationId, 'materializationId'), recordedAt: timestamp(x.recordedAt, 'Work Slice execution attention recordedAt') };
 };
 const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
   const x = object(value, 'materialized Work Unit');
@@ -2568,12 +2630,21 @@ function validate(query: OrchestrationNativeQueryV2) {
     'Work Unit materialization planning point',
   );
   unique(query.workUnits, (x) => x.workUnitId, 'materialized Work Unit ID');
+  unique(query.workUnitExecutionStates, (x) => x.workUnitId, 'Work Unit execution state Work Unit ID');
+  unique(query.workSliceExecutionGraphCompletions, (x) => x.materializationId, 'Work Slice graph completion materialization ID');
+  unique(query.workSliceExecutionSettlements, (x) => x.materializationId, 'Work Slice execution settlement materialization ID');
+  unique(query.workSlicePlanningPointExecutionSettlements, (x) => x.planningPointId, 'Work Slice planning-point execution settlement planning point ID');
+  unique(query.workSliceExecutionAttentions, (x) => x.materializationId, 'Work Slice execution attention materialization ID');
   unique(query.workUnitRelationships, (x) => x.relationshipId, 'Work Unit relationship ID');
   unique(query.dependencyActivationIntents, (x) => x.workUnitId, 'dependency activation intent Work Unit ID');
   const materializations = new Map(
     query.workUnitMaterializations.map((x) => [x.materializationId, x]),
   );
   const unitsById = new Map(query.workUnits.map((unit) => [unit.workUnitId, unit]));
+  const stateByUnitId = new Map(query.workUnitExecutionStates.map((state) => [state.workUnitId, state]));
+  const completionByMaterializationId = new Map(query.workSliceExecutionGraphCompletions.map((item) => [item.materializationId, item]));
+  const settlementByMaterializationId = new Map(query.workSliceExecutionSettlements.map((item) => [item.materializationId, item]));
+  const attentionByMaterializationId = new Map(query.workSliceExecutionAttentions.map((item) => [item.materializationId, item]));
   query.dependencyActivationIntents.forEach((intent) => {
     const unit = unitsById.get(intent.workUnitId);
     const materialization = materializations.get(intent.materializationId);
@@ -2620,7 +2691,18 @@ function validate(query: OrchestrationNativeQueryV2) {
         fail('materialized Work Unit does not match its materialization');
       validateActivationCorrelations(unit);
     });
+    if (query.workUnitExecutionStates.length && units.some((unit) => !stateByUnitId.has(unit.workUnitId))) fail('productive execution state is incomplete');
+    const completion = completionByMaterializationId.get(materialization.materializationId);
+    const attention = attentionByMaterializationId.get(materialization.materializationId);
+    if (completion) {
+      if (completion.acceptedRevisionId !== materialization.acceptedRevisionId || attention || units.some((unit) => stateByUnitId.get(unit.workUnitId)?.state !== 'settled')) fail('Work Slice graph completion is incoherent');
+      const settlement = settlementByMaterializationId.get(materialization.materializationId);
+      if (settlement && (settlement.graphCompletionMaterializationId !== materialization.materializationId || Date.parse(settlement.settledAt) < Date.parse(completion.completedAt))) fail('Work Slice execution settlement is incoherent');
+    } else if (settlementByMaterializationId.has(materialization.materializationId)) fail('Work Slice execution settlement lacks graph completion');
   });
+  query.workUnitExecutionStates.forEach((state) => { const unit = unitsById.get(state.workUnitId); if (!unit || unit.materializationId !== state.materializationId || unit.acceptedRevisionId !== state.acceptedRevisionId) fail('Work Unit execution state has invalid correlation'); });
+  query.workSliceExecutionAttentions.forEach((attention) => { if (!materializations.has(attention.materializationId)) fail('Work Slice execution attention references unknown materialization'); });
+  query.workSlicePlanningPointExecutionSettlements.forEach((item) => { const materialization = materializations.get(item.materializationId); const settlement = settlementByMaterializationId.get(item.materializationId); if (!materialization || item.planningPointId !== materialization.planningPointId || item.workSliceExecutionMaterializationId !== item.materializationId || !settlement || Date.parse(item.settledAt) < Date.parse(settlement.settledAt)) fail('Work Slice planning-point execution settlement is incoherent'); });
   if (query.workUnits.some((unit) => !materializations.has(unit.materializationId)))
     fail('materialized Work Unit references unknown materialization');
   if (query.workUnitRelationships.some((item) => !materializations.has(item.materializationId)))
