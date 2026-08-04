@@ -28,6 +28,14 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
         .map_err(|error| format!("Unable to read active schema version: {error}"))?;
     if current_version == ACTIVE_SCHEMA_VERSION {
+        let transaction = connection
+            .unchecked_transaction()
+            .map_err(|error| format!("Unable to begin active v19 schema evolution: {error}"))?;
+        crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
+            .map_err(|error| format!("Unable to evolve accepted-integration schema: {error}"))?;
+        transaction
+            .commit()
+            .map_err(|error| format!("Unable to commit active v19 schema evolution: {error}"))?;
         return Ok(());
     }
     if (1..=18).contains(&current_version) {
@@ -529,7 +537,9 @@ mod tests {
         assert_eq!(reopened.query_row("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='integration'", [], |row| row.get::<_, String>(0)).expect("open stage"), "intent_reserved");
         assert_eq!(reopened.query_row("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| row.get::<_, String>(0)).expect("terminal stage"), "settled");
         let evolved_columns = reopened.prepare("PRAGMA table_info(accepted_work_unit_integrations)").unwrap().query_map([], |row| row.get::<_, String>(1)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
-        for column in ["stage","commit_fingerprint","object_created_at","ref_advanced_at","runtime_advanced_at","db_advanced_at","notification_intent_recorded_at","notification_delivered_at"] { assert!(evolved_columns.contains(&column.to_string()), "missing {column}"); }
+        for column in ["stage","authorization_recorded_at","commit_fingerprint","object_created_at","ref_advanced_at","runtime_advanced_at","db_advanced_at","notification_intent_recorded_at","notification_delivered_at"] { assert!(evolved_columns.contains(&column.to_string()), "missing {column}"); }
+        assert_eq!(reopened.query_row::<String, _, _>("SELECT authorization_recorded_at FROM accepted_work_unit_integrations WHERE integration_id='integration'", [], |row| row.get(0)).unwrap(), "t");
+        assert_eq!(reopened.query_row::<String, _, _>("SELECT authorization_recorded_at FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| row.get(0)).unwrap(), "terminal-intent-at");
         let terminal: (String, Option<String>, Option<String>) = reopened.query_row("SELECT notification_intent_recorded_at,notification_delivered_at,commit_fingerprint FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
         assert_eq!(terminal, ("terminal-settled-at".into(), None, None));
         assert_eq!(reopened.query_row::<String, _, _>("SELECT evidence_id FROM accepted_work_unit_integration_evidence", [], |row| row.get(0)).unwrap(), "terminal-evidence-id");
@@ -540,6 +550,35 @@ mod tests {
         crate::orchestration::accepted_integration::reconcile_accepted_integrations(&mut reopened).expect("NULL baseline remains non-integratable");
         assert_eq!(reopened.query_row::<String, _, _>("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='integration'", [], |row| row.get(0)).unwrap(), "intent_reserved");
         assert_eq!(reopened.query_row::<String, _, _>("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| row.get(0)).unwrap(), "settled");
+        assert_eq!(pragma_i64(&reopened, "user_version"), ACTIVE_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn evolves_existing_v19_integration_authorization_boundary() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("active-v19.sqlite");
+        let connection = open_active_database(&path).expect("current database");
+        connection.execute_batch(
+            "PRAGMA foreign_keys=OFF;
+             DROP TABLE work_unit_prerequisite_contributions;
+             DROP TABLE work_unit_settlements;
+             DROP TABLE accepted_work_unit_integration_evidence;
+             DROP TABLE accepted_work_unit_integrations;
+             CREATE TABLE accepted_work_unit_integrations (integration_id TEXT PRIMARY KEY,work_unit_id TEXT,candidate_id TEXT,authority_id TEXT,target_ref_name TEXT,pre_object_id TEXT,pre_version INTEGER,candidate_commit_id TEXT,candidate_tree_id TEXT,baseline_object_id TEXT,intent_fingerprint TEXT,intent_recorded_at TEXT,integration_commit_id TEXT,integration_tree_id TEXT,settled_at TEXT,attention_code TEXT,attention_recorded_at TEXT);
+             INSERT INTO accepted_work_unit_integrations VALUES ('integration-v19','unit','candidate','authority','refs/heads/main','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','cccccccccccccccccccccccccccccccccccccccc','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','intent-v19','2026-08-04T00:00:00Z',NULL,NULL,NULL,NULL,NULL);
+             PRAGMA user_version=19;",
+        ).expect("v19 predecessor");
+        drop(connection);
+
+        let reopened = open_active_database(&path).expect("evolve v19");
+        assert_eq!(
+            reopened.query_row::<String, _, _>(
+                "SELECT authorization_recorded_at FROM accepted_work_unit_integrations WHERE integration_id='integration-v19'",
+                [],
+                |row| row.get(0),
+            ).unwrap(),
+            "2026-08-04T00:00:00Z"
+        );
         assert_eq!(pragma_i64(&reopened, "user_version"), ACTIVE_SCHEMA_VERSION);
     }
 

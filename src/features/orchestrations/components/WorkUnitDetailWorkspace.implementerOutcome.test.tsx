@@ -3,6 +3,7 @@ import type {
   ProductWorkUnitHandlerDecisionV1,
   ProductWorkUnitHandlerReviewV1,
   ProductWorkUnitImplementerOutcomeV1,
+  ProductWorkUnitIntegrationV1,
   SprintWorkspacePresentationV1,
 } from '../../../application/orchestrations';
 import { WorkUnitDetailWorkspace } from './WorkUnitDetailWorkspace';
@@ -108,24 +109,83 @@ describe('WorkUnitDetailWorkspace Implementer outcome activity', () => {
     expect(detail).toHaveTextContent('Review conflict observed at');
     expect(detail).not.toHaveTextContent(/implementation approved|Work Unit accepted|settled|Sprint continuation/i);
   });
+
+  it('shows progressive, attention, success, settlement, and contribution facts after Handler review', () => {
+    const review = handlerReview('accepted');
+    const decision = handlerDecision('accepted');
+    const rendered = renderWorkspace(reviewReadyOutcome(), review, decision, {
+      requestedAt: '2026-08-04T00:00:20Z',
+      authorizedAt: '2026-08-04T00:00:20Z',
+      progress: { phase: 'applying', recordedAt: '2026-08-04T00:00:22Z' },
+    });
+    let detail = screen.getByLabelText('Work Unit context');
+    const reviewHeading = screen.getByText('Handler review');
+    const integrationHeading = screen.getByText('Integration and settlement');
+    expect(
+      reviewHeading.compareDocumentPosition(integrationHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(detail).toHaveTextContent('explicitly authorized');
+    expect(detail).toHaveTextContent('Integration is in progress: applying the integration');
+    expect(detail).not.toHaveTextContent('Integration success was recorded');
+
+    rendered.rerender(
+      workspace(reviewReadyOutcome(), review, decision, {
+        requestedAt: '2026-08-04T00:00:20Z',
+        authorizedAt: '2026-08-04T00:00:20Z',
+        progress: { phase: 'preparing', recordedAt: '2026-08-04T00:00:21Z' },
+        attention: {
+          kind: 'conflict',
+          safeCode: 'integration_conflict',
+          recordedAt: '2026-08-04T00:00:22Z',
+        },
+      }),
+    );
+    detail = screen.getByLabelText('Work Unit context');
+    expect(detail).toHaveTextContent('Integration needs attention: conflict');
+    expect(detail).toHaveTextContent('No integration success or Work Unit settlement is recorded');
+
+    rendered.rerender(
+      workspace(reviewReadyOutcome(), review, decision, {
+        requestedAt: '2026-08-04T00:00:20Z',
+        authorizedAt: '2026-08-04T00:00:20Z',
+        progress: { phase: 'recording', recordedAt: '2026-08-04T00:00:24Z' },
+        success: { recordedAt: '2026-08-04T00:00:25Z' },
+        settlement: { settledAt: '2026-08-04T00:00:25Z' },
+        prerequisiteContribution: {
+          recordedAt: '2026-08-04T00:00:25Z',
+          dependentCount: 2,
+        },
+      }),
+    );
+    detail = screen.getByLabelText('Work Unit context');
+    expect(detail).toHaveTextContent('Integration success was recorded');
+    expect(detail).toHaveTextContent('Work Unit settlement was recorded');
+    expect(detail).toHaveTextContent('for 2 dependent Work Units');
+    expect(detail).toHaveTextContent('This does not activate dependent work');
+    expect(detail).not.toHaveTextContent(
+      /dependent work (?:is|was) active|Sprint settlement|Work Slice settlement|Epic settlement|published|user accepted/i,
+    );
+  });
 });
 
 function renderWorkspace(
   outcome?: ProductWorkUnitImplementerOutcomeV1,
   handlerReview?: ProductWorkUnitHandlerReviewV1,
   handlerDecision?: ProductWorkUnitHandlerDecisionV1,
+  integration?: ProductWorkUnitIntegrationV1,
 ) {
-  return render(workspace(outcome, handlerReview, handlerDecision));
+  return render(workspace(outcome, handlerReview, handlerDecision, integration));
 }
 
 function workspace(
   outcome?: ProductWorkUnitImplementerOutcomeV1,
   handlerReview?: ProductWorkUnitHandlerReviewV1,
   handlerDecision?: ProductWorkUnitHandlerDecisionV1,
+  integration?: ProductWorkUnitIntegrationV1,
 ) {
-    return (
+  return (
     <WorkUnitDetailWorkspace
-      unit={presentedWorkUnit(outcome, handlerReview, handlerDecision)}
+      unit={presentedWorkUnit(outcome, handlerReview, handlerDecision, integration)}
       lifecycleEntries={[]}
       workSlicePlanningPointGroupTitle="Planning point"
       sessions={[]}
@@ -138,6 +198,7 @@ function presentedWorkUnit(
   outcome?: ProductWorkUnitImplementerOutcomeV1,
   handlerReview?: ProductWorkUnitHandlerReviewV1,
   handlerDecision?: ProductWorkUnitHandlerDecisionV1,
+  integration?: ProductWorkUnitIntegrationV1,
 ): PresentedWorkUnit {
   return {
     workUnitId: 'unit-1',
@@ -152,6 +213,7 @@ function presentedWorkUnit(
     ...(outcome ? { implementerOutcome: outcome } : {}),
     ...(handlerReview ? { handlerReview } : {}),
     ...(handlerDecision ? { handlerDecision } : {}),
+    ...(integration ? { integration } : {}),
     workUnitScopeId: 'scope-1',
     sprintPlanRevisionId: 'revision-1',
     fixedExecutionScopeIds: [],

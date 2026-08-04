@@ -172,6 +172,7 @@ export interface ProductReadReferenceIndexV1 {
     readonly implementerOutcome?: ProductWorkUnitImplementerOutcomeV1;
     readonly handlerReview?: ProductWorkUnitHandlerReviewV1;
     readonly handlerDecision?: ProductWorkUnitHandlerDecisionV1;
+    readonly integration?: ProductWorkUnitIntegrationV1;
   }[];
   readonly gates: readonly {
     readonly gateId: string;
@@ -364,6 +365,27 @@ export type ProductWorkUnitHandlerDecisionV1 = Readonly<{
   readonly settlementReadyAt?: string;
 }>;
 
+/** Productive integration facts remain separate from legacy observed lifecycle events. */
+export type ProductWorkUnitIntegrationV1 = Readonly<{
+  readonly requestedAt: string;
+  readonly authorizedAt: string;
+  readonly progress?: Readonly<{
+    readonly phase: 'preparing' | 'applying' | 'recording';
+    readonly recordedAt: string;
+  }>;
+  readonly attention?: Readonly<{
+    readonly kind: 'conflict' | 'failure';
+    readonly safeCode: 'integration_conflict' | 'integration_failure';
+    readonly recordedAt: string;
+  }>;
+  readonly success?: Readonly<{ readonly recordedAt: string }>;
+  readonly settlement?: Readonly<{ readonly settledAt: string }>;
+  readonly prerequisiteContribution?: Readonly<{
+    readonly recordedAt: string;
+    readonly dependentCount: number;
+  }>;
+}>;
+
 /** Application-recorded reporting facts; submitted prose remains explicitly claim-only. */
 export type ProductWorkUnitImplementerOutcomeV1 = Readonly<{
   readonly attemptId: string;
@@ -486,6 +508,7 @@ export interface ProductSprintRevisionViewV1 {
     readonly implementerOutcome?: ProductWorkUnitImplementerOutcomeV1;
     readonly handlerReview?: ProductWorkUnitHandlerReviewV1;
     readonly handlerDecision?: ProductWorkUnitHandlerDecisionV1;
+    readonly integration?: ProductWorkUnitIntegrationV1;
     readonly workUnitScopeId: string;
     readonly sprintPlanRevisionId: string;
     readonly fixedExecutionScopeIds: readonly string[];

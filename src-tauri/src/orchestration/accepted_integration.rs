@@ -10,7 +10,7 @@ mod accepted_integration_proof_tests;
 
 pub(crate) const ACCEPTED_INTEGRATION_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS accepted_work_unit_integrations (
- integration_id TEXT PRIMARY KEY, work_unit_id TEXT NOT NULL UNIQUE REFERENCES work_units(work_unit_id), candidate_id TEXT NOT NULL UNIQUE REFERENCES accepted_handler_candidates(candidate_id), authority_id TEXT NOT NULL REFERENCES initiated_sprint_git_authorities(authority_id), target_ref_name TEXT NOT NULL, pre_object_id TEXT NOT NULL, pre_version INTEGER NOT NULL, candidate_commit_id TEXT NOT NULL, candidate_tree_id TEXT NOT NULL, baseline_object_id TEXT NOT NULL, intent_fingerprint TEXT NOT NULL UNIQUE, intent_recorded_at TEXT NOT NULL, commit_fingerprint TEXT, stage TEXT NOT NULL DEFAULT 'intent_reserved' CHECK(stage IN ('intent_reserved','object_created','ref_advanced','runtime_advanced','db_advanced','settled','attention')), integration_commit_id TEXT, integration_tree_id TEXT, object_created_at TEXT, ref_advanced_at TEXT, runtime_advanced_at TEXT, db_advanced_at TEXT, settled_at TEXT, notification_intent_recorded_at TEXT, notification_delivered_at TEXT, attention_code TEXT, attention_recorded_at TEXT, CHECK ((attention_code IS NULL) = (attention_recorded_at IS NULL))
+ integration_id TEXT PRIMARY KEY, work_unit_id TEXT NOT NULL UNIQUE REFERENCES work_units(work_unit_id), candidate_id TEXT NOT NULL UNIQUE REFERENCES accepted_handler_candidates(candidate_id), authority_id TEXT NOT NULL REFERENCES initiated_sprint_git_authorities(authority_id), target_ref_name TEXT NOT NULL, pre_object_id TEXT NOT NULL, pre_version INTEGER NOT NULL, candidate_commit_id TEXT NOT NULL, candidate_tree_id TEXT NOT NULL, baseline_object_id TEXT NOT NULL, intent_fingerprint TEXT NOT NULL UNIQUE, intent_recorded_at TEXT NOT NULL, authorization_recorded_at TEXT NOT NULL, commit_fingerprint TEXT, stage TEXT NOT NULL DEFAULT 'intent_reserved' CHECK(stage IN ('intent_reserved','object_created','ref_advanced','runtime_advanced','db_advanced','settled','attention')), integration_commit_id TEXT, integration_tree_id TEXT, object_created_at TEXT, ref_advanced_at TEXT, runtime_advanced_at TEXT, db_advanced_at TEXT, settled_at TEXT, notification_intent_recorded_at TEXT, notification_delivered_at TEXT, attention_code TEXT, attention_recorded_at TEXT, CHECK ((attention_code IS NULL) = (attention_recorded_at IS NULL))
 );
 CREATE TABLE IF NOT EXISTS accepted_work_unit_integration_evidence (evidence_id TEXT PRIMARY KEY, integration_id TEXT NOT NULL UNIQUE REFERENCES accepted_work_unit_integrations(integration_id), evidence_fingerprint TEXT NOT NULL UNIQUE, integration_commit_id TEXT NOT NULL, integration_tree_id TEXT NOT NULL, parent_object_id TEXT NOT NULL, candidate_id TEXT NOT NULL, target_ref_name TEXT NOT NULL, intent_fingerprint TEXT NOT NULL, recorded_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS work_unit_settlements (settlement_id TEXT PRIMARY KEY, work_unit_id TEXT NOT NULL UNIQUE REFERENCES work_units(work_unit_id), integration_id TEXT NOT NULL UNIQUE REFERENCES accepted_work_unit_integrations(integration_id), settled_at TEXT NOT NULL);
@@ -51,6 +51,7 @@ fn ensure_columns(c: &Connection) -> Result<(), String> {
     let added_stage = !columns.iter().any(|column| column == "stage");
     for (name, definition) in [
         ("stage", "TEXT NOT NULL DEFAULT 'intent_reserved'"),
+        ("authorization_recorded_at", "TEXT"),
         ("commit_fingerprint", "TEXT"),
         ("object_created_at", "TEXT"),
         ("ref_advanced_at", "TEXT"),
@@ -61,6 +62,8 @@ fn ensure_columns(c: &Connection) -> Result<(), String> {
     ] {
         if !columns.iter().any(|column| column == name) { c.execute_batch(&format!("ALTER TABLE accepted_work_unit_integrations ADD COLUMN {name} {definition}")).map_err(|e| e.to_string())?; }
     }
+    // In v19, the successful intent reservation was the authorization boundary.
+    c.execute_batch("UPDATE accepted_work_unit_integrations SET authorization_recorded_at=intent_recorded_at WHERE authorization_recorded_at IS NULL").map_err(|e| e.to_string())?;
     if added_stage {
         c.execute_batch(
             "UPDATE accepted_work_unit_integrations
@@ -120,7 +123,8 @@ fn reserve(c: &mut Connection, r: &Row) -> Result<(), String> {
     let id = stable_id("accepted-work-unit-integration", &r.candidate);
     let intent = fingerprint(&[POLICY_VERSION, &id, &r.unit, &r.candidate, &r.authority, &t.reference, &t.current, &t.version.to_string(), &r.baseline, &r.commit, &r.tree, &r.evidence]);
     let tx = c.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
-    match tx.execute("INSERT INTO accepted_work_unit_integrations(integration_id,work_unit_id,candidate_id,authority_id,target_ref_name,pre_object_id,pre_version,candidate_commit_id,candidate_tree_id,baseline_object_id,intent_fingerprint,intent_recorded_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)", params![id,r.unit,r.candidate,r.authority,t.reference,t.current,t.version,r.commit,r.tree,r.baseline,intent,now()]) {
+    let recorded_at = now();
+    match tx.execute("INSERT INTO accepted_work_unit_integrations(integration_id,work_unit_id,candidate_id,authority_id,target_ref_name,pre_object_id,pre_version,candidate_commit_id,candidate_tree_id,baseline_object_id,intent_fingerprint,intent_recorded_at,authorization_recorded_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?12)", params![id,r.unit,r.candidate,r.authority,t.reference,t.current,t.version,r.commit,r.tree,r.baseline,intent,recorded_at]) {
         Ok(1) => {},
         Err(rusqlite::Error::SqliteFailure(error,_)) if error.code==rusqlite::ErrorCode::ConstraintViolation => { let exact:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM accepted_work_unit_integrations WHERE integration_id=?1 AND candidate_id=?2 AND authority_id=?3 AND target_ref_name=?4 AND pre_object_id=?5 AND pre_version=?6 AND candidate_commit_id=?7 AND candidate_tree_id=?8 AND baseline_object_id=?9 AND intent_fingerprint=?10)",params![id,r.candidate,r.authority,t.reference,t.current,t.version,r.commit,r.tree,r.baseline,intent],|x|x.get(0)).map_err(|e|e.to_string())?;if !exact{return Err("integration_reservation_conflict".into())} },
         Ok(_) => return Err("integration_reservation_conflict".into()), Err(e)=>return Err(e.to_string()),

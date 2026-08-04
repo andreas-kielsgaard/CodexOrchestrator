@@ -662,6 +662,113 @@ describe('orchestration native query v1', () => {
     );
   });
 
+  it('projects productive integration and settlement without populating legacy observed events', () => {
+    const value = productiveIntegrationNativeFixture();
+    const query = decodeOrchestrationNativeQueryV2(value);
+    expect(query.workUnits[0]!.integration).toEqual({
+      requestedAt: '2026-08-04T00:00:20Z',
+      authorizedAt: '2026-08-04T00:00:20Z',
+      progress: { phase: 'recording', recordedAt: '2026-08-04T00:00:24Z' },
+      success: { recordedAt: '2026-08-04T00:00:25Z' },
+      settlement: { settledAt: '2026-08-04T00:00:25Z' },
+      prerequisiteContribution: {
+        recordedAt: '2026-08-04T00:00:25Z',
+        dependentCount: 1,
+      },
+    });
+
+    const input = nativeQueryProductCompositionInputV2(query);
+    expect(input.events.observedIntegrations).toEqual([]);
+    expect(input.events.observedCompletions).toEqual([]);
+    expect(input.events.observedHandoffs).toEqual([]);
+    const unit = composeProductOrchestrationReadModels(input).epics[0]!.sprints[0]!
+      .revisionViews[0]!.workUnits.find(({ workUnitId }) => workUnitId === 'unit-1')!;
+    expect(unit.integration?.settlement?.settledAt).toBe('2026-08-04T00:00:25Z');
+    expect(unit.observed.integrated).toBe(false);
+    expect(unit.observed.responsibilityAccepted).toBe(false);
+    expect(unit.presentationState).toBe('not_started');
+  });
+
+  it('keeps progressive and attention integration facts non-terminal', () => {
+    const progressive = productiveIntegrationNativeFixture();
+    const progressiveUnit = (progressive.workUnits as Array<Record<string, unknown>>)[0]!;
+    progressiveUnit.integration = {
+      requestedAt: '2026-08-04T00:00:20Z',
+      authorizedAt: '2026-08-04T00:00:20Z',
+      progress: { phase: 'applying', recordedAt: '2026-08-04T00:00:22Z' },
+    };
+    expect(
+      decodeOrchestrationNativeQueryV2(progressive).workUnits[0]!.integration,
+    ).not.toHaveProperty('success');
+
+    const attention = productiveIntegrationNativeFixture();
+    const attentionUnit = (attention.workUnits as Array<Record<string, unknown>>)[0]!;
+    attentionUnit.integration = {
+      requestedAt: '2026-08-04T00:00:20Z',
+      authorizedAt: '2026-08-04T00:00:20Z',
+      progress: { phase: 'preparing', recordedAt: '2026-08-04T00:00:21Z' },
+      attention: {
+        kind: 'conflict',
+        safeCode: 'integration_conflict',
+        recordedAt: '2026-08-04T00:00:22Z',
+      },
+    };
+    expect(decodeOrchestrationNativeQueryV2(attention).workUnits[0]!.integration).toMatchObject({
+      attention: { kind: 'conflict', safeCode: 'integration_conflict' },
+    });
+  });
+
+  it.each([
+    [
+      'unknown field',
+      (integration: Record<string, unknown>) =>
+        (integration.privateRef = 'refs/heads/main'),
+    ],
+    [
+      'authorization order',
+      (integration: Record<string, unknown>) =>
+        (integration.authorizedAt = '2026-08-04T00:00:19Z'),
+    ],
+    [
+      'unknown phase',
+      (integration: Record<string, unknown>) =>
+        ((integration.progress as Record<string, unknown>).phase = 'ref_advanced'),
+    ],
+    [
+      'attention terminal collision',
+      (integration: Record<string, unknown>) =>
+        (integration.attention = {
+          kind: 'failure',
+          safeCode: 'integration_failure',
+          recordedAt: '2026-08-04T00:00:25Z',
+        }),
+    ],
+    [
+      'settlement without success',
+      (integration: Record<string, unknown>) => delete integration.success,
+    ],
+    [
+      'foreign dependent count',
+      (integration: Record<string, unknown>) =>
+        ((integration.prerequisiteContribution as Record<string, unknown>).dependentCount = 2),
+    ],
+  ] as const)('rejects productive integration %s', (_label, mutate) => {
+    const value = productiveIntegrationNativeFixture();
+    const unit = (value.workUnits as Array<Record<string, unknown>>)[0]!;
+    mutate(unit.integration as Record<string, unknown>);
+    expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow(
+      'Invalid orchestration native query',
+    );
+  });
+
+  it('rejects productive integration without the exact accepted Handler decision', () => {
+    const value = productiveIntegrationNativeFixture();
+    delete (value.workUnits as Array<Record<string, unknown>>)[0]!.handlerDecision;
+    expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow(
+      'Productive integration requires an accepted Handler decision',
+    );
+  });
+
   it('keeps partial materialization stages separate from Work Unit production truth', () => {
     const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
     value.workUnitMaterializations = [
@@ -955,6 +1062,61 @@ function implementerOutcomeNativeFixture(): Record<string, unknown> {
       ordinal: 0,
     },
   ];
+  return value;
+}
+
+function productiveIntegrationNativeFixture(): Record<string, unknown> {
+  const value = implementerOutcomeNativeFixture();
+  const units = value.workUnits as Array<Record<string, unknown>>;
+  units[0]!.implementerOutcome = implementerOutcomeFixture('review_ready');
+  units[0]!.handlerReview = handlerReviewFixture('accepted');
+  units[0]!.handlerDecision = handlerDecisionFixture('accepted');
+  units[0]!.integration = {
+    requestedAt: '2026-08-04T00:00:20Z',
+    authorizedAt: '2026-08-04T00:00:20Z',
+    progress: { phase: 'recording', recordedAt: '2026-08-04T00:00:24Z' },
+    success: { recordedAt: '2026-08-04T00:00:25Z' },
+    settlement: { settledAt: '2026-08-04T00:00:25Z' },
+    prerequisiteContribution: {
+      recordedAt: '2026-08-04T00:00:25Z',
+      dependentCount: 1,
+    },
+  };
+  units.push({
+    workUnitId: 'unit-2',
+    materializationId: 'materialization-1',
+    workSliceId: 'slice-1',
+    acceptedRevisionId: 'accepted-revision-1',
+    laneOrdinal: 1,
+    laneTitle: 'Dependent responsibility',
+    specification: 'Wait for the prerequisite contribution.',
+  });
+  const relationships = value.workUnitRelationships as Array<Record<string, unknown>>;
+  relationships.push(
+    {
+      relationshipId: 'lane-2',
+      materializationId: 'materialization-1',
+      relationshipKind: 'lane',
+      fromId: 'slice-1',
+      toId: 'unit-2',
+      ordinal: 1,
+    },
+    {
+      relationshipId: 'order-2',
+      materializationId: 'materialization-1',
+      relationshipKind: 'order',
+      fromId: 'slice-1',
+      toId: 'unit-2',
+      ordinal: 1,
+    },
+    {
+      relationshipId: 'dependency-1',
+      materializationId: 'materialization-1',
+      relationshipKind: 'depends_on',
+      fromId: 'unit-2',
+      toId: 'unit-1',
+    },
+  );
   return value;
 }
 

@@ -1166,13 +1166,20 @@ impl SqliteOrchestrationRepository {
         let mut implementer_outcomes = implementer_outcome_rows(&connection)?;
         let handler_reviews = handler_review_rows(&connection)?;
         let handler_decisions = handler_decision_rows(&connection)?;
-        let mut work_units = if handler_activation_tables { collect(&connection, "SELECT u.work_unit_id,u.materialization_id,u.work_slice_id,u.accepted_revision_id,u.lane_ordinal,u.lane_title,u.specification,a.attempt_id,a.handler_session_id,a.handler_invocation_id,a.handler_harness_revision_id,a.handler_harness_configuration_digest,a.handler_harness_repository_commit_ref,a.eligibility_state,a.blocked_reason,a.requested_at,a.authorized_at,a.attempt_created_at,a.execution_support_granted_at,a.isolated_worktree_ready_at,a.handler_session_created_at,a.handler_invocation_prepared_at,a.handler_harness_bound_at,a.launch_requested_at,a.launch_accepted_at,a.provider_activation_observed_at,a.handler_ready_at FROM work_units u LEFT JOIN work_unit_handler_activations a ON a.work_unit_id=u.work_unit_id ORDER BY u.materialization_id,u.lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation: match row.get::<_,Option<String>>(7)? { Some(attempt_id) => Some(WorkUnitHandlerActivationDto { attempt_id, handler_session_id:row.get(8)?, handler_invocation_id:row.get(9)?, handler_harness_revision_id:row.get(10)?, handler_harness_configuration_digest:row.get(11)?, handler_harness_repository_commit_ref:row.get(12)?, eligibility_state:row.get(13)?, blocked_reason:row.get(14)?, requested_at:row.get(15)?, authorized_at:row.get(16)?, attempt_created_at:row.get(17)?, execution_support_granted_at:row.get(18)?, isolated_worktree_ready_at:row.get(19)?, handler_session_created_at:row.get(20)?, handler_invocation_prepared_at:row.get(21)?, handler_harness_bound_at:row.get(22)?, launch_requested_at:row.get(23)?, launch_accepted_at:row.get(24)?, provider_activation_observed_at:row.get(25)?, handler_ready_at:row.get(26)? }), None => None }, action_continuation:None, implementer_activation:None, implementer_outcome:None, handler_review:None, handler_decision:None }))? } else if materialization_tables { collect(&connection, "SELECT work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification FROM work_units ORDER BY materialization_id,lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation:None, action_continuation:None, implementer_activation:None, implementer_outcome:None, handler_review:None, handler_decision:None }))? } else { Vec::new() };
+        let mut work_units = if handler_activation_tables { collect(&connection, "SELECT u.work_unit_id,u.materialization_id,u.work_slice_id,u.accepted_revision_id,u.lane_ordinal,u.lane_title,u.specification,a.attempt_id,a.handler_session_id,a.handler_invocation_id,a.handler_harness_revision_id,a.handler_harness_configuration_digest,a.handler_harness_repository_commit_ref,a.eligibility_state,a.blocked_reason,a.requested_at,a.authorized_at,a.attempt_created_at,a.execution_support_granted_at,a.isolated_worktree_ready_at,a.handler_session_created_at,a.handler_invocation_prepared_at,a.handler_harness_bound_at,a.launch_requested_at,a.launch_accepted_at,a.provider_activation_observed_at,a.handler_ready_at FROM work_units u LEFT JOIN work_unit_handler_activations a ON a.work_unit_id=u.work_unit_id ORDER BY u.materialization_id,u.lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation: match row.get::<_,Option<String>>(7)? { Some(attempt_id) => Some(WorkUnitHandlerActivationDto { attempt_id, handler_session_id:row.get(8)?, handler_invocation_id:row.get(9)?, handler_harness_revision_id:row.get(10)?, handler_harness_configuration_digest:row.get(11)?, handler_harness_repository_commit_ref:row.get(12)?, eligibility_state:row.get(13)?, blocked_reason:row.get(14)?, requested_at:row.get(15)?, authorized_at:row.get(16)?, attempt_created_at:row.get(17)?, execution_support_granted_at:row.get(18)?, isolated_worktree_ready_at:row.get(19)?, handler_session_created_at:row.get(20)?, handler_invocation_prepared_at:row.get(21)?, handler_harness_bound_at:row.get(22)?, launch_requested_at:row.get(23)?, launch_accepted_at:row.get(24)?, provider_activation_observed_at:row.get(25)?, handler_ready_at:row.get(26)? }), None => None }, action_continuation:None, implementer_activation:None, implementer_outcome:None, handler_review:None, handler_decision:None, integration:None }))? } else if materialization_tables { collect(&connection, "SELECT work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification FROM work_units ORDER BY materialization_id,lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation:None, action_continuation:None, implementer_activation:None, implementer_outcome:None, handler_review:None, handler_decision:None, integration:None }))? } else { Vec::new() };
+        let work_unit_relationships = if materialization_tables { collect(&connection, "SELECT relationship_id,materialization_id,relationship_kind,from_id,to_id,ordinal FROM work_unit_relationships ORDER BY materialization_id,relationship_kind,from_id,to_id", |row| Ok(WorkUnitRelationshipDto { relationship_id:row.get(0)?, materialization_id:row.get(1)?, relationship_kind:row.get(2)?, from_id:row.get(3)?, to_id:row.get(4)?, ordinal:row.get(5)? }))? } else { Vec::new() };
+        let mut productive_integrations = productive_integration_rows(
+            &connection,
+            &work_units,
+            &work_unit_relationships,
+        )?;
         for work_unit in &mut work_units {
             work_unit.action_continuation = action_continuations.get(&work_unit.work_unit_id).cloned();
             work_unit.implementer_activation = implementer_activations.get(&work_unit.work_unit_id).cloned();
             work_unit.implementer_outcome = implementer_outcomes.remove(&work_unit.work_unit_id);
             work_unit.handler_review = handler_reviews.get(&work_unit.work_unit_id).cloned();
             work_unit.handler_decision = handler_decisions.get(&work_unit.work_unit_id).cloned();
+            work_unit.integration = productive_integrations.remove(&work_unit.work_unit_id);
             validate_work_unit_activation_projection(work_unit)?;
         }
         if !implementer_outcomes.is_empty() {
@@ -1184,7 +1191,9 @@ impl SqliteOrchestrationRepository {
         if handler_decisions.keys().any(|id| !work_units.iter().any(|unit| &unit.work_unit_id == id)) {
             return Err("Handler decision references an unknown Work Unit".into());
         }
-        let work_unit_relationships = if materialization_tables { collect(&connection, "SELECT relationship_id,materialization_id,relationship_kind,from_id,to_id,ordinal FROM work_unit_relationships ORDER BY materialization_id,relationship_kind,from_id,to_id", |row| Ok(WorkUnitRelationshipDto { relationship_id:row.get(0)?, materialization_id:row.get(1)?, relationship_kind:row.get(2)?, from_id:row.get(3)?, to_id:row.get(4)?, ordinal:row.get(5)? }))? } else { Vec::new() };
+        if !productive_integrations.is_empty() {
+            return Err("Productive integration references an unknown Work Unit".into());
+        }
         Ok(NativeQueryV2 {
             contract_version: NATIVE_QUERY_VERSION,
             generated_at: timestamp(generated_at),
@@ -2942,6 +2951,81 @@ struct WorkUnitDto {
     handler_review: Option<WorkUnitHandlerReviewDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     handler_decision: Option<WorkUnitHandlerDecisionDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    integration: Option<WorkUnitIntegrationDto>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitIntegrationDto {
+    requested_at: String,
+    authorized_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    progress: Option<WorkUnitIntegrationProgressDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attention: Option<WorkUnitIntegrationAttentionDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    success: Option<WorkUnitIntegrationSuccessDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    settlement: Option<WorkUnitSettlementDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prerequisite_contribution: Option<WorkUnitPrerequisiteContributionDto>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitIntegrationProgressDto {
+    phase: WorkUnitIntegrationProgressPhaseDto,
+    recorded_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkUnitIntegrationProgressPhaseDto {
+    Preparing,
+    Applying,
+    Recording,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitIntegrationAttentionDto {
+    kind: WorkUnitIntegrationAttentionKindDto,
+    safe_code: WorkUnitIntegrationAttentionCodeDto,
+    recorded_at: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkUnitIntegrationAttentionKindDto {
+    Conflict,
+    Failure,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkUnitIntegrationAttentionCodeDto {
+    IntegrationConflict,
+    IntegrationFailure,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitIntegrationSuccessDto {
+    recorded_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitSettlementDto {
+    settled_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitPrerequisiteContributionDto {
+    recorded_at: String,
+    dependent_count: usize,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -3903,6 +3987,427 @@ fn projection_stable_id(prefix: &str, value: &str) -> String {
     hash.update([0]);
     hash.update(value.as_bytes());
     format!("{prefix}-{:x}", hash.finalize())
+}
+
+#[derive(Debug)]
+struct ProductiveIntegrationRow {
+    integration_id: String,
+    work_unit_id: String,
+    candidate_id: String,
+    authority_id: String,
+    intent_fingerprint: String,
+    requested_at: String,
+    authorized_at: String,
+    stage: String,
+    integration_commit_id: Option<String>,
+    integration_tree_id: Option<String>,
+    object_created_at: Option<String>,
+    ref_advanced_at: Option<String>,
+    runtime_advanced_at: Option<String>,
+    db_advanced_at: Option<String>,
+    internal_settled_at: Option<String>,
+    attention_code: Option<String>,
+    attention_recorded_at: Option<String>,
+}
+
+fn productive_integration_rows(
+    connection: &Connection,
+    work_units: &[WorkUnitDto],
+    relationships: &[WorkUnitRelationshipDto],
+) -> Result<std::collections::HashMap<String, WorkUnitIntegrationDto>, String> {
+    if !projection_table_exists(connection, "accepted_work_unit_integrations")? {
+        return Ok(std::collections::HashMap::new());
+    }
+    let integration_count = connection.query_row(
+        "SELECT COUNT(*) FROM accepted_work_unit_integrations",
+        [],
+        |row| row.get::<_, i64>(0),
+    ).map_err(|error| error.to_string())?;
+    if integration_count == 0 {
+        return Ok(std::collections::HashMap::new());
+    }
+    for table in [
+        "accepted_handler_candidates",
+        "work_unit_handler_reviews",
+        "work_unit_handler_decisions",
+        "accepted_work_unit_integration_evidence",
+        "work_unit_settlements",
+        "work_unit_prerequisite_contributions",
+        "work_unit_relationships",
+    ] {
+        if !projection_table_exists(connection, table)? {
+            return Err("Productive integration projection is missing a required durable table".into());
+        }
+    }
+    for (table, parent) in [
+        ("accepted_work_unit_integration_evidence", "integration_id"),
+        ("work_unit_settlements", "integration_id"),
+        ("work_unit_prerequisite_contributions", "integration_id"),
+    ] {
+        let orphaned = connection
+            .query_row(
+                &format!(
+                    "SELECT EXISTS(SELECT 1 FROM {table} child LEFT JOIN accepted_work_unit_integrations parent ON parent.integration_id=child.{parent} WHERE parent.integration_id IS NULL)"
+                ),
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|error| error.to_string())?;
+        if orphaned {
+            return Err("Productive integration projection has orphaned terminal facts".into());
+        }
+    }
+
+    let mut statement = connection.prepare(
+        "SELECT integration_id,work_unit_id,candidate_id,authority_id,intent_fingerprint,intent_recorded_at,authorization_recorded_at,stage,integration_commit_id,integration_tree_id,object_created_at,ref_advanced_at,runtime_advanced_at,db_advanced_at,settled_at,attention_code,attention_recorded_at FROM accepted_work_unit_integrations ORDER BY intent_recorded_at,integration_id",
+    ).map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| {
+        Ok(ProductiveIntegrationRow {
+            integration_id: row.get(0)?,
+            work_unit_id: row.get(1)?,
+            candidate_id: row.get(2)?,
+            authority_id: row.get(3)?,
+            intent_fingerprint: row.get(4)?,
+            requested_at: row.get(5)?,
+            authorized_at: row.get(6)?,
+            stage: row.get(7)?,
+            integration_commit_id: row.get(8)?,
+            integration_tree_id: row.get(9)?,
+            object_created_at: row.get(10)?,
+            ref_advanced_at: row.get(11)?,
+            runtime_advanced_at: row.get(12)?,
+            db_advanced_at: row.get(13)?,
+            internal_settled_at: row.get(14)?,
+            attention_code: row.get(15)?,
+            attention_recorded_at: row.get(16)?,
+        })
+    }).map_err(|error| error.to_string())?;
+    let rows = rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
+    let known_work_units = work_units
+        .iter()
+        .map(|unit| unit.work_unit_id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let materialization_by_work_unit = work_units
+        .iter()
+        .map(|unit| (unit.work_unit_id.as_str(), unit.materialization_id.as_str()))
+        .collect::<std::collections::HashMap<_, _>>();
+    for relationship in relationships
+        .iter()
+        .filter(|relationship| relationship.relationship_kind == "depends_on")
+    {
+        let from_materialization = materialization_by_work_unit.get(relationship.from_id.as_str());
+        let to_materialization = materialization_by_work_unit.get(relationship.to_id.as_str());
+        if from_materialization != Some(&relationship.materialization_id.as_str())
+            || to_materialization != Some(&relationship.materialization_id.as_str())
+        {
+            return Err("Productive integration dependency has a foreign Work Unit correlation".into());
+        }
+    }
+    let mut integration_ids = std::collections::HashSet::new();
+    let mut candidate_ids = std::collections::HashSet::new();
+    let mut projected = std::collections::HashMap::new();
+    for row in rows {
+        if !known_work_units.contains(row.work_unit_id.as_str()) {
+            return Err("Productive integration references an unknown Work Unit".into());
+        }
+        if !integration_ids.insert(row.integration_id.clone())
+            || !candidate_ids.insert(row.candidate_id.clone())
+            || projected.contains_key(&row.work_unit_id)
+        {
+            return Err("Productive integration projection has a duplicate correlation".into());
+        }
+        let value = productive_integration_row(connection, relationships, &row)?;
+        projected.insert(row.work_unit_id, value);
+    }
+    Ok(projected)
+}
+
+fn productive_integration_row(
+    connection: &Connection,
+    relationships: &[WorkUnitRelationshipDto],
+    row: &ProductiveIntegrationRow,
+) -> Result<WorkUnitIntegrationDto, String> {
+    let accepted: Option<(String, String, String)> = connection.query_row(
+        "SELECT candidate.pinned_at,decision.decision_recorded_at,review.lifecycle_observed_at FROM accepted_handler_candidates candidate JOIN work_unit_handler_decisions decision ON decision.work_unit_id=candidate.work_unit_id AND decision.review_invocation_id=candidate.review_invocation_id AND decision.decision_fingerprint=candidate.decision_fingerprint JOIN work_unit_handler_reviews review ON review.work_unit_id=candidate.work_unit_id AND review.review_invocation_id=candidate.review_invocation_id WHERE candidate.candidate_id=?1 AND candidate.work_unit_id=?2 AND candidate.authority_id=?3 AND candidate.pinned_at IS NOT NULL AND candidate.attention_reason IS NULL AND decision.decision_variant='accepted' AND decision.implementation_accepted_at IS NOT NULL AND decision.implementation_returned_at IS NULL AND decision.retry_required_at IS NULL AND decision.settlement_ready_at IS NULL AND review.semantic_judgment_variant='accept' AND review.lifecycle_status='completed' AND review.lifecycle_observed_at IS NOT NULL",
+        params![row.candidate_id, row.work_unit_id, row.authority_id],
+        |value| Ok((value.get(0)?, value.get(1)?, value.get(2)?)),
+    ).optional().map_err(|error| error.to_string())?;
+    let Some((candidate_pinned_at, decision_recorded_at, review_completed_at)) = accepted else {
+        return Err("Productive integration lacks exact accepted Handler authority".into());
+    };
+    require_timestamp_at_or_after(&review_completed_at, &decision_recorded_at, "Productive integration Handler decision")?;
+    require_timestamp_at_or_after(&decision_recorded_at, &candidate_pinned_at, "Productive integration candidate pin")?;
+    require_timestamp_at_or_after(&candidate_pinned_at, &row.requested_at, "Productive integration request")?;
+    require_timestamp_at_or_after(&row.requested_at, &row.authorized_at, "Productive integration authorization")?;
+
+    let phases = [
+        Some(row.requested_at.as_str()),
+        Some(row.authorized_at.as_str()),
+        row.object_created_at.as_deref(),
+        row.ref_advanced_at.as_deref(),
+        row.runtime_advanced_at.as_deref(),
+        row.db_advanced_at.as_deref(),
+    ];
+    require_ordered_projected_phases(&phases, "Productive integration")?;
+    let completed_effects = phases[2..].iter().take_while(|value| value.is_some()).count();
+    let commit_pair = (
+        row.integration_commit_id.as_deref(),
+        row.integration_tree_id.as_deref(),
+    );
+    if matches!(commit_pair, (Some(_), None) | (None, Some(_)))
+        || (completed_effects == 0 && commit_pair.0.is_some())
+        || (completed_effects > 0 && commit_pair.0.is_none())
+    {
+        return Err("Productive integration effect bundle is malformed".into());
+    }
+
+    let evidence = connection.prepare(
+        "SELECT candidate_id,intent_fingerprint,integration_commit_id,integration_tree_id,recorded_at FROM accepted_work_unit_integration_evidence WHERE integration_id=?1",
+    ).and_then(|mut statement| {
+        statement.query_map([&row.integration_id], |value| {
+            Ok((
+                value.get::<_, String>(0)?,
+                value.get::<_, String>(1)?,
+                value.get::<_, String>(2)?,
+                value.get::<_, String>(3)?,
+                value.get::<_, String>(4)?,
+            ))
+        })?.collect::<Result<Vec<_>, _>>()
+    }).map_err(|error| error.to_string())?;
+    if evidence.len() > 1 {
+        return Err("Productive integration has duplicate success evidence".into());
+    }
+    if let Some((candidate_id, intent_fingerprint, commit_id, tree_id, _)) = evidence.first() {
+        if candidate_id != &row.candidate_id
+            || intent_fingerprint != &row.intent_fingerprint
+            || Some(commit_id.as_str()) != row.integration_commit_id.as_deref()
+            || Some(tree_id.as_str()) != row.integration_tree_id.as_deref()
+        {
+            return Err("Productive integration success evidence has a foreign correlation".into());
+        }
+    }
+
+    let settlements = connection.prepare(
+        "SELECT work_unit_id,settled_at FROM work_unit_settlements WHERE integration_id=?1",
+    ).and_then(|mut statement| {
+        statement.query_map([&row.integration_id], |value| {
+            Ok((value.get::<_, String>(0)?, value.get::<_, String>(1)?))
+        })?.collect::<Result<Vec<_>, _>>()
+    }).map_err(|error| error.to_string())?;
+    if settlements.len() > 1 {
+        return Err("Productive integration has duplicate Work Unit settlements".into());
+    }
+    if settlements.first().is_some_and(|(work_unit_id, _)| work_unit_id != &row.work_unit_id) {
+        return Err("Work Unit settlement has a foreign correlation".into());
+    }
+
+    let contributions = connection.prepare(
+        "SELECT prerequisite_work_unit_id,dependent_work_unit_id,relationship_id,recorded_at FROM work_unit_prerequisite_contributions WHERE integration_id=?1 ORDER BY relationship_id",
+    ).and_then(|mut statement| {
+        statement.query_map([&row.integration_id], |value| {
+            Ok((
+                value.get::<_, String>(0)?,
+                value.get::<_, String>(1)?,
+                value.get::<_, String>(2)?,
+                value.get::<_, String>(3)?,
+            ))
+        })?.collect::<Result<Vec<_>, _>>()
+    }).map_err(|error| error.to_string())?;
+    let expected_relationships = relationships
+        .iter()
+        .filter(|relationship| {
+            relationship.relationship_kind == "depends_on" && relationship.to_id == row.work_unit_id
+        })
+        .map(|relationship| relationship.relationship_id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let mut contribution_relationships = std::collections::HashSet::new();
+    let mut contribution_recorded_at = None;
+    for (prerequisite, dependent, relationship_id, recorded_at) in &contributions {
+        let exact = relationships.iter().any(|relationship| {
+            relationship.relationship_id == *relationship_id
+                && relationship.relationship_kind == "depends_on"
+                && relationship.to_id == *prerequisite
+                && relationship.from_id == *dependent
+                && prerequisite == &row.work_unit_id
+        });
+        if !exact || !contribution_relationships.insert(relationship_id.as_str()) {
+            return Err("Prerequisite contribution has a foreign or duplicate correlation".into());
+        }
+        if contribution_recorded_at
+            .is_some_and(|existing: &str| existing != recorded_at.as_str())
+        {
+            return Err("Prerequisite contributions have inconsistent timestamps".into());
+        }
+        contribution_recorded_at = Some(recorded_at.as_str());
+    }
+
+    let terminal_rows_present = !evidence.is_empty() || !settlements.is_empty() || !contributions.is_empty();
+    let progress = latest_integration_progress(row);
+    let attention = match (&row.attention_code, &row.attention_recorded_at) {
+        (Some(code), Some(recorded_at)) => {
+            let (kind, safe_code) = safe_integration_attention(code)?;
+            require_timestamp_at_or_after(
+                progress.as_ref().map_or(row.authorized_at.as_str(), |value| value.recorded_at.as_str()),
+                recorded_at,
+                "Productive integration attention",
+            )?;
+            Some(WorkUnitIntegrationAttentionDto {
+                kind,
+                safe_code,
+                recorded_at: recorded_at.clone(),
+            })
+        }
+        (None, None) => None,
+        _ => return Err("Productive integration attention bundle is malformed".into()),
+    };
+
+    match row.stage.as_str() {
+        "intent_reserved" if completed_effects == 0 && attention.is_none() && !terminal_rows_present && row.internal_settled_at.is_none() => {}
+        "object_created" if completed_effects == 1 && attention.is_none() && !terminal_rows_present && row.internal_settled_at.is_none() => {}
+        "ref_advanced" if completed_effects == 2 && attention.is_none() && !terminal_rows_present && row.internal_settled_at.is_none() => {}
+        "runtime_advanced" if completed_effects == 3 && attention.is_none() && !terminal_rows_present && row.internal_settled_at.is_none() => {}
+        "db_advanced" if completed_effects == 4 && attention.is_none() && !terminal_rows_present && row.internal_settled_at.is_none() => {}
+        "attention" if attention.is_some() && !terminal_rows_present && row.internal_settled_at.is_none() => {}
+        "settled" if completed_effects == 4 && attention.is_none() => {}
+        "intent_reserved" | "object_created" | "ref_advanced" | "runtime_advanced" | "db_advanced" | "attention" | "settled" => {
+            return Err("Productive integration stage bundle is malformed".into());
+        }
+        _ => return Err("Productive integration stage is unknown".into()),
+    }
+
+    let (success, settlement, prerequisite_contribution) = if row.stage == "settled" {
+        let evidence_recorded_at = evidence.first().map(|value| value.4.as_str())
+            .ok_or_else(|| "Settled Work Unit integration lacks success evidence".to_string())?;
+        let settlement_recorded_at = settlements.first().map(|value| value.1.as_str())
+            .ok_or_else(|| "Work Unit settlement exists without integration success".to_string())?;
+        if row.internal_settled_at.as_deref() != Some(settlement_recorded_at) {
+            return Err("Work Unit settlement does not match the durable integration terminal".into());
+        }
+        if contribution_relationships != expected_relationships {
+            return Err("Prerequisite contributions do not match exact depends-on relationships".into());
+        }
+        for (label, recorded_at) in [
+            ("integration success", evidence_recorded_at),
+            ("Work Unit settlement", settlement_recorded_at),
+        ] {
+            require_timestamp_at_or_after(&row.authorized_at, recorded_at, label)?;
+        }
+        require_timestamp_at_or_after(
+            row.db_advanced_at.as_deref().unwrap_or(row.authorized_at.as_str()),
+            evidence_recorded_at,
+            "integration success",
+        )?;
+        require_timestamp_at_or_after(
+            evidence_recorded_at,
+            settlement_recorded_at,
+            "Work Unit settlement",
+        )?;
+        if let Some(recorded_at) = contribution_recorded_at {
+            require_timestamp_at_or_after(evidence_recorded_at, recorded_at, "Prerequisite contribution")?;
+        }
+        (
+            Some(WorkUnitIntegrationSuccessDto { recorded_at: evidence_recorded_at.to_owned() }),
+            Some(WorkUnitSettlementDto { settled_at: settlement_recorded_at.to_owned() }),
+            contribution_recorded_at.map(|recorded_at| WorkUnitPrerequisiteContributionDto {
+                recorded_at: recorded_at.to_owned(),
+                dependent_count: contributions.len(),
+            }),
+        )
+    } else {
+        if terminal_rows_present {
+            return Err("Partial Work Unit integration has terminal facts".into());
+        }
+        (None, None, None)
+    };
+
+    Ok(WorkUnitIntegrationDto {
+        requested_at: row.requested_at.clone(),
+        authorized_at: row.authorized_at.clone(),
+        progress,
+        attention,
+        success,
+        settlement,
+        prerequisite_contribution,
+    })
+}
+
+fn latest_integration_progress(row: &ProductiveIntegrationRow) -> Option<WorkUnitIntegrationProgressDto> {
+    if let Some(recorded_at) = &row.db_advanced_at {
+        return Some(WorkUnitIntegrationProgressDto {
+            phase: WorkUnitIntegrationProgressPhaseDto::Recording,
+            recorded_at: recorded_at.clone(),
+        });
+    }
+    if let Some(recorded_at) = row.runtime_advanced_at.as_ref().or(row.ref_advanced_at.as_ref()) {
+        return Some(WorkUnitIntegrationProgressDto {
+            phase: WorkUnitIntegrationProgressPhaseDto::Applying,
+            recorded_at: recorded_at.clone(),
+        });
+    }
+    row.object_created_at.as_ref().map(|recorded_at| WorkUnitIntegrationProgressDto {
+        phase: WorkUnitIntegrationProgressPhaseDto::Preparing,
+        recorded_at: recorded_at.clone(),
+    })
+}
+
+fn safe_integration_attention(
+    code: &str,
+) -> Result<(WorkUnitIntegrationAttentionKindDto, WorkUnitIntegrationAttentionCodeDto), String> {
+    let kind = match code {
+        "integration_reservation_conflict"
+        | "durable_integration_correlation_mismatch"
+        | "target_ref_cas_lost"
+        | "target_ref_advanced_or_foreign"
+        | "owned_ref_effect_state_ambiguous"
+        | "target_db_pre_state_mismatch"
+        | "target_ref_or_runtime_drift"
+        | "advanced_target_runtime_mismatch"
+        | "advanced_target_db_mismatch"
+        | "advanced_target_db_pre_mismatch"
+        | "ref_advanced_target_mismatch"
+        | "ref_advanced_runtime_foreign"
+        | "target_current_cas_lost"
+        | "durable_replay_conflict"
+        | "settled_target_line_mismatch"
+        | "settled_evidence_or_settlement_missing"
+        | "integration_object_mismatch"
+        | "integration_fingerprint_mismatch"
+        | "integration_identity_metadata_mismatch"
+        | "integration_message_mismatch"
+        | "candidate_private_ref_drift" => WorkUnitIntegrationAttentionKindDto::Conflict,
+        "target_unavailable"
+        | "integration_missing"
+        | "unsafe_durable_identity"
+        | "target_common_dir_drift"
+        | "integration_tree_missing"
+        | "integration_fingerprint_missing"
+        | "git_output_too_large"
+        | "git_output_invalid_utf8"
+        | "git_unavailable"
+        | "git_command_failed"
+        | "path_unavailable"
+        | "candidate_author_invalid" => WorkUnitIntegrationAttentionKindDto::Failure,
+        // Backend diagnostics are never projected verbatim. Unrecognized values fail safely into
+        // one generic product attention category without disclosing their text.
+        _ => WorkUnitIntegrationAttentionKindDto::Failure,
+    };
+    let safe_code = match kind {
+        WorkUnitIntegrationAttentionKindDto::Conflict => {
+            WorkUnitIntegrationAttentionCodeDto::IntegrationConflict
+        }
+        WorkUnitIntegrationAttentionKindDto::Failure => {
+            WorkUnitIntegrationAttentionCodeDto::IntegrationFailure
+        }
+    };
+    Ok((kind, safe_code))
+}
+
+fn projection_table_exists(connection: &Connection, table: &str) -> Result<bool, String> {
+    connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+        [table],
+        |row| row.get(0),
+    ).map_err(|error| error.to_string())
 }
 
 fn activation_rows<T, F>(connection: &Connection, table: &str, columns: &str, mut map: F) -> Result<std::collections::HashMap<String, T>, String>

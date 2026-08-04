@@ -8,6 +8,7 @@ import { SharedAgentSessionPanel } from './SharedAgentSessionPanel';
 import type {
   ProductWorkUnitHandlerDecisionV1,
   ProductWorkUnitHandlerReviewV1,
+  ProductWorkUnitIntegrationV1,
 } from '../../../application/orchestrations/productReadModels';
 import '../styles/orchestrationSubdetail.css';
 import type { ReactNode } from 'react';
@@ -100,7 +101,8 @@ export function WorkUnitDetailWorkspace({
             unit.implementerActivation ||
             unit.implementerOutcome ||
             unit.handlerReview ||
-            unit.handlerDecision) && (
+            unit.handlerDecision ||
+            unit.integration) && (
             <section className="work-unit-activation" aria-label="Work Unit activation activity">
               <h2>Activation activity</h2>
               {unit.handlerActivation && <p>{handlerActivity(unit.handlerActivation)}</p>}
@@ -116,6 +118,7 @@ export function WorkUnitDetailWorkspace({
               {unit.handlerReview && (
                 <HandlerReviewActivity review={unit.handlerReview} decision={unit.handlerDecision} />
               )}
+              {unit.integration && <IntegrationAndSettlement integration={unit.integration} />}
             </section>
           )}
           <section className="work-unit-lifecycle" aria-label="Work Unit lifecycle turn log">
@@ -594,6 +597,57 @@ function HandlerReviewActivity({
         </p>
       )}
       <p>No retry attempt, settlement, dependent activation, or upward continuation is recorded.</p>
+    </div>
+  );
+}
+
+function IntegrationAndSettlement({
+  integration,
+}: {
+  readonly integration: ProductWorkUnitIntegrationV1;
+}) {
+  const phase = integration.progress
+    ? {
+        preparing: 'preparing the integration',
+        applying: 'applying the integration',
+        recording: 'recording the integration result',
+      }[integration.progress.phase]
+    : undefined;
+  return (
+    <div className="work-unit-integration">
+      <h3>Integration and settlement</h3>
+      <p>
+        Integration was requested at {integration.requestedAt} and explicitly authorized at{' '}
+        {integration.authorizedAt}.
+      </p>
+      {integration.progress && (integration.attention || integration.success) ? (
+        <p>Durable progress was recorded while {phase} at {integration.progress.recordedAt}.</p>
+      ) : integration.progress ? (
+        <p>Integration is in progress: {phase} at {integration.progress.recordedAt}.</p>
+      ) : null}
+      {integration.attention && (
+        <p>
+          Integration needs attention: {integration.attention.kind} (
+          {integration.attention.safeCode.replaceAll('_', ' ')}) recorded at{' '}
+          {integration.attention.recordedAt}. No integration success or Work Unit settlement is
+          recorded.
+        </p>
+      )}
+      {integration.success && (
+        <p>Integration success was recorded at {integration.success.recordedAt}.</p>
+      )}
+      {integration.settlement && (
+        <p>Work Unit settlement was recorded at {integration.settlement.settledAt}.</p>
+      )}
+      {integration.prerequisiteContribution && (
+        <p>
+          Prerequisite contribution was recorded at{' '}
+          {integration.prerequisiteContribution.recordedAt} for{' '}
+          {integration.prerequisiteContribution.dependentCount} dependent Work{' '}
+          {integration.prerequisiteContribution.dependentCount === 1 ? 'Unit' : 'Units'}. This does
+          not activate dependent work.
+        </p>
+      )}
     </div>
   );
 }

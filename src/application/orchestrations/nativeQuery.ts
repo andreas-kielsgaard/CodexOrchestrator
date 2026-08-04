@@ -8,6 +8,7 @@ import type {
   ProductWorkUnitHandlerActivationV1,
   ProductWorkUnitHandlerDecisionV1,
   ProductWorkUnitHandlerReviewV1,
+  ProductWorkUnitIntegrationV1,
   ProductWorkUnitImplementerActivationV1,
   ProductWorkUnitImplementerOutcomeV1,
 } from './productReadModels';
@@ -61,6 +62,7 @@ export interface NativeMaterializedWorkUnitV1 {
   readonly implementerOutcome?: NativeWorkUnitImplementerOutcomeV1;
   readonly handlerReview?: NativeWorkUnitHandlerReviewV1;
   readonly handlerDecision?: NativeWorkUnitHandlerDecisionV1;
+  readonly integration?: NativeWorkUnitIntegrationV1;
 }
 export interface NativeWorkUnitHandlerActivationV1 {
   readonly attemptId: string;
@@ -127,6 +129,7 @@ export interface NativeWorkUnitImplementerActivationV1 {
 export type NativeWorkUnitImplementerOutcomeV1 = ProductWorkUnitImplementerOutcomeV1;
 export type NativeWorkUnitHandlerReviewV1 = ProductWorkUnitHandlerReviewV1;
 export type NativeWorkUnitHandlerDecisionV1 = ProductWorkUnitHandlerDecisionV1;
+export type NativeWorkUnitIntegrationV1 = ProductWorkUnitIntegrationV1;
 export interface NativeWorkUnitRelationshipV1 {
   readonly relationshipId: string;
   readonly materializationId: string;
@@ -594,6 +597,7 @@ export function nativeQueryProductCompositionInputV2(
           : {}),
         ...(unit.handlerReview ? { handlerReview: { ...unit.handlerReview } } : {}),
         ...(unit.handlerDecision ? { handlerDecision: { ...unit.handlerDecision } } : {}),
+        ...(unit.integration ? { integration: { ...unit.integration } } : {}),
       })),
       gates: [],
       concerns: [],
@@ -1184,6 +1188,7 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
       'implementerOutcome',
       'handlerReview',
       'handlerDecision',
+      'integration',
     ],
     'materialized Work Unit',
   );
@@ -1213,6 +1218,9 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
     ...(x.handlerDecision === undefined
       ? {}
       : { handlerDecision: workUnitHandlerDecision(x.handlerDecision) }),
+    ...(x.integration === undefined
+      ? {}
+      : { integration: workUnitIntegration(x.integration) }),
   };
 };
 const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivationV1 => {
@@ -2156,6 +2164,115 @@ const workUnitHandlerDecision = (value: unknown): NativeWorkUnitHandlerDecisionV
   }
   return result;
 };
+const workUnitIntegration = (value: unknown): NativeWorkUnitIntegrationV1 => {
+  const x = object(value, 'Work Unit integration');
+  keys(
+    x,
+    [
+      'requestedAt',
+      'authorizedAt',
+      'progress',
+      'attention',
+      'success',
+      'settlement',
+      'prerequisiteContribution',
+    ],
+    'Work Unit integration',
+  );
+  const requestedAt = timestamp(x.requestedAt, 'Work Unit integration requestedAt');
+  const authorizedAt = timestamp(x.authorizedAt, 'Work Unit integration authorizedAt');
+  timestampAtOrAfter(requestedAt, authorizedAt, 'Work Unit integration authorization');
+
+  const progress = x.progress === undefined ? undefined : (() => {
+    const value = object(x.progress, 'Work Unit integration progress');
+    keys(value, ['phase', 'recordedAt'], 'Work Unit integration progress');
+    if (!['preparing', 'applying', 'recording'].includes(value.phase as string))
+      fail('invalid Work Unit integration progress phase');
+    const recordedAt = timestamp(value.recordedAt, 'Work Unit integration progress recordedAt');
+    timestampAtOrAfter(authorizedAt, recordedAt, 'Work Unit integration progress');
+    return {
+      phase: value.phase as 'preparing' | 'applying' | 'recording',
+      recordedAt,
+    };
+  })();
+  const attention = x.attention === undefined ? undefined : (() => {
+    const value = object(x.attention, 'Work Unit integration attention');
+    keys(value, ['kind', 'safeCode', 'recordedAt'], 'Work Unit integration attention');
+    if (value.kind !== 'conflict' && value.kind !== 'failure')
+      fail('invalid Work Unit integration attention kind');
+    const expectedCode = value.kind === 'conflict' ? 'integration_conflict' : 'integration_failure';
+    if (value.safeCode !== expectedCode) fail('invalid Work Unit integration attention code');
+    const recordedAt = timestamp(value.recordedAt, 'Work Unit integration attention recordedAt');
+    timestampAtOrAfter(
+      progress?.recordedAt ?? authorizedAt,
+      recordedAt,
+      'Work Unit integration attention',
+    );
+    return { kind: value.kind, safeCode: expectedCode, recordedAt } as const;
+  })();
+  const success = x.success === undefined ? undefined : (() => {
+    const value = object(x.success, 'Work Unit integration success');
+    keys(value, ['recordedAt'], 'Work Unit integration success');
+    const recordedAt = timestamp(value.recordedAt, 'Work Unit integration success recordedAt');
+    timestampAtOrAfter(
+      progress?.recordedAt ?? authorizedAt,
+      recordedAt,
+      'Work Unit integration success',
+    );
+    return { recordedAt };
+  })();
+  const settlement = x.settlement === undefined ? undefined : (() => {
+    const value = object(x.settlement, 'Work Unit settlement');
+    keys(value, ['settledAt'], 'Work Unit settlement');
+    const settledAt = timestamp(value.settledAt, 'Work Unit settlement settledAt');
+    timestampAtOrAfter(
+      success?.recordedAt ?? authorizedAt,
+      settledAt,
+      'Work Unit settlement',
+    );
+    return { settledAt };
+  })();
+  const prerequisiteContribution =
+    x.prerequisiteContribution === undefined
+      ? undefined
+      : (() => {
+          const value = object(
+            x.prerequisiteContribution,
+            'Work Unit prerequisite contribution',
+          );
+          keys(
+            value,
+            ['recordedAt', 'dependentCount'],
+            'Work Unit prerequisite contribution',
+          );
+          if (!Number.isSafeInteger(value.dependentCount) || (value.dependentCount as number) < 1)
+            fail('invalid Work Unit prerequisite contribution dependent count');
+          const recordedAt = timestamp(
+            value.recordedAt,
+            'Work Unit prerequisite contribution recordedAt',
+          );
+          timestampAtOrAfter(
+            success?.recordedAt ?? authorizedAt,
+            recordedAt,
+            'Work Unit prerequisite contribution',
+          );
+          return { recordedAt, dependentCount: value.dependentCount as number };
+        })();
+  if (attention && (success || settlement || prerequisiteContribution))
+    fail('Work Unit integration attention contradicts terminal facts');
+  if (settlement && !success) fail('Work Unit settlement requires integration success');
+  if (prerequisiteContribution && (!success || !settlement))
+    fail('Work Unit prerequisite contribution requires integration success and settlement');
+  return {
+    requestedAt,
+    authorizedAt,
+    ...(progress ? { progress } : {}),
+    ...(attention ? { attention } : {}),
+    ...(success ? { success } : {}),
+    ...(settlement ? { settlement } : {}),
+    ...(prerequisiteContribution ? { prerequisiteContribution } : {}),
+  };
+};
 const workUnitRelationship = (value: unknown): NativeWorkUnitRelationshipV1 => {
   const x = object(value, 'Work Unit relationship');
   keys(
@@ -2475,7 +2592,7 @@ function validate(query: OrchestrationNativeQueryV2) {
         unit.acceptedRevisionId !== materialization.acceptedRevisionId
       )
         fail('materialized Work Unit does not match its materialization');
-      validateActivationCorrelations(unit);
+      validateActivationCorrelations(unit, relationships);
     });
   });
   if (query.workUnits.some((unit) => !materializations.has(unit.materializationId)))
@@ -2483,7 +2600,10 @@ function validate(query: OrchestrationNativeQueryV2) {
   if (query.workUnitRelationships.some((item) => !materializations.has(item.materializationId)))
     fail('Work Unit relationship references unknown materialization');
 }
-function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
+function validateActivationCorrelations(
+  unit: NativeMaterializedWorkUnitV1,
+  relationships: readonly NativeWorkUnitRelationshipV1[],
+) {
   const handler = unit.handlerActivation;
   const continuation = unit.actionContinuation;
   const implementer = unit.implementerActivation;
@@ -2582,6 +2702,31 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
       decision.recordedAt,
       'Handler decision',
     );
+  }
+  const integration = unit.integration;
+  if (integration) {
+    if (!decision || decision.variant !== 'accepted')
+      fail('Productive integration requires an accepted Handler decision');
+    timestampAtOrAfter(
+      decision.recordedAt,
+      integration.requestedAt,
+      'Productive integration request',
+    );
+    const dependents = relationships.filter(
+      (relationship) =>
+        relationship.relationshipKind === 'depends_on' && relationship.toId === unit.workUnitId,
+    );
+    if (integration.settlement) {
+      if (dependents.length === 0 && integration.prerequisiteContribution)
+        fail('Work Unit without dependents has a prerequisite contribution');
+      if (
+        dependents.length > 0 &&
+        integration.prerequisiteContribution?.dependentCount !== dependents.length
+      )
+        fail('Prerequisite contribution does not match exact dependent Work Units');
+    } else if (integration.prerequisiteContribution) {
+      fail('Prerequisite contribution exists without Work Unit settlement');
+    }
   }
 }
 function validateMaterializationRelationships(

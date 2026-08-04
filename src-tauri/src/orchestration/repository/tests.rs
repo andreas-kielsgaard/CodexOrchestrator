@@ -2166,5 +2166,168 @@ fn valid_work_unit_activation_projection() -> WorkUnitDto {
         implementer_outcome: None,
         handler_review: None,
         handler_decision: None,
+        integration: None,
     }
+}
+
+#[test]
+fn productive_integration_projection_is_absent_without_owned_schema() {
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    assert!(productive_integration_rows(&connection, &[], &[]).unwrap().is_empty());
+}
+
+#[test]
+fn productive_integration_projection_preserves_authorized_and_progressive_stages() {
+    let (connection, units, relationships) = productive_integration_projection_fixture();
+    let authorized = productive_integration_rows(&connection, &units, &relationships).unwrap();
+    assert_eq!(authorized["unit"].requested_at, "2026-08-04T00:00:20Z");
+    assert_eq!(authorized["unit"].authorized_at, "2026-08-04T00:00:20Z");
+    assert!(authorized["unit"].progress.is_none());
+    assert!(authorized["unit"].success.is_none());
+
+    connection.execute_batch(
+        "UPDATE accepted_work_unit_integrations SET stage='object_created',integration_commit_id='private-integration-commit',integration_tree_id='private-integration-tree',object_created_at='2026-08-04T00:00:21Z';",
+    ).unwrap();
+    let preparing = productive_integration_rows(&connection, &units, &relationships).unwrap();
+    assert_eq!(
+        preparing["unit"].progress.as_ref().unwrap().phase,
+        WorkUnitIntegrationProgressPhaseDto::Preparing
+    );
+
+    connection.execute_batch(
+        "UPDATE accepted_work_unit_integrations SET stage='runtime_advanced',ref_advanced_at='2026-08-04T00:00:22Z',runtime_advanced_at='2026-08-04T00:00:23Z';",
+    ).unwrap();
+    let applying = productive_integration_rows(&connection, &units, &relationships).unwrap();
+    assert_eq!(
+        applying["unit"].progress.as_ref().unwrap().phase,
+        WorkUnitIntegrationProgressPhaseDto::Applying
+    );
+    assert!(applying["unit"].success.is_none());
+}
+
+#[test]
+fn productive_integration_projection_maps_safe_attention_without_terminal_facts() {
+    let (connection, units, relationships) = productive_integration_projection_fixture();
+    connection.execute_batch(
+        "UPDATE accepted_work_unit_integrations SET stage='attention',attention_code='durable_replay_conflict',attention_recorded_at='2026-08-04T00:00:21Z';",
+    ).unwrap();
+    let projected = productive_integration_rows(&connection, &units, &relationships).unwrap();
+    let attention = projected["unit"].attention.as_ref().unwrap();
+    assert_eq!(attention.kind, WorkUnitIntegrationAttentionKindDto::Conflict);
+    assert_eq!(attention.safe_code, WorkUnitIntegrationAttentionCodeDto::IntegrationConflict);
+    assert!(projected["unit"].success.is_none());
+    assert!(projected["unit"].settlement.is_none());
+
+    connection.execute("UPDATE accepted_work_unit_integrations SET attention_code='C:\\private\\repository\\diagnostic'", []).unwrap();
+    let sanitized = productive_integration_rows(&connection, &units, &relationships).unwrap();
+    let json = serde_json::to_string(&sanitized["unit"]).unwrap();
+    assert_eq!(sanitized["unit"].attention.as_ref().unwrap().kind, WorkUnitIntegrationAttentionKindDto::Failure);
+    assert!(!json.contains("private"));
+}
+
+#[test]
+fn productive_integration_projection_keeps_success_settlement_and_contribution_separate_and_private() {
+    let (connection, units, relationships) = productive_integration_projection_fixture();
+    seed_settled_productive_integration(&connection);
+    let projected = productive_integration_rows(&connection, &units, &relationships).unwrap();
+    let integration = &projected["unit"];
+    assert_eq!(integration.success.as_ref().unwrap().recorded_at, "2026-08-04T00:00:25Z");
+    assert_eq!(integration.settlement.as_ref().unwrap().settled_at, "2026-08-04T00:00:25Z");
+    assert_eq!(integration.prerequisite_contribution.as_ref().unwrap().dependent_count, 1);
+    let json = serde_json::to_string(integration).unwrap();
+    for private in [
+        "private-integration-id",
+        "private-candidate-id",
+        "private-intent-fingerprint",
+        "private-integration-commit",
+        "private-integration-tree",
+        "private-ref",
+    ] {
+        assert!(!json.contains(private), "leaked {private}: {json}");
+    }
+}
+
+#[test]
+fn productive_integration_projection_rejects_order_unknown_stage_and_missing_terminal_bundle() {
+    let (connection, units, relationships) = productive_integration_projection_fixture();
+    connection.execute("UPDATE accepted_work_unit_integrations SET authorization_recorded_at='2026-08-04T00:00:19Z'", []).unwrap();
+    assert!(productive_integration_rows(&connection, &units, &relationships).unwrap_err().contains("authorization"));
+
+    connection.execute_batch("UPDATE accepted_work_unit_integrations SET authorization_recorded_at='2026-08-04T00:00:20Z',stage='unknown';").unwrap();
+    assert!(productive_integration_rows(&connection, &units, &relationships).unwrap_err().contains("unknown"));
+
+    connection.execute_batch("UPDATE accepted_work_unit_integrations SET stage='settled',integration_commit_id='private-integration-commit',integration_tree_id='private-integration-tree',object_created_at='2026-08-04T00:00:21Z',ref_advanced_at='2026-08-04T00:00:22Z',runtime_advanced_at='2026-08-04T00:00:23Z',db_advanced_at='2026-08-04T00:00:24Z',settled_at='2026-08-04T00:00:25Z'; INSERT INTO work_unit_settlements VALUES('settlement','unit','private-integration-id','2026-08-04T00:00:25Z');").unwrap();
+    assert!(productive_integration_rows(&connection, &units, &relationships).unwrap_err().contains("lacks success evidence"));
+}
+
+#[test]
+fn productive_integration_projection_rejects_orphan_duplicate_foreign_and_unaccepted_correlations() {
+    let (connection, units, relationships) = productive_integration_projection_fixture();
+    connection.execute("INSERT INTO accepted_work_unit_integration_evidence VALUES('orphan','missing','fingerprint','commit','tree','parent','candidate','private-ref','intent','2026-08-04T00:00:25Z')", []).unwrap();
+    assert!(productive_integration_rows(&connection, &units, &relationships).unwrap_err().contains("orphaned"));
+
+    connection.execute("DELETE FROM accepted_work_unit_integration_evidence", []).unwrap();
+    seed_settled_productive_integration(&connection);
+    connection.execute("INSERT INTO accepted_work_unit_integration_evidence VALUES('duplicate','private-integration-id','fingerprint-2','private-integration-commit','private-integration-tree','parent','private-candidate-id','private-ref','private-intent-fingerprint','2026-08-04T00:00:25Z')", []).unwrap();
+    assert!(productive_integration_rows(&connection, &units, &relationships).unwrap_err().contains("duplicate success evidence"));
+
+    connection.execute("DELETE FROM accepted_work_unit_integration_evidence WHERE evidence_id='duplicate'", []).unwrap();
+    connection.execute("UPDATE accepted_work_unit_integration_evidence SET candidate_id='foreign-candidate'", []).unwrap();
+    assert!(productive_integration_rows(&connection, &units, &relationships).unwrap_err().contains("foreign correlation"));
+
+    connection.execute("UPDATE accepted_work_unit_integration_evidence SET candidate_id='private-candidate-id'", []).unwrap();
+    connection.execute("UPDATE accepted_handler_candidates SET authority_id='foreign-authority'", []).unwrap();
+    assert!(productive_integration_rows(&connection, &units, &relationships).unwrap_err().contains("accepted Handler authority"));
+
+    connection.execute("UPDATE accepted_handler_candidates SET authority_id='private-authority'", []).unwrap();
+    connection.execute("UPDATE work_unit_handler_decisions SET decision_variant='returned',implementation_accepted_at=NULL,implementation_returned_at='2026-08-04T00:00:19Z',retry_required_at='2026-08-04T00:00:19Z'", []).unwrap();
+    assert!(productive_integration_rows(&connection, &units, &relationships).unwrap_err().contains("accepted Handler authority"));
+}
+
+fn productive_integration_projection_fixture() -> (
+    rusqlite::Connection,
+    Vec<WorkUnitDto>,
+    Vec<WorkUnitRelationshipDto>,
+) {
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    connection.execute_batch(
+        "CREATE TABLE accepted_work_unit_integrations (integration_id TEXT,work_unit_id TEXT,candidate_id TEXT,authority_id TEXT,target_ref_name TEXT,pre_object_id TEXT,pre_version INTEGER,candidate_commit_id TEXT,candidate_tree_id TEXT,baseline_object_id TEXT,intent_fingerprint TEXT,intent_recorded_at TEXT,authorization_recorded_at TEXT,commit_fingerprint TEXT,stage TEXT,integration_commit_id TEXT,integration_tree_id TEXT,object_created_at TEXT,ref_advanced_at TEXT,runtime_advanced_at TEXT,db_advanced_at TEXT,settled_at TEXT,notification_intent_recorded_at TEXT,notification_delivered_at TEXT,attention_code TEXT,attention_recorded_at TEXT);
+         CREATE TABLE accepted_handler_candidates (candidate_id TEXT,work_unit_id TEXT,authority_id TEXT,pinned_at TEXT,attention_reason TEXT,review_invocation_id TEXT,decision_fingerprint TEXT);
+         CREATE TABLE work_unit_handler_reviews (work_unit_id TEXT,review_invocation_id TEXT,semantic_judgment_variant TEXT,lifecycle_status TEXT,lifecycle_observed_at TEXT);
+         CREATE TABLE work_unit_handler_decisions (work_unit_id TEXT,review_invocation_id TEXT,decision_variant TEXT,decision_fingerprint TEXT,decision_recorded_at TEXT,implementation_accepted_at TEXT,implementation_returned_at TEXT,retry_required_at TEXT,settlement_ready_at TEXT);
+         CREATE TABLE accepted_work_unit_integration_evidence (evidence_id TEXT,integration_id TEXT,evidence_fingerprint TEXT,integration_commit_id TEXT,integration_tree_id TEXT,parent_object_id TEXT,candidate_id TEXT,target_ref_name TEXT,intent_fingerprint TEXT,recorded_at TEXT);
+         CREATE TABLE work_unit_settlements (settlement_id TEXT,work_unit_id TEXT,integration_id TEXT,settled_at TEXT);
+         CREATE TABLE work_unit_prerequisite_contributions (contribution_id TEXT,prerequisite_work_unit_id TEXT,dependent_work_unit_id TEXT,integration_id TEXT,relationship_id TEXT,recorded_at TEXT);
+         CREATE TABLE work_unit_relationships (relationship_id TEXT,materialization_id TEXT,relationship_kind TEXT,from_id TEXT,to_id TEXT,ordinal INTEGER);
+         INSERT INTO accepted_handler_candidates VALUES('private-candidate-id','unit','private-authority','2026-08-04T00:00:19Z',NULL,'review','decision');
+         INSERT INTO work_unit_handler_reviews VALUES('unit','review','accept','completed','2026-08-04T00:00:18Z');
+         INSERT INTO work_unit_handler_decisions VALUES('unit','review','accepted','decision','2026-08-04T00:00:19Z','2026-08-04T00:00:19Z',NULL,NULL,NULL);
+         INSERT INTO accepted_work_unit_integrations VALUES('private-integration-id','unit','private-candidate-id','private-authority','private-ref','private-pre',1,'private-candidate-commit','private-candidate-tree','private-baseline','private-intent-fingerprint','2026-08-04T00:00:20Z','2026-08-04T00:00:20Z',NULL,'intent_reserved',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+         INSERT INTO work_unit_relationships VALUES('dependency','materialization','depends_on','dependent','unit',NULL);",
+    ).unwrap();
+    let mut unit = valid_work_unit_activation_projection();
+    unit.work_unit_id = "unit".into();
+    unit.materialization_id = "materialization".into();
+    let mut dependent = valid_work_unit_activation_projection();
+    dependent.work_unit_id = "dependent".into();
+    dependent.materialization_id = "materialization".into();
+    dependent.lane_ordinal = 1;
+    let relationships = vec![WorkUnitRelationshipDto {
+        relationship_id: "dependency".into(),
+        materialization_id: "materialization".into(),
+        relationship_kind: "depends_on".into(),
+        from_id: "dependent".into(),
+        to_id: "unit".into(),
+        ordinal: None,
+    }];
+    (connection, vec![unit, dependent], relationships)
+}
+
+fn seed_settled_productive_integration(connection: &rusqlite::Connection) {
+    connection.execute_batch(
+        "UPDATE accepted_work_unit_integrations SET stage='settled',integration_commit_id='private-integration-commit',integration_tree_id='private-integration-tree',object_created_at='2026-08-04T00:00:21Z',ref_advanced_at='2026-08-04T00:00:22Z',runtime_advanced_at='2026-08-04T00:00:23Z',db_advanced_at='2026-08-04T00:00:24Z',settled_at='2026-08-04T00:00:25Z';
+         INSERT INTO accepted_work_unit_integration_evidence VALUES('evidence','private-integration-id','private-evidence-fingerprint','private-integration-commit','private-integration-tree','private-parent','private-candidate-id','private-ref','private-intent-fingerprint','2026-08-04T00:00:25Z');
+         INSERT INTO work_unit_settlements VALUES('settlement','unit','private-integration-id','2026-08-04T00:00:25Z');
+         INSERT INTO work_unit_prerequisite_contributions VALUES('contribution','unit','dependent','private-integration-id','dependency','2026-08-04T00:00:25Z');",
+    ).unwrap();
 }
