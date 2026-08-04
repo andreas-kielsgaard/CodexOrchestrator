@@ -8,6 +8,7 @@ import { SharedAgentSessionPanel } from './SharedAgentSessionPanel';
 import type {
   ProductWorkUnitHandlerDecisionV1,
   ProductWorkUnitHandlerReviewV1,
+  ProductWorkUnitIncompleteDispositionV1,
   ProductWorkUnitImplementerOutcomeV1,
   ProductWorkUnitRetryAttemptV1,
 } from '../../../application/orchestrations/productReadModels';
@@ -128,6 +129,9 @@ export function WorkUnitDetailWorkspace({
                         review={attempt.handlerReview}
                         decision={attempt.handlerDecision}
                       />
+                    )}
+                    {attempt?.incompleteDisposition && (
+                      <IncompleteDispositionActivity disposition={attempt.incompleteDisposition} />
                     )}
                     {unit.retryAttempts
                       .filter((retry) => retry.ordinal === ordinal)
@@ -601,7 +605,10 @@ function HandlerReviewActivity({
             <p>Implementation returned by the Handler review at {decision.implementationReturnedAt}.</p>
           )}
           {decision.retryRequiredAt && (
-            <p>Retry is required at {decision.retryRequiredAt}.</p>
+            <p>
+              Retry is required at {decision.retryRequiredAt}. This is a legacy ordinal-1
+              compatibility fact only; it is not generalized retry authorization.
+            </p>
           )}
         </div>
       ) : review.lifecycle?.status === 'completed' && review.semanticJudgment ? (
@@ -615,6 +622,74 @@ function HandlerReviewActivity({
         </p>
       )}
       <p>No settlement, dependent activation, or upward continuation is recorded.</p>
+    </div>
+  );
+}
+
+function IncompleteDispositionActivity({
+  disposition,
+}: {
+  readonly disposition: ProductWorkUnitIncompleteDispositionV1;
+}) {
+  const classification = {
+    refinement_needed: 'Refinement needed',
+    functional_objective_not_satisfied: 'Functional objective not satisfied',
+    blocked: 'Blocked',
+  }[disposition.classification];
+  return (
+    <div className="work-unit-incomplete-disposition">
+      <h3>Incomplete Handler disposition</h3>
+      <p>
+        {classification}; meaningful progress was{' '}
+        {disposition.meaningfulProgress ? 'recorded' : 'not recorded'}.
+      </p>
+      <dl>
+        <RecordedFact label="Classification" value={classification} />
+        <RecordedFact
+          label="Meaningful progress"
+          value={disposition.meaningfulProgress ? 'Recorded' : 'Not recorded'}
+        />
+        <RecordedFact label="Disposition recorded" value={disposition.recordedAt} />
+        {disposition.nextAttemptAuthorizedAt && (
+          <RecordedFact
+            label="Next attempt authorization"
+            value={disposition.nextAttemptAuthorizedAt}
+          />
+        )}
+      </dl>
+      {disposition.noProgressHandback ? (
+        <>
+          <p>
+            No meaningful progress was recorded. Work Unit handback persistence and delivery intent
+            are recorded separately from Sprint Runner receiver activation or decision.
+          </p>
+          <dl>
+            <RecordedFact label="Handback" value={disposition.noProgressHandback.handbackId} />
+            <RecordedFact
+              label="Source attempt"
+              value={disposition.noProgressHandback.sourceAttemptId}
+            />
+            <RecordedFact
+              label="Source review"
+              value={disposition.noProgressHandback.sourceReviewInvocationId}
+            />
+            <RecordedFact
+              label="Handback persisted"
+              value={disposition.noProgressHandback.persistedAt}
+            />
+            <RecordedFact
+              label="Delivery intent recorded"
+              value={disposition.noProgressHandback.deliveryIntendedAt}
+            />
+          </dl>
+        </>
+      ) : (
+        <p>
+          The authorized next attempt is a recorded application fact; no launch, receiver
+          activation, settlement, integration, or dependent activation is recorded here.
+        </p>
+      )}
+      <p>No user acceptance is recorded by this disposition.</p>
     </div>
   );
 }

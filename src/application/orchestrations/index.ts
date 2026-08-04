@@ -170,6 +170,7 @@ export type {
   ProductWorkUnitHandlerActivationV1,
   ProductWorkUnitHandlerDecisionV1,
   ProductWorkUnitHandlerReviewV1,
+  ProductWorkUnitIncompleteDispositionV1,
   ProductWorkUnitImplementerActivationV1,
   ProductWorkUnitImplementerOutcomeV1,
   ProductWorkUnitRetryAttemptV1,

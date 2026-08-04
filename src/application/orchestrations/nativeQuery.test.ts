@@ -717,7 +717,9 @@ describe('orchestration native query v1', () => {
     extensibleUnit.handlerReview = handlerReviewFixture('returned');
     extensibleUnit.handlerDecision = handlerDecisionFixture('returned');
     extensibleUnit.retryAttempts = [{ ...retryAttemptFixture('partial'), ordinal: 2, retryAttemptId: 'retry-attempt-2' }];
-    expect(decodeOrchestrationNativeQueryV2(structurallyExtensible).workUnits[0]!.retryAttempts[0]!.ordinal).toBe(2);
+    expect(() => decodeOrchestrationNativeQueryV2(structurallyExtensible)).toThrow(
+      'exact predecessor history member',
+    );
 
     const malformed = [
       { ...retryAttemptFixture('ready'), originAttemptId: 'foreign-attempt' },
@@ -763,6 +765,53 @@ describe('orchestration native query v1', () => {
     acceptedDecisionUnit.retryAttempts = [retryAttemptFixture('partial')];
     expect(() => decodeOrchestrationNativeQueryV2(acceptedDecision)).toThrow(
       'retry attempt requires a returned Handler decision',
+    );
+  });
+
+  it('requires generalized retry authorization from the exact predecessor and preserves dispositions', () => {
+    const meaningful = implementerOutcomeNativeFixture();
+    const meaningfulUnit = (meaningful.workUnits as Array<Record<string, unknown>>)[0]!;
+    meaningfulUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
+    meaningfulUnit.handlerReview = handlerReviewFixture('returned');
+    meaningfulUnit.handlerDecision = handlerDecisionFixture('returned');
+    delete (meaningfulUnit.handlerDecision as Record<string, unknown>).retryRequiredAt;
+    (meaningfulUnit as Record<string, unknown>).attemptHistory = [
+      {
+        ordinal: 0,
+        attemptId: 'attempt-1',
+        implementerOutcome: meaningfulUnit.implementerOutcome,
+        handlerReview: meaningfulUnit.handlerReview,
+        handlerDecision: meaningfulUnit.handlerDecision,
+        incompleteDisposition: {
+          attemptId: 'attempt-1',
+          reviewInvocationId: 'review-invocation-1',
+          decisionFingerprint: 'decision-1',
+          classification: 'refinement_needed',
+          meaningfulProgress: true,
+          recordedAt: '2026-08-04T00:00:18Z',
+          nextAttemptAuthorizedAt: '2026-08-04T00:00:19Z',
+        },
+      },
+    ];
+    meaningfulUnit.retryAttempts = [retryAttemptFixture('partial')];
+    const decoded = decodeOrchestrationNativeQueryV2(meaningful);
+    const model = composeProductOrchestrationReadModels(
+      nativeQueryProductCompositionInputV2(decoded),
+    ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
+    expect(model.attemptHistory[0]!.incompleteDisposition).toMatchObject({
+      classification: 'refinement_needed',
+      meaningfulProgress: true,
+      nextAttemptAuthorizedAt: '2026-08-04T00:00:19Z',
+    });
+
+    const gapped = implementerOutcomeNativeFixture();
+    const gappedUnit = (gapped.workUnits as Array<Record<string, unknown>>)[0]!;
+    gappedUnit.attemptHistory = [
+      { ordinal: 0, attemptId: 'attempt-1', implementerOutcome: implementerOutcomeFixture('review_ready') },
+      { ordinal: 2, attemptId: 'attempt-3', implementerOutcome: { ...implementerOutcomeFixture('review_ready'), attemptId: 'attempt-3' } },
+    ];
+    expect(() => decodeOrchestrationNativeQueryV2(gapped)).toThrow(
+      'strictly ordered without gaps',
     );
   });
 

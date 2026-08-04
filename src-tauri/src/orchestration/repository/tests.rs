@@ -2177,7 +2177,7 @@ fn retry_projection_exposes_only_semantic_stages_and_rejects_impossible_ordering
     primary_retry_mut(&mut work_unit).retry_ready_at = Some("2026-08-04T00:00:12Z".into());
 
     primary_retry_mut(&mut work_unit).ordinal = 2;
-    assert!(validate_work_unit_activation_projection(&work_unit).is_ok());
+    assert!(validate_work_unit_activation_projection(&work_unit).is_err());
     primary_retry_mut(&mut work_unit).ordinal = 1;
     primary_retry_mut(&mut work_unit).launch_accepted_at = None;
     assert!(validate_work_unit_activation_projection(&work_unit).is_err());

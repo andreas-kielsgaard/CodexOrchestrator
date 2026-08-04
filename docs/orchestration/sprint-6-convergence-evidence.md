@@ -655,3 +655,27 @@ candidate lineage, Session, invocation, harness, and authorization facts; a reop
 reuses the ordinal-2 identities without a handback, receiver effect, settlement, integration, or
 dependency activation. Multi-process SQLite stress, live provider/desktop behavior, integration,
 settlement, receiver activation, publication, and user acceptance remain unproven.
+
+## OPS-3: Strict ordered history and factual product projection
+
+The repository and native query now require lossless attempt history to start at ordinal 0 and
+advance without gaps, with unique application-owned attempt identities and exact retry-to-history
+correlation. Generalized retry activation is authorized only by the meaningful-progress
+disposition for its exact predecessor. The accepted ordinal-0 to ordinal-1 legacy path remains
+readable through `retry_required_at`, but that field is labeled historical compatibility data and
+is not used as generalized policy. Incomplete classification, meaningful-progress judgment,
+next-attempt authorization, eventual Handler decision, and no-progress handback persistence and
+delivery intent are retained in the Product read model. Receiver activation or decision,
+settlement, integration, dependent activation, and user acceptance are not inferred.
+
+The Work Unit detail activity renders ordered attempt sections with classification, progress,
+authorization, completion, and handback labels. Private candidate lineage, refs, paths, and Git
+object identities remain excluded from productive reads and UI.
+
+Validation in this worktree: `cargo test --manifest-path src-tauri/Cargo.toml --lib
+orchestration::repository::tests::` passed **30 tests**; the productive ordinal-0/1/2 replay,
+no-progress handback reopen, and legacy migration/reopen regressions each passed **1 test**.
+Frontend Vitest/type/build execution remains unavailable because this checkout has no installed
+`node_modules`, `tsc`, or `vitest`; no dependencies were installed. Live provider/desktop
+behavior, Sprint Runner receiver activation or reassessment, integration, settlement,
+publication, and user acceptance remain unproven.

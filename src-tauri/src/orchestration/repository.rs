@@ -3572,16 +3572,13 @@ fn map_retry_attempt(row: &Row<'_>) -> Result<WorkUnitRetryAttemptDto, rusqlite:
 }
 
 fn validate_attempt_history_projection(work_unit: &WorkUnitDto) -> Result<(), String> {
-    let mut previous_ordinal = None;
+    let mut expected_ordinal = 0;
     let mut attempt_ids = std::collections::HashSet::new();
     for member in &work_unit.attempt_history {
-        if member.ordinal < 0 || !attempt_ids.insert(member.attempt_id.as_str()) {
-            return Err("attempt history has an invalid ordinal or duplicate attempt identity".into());
+        if member.ordinal != expected_ordinal || !attempt_ids.insert(member.attempt_id.as_str()) {
+            return Err("attempt history has a gapped ordinal or duplicate attempt identity".into());
         }
-        if previous_ordinal.is_some_and(|previous| member.ordinal <= previous) {
-            return Err("attempt history is not strictly ordered by ordinal".into());
-        }
-        previous_ordinal = Some(member.ordinal);
+        expected_ordinal += 1;
         let outcome = member.implementer_outcome.as_ref().ok_or_else(|| "attempt history member lacks an Implementer outcome record".to_string())?;
         if outcome.attempt_id != member.attempt_id || outcome.reporting_invocation_id != projection_stable_id("work-unit-implementer-reporting-invocation", &member.attempt_id) {
             return Err("attempt history Implementer outcome correlation is incoherent".into());
@@ -3623,16 +3620,33 @@ fn validate_attempt_history_projection(work_unit: &WorkUnitDto) -> Result<(), St
                 if disposition.next_attempt_authorized_at.is_none() || disposition.no_progress_handback.is_some() { return Err("meaningful-progress disposition has incoherent later effects".into()); }
             } else if disposition.next_attempt_authorized_at.is_some() || disposition.no_progress_handback.is_none() {
                 return Err("no-progress disposition has incoherent authorization or handback".into());
+            } else if let Some(handback) = &disposition.no_progress_handback {
+                if handback.source_attempt_id != member.attempt_id
+                    || handback.source_review_invocation_id != review.review_invocation_id
+                    || handback.sprint_runner_receiver_activated_at.is_some()
+                    || handback.sprint_runner_receiver_decision_at.is_some()
+                {
+                    return Err("no-progress handback has foreign or forbidden receiver effects".into());
+                }
             }
         }
     }
+    let mut retry_ordinals = std::collections::HashSet::new();
+    let mut retry_attempt_ids = std::collections::HashSet::new();
     for retry in &work_unit.retry_attempts {
+        if !retry_ordinals.insert(retry.ordinal) || !retry_attempt_ids.insert(retry.retry_attempt_id.as_str()) {
+            return Err("retry activation has duplicate ordinal or attempt identity".into());
+        }
         let origin = work_unit.attempt_history.iter().find(|member| member.attempt_id == retry.origin_attempt_id).ok_or_else(|| "retry activation lacks its origin history member".to_string())?;
-        let returned = origin.incomplete_disposition.as_ref().is_some_and(|disposition| disposition.meaningful_progress && disposition.next_attempt_authorized_at.is_some())
+        let predecessor = work_unit.attempt_history.iter().find(|member| member.ordinal == retry.ordinal - 1);
+        let returned = predecessor.is_some_and(|member| member.attempt_id == retry.origin_attempt_id && member.incomplete_disposition.as_ref().is_some_and(|disposition| disposition.meaningful_progress && disposition.next_attempt_authorized_at.is_some()))
             || (origin.ordinal == 0 && retry.ordinal == 1 && origin.incomplete_disposition.is_none() && origin.handler_decision.as_ref().is_some_and(|decision| matches!(decision.variant, WorkUnitHandlerDecisionVariantDto::Returned) && decision.retry_required_at.is_some()));
         let retry_member = work_unit.attempt_history.iter().find(|member| member.ordinal == retry.ordinal);
-        if retry.ordinal <= origin.ordinal || !returned || retry_member.is_some_and(|member| member.attempt_id != retry.retry_attempt_id) {
+        if retry.ordinal != origin.ordinal + 1 || !returned || retry_member.is_some_and(|member| member.attempt_id != retry.retry_attempt_id) || (attempt_ids.contains(retry.retry_attempt_id.as_str()) && retry_member.is_none()) {
             return Err("retry activation has invalid origin or ordinal correlation".into());
+        }
+        if retry_member.is_none() {
+            attempt_ids.insert(retry.retry_attempt_id.as_str());
         }
     }
     Ok(())
@@ -3771,14 +3785,50 @@ fn validate_work_unit_activation_projection(work_unit: &WorkUnitDto) -> Result<(
         let origin = work_unit.attempt_history.iter()
             .find(|member| member.attempt_id == retry.origin_attempt_id)
             .ok_or_else(|| "retry attempt lacks its origin history member".to_string())?;
+        let predecessor = work_unit.attempt_history.iter()
+            .find(|member| member.ordinal == retry.ordinal - 1);
         let decision = origin.handler_decision.as_ref()
             .ok_or_else(|| "retry attempt lacks Handler return decision".to_string())?;
-        if retry.ordinal <= origin.ordinal
+        let disposition = predecessor.and_then(|member| member.incomplete_disposition.as_ref());
+        let generalized_authorization = predecessor.is_some_and(|member| member.attempt_id == origin.attempt_id)
+            && disposition.is_some_and(|value| value.meaningful_progress && value.next_attempt_authorized_at.is_some());
+        let legacy_ordinal_one = origin.ordinal == 0
+            && retry.ordinal == 1
+            && predecessor.is_some_and(|member| member.attempt_id == origin.attempt_id)
+            && origin.incomplete_disposition.is_none()
+            && decision.retry_required_at.is_some();
+        if retry.ordinal != origin.ordinal + 1
             || !matches!(decision.variant, WorkUnitHandlerDecisionVariantDto::Returned)
-            || !(origin.incomplete_disposition.as_ref().is_some_and(|disposition| disposition.meaningful_progress && disposition.next_attempt_authorized_at.is_some())
-                || (origin.ordinal == 0 && retry.ordinal == 1 && origin.incomplete_disposition.is_none() && decision.retry_required_at.is_some()))
+            || !(generalized_authorization || legacy_ordinal_one)
         {
             return Err("retry attempt has foreign or non-return lineage".into());
+        }
+        if generalized_authorization {
+            require_timestamp_at_or_after(
+                disposition.and_then(|value| value.next_attempt_authorized_at.as_deref()).expect("meaningful-progress authorization checked"),
+                &retry.capture_requested_at,
+                "retry capture request",
+            )?;
+        } else {
+            require_timestamp_at_or_after(
+                decision.retry_required_at.as_deref().expect("legacy retry-required fact checked"),
+                &retry.capture_requested_at,
+                "legacy retry capture request",
+            )?;
+        }
+        if let Some(retry_history) = work_unit.attempt_history.iter().find(|member| member.ordinal == retry.ordinal) {
+            if retry_history.attempt_id != retry.retry_attempt_id {
+                return Err("retry activation does not match its attempt-history identity".into());
+            }
+            if let Some(outcome) = &retry_history.implementer_outcome {
+                if outcome.implementer_session_id != retry.implementer_session_id
+                    || outcome.original_implementer_invocation_id != retry.implementer_invocation_id
+                {
+                    return Err("retry attempt history does not match its exact Session and invocation".into());
+                }
+            }
+        } else if work_unit.attempt_history.iter().any(|member| member.attempt_id == retry.retry_attempt_id) {
+            return Err("retry activation reuses a foreign attempt-history identity".into());
         }
         require_ordered_projected_phases(
             &[

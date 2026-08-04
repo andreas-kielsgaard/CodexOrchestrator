@@ -608,6 +608,9 @@ export function nativeQueryProductCompositionInputV2(
             : {}),
           ...(attempt.handlerReview ? { handlerReview: { ...attempt.handlerReview } } : {}),
           ...(attempt.handlerDecision ? { handlerDecision: { ...attempt.handlerDecision } } : {}),
+          ...(attempt.incompleteDisposition
+            ? { incompleteDisposition: { ...attempt.incompleteDisposition } }
+            : {}),
         })),
         retryAttempts: unit.retryAttempts.map((retry) => ({ ...retry })),
       })),
@@ -2664,74 +2667,6 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
     )
       fail('Implementer outcome reuses the original Implementer Harness revision');
   }
-  const review = originHistory?.handlerReview;
-  const decision = originHistory?.handlerDecision;
-  const incompleteDisposition = originHistory?.incompleteDisposition;
-  if (review) {
-    if (!handler || handler.eligibilityState !== 'eligible')
-      fail('Handler review requires an eligible Handler activation');
-    if (!continuation || continuation.stage === 'blocked')
-      fail('Handler review requires an unblocked Handler action continuation');
-    if (
-      review.attemptId !== handler.attemptId ||
-      review.handlerSessionId !== handler.handlerSessionId ||
-      review.originalHandlerInvocationId !== handler.handlerInvocationId ||
-      review.attemptId !== continuation.attemptId ||
-      review.handlerSessionId !== continuation.handlerSessionId ||
-      review.originalHandlerInvocationId !== continuation.originalHandlerInvocationId ||
-      review.actionHandlerInvocationId !== continuation.actionInvocationId
-    )
-      fail('Handler review does not match the original Handler Session and action continuation');
-    if (!outcome || outcome.attemptId !== review.attemptId || outcome.reportingInvocationId !== review.reportingInvocationId)
-      fail('Handler review does not match the Implementer reporting outcome');
-    if (!outcome.submittedOutcome || !outcome.evidence)
-      fail('Handler review requires the accepted Implementer claims and evidence');
-    if (
-      review.delivered.summaryClaim !== outcome.submittedOutcome.summaryClaim ||
-      review.delivered.validationStatementClaim !== outcome.submittedOutcome.validationStatementClaim ||
-      review.delivered.comparisonFingerprint !== outcome.evidence.comparisonFingerprint ||
-      JSON.stringify(review.delivered.changedFiles) !== JSON.stringify(outcome.evidence.changedFiles)
-    )
-      fail('Handler review delivered evidence differs from the Implementer outcome');
-    if (review.semanticJudgment && !review.launchAcceptedAt)
-      fail('Handler review judgment requires launch acceptance');
-  }
-  if (decision) {
-    if (!review || decision.reviewInvocationId !== review.reviewInvocationId)
-      fail('Handler decision does not match the Handler review invocation');
-    if (!review.semanticJudgment || review.lifecycle?.status !== 'completed')
-      fail('Handler decision requires exact Completed Handler review judgment');
-    const expectedVariant = review.semanticJudgment.variant === 'accept' ? 'accepted' : 'returned';
-    if (decision.variant !== expectedVariant)
-      fail('Handler decision contradicts semantic judgment');
-    if (decision.variant === 'returned') {
-      if (JSON.stringify(decision.returnReason) !== JSON.stringify(review.semanticJudgment.reason))
-        fail('Handler decision return reason differs from semantic judgment');
-    } else if (decision.returnReason) {
-      fail('accepted Handler decision cannot have a return reason');
-    }
-    timestampAtOrAfter(
-      review.lifecycle.observedAt,
-      decision.recordedAt,
-      'Handler decision',
-    );
-  }
-  if (incompleteDisposition) {
-    if (!review || !decision || decision.variant !== 'returned')
-      fail('incomplete disposition requires a returned Handler decision');
-    if (
-      incompleteDisposition.attemptId !== originHistory?.attemptId ||
-      incompleteDisposition.reviewInvocationId !== review.reviewInvocationId ||
-      incompleteDisposition.decisionFingerprint !== decision.fingerprint
-    )
-      fail('incomplete disposition does not match its attempt, review, and decision');
-    if (incompleteDisposition.meaningfulProgress) {
-      if (!incompleteDisposition.nextAttemptAuthorizedAt || incompleteDisposition.noProgressHandback)
-        fail('meaningful-progress disposition has incoherent later effects');
-    } else if (incompleteDisposition.nextAttemptAuthorizedAt || !incompleteDisposition.noProgressHandback) {
-      fail('no-progress disposition has incoherent authorization or handback');
-    }
-  }
   const retryOrdinals = new Set<number>();
   const retryAttemptIds = new Set<string>();
   for (const retry of retries) {
@@ -2739,17 +2674,30 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
       fail('retry attempts must have unique ordinals and identities');
     const origin = history.find((member) => member.attemptId === retry.originAttemptId);
     const originOutcome = origin?.implementerOutcome;
-    const originDecision = origin?.handlerDecision;
-    if (!origin || retry.ordinal <= origin.ordinal || !originOutcome)
-      fail('retry attempt does not match an earlier Implementer attempt');
-    if (!originDecision || originDecision.variant !== 'returned' || !originDecision.retryRequiredAt)
-      fail('retry attempt requires a returned Handler decision with retryRequiredAt');
+    const predecessor = history.find((member) => member.ordinal === retry.ordinal - 1);
+    const disposition = predecessor?.incompleteDisposition;
+    const legacyOrdinalOne =
+      origin?.ordinal === 0 &&
+      retry.ordinal === 1 &&
+      origin.incompleteDisposition === undefined &&
+      origin.handlerDecision?.variant === 'returned' &&
+      origin.handlerDecision.retryRequiredAt !== undefined;
+    if (!origin || !predecessor || predecessor.attemptId !== origin.attemptId || !originOutcome || retry.ordinal !== origin.ordinal + 1)
+      fail('retry attempt does not match its exact predecessor history member');
+    if (!legacyOrdinalOne && (!disposition || !disposition.meaningfulProgress || !disposition.nextAttemptAuthorizedAt))
+      fail('retry attempt requires a returned Handler decision or exact meaningful-progress authorization from its predecessor');
     if (
       retry.implementerSessionId === originOutcome.implementerSessionId ||
       retry.implementerInvocationId === originOutcome.originalImplementerInvocationId
     )
       fail('retry attempt must use distinct Implementer Session and invocation identities');
-    timestampAtOrAfter(originDecision.retryRequiredAt, retry.captureRequestedAt, 'retry capture request');
+    timestampAtOrAfter(
+      legacyOrdinalOne
+        ? origin.handlerDecision!.retryRequiredAt!
+        : disposition!.nextAttemptAuthorizedAt!,
+      retry.captureRequestedAt,
+      'retry capture request',
+    );
     phaseCoherence(
       retry,
       [
@@ -2774,13 +2722,21 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
     const retryHistory = history.find((member) => member.ordinal === retry.ordinal);
     if (retryHistory && retryHistory.attemptId !== retry.retryAttemptId)
       fail('retry activation does not match its attempt-history identity');
+    if (
+      retryHistory?.implementerOutcome &&
+      (retryHistory.implementerOutcome.implementerSessionId !== retry.implementerSessionId ||
+        retryHistory.implementerOutcome.originalImplementerInvocationId !== retry.implementerInvocationId)
+    )
+      fail('retry attempt history does not match its exact Session and invocation');
+    if (!retryHistory && history.some((member) => member.attemptId === retry.retryAttemptId))
+      fail('retry activation reuses a foreign attempt-history identity');
   }
-  let priorOrdinal = -1;
+  let expectedOrdinal = 0;
   const attemptIds = new Set<string>();
   for (const member of history) {
-    if (member.ordinal <= priorOrdinal || attemptIds.has(member.attemptId))
-      fail('Work Unit attempt history must be strictly ordered with unique identities');
-    priorOrdinal = member.ordinal;
+    if (member.ordinal !== expectedOrdinal || attemptIds.has(member.attemptId))
+      fail('Work Unit attempt history must be strictly ordered without gaps and use unique identities');
+    expectedOrdinal += 1;
     attemptIds.add(member.attemptId);
     const memberOutcome = member.implementerOutcome;
     if (!memberOutcome || memberOutcome.attemptId !== member.attemptId)
@@ -2795,6 +2751,21 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
         memberReview.actionHandlerInvocationId !== continuation?.actionInvocationId
       )
         fail('Handler review does not match its attempt and application-owned Handler authority');
+      if (!handler || handler.eligibilityState !== 'eligible')
+        fail('Handler review requires an eligible Handler activation');
+      if (!continuation || continuation.stage === 'blocked')
+        fail('Handler review requires an unblocked Handler action continuation');
+      if (!memberOutcome.submittedOutcome || !memberOutcome.evidence)
+        fail('Handler review requires the accepted Implementer claims and evidence');
+      if (
+        memberReview.delivered.summaryClaim !== memberOutcome.submittedOutcome.summaryClaim ||
+        memberReview.delivered.validationStatementClaim !== memberOutcome.submittedOutcome.validationStatementClaim ||
+        memberReview.delivered.comparisonFingerprint !== memberOutcome.evidence.comparisonFingerprint ||
+        JSON.stringify(memberReview.delivered.changedFiles) !== JSON.stringify(memberOutcome.evidence.changedFiles)
+      )
+        fail('Handler review delivered evidence differs from the Implementer outcome');
+      if (memberReview.semanticJudgment && !memberReview.launchAcceptedAt)
+        fail('Handler review judgment requires launch acceptance');
     }
     const memberDecision = member.handlerDecision;
     if (memberDecision) {
@@ -2805,6 +2776,42 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
         memberReview.lifecycle?.status !== 'completed'
       )
         fail('Handler decision lacks exact completed review correlation');
+      const expectedVariant = memberReview.semanticJudgment.variant === 'accept' ? 'accepted' : 'returned';
+      if (memberDecision.variant !== expectedVariant)
+        fail('Handler decision contradicts semantic judgment');
+      if (memberDecision.variant === 'returned') {
+        if (JSON.stringify(memberDecision.returnReason) !== JSON.stringify(memberReview.semanticJudgment.reason))
+          fail('Handler decision return reason differs from semantic judgment');
+      } else if (memberDecision.returnReason) {
+        fail('accepted Handler decision cannot have a return reason');
+      }
+      timestampAtOrAfter(memberReview.lifecycle.observedAt, memberDecision.recordedAt, 'Handler decision');
+    }
+    const memberDisposition = member.incompleteDisposition;
+    if (memberDisposition) {
+      if (!memberReview || !memberDecision || memberDecision.variant !== 'returned')
+        fail('incomplete disposition requires a returned Handler decision');
+      if (
+        memberDisposition.attemptId !== member.attemptId ||
+        memberDisposition.reviewInvocationId !== memberReview.reviewInvocationId ||
+        memberDisposition.decisionFingerprint !== memberDecision.fingerprint
+      )
+        fail('incomplete disposition does not match its attempt, review, and decision');
+      const handback = memberDisposition.noProgressHandback;
+      if (memberDisposition.meaningfulProgress) {
+        if (!memberDisposition.nextAttemptAuthorizedAt || handback)
+          fail('meaningful-progress disposition has incoherent later effects');
+      } else {
+        if (memberDisposition.nextAttemptAuthorizedAt || !handback)
+          fail('no-progress disposition has incoherent authorization or handback');
+        if (
+          handback.sourceAttemptId !== member.attemptId ||
+          handback.sourceReviewInvocationId !== memberReview.reviewInvocationId ||
+          handback.sprintRunnerReceiverActivatedAt !== undefined ||
+          handback.sprintRunnerReceiverDecisionAt !== undefined
+        )
+          fail('no-progress handback has foreign or forbidden receiver effects');
+      }
     }
   }
 }

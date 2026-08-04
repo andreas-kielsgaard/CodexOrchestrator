@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import type {
   ProductWorkUnitHandlerDecisionV1,
   ProductWorkUnitHandlerReviewV1,
+  ProductWorkUnitIncompleteDispositionV1,
   ProductWorkUnitImplementerOutcomeV1,
   ProductWorkUnitRetryAttemptV1,
   SprintWorkspacePresentationV1,
@@ -149,6 +150,42 @@ describe('WorkUnitDetailWorkspace Implementer outcome activity', () => {
     expect(detail).not.toHaveTextContent('Retry attempt is application-ready');
     expect(detail).toHaveTextContent('Handler decision: returned');
   });
+
+  it('shows incomplete classification, progress, and handback intent without receiver effects', () => {
+    render(
+      workspace(
+        reviewReadyOutcome(),
+        handlerReview('returned'),
+        handlerDecision('returned'),
+        undefined,
+        {
+          attemptId: 'attempt-1',
+          reviewInvocationId: 'review-invocation-1',
+          decisionFingerprint: 'decision-1',
+          classification: 'blocked',
+          meaningfulProgress: false,
+          recordedAt: '2026-08-04T00:00:20Z',
+          noProgressHandback: {
+            handbackId: 'handback-1',
+            sourceAttemptId: 'attempt-1',
+            sourceReviewInvocationId: 'review-invocation-1',
+            contextFingerprint: 'context-1',
+            persistedAt: '2026-08-04T00:00:21Z',
+            deliveryIntendedAt: '2026-08-04T00:00:22Z',
+          },
+        },
+      ),
+    );
+    const detail = screen.getByLabelText('Work Unit context');
+    expect(detail).toHaveTextContent('Incomplete Handler disposition');
+    expect(detail).toHaveTextContent('Blocked');
+    expect(detail).toHaveTextContent('Meaningful progress Not recorded');
+    expect(detail).toHaveTextContent('Work Unit handback persistence and delivery intent');
+    expect(detail).toHaveTextContent('Handback persisted');
+    expect(detail).toHaveTextContent('Delivery intent recorded');
+    expect(detail).toHaveTextContent('Sprint Runner receiver activation or decision');
+    expect(detail).not.toHaveTextContent(/receiver activated|receiver decision|integrated/i);
+  });
 });
 
 function renderWorkspace(
@@ -156,8 +193,9 @@ function renderWorkspace(
   handlerReview?: ProductWorkUnitHandlerReviewV1,
   handlerDecision?: ProductWorkUnitHandlerDecisionV1,
   retryAttempt?: ProductWorkUnitRetryAttemptV1,
+  incompleteDisposition?: ProductWorkUnitIncompleteDispositionV1,
 ) {
-  return render(workspace(outcome, handlerReview, handlerDecision, retryAttempt));
+  return render(workspace(outcome, handlerReview, handlerDecision, retryAttempt, incompleteDisposition));
 }
 
 function workspace(
@@ -165,10 +203,11 @@ function workspace(
   handlerReview?: ProductWorkUnitHandlerReviewV1,
   handlerDecision?: ProductWorkUnitHandlerDecisionV1,
   retryAttempt?: ProductWorkUnitRetryAttemptV1,
+  incompleteDisposition?: ProductWorkUnitIncompleteDispositionV1,
 ) {
-    return (
+  return (
     <WorkUnitDetailWorkspace
-      unit={presentedWorkUnit(outcome, handlerReview, handlerDecision, retryAttempt)}
+      unit={presentedWorkUnit(outcome, handlerReview, handlerDecision, retryAttempt, incompleteDisposition)}
       lifecycleEntries={[]}
       workSlicePlanningPointGroupTitle="Planning point"
       sessions={[]}
@@ -182,6 +221,7 @@ function presentedWorkUnit(
   handlerReview?: ProductWorkUnitHandlerReviewV1,
   handlerDecision?: ProductWorkUnitHandlerDecisionV1,
   retryAttempt?: ProductWorkUnitRetryAttemptV1,
+  incompleteDisposition?: ProductWorkUnitIncompleteDispositionV1,
 ): PresentedWorkUnit {
   return {
     workUnitId: 'unit-1',
@@ -194,7 +234,7 @@ function presentedWorkUnit(
       sourceReferences: ['materialization-1'],
     },
     attemptHistory: outcome
-      ? [{ ordinal: 0, attemptId: outcome.attemptId, implementerOutcome: outcome, ...(handlerReview ? { handlerReview } : {}), ...(handlerDecision ? { handlerDecision } : {}) }]
+      ? [{ ordinal: 0, attemptId: outcome.attemptId, implementerOutcome: outcome, ...(handlerReview ? { handlerReview } : {}), ...(handlerDecision ? { handlerDecision } : {}), ...(incompleteDisposition ? { incompleteDisposition } : {}) }]
       : [],
     retryAttempts: retryAttempt ? [retryAttempt] : [],
     workUnitScopeId: 'scope-1',
