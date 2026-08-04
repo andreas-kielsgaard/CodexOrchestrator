@@ -1380,8 +1380,8 @@ const dependencyActivationIntent = (value: unknown): NativeWorkUnitDependencyAct
   const activationIntendedAt = x.activationIntendedAt === undefined ? undefined : timestamp(x.activationIntendedAt, 'activationIntendedAt');
   if (eligibilityState === 'blocked' && !blockedReason)
     fail('blocked dependency intent requires a reason');
-  if (eligibilityState === 'eligible' && (blockedReason || !activationIntendedAt))
-    fail('eligible dependency intent requires activation intent without a blocked reason');
+  if (eligibilityState === 'eligible' && blockedReason)
+    fail('eligible dependency intent cannot have a blocked reason');
   return {
     workUnitId: string(x.workUnitId, 'workUnitId'),
     materializationId: string(x.materializationId, 'materializationId'),

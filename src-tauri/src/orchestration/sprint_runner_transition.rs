@@ -2431,8 +2431,11 @@ impl SprintRunnerTransitionService {
              JOIN work_unit_handler_reviews r ON r.work_unit_id=o.work_unit_id AND r.attempt_id=o.attempt_id AND r.reporting_invocation_id=o.reporting_invocation_id
              JOIN execution_support_attempt_authorizations a ON a.attempt_id=o.attempt_id AND a.work_unit_id=o.work_unit_id AND a.role_kind='work_unit_implementer'
              JOIN work_unit_handler_decisions d ON d.attempt_id=o.attempt_id AND d.review_invocation_id=r.review_invocation_id
-             JOIN work_unit_handler_incomplete_dispositions i ON i.attempt_id=o.attempt_id AND i.work_unit_id=o.work_unit_id AND i.review_invocation_id=r.review_invocation_id AND i.decision_fingerprint=d.decision_fingerprint
-             WHERE d.decision_variant='returned' AND i.meaningful_progress=1 AND i.next_attempt_authorized_at IS NOT NULL
+             LEFT JOIN work_unit_handler_incomplete_dispositions i ON i.attempt_id=o.attempt_id AND i.work_unit_id=o.work_unit_id AND i.review_invocation_id=r.review_invocation_id AND i.decision_fingerprint=d.decision_fingerprint
+             WHERE d.decision_variant='returned' AND (
+                 (i.meaningful_progress=1 AND i.next_attempt_authorized_at IS NOT NULL)
+                 OR (i.attempt_id IS NULL AND d.retry_required_at IS NOT NULL)
+             )
                AND r.semantic_judgment_variant='return' AND r.semantic_judgment_at IS NOT NULL
                AND r.lifecycle_observed_at IS NOT NULL AND r.lifecycle_status='completed'
                AND o.application_accepted_at IS NOT NULL AND o.handler_review_ready_at IS NOT NULL

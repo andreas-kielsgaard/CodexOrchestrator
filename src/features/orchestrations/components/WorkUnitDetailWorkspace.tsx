@@ -149,9 +149,11 @@ export function WorkUnitDetailWorkspace({
                 <div className="work-unit-dependency-activation">
                   <h3>Dependent activation</h3>
                   <p>
-                    {unit.dependencyActivationIntent.eligibilityState === 'eligible'
-                      ? 'One dependent Work Unit is eligible for activation.'
-                      : 'Dependent activation remains blocked.'}
+                    {unit.dependencyActivationIntent.eligibilityState === 'blocked'
+                      ? 'Dependent activation remains blocked.'
+                      : unit.dependencyActivationIntent.activationIntendedAt
+                        ? 'Dependencies are eligible and Handler activation intent is durably recorded.'
+                        : 'Dependencies are eligible; Handler activation intent is not yet recorded.'}
                   </p>
                   {unit.dependencyActivationIntent.blockedReason && (
                     <p>Reason: {unit.dependencyActivationIntent.blockedReason}.</p>

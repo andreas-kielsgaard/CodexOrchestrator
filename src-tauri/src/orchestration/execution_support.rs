@@ -347,9 +347,14 @@ impl ProductExecutionWorkspaceResolver {
         let authority = &attempt.authority;
         let repository_root = canonical_authorized_root(&authority.repository_root)?;
         let authority_root = canonical_authorized_root(&authority.worktree_root)?;
+        let authority_head = git_text(&authority_root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
         if !git_text(&authority_root, &["status", "--porcelain"])?.is_empty()
-            || git_text(&authority_root, &["rev-parse", "--verify", "HEAD^{commit}"])?
-                != attempt.baseline_object_id
+            || (attempt.baseline_object_id == authority.current_object_id
+                && authority_head != authority.current_object_id)
+            || git_text(
+                &repository_root,
+                &["rev-parse", "--verify", &format!("{}^{{commit}}", authority.current_object_id)],
+            )? != authority.current_object_id
         {
             return Err(ExecutionSupportError::Unavailable);
         }
@@ -646,7 +651,15 @@ impl SqliteExecutionSupportRepository {
             .map_err(|_| ExecutionSupportError::Unavailable)?
             .ok_or(ExecutionSupportError::Denied)?;
         if self.current_target_object_id(&authority)? != baseline_object_id {
-            return Err(ExecutionSupportError::CorrelationMismatch);
+            let connection = self.connection.lock().map_err(|_| ExecutionSupportError::Unavailable)?;
+            let retry_seed: bool = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM work_unit_retry_attempts WHERE retry_attempt_id=?1 AND candidate_commit_id=?2 AND candidate_pinned_at IS NOT NULL)",
+                params![attempt_id, baseline_object_id],
+                |row| row.get(0),
+            ).map_err(|_| ExecutionSupportError::Unavailable)?;
+            if !retry_seed {
+                return Err(ExecutionSupportError::CorrelationMismatch);
+            }
         }
         Ok(AuthorizedExecutionAttempt {
             attempt_id: attempt_id.into(),

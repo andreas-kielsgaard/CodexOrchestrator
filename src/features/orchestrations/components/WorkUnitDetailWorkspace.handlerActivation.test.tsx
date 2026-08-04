@@ -201,6 +201,45 @@ describe('WorkUnitDetailWorkspace Handler activation detail', () => {
       blockedReason: 'missing_prerequisite_contributions:edge-1',
       activationIntendedAt: '2026-08-02T00:00:06Z',
     });
+    rendered.rerender(
+      <WorkUnitDetailWorkspace
+        unit={blockedUnit}
+        lifecycleEntries={[]}
+        workSlicePlanningPointGroupTitle="Planning point"
+        sessions={[]}
+        onBack={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText('Work Unit context')).toHaveTextContent(
+      'Dependent activation remains blocked.',
+    );
+
+    value.dependencyActivationIntents = [
+      {
+        workUnitId: 'unit-launch-accepted',
+        materializationId: 'materialization-1',
+        acceptedRevisionId: 'accepted-revision-1',
+        eligibilityState: 'eligible',
+        eligibilityRecordedAt: '2026-08-02T00:00:08Z',
+      },
+    ];
+    const pendingIntentUnit = projectSprintWorkspacePresentation(
+      composeProductOrchestrationReadModels(
+        nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(value)),
+      ).epics[0]!.sprints[0]!,
+    ).revisionViews[0]!.workUnits[0]!;
+    rendered.rerender(
+      <WorkUnitDetailWorkspace
+        unit={pendingIntentUnit}
+        lifecycleEntries={[]}
+        workSlicePlanningPointGroupTitle="Planning point"
+        sessions={[]}
+        onBack={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText('Work Unit context')).toHaveTextContent(
+      'Dependencies are eligible; Handler activation intent is not yet recorded.',
+    );
     value.dependencyActivationIntents = [
       { ...(value.dependencyActivationIntents as Array<Record<string, unknown>>)[0], workUnitId: 'foreign-unit' },
     ];

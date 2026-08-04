@@ -2986,7 +2986,7 @@ fn validate_dependency_activation_intents(
         }
         match intent.eligibility_state.as_str() {
             "blocked" if intent.blocked_reason.is_some() => {}
-            "eligible" if intent.blocked_reason.is_none() && intent.activation_intended_at.is_some() => {}
+            "eligible" if intent.blocked_reason.is_none() => {}
             _ => return Err("Dependency activation intent has contradictory eligibility facts".into()),
         }
     }
@@ -4279,6 +4279,12 @@ fn productive_integration_rows(
 ) -> Result<std::collections::HashMap<String, WorkUnitIntegrationDto>, String> {
     let exists: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='accepted_work_unit_integrations')", [], |row| row.get(0)).map_err(|error| error.to_string())?;
     if !exists { return Ok(Default::default()); }
+    let has_integrations: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM accepted_work_unit_integrations)",
+        [],
+        |row| row.get(0),
+    ).map_err(|error| error.to_string())?;
+    if !has_integrations { return Ok(Default::default()); }
     for table in ["accepted_handler_candidates", "work_unit_handler_reviews", "work_unit_handler_decisions", "accepted_work_unit_integration_evidence", "work_unit_settlements", "work_unit_prerequisite_contributions"] {
         let available: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)", [table], |row| row.get(0)).map_err(|error| error.to_string())?;
         if !available { return Err("Productive integration projection is missing a required durable table".into()); }

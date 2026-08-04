@@ -2548,7 +2548,7 @@ mod tests {
         assert!(matches!(service.start_selected_sprint(&AgentInvocationId::new("wrong-epic-continuation").unwrap()),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));
         let barrier=Arc::new(Barrier::new(2));let start_calls=(0..2).map(|_|{let service=service.clone();let barrier=barrier.clone();let invocation=accepted.epic_continuation_invocation_id.clone().unwrap();std::thread::spawn(move||{barrier.wait();service.start_selected_sprint(&AgentInvocationId::new(invocation).unwrap())})}).collect::<Vec<_>>();let start_results=start_calls.into_iter().map(|call|call.join().unwrap()).collect::<Vec<_>>();assert!(start_results.iter().all(Result::is_ok),"{start_results:?}");
         let started=service.query().unwrap().transitions.into_iter().next().unwrap();assert_eq!(started.sprint_runner_session_id,request.sprint_runner_session_id);assert!(started.sprint_continuation_launch_accepted_at.is_some());assert_eq!(fixture.runtime.requests().len(),5);
-        let reevaluation=crate::orchestration::sprint_runner_transition::StartedReevaluation{repository_branch_evaluation:"branch is clean".into(),started_forecast_and_concerns:"started concern".into()};service.record_started_reevaluation(&AgentInvocationId::new(started.sprint_continuation_invocation_id.clone().unwrap()).unwrap(),reevaluation.clone()).unwrap();assert!(matches!(service.record_started_reevaluation(&AgentInvocationId::new(started.sprint_continuation_invocation_id.unwrap()).unwrap(),crate::orchestration::sprint_runner_transition::StartedReevaluation{repository_branch_evaluation:"different branch".into(),started_forecast_and_concerns:"started concern".into()}),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));let final_state=service.query().unwrap().transitions.into_iter().next().unwrap();assert!(final_state.planning_ready_at.is_some());assert!(final_state.downstream_not_started);
+        let reevaluation=crate::orchestration::sprint_runner_transition::StartedReevaluation{repository_branch_evaluation:"branch is clean".into(),started_forecast_and_concerns:"started concern".into()};service.record_started_reevaluation(&AgentInvocationId::new(started.sprint_continuation_invocation_id.clone().unwrap()).unwrap(),reevaluation.clone()).unwrap();assert!(matches!(service.record_started_reevaluation(&AgentInvocationId::new(started.sprint_continuation_invocation_id.unwrap()).unwrap(),crate::orchestration::sprint_runner_transition::StartedReevaluation{repository_branch_evaluation:"different branch".into(),started_forecast_and_concerns:"started concern".into()}),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));let final_state=service.query().unwrap().transitions.into_iter().next().unwrap();assert!(final_state.planning_ready_at.is_none());assert!(final_state.downstream_not_started);
     }
 
     #[test]
@@ -5215,8 +5215,8 @@ mod tests {
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN (
                 'work_unit_implementation_outputs','work_unit_implementation_feedback',
-                'work_unit_handler_reviews','work_unit_handler_acceptances','work_unit_handler_returns',
-                'work_unit_retry_attempts','work_unit_settlements','work_unit_integrations',
+                'work_unit_handler_acceptances','work_unit_handler_returns',
+                'work_unit_integrations',
                 'work_unit_handoffs','work_unit_executions')",
             [], |row| row.get(0),
         ).unwrap(), 0);

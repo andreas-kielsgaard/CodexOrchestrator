@@ -1801,7 +1801,7 @@ impl From<SaveProposalError> for GoldenBoundaryDto {
 }
 
 #[test]
-fn implementer_activation_projection_serializes_every_persisted_fact_at_its_named_column() {
+fn implementer_activation_projection_serializes_public_facts_and_redacts_private_harness_facts() {
     let connection = rusqlite::Connection::open_in_memory().unwrap();
     connection.execute_batch(
         "CREATE TABLE work_unit_implementer_activations (
@@ -1833,8 +1833,8 @@ fn implementer_activation_projection_serializes_every_persisted_fact_at_its_name
     assert_eq!(value["implementerSessionId"], "implementer-session");
     assert_eq!(value["implementerInvocationId"], "implementer-invocation");
     assert_eq!(value["implementerHarnessRevisionId"], "implementer-revision");
-    assert_eq!(value["implementerHarnessConfigurationDigest"], "digest");
-    assert_eq!(value["implementerHarnessRepositoryCommitRef"], "commit");
+    assert!(value.get("implementerHarnessConfigurationDigest").is_none());
+    assert!(value.get("implementerHarnessRepositoryCommitRef").is_none());
     for (key, expected) in [
         ("requestedAt", "requested"), ("authorizedAt", "authorized"),
         ("executionSupportGrantedAt", "support"), ("isolatedWorktreeReadyAt", "worktree"),
