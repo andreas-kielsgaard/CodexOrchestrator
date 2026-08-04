@@ -5,6 +5,10 @@ import type { WorkUnitAgentSessionPresentation } from '../orchestrationModel';
 import { DetailWorkspace } from './DetailWorkspace';
 import { ResizableSplitSurface } from './ResizableSplitSurface';
 import { SharedAgentSessionPanel } from './SharedAgentSessionPanel';
+import type {
+  ProductWorkUnitHandlerDecisionV1,
+  ProductWorkUnitHandlerReviewV1,
+} from '../../../application/orchestrations/productReadModels';
 import '../styles/orchestrationSubdetail.css';
 import type { ReactNode } from 'react';
 
@@ -94,7 +98,9 @@ export function WorkUnitDetailWorkspace({
           {(unit.handlerActivation ||
             unit.actionContinuation ||
             unit.implementerActivation ||
-            unit.implementerOutcome) && (
+            unit.implementerOutcome ||
+            unit.handlerReview ||
+            unit.handlerDecision) && (
             <section className="work-unit-activation" aria-label="Work Unit activation activity">
               <h2>Activation activity</h2>
               {unit.handlerActivation && <p>{handlerActivity(unit.handlerActivation)}</p>}
@@ -106,6 +112,9 @@ export function WorkUnitDetailWorkspace({
               )}
               {unit.implementerOutcome && (
                 <ImplementerOutcomeActivity outcome={unit.implementerOutcome} />
+              )}
+              {unit.handlerReview && (
+                <HandlerReviewActivity review={unit.handlerReview} decision={unit.handlerDecision} />
               )}
             </section>
           )}
@@ -468,6 +477,123 @@ function ImplementerOutcomeActivity({
           judgment is recorded here.
         </p>
       )}
+    </div>
+  );
+}
+
+function HandlerReviewActivity({
+  review,
+  decision,
+}: {
+  readonly review: ProductWorkUnitHandlerReviewV1;
+  readonly decision?: ProductWorkUnitHandlerDecisionV1;
+}) {
+  const reviewStage = review.reviewReadyAt
+    ? 'Handler review is application-ready.'
+    : review.launchAcceptedAt
+      ? 'Handler review launch was accepted; review readiness is not yet recorded.'
+      : review.launchRequestedAt
+        ? 'Handler review launch was requested; launch acceptance is not yet recorded.'
+        : review.harnessBoundAt
+          ? 'Handler review Harness is bound.'
+          : review.deliveryPersistedAt
+            ? 'Handler review evidence delivery is persisted.'
+            : 'Handler review evidence delivery was requested.';
+  return (
+    <div className="work-unit-handler-review">
+      <h3>Handler review</h3>
+      <p>{reviewStage}</p>
+      <dl>
+        <RecordedFact label="Attempt" value={review.attemptId} />
+        <RecordedFact label="Handler Session" value={review.handlerSessionId} />
+        <RecordedFact label="Original Handler invocation" value={review.originalHandlerInvocationId} />
+        <RecordedFact label="Handler action invocation" value={review.actionHandlerInvocationId} />
+        <RecordedFact label="Implementer reporting invocation" value={review.reportingInvocationId} />
+        <RecordedFact label="Review invocation" value={review.reviewInvocationId} />
+        <RecordedFact label="Review Harness revision" value={review.reviewHarnessRevisionId} />
+        <RecordedFact label="Review Harness configuration digest" value={review.reviewHarnessConfigurationDigest} />
+        <RecordedFact label="Review Harness repository commit" value={review.reviewHarnessRepositoryCommitRef} />
+        <RecordedFact label="Delivery requested" value={review.deliveryRequestedAt} />
+        {review.deliveryPersistedAt && <RecordedFact label="Delivery persisted" value={review.deliveryPersistedAt} />}
+        {review.harnessBoundAt && <RecordedFact label="Harness bound" value={review.harnessBoundAt} />}
+        {review.launchRequestedAt && <RecordedFact label="Launch requested" value={review.launchRequestedAt} />}
+        {review.launchAcceptedAt && <RecordedFact label="Launch accepted" value={review.launchAcceptedAt} />}
+        {review.reviewReadyAt && <RecordedFact label="Review ready" value={review.reviewReadyAt} />}
+      </dl>
+      <details>
+        <summary>Application-bound claims and evidence</summary>
+        <dl>
+          <RecordedFact label="Summary claim" value={review.delivered.summaryClaim} />
+          <RecordedFact label="Validation claim" value={review.delivered.validationStatementClaim} />
+          <RecordedFact label="Delivered payload fingerprint" value={review.delivered.deliveredPayloadFingerprint} />
+          <RecordedFact label="Comparison fingerprint" value={review.delivered.comparisonFingerprint} />
+        </dl>
+        <ul>
+          {review.delivered.changedFiles.map((file) => (
+            <li key={file.evidenceRef}>
+              <strong>{file.displayName}</strong>
+              <span>
+                {file.changeKind}; evidence reference {file.evidenceRef}; content fingerprint{' '}
+                {file.contentFingerprint}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </details>
+      {review.semanticJudgment ? (
+        <p>
+          Handler semantic judgment was recorded as{' '}
+          {review.semanticJudgment.variant === 'accept' ? 'accept' : 'return'} at{' '}
+          {review.semanticJudgment.recordedAt}.
+        </p>
+      ) : (
+        <p>Handler semantic judgment is pending; the Handler agent owns the review action.</p>
+      )}
+      {review.semanticJudgment?.reason && (
+        <p>
+          Structured return reason: {review.semanticJudgment.reason.code} -{' '}
+          {review.semanticJudgment.reason.explanation}
+        </p>
+      )}
+      {review.lifecycle && (
+        <p>
+          Handler review lifecycle was observed as {lifecycleLabel(review.lifecycle.status)} at{' '}
+          {review.lifecycle.observedAt}.
+        </p>
+      )}
+      {decision ? (
+        <div>
+          <p>
+            <strong>
+              Handler decision: {decision.variant === 'accepted' ? 'accepted' : 'returned'}
+            </strong>{' '}
+            at {decision.recordedAt}.
+          </p>
+          {decision.returnReason && (
+            <p>
+              Structured return reason: {decision.returnReason.code} -{' '}
+              {decision.returnReason.explanation}
+            </p>
+          )}
+          {decision.implementationAcceptedAt && (
+            <p>Implementation accepted by the Handler review at {decision.implementationAcceptedAt}.</p>
+          )}
+          {decision.implementationReturnedAt && (
+            <p>Implementation returned by the Handler review at {decision.implementationReturnedAt}.</p>
+          )}
+          {decision.retryRequiredAt && <p>Retry is required at {decision.retryRequiredAt}; no retry attempt is recorded.</p>}
+        </div>
+      ) : review.lifecycle?.status === 'completed' && review.semanticJudgment ? (
+        <p>No final Handler decision is recorded yet.</p>
+      ) : review.lifecycle ? (
+        <p>No final Handler decision is recorded for this lifecycle observation.</p>
+      ) : null}
+      {review.conflict && (
+        <p>
+          Review conflict observed at {review.conflict.occurredAt}: {review.conflict.reason}.
+        </p>
+      )}
+      <p>No retry attempt, settlement, dependent activation, or upward continuation is recorded.</p>
     </div>
   );
 }

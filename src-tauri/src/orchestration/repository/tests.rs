@@ -2026,6 +2026,71 @@ fn valid_work_unit_outcome_projection() -> WorkUnitDto {
     work_unit
 }
 
+#[test]
+fn handler_review_projection_preserves_judgment_decision_and_later_workflow_boundary() {
+    let mut work_unit = valid_work_unit_outcome_projection();
+    work_unit.handler_review = Some(WorkUnitHandlerReviewDto {
+        attempt_id: "attempt".into(),
+        reporting_invocation_id: projection_stable_id("work-unit-implementer-reporting-invocation", "attempt"),
+        handler_session_id: "handler-session".into(),
+        original_handler_invocation_id: "handler-original".into(),
+        action_handler_invocation_id: "handler-action".into(),
+        review_invocation_id: projection_stable_id("work-unit-handler-review-invocation", "attempt"),
+        review_harness_revision_id: "review-revision".into(),
+        review_harness_configuration_digest: "review-digest".into(),
+        review_harness_repository_commit_ref: "review-commit".into(),
+        delivery_requested_at: "2026-08-04T00:00:12Z".into(),
+        delivery_persisted_at: Some("2026-08-04T00:00:12Z".into()),
+        harness_bound_at: Some("2026-08-04T00:00:13Z".into()),
+        launch_requested_at: Some("2026-08-04T00:00:14Z".into()),
+        launch_accepted_at: Some("2026-08-04T00:00:15Z".into()),
+        review_ready_at: Some("2026-08-04T00:00:16Z".into()),
+        delivered: WorkUnitHandlerReviewEvidenceDto {
+            summary_claim: "Implemented the bounded change.".into(),
+            validation_statement_claim: "Focused checks passed.".into(),
+            changed_files: vec![WorkUnitHandlerReviewEvidenceFileDto {
+                evidence_ref: "evidence-1".into(),
+                display_name: "src/lib.rs".into(),
+                change_kind: ImplementationEvidenceChangeKindDto::Modified,
+                content_fingerprint: "content-fingerprint".into(),
+            }],
+            comparison_fingerprint: "comparison-fingerprint".into(),
+            delivered_payload_fingerprint: "delivery-fingerprint".into(),
+        },
+        semantic_judgment: Some(WorkUnitHandlerReviewJudgmentDto {
+            variant: WorkUnitHandlerReviewJudgmentVariantDto::Accept,
+            reason: None,
+            fingerprint: "judgment-fingerprint".into(),
+            recorded_at: "2026-08-04T00:00:17Z".into(),
+        }),
+        lifecycle: Some(WorkUnitHandlerReviewLifecycleDto {
+            status: WorkUnitHandlerReviewLifecycleStatusDto::Completed,
+            observed_at: "2026-08-04T00:00:18Z".into(),
+        }),
+        conflict: None,
+    });
+    work_unit.handler_decision = Some(WorkUnitHandlerDecisionDto {
+        review_invocation_id: projection_stable_id("work-unit-handler-review-invocation", "attempt"),
+        variant: WorkUnitHandlerDecisionVariantDto::Accepted,
+        fingerprint: "decision-fingerprint".into(),
+        return_reason: None,
+        recorded_at: "2026-08-04T00:00:19Z".into(),
+        implementation_accepted_at: Some("2026-08-04T00:00:19Z".into()),
+        implementation_returned_at: None,
+        retry_required_at: None,
+        settlement_ready_at: None,
+    });
+    validate_work_unit_activation_projection(&work_unit).expect("accepted review projection");
+
+    work_unit.handler_review.as_mut().unwrap().lifecycle = Some(WorkUnitHandlerReviewLifecycleDto {
+        status: WorkUnitHandlerReviewLifecycleStatusDto::Failed,
+        observed_at: "2026-08-04T00:00:18Z".into(),
+    });
+    assert!(validate_work_unit_activation_projection(&work_unit)
+        .expect_err("decision without Completed lifecycle")
+        .contains("Completed review judgment"));
+}
+
 fn valid_work_unit_activation_projection() -> WorkUnitDto {
     let timestamp = || Some("2026-08-03T00:00:00Z".to_string());
     WorkUnitDto {
@@ -2099,5 +2164,7 @@ fn valid_work_unit_activation_projection() -> WorkUnitDto {
             failure_reason: None,
         }),
         implementer_outcome: None,
+        handler_review: None,
+        handler_decision: None,
     }
 }

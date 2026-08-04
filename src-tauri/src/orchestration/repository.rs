@@ -1157,15 +1157,25 @@ impl SqliteOrchestrationRepository {
         let action_continuations = activation_rows(&connection, "work_unit_handler_action_continuations", "attempt_id,handler_session_id,original_handler_invocation_id,action_invocation_id,action_harness_revision_id,action_harness_configuration_digest,action_harness_repository_commit_ref,requested_at,authorized_at,invocation_prepared_at,harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,action_ready_at,blocked_reason,failure_reason", |row| Ok(WorkUnitHandlerActionContinuationDto { attempt_id:row.get(1)?, handler_session_id:row.get(2)?, original_handler_invocation_id:row.get(3)?, action_invocation_id:row.get(4)?, action_harness_revision_id:row.get(5)?, action_harness_configuration_digest:row.get(6)?, action_harness_repository_commit_ref:row.get(7)?, requested_at:row.get(8)?, authorized_at:row.get(9)?, invocation_prepared_at:row.get(10)?, harness_bound_at:row.get(11)?, launch_requested_at:row.get(12)?, launch_accepted_at:row.get(13)?, provider_activation_observed_at:row.get(14)?, action_ready_at:row.get(15)?, blocked_reason:row.get(16)?, failure_reason:row.get(17)? }))?;
         let implementer_activations = activation_rows(&connection, "work_unit_implementer_activations", "attempt_id,handler_invocation_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at,authorized_at,execution_support_granted_at,isolated_worktree_ready_at,implementer_session_created_at,implementer_invocation_prepared_at,implementer_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,implementer_ready_at,failure_reason", map_implementer_activation)?;
         let mut implementer_outcomes = implementer_outcome_rows(&connection)?;
-        let mut work_units = if handler_activation_tables { collect(&connection, "SELECT u.work_unit_id,u.materialization_id,u.work_slice_id,u.accepted_revision_id,u.lane_ordinal,u.lane_title,u.specification,a.attempt_id,a.handler_session_id,a.handler_invocation_id,a.handler_harness_revision_id,a.handler_harness_configuration_digest,a.handler_harness_repository_commit_ref,a.eligibility_state,a.blocked_reason,a.requested_at,a.authorized_at,a.attempt_created_at,a.execution_support_granted_at,a.isolated_worktree_ready_at,a.handler_session_created_at,a.handler_invocation_prepared_at,a.handler_harness_bound_at,a.launch_requested_at,a.launch_accepted_at,a.provider_activation_observed_at,a.handler_ready_at FROM work_units u LEFT JOIN work_unit_handler_activations a ON a.work_unit_id=u.work_unit_id ORDER BY u.materialization_id,u.lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation: match row.get::<_,Option<String>>(7)? { Some(attempt_id) => Some(WorkUnitHandlerActivationDto { attempt_id, handler_session_id:row.get(8)?, handler_invocation_id:row.get(9)?, handler_harness_revision_id:row.get(10)?, handler_harness_configuration_digest:row.get(11)?, handler_harness_repository_commit_ref:row.get(12)?, eligibility_state:row.get(13)?, blocked_reason:row.get(14)?, requested_at:row.get(15)?, authorized_at:row.get(16)?, attempt_created_at:row.get(17)?, execution_support_granted_at:row.get(18)?, isolated_worktree_ready_at:row.get(19)?, handler_session_created_at:row.get(20)?, handler_invocation_prepared_at:row.get(21)?, handler_harness_bound_at:row.get(22)?, launch_requested_at:row.get(23)?, launch_accepted_at:row.get(24)?, provider_activation_observed_at:row.get(25)?, handler_ready_at:row.get(26)? }), None => None }, action_continuation:None, implementer_activation:None, implementer_outcome:None }))? } else if materialization_tables { collect(&connection, "SELECT work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification FROM work_units ORDER BY materialization_id,lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation:None, action_continuation:None, implementer_activation:None, implementer_outcome:None }))? } else { Vec::new() };
+        let handler_reviews = handler_review_rows(&connection)?;
+        let handler_decisions = handler_decision_rows(&connection)?;
+        let mut work_units = if handler_activation_tables { collect(&connection, "SELECT u.work_unit_id,u.materialization_id,u.work_slice_id,u.accepted_revision_id,u.lane_ordinal,u.lane_title,u.specification,a.attempt_id,a.handler_session_id,a.handler_invocation_id,a.handler_harness_revision_id,a.handler_harness_configuration_digest,a.handler_harness_repository_commit_ref,a.eligibility_state,a.blocked_reason,a.requested_at,a.authorized_at,a.attempt_created_at,a.execution_support_granted_at,a.isolated_worktree_ready_at,a.handler_session_created_at,a.handler_invocation_prepared_at,a.handler_harness_bound_at,a.launch_requested_at,a.launch_accepted_at,a.provider_activation_observed_at,a.handler_ready_at FROM work_units u LEFT JOIN work_unit_handler_activations a ON a.work_unit_id=u.work_unit_id ORDER BY u.materialization_id,u.lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation: match row.get::<_,Option<String>>(7)? { Some(attempt_id) => Some(WorkUnitHandlerActivationDto { attempt_id, handler_session_id:row.get(8)?, handler_invocation_id:row.get(9)?, handler_harness_revision_id:row.get(10)?, handler_harness_configuration_digest:row.get(11)?, handler_harness_repository_commit_ref:row.get(12)?, eligibility_state:row.get(13)?, blocked_reason:row.get(14)?, requested_at:row.get(15)?, authorized_at:row.get(16)?, attempt_created_at:row.get(17)?, execution_support_granted_at:row.get(18)?, isolated_worktree_ready_at:row.get(19)?, handler_session_created_at:row.get(20)?, handler_invocation_prepared_at:row.get(21)?, handler_harness_bound_at:row.get(22)?, launch_requested_at:row.get(23)?, launch_accepted_at:row.get(24)?, provider_activation_observed_at:row.get(25)?, handler_ready_at:row.get(26)? }), None => None }, action_continuation:None, implementer_activation:None, implementer_outcome:None, handler_review:None, handler_decision:None }))? } else if materialization_tables { collect(&connection, "SELECT work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification FROM work_units ORDER BY materialization_id,lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation:None, action_continuation:None, implementer_activation:None, implementer_outcome:None, handler_review:None, handler_decision:None }))? } else { Vec::new() };
         for work_unit in &mut work_units {
             work_unit.action_continuation = action_continuations.get(&work_unit.work_unit_id).cloned();
             work_unit.implementer_activation = implementer_activations.get(&work_unit.work_unit_id).cloned();
             work_unit.implementer_outcome = implementer_outcomes.remove(&work_unit.work_unit_id);
+            work_unit.handler_review = handler_reviews.get(&work_unit.work_unit_id).cloned();
+            work_unit.handler_decision = handler_decisions.get(&work_unit.work_unit_id).cloned();
             validate_work_unit_activation_projection(work_unit)?;
         }
         if !implementer_outcomes.is_empty() {
             return Err("Implementer outcome references an unknown Work Unit".into());
+        }
+        if handler_reviews.keys().any(|id| !work_units.iter().any(|unit| &unit.work_unit_id == id)) {
+            return Err("Handler review references an unknown Work Unit".into());
+        }
+        if handler_decisions.keys().any(|id| !work_units.iter().any(|unit| &unit.work_unit_id == id)) {
+            return Err("Handler decision references an unknown Work Unit".into());
         }
         let work_unit_relationships = if materialization_tables { collect(&connection, "SELECT relationship_id,materialization_id,relationship_kind,from_id,to_id,ordinal FROM work_unit_relationships ORDER BY materialization_id,relationship_kind,from_id,to_id", |row| Ok(WorkUnitRelationshipDto { relationship_id:row.get(0)?, materialization_id:row.get(1)?, relationship_kind:row.get(2)?, from_id:row.get(3)?, to_id:row.get(4)?, ordinal:row.get(5)? }))? } else { Vec::new() };
         Ok(NativeQueryV2 {
@@ -2912,6 +2922,10 @@ struct WorkUnitDto {
     implementer_activation: Option<WorkUnitImplementerActivationDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     implementer_outcome: Option<WorkUnitImplementerOutcomeDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    handler_review: Option<WorkUnitHandlerReviewDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    handler_decision: Option<WorkUnitHandlerDecisionDto>,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -3107,6 +3121,155 @@ struct WorkUnitImplementerOutcomeDto {
     handler_review_ready_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     failure_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistedHandlerReviewPayload {
+    summary: String,
+    validation_statement: String,
+    changed_files: Vec<PersistedHandlerReviewChangedFile>,
+    comparison_fingerprint: String,
+    evidence_content_fingerprints: Vec<PersistedHandlerReviewContentFingerprint>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistedHandlerReviewChangedFile {
+    evidence_ref: String,
+    display_name: String,
+    change_kind: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistedHandlerReviewContentFingerprint {
+    evidence_ref: String,
+    content_fingerprint: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitHandlerReviewEvidenceFileDto {
+    evidence_ref: String,
+    display_name: String,
+    change_kind: ImplementationEvidenceChangeKindDto,
+    content_fingerprint: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitHandlerReviewEvidenceDto {
+    summary_claim: String,
+    validation_statement_claim: String,
+    changed_files: Vec<WorkUnitHandlerReviewEvidenceFileDto>,
+    comparison_fingerprint: String,
+    delivered_payload_fingerprint: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkUnitHandlerReviewJudgmentVariantDto {
+    Accept,
+    Return,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WorkUnitHandlerReviewReasonDto {
+    code: String,
+    explanation: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitHandlerReviewJudgmentDto {
+    variant: WorkUnitHandlerReviewJudgmentVariantDto,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<WorkUnitHandlerReviewReasonDto>,
+    fingerprint: String,
+    recorded_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkUnitHandlerReviewLifecycleStatusDto {
+    Completed,
+    Failed,
+    Canceled,
+    Interrupted,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitHandlerReviewLifecycleDto {
+    status: WorkUnitHandlerReviewLifecycleStatusDto,
+    observed_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitHandlerReviewConflictDto {
+    occurred_at: String,
+    reason: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitHandlerReviewDto {
+    attempt_id: String,
+    reporting_invocation_id: String,
+    handler_session_id: String,
+    original_handler_invocation_id: String,
+    action_handler_invocation_id: String,
+    review_invocation_id: String,
+    review_harness_revision_id: String,
+    review_harness_configuration_digest: String,
+    review_harness_repository_commit_ref: String,
+    delivery_requested_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    delivery_persisted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    harness_bound_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    launch_requested_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    launch_accepted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    review_ready_at: Option<String>,
+    delivered: WorkUnitHandlerReviewEvidenceDto,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    semantic_judgment: Option<WorkUnitHandlerReviewJudgmentDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lifecycle: Option<WorkUnitHandlerReviewLifecycleDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conflict: Option<WorkUnitHandlerReviewConflictDto>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkUnitHandlerDecisionVariantDto {
+    Accepted,
+    Returned,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitHandlerDecisionDto {
+    review_invocation_id: String,
+    variant: WorkUnitHandlerDecisionVariantDto,
+    fingerprint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    return_reason: Option<WorkUnitHandlerReviewReasonDto>,
+    recorded_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    implementation_accepted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    implementation_returned_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry_required_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    settlement_ready_at: Option<String>,
 }
 
 fn map_implementer_outcome(row: &Row<'_>) -> Result<WorkUnitImplementerOutcomeDto, rusqlite::Error> {
@@ -3561,6 +3724,123 @@ fn validate_work_unit_activation_projection(work_unit: &WorkUnitDto) -> Result<(
             )?;
         }
     }
+    if let Some(review) = &work_unit.handler_review {
+        let handler = work_unit.handler_activation.as_ref()
+            .ok_or_else(|| "Handler review lacks Handler activation".to_string())?;
+        let continuation = work_unit.action_continuation.as_ref()
+            .ok_or_else(|| "Handler review lacks Handler action continuation".to_string())?;
+        let outcome = work_unit.implementer_outcome.as_ref()
+            .ok_or_else(|| "Handler review lacks Implementer outcome".to_string())?;
+        if handler.eligibility_state.as_deref() != Some("eligible")
+            || handler.attempt_id != review.attempt_id
+            || handler.handler_session_id.as_deref() != Some(review.handler_session_id.as_str())
+            || handler.handler_invocation_id.as_deref() != Some(review.original_handler_invocation_id.as_str())
+            || continuation.attempt_id != review.attempt_id
+            || continuation.handler_session_id != review.handler_session_id
+            || continuation.original_handler_invocation_id != review.original_handler_invocation_id
+            || continuation.action_invocation_id != review.action_handler_invocation_id
+            || outcome.attempt_id != review.attempt_id
+            || outcome.reporting_invocation_id != review.reporting_invocation_id
+        {
+            return Err("Handler review has foreign activation or reporting correlation".into());
+        }
+        if review.review_invocation_id
+            != projection_stable_id("work-unit-handler-review-invocation", &review.attempt_id)
+        {
+            return Err("Handler review invocation is not stable for its attempt".into());
+        }
+        for identity in [
+            &review.review_harness_revision_id,
+            &review.review_harness_configuration_digest,
+            &review.review_harness_repository_commit_ref,
+        ] {
+            if identity.trim().is_empty() { return Err("Handler review Harness facts are incomplete".into()); }
+        }
+        require_ordered_projected_phases(
+            &[
+                Some(review.delivery_requested_at.as_str()), review.delivery_persisted_at.as_deref(),
+                review.harness_bound_at.as_deref(), review.launch_requested_at.as_deref(),
+                review.launch_accepted_at.as_deref(), review.review_ready_at.as_deref(),
+            ],
+            "Handler review",
+        )?;
+        if let (Some(submitted), Some(evidence)) = (&outcome.submitted_outcome, &outcome.evidence) {
+            if submitted.summary_claim != review.delivered.summary_claim
+                || submitted.validation_statement_claim != review.delivered.validation_statement_claim
+                || evidence.comparison_fingerprint != review.delivered.comparison_fingerprint
+                || evidence.changed_files.len() != review.delivered.changed_files.len()
+                || evidence.changed_files.iter().zip(&review.delivered.changed_files).any(|(left, right)|
+                    left.evidence_ref != right.evidence_ref || left.display_name != right.display_name
+                        || left.change_kind != right.change_kind || left.content_fingerprint != right.content_fingerprint)
+            {
+                return Err("Handler review delivered evidence differs from the accepted Implementer outcome".into());
+            }
+        } else {
+            return Err("Handler review lacks the accepted Implementer outcome bundle".into());
+        }
+        if let Some(judgment) = &review.semantic_judgment {
+            if judgment.fingerprint.trim().is_empty() || judgment.fingerprint.len() > 240 {
+                return Err("Handler review judgment fingerprint is incomplete".into());
+            }
+            let launch_accepted = review.launch_accepted_at.as_deref()
+                .ok_or_else(|| "Handler review judgment lacks launch acceptance".to_string())?;
+            let review_ready = review.review_ready_at.as_deref()
+                .ok_or_else(|| "Handler review judgment lacks review readiness".to_string())?;
+            require_timestamp_at_or_after(review_ready, &judgment.recorded_at, "Handler review judgment")?;
+            require_timestamp_at_or_after(launch_accepted, review_ready, "Handler review readiness")?;
+        }
+        if let Some(lifecycle) = &review.lifecycle {
+            let review_ready = review.review_ready_at.as_deref()
+                .ok_or_else(|| "Handler review lifecycle lacks review readiness".to_string())?;
+            require_timestamp_at_or_after(review_ready, &lifecycle.observed_at, "Handler review lifecycle")?;
+            if let Some(judgment) = &review.semantic_judgment {
+                require_timestamp_at_or_after(&judgment.recorded_at, &lifecycle.observed_at, "Handler review lifecycle")?;
+            }
+        }
+    }
+    if let Some(decision) = &work_unit.handler_decision {
+        let review = work_unit.handler_review.as_ref()
+            .ok_or_else(|| "Handler decision lacks Handler review".to_string())?;
+        let judgment = review.semantic_judgment.as_ref()
+            .ok_or_else(|| "Handler decision lacks semantic judgment".to_string())?;
+        let lifecycle = review.lifecycle.as_ref()
+            .ok_or_else(|| "Handler decision lacks observed lifecycle".to_string())?;
+        if decision.review_invocation_id != review.review_invocation_id
+            || !matches!(lifecycle.status, WorkUnitHandlerReviewLifecycleStatusDto::Completed)
+        {
+            return Err("Handler decision lacks exact Completed review judgment correlation".into());
+        }
+        require_timestamp_at_or_after(&judgment.recorded_at, &decision.recorded_at, "Handler decision")?;
+        if decision.fingerprint.trim().is_empty() || decision.fingerprint.len() > 240 {
+            return Err("Handler decision fingerprint is incomplete".into());
+        }
+        for (stage, label) in [
+            (decision.implementation_accepted_at.as_deref(), "Handler accepted decision"),
+            (decision.implementation_returned_at.as_deref(), "Handler returned decision"),
+            (decision.retry_required_at.as_deref(), "Handler retry requirement"),
+        ] {
+            if let Some(stage) = stage {
+                require_timestamp_at_or_after(&decision.recorded_at, stage, label)?;
+            }
+        }
+        match (&judgment.variant, &decision.variant, &decision.return_reason) {
+            (WorkUnitHandlerReviewJudgmentVariantDto::Accept, WorkUnitHandlerDecisionVariantDto::Accepted, None) => {
+                if decision.implementation_accepted_at.is_none()
+                    || decision.implementation_returned_at.is_some() || decision.retry_required_at.is_some()
+                { return Err("accepted Handler decision facts are incoherent".into()); }
+            }
+            (WorkUnitHandlerReviewJudgmentVariantDto::Return, WorkUnitHandlerDecisionVariantDto::Returned, Some(reason)) => {
+                if decision.implementation_returned_at.is_none()
+                    || decision.retry_required_at.is_none() || decision.implementation_accepted_at.is_some()
+                    || review.semantic_judgment.as_ref().and_then(|value| value.reason.as_ref()) != Some(reason)
+                { return Err("returned Handler decision facts are incoherent".into()); }
+            }
+            _ => return Err("Handler decision contradicts semantic judgment".into()),
+        }
+        if decision.settlement_ready_at.is_some() {
+            return Err("Handler decision has forbidden settlement readiness".into());
+        }
+    }
     Ok(())
 }
 
@@ -3647,6 +3927,192 @@ fn implementer_outcome_rows(
     }).map_err(|error| error.to_string())?;
     rows.collect::<Result<std::collections::HashMap<_, _>, _>>()
         .map_err(|error| error.to_string())
+}
+
+fn handler_review_rows(
+    connection: &Connection,
+) -> Result<std::collections::HashMap<String, WorkUnitHandlerReviewDto>, String> {
+    let exists = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_handler_reviews')",
+        [],
+        |row| row.get::<_, bool>(0),
+    ).map_err(|error| error.to_string())?;
+    if !exists { return Ok(std::collections::HashMap::new()); }
+    let mut statement = connection.prepare(
+        "SELECT work_unit_id,attempt_id,reporting_invocation_id,handler_session_id,original_handler_invocation_id,action_handler_invocation_id,review_invocation_id,review_harness_revision_id,review_harness_configuration_digest,review_harness_repository_commit_ref,delivery_requested_at,delivery_persisted_at,harness_bound_at,launch_requested_at,launch_accepted_at,review_ready_at,delivered_payload_json,delivered_payload_fingerprint,semantic_judgment_variant,semantic_return_reason_json,semantic_judgment_fingerprint,semantic_judgment_at,lifecycle_observed_at,lifecycle_status,conflict_at,conflict_reason FROM work_unit_handler_reviews"
+    ).map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, map_handler_review(row)?)))
+        .map_err(|error| error.to_string())?;
+    rows.collect::<Result<std::collections::HashMap<_, _>, _>>().map_err(|error| error.to_string())
+}
+
+fn handler_decision_rows(
+    connection: &Connection,
+) -> Result<std::collections::HashMap<String, WorkUnitHandlerDecisionDto>, String> {
+    let exists = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_handler_decisions')",
+        [],
+        |row| row.get::<_, bool>(0),
+    ).map_err(|error| error.to_string())?;
+    if !exists { return Ok(std::collections::HashMap::new()); }
+    let mut statement = connection.prepare(
+        "SELECT work_unit_id,review_invocation_id,decision_variant,decision_fingerprint,return_reason_json,decision_recorded_at,implementation_accepted_at,implementation_returned_at,retry_required_at,settlement_ready_at FROM work_unit_handler_decisions"
+    ).map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, map_handler_decision(row)?)))
+        .map_err(|error| error.to_string())?;
+    rows.collect::<Result<std::collections::HashMap<_, _>, _>>().map_err(|error| error.to_string())
+}
+
+fn map_handler_review(row: &Row<'_>) -> Result<WorkUnitHandlerReviewDto, rusqlite::Error> {
+    let payload_json: String = row.get(16)?;
+    let payload: PersistedHandlerReviewPayload = serde_json::from_str(&payload_json)
+        .map_err(|error| to_sql_error(error.to_string()))?;
+    let canonical = serde_json::to_string(&payload).map_err(|error| to_sql_error(error.to_string()))?;
+    if canonical != payload_json
+        || payload.summary.trim().is_empty() || payload.summary.len() > 20_000
+        || payload.validation_statement.trim().is_empty() || payload.validation_statement.len() > 20_000
+        || payload.changed_files.is_empty() || payload.changed_files.len() > 500
+        || payload.comparison_fingerprint.trim().is_empty() || payload.comparison_fingerprint.len() > 240
+    {
+        return Err(to_sql_error("Handler review delivered payload is incoherent".into()));
+    }
+    let mut content = std::collections::HashMap::new();
+    for entry in payload.evidence_content_fingerprints {
+        if entry.evidence_ref.trim().is_empty() || entry.evidence_ref.len() > 240
+            || entry.content_fingerprint.trim().is_empty() || entry.content_fingerprint.len() > 240
+            || content.insert(entry.evidence_ref, entry.content_fingerprint).is_some()
+        {
+            return Err(to_sql_error("Handler review evidence content is incoherent".into()));
+        }
+    }
+    let mut changed_files = Vec::with_capacity(payload.changed_files.len());
+    let mut references = std::collections::HashSet::new();
+    for entry in payload.changed_files {
+        let change_kind = match entry.change_kind.as_str() {
+            "added" => ImplementationEvidenceChangeKindDto::Added,
+            "modified" => ImplementationEvidenceChangeKindDto::Modified,
+            "deleted" => ImplementationEvidenceChangeKindDto::Deleted,
+            "renamed" => ImplementationEvidenceChangeKindDto::Renamed,
+            _ => return Err(to_sql_error("invalid Handler review evidence change kind".into())),
+        };
+        let Some(content_fingerprint) = content.remove(&entry.evidence_ref) else {
+            return Err(to_sql_error("Handler review evidence content is uncorrelated".into()));
+        };
+        if entry.display_name.trim().is_empty() || entry.display_name.len() > 1_000
+            || !references.insert(entry.evidence_ref.clone())
+        {
+            return Err(to_sql_error("Handler review evidence references are incoherent".into()));
+        }
+        changed_files.push(WorkUnitHandlerReviewEvidenceFileDto {
+            evidence_ref: entry.evidence_ref,
+            display_name: entry.display_name,
+            change_kind,
+            content_fingerprint,
+        });
+    }
+    if !content.is_empty() {
+        return Err(to_sql_error("Handler review evidence content has an unknown reference".into()));
+    }
+    let semantic_variant: Option<String> = row.get(18)?;
+    let semantic_reason: Option<String> = row.get(19)?;
+    let semantic_fingerprint: Option<String> = row.get(20)?;
+    let semantic_at: Option<String> = row.get(21)?;
+    let semantic_judgment = match (semantic_variant, semantic_reason, semantic_fingerprint, semantic_at) {
+        (None, None, None, None) => None,
+        (Some(variant), reason, Some(fingerprint), Some(recorded_at)) => {
+            let variant = match variant.as_str() {
+                "accept" => WorkUnitHandlerReviewJudgmentVariantDto::Accept,
+                "return" => WorkUnitHandlerReviewJudgmentVariantDto::Return,
+                _ => return Err(to_sql_error("invalid Handler review judgment variant".into())),
+            };
+            let reason = match (&variant, reason) {
+                (WorkUnitHandlerReviewJudgmentVariantDto::Accept, None) => None,
+                (WorkUnitHandlerReviewJudgmentVariantDto::Return, Some(value)) => Some(parse_handler_review_reason(value)?),
+                _ => return Err(to_sql_error("Handler review judgment reason is incoherent".into())),
+            };
+            Some(WorkUnitHandlerReviewJudgmentDto { variant, reason, fingerprint, recorded_at })
+        }
+        _ => return Err(to_sql_error("Handler review judgment bundle is partial".into())),
+    };
+    let lifecycle_observed_at: Option<String> = row.get(22)?;
+    let lifecycle_status: Option<String> = row.get(23)?;
+    let lifecycle = match (lifecycle_observed_at, lifecycle_status) {
+        (None, None) => None,
+        (Some(observed_at), Some(status)) => Some(WorkUnitHandlerReviewLifecycleDto {
+            status: match status.as_str() {
+                "completed" => WorkUnitHandlerReviewLifecycleStatusDto::Completed,
+                "failed" => WorkUnitHandlerReviewLifecycleStatusDto::Failed,
+                "canceled" => WorkUnitHandlerReviewLifecycleStatusDto::Canceled,
+                "interrupted" => WorkUnitHandlerReviewLifecycleStatusDto::Interrupted,
+                _ => return Err(to_sql_error("invalid Handler review lifecycle status".into())),
+            },
+            observed_at,
+        }),
+        _ => return Err(to_sql_error("Handler review lifecycle bundle is partial".into())),
+    };
+    let conflict_at: Option<String> = row.get(24)?;
+    let conflict_reason: Option<String> = row.get(25)?;
+    let conflict = match (conflict_at, conflict_reason) {
+        (None, None) => None,
+        (Some(occurred_at), Some(reason)) if !reason.trim().is_empty() && reason.len() <= 4_000 =>
+            Some(WorkUnitHandlerReviewConflictDto { occurred_at, reason }),
+        _ => return Err(to_sql_error("Handler review conflict bundle is incoherent".into())),
+    };
+    let delivered_payload_fingerprint: String = row.get(17)?;
+    if delivered_payload_fingerprint != projection_stable_id("work-unit-handler-review-delivery", &payload_json) {
+        return Err(to_sql_error("Handler review delivered payload fingerprint is incoherent".into()));
+    }
+    Ok(WorkUnitHandlerReviewDto {
+        attempt_id: row.get(1)?, reporting_invocation_id: row.get(2)?, handler_session_id: row.get(3)?,
+        original_handler_invocation_id: row.get(4)?, action_handler_invocation_id: row.get(5)?,
+        review_invocation_id: row.get(6)?, review_harness_revision_id: row.get(7)?,
+        review_harness_configuration_digest: row.get(8)?, review_harness_repository_commit_ref: row.get(9)?,
+        delivery_requested_at: row.get(10)?, delivery_persisted_at: row.get(11)?, harness_bound_at: row.get(12)?,
+        launch_requested_at: row.get(13)?, launch_accepted_at: row.get(14)?, review_ready_at: row.get(15)?,
+        delivered: WorkUnitHandlerReviewEvidenceDto {
+            summary_claim: payload.summary, validation_statement_claim: payload.validation_statement,
+            changed_files, comparison_fingerprint: payload.comparison_fingerprint, delivered_payload_fingerprint,
+        },
+        semantic_judgment, lifecycle, conflict,
+    })
+}
+
+fn parse_handler_review_reason(value: String) -> Result<WorkUnitHandlerReviewReasonDto, rusqlite::Error> {
+    let reason: WorkUnitHandlerReviewReasonDto = serde_json::from_str(&value)
+        .map_err(|error| to_sql_error(error.to_string()))?;
+    let canonical = serde_json::to_string(&reason).map_err(|error| to_sql_error(error.to_string()))?;
+    if canonical != value || reason.code.is_empty() || reason.code.len() > 96
+        || !reason.code.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+        || reason.explanation.trim().is_empty() || reason.explanation.len() > 2_000
+    {
+        return Err(to_sql_error("Handler review reason is incoherent".into()));
+    }
+    Ok(reason)
+}
+
+fn map_handler_decision(row: &Row<'_>) -> Result<WorkUnitHandlerDecisionDto, rusqlite::Error> {
+    let variant: String = row.get(2)?;
+    let reason: Option<String> = row.get(4)?;
+    let variant = match variant.as_str() {
+        "accepted" if reason.is_none() && row.get::<_, Option<String>>(6)?.is_some()
+            && row.get::<_, Option<String>>(7)?.is_none() && row.get::<_, Option<String>>(8)?.is_none() =>
+            WorkUnitHandlerDecisionVariantDto::Accepted,
+        "returned" if reason.is_some() && row.get::<_, Option<String>>(6)?.is_none()
+            && row.get::<_, Option<String>>(7)?.is_some() && row.get::<_, Option<String>>(8)?.is_some() =>
+            WorkUnitHandlerDecisionVariantDto::Returned,
+        "accepted" | "returned" => return Err(to_sql_error("Handler decision facts contradict their variant".into())),
+        _ => return Err(to_sql_error("invalid Handler decision variant".into())),
+    };
+    let settlement_ready_at: Option<String> = row.get(9)?;
+    if settlement_ready_at.is_some() {
+        return Err(to_sql_error("Handler decision has forbidden settlement readiness".into()));
+    }
+    Ok(WorkUnitHandlerDecisionDto {
+        review_invocation_id: row.get(1)?, variant, fingerprint: row.get(3)?,
+        return_reason: reason.map(parse_handler_review_reason).transpose()?, recorded_at: row.get(5)?,
+        implementation_accepted_at: row.get(6)?, implementation_returned_at: row.get(7)?,
+        retry_required_at: row.get(8)?, settlement_ready_at,
+    })
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]

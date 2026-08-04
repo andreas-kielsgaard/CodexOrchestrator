@@ -168,6 +168,8 @@ export type {
   ProductSourcedReadValueV1,
   ProductWorkUnitActionContinuationV1,
   ProductWorkUnitHandlerActivationV1,
+  ProductWorkUnitHandlerDecisionV1,
+  ProductWorkUnitHandlerReviewV1,
   ProductWorkUnitImplementerActivationV1,
   ProductWorkUnitImplementerOutcomeV1,
   ProductWorkUnitPresentationState,

@@ -6,6 +6,8 @@ import type {
   ProductReadCompositionInputV1,
   ProductWorkUnitActionContinuationV1,
   ProductWorkUnitHandlerActivationV1,
+  ProductWorkUnitHandlerDecisionV1,
+  ProductWorkUnitHandlerReviewV1,
   ProductWorkUnitImplementerActivationV1,
   ProductWorkUnitImplementerOutcomeV1,
 } from './productReadModels';
@@ -57,6 +59,8 @@ export interface NativeMaterializedWorkUnitV1 {
   readonly actionContinuation?: NativeWorkUnitHandlerActionContinuationV1;
   readonly implementerActivation?: NativeWorkUnitImplementerActivationV1;
   readonly implementerOutcome?: NativeWorkUnitImplementerOutcomeV1;
+  readonly handlerReview?: NativeWorkUnitHandlerReviewV1;
+  readonly handlerDecision?: NativeWorkUnitHandlerDecisionV1;
 }
 export interface NativeWorkUnitHandlerActivationV1 {
   readonly attemptId: string;
@@ -121,6 +125,8 @@ export interface NativeWorkUnitImplementerActivationV1 {
   readonly failureReason?: string;
 }
 export type NativeWorkUnitImplementerOutcomeV1 = ProductWorkUnitImplementerOutcomeV1;
+export type NativeWorkUnitHandlerReviewV1 = ProductWorkUnitHandlerReviewV1;
+export type NativeWorkUnitHandlerDecisionV1 = ProductWorkUnitHandlerDecisionV1;
 export interface NativeWorkUnitRelationshipV1 {
   readonly relationshipId: string;
   readonly materializationId: string;
@@ -586,6 +592,8 @@ export function nativeQueryProductCompositionInputV2(
         ...(unit.implementerOutcome
           ? { implementerOutcome: implementerOutcomePresentation(unit.implementerOutcome) }
           : {}),
+        ...(unit.handlerReview ? { handlerReview: { ...unit.handlerReview } } : {}),
+        ...(unit.handlerDecision ? { handlerDecision: { ...unit.handlerDecision } } : {}),
       })),
       gates: [],
       concerns: [],
@@ -1174,6 +1182,8 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
       'actionContinuation',
       'implementerActivation',
       'implementerOutcome',
+      'handlerReview',
+      'handlerDecision',
     ],
     'materialized Work Unit',
   );
@@ -1199,6 +1209,10 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
     ...(x.implementerOutcome === undefined
       ? {}
       : { implementerOutcome: workUnitImplementerOutcome(x.implementerOutcome) }),
+    ...(x.handlerReview === undefined ? {} : { handlerReview: workUnitHandlerReview(x.handlerReview) }),
+    ...(x.handlerDecision === undefined
+      ? {}
+      : { handlerDecision: workUnitHandlerDecision(x.handlerDecision) }),
   };
 };
 const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivationV1 => {
@@ -1858,6 +1872,290 @@ const workUnitImplementerOutcome = (value: unknown): NativeWorkUnitImplementerOu
   }
   return result;
 };
+const handlerReviewReason = (value: unknown, label: string) => {
+  const x = object(value, label);
+  keys(x, ['code', 'explanation'], label);
+  const code = boundedString(x.code, 96, `${label} code`);
+  if (!/^[A-Za-z0-9_-]+$/.test(code)) fail(`${label} code is not a bounded identifier`);
+  return { code, explanation: boundedString(x.explanation, 2_000, `${label} explanation`) };
+};
+const workUnitHandlerReview = (value: unknown): NativeWorkUnitHandlerReviewV1 => {
+  const x = object(value, 'Work Unit Handler review');
+  keys(
+    x,
+    [
+      'attemptId',
+      'reportingInvocationId',
+      'handlerSessionId',
+      'originalHandlerInvocationId',
+      'actionHandlerInvocationId',
+      'reviewInvocationId',
+      'reviewHarnessRevisionId',
+      'reviewHarnessConfigurationDigest',
+      'reviewHarnessRepositoryCommitRef',
+      'deliveryRequestedAt',
+      'deliveryPersistedAt',
+      'harnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+      'reviewReadyAt',
+      'delivered',
+      'semanticJudgment',
+      'lifecycle',
+      'conflict',
+    ],
+    'Work Unit Handler review',
+  );
+  const optionalTime = (key: keyof typeof x) =>
+    x[key] === undefined ? undefined : timestamp(x[key], key);
+  const deliveredValue = object(x.delivered, 'Handler review delivered evidence');
+  keys(
+    deliveredValue,
+    [
+      'summaryClaim',
+      'validationStatementClaim',
+      'changedFiles',
+      'comparisonFingerprint',
+      'deliveredPayloadFingerprint',
+    ],
+    'Handler review delivered evidence',
+  );
+  const changedFiles = array(
+    deliveredValue.changedFiles,
+    'Handler review delivered changed files',
+  ).map((value) => {
+    const file = object(value, 'Handler review changed file');
+    keys(
+      file,
+      ['evidenceRef', 'displayName', 'changeKind', 'contentFingerprint'],
+      'Handler review changed file',
+    );
+    if (!['added', 'modified', 'deleted', 'renamed'].includes(file.changeKind as string))
+      fail('invalid Handler review evidence change kind');
+    return {
+      evidenceRef: boundedString(file.evidenceRef, 240, 'Handler review evidenceRef'),
+      displayName: boundedString(file.displayName, 1_000, 'Handler review displayName'),
+      changeKind: file.changeKind as 'added' | 'modified' | 'deleted' | 'renamed',
+      contentFingerprint: boundedString(
+        file.contentFingerprint,
+        240,
+        'Handler review content fingerprint',
+      ),
+    };
+  });
+  if (!changedFiles.length || changedFiles.length > 500)
+    fail('Handler review evidence must contain a bounded changed-file manifest');
+  unique(changedFiles, (file) => file.evidenceRef, 'Handler review evidence reference');
+  const semanticJudgment =
+    x.semanticJudgment === undefined
+      ? undefined
+      : (() => {
+          const judgment = object(x.semanticJudgment, 'Handler review semantic judgment');
+          keys(
+            judgment,
+            ['variant', 'reason', 'fingerprint', 'recordedAt'],
+            'Handler review semantic judgment',
+          );
+          if (judgment.variant !== 'accept' && judgment.variant !== 'return')
+            fail('invalid Handler review semantic judgment variant');
+          const reason =
+            judgment.reason === undefined
+              ? undefined
+              : handlerReviewReason(judgment.reason, 'Handler review semantic judgment reason');
+          if (judgment.variant === 'return' && !reason)
+            fail('returned Handler review judgment requires a reason');
+          if (judgment.variant === 'accept' && reason)
+            fail('accepted Handler review judgment cannot have a reason');
+          return {
+            variant: judgment.variant as 'accept' | 'return',
+            ...(reason ? { reason } : {}),
+            fingerprint: boundedString(
+              judgment.fingerprint,
+              240,
+              'Handler review judgment fingerprint',
+            ),
+            recordedAt: timestamp(judgment.recordedAt, 'Handler review judgment recordedAt'),
+          };
+        })();
+  const lifecycle =
+    x.lifecycle === undefined
+      ? undefined
+      : (() => {
+          const value = object(x.lifecycle, 'Handler review lifecycle');
+          keys(value, ['status', 'observedAt'], 'Handler review lifecycle');
+          if (!['completed', 'failed', 'canceled', 'interrupted'].includes(value.status as string))
+            fail('invalid Handler review lifecycle status');
+          return {
+            status: value.status as 'completed' | 'failed' | 'canceled' | 'interrupted',
+            observedAt: timestamp(value.observedAt, 'Handler review lifecycle observedAt'),
+          };
+        })();
+  const conflict =
+    x.conflict === undefined
+      ? undefined
+      : (() => {
+          const value = object(x.conflict, 'Handler review conflict');
+          keys(value, ['occurredAt', 'reason'], 'Handler review conflict');
+          return {
+            occurredAt: timestamp(value.occurredAt, 'Handler review conflict occurredAt'),
+            reason: boundedString(value.reason, 4_000, 'Handler review conflict reason'),
+          };
+        })();
+  const result: NativeWorkUnitHandlerReviewV1 = {
+    attemptId: boundedString(x.attemptId, 240, 'Handler review attemptId'),
+    reportingInvocationId: boundedString(
+      x.reportingInvocationId,
+      240,
+      'Handler review reportingInvocationId',
+    ),
+    handlerSessionId: boundedString(x.handlerSessionId, 240, 'Handler review handlerSessionId'),
+    originalHandlerInvocationId: boundedString(
+      x.originalHandlerInvocationId,
+      240,
+      'Handler review originalHandlerInvocationId',
+    ),
+    actionHandlerInvocationId: boundedString(
+      x.actionHandlerInvocationId,
+      240,
+      'Handler review actionHandlerInvocationId',
+    ),
+    reviewInvocationId: boundedString(x.reviewInvocationId, 240, 'Handler review reviewInvocationId'),
+    reviewHarnessRevisionId: boundedString(
+      x.reviewHarnessRevisionId,
+      240,
+      'Handler review reviewHarnessRevisionId',
+    ),
+    reviewHarnessConfigurationDigest: boundedString(
+      x.reviewHarnessConfigurationDigest,
+      240,
+      'Handler review reviewHarnessConfigurationDigest',
+    ),
+    reviewHarnessRepositoryCommitRef: boundedString(
+      x.reviewHarnessRepositoryCommitRef,
+      240,
+      'Handler review reviewHarnessRepositoryCommitRef',
+    ),
+    deliveryRequestedAt: timestamp(x.deliveryRequestedAt, 'Handler review deliveryRequestedAt'),
+    ...(optionalTime('deliveryPersistedAt')
+      ? { deliveryPersistedAt: optionalTime('deliveryPersistedAt') }
+      : {}),
+    ...(optionalTime('harnessBoundAt') ? { harnessBoundAt: optionalTime('harnessBoundAt') } : {}),
+    ...(optionalTime('launchRequestedAt')
+      ? { launchRequestedAt: optionalTime('launchRequestedAt') }
+      : {}),
+    ...(optionalTime('launchAcceptedAt')
+      ? { launchAcceptedAt: optionalTime('launchAcceptedAt') }
+      : {}),
+    ...(optionalTime('reviewReadyAt') ? { reviewReadyAt: optionalTime('reviewReadyAt') } : {}),
+    delivered: {
+      summaryClaim: boundedString(
+        deliveredValue.summaryClaim,
+        20_000,
+        'Handler review summary claim',
+      ),
+      validationStatementClaim: boundedString(
+        deliveredValue.validationStatementClaim,
+        20_000,
+        'Handler review validation statement claim',
+      ),
+      changedFiles,
+      comparisonFingerprint: boundedString(
+        deliveredValue.comparisonFingerprint,
+        240,
+        'Handler review comparison fingerprint',
+      ),
+      deliveredPayloadFingerprint: boundedString(
+        deliveredValue.deliveredPayloadFingerprint,
+        240,
+        'Handler review delivered payload fingerprint',
+      ),
+    },
+    ...(semanticJudgment ? { semanticJudgment } : {}),
+    ...(lifecycle ? { lifecycle } : {}),
+    ...(conflict ? { conflict } : {}),
+  };
+  phaseCoherence(
+    result,
+    [
+      'deliveryRequestedAt',
+      'deliveryPersistedAt',
+      'harnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+      'reviewReadyAt',
+    ],
+    'Handler review',
+  );
+  if (result.semanticJudgment) {
+    if (!result.reviewReadyAt)
+      fail('Handler review judgment requires review readiness');
+    timestampAtOrAfter(
+      result.reviewReadyAt,
+      result.semanticJudgment.recordedAt,
+      'Handler review judgment',
+    );
+  }
+  if (result.lifecycle) {
+    if (!result.reviewReadyAt) fail('Handler review lifecycle requires review readiness');
+    timestampAtOrAfter(result.reviewReadyAt, result.lifecycle.observedAt, 'Handler review lifecycle');
+    if (result.semanticJudgment)
+      timestampAtOrAfter(
+        result.semanticJudgment.recordedAt,
+        result.lifecycle.observedAt,
+        'Handler review lifecycle',
+      );
+  }
+  return result;
+};
+const workUnitHandlerDecision = (value: unknown): NativeWorkUnitHandlerDecisionV1 => {
+  const x = object(value, 'Work Unit Handler decision');
+  keys(
+    x,
+    [
+      'reviewInvocationId',
+      'variant',
+      'fingerprint',
+      'returnReason',
+      'recordedAt',
+      'implementationAcceptedAt',
+      'implementationReturnedAt',
+      'retryRequiredAt',
+      'settlementReadyAt',
+    ],
+    'Work Unit Handler decision',
+  );
+  if (x.settlementReadyAt !== undefined) fail('Handler decision has forbidden settlement readiness');
+  if (x.variant !== 'accepted' && x.variant !== 'returned') fail('invalid Handler decision variant');
+  const returnReason =
+    x.returnReason === undefined
+      ? undefined
+      : handlerReviewReason(x.returnReason, 'Handler decision return reason');
+  const optionalTime = (key: keyof typeof x) =>
+    x[key] === undefined ? undefined : timestamp(x[key], key);
+  const result: NativeWorkUnitHandlerDecisionV1 = {
+    reviewInvocationId: boundedString(x.reviewInvocationId, 240, 'Handler decision reviewInvocationId'),
+    variant: x.variant as 'accepted' | 'returned',
+    fingerprint: boundedString(x.fingerprint, 240, 'Handler decision fingerprint'),
+    ...(returnReason ? { returnReason } : {}),
+    recordedAt: timestamp(x.recordedAt, 'Handler decision recordedAt'),
+    ...(optionalTime('implementationAcceptedAt')
+      ? { implementationAcceptedAt: optionalTime('implementationAcceptedAt') }
+      : {}),
+    ...(optionalTime('implementationReturnedAt')
+      ? { implementationReturnedAt: optionalTime('implementationReturnedAt') }
+      : {}),
+    ...(optionalTime('retryRequiredAt') ? { retryRequiredAt: optionalTime('retryRequiredAt') } : {}),
+  };
+  if (result.variant === 'accepted') {
+    if (returnReason || !result.implementationAcceptedAt || result.implementationReturnedAt || result.retryRequiredAt)
+      fail('accepted Handler decision facts contradict their variant');
+  } else if (
+    !returnReason || !result.implementationReturnedAt || !result.retryRequiredAt || result.implementationAcceptedAt
+  ) {
+    fail('returned Handler decision facts contradict their variant');
+  }
+  return result;
+};
 const workUnitRelationship = (value: unknown): NativeWorkUnitRelationshipV1 => {
   const x = object(value, 'Work Unit relationship');
   keys(
@@ -2233,6 +2531,57 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
         implementer.implementerHarnessConfigurationDigest
     )
       fail('Implementer outcome reuses the original Implementer Harness revision');
+  }
+  const review = unit.handlerReview;
+  const decision = unit.handlerDecision;
+  if (review) {
+    if (!handler || handler.eligibilityState !== 'eligible')
+      fail('Handler review requires an eligible Handler activation');
+    if (!continuation || continuation.stage === 'blocked')
+      fail('Handler review requires an unblocked Handler action continuation');
+    if (
+      review.attemptId !== handler.attemptId ||
+      review.handlerSessionId !== handler.handlerSessionId ||
+      review.originalHandlerInvocationId !== handler.handlerInvocationId ||
+      review.attemptId !== continuation.attemptId ||
+      review.handlerSessionId !== continuation.handlerSessionId ||
+      review.originalHandlerInvocationId !== continuation.originalHandlerInvocationId ||
+      review.actionHandlerInvocationId !== continuation.actionInvocationId
+    )
+      fail('Handler review does not match the original Handler Session and action continuation');
+    if (!outcome || outcome.attemptId !== review.attemptId || outcome.reportingInvocationId !== review.reportingInvocationId)
+      fail('Handler review does not match the Implementer reporting outcome');
+    if (!outcome.submittedOutcome || !outcome.evidence)
+      fail('Handler review requires the accepted Implementer claims and evidence');
+    if (
+      review.delivered.summaryClaim !== outcome.submittedOutcome.summaryClaim ||
+      review.delivered.validationStatementClaim !== outcome.submittedOutcome.validationStatementClaim ||
+      review.delivered.comparisonFingerprint !== outcome.evidence.comparisonFingerprint ||
+      JSON.stringify(review.delivered.changedFiles) !== JSON.stringify(outcome.evidence.changedFiles)
+    )
+      fail('Handler review delivered evidence differs from the Implementer outcome');
+    if (review.semanticJudgment && !review.launchAcceptedAt)
+      fail('Handler review judgment requires launch acceptance');
+  }
+  if (decision) {
+    if (!review || decision.reviewInvocationId !== review.reviewInvocationId)
+      fail('Handler decision does not match the Handler review invocation');
+    if (!review.semanticJudgment || review.lifecycle?.status !== 'completed')
+      fail('Handler decision requires exact Completed Handler review judgment');
+    const expectedVariant = review.semanticJudgment.variant === 'accept' ? 'accepted' : 'returned';
+    if (decision.variant !== expectedVariant)
+      fail('Handler decision contradicts semantic judgment');
+    if (decision.variant === 'returned') {
+      if (JSON.stringify(decision.returnReason) !== JSON.stringify(review.semanticJudgment.reason))
+        fail('Handler decision return reason differs from semantic judgment');
+    } else if (decision.returnReason) {
+      fail('accepted Handler decision cannot have a return reason');
+    }
+    timestampAtOrAfter(
+      review.lifecycle.observedAt,
+      decision.recordedAt,
+      'Handler decision',
+    );
   }
 }
 function validateMaterializationRelationships(

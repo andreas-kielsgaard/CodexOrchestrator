@@ -575,6 +575,93 @@ describe('orchestration native query v1', () => {
     }
   });
 
+  it('projects the Handler review boundary without inventing later workflow', () => {
+    const pending = implementerOutcomeNativeFixture();
+    const pendingUnit = (pending.workUnits as Array<Record<string, unknown>>)[0]!;
+    pendingUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
+    pendingUnit.handlerReview = handlerReviewFixture('pending');
+    const pendingQuery = decodeOrchestrationNativeQueryV2(pending);
+    expect(pendingQuery.workUnits[0]!.handlerReview).toMatchObject({
+      reviewReadyAt: '2026-08-04T00:00:11Z',
+      delivered: { comparisonFingerprint: 'comparison-1' },
+    });
+    const pendingUnitModel = composeProductOrchestrationReadModels(
+      nativeQueryProductCompositionInputV2(pendingQuery),
+    ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
+    expect(pendingUnitModel.handlerReview?.semanticJudgment).toBeUndefined();
+    expect(pendingUnitModel.handlerDecision).toBeUndefined();
+
+    for (const variant of ['accepted', 'returned'] as const) {
+      const value = implementerOutcomeNativeFixture();
+      const unit = (value.workUnits as Array<Record<string, unknown>>)[0]!;
+      unit.implementerOutcome = implementerOutcomeFixture('review_ready');
+      unit.handlerReview = handlerReviewFixture(variant);
+      unit.handlerDecision = handlerDecisionFixture(variant);
+      if (variant === 'returned') {
+        (unit.handlerReview as Record<string, unknown>).conflict = {
+          occurredAt: '2026-08-04T00:00:16Z',
+          reason: 'divergent_review_judgment',
+        };
+      }
+      const query = decodeOrchestrationNativeQueryV2(value);
+      expect(query.workUnits[0]!.handlerDecision?.variant).toBe(variant);
+      expect(query.workUnits[0]!.handlerReview?.semanticJudgment?.variant).toBe(
+        variant === 'accepted' ? 'accept' : 'return',
+      );
+      expect(query.workUnits[0]!.handlerReview?.lifecycle?.status).toBe('completed');
+    }
+
+    const failed = implementerOutcomeNativeFixture();
+    const failedUnit = (failed.workUnits as Array<Record<string, unknown>>)[0]!;
+    failedUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
+    failedUnit.handlerReview = handlerReviewFixture('failed');
+    expect(decodeOrchestrationNativeQueryV2(failed).workUnits[0]!.handlerDecision).toBeUndefined();
+
+    const malformed = [
+      (() => {
+        const value = implementerOutcomeNativeFixture();
+        const unit = (value.workUnits as Array<Record<string, unknown>>)[0]!;
+        unit.implementerOutcome = implementerOutcomeFixture('review_ready');
+        unit.handlerReview = handlerReviewFixture('accepted');
+        unit.handlerDecision = handlerDecisionFixture('accepted');
+        (unit.handlerDecision as Record<string, unknown>).settlementReadyAt =
+          '2026-08-04T00:00:15Z';
+        return value;
+      })(),
+      (() => {
+        const value = implementerOutcomeNativeFixture();
+        const unit = (value.workUnits as Array<Record<string, unknown>>)[0]!;
+        unit.implementerOutcome = implementerOutcomeFixture('review_ready');
+        unit.handlerReview = handlerReviewFixture('pending');
+        unit.handlerDecision = {
+          reviewInvocationId: 'review-invocation-1',
+          variant: 'accepted',
+          fingerprint: 'decision-1',
+          recordedAt: '2026-08-04T00:00:14Z',
+          implementationAcceptedAt: '2026-08-04T00:00:14Z',
+        };
+        return value;
+      })(),
+      (() => {
+        const value = implementerOutcomeNativeFixture();
+        const unit = (value.workUnits as Array<Record<string, unknown>>)[0]!;
+        unit.implementerOutcome = implementerOutcomeFixture('review_ready');
+        unit.handlerReview = handlerReviewFixture('accepted');
+        (unit.handlerReview as Record<string, unknown>).semanticJudgment = {
+          variant: 'unknown',
+          fingerprint: 'judgment-1',
+          recordedAt: '2026-08-04T00:00:12Z',
+        };
+        return value;
+      })(),
+    ];
+    malformed.forEach((value) =>
+      expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow(
+        'Invalid orchestration native query',
+      ),
+    );
+  });
+
   it('keeps partial materialization stages separate from Work Unit production truth', () => {
     const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
     value.workUnitMaterializations = [
@@ -933,4 +1020,76 @@ function implementerOutcomeFixture(
     handlerReviewReadyAt: '2026-08-04T00:00:11Z',
   });
   return outcome;
+}
+
+function handlerReviewFixture(
+  state: 'pending' | 'accepted' | 'returned' | 'failed',
+): Record<string, unknown> {
+  const review: Record<string, unknown> = {
+    attemptId: 'attempt-1',
+    reportingInvocationId: 'reporting-invocation-1',
+    handlerSessionId: 'handler-session-1',
+    originalHandlerInvocationId: 'handler-invocation-1',
+    actionHandlerInvocationId: 'handler-action-1',
+    reviewInvocationId: 'review-invocation-1',
+    reviewHarnessRevisionId: 'review-revision-1',
+    reviewHarnessConfigurationDigest: 'review-digest-1',
+    reviewHarnessRepositoryCommitRef: 'review-commit-1',
+    deliveryRequestedAt: '2026-08-04T00:00:12Z',
+    deliveryPersistedAt: '2026-08-04T00:00:12Z',
+    harnessBoundAt: '2026-08-04T00:00:13Z',
+    launchRequestedAt: '2026-08-04T00:00:14Z',
+    launchAcceptedAt: '2026-08-04T00:00:15Z',
+    reviewReadyAt: '2026-08-04T00:00:16Z',
+    delivered: {
+      summaryClaim: 'Implemented the bounded change.',
+      validationStatementClaim: 'Focused checks passed.',
+      changedFiles: [
+        {
+          evidenceRef: 'evidence-1',
+          displayName: 'src/feature.ts',
+          changeKind: 'modified',
+          contentFingerprint: 'content-1',
+        },
+      ],
+      comparisonFingerprint: 'comparison-1',
+      deliveredPayloadFingerprint: 'delivery-1',
+    },
+  };
+  if (state === 'accepted' || state === 'returned') {
+    Object.assign(review, {
+      semanticJudgment: {
+        variant: state === 'accepted' ? 'accept' : 'return',
+        ...(state === 'returned'
+          ? { reason: { code: 'review_failed', explanation: 'Evidence requires correction.' } }
+          : {}),
+        fingerprint: 'judgment-1',
+        recordedAt: '2026-08-04T00:00:17Z',
+      },
+      lifecycle: { status: 'completed', observedAt: '2026-08-04T00:00:18Z' },
+    });
+  } else if (state === 'failed') {
+    review.lifecycle = { status: 'failed', observedAt: '2026-08-04T00:00:18Z' };
+  }
+  return review;
+}
+
+function handlerDecisionFixture(variant: 'accepted' | 'returned'): Record<string, unknown> {
+  return variant === 'accepted'
+    ? {
+        reviewInvocationId: 'review-invocation-1',
+        variant,
+        fingerprint: 'decision-1',
+        recordedAt: '2026-08-04T00:00:19Z',
+        implementationAcceptedAt: '2026-08-04T00:00:19Z',
+      }
+    : {
+        reviewInvocationId: 'review-invocation-1',
+        variant,
+        fingerprint: 'decision-1',
+        returnReason: { code: 'review_failed', explanation: 'Evidence requires correction.' },
+        recordedAt: '2026-08-04T00:00:19Z',
+        implementationReturnedAt: '2026-08-04T00:00:19Z',
+        retryRequiredAt: '2026-08-04T00:00:19Z',
+      };
 }
