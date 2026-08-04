@@ -55,6 +55,20 @@ describe('orchestration native query v1', () => {
     );
   });
 
+  it('requires the productive execution bundle to be all present or all absent and rejects private additions', () => {
+    const value = fixture('valid-empty.json') as Record<string, unknown>;
+    value.workUnitExecutionStates = [];
+    expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow('execution projection bundle is incomplete');
+    Object.assign(value, {
+      workSliceExecutionGraphCompletions: [], workSliceExecutionSettlements: [],
+      workSlicePlanningPointExecutionSettlements: [], workSliceExecutionAttentions: [],
+    });
+    const query = decodeOrchestrationNativeQueryV2(value);
+    expect(query.workUnitExecutionStates).toEqual([]);
+    (value.workUnitExecutionStates as unknown[]).push({ workUnitId: 'private', materializationId: 'private', acceptedRevisionId: 'private', state: 'ready', recordedAt: '2026-08-05T00:00:00Z', graphFingerprint: 'private' });
+    expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow('unknown field');
+  });
+
   it('projects durable File Review ownership and rejects an unknown owner Sprint', () => {
     const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
     value.fileReviewDocuments = [

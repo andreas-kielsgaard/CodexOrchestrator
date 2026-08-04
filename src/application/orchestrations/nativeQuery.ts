@@ -332,6 +332,10 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
     'native query',
   );
   if (root.contractVersion !== ORCHESTRATION_NATIVE_QUERY_V2) fail('unsupported contractVersion');
+  const executionFields = ['workUnitExecutionStates', 'workSliceExecutionGraphCompletions', 'workSliceExecutionSettlements', 'workSlicePlanningPointExecutionSettlements', 'workSliceExecutionAttentions'] as const;
+  const executionFieldCount = executionFields.filter((field) => root[field] !== undefined).length;
+  if (executionFieldCount !== 0 && executionFieldCount !== executionFields.length)
+    fail('productive execution projection bundle is incomplete');
   const query: OrchestrationNativeQueryV2 = {
     contractVersion: ORCHESTRATION_NATIVE_QUERY_V2,
     generatedAt: string(root.generatedAt, 'generatedAt'),
