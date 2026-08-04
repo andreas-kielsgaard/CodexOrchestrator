@@ -146,6 +146,9 @@ fn reconcile_candidate(connection: &mut Connection, row: CandidateRow) -> Result
                 "retained_durable_lineage_mismatch",
             );
         }
+        if let Err(reason) = validate_durable_lineage(connection, &row) {
+            return record_attention(connection, &candidate_id, &reason);
+        }
         let repository = PathBuf::from(&row.repo);
         let actual = git(
             &repository,
@@ -274,6 +277,17 @@ fn validate_candidate(connection: &Connection, row: &CandidateRow) -> Result<Str
             &format!("{}^{{tree}}", row.capture_commit),
         ],
     )?;
+    validate_durable_lineage(connection, row)?;
+    Ok(tree)
+}
+
+/// Revalidates every durable File Review/outcome/review/decision linkage without reading an
+/// attempt workspace. Retained reopen uses this after the private object check.
+fn validate_durable_lineage(connection: &Connection, row: &CandidateRow) -> Result<(), String> {
+    let direct:Option<i64>=connection.query_row("SELECT 1 FROM file_review_git_capture_documents l JOIN file_review_git_capture_authorizations c ON c.capture_authorization_id=l.capture_authorization_id WHERE l.capture_authorization_id=?1 AND l.document_ref_id=?2 AND l.artifact_id=?3 AND c.current_object_id=?4 AND c.baseline_object_id=?5",params![row.capture_id,row.document_id,row.artifact_id,row.capture_commit,row.baseline],|r|r.get(0)).optional().map_err(|e|e.to_string())?;
+    if direct.is_none() {
+        return Err("capture_document_artifact_mismatch".into());
+    }
     let payload:Vec<u8>=connection.query_row("SELECT payload FROM stored_file_review_artifacts WHERE artifact_id=?1 AND document_ref_id=?2",params![row.artifact_id,row.document_id],|r|r.get(0)).map_err(|_|"capture_document_artifact_mismatch".to_string())?;
     if fingerprint_bytes("implementer-evidence-comparison", &payload) != row.comparison {
         return Err("comparison_fingerprint_mismatch".into());
@@ -305,21 +319,27 @@ fn validate_candidate(connection: &Connection, row: &CandidateRow) -> Result<Str
     if serde_json::to_string(&actual_contents).map_err(|e| e.to_string())? != row.contents {
         return Err("evidence_content_fingerprint_mismatch".into());
     }
-    Ok(tree)
+    Ok(())
 }
 
 fn initialize_target(connection: &mut Connection, row: &CandidateRow) -> Result<(), String> {
-    if connection
-        .query_row(
-            "SELECT 1 FROM sprint_target_currents WHERE authority_id=?1",
-            [&row.authority_id],
-            |r| r.get::<_, i64>(0),
-        )
-        .optional()
-        .map_err(|e| e.to_string())?
-        .is_some()
-    {
-        return Ok(());
+    let existing:Option<(String,String,String,String,i64,String,String)>=connection.query_row("SELECT sprint_id,target_ref_name,current_object_id,binding_fingerprint,version,initialized_at,updated_at FROM sprint_target_currents WHERE authority_id=?1",[&row.authority_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).optional().map_err(|e|e.to_string())?;
+    if let Some((sprint, reference, current, binding, version, initialized, updated)) = existing {
+        let exact = sprint == row.sprint_id
+            && safe_ref(&reference)
+            && git_object(&current)
+            && version >= 1
+            && initialized <= updated
+            && binding == fingerprint(&[&row.authority_id, &reference, &current]);
+        return if exact {
+            Ok(())
+        } else {
+            record_target_attention(
+                connection,
+                &row.authority_id,
+                "target_current_durable_mismatch",
+            )
+        };
     }
     let root = PathBuf::from(&row.repo);
     let worktree = PathBuf::from(&row.authority_root);
@@ -337,7 +357,12 @@ fn initialize_target(connection: &mut Connection, row: &CandidateRow) -> Result<
         return record_target_attention(connection, &row.authority_id, "target_worktree_dirty");
     };
     let current = git(&worktree, &["rev-parse", "--verify", "HEAD^{commit}"])?;
-    if current != row.authority_current
+    if git(&worktree, &["rev-parse", "--show-toplevel"])? != canonical(&worktree)?
+        || git(
+            &worktree,
+            &["rev-parse", "--verify", &format!("{ref_name}^{{commit}}")],
+        )? != current
+        || current != row.authority_current
         || git(&worktree, &["rev-parse", "--git-common-dir"])?
             != canonical(&PathBuf::from(&row.common))?
     {
@@ -393,6 +418,9 @@ fn safe_ref(value: &str) -> bool {
         && !value.contains(' ')
         && !value.ends_with('/')
 }
+fn git_object(value: &str) -> bool {
+    (value.len() == 40 || value.len() == 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     let output = Command::new("git")
         .env("GIT_TERMINAL_PROMPT", "0")
@@ -433,4 +461,126 @@ fn fingerprint_bytes(prefix: &str, value: &[u8]) -> String {
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(payload: &[u8]) -> CandidateRow {
+        let artifact: serde_json::Value = serde_json::from_slice(payload).unwrap();
+        let file = &artifact["files"][0];
+        let manifest=serde_json::json!([{"evidenceRef":"e1","displayName":"one.rs","changeKind":"modified"}]).to_string();
+        let contents=serde_json::json!([{"evidenceRef":"e1","contentFingerprint":fingerprint_bytes("implementer-evidence-content",&serde_json::to_vec(file).unwrap())}]).to_string();
+        CandidateRow {
+            work_unit_id: "unit".into(),
+            sprint_id: "sprint".into(),
+            authority_id: "authority".into(),
+            attempt_id: "attempt".into(),
+            reporting: "report".into(),
+            review: "review".into(),
+            decision: "decision".into(),
+            delivered_evidence: "delivery".into(),
+            manifest,
+            comparison: fingerprint_bytes("implementer-evidence-comparison", payload),
+            contents,
+            repo: "x".into(),
+            common: "x".into(),
+            authority_root: "x".into(),
+            baseline: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            authority_current: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            capture_id: "capture".into(),
+            document_id: "document".into(),
+            artifact_id: "artifact".into(),
+            capture_root: "x".into(),
+            capture_commit: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+        }
+    }
+
+    fn durable_connection(payload: &[u8]) -> Connection {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("CREATE TABLE initiated_sprints(id TEXT PRIMARY KEY);CREATE TABLE initiated_sprint_git_authorities(authority_id TEXT PRIMARY KEY);CREATE TABLE work_units(work_unit_id TEXT PRIMARY KEY);CREATE TABLE work_unit_handler_reviews(review_invocation_id TEXT PRIMARY KEY);CREATE TABLE work_unit_handler_decisions(decision_fingerprint TEXT PRIMARY KEY);CREATE TABLE file_review_git_capture_authorizations(capture_authorization_id TEXT PRIMARY KEY,current_object_id TEXT,baseline_object_id TEXT);CREATE TABLE file_review_git_capture_documents(capture_authorization_id TEXT,document_ref_id TEXT,artifact_id TEXT);CREATE TABLE stored_file_review_artifacts(artifact_id TEXT,document_ref_id TEXT,payload BLOB);CREATE TABLE file_review_changed_files(document_ref_id TEXT,changed_file_reference_id TEXT,display_name TEXT,change_kind TEXT,ordinal INTEGER);").unwrap();
+        connection
+            .execute("INSERT INTO initiated_sprints VALUES('sprint')", [])
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO initiated_sprint_git_authorities VALUES('authority')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO file_review_git_capture_authorizations VALUES('capture',?1,?2)",
+                params![
+                    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                ],
+            )
+            .unwrap();
+        connection.execute("INSERT INTO file_review_git_capture_documents VALUES('capture','document','artifact')",[]).unwrap();
+        connection
+            .execute(
+                "INSERT INTO stored_file_review_artifacts VALUES('artifact','document',?1)",
+                [payload],
+            )
+            .unwrap();
+        connection.execute("INSERT INTO file_review_changed_files VALUES('document','e1','one.rs','modified',0)",[]).unwrap();
+        connection
+    }
+
+    #[test]
+    fn durable_lineage_requires_exact_capture_link_and_content_fingerprints() {
+        let payload=br#"{"files":[{"changedFileReferenceId":"e1","content":{"encoding":"base64","bytesBase64":"eA=="}}]}"#;
+        let connection = durable_connection(payload);
+        let row = row(payload);
+        assert!(validate_durable_lineage(&connection, &row).is_ok());
+        let mut tampered = row.clone();
+        tampered.contents = "[]".into();
+        assert_eq!(
+            validate_durable_lineage(&connection, &tampered),
+            Err("evidence_content_fingerprint_mismatch".into())
+        );
+        connection
+            .execute("DELETE FROM file_review_git_capture_documents", [])
+            .unwrap();
+        assert_eq!(
+            validate_durable_lineage(&connection, &row),
+            Err("capture_document_artifact_mismatch".into())
+        );
+    }
+
+    #[test]
+    fn existing_mutable_target_requires_consistent_fingerprint() {
+        let payload=br#"{"files":[{"changedFileReferenceId":"e1","content":{"encoding":"base64","bytesBase64":"eA=="}}]}"#;
+        let mut connection = durable_connection(payload);
+        connection
+            .execute_batch(ACCEPTED_CANDIDATE_AUTHORITY_SCHEMA)
+            .unwrap();
+        let mut row = row(payload);
+        row.sprint_id = "sprint".into();
+        let binding = fingerprint(&[
+            "authority",
+            "refs/heads/main",
+            "cccccccccccccccccccccccccccccccccccccccc",
+        ]);
+        connection.execute("INSERT INTO sprint_target_currents(authority_id,sprint_id,target_ref_name,current_object_id,binding_fingerprint,version,initialized_at,updated_at) VALUES('authority','sprint','refs/heads/main','cccccccccccccccccccccccccccccccccccccccc',?1,2,'2026-01-01T00:00:00Z','2026-01-02T00:00:00Z')",[binding]).unwrap();
+        assert!(initialize_target(&mut connection, &row).is_ok());
+        connection
+            .execute(
+                "UPDATE sprint_target_currents SET version=0 WHERE authority_id='authority'",
+                [],
+            )
+            .unwrap();
+        assert!(initialize_target(&mut connection, &row).is_ok());
+        let attention:i64=connection.query_row("SELECT COUNT(*) FROM sprint_target_current_attentions WHERE authority_id='authority'",[],|r|r.get(0)).unwrap();
+        assert_eq!(attention, 1);
+    }
+
+    #[test]
+    fn safe_target_ref_rejects_detached_and_unsafe_names() {
+        assert!(safe_ref("refs/heads/main"));
+        assert!(!safe_ref("HEAD"));
+        assert!(!safe_ref("refs/heads/../other"));
+    }
 }
