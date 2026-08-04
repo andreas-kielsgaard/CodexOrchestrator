@@ -3,6 +3,7 @@ import type {
   ProductWorkUnitHandlerDecisionV1,
   ProductWorkUnitHandlerReviewV1,
   ProductWorkUnitImplementerOutcomeV1,
+  ProductWorkUnitRetryAttemptV1,
   SprintWorkspacePresentationV1,
 } from '../../../application/orchestrations';
 import { WorkUnitDetailWorkspace } from './WorkUnitDetailWorkspace';
@@ -108,24 +109,66 @@ describe('WorkUnitDetailWorkspace Implementer outcome activity', () => {
     expect(detail).toHaveTextContent('Review conflict observed at');
     expect(detail).not.toHaveTextContent(/implementation approved|Work Unit accepted|settled|Sprint continuation/i);
   });
+
+  it('shows retry partial, ready, and terminal launch failure facts without raw fields or later workflow', () => {
+    const returnedReview = handlerReview('returned');
+    const returnedDecision = handlerDecision('returned');
+    const rendered = renderWorkspace(
+      reviewReadyOutcome(),
+      returnedReview,
+      returnedDecision,
+      retryAttempt('partial'),
+    );
+    let detail = screen.getByLabelText('Work Unit context');
+    expect(detail).toHaveTextContent('Returned Work Unit retry');
+    expect(detail).toHaveTextContent('Ordinal 1');
+    expect(detail).toHaveTextContent('This ordinal-1 retry addresses the Handler return reason');
+    expect(detail).toHaveTextContent('Candidate pinned');
+    expect(detail).toHaveTextContent('Implementer Harness bound');
+    expect(detail).toHaveTextContent('Retry readiness is not yet recorded');
+    expect(detail).not.toHaveTextContent(/candidateCommitId|candidateTreeId|privateRefName|worktreePath/i);
+
+    rendered.rerender(
+      workspace(reviewReadyOutcome(), returnedReview, returnedDecision, retryAttempt('ready')),
+    );
+    detail = screen.getByLabelText('Work Unit context');
+    expect(detail).toHaveTextContent('Retry attempt is application-ready');
+    expect(detail).toHaveTextContent('Launch accepted');
+    expect(detail).toHaveTextContent('Provider activation observed separately');
+    expect(detail).toHaveTextContent('Retry ready');
+    expect(detail).not.toHaveTextContent(/relaunch|replacement/i);
+
+    rendered.rerender(
+      workspace(reviewReadyOutcome(), returnedReview, returnedDecision, retryAttempt('failed')),
+    );
+    detail = screen.getByLabelText('Work Unit context');
+    expect(detail).toHaveTextContent('Retry attempt failed and needs attention');
+    expect(detail).toHaveTextContent('It is not ready');
+    expect(detail).toHaveTextContent('No provider activation is recorded');
+    expect(detail).not.toHaveTextContent(/recovering|relaunch|replacement/);
+    expect(detail).not.toHaveTextContent('Retry attempt is application-ready');
+    expect(detail).toHaveTextContent('Handler decision: returned');
+  });
 });
 
 function renderWorkspace(
   outcome?: ProductWorkUnitImplementerOutcomeV1,
   handlerReview?: ProductWorkUnitHandlerReviewV1,
   handlerDecision?: ProductWorkUnitHandlerDecisionV1,
+  retryAttempt?: ProductWorkUnitRetryAttemptV1,
 ) {
-  return render(workspace(outcome, handlerReview, handlerDecision));
+  return render(workspace(outcome, handlerReview, handlerDecision, retryAttempt));
 }
 
 function workspace(
   outcome?: ProductWorkUnitImplementerOutcomeV1,
   handlerReview?: ProductWorkUnitHandlerReviewV1,
   handlerDecision?: ProductWorkUnitHandlerDecisionV1,
+  retryAttempt?: ProductWorkUnitRetryAttemptV1,
 ) {
     return (
     <WorkUnitDetailWorkspace
-      unit={presentedWorkUnit(outcome, handlerReview, handlerDecision)}
+      unit={presentedWorkUnit(outcome, handlerReview, handlerDecision, retryAttempt)}
       lifecycleEntries={[]}
       workSlicePlanningPointGroupTitle="Planning point"
       sessions={[]}
@@ -138,6 +181,7 @@ function presentedWorkUnit(
   outcome?: ProductWorkUnitImplementerOutcomeV1,
   handlerReview?: ProductWorkUnitHandlerReviewV1,
   handlerDecision?: ProductWorkUnitHandlerDecisionV1,
+  retryAttempt?: ProductWorkUnitRetryAttemptV1,
 ): PresentedWorkUnit {
   return {
     workUnitId: 'unit-1',
@@ -152,6 +196,7 @@ function presentedWorkUnit(
     ...(outcome ? { implementerOutcome: outcome } : {}),
     ...(handlerReview ? { handlerReview } : {}),
     ...(handlerDecision ? { handlerDecision } : {}),
+    ...(retryAttempt ? { retryAttempt } : {}),
     workUnitScopeId: 'scope-1',
     sprintPlanRevisionId: 'revision-1',
     fixedExecutionScopeIds: [],
@@ -300,4 +345,33 @@ function handlerDecision(
         implementationReturnedAt: '2026-08-04T00:00:19Z',
         retryRequiredAt: '2026-08-04T00:00:19Z',
       };
+}
+
+function retryAttempt(state: 'partial' | 'ready' | 'failed'): ProductWorkUnitRetryAttemptV1 {
+  const retry: ProductWorkUnitRetryAttemptV1 = {
+    ordinal: 1,
+    originAttemptId: 'attempt-1',
+    retryAttemptId: 'retry-attempt-1',
+    implementerSessionId: 'retry-implementer-session-1',
+    implementerInvocationId: 'retry-implementer-invocation-1',
+    captureRequestedAt: '2026-08-04T00:00:20Z',
+    candidatePinnedAt: '2026-08-04T00:00:21Z',
+    authorizedAt: '2026-08-04T00:00:22Z',
+    executionSupportGrantedAt: '2026-08-04T00:00:23Z',
+    isolatedWorktreeReadyAt: '2026-08-04T00:00:24Z',
+    implementerSessionCreatedAt: '2026-08-04T00:00:25Z',
+    implementerInvocationPreparedAt: '2026-08-04T00:00:26Z',
+    implementerHarnessBoundAt: '2026-08-04T00:00:27Z',
+  };
+  if (state === 'ready')
+    return {
+      ...retry,
+      launchRequestedAt: '2026-08-04T00:00:29Z',
+      launchAcceptedAt: '2026-08-04T00:00:30Z',
+      providerActivationObservedAt: '2026-08-04T00:00:31Z',
+      retryReadyAt: '2026-08-04T00:00:32Z',
+    };
+  if (state === 'failed')
+    return { ...retry, launchRequestedAt: '2026-08-04T00:00:29Z', failureReason: 'retry_terminal_launch_failed' };
+  return retry;
 }

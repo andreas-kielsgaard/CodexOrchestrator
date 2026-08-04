@@ -8,6 +8,7 @@ import { SharedAgentSessionPanel } from './SharedAgentSessionPanel';
 import type {
   ProductWorkUnitHandlerDecisionV1,
   ProductWorkUnitHandlerReviewV1,
+  ProductWorkUnitRetryAttemptV1,
 } from '../../../application/orchestrations/productReadModels';
 import '../styles/orchestrationSubdetail.css';
 import type { ReactNode } from 'react';
@@ -114,7 +115,17 @@ export function WorkUnitDetailWorkspace({
                 <ImplementerOutcomeActivity outcome={unit.implementerOutcome} />
               )}
               {unit.handlerReview && (
-                <HandlerReviewActivity review={unit.handlerReview} decision={unit.handlerDecision} />
+                <HandlerReviewActivity
+                  review={unit.handlerReview}
+                  decision={unit.handlerDecision}
+                  retryAttempt={unit.retryAttempt}
+                />
+              )}
+              {unit.retryAttempt && (
+                <RetryAttemptActivity
+                  retryAttempt={unit.retryAttempt}
+                  handlerDecision={unit.handlerDecision}
+                />
               )}
             </section>
           )}
@@ -484,9 +495,11 @@ function ImplementerOutcomeActivity({
 function HandlerReviewActivity({
   review,
   decision,
+  retryAttempt,
 }: {
   readonly review: ProductWorkUnitHandlerReviewV1;
   readonly decision?: ProductWorkUnitHandlerDecisionV1;
+  readonly retryAttempt?: ProductWorkUnitRetryAttemptV1;
 }) {
   const reviewStage = review.reviewReadyAt
     ? 'Handler review is application-ready.'
@@ -581,7 +594,9 @@ function HandlerReviewActivity({
           {decision.implementationReturnedAt && (
             <p>Implementation returned by the Handler review at {decision.implementationReturnedAt}.</p>
           )}
-          {decision.retryRequiredAt && <p>Retry is required at {decision.retryRequiredAt}; no retry attempt is recorded.</p>}
+          {decision.retryRequiredAt && !retryAttempt && (
+            <p>Retry is required at {decision.retryRequiredAt}; no retry attempt is recorded.</p>
+          )}
         </div>
       ) : review.lifecycle?.status === 'completed' && review.semanticJudgment ? (
         <p>No final Handler decision is recorded yet.</p>
@@ -593,7 +608,126 @@ function HandlerReviewActivity({
           Review conflict observed at {review.conflict.occurredAt}: {review.conflict.reason}.
         </p>
       )}
-      <p>No retry attempt, settlement, dependent activation, or upward continuation is recorded.</p>
+      {!retryAttempt && (
+        <p>No retry attempt, settlement, dependent activation, or upward continuation is recorded.</p>
+      )}
+    </div>
+  );
+}
+
+function RetryAttemptActivity({
+  retryAttempt,
+  handlerDecision,
+}: {
+  readonly retryAttempt: ProductWorkUnitRetryAttemptV1;
+  readonly handlerDecision?: ProductWorkUnitHandlerDecisionV1;
+}) {
+  const status = retryAttempt.failureReason
+    ? 'Retry attempt failed and needs attention. It is not ready; no relaunch or replacement is implied.'
+    : retryAttempt.retryReadyAt
+      ? 'Retry attempt is application-ready.'
+      : retryAttempt.launchAcceptedAt
+        ? 'Retry launch was accepted; retry readiness is not yet recorded.'
+        : retryAttempt.launchRequestedAt
+          ? 'Retry launch was requested; launch acceptance is not yet recorded.'
+          : retryAttempt.implementerHarnessBoundAt
+            ? 'Retry Implementer Harness is bound.'
+            : retryAttempt.implementerInvocationPreparedAt
+              ? 'Retry Implementer invocation is prepared.'
+              : retryAttempt.implementerSessionCreatedAt
+                ? 'Retry Implementer Session is created.'
+                : retryAttempt.isolatedWorktreeReadyAt
+                  ? 'Retry isolated WorkspaceWrite package is ready.'
+                  : retryAttempt.executionSupportGrantedAt
+                    ? 'Retry execution support is granted.'
+                    : retryAttempt.authorizedAt
+                      ? 'Retry attempt is authorized.'
+                      : retryAttempt.candidatePinnedAt
+                        ? 'Retry candidate is pinned.'
+                        : 'Retry capture was requested.';
+  return (
+    <div className="work-unit-retry-attempt">
+      <h3>Returned Work Unit retry</h3>
+      <p>{status}</p>
+      {handlerDecision?.returnReason && (
+        <p>
+          This ordinal-1 retry addresses the Handler return reason:{' '}
+          {handlerDecision.returnReason.code} - {handlerDecision.returnReason.explanation}.
+        </p>
+      )}
+      <dl>
+        <RecordedFact label="Ordinal" value={String(retryAttempt.ordinal)} />
+        <RecordedFact label="Origin Implementer attempt" value={retryAttempt.originAttemptId} />
+        <RecordedFact label="Retry attempt" value={retryAttempt.retryAttemptId} />
+        <RecordedFact label="Retry Implementer Session" value={retryAttempt.implementerSessionId} />
+        <RecordedFact
+          label="Retry Implementer invocation"
+          value={retryAttempt.implementerInvocationId}
+        />
+        <RecordedFact label="Capture requested" value={retryAttempt.captureRequestedAt} />
+        {retryAttempt.candidatePinnedAt && (
+          <RecordedFact label="Candidate pinned" value={retryAttempt.candidatePinnedAt} />
+        )}
+        {retryAttempt.authorizedAt && (
+          <RecordedFact label="Authorized" value={retryAttempt.authorizedAt} />
+        )}
+        {retryAttempt.executionSupportGrantedAt && (
+          <RecordedFact
+            label="Execution support granted"
+            value={retryAttempt.executionSupportGrantedAt}
+          />
+        )}
+        {retryAttempt.isolatedWorktreeReadyAt && (
+          <RecordedFact
+            label="Isolated WorkspaceWrite package ready"
+            value={retryAttempt.isolatedWorktreeReadyAt}
+          />
+        )}
+        {retryAttempt.implementerSessionCreatedAt && (
+          <RecordedFact
+            label="Implementer Session created"
+            value={retryAttempt.implementerSessionCreatedAt}
+          />
+        )}
+        {retryAttempt.implementerInvocationPreparedAt && (
+          <RecordedFact
+            label="Implementer invocation prepared"
+            value={retryAttempt.implementerInvocationPreparedAt}
+          />
+        )}
+        {retryAttempt.implementerHarnessBoundAt && (
+          <RecordedFact
+            label="Implementer Harness bound"
+            value={retryAttempt.implementerHarnessBoundAt}
+          />
+        )}
+        {retryAttempt.launchRequestedAt && (
+          <RecordedFact label="Launch requested" value={retryAttempt.launchRequestedAt} />
+        )}
+        {retryAttempt.launchAcceptedAt && (
+          <RecordedFact label="Launch accepted" value={retryAttempt.launchAcceptedAt} />
+        )}
+        {retryAttempt.providerActivationObservedAt && (
+          <RecordedFact
+            label="Provider activation observed separately"
+            value={retryAttempt.providerActivationObservedAt}
+          />
+        )}
+        {retryAttempt.retryReadyAt && (
+          <RecordedFact label="Retry ready" value={retryAttempt.retryReadyAt} />
+        )}
+      </dl>
+      {retryAttempt.failureReason && (
+        <p>
+          Retry failed and needs attention: {retryAttempt.failureReason}. It is not ready.{' '}
+          {retryAttempt.providerActivationObservedAt
+            ? 'Provider activation was observed separately.'
+            : 'No provider activation is recorded.'}
+        </p>
+      )}
+      {!retryAttempt.failureReason && !retryAttempt.retryReadyAt && (
+        <p>Retry readiness is not yet recorded. This surface does not imply recovery or relaunch.</p>
+      )}
     </div>
   );
 }

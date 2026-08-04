@@ -172,6 +172,7 @@ export type {
   ProductWorkUnitHandlerReviewV1,
   ProductWorkUnitImplementerActivationV1,
   ProductWorkUnitImplementerOutcomeV1,
+  ProductWorkUnitRetryAttemptV1,
   ProductWorkUnitPresentationState,
   ReadSourceAuthorityV1,
 } from './productReadModels';

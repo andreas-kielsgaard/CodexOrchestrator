@@ -662,6 +662,102 @@ describe('orchestration native query v1', () => {
     );
   });
 
+  it('projects returned Work Unit retry stages and rejects private or incoherent retry facts', () => {
+    const value = implementerOutcomeNativeFixture();
+    const unit = (value.workUnits as Array<Record<string, unknown>>)[0]!;
+    unit.implementerOutcome = implementerOutcomeFixture('review_ready');
+    unit.handlerReview = handlerReviewFixture('returned');
+    unit.handlerDecision = handlerDecisionFixture('returned');
+    unit.retryAttempt = retryAttemptFixture('ready');
+
+    const query = decodeOrchestrationNativeQueryV2(value);
+    expect(query.workUnits[0]!.retryAttempt).toMatchObject({
+      ordinal: 1,
+      originAttemptId: 'attempt-1',
+      retryAttemptId: 'retry-attempt-1',
+      providerActivationObservedAt: '2026-08-04T00:00:31Z',
+      retryReadyAt: '2026-08-04T00:00:32Z',
+    });
+    const model = composeProductOrchestrationReadModels(
+      nativeQueryProductCompositionInputV2(query),
+    ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
+    expect(model.retryAttempt).toEqual(query.workUnits[0]!.retryAttempt);
+    expect(model.retryAttempt).not.toHaveProperty('candidateCommitId');
+    expect(model.retryAttempt).not.toHaveProperty('candidateTreeId');
+    expect(model.retryAttempt).not.toHaveProperty('privateRefName');
+
+    const partial = implementerOutcomeNativeFixture();
+    const partialUnit = (partial.workUnits as Array<Record<string, unknown>>)[0]!;
+    partialUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
+    partialUnit.handlerReview = handlerReviewFixture('returned');
+    partialUnit.handlerDecision = handlerDecisionFixture('returned');
+    partialUnit.retryAttempt = retryAttemptFixture('partial');
+    expect(decodeOrchestrationNativeQueryV2(partial).workUnits[0]!.retryAttempt).toMatchObject({
+      candidatePinnedAt: '2026-08-04T00:00:21Z',
+      implementerHarnessBoundAt: '2026-08-04T00:00:27Z',
+    });
+
+    const failed = implementerOutcomeNativeFixture();
+    const failedUnit = (failed.workUnits as Array<Record<string, unknown>>)[0]!;
+    failedUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
+    failedUnit.handlerReview = handlerReviewFixture('returned');
+    failedUnit.handlerDecision = handlerDecisionFixture('returned');
+    failedUnit.retryAttempt = retryAttemptFixture('failed');
+    expect(decodeOrchestrationNativeQueryV2(failed).workUnits[0]!.retryAttempt).toMatchObject({
+      launchRequestedAt: '2026-08-04T00:00:29Z',
+      failureReason: 'retry_terminal_launch_failed',
+    });
+
+    const absent = implementerOutcomeNativeFixture();
+    expect(decodeOrchestrationNativeQueryV2(absent).workUnits[0]!.retryAttempt).toBeUndefined();
+
+    const malformed = [
+      { ...retryAttemptFixture('ready'), ordinal: 2 },
+      { ...retryAttemptFixture('ready'), originAttemptId: 'foreign-attempt' },
+      { ...retryAttemptFixture('ready'), candidateCommitId: 'private-candidate' },
+      { ...retryAttemptFixture('ready'), inventedField: true },
+      { ...retryAttemptFixture('ready'), failureReason: '' },
+      { ...retryAttemptFixture('partial'), authorizedAt: '2026-08-04T00:00:20Z' },
+      {
+        ...retryAttemptFixture('partial'),
+        launchRequestedAt: '2026-08-04T00:00:29Z',
+        retryReadyAt: '2026-08-04T00:00:30Z',
+        launchAcceptedAt: undefined,
+      },
+      { ...retryAttemptFixture('ready'), failureReason: 'retry_failed' },
+      { ...retryAttemptFixture('partial'), providerActivationObservedAt: '2026-08-04T00:00:28Z', launchRequestedAt: undefined },
+    ];
+    for (const retryAttempt of malformed) {
+      const malformedValue = implementerOutcomeNativeFixture();
+      const malformedUnit = (malformedValue.workUnits as Array<Record<string, unknown>>)[0]!;
+      malformedUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
+      malformedUnit.handlerReview = handlerReviewFixture('returned');
+      malformedUnit.handlerDecision = handlerDecisionFixture('returned');
+      malformedUnit.retryAttempt = retryAttempt;
+      expect(() => decodeOrchestrationNativeQueryV2(malformedValue)).toThrow(
+        'Invalid orchestration native query',
+      );
+    }
+
+    const missingDecision = implementerOutcomeNativeFixture();
+    const missingDecisionUnit = (missingDecision.workUnits as Array<Record<string, unknown>>)[0]!;
+    missingDecisionUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
+    missingDecisionUnit.retryAttempt = retryAttemptFixture('partial');
+    expect(() => decodeOrchestrationNativeQueryV2(missingDecision)).toThrow(
+      'retry attempt requires a returned Handler decision',
+    );
+
+    const acceptedDecision = implementerOutcomeNativeFixture();
+    const acceptedDecisionUnit = (acceptedDecision.workUnits as Array<Record<string, unknown>>)[0]!;
+    acceptedDecisionUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
+    acceptedDecisionUnit.handlerReview = handlerReviewFixture('accepted');
+    acceptedDecisionUnit.handlerDecision = handlerDecisionFixture('accepted');
+    acceptedDecisionUnit.retryAttempt = retryAttemptFixture('partial');
+    expect(() => decodeOrchestrationNativeQueryV2(acceptedDecision)).toThrow(
+      'retry attempt requires a returned Handler decision',
+    );
+  });
+
   it('keeps partial materialization stages separate from Work Unit production truth', () => {
     const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
     value.workUnitMaterializations = [
@@ -1092,4 +1188,36 @@ function handlerDecisionFixture(variant: 'accepted' | 'returned'): Record<string
         implementationReturnedAt: '2026-08-04T00:00:19Z',
         retryRequiredAt: '2026-08-04T00:00:19Z',
       };
+}
+
+function retryAttemptFixture(state: 'partial' | 'ready' | 'failed'): Record<string, unknown> {
+  const retry: Record<string, unknown> = {
+    ordinal: 1,
+    originAttemptId: 'attempt-1',
+    retryAttemptId: 'retry-attempt-1',
+    implementerSessionId: 'retry-implementer-session-1',
+    implementerInvocationId: 'retry-implementer-invocation-1',
+    captureRequestedAt: '2026-08-04T00:00:20Z',
+    candidatePinnedAt: '2026-08-04T00:00:21Z',
+    authorizedAt: '2026-08-04T00:00:22Z',
+    executionSupportGrantedAt: '2026-08-04T00:00:23Z',
+    isolatedWorktreeReadyAt: '2026-08-04T00:00:24Z',
+    implementerSessionCreatedAt: '2026-08-04T00:00:25Z',
+    implementerInvocationPreparedAt: '2026-08-04T00:00:26Z',
+    implementerHarnessBoundAt: '2026-08-04T00:00:27Z',
+  };
+  if (state === 'ready') {
+    Object.assign(retry, {
+      launchRequestedAt: '2026-08-04T00:00:29Z',
+      launchAcceptedAt: '2026-08-04T00:00:30Z',
+      providerActivationObservedAt: '2026-08-04T00:00:31Z',
+      retryReadyAt: '2026-08-04T00:00:32Z',
+    });
+  } else if (state === 'failed') {
+    Object.assign(retry, {
+      launchRequestedAt: '2026-08-04T00:00:29Z',
+      failureReason: 'retry_terminal_launch_failed',
+    });
+  }
+  return retry;
 }

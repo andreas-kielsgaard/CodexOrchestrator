@@ -10,6 +10,7 @@ import type {
   ProductWorkUnitHandlerReviewV1,
   ProductWorkUnitImplementerActivationV1,
   ProductWorkUnitImplementerOutcomeV1,
+  ProductWorkUnitRetryAttemptV1,
 } from './productReadModels';
 
 export const ORCHESTRATION_NATIVE_QUERY_V2 = 'orchestration-native-query/v2' as const;
@@ -61,6 +62,7 @@ export interface NativeMaterializedWorkUnitV1 {
   readonly implementerOutcome?: NativeWorkUnitImplementerOutcomeV1;
   readonly handlerReview?: NativeWorkUnitHandlerReviewV1;
   readonly handlerDecision?: NativeWorkUnitHandlerDecisionV1;
+  readonly retryAttempt?: NativeWorkUnitRetryAttemptV1;
 }
 export interface NativeWorkUnitHandlerActivationV1 {
   readonly attemptId: string;
@@ -127,6 +129,7 @@ export interface NativeWorkUnitImplementerActivationV1 {
 export type NativeWorkUnitImplementerOutcomeV1 = ProductWorkUnitImplementerOutcomeV1;
 export type NativeWorkUnitHandlerReviewV1 = ProductWorkUnitHandlerReviewV1;
 export type NativeWorkUnitHandlerDecisionV1 = ProductWorkUnitHandlerDecisionV1;
+export type NativeWorkUnitRetryAttemptV1 = ProductWorkUnitRetryAttemptV1;
 export interface NativeWorkUnitRelationshipV1 {
   readonly relationshipId: string;
   readonly materializationId: string;
@@ -594,6 +597,7 @@ export function nativeQueryProductCompositionInputV2(
           : {}),
         ...(unit.handlerReview ? { handlerReview: { ...unit.handlerReview } } : {}),
         ...(unit.handlerDecision ? { handlerDecision: { ...unit.handlerDecision } } : {}),
+        ...(unit.retryAttempt ? { retryAttempt: { ...unit.retryAttempt } } : {}),
       })),
       gates: [],
       concerns: [],
@@ -1184,6 +1188,7 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
       'implementerOutcome',
       'handlerReview',
       'handlerDecision',
+      'retryAttempt',
     ],
     'materialized Work Unit',
   );
@@ -1213,6 +1218,88 @@ const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
     ...(x.handlerDecision === undefined
       ? {}
       : { handlerDecision: workUnitHandlerDecision(x.handlerDecision) }),
+    ...(x.retryAttempt === undefined ? {} : { retryAttempt: workUnitRetryAttempt(x.retryAttempt) }),
+  };
+};
+const workUnitRetryAttempt = (value: unknown): NativeWorkUnitRetryAttemptV1 => {
+  const x = object(value, 'Work Unit retry attempt');
+  keys(
+    x,
+    [
+      'ordinal',
+      'originAttemptId',
+      'retryAttemptId',
+      'implementerSessionId',
+      'implementerInvocationId',
+      'captureRequestedAt',
+      'candidatePinnedAt',
+      'authorizedAt',
+      'executionSupportGrantedAt',
+      'isolatedWorktreeReadyAt',
+      'implementerSessionCreatedAt',
+      'implementerInvocationPreparedAt',
+      'implementerHarnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+      'providerActivationObservedAt',
+      'retryReadyAt',
+      'failureReason',
+    ],
+    'Work Unit retry attempt',
+  );
+  if (!Number.isSafeInteger(x.ordinal) || x.ordinal !== 1)
+    fail('Work Unit retry attempt ordinal must be 1');
+  const optionalTime = (key: keyof typeof x) =>
+    x[key] === undefined ? undefined : timestamp(x[key], key);
+  const failureReason =
+    x.failureReason === undefined
+      ? undefined
+      : boundedString(x.failureReason, 4000, 'retry failureReason');
+  return {
+    ordinal: 1,
+    originAttemptId: boundedString(x.originAttemptId, 240, 'retry originAttemptId'),
+    retryAttemptId: boundedString(x.retryAttemptId, 240, 'retry retryAttemptId'),
+    implementerSessionId: boundedString(
+      x.implementerSessionId,
+      240,
+      'retry implementerSessionId',
+    ),
+    implementerInvocationId: boundedString(
+      x.implementerInvocationId,
+      240,
+      'retry implementerInvocationId',
+    ),
+    captureRequestedAt: timestamp(x.captureRequestedAt, 'retry captureRequestedAt'),
+    ...(optionalTime('candidatePinnedAt')
+      ? { candidatePinnedAt: optionalTime('candidatePinnedAt') }
+      : {}),
+    ...(optionalTime('authorizedAt') ? { authorizedAt: optionalTime('authorizedAt') } : {}),
+    ...(optionalTime('executionSupportGrantedAt')
+      ? { executionSupportGrantedAt: optionalTime('executionSupportGrantedAt') }
+      : {}),
+    ...(optionalTime('isolatedWorktreeReadyAt')
+      ? { isolatedWorktreeReadyAt: optionalTime('isolatedWorktreeReadyAt') }
+      : {}),
+    ...(optionalTime('implementerSessionCreatedAt')
+      ? { implementerSessionCreatedAt: optionalTime('implementerSessionCreatedAt') }
+      : {}),
+    ...(optionalTime('implementerInvocationPreparedAt')
+      ? { implementerInvocationPreparedAt: optionalTime('implementerInvocationPreparedAt') }
+      : {}),
+    ...(optionalTime('implementerHarnessBoundAt')
+      ? { implementerHarnessBoundAt: optionalTime('implementerHarnessBoundAt') }
+      : {}),
+    ...(optionalTime('launchRequestedAt')
+      ? { launchRequestedAt: optionalTime('launchRequestedAt') }
+      : {}),
+    ...(optionalTime('launchAcceptedAt')
+      ? { launchAcceptedAt: optionalTime('launchAcceptedAt') }
+      : {}),
+    ...(optionalTime('providerActivationObservedAt')
+      ? { providerActivationObservedAt: optionalTime('providerActivationObservedAt') }
+      : {}),
+    ...(optionalTime('retryReadyAt') ? { retryReadyAt: optionalTime('retryReadyAt') } : {}),
+    ...(failureReason ? { failureReason } : {}),
   };
 };
 const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivationV1 => {
@@ -2488,6 +2575,7 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
   const continuation = unit.actionContinuation;
   const implementer = unit.implementerActivation;
   const outcome = unit.implementerOutcome;
+  const retry = unit.retryAttempt;
   if (continuation) {
     if (!handler || handler.attemptId !== continuation.attemptId)
       fail('Handler action continuation does not share the Handler attempt');
@@ -2582,6 +2670,52 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
       decision.recordedAt,
       'Handler decision',
     );
+  }
+  if (retry) {
+    if (!implementer || retry.originAttemptId !== implementer.attemptId)
+      fail('retry attempt does not match the original Implementer attempt');
+    if (!decision || decision.variant !== 'returned' || !decision.retryRequiredAt)
+      fail('retry attempt requires a returned Handler decision with retryRequiredAt');
+    if (
+      retry.implementerSessionId === implementer.implementerSessionId ||
+      retry.implementerInvocationId === implementer.implementerInvocationId
+    )
+      fail('retry attempt must use distinct Implementer Session and invocation identities');
+    timestampAtOrAfter(
+      decision.retryRequiredAt,
+      retry.captureRequestedAt,
+      'retry capture request',
+    );
+    phaseCoherence(
+      retry,
+      [
+        'captureRequestedAt',
+        'candidatePinnedAt',
+        'authorizedAt',
+        'executionSupportGrantedAt',
+        'isolatedWorktreeReadyAt',
+        'implementerSessionCreatedAt',
+        'implementerInvocationPreparedAt',
+        'implementerHarnessBoundAt',
+        'launchRequestedAt',
+        'launchAcceptedAt',
+        'retryReadyAt',
+      ],
+      'retry Implementer activation',
+    );
+    if (retry.providerActivationObservedAt) {
+      if (!retry.launchRequestedAt)
+        fail('retry provider observation lacks launch request');
+      timestampAtOrAfter(
+        retry.launchRequestedAt,
+        retry.providerActivationObservedAt,
+        'retry provider observation',
+      );
+    }
+    if (retry.retryReadyAt && !retry.launchAcceptedAt)
+      fail('retry readiness lacks launch acceptance');
+    if (retry.failureReason && retry.retryReadyAt)
+      fail('retry failure cannot be application-ready');
   }
 }
 function validateMaterializationRelationships(

@@ -172,6 +172,7 @@ export interface ProductReadReferenceIndexV1 {
     readonly implementerOutcome?: ProductWorkUnitImplementerOutcomeV1;
     readonly handlerReview?: ProductWorkUnitHandlerReviewV1;
     readonly handlerDecision?: ProductWorkUnitHandlerDecisionV1;
+    readonly retryAttempt?: ProductWorkUnitRetryAttemptV1;
   }[];
   readonly gates: readonly {
     readonly gateId: string;
@@ -364,6 +365,27 @@ export type ProductWorkUnitHandlerDecisionV1 = Readonly<{
   readonly settlementReadyAt?: string;
 }>;
 
+export type ProductWorkUnitRetryAttemptV1 = Readonly<{
+  readonly ordinal: 1;
+  readonly originAttemptId: string;
+  readonly retryAttemptId: string;
+  readonly implementerSessionId: string;
+  readonly implementerInvocationId: string;
+  readonly captureRequestedAt: string;
+  readonly candidatePinnedAt?: string;
+  readonly authorizedAt?: string;
+  readonly executionSupportGrantedAt?: string;
+  readonly isolatedWorktreeReadyAt?: string;
+  readonly implementerSessionCreatedAt?: string;
+  readonly implementerInvocationPreparedAt?: string;
+  readonly implementerHarnessBoundAt?: string;
+  readonly launchRequestedAt?: string;
+  readonly launchAcceptedAt?: string;
+  readonly providerActivationObservedAt?: string;
+  readonly retryReadyAt?: string;
+  readonly failureReason?: string;
+}>;
+
 /** Application-recorded reporting facts; submitted prose remains explicitly claim-only. */
 export type ProductWorkUnitImplementerOutcomeV1 = Readonly<{
   readonly attemptId: string;
@@ -486,6 +508,7 @@ export interface ProductSprintRevisionViewV1 {
     readonly implementerOutcome?: ProductWorkUnitImplementerOutcomeV1;
     readonly handlerReview?: ProductWorkUnitHandlerReviewV1;
     readonly handlerDecision?: ProductWorkUnitHandlerDecisionV1;
+    readonly retryAttempt?: ProductWorkUnitRetryAttemptV1;
     readonly workUnitScopeId: string;
     readonly sprintPlanRevisionId: string;
     readonly fixedExecutionScopeIds: readonly string[];
