@@ -211,12 +211,34 @@ pub(crate) fn initial_work_unit_handler_baseline_revision_configuration(
     Ok(configuration)
 }
 
+/// A third, separate Handler revision used only after the application has accepted one exact
+/// Implementer outcome for independent review. It leaves historical Handler revisions unchanged.
+pub(crate) fn handler_outcome_review_revision_configuration(
+) -> Result<HarnessEffectiveConfiguration, String> {
+    let mut configuration = initial_work_unit_handler_baseline_revision_configuration()?;
+    configuration.prompt_prefix.content = "You are the independent Work Unit Handler review continuation for one application-accepted Implementer outcome. Read only the bounded application-delivered claims and evidence. Submit exactly one identity-free accept or structured return judgment, then end successfully. Do not request an Implementer, create a retry, settle planning, activate dependents, or continue Sprint or Epic work.".into();
+    configuration.tools.items = vec![
+        HarnessToolConfiguration { name: "read_handler_review_evidence".into(), policy: HarnessToolPolicy::Available },
+        HarnessToolConfiguration { name: "accept_implementation_outcome".into(), policy: HarnessToolPolicy::Available },
+        HarnessToolConfiguration { name: "return_implementation_outcome".into(), policy: HarnessToolPolicy::Available },
+    ];
+    configuration.tools.schema_boundary = "Only application-bound review evidence plus one identity-free accept or structured return judgment are exposed.".into();
+    configuration.runtime.authority_summary = "Read-only exact attempt evidence and one non-settling Handler review judgment.".into();
+    configuration.hooks = vec![HarnessHookConfiguration { name: "completion".into(), status: HarnessHookStatus::NotConnected, detail: "A judgment is not durable until the application observes this exact review invocation Completed.".into() }];
+    Ok(configuration)
+}
+
 pub(crate) fn profile_from_immutable_handler_revision(
     configuration: &HarnessEffectiveConfiguration,
     revision_version: u16,
 ) -> Result<ConversationHarnessProfile, String> {
+    let tools = configuration.tools.items.iter().map(|tool| tool.name.as_str()).collect::<Vec<_>>();
+    let valid_tools = tools.is_empty()
+        || tools.as_slice() == ["request_work_unit_implementer"]
+        || tools.as_slice() == ["read_handler_review_evidence", "accept_implementation_outcome", "return_implementation_outcome"];
     if configuration.identity.machine_key != "work_unit_handler"
-        || configuration.tools.items.iter().any(|tool| tool.name != "request_work_unit_implementer" || tool.policy != HarnessToolPolicy::Available)
+        || !valid_tools
+        || configuration.tools.items.iter().any(|tool| tool.policy != HarnessToolPolicy::Available)
         || configuration.runtime.sandbox != HarnessSandbox::ReadOnly
         || configuration.runtime.approval_policy != RevisionApprovalPolicy::Never
     {
@@ -673,6 +695,21 @@ mod tests {
         let mut unsafe_revision = initial_work_unit_handler_revision_configuration().unwrap();
         unsafe_revision.runtime.sandbox = HarnessSandbox::WorkspaceWrite;
         assert!(profile_from_immutable_handler_revision(&unsafe_revision, 2).is_err());
+    }
+
+    #[test]
+    fn review_handler_revision_is_read_only_and_cannot_gain_execution_authority() {
+        let historical = initial_work_unit_handler_baseline_revision_configuration().unwrap();
+        let review = handler_outcome_review_revision_configuration().unwrap();
+        let historical_profile = profile_from_immutable_handler_revision(&historical, 1).unwrap();
+        let review_profile = profile_from_immutable_handler_revision(&review, 3).unwrap();
+        assert!(historical_profile.mcp.enabled_tools.is_empty());
+        assert_eq!(review_profile.mcp.enabled_tools, ["read_handler_review_evidence", "accept_implementation_outcome", "return_implementation_outcome"]);
+        assert_eq!(review_profile.runtime_options().sandbox, Some(RuntimeSandboxMode::ReadOnly));
+        assert!(!review_profile.mcp.enabled_tools.iter().any(|tool| tool == "request_work_unit_implementer"));
+        let mut unsafe_revision = review;
+        unsafe_revision.runtime.sandbox = HarnessSandbox::WorkspaceWrite;
+        assert!(profile_from_immutable_handler_revision(&unsafe_revision, 3).is_err());
     }
 
     #[test]

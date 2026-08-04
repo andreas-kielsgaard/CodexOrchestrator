@@ -193,6 +193,54 @@ impl WorkUnitExecutionHarnessService {
         Ok(pinned)
     }
 
+    /// Publishes once the immutable, read-only Handler review revision. It is selected only by
+    /// the application after acceptance and never changes either prior Handler revision.
+    pub(crate) fn current_handler_review_revision(&self) -> Result<PinnedHandlerHarnessRevision, WorkUnitHarnessError> {
+        let revisions = match self.orchestration.load_harness_revision_history("work_unit_handler") {
+            HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions,
+            HarnessRevisionHistoryOutcome::Missing => {
+                self.bootstrap_initial_handler_revision()?;
+                match self.orchestration.load_harness_revision_history("work_unit_handler") {
+                    HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions,
+                    _ => return Err(WorkUnitHarnessError::Unavailable),
+                }
+            }
+            _ => return Err(WorkUnitHarnessError::Unavailable),
+        };
+        let expected_tools = ["read_handler_review_evidence", "accept_implementation_outcome", "return_implementation_outcome"];
+        if let Some(revision) = revisions.iter().rev().find(|revision| {
+            self.pinned_handler_revision_from_revision((*revision).clone()).map(|pinned| {
+                pinned.profile.mcp.required && pinned.profile.mcp.enabled_tools.iter().map(String::as_str).eq(expected_tools)
+            }).unwrap_or(false)
+        }) { return self.pinned_handler_revision_from_revision((*revision).clone()); }
+        let predecessor = revisions.last().ok_or(WorkUnitHarnessError::Unavailable)?;
+        let expected = self.orchestration.load_harness_working_copy("work_unit_handler").map_err(|_| WorkUnitHarnessError::Unavailable)?.as_ref().map_or(0, |copy| copy.draft_revision);
+        let draft = match self.orchestration.save_harness_working_copy(SaveHarnessWorkingCopyCommand {
+            harness_key: "work_unit_handler".into(),
+            configuration: conversation_harness::handler_outcome_review_revision_configuration().map_err(|_| WorkUnitHarnessError::Unavailable)?,
+            expected_current_revision: expected,
+            editor: HarnessWorkingCopyEditor { kind: HarnessEditorKind::ApplicationUser, reference: "work-unit-handler-outcome-review".into() },
+            idempotency_key: format!("work-unit-handler-review-working-copy-{}", predecessor.revision_id),
+        }).map_err(|_| WorkUnitHarnessError::Unavailable)? {
+            super::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::Stored(copy)
+            | super::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::IdempotentReplay(copy) => copy.draft_revision,
+        };
+        let revision = match self.orchestration.create_harness_revision(CreateHarnessRevisionCommand {
+            harness_key: "work_unit_handler".into(),
+            expected_source_draft_revision: draft,
+            expected_predecessor_revision_id: Some(predecessor.revision_id.clone()),
+            idempotency_key: format!("work-unit-handler-review-revision-{}", predecessor.revision_id),
+            creation_provenance: HarnessRevisionCreationProvenance { kind: HarnessRevisionProvenanceKind::ApplicationUser, reference: "work-unit-handler-outcome-review".into() },
+        }) {
+            Ok(CreateHarnessRevisionResult::Published(revision)) | Ok(CreateHarnessRevisionResult::IdempotentReplay(revision)) => revision,
+            Err(HarnessRevisionError::Conflict) => self.load_newly_published_handler_revision()?,
+            Err(_) => return Err(WorkUnitHarnessError::Unavailable),
+        };
+        let pinned = self.pinned_handler_revision_from_revision(revision)?;
+        if !pinned.profile.mcp.required || pinned.profile.mcp.enabled_tools.iter().map(String::as_str).ne(expected_tools) { return Err(WorkUnitHarnessError::Denied); }
+        Ok(pinned)
+    }
+
     pub(crate) fn load_pinned_handler_revision(
         &self,
         revision_id: &str,
