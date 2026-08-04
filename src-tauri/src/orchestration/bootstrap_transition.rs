@@ -6006,6 +6006,12 @@ mod tests {
             let now = "2026-08-04T00:00:00Z";
             connection.execute("INSERT OR IGNORE INTO work_units (work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification) VALUES (?1,'reporting-materialization','reporting-slice','reporting-revision',0,'Reporting','Handler review test')", [&self.work_unit_id]).unwrap();
             connection.execute("INSERT INTO work_unit_handler_activations (work_unit_id,materialization_id,sprint_id,attempt_id,handler_session_id,handler_invocation_id,handler_harness_key,handler_harness_version,handler_harness_revision_id,handler_harness_configuration_digest,handler_harness_repository_commit_ref,eligibility_state,requested_at,authorized_at,attempt_created_at,execution_support_granted_at,isolated_worktree_ready_at,handler_session_created_at,handler_invocation_prepared_at,handler_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,handler_ready_at) VALUES (?1,'reporting-materialization','reporting-sprint',?2,?3,?4,?5,?6,?7,?8,?9,'eligible',?10,?10,?10,?10,?10,?10,?10,?10,?10,?10,?10,?10)", params![self.work_unit_id,self.attempt_id,self.handler_session_id,self.handler_invocation_id,original.profile.key,original.profile.version,original.revision_id,original.configuration_digest,original.repository_commit_ref,now]).unwrap();
+            connection.execute(
+                "UPDATE work_unit_implementer_activations
+                 SET handler_attempt_id=?2,handler_invocation_id=?3
+                 WHERE work_unit_id=?1",
+                params![self.work_unit_id, self.attempt_id, self.handler_action_invocation_id],
+            ).unwrap();
             connection.execute("INSERT INTO work_unit_handler_action_continuations (work_unit_id,attempt_id,handler_session_id,original_handler_invocation_id,action_invocation_id,action_harness_revision_id,action_harness_configuration_digest,action_harness_repository_commit_ref,requested_at,authorized_at,invocation_prepared_at,harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,action_ready_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?9,?9,?9,?9,?9,?9,?9)", params![self.work_unit_id,self.attempt_id,self.handler_session_id,self.handler_invocation_id,self.handler_action_invocation_id,action.revision_id,action.configuration_digest,action.repository_commit_ref,now]).unwrap();
             connection.pragma_update(None, "foreign_keys", true).unwrap();
         }
@@ -6018,6 +6024,77 @@ mod tests {
             self.enable_notifications();
             self.finish(AgentInvocationTerminalStatus::Completed);
             Connection::open(&self.base.database_path).unwrap().query_row("SELECT review_invocation_id FROM work_unit_handler_reviews WHERE work_unit_id=?1", [&self.work_unit_id], |row| row.get(0)).unwrap()
+        }
+
+        fn establish_canonical_dependency_graph(&self) -> (String, String) {
+            let connection = Connection::open(&self.base.database_path).unwrap();
+            let (sprint_id, epic_id): (String, String) = connection.query_row(
+                "SELECT id,epic_id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            ).unwrap();
+            let materialization = "implementer-reporting-materialization";
+            let revision = "implementer-reporting-revision";
+            let dependent = "implementer-reporting-dependent".to_string();
+            let relationship = "implementer-reporting-depends-on".to_string();
+            let planner_harness = conversation_harness::profile(ConversationHarnessRole::WorkSlicePlanner).unwrap();
+            connection.pragma_update(None, "foreign_keys", false).unwrap();
+            connection.execute(
+                "INSERT INTO work_slice_planning_requests
+                 (planning_point_id,sprint_id,planning_episode,is_current,request_fact_id,parent_sprint_runner_session_id,
+                  parent_planning_control_invocation_id,authority_id,authority_epic_id,authority_provenance_id,
+                  authority_repository_id,authority_worktree_id,authority_baseline_object_id,authority_current_object_id,
+                  authority_source_fingerprint,repository_worktree_route,requested_at,authorized_at,planner_harness_key,
+                  planner_harness_version,planner_session_id,planner_invocation_id)
+                 VALUES ('implementer-reporting-point',?1,0,1,'implementer-reporting-request','parent-session',
+                  'parent-invocation',?2,?3,'provenance','repository','worktree','baseline','current','fingerprint','route',
+                  't','t','work_slice_planner',?4,'planner-session','planner-invocation')",
+                params![sprint_id, self.authority_id, epic_id, planner_harness.version],
+            ).unwrap();
+            connection.execute(
+                "INSERT INTO work_slice_planning_episodes
+                 (planning_point_id,sprint_id,authority_id,planner_session_id,planner_invocation_id,harness_json,repository_worktree_route,created_at)
+                 VALUES ('implementer-reporting-point',?1,?2,'planner-session','planner-invocation','{}','route','t')",
+                params![sprint_id, self.authority_id],
+            ).unwrap();
+            connection.execute(
+                "INSERT INTO work_slice_proposal_revisions
+                 (revision_id,planning_point_id,revision_number,is_current,idempotency_key,content_fingerprint,proposal_json,
+                  submitted_at,validation_at,validation_result,semantic_completed_at,semantic_completion_invocation_id,
+                  lifecycle_observed_at,lifecycle_status,accepted_at,materialization_ready_at)
+                 VALUES (?1,'implementer-reporting-point',1,1,'implementer-reporting-revision','fingerprint','{}',
+                  't','t','valid','t','planner-invocation','t','completed','t','t')",
+                [revision],
+            ).unwrap();
+            connection.execute(
+                "INSERT INTO work_unit_materializations
+                 (materialization_id,planning_point_id,accepted_revision_id,epic_id,sprint_id,work_slice_id,
+                  authorization_recorded_at,attempt_recorded_at,work_units_created_at,relationships_completed_at,settled_at)
+                 VALUES (?1,'implementer-reporting-point',?2,?3,?4,'implementer-reporting-slice','t','t','t','t','t')",
+                params![materialization, revision, epic_id, sprint_id],
+            ).unwrap();
+            connection.execute(
+                "UPDATE work_units SET materialization_id=?2,work_slice_id='implementer-reporting-slice',accepted_revision_id=?3
+                 WHERE work_unit_id=?1",
+                params![self.work_unit_id, materialization, revision],
+            ).unwrap();
+            connection.execute(
+                "INSERT INTO work_units (work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification)
+                 VALUES (?1,?2,'implementer-reporting-slice',?3,1,'Dependent reporting','One bounded dependent.')",
+                params![dependent, materialization, revision],
+            ).unwrap();
+            connection.execute(
+                "INSERT INTO work_unit_relationships (relationship_id,materialization_id,relationship_kind,from_id,to_id,ordinal)
+                 VALUES (?1,?2,'depends_on',?3,?4,NULL)",
+                params![relationship, materialization, dependent, self.work_unit_id],
+            ).unwrap();
+            connection.execute(
+                "UPDATE work_unit_handler_activations SET materialization_id=?2,sprint_id=?3
+                 WHERE work_unit_id=?1",
+                params![self.work_unit_id, materialization, sprint_id],
+            ).unwrap();
+            connection.pragma_update(None, "foreign_keys", true).unwrap();
+            (dependent, relationship)
         }
 
         fn assert_no_submission_evidence_or_completion(&self) {
@@ -6351,6 +6428,83 @@ mod tests {
             terminal.base.runtime.finish(&terminal_review, status);
             assert_eq!(Connection::open(&terminal.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_decisions", [], |row| row.get(0)).unwrap(), 0);
         }
+    }
+
+    #[test]
+    fn completed_handler_review_drains_one_canonical_dependent_cycle_and_return_stops() {
+        let accepted = ReportingFixture::new();
+        let accepted_review = accepted.ready_review();
+        let (dependent, relationship) = accepted.establish_canonical_dependency_graph();
+        accepted.transition.record_handler_review_judgment_for_test(&accepted_review, "accept", None).unwrap();
+        accepted.base.runtime.finish(&accepted_review, AgentInvocationTerminalStatus::Completed);
+
+        let connection = Connection::open(&accepted.base.database_path).unwrap();
+        let root: (String, String, String, String) = connection.query_row(
+            "SELECT attempt_id,handler_session_id,handler_invocation_id,handler_harness_revision_id
+             FROM work_unit_handler_activations WHERE work_unit_id=?1",
+            [&accepted.work_unit_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).unwrap();
+        let activated: (String, String, String, String, String) = connection.query_row(
+            "SELECT attempt_id,handler_session_id,handler_invocation_id,handler_harness_revision_id,eligibility_state
+             FROM work_unit_handler_activations WHERE work_unit_id=?1",
+            [&dependent],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        ).unwrap();
+        assert_eq!(activated.4, "eligible");
+        assert_eq!(connection.query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM accepted_work_unit_integrations WHERE work_unit_id=?1 AND stage='settled' AND attention_code IS NULL",
+            [&accepted.work_unit_id], |row| row.get(0),
+        ).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM work_unit_settlements WHERE work_unit_id=?1",
+            [&accepted.work_unit_id], |row| row.get(0),
+        ).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM work_unit_prerequisite_contributions WHERE prerequisite_work_unit_id=?1 AND dependent_work_unit_id=?2 AND relationship_id=?3",
+            params![accepted.work_unit_id, dependent, relationship], |row| row.get(0),
+        ).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM work_unit_handler_decisions WHERE work_unit_id=?1 AND decision_variant='accepted'",
+            [&accepted.work_unit_id], |row| row.get(0),
+        ).unwrap(), 1);
+        let native = serde_json::to_value(SqliteOrchestrationRepository::open(&accepted.base.database_path).unwrap().native_query().unwrap()).unwrap();
+        let projected = native["workUnits"].as_array().unwrap().iter().find(|unit| unit["workUnitId"] == dependent).unwrap();
+        assert_eq!(projected["handlerActivation"]["eligibilityState"], "eligible");
+        assert!(projected["handlerActivation"].get("handlerHarnessRepositoryCommitRef").is_none());
+        let projected_root = native["workUnits"].as_array().unwrap().iter().find(|unit| unit["workUnitId"] == accepted.work_unit_id).unwrap();
+        assert!(projected_root["integration"]["settlement"]["settledAt"].is_string());
+        assert!(!native.to_string().contains(&*accepted.working_directory.to_string_lossy()));
+        drop(connection);
+
+        let connection = Connection::open(&accepted.base.database_path).unwrap();
+        connection.execute("DELETE FROM work_unit_prerequisite_contributions WHERE prerequisite_work_unit_id=?1", [&accepted.work_unit_id]).unwrap();
+        connection.execute("DELETE FROM work_unit_settlements WHERE work_unit_id=?1", [&accepted.work_unit_id]).unwrap();
+        connection.execute("UPDATE accepted_work_unit_integrations SET stage='db_advanced',settled_at=NULL WHERE work_unit_id=?1", [&accepted.work_unit_id]).unwrap();
+        drop(connection);
+        accepted.transition.reconcile_handler_reviews_for_test().unwrap();
+        let connection = Connection::open(&accepted.base.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1 AND attempt_id=?2 AND handler_session_id=?3 AND handler_invocation_id=?4", params![accepted.work_unit_id, root.0, root.1, root.2], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1 AND attempt_id=?2 AND handler_session_id=?3 AND handler_invocation_id=?4", params![dependent, activated.0, activated.1, activated.2], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM accepted_work_unit_integrations WHERE work_unit_id=?1", [&accepted.work_unit_id], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_settlements WHERE work_unit_id=?1", [&accepted.work_unit_id], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_prerequisite_contributions WHERE prerequisite_work_unit_id=?1 AND dependent_work_unit_id=?2", params![accepted.work_unit_id, dependent], |row| row.get(0)).unwrap(), 1);
+        drop(connection);
+
+        let returned = ReportingFixture::new();
+        let returned_review = returned.ready_review();
+        let (returned_dependent, _) = returned.establish_canonical_dependency_graph();
+        returned.transition.record_handler_review_judgment_for_test(&returned_review, "return", Some(crate::orchestration::sprint_runner_transition::HandlerReviewReturnReason { code: "review_failed".into(), explanation: "evidence requires correction".into() })).unwrap();
+        returned.base.runtime.finish(&returned_review, AgentInvocationTerminalStatus::Completed);
+        let connection = Connection::open(&returned.base.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_decisions WHERE work_unit_id=?1 AND decision_variant='returned' AND retry_required_at IS NOT NULL", [&returned.work_unit_id], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM accepted_handler_candidates WHERE work_unit_id=?1", [&returned.work_unit_id], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM accepted_work_unit_integrations WHERE work_unit_id=?1", [&returned.work_unit_id], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_settlements WHERE work_unit_id=?1", [&returned.work_unit_id], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_prerequisite_contributions WHERE prerequisite_work_unit_id=?1", [&returned.work_unit_id], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1", [&returned_dependent], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1", [&returned.work_unit_id], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1 AND attempt_id<>?2", params![returned.work_unit_id, returned.attempt_id], |row| row.get(0)).unwrap(), 0);
     }
 
     #[test]

@@ -94,6 +94,20 @@ fn integration(c: &Connection, candidate: &str) -> Result<Option<Integration>, S
     c.query_row("SELECT integration_id,target_ref_name,pre_object_id,pre_version,intent_fingerprint,intent_recorded_at,stage,integration_commit_id,integration_tree_id,commit_fingerprint,settled_at FROM accepted_work_unit_integrations WHERE candidate_id=?1", [candidate], |r| Ok(Integration { id:r.get(0)?, reference:r.get(1)?, pre:r.get(2)?, version:r.get(3)?, intent:r.get(4)?, recorded:r.get(5)?, stage:r.get(6)?, commit:r.get(7)?, tree:r.get(8)?, fingerprint:r.get(9)?, settled:r.get(10)? })).optional().map_err(|e| e.to_string())
 }
 
+fn integration_recorded_at(c: &Connection, candidate: &str) -> Result<String, String> {
+    let pinned_at: String = c.query_row(
+        "SELECT pinned_at FROM accepted_handler_candidates WHERE candidate_id=?1 AND pinned_at IS NOT NULL",
+        [candidate],
+        |row| row.get(0),
+    ).map_err(|error| error.to_string())?;
+    let pinned = chrono::DateTime::parse_from_rfc3339(&pinned_at)
+        .map_err(|_| "accepted_candidate_pin_timestamp_invalid".to_string())?;
+    let seconds = pinned.timestamp() + i64::from(pinned.timestamp_subsec_nanos() > 0);
+    chrono::DateTime::from_timestamp(seconds, 0)
+        .ok_or_else(|| "accepted_candidate_pin_timestamp_invalid".to_string())
+        .map(|timestamp| timestamp.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+}
+
 fn reconcile_one(c: &mut Connection, r: &Row) -> Result<(), String> {
     // The target reference names the lock only. Candidate authority and replay state are loaded
     // after acquiring it, so a queued same-candidate caller cannot carry a stale absence into
@@ -134,8 +148,8 @@ fn reserve(c: &mut Connection, r: &Row) -> Result<(), String> {
     validate_identity(r, &t)?;
     let id = stable_id("accepted-work-unit-integration", &r.candidate);
     let intent = fingerprint(&[POLICY_VERSION, &id, &r.unit, &r.candidate, &r.authority, &t.reference, &t.current, &t.version.to_string(), &r.baseline, &r.commit, &r.tree, &r.evidence]);
+    let recorded_at = integration_recorded_at(c, &r.candidate)?;
     let tx = c.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
-    let recorded_at = now();
     match tx.execute("INSERT INTO accepted_work_unit_integrations(integration_id,work_unit_id,candidate_id,authority_id,target_ref_name,pre_object_id,pre_version,candidate_commit_id,candidate_tree_id,baseline_object_id,intent_fingerprint,intent_recorded_at,authorization_recorded_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?12)", params![id,r.unit,r.candidate,r.authority,t.reference,t.current,t.version,r.commit,r.tree,r.baseline,intent,recorded_at]) {
         Ok(1) => {},
         Err(rusqlite::Error::SqliteFailure(error,_)) if error.code==rusqlite::ErrorCode::ConstraintViolation => { let exact:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM accepted_work_unit_integrations WHERE integration_id=?1 AND candidate_id=?2 AND authority_id=?3 AND target_ref_name=?4 AND pre_object_id=?5 AND pre_version=?6 AND candidate_commit_id=?7 AND candidate_tree_id=?8 AND baseline_object_id=?9 AND intent_fingerprint=?10)",params![id,r.candidate,r.authority,t.reference,t.current,t.version,r.commit,r.tree,r.baseline,intent],|x|x.get(0)).map_err(|e|e.to_string())?;if !exact{return Err("integration_reservation_conflict".into())} },

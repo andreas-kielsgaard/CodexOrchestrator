@@ -104,26 +104,33 @@ impl WorkUnitExecutionHarnessService {
         }
     }
 
-    /// New attempts pin exactly the latest verified application-owned revision. Existing attempts
-    /// use `load_pinned_handler_revision` and never choose a later current revision.
+    /// New ordinal-0 attempts pin the verified original no-tool Handler revision. Existing
+    /// attempts use `load_pinned_handler_revision` and never choose a later current revision.
     pub(crate) fn current_handler_revision(
         &self,
     ) -> Result<PinnedHandlerHarnessRevision, WorkUnitHarnessError> {
-        let history = self
+        let revisions = match self
             .orchestration
-            .load_harness_revision_history("work_unit_handler");
-        let revision = match history {
-            HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions
-                .last()
-                .cloned()
-                .ok_or(WorkUnitHarnessError::Unavailable)?,
-            HarnessRevisionHistoryOutcome::Missing => self.bootstrap_initial_handler_revision()?,
+            .load_harness_revision_history("work_unit_handler") {
+            HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions,
+            HarnessRevisionHistoryOutcome::Missing => {
+                return self.pinned_handler_revision_from_revision(
+                    self.bootstrap_initial_handler_revision()?,
+                )
+            }
             HarnessRevisionHistoryOutcome::InvalidLocalCommitEvidence
             | HarnessRevisionHistoryOutcome::Unavailable => {
                 return Err(WorkUnitHarnessError::Unavailable)
             }
         };
-        self.pinned_handler_revision_from_revision(revision)
+        if let Some(revision) = revisions.iter().rev().find(|revision| {
+            self.pinned_handler_revision_from_revision((*revision).clone())
+                .map(|pinned| !pinned.profile.mcp.required && pinned.profile.mcp.enabled_tools.is_empty())
+                .unwrap_or(false)
+        }) {
+            return self.pinned_handler_revision_from_revision((*revision).clone());
+        }
+        Err(WorkUnitHarnessError::Unavailable)
     }
 
     /// Publishes (once) the immutable Handler revision which exposes the one application-owned

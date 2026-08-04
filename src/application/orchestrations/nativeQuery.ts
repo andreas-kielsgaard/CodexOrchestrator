@@ -80,7 +80,6 @@ export interface NativeWorkUnitHandlerActivationV1 {
   readonly handlerInvocationId?: string;
   readonly handlerHarnessRevisionId?: string;
   readonly handlerHarnessConfigurationDigest?: string;
-  readonly handlerHarnessRepositoryCommitRef?: string;
   readonly eligibilityState: 'blocked' | 'eligible';
   readonly blockedReason?: string;
   readonly requestedAt?: string;
@@ -1274,7 +1273,6 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
       'handlerInvocationId',
       'handlerHarnessRevisionId',
       'handlerHarnessConfigurationDigest',
-      'handlerHarnessRepositoryCommitRef',
       'eligibilityState',
       'blockedReason',
       'requestedAt',
@@ -1314,9 +1312,6 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
       : {}),
     ...(optional('handlerHarnessConfigurationDigest')
       ? { handlerHarnessConfigurationDigest: optional('handlerHarnessConfigurationDigest') }
-      : {}),
-    ...(optional('handlerHarnessRepositoryCommitRef')
-      ? { handlerHarnessRepositoryCommitRef: optional('handlerHarnessRepositoryCommitRef') }
       : {}),
     eligibilityState,
     ...(blockedReason ? { blockedReason } : {}),

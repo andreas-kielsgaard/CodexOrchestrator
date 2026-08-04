@@ -517,10 +517,10 @@ impl SqliteExecutionSupportRepository {
             .load_initiated_sprint_git_authority(&request.sprint_git_authority_id)
             .map_err(|_| ExecutionSupportError::Unavailable)?
             .ok_or(ExecutionSupportError::Denied)?;
-        if !git_object_id(&authority.current_object_id) {
+        let baseline = self.current_target_object_id(&authority)?;
+        if !git_object_id(&baseline) {
             return Err(ExecutionSupportError::CorrelationMismatch);
         }
-        let baseline = authority.current_object_id;
         let role_kind = request.role.as_str();
         let fingerprint = authorization_fingerprint(
             &request.attempt_id,
@@ -573,6 +573,35 @@ impl SqliteExecutionSupportRepository {
         )
     }
 
+    fn current_target_object_id(
+        &self,
+        authority: &InitiatedSprintGitAuthority,
+    ) -> Result<String, ExecutionSupportError> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| ExecutionSupportError::Unavailable)?;
+        let target_table_exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sprint_target_currents')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|_| ExecutionSupportError::Unavailable)?;
+        if !target_table_exists {
+            return Ok(authority.current_object_id.clone());
+        }
+        let target: Option<String> = connection
+            .query_row(
+                "SELECT current_object_id FROM sprint_target_currents WHERE authority_id=?1 AND attention_reason IS NULL",
+                [&authority.authority_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| ExecutionSupportError::Unavailable)?;
+        Ok(target.unwrap_or_else(|| authority.current_object_id.clone()))
+    }
+
     fn load_authorized_attempt_for_role(&self, attempt_id: &str, role: WorkUnitExecutionRole,
     ) -> Result<AuthorizedExecutionAttempt, ExecutionSupportError> {
         let (work_unit_id, role_kind, authority_id, baseline_object_id, stored_fingerprint):
@@ -610,7 +639,7 @@ impl SqliteExecutionSupportRepository {
             .load_initiated_sprint_git_authority(&authority_id)
             .map_err(|_| ExecutionSupportError::Unavailable)?
             .ok_or(ExecutionSupportError::Denied)?;
-        if authority.current_object_id != baseline_object_id {
+        if self.current_target_object_id(&authority)? != baseline_object_id {
             return Err(ExecutionSupportError::CorrelationMismatch);
         }
         Ok(AuthorizedExecutionAttempt {

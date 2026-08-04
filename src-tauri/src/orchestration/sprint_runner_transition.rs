@@ -1816,22 +1816,25 @@ impl SprintRunnerTransitionService {
     /// dependency wave. A returned decision creates no accepted candidate, integration, or retry.
     fn reconcile_completed_handler_reviews(self: &Arc<Self>) -> Result<(), SprintRunnerTransitionError> {
         self.finalize_handler_review_decisions()?;
-        let needs_dependency_activation = {
+        let dependency_activations = {
             let mut connection = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;
             reconcile_accepted_integrations(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
-            connection.query_row(
-                "SELECT EXISTS(
-                   SELECT 1
+            reconcile_work_unit_dependency_wave(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
+            connection.prepare(
+                "SELECT u.work_unit_id,u.materialization_id,m.sprint_id
                    FROM work_unit_prerequisite_contributions c
                    JOIN work_units u ON u.work_unit_id=c.dependent_work_unit_id
+                   JOIN work_unit_materializations m ON m.materialization_id=u.materialization_id
                    LEFT JOIN work_unit_handler_activations h ON h.work_unit_id=u.work_unit_id
-                   WHERE h.work_unit_id IS NULL OR h.eligibility_state<>'eligible' OR h.launch_accepted_at IS NULL)",
-                [],
-                |row| row.get::<_, bool>(0),
-            ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?
+                   WHERE h.work_unit_id IS NULL OR h.eligibility_state<>'eligible' OR h.launch_accepted_at IS NULL
+                   ORDER BY m.sprint_id,u.lane_ordinal,u.work_unit_id",
+            ).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, String>(0)?,row.get::<_, String>(1)?,row.get::<_, String>(2)?)))?.collect::<Result<Vec<_>,_>>())
+             .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?
         };
-        if needs_dependency_activation {
-            self.reconcile_work_unit_handlers()?;
+        let Some(handler) = self.work_unit_handler.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Work Unit Handler registry is poisoned".into()))?.clone() else { return Ok(()) };
+        for (work_unit, materialization, sprint) in dependency_activations {
+            self.reconcile_work_unit_handler(&handler, &work_unit, &materialization, &sprint)
+                .map_err(|error| SprintRunnerTransitionError::Unavailable(format!("dependent Handler activation failed: {error:?}")))?;
         }
         Ok(())
     }

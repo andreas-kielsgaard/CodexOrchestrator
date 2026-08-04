@@ -3082,6 +3082,7 @@ struct WorkUnitHandlerActivationDto {
     handler_invocation_id: Option<String>,
     handler_harness_revision_id: Option<String>,
     handler_harness_configuration_digest: Option<String>,
+    #[serde(skip_serializing)]
     handler_harness_repository_commit_ref: Option<String>,
     eligibility_state: Option<String>,
     blocked_reason: Option<String>,
@@ -4535,9 +4536,7 @@ fn map_handler_review(row: &Row<'_>) -> Result<WorkUnitHandlerReviewDto, rusqlit
     let payload_json: String = row.get(16)?;
     let payload: PersistedHandlerReviewPayload = serde_json::from_str(&payload_json)
         .map_err(|error| to_sql_error(error.to_string()))?;
-    let canonical = serde_json::to_string(&payload).map_err(|error| to_sql_error(error.to_string()))?;
-    if canonical != payload_json
-        || payload.summary.trim().is_empty() || payload.summary.len() > 20_000
+    if payload.summary.trim().is_empty() || payload.summary.len() > 20_000
         || payload.validation_statement.trim().is_empty() || payload.validation_statement.len() > 20_000
         || payload.changed_files.is_empty() || payload.changed_files.len() > 500
         || payload.comparison_fingerprint.trim().is_empty() || payload.comparison_fingerprint.len() > 240

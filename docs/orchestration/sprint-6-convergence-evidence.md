@@ -579,24 +579,33 @@ user acceptance occurred or is authorized by this record.
 
 ## DWE-01: dependent Work Unit execution-cycle convergence
 
-The productive Handler-review terminal notification now enters the same ordered downstream drain
-as startup reconciliation: finalize the completed accept-or-return decision, reconcile accepted
-candidate and integration facts, then recompute dependency eligibility only when a settled
-prerequisite contribution leaves a dependent absent, blocked, or not launch-accepted. Thus an
-accepted root can make its exact dependent eligible without a separate manual replay. A return
-cannot create an accepted candidate, integration, contribution, retry, or later attempt.
+The productive Handler-review terminal notification finalizes the completed accept-or-return
+decision, reconciles accepted integration facts, recomputes dependency eligibility, and activates
+only contributed dependents that remain absent, blocked, or not launch-accepted. The immutable
+ordinal-0 Handler selector remains the original no-tool profile even after later action and review
+profiles exist. New downstream attempts derive their baseline from the durable settled Sprint
+target, while the initiated authority record remains immutable. A return cannot create an accepted
+candidate, integration, contribution, retry, or later attempt.
 
 Current deterministic validation in this candidate checkout:
 
-- Handler-review terminal notification: **1 passed, 367 filtered**.
-- Concurrent exact replay and accept-vs-return race: **1 passed, 367 filtered**.
-- `git diff --check` passed. The first attempted focused selector matched no test; it is not a
-  passing gate. Two earlier compilation attempts timed out while building the isolated Cargo
-  target; the completed reruns above are the recorded results.
+- Combined accepted/returned convergence: **1 passed, 368 filtered, 92.98s**. It records a
+  canonical blocked dependent, accepts and integrates its exact settled prerequisite, records one
+  contribution and one stable dependent ordinal-0 Handler activation, checks native projection and
+  the absence of the Handler Harness commit reference, repairs a representative erased
+  settlement/contribution partial effect without replacement Handler identities or duplicate
+  effects, and proves the corresponding returned root records `retry_required` with no candidate,
+  integration, settlement, contribution, dependent activation, or replacement Implementer attempt.
+- Concurrent exact replay and accept-vs-return race: **1 passed, 368 filtered, 96.48s**.
+- `git diff --check` passed. Earlier selector/compilation attempts that matched zero tests or
+  timed out are not passing gates.
 
 The existing native-query, strict frontend read-model, and Work Unit activity surfaces were
 inspected for the established safe projections, but frontend Vitest, TypeScript, and UI execution
 are **unrun** here because this clean routed checkout has no `node_modules`; dependencies were not
 installed. Broad Rust suites, live-provider receipt, provider activation/compliance, and human
-acceptance are likewise unproven. This correction does not add retry, ordinal-1 authority,
-relaunch, planning-point/Work Slice/Sprint/Epic continuation, reattachment, push, or publication.
+acceptance are likewise unproven. The combined proof stops after the newly eligible dependent's
+ordinal-0 Handler activation; its own Implementer/reporting/review/integration/outgoing-
+contribution path remains an explicit unproven acceptance gap. This correction does not add retry,
+ordinal-1 authority, relaunch, planning-point/Work Slice/Sprint/Epic continuation, reattachment,
+push, or publication.
