@@ -636,3 +636,20 @@ handback fingerprints without creating a retry or receiver effect. A separate tw
 between functional-objective/meaningful-progress and blocked/no-progress inputs produced one
 authoritative disposition and one conflict, with exactly one of authorization or handback and no
 retry. Each focused regression passed **1 test / 339 filtered**.
+
+## OPS-2: General application-owned next-attempt progression
+
+A completed exact meaningful-progress disposition is now the only active authorizer for one
+later correction attempt. Reconciliation selects the newest completed durable attempt, derives
+the next ordinal from the ordered attempt history, and keys replay, recovery, lifecycle marks,
+and terminal launch failure to the application-owned next-attempt identity. It does not read
+`retry_required_at` for this progression; that legacy field remains on old decision records for
+lossless history only. The candidate remains private and is carried forward only through the
+bounded application-created handoff.
+
+The two-service meaningful-progress regression converged on one ordinal-1 attempt, Session,
+invocation, private candidate ref, and launch acceptance. It also verifies that a reopened
+reconciler reuses those identities. The implementation has no ordinal ceiling and derives a
+subsequent ordinal from `MAX(attempt_ordinal)+1`; an end-to-end ordinal-2 runtime regression,
+multi-process SQLite stress, live provider/desktop behavior, integration, settlement, receiver
+activation, publication, and user acceptance remain unproven.

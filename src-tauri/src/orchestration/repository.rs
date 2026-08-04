@@ -3628,7 +3628,8 @@ fn validate_attempt_history_projection(work_unit: &WorkUnitDto) -> Result<(), St
     }
     for retry in &work_unit.retry_attempts {
         let origin = work_unit.attempt_history.iter().find(|member| member.attempt_id == retry.origin_attempt_id).ok_or_else(|| "retry activation lacks its origin history member".to_string())?;
-        let returned = origin.handler_decision.as_ref().is_some_and(|decision| matches!(decision.variant, WorkUnitHandlerDecisionVariantDto::Returned) && decision.retry_required_at.is_some());
+        let returned = origin.incomplete_disposition.as_ref().is_some_and(|disposition| disposition.meaningful_progress && disposition.next_attempt_authorized_at.is_some())
+            || (origin.ordinal == 0 && retry.ordinal == 1 && origin.incomplete_disposition.is_none() && origin.handler_decision.as_ref().is_some_and(|decision| matches!(decision.variant, WorkUnitHandlerDecisionVariantDto::Returned) && decision.retry_required_at.is_some()));
         let retry_member = work_unit.attempt_history.iter().find(|member| member.ordinal == retry.ordinal);
         if retry.ordinal <= origin.ordinal || !returned || retry_member.is_some_and(|member| member.attempt_id != retry.retry_attempt_id) {
             return Err("retry activation has invalid origin or ordinal correlation".into());
@@ -3774,7 +3775,8 @@ fn validate_work_unit_activation_projection(work_unit: &WorkUnitDto) -> Result<(
             .ok_or_else(|| "retry attempt lacks Handler return decision".to_string())?;
         if retry.ordinal <= origin.ordinal
             || !matches!(decision.variant, WorkUnitHandlerDecisionVariantDto::Returned)
-            || decision.retry_required_at.is_none()
+            || !(origin.incomplete_disposition.as_ref().is_some_and(|disposition| disposition.meaningful_progress && disposition.next_attempt_authorized_at.is_some())
+                || (origin.ordinal == 0 && retry.ordinal == 1 && origin.incomplete_disposition.is_none() && decision.retry_required_at.is_some()))
         {
             return Err("retry attempt has foreign or non-return lineage".into());
         }
@@ -4045,7 +4047,7 @@ fn validate_work_unit_activation_projection(work_unit: &WorkUnitDto) -> Result<(
             }
             (WorkUnitHandlerReviewJudgmentVariantDto::Return, WorkUnitHandlerDecisionVariantDto::Returned, Some(reason)) => {
                 if decision.implementation_returned_at.is_none()
-                    || decision.retry_required_at.is_none() || decision.implementation_accepted_at.is_some()
+                    || decision.implementation_accepted_at.is_some()
                     || review.semantic_judgment.as_ref().and_then(|value| value.reason.as_ref()) != Some(reason)
                 { return Err("returned Handler decision facts are incoherent".into()); }
             }

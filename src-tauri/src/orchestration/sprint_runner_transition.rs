@@ -427,8 +427,8 @@ CREATE TABLE IF NOT EXISTS work_unit_no_progress_handbacks (
   sprint_runner_receiver_decision_at TEXT,
   CHECK (sprint_runner_receiver_activated_at IS NULL AND sprint_runner_receiver_decision_at IS NULL)
 );
--- A returned ordinal-0 outcome can authorize exactly one correction attempt.  The private ref
--- name and object ids never cross the native-query boundary.
+-- Each completed meaningful-progress disposition can authorize exactly one later correction
+-- attempt. The private ref name and object ids never cross the native-query boundary.
 CREATE TABLE IF NOT EXISTS work_unit_retry_attempts (
   retry_attempt_id TEXT PRIMARY KEY,
   work_unit_id TEXT NOT NULL REFERENCES work_units(work_unit_id) ON DELETE RESTRICT,
@@ -873,6 +873,7 @@ struct RetrySource {
     sprint_id: String,
     authority_id: String,
     origin_attempt_id: String,
+    origin_ordinal: i64,
     reporting_invocation_id: String,
     reporting_revision_id: String,
     reporting_configuration_digest: String,
@@ -2377,9 +2378,9 @@ impl SprintRunnerTransitionService {
         Ok(())
     }
 
-    /// The return decision is application authority for one correction attempt.  This path is
-    /// intentionally separate from Handler review finalization: a retry is neither acceptance nor
-    /// an update to Sprint Git authority.
+    /// A completed meaningful-progress disposition is application authority for exactly one
+    /// later correction attempt. This path is separate from Handler review finalization: it is
+    /// neither acceptance nor an update to Sprint Git authority.
     fn reconcile_work_unit_retries(self: &Arc<Self>) -> Result<(), SprintRunnerTransitionError> {
         let Some(handler) = self.work_unit_handler.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Work Unit Handler registry is poisoned".into()))?.clone() else { return Ok(()); };
         let sources = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare(
@@ -2387,21 +2388,22 @@ impl SprintRunnerTransitionService {
                     o.reporting_harness_revision_id,o.reporting_harness_configuration_digest,o.reporting_harness_repository_commit_ref,
                     d.review_invocation_id,d.decision_fingerprint,d.return_reason_json,
                     o.submitted_summary,o.submitted_validation_statement,o.evidence_manifest_json,
-                    o.comparison_fingerprint,o.evidence_content_fingerprints_json
+                    o.comparison_fingerprint,o.evidence_content_fingerprints_json,o.attempt_ordinal
              FROM work_unit_implementer_outcomes o
-             JOIN work_unit_handler_activations h ON h.work_unit_id=o.work_unit_id AND h.attempt_id=o.attempt_id
+             JOIN work_unit_handler_activations h ON h.work_unit_id=o.work_unit_id
              JOIN work_unit_handler_reviews r ON r.work_unit_id=o.work_unit_id AND r.attempt_id=o.attempt_id AND r.reporting_invocation_id=o.reporting_invocation_id
              JOIN execution_support_attempt_authorizations a ON a.attempt_id=o.attempt_id AND a.work_unit_id=o.work_unit_id AND a.role_kind='work_unit_implementer'
              JOIN work_unit_handler_decisions d ON d.attempt_id=o.attempt_id AND d.review_invocation_id=r.review_invocation_id
-             WHERE d.decision_variant='returned' AND d.retry_required_at IS NOT NULL
+             JOIN work_unit_handler_incomplete_dispositions i ON i.attempt_id=o.attempt_id AND i.work_unit_id=o.work_unit_id AND i.review_invocation_id=r.review_invocation_id AND i.decision_fingerprint=d.decision_fingerprint
+             WHERE d.decision_variant='returned' AND i.meaningful_progress=1 AND i.next_attempt_authorized_at IS NOT NULL
                AND r.semantic_judgment_variant='return' AND r.semantic_judgment_at IS NOT NULL
                AND r.lifecycle_observed_at IS NOT NULL AND r.lifecycle_status='completed'
                AND o.application_accepted_at IS NOT NULL AND o.handler_review_ready_at IS NOT NULL
                AND o.evidence_ready_at IS NOT NULL AND o.semantic_completed_at IS NOT NULL
-               AND o.attempt_ordinal=0
+               AND o.attempt_ordinal=(SELECT MAX(previous.attempt_ordinal) FROM work_unit_implementer_outcomes previous WHERE previous.work_unit_id=o.work_unit_id)
              ORDER BY h.sprint_id,o.work_unit_id"
         ).and_then(|mut statement| statement.query_map([], |row| Ok(RetrySource {
-            work_unit_id: row.get(0)?, sprint_id: row.get(1)?, authority_id: row.get(2)?, origin_attempt_id: row.get(3)?, reporting_invocation_id: row.get(4)?,
+            work_unit_id: row.get(0)?, sprint_id: row.get(1)?, authority_id: row.get(2)?, origin_attempt_id: row.get(3)?, origin_ordinal: row.get(16)?, reporting_invocation_id: row.get(4)?,
             reporting_revision_id: row.get(5)?, reporting_configuration_digest: row.get(6)?, reporting_repository_commit_ref: row.get(7)?,
             review_invocation_id: row.get(8)?, decision_fingerprint: row.get(9)?, return_reason_json: row.get(10)?,
             summary: row.get(11)?, validation: row.get(12)?, manifest_json: row.get(13)?, comparison_fingerprint: row.get(14)?, content_fingerprints_json: row.get(15)?,
@@ -2414,34 +2416,34 @@ impl SprintRunnerTransitionService {
         let lock = self.transition_lock(&source.sprint_id)?;
         let _guard = lock.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Work Unit retry lock is poisoned".into()))?;
         let retry_exists: bool = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
-            "SELECT EXISTS(SELECT 1 FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=1)",
-            [&source.work_unit_id],
+            "SELECT EXISTS(SELECT 1 FROM work_unit_retry_attempts WHERE origin_attempt_id=?1)",
+            [&source.origin_attempt_id],
             |row| row.get(0),
         ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         let reporting = AgentInvocationId::new(source.reporting_invocation_id.clone()).map_err(|_| SprintRunnerTransitionError::Conflict)?;
         let (_, snapshot) = match self.evidence_snapshot(&reporting, false) {
             Ok(value) => value,
-            Err(error) if retry_exists => return self.fail_retry(&source.work_unit_id, "retry_evidence_revalidation_failed", error),
+            Err(error) if retry_exists => return self.fail_retry_for_origin(&source.origin_attempt_id, "retry_evidence_revalidation_failed", error),
             Err(error) => return Err(error),
         };
         if snapshot.manifest_json != source.manifest_json || snapshot.comparison_fingerprint != source.comparison_fingerprint || snapshot.content_fingerprints_json != source.content_fingerprints_json {
-            return if retry_exists { self.fail_retry(&source.work_unit_id, "retry_evidence_revalidation_failed", SprintRunnerTransitionError::Conflict) } else { Err(SprintRunnerTransitionError::Conflict) };
+            return if retry_exists { self.fail_retry_for_origin(&source.origin_attempt_id, "retry_evidence_revalidation_failed", SprintRunnerTransitionError::Conflict) } else { Err(SprintRunnerTransitionError::Conflict) };
         }
         let authority = match self.authority_repository.load_initiated_sprint_git_authority(&source.authority_id) {
             Ok(Some(authority)) => authority,
-            Ok(None) if retry_exists => return self.fail_retry(&source.work_unit_id, "retry_authority_revalidation_failed", SprintRunnerTransitionError::Conflict),
+            Ok(None) if retry_exists => return self.fail_retry_for_origin(&source.origin_attempt_id, "retry_authority_revalidation_failed", SprintRunnerTransitionError::Conflict),
             Ok(None) => return Err(SprintRunnerTransitionError::Forbidden),
-            Err(_) if retry_exists => return self.fail_retry(&source.work_unit_id, "retry_authority_revalidation_failed", SprintRunnerTransitionError::Unavailable("load retry Sprint Git authority".into())),
+            Err(_) if retry_exists => return self.fail_retry_for_origin(&source.origin_attempt_id, "retry_authority_revalidation_failed", SprintRunnerTransitionError::Unavailable("load retry Sprint Git authority".into())),
             Err(_) => return Err(SprintRunnerTransitionError::Unavailable("load retry Sprint Git authority".into())),
         };
         let pinned_reporting = match handler.load_pinned_implementer_revision(&source.reporting_revision_id, &source.reporting_configuration_digest, &source.reporting_repository_commit_ref) {
             Ok(value) => value,
-            Err(_) if retry_exists => return self.fail_retry(&source.work_unit_id, "retry_harness_revalidation_failed", SprintRunnerTransitionError::Conflict),
+            Err(_) if retry_exists => return self.fail_retry_for_origin(&source.origin_attempt_id, "retry_harness_revalidation_failed", SprintRunnerTransitionError::Conflict),
             Err(_) => return Err(SprintRunnerTransitionError::Conflict),
         };
         let origin_package = match handler.construct_for_pinned_profile(&source.origin_attempt_id, WorkUnitHarnessRole::Implementer, pinned_reporting.profile) {
             Ok(value) => value,
-            Err(_) if retry_exists => return self.fail_retry(&source.work_unit_id, "retry_execution_support_revalidation_failed", SprintRunnerTransitionError::Conflict),
+            Err(_) if retry_exists => return self.fail_retry_for_origin(&source.origin_attempt_id, "retry_execution_support_revalidation_failed", SprintRunnerTransitionError::Conflict),
             Err(_) => return Err(SprintRunnerTransitionError::Conflict),
         };
         let source_root = PathBuf::from(origin_package.working_directory());
@@ -2457,42 +2459,47 @@ impl SprintRunnerTransitionService {
             .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?
         {
             Some(value) => value,
-            None if retry_exists => return self.fail_retry(&source.work_unit_id, "retry_authorization_revalidation_failed", SprintRunnerTransitionError::Forbidden),
+            None if retry_exists => return self.fail_retry_for_origin(&source.origin_attempt_id, "retry_authorization_revalidation_failed", SprintRunnerTransitionError::Forbidden),
             None => return Err(SprintRunnerTransitionError::Forbidden),
         };
         let (candidate_commit, candidate_tree) = match retry_git_candidate_facts(&authority, &source_root, &source_baseline) {
             Ok(value) => value,
-            Err(error) if retry_exists => return self.fail_retry(&source.work_unit_id, "retry_candidate_revalidation_failed", error),
+            Err(error) if retry_exists => return self.fail_retry_for_origin(&source.origin_attempt_id, "retry_candidate_revalidation_failed", error),
             Err(error) => return Err(error),
         };
-        let retry_attempt = stable_id("work-unit-retry-attempt", &source.origin_attempt_id);
-        let session_id = stable_id("work-unit-retry-implementer-session", &retry_attempt);
-        let invocation_id = stable_id("work-unit-retry-implementer-invocation", &retry_attempt);
-        let capture_intent = stable_id("work-unit-retry-capture", &source.origin_attempt_id);
-        let private_ref = format!("refs/codex-orchestrator/retry/{}", stable_id("work-unit-retry-ref", &retry_attempt));
+        let next_ordinal: i64 = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
+            "SELECT COALESCE(MAX(attempt_ordinal),-1)+1 FROM work_unit_implementer_outcomes WHERE work_unit_id=?1",
+            [&source.work_unit_id], |row| row.get(0),
+        ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        if next_ordinal != source.origin_ordinal + 1 { return Err(SprintRunnerTransitionError::Conflict); }
+        let retry_attempt = stable_id("work-unit-next-attempt", &source.origin_attempt_id);
+        let session_id = stable_id("work-unit-next-attempt-implementer-session", &retry_attempt);
+        let invocation_id = stable_id("work-unit-next-attempt-implementer-invocation", &retry_attempt);
+        let capture_intent = stable_id("work-unit-next-attempt-capture", &source.origin_attempt_id);
+        let private_ref = format!("refs/codex-orchestrator/retry/{}", stable_id("work-unit-next-attempt-ref", &retry_attempt));
         let handoff = serde_json::json!({
             "handlerReturnReason": serde_json::from_str::<serde_json::Value>(&source.return_reason_json).map_err(|_| SprintRunnerTransitionError::Conflict)?,
             "priorClaims": {"summary": source.summary, "validationStatement": source.validation},
             "evidence": {"changedFiles": serde_json::from_str::<serde_json::Value>(&source.manifest_json).map_err(|_| SprintRunnerTransitionError::Conflict)?, "comparisonFingerprint": source.comparison_fingerprint, "contentFingerprints": serde_json::from_str::<serde_json::Value>(&source.content_fingerprints_json).map_err(|_| SprintRunnerTransitionError::Conflict)?}
         }).to_string();
-        let handoff_fingerprint = stable_id("work-unit-retry-handoff", &handoff);
-        let capture_fingerprint = stable_id("work-unit-retry-capture-lineage", &format!("{}:{}:{}:{}:{}", source.origin_attempt_id, source.review_invocation_id, source.decision_fingerprint, candidate_commit, candidate_tree));
-        let desired = handler.current_implementer_revision().map_err(|_| SprintRunnerTransitionError::Unavailable("immutable retry Implementer Harness revision unavailable".into()))?;
+        let handoff_fingerprint = stable_id("work-unit-next-attempt-handoff", &handoff);
+        let capture_fingerprint = stable_id("work-unit-next-attempt-capture-lineage", &format!("{}:{}:{}:{}:{}", source.origin_attempt_id, source.review_invocation_id, source.decision_fingerprint, candidate_commit, candidate_tree));
+        let desired = handler.current_implementer_revision().map_err(|_| SprintRunnerTransitionError::Unavailable("immutable later Implementer Harness revision unavailable".into()))?;
         let now = chrono::Utc::now().to_rfc3339();
         {
             let mut connection = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;
             let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
             let changed = transaction.execute(
-                "INSERT OR IGNORE INTO work_unit_retry_attempts (work_unit_id,ordinal,origin_attempt_id,review_invocation_id,decision_fingerprint,sprint_git_authority_id,sprint_baseline_object_id,sprint_current_object_id,retry_attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,capture_intent_id,capture_fingerprint,handoff_json,handoff_fingerprint,candidate_commit_id,candidate_tree_id,private_ref_name,capture_requested_at) VALUES (?1,1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)",
-                params![source.work_unit_id,source.origin_attempt_id,source.review_invocation_id,source.decision_fingerprint,source.authority_id,authority.baseline_object_id,authority.current_object_id,retry_attempt,session_id,invocation_id,desired.revision_id,desired.configuration_digest,desired.repository_commit_ref,capture_intent,capture_fingerprint,handoff,handoff_fingerprint,candidate_commit,candidate_tree,private_ref,now]
+                "INSERT OR IGNORE INTO work_unit_retry_attempts (work_unit_id,ordinal,origin_attempt_id,review_invocation_id,decision_fingerprint,sprint_git_authority_id,sprint_baseline_object_id,sprint_current_object_id,retry_attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,capture_intent_id,capture_fingerprint,handoff_json,handoff_fingerprint,candidate_commit_id,candidate_tree_id,private_ref_name,capture_requested_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)",
+                params![source.work_unit_id,next_ordinal,source.origin_attempt_id,source.review_invocation_id,source.decision_fingerprint,source.authority_id,authority.baseline_object_id,authority.current_object_id,retry_attempt,session_id,invocation_id,desired.revision_id,desired.configuration_digest,desired.repository_commit_ref,capture_intent,capture_fingerprint,handoff,handoff_fingerprint,candidate_commit,candidate_tree,private_ref,now]
             ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
             if changed == 0 {
                 let exact: bool = transaction.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=1 AND origin_attempt_id=?2 AND review_invocation_id=?3 AND decision_fingerprint=?4 AND sprint_git_authority_id=?5 AND sprint_baseline_object_id=?6 AND sprint_current_object_id=?7 AND retry_attempt_id=?8 AND implementer_session_id=?9 AND implementer_invocation_id=?10 AND implementer_harness_revision_id=?11 AND implementer_harness_configuration_digest=?12 AND implementer_harness_repository_commit_ref=?13 AND capture_intent_id=?14 AND capture_fingerprint=?15 AND handoff_json=?16 AND handoff_fingerprint=?17 AND candidate_commit_id=?18 AND candidate_tree_id=?19 AND private_ref_name=?20)",
-                    params![source.work_unit_id,source.origin_attempt_id,source.review_invocation_id,source.decision_fingerprint,source.authority_id,authority.baseline_object_id,authority.current_object_id,retry_attempt,session_id,invocation_id,desired.revision_id,desired.configuration_digest,desired.repository_commit_ref,capture_intent,capture_fingerprint,handoff,handoff_fingerprint,candidate_commit,candidate_tree,private_ref], |row| row.get(0)
+                    "SELECT EXISTS(SELECT 1 FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=?2 AND origin_attempt_id=?3 AND review_invocation_id=?4 AND decision_fingerprint=?5 AND sprint_git_authority_id=?6 AND sprint_baseline_object_id=?7 AND sprint_current_object_id=?8 AND retry_attempt_id=?9 AND implementer_session_id=?10 AND implementer_invocation_id=?11 AND implementer_harness_revision_id=?12 AND implementer_harness_configuration_digest=?13 AND implementer_harness_repository_commit_ref=?14 AND capture_intent_id=?15 AND capture_fingerprint=?16 AND handoff_json=?17 AND handoff_fingerprint=?18 AND candidate_commit_id=?19 AND candidate_tree_id=?20 AND private_ref_name=?21)",
+                    params![source.work_unit_id,next_ordinal,source.origin_attempt_id,source.review_invocation_id,source.decision_fingerprint,source.authority_id,authority.baseline_object_id,authority.current_object_id,retry_attempt,session_id,invocation_id,desired.revision_id,desired.configuration_digest,desired.repository_commit_ref,capture_intent,capture_fingerprint,handoff,handoff_fingerprint,candidate_commit,candidate_tree,private_ref], |row| row.get(0)
                 ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
                 if !exact {
-                    transaction.execute("UPDATE work_unit_retry_attempts SET failure_reason='retry_immutable_lineage_mismatch' WHERE work_unit_id=?1 AND ordinal=1", [&source.work_unit_id]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+                    transaction.execute("UPDATE work_unit_retry_attempts SET failure_reason='retry_immutable_lineage_mismatch' WHERE origin_attempt_id=?1", [&source.origin_attempt_id]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
                     transaction.commit().map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
                     return Err(SprintRunnerTransitionError::Conflict);
                 }
@@ -2501,107 +2508,107 @@ impl SprintRunnerTransitionService {
         }
         let (verified_commit, verified_tree) = match retry_git_candidate_facts(&authority, &source_root, &source_baseline) {
             Ok(facts) => facts,
-            Err(error) => return self.fail_retry(&source.work_unit_id, "retry_candidate_revalidation_failed", error),
+            Err(error) => return self.fail_retry(&retry_attempt, "retry_candidate_revalidation_failed", error),
         };
-        if verified_commit != candidate_commit || verified_tree != candidate_tree { return self.fail_retry(&source.work_unit_id, "retry_candidate_drift", SprintRunnerTransitionError::Conflict); }
+        if verified_commit != candidate_commit || verified_tree != candidate_tree { return self.fail_retry(&retry_attempt, "retry_candidate_drift", SprintRunnerTransitionError::Conflict); }
         if let Err(error) = ensure_private_retry_ref(Path::new(&authority.repository_root), &private_ref, &candidate_commit) {
-            return self.fail_retry(&source.work_unit_id, "retry_private_ref_pin_failed", error);
+            return self.fail_retry(&retry_attempt, "retry_private_ref_pin_failed", error);
         }
-        if let Err(error) = self.mark_retry(&source.work_unit_id, "candidate_pinned_at") {
-            return self.fail_retry(&source.work_unit_id, "retry_candidate_pin_record_failed", error);
+        if let Err(error) = self.mark_retry(&retry_attempt, "candidate_pinned_at") {
+            return self.fail_retry(&retry_attempt, "retry_candidate_pin_record_failed", error);
         }
-        self.launch_retry_implementer(handler, &source.work_unit_id)
+        self.launch_retry_implementer(handler, &retry_attempt)
     }
 
-    fn launch_retry_implementer(self: &Arc<Self>, handler: &Arc<WorkUnitExecutionHarnessService>, work_unit_id: &str) -> Result<(), SprintRunnerTransitionError> {
-        let row: (String,String,String,String,String,String,String,String,String,String,String) = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
-            "SELECT retry_attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,sprint_git_authority_id,candidate_commit_id,candidate_tree_id,handoff_json,private_ref_name FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=1 AND candidate_pinned_at IS NOT NULL", [work_unit_id],
-            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?,row.get(9)?,row.get(10)?))
+    fn launch_retry_implementer(self: &Arc<Self>, handler: &Arc<WorkUnitExecutionHarnessService>, retry_attempt_id: &str) -> Result<(), SprintRunnerTransitionError> {
+        let row: (String,String,String,String,String,String,String,String,String,String,String,String) = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
+            "SELECT work_unit_id,retry_attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,sprint_git_authority_id,candidate_commit_id,candidate_tree_id,handoff_json,private_ref_name FROM work_unit_retry_attempts WHERE retry_attempt_id=?1 AND candidate_pinned_at IS NOT NULL", [retry_attempt_id],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?,row.get(9)?,row.get(10)?,row.get(11)?))
         ).map_err(|_| SprintRunnerTransitionError::Conflict)?;
-        let (attempt,session_id,invocation_id,revision,digest,commit,authority,seed,tree,handoff,private_ref) = row;
+        let (work_unit_id,attempt,session_id,invocation_id,revision,digest,commit,authority,seed,tree,handoff,private_ref) = row;
         let git_authority = match self.authority_repository.load_initiated_sprint_git_authority(&authority) {
             Ok(Some(authority)) => authority,
-            Ok(None) => return self.fail_retry(work_unit_id, "retry_authority_missing", SprintRunnerTransitionError::Conflict),
-            Err(_) => return self.fail_retry(work_unit_id, "retry_authority_load_failed", SprintRunnerTransitionError::Unavailable("load retry Sprint Git authority".into())),
+            Ok(None) => return self.fail_retry(&attempt, "retry_authority_missing", SprintRunnerTransitionError::Conflict),
+            Err(_) => return self.fail_retry(&attempt, "retry_authority_load_failed", SprintRunnerTransitionError::Unavailable("load retry Sprint Git authority".into())),
         };
         let pinned_target = match private_retry_ref_target(Path::new(&git_authority.repository_root), &private_ref) {
             Ok(target) => target,
-            Err(error) => return self.fail_retry(work_unit_id, "retry_private_ref_verification_failed", error),
+            Err(error) => return self.fail_retry(&attempt, "retry_private_ref_verification_failed", error),
         };
-        if pinned_target != seed { return self.fail_retry(work_unit_id, "retry_private_ref_mismatch", SprintRunnerTransitionError::Conflict); }
+        if pinned_target != seed { return self.fail_retry(&attempt, "retry_private_ref_mismatch", SprintRunnerTransitionError::Conflict); }
         let pinned = match handler.load_pinned_implementer_revision(&revision, &digest, &commit) {
             Ok(pinned) => pinned,
-            Err(_) => return self.fail_retry(work_unit_id, "retry_harness_revision_invalid", SprintRunnerTransitionError::Conflict),
+            Err(_) => return self.fail_retry(&attempt, "retry_harness_revision_invalid", SprintRunnerTransitionError::Conflict),
         };
-        if let Err(error) = handler.authorize_implementer_attempt_at_seed(&attempt, work_unit_id, &authority, Some(seed.clone())) {
+        if let Err(error) = handler.authorize_implementer_attempt_at_seed(&attempt, &work_unit_id, &authority, Some(seed.clone())) {
             let _ = error;
-            return self.fail_retry(work_unit_id, "retry_execution_authorization_failed", SprintRunnerTransitionError::Conflict);
+            return self.fail_retry(&attempt, "retry_execution_authorization_failed", SprintRunnerTransitionError::Conflict);
         }
-        self.mark_retry(work_unit_id, "authorized_at")?;
+        self.mark_retry(&attempt, "authorized_at")?;
         let package = match handler.construct_for_pinned_profile(&attempt, WorkUnitHarnessRole::Implementer, pinned.profile) {
             Ok(package) => package,
-            Err(_) => return self.fail_retry(work_unit_id, "retry_execution_support_failed", SprintRunnerTransitionError::Unavailable("retry execution-support grant failed".into())),
+            Err(_) => return self.fail_retry(&attempt, "retry_execution_support_failed", SprintRunnerTransitionError::Unavailable("retry execution-support grant failed".into())),
         };
         if let Err(error) = retry_git_workspace_facts(&git_authority, Path::new(package.working_directory()), &seed, &tree) {
-            return self.fail_retry(work_unit_id, "retry_workspace_validation_failed", error);
+            return self.fail_retry(&attempt, "retry_workspace_validation_failed", error);
         }
-        self.mark_retry(work_unit_id, "execution_support_granted_at")?;
-        self.mark_retry(work_unit_id, "isolated_worktree_ready_at")?;
+        self.mark_retry(&attempt, "execution_support_granted_at")?;
+        self.mark_retry(&attempt, "isolated_worktree_ready_at")?;
         let session = AgentSessionId::new(session_id).map_err(|_| SprintRunnerTransitionError::Conflict)?;
         let invocation = AgentInvocationId::new(invocation_id).map_err(|_| SprintRunnerTransitionError::Conflict)?;
         let runtime = package.runtime_launch_configuration();
-        if let Err(error) = self.sessions.create_application_session(CreateApplicationAgentSessionCommand { session_id: session.clone(), session: CreateAgentSessionCommand { title: Some("Work Unit Retry Implementer".into()), working_directory: Some(package.working_directory().into()), requested_options: runtime.requested_options.clone() }}) { return self.fail_retry(work_unit_id, "retry_session_creation_failed", SprintRunnerTransitionError::Unavailable(error.to_string())); }
-        self.mark_retry(work_unit_id, "implementer_session_created_at")?;
+        if let Err(error) = self.sessions.create_application_session(CreateApplicationAgentSessionCommand { session_id: session.clone(), session: CreateAgentSessionCommand { title: Some("Work Unit Later Attempt Implementer".into()), working_directory: Some(package.working_directory().into()), requested_options: runtime.requested_options.clone() }}) { return self.fail_retry(&attempt, "retry_session_creation_failed", SprintRunnerTransitionError::Unavailable(error.to_string())); }
+        self.mark_retry(&attempt, "implementer_session_created_at")?;
         // Policy B: a runtime launch error terminally fails this exact prepared invocation.  A
         // reopen observes that durable fact; it neither launches it again nor allocates another.
         let existing_history = self.sessions.load_session(&session).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         if let Some(existing) = existing_history.invocations.iter().find(|entry| entry.invocation.id == invocation) {
             if existing.invocation.status == AgentInvocationStatus::Failed {
-                self.record_retry_failure(work_unit_id, "retry_terminal_launch_failed")?;
+                self.record_retry_failure(&attempt, "retry_terminal_launch_failed")?;
                 return Ok(());
             }
             if existing.invocation.status.is_terminal() {
-                return self.fail_retry(work_unit_id, "retry_terminal_invocation_incompatible", SprintRunnerTransitionError::Conflict);
+                return self.fail_retry(&attempt, "retry_terminal_invocation_incompatible", SprintRunnerTransitionError::Conflict);
             }
         }
-        let prompt = format!("Work Unit Implementer correction attempt. Work only in the application-provided isolated retry workspace. The bounded correction handoff is below; it contains no private route, path, ref, or object id. Do not accept, review, retry, settle, activate dependents, or continue Sprint or Epic work.\n\n{handoff}");
-        if let Err(error) = self.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: prompt.clone(), title: None, working_directory: Some(package.working_directory().into()), requested_options: Some(runtime.requested_options.clone()) }}) { return self.fail_retry(work_unit_id, "retry_invocation_preparation_failed", SprintRunnerTransitionError::Unavailable(error.to_string())); }
-        self.mark_retry(work_unit_id, "implementer_invocation_prepared_at")?;
+        let prompt = format!("Work Unit Implementer later correction attempt. Work only in the application-provided isolated workspace. The bounded correction handoff is below; it contains no private route, path, ref, or object id. Do not accept, review, create another attempt, settle, activate dependents, or continue Sprint or Epic work.\n\n{handoff}");
+        if let Err(error) = self.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: prompt.clone(), title: None, working_directory: Some(package.working_directory().into()), requested_options: Some(runtime.requested_options.clone()) }}) { return self.fail_retry(&attempt, "retry_invocation_preparation_failed", SprintRunnerTransitionError::Unavailable(error.to_string())); }
+        self.mark_retry(&attempt, "implementer_invocation_prepared_at")?;
         if let Err(error) = package.bind_correlated_invocation(session.clone(), invocation.clone()) {
             let _ = error;
-            return self.fail_retry(work_unit_id, "retry_harness_binding_failed", SprintRunnerTransitionError::Conflict);
+            return self.fail_retry(&attempt, "retry_harness_binding_failed", SprintRunnerTransitionError::Conflict);
         }
-        self.mark_retry(work_unit_id, "implementer_harness_bound_at")?;
+        self.mark_retry(&attempt, "implementer_harness_bound_at")?;
         // This intent precedes inspecting or requesting launch so a reopen that observes an
         // accepted prepared invocation still has a truthful launch-request stage.
-        self.mark_retry(work_unit_id, "launch_requested_at")?;
+        self.mark_retry(&attempt, "launch_requested_at")?;
         match self.sessions.application_invocation_launch_evidence(&invocation, &session).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string())) {
-            Err(error) => return self.fail_retry(work_unit_id, "retry_launch_inspection_failed", error),
-            Ok(ApplicationInvocationLaunchEvidence::LaunchAccepted) => { self.mark_retry(work_unit_id, "launch_accepted_at")?; }
+            Err(error) => return self.fail_retry(&attempt, "retry_launch_inspection_failed", error),
+            Ok(ApplicationInvocationLaunchEvidence::LaunchAccepted) => { self.mark_retry(&attempt, "launch_accepted_at")?; }
             Ok(ApplicationInvocationLaunchEvidence::PersistedNotAccepted) => {
-                let launch = match self.sessions.launch_prepared_application_invocation_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: prompt, title: None, working_directory: Some(package.working_directory().into()), requested_options: Some(runtime.requested_options) }}, Some(runtime.extension)) { Ok(launch) => launch, Err(error) => return self.fail_retry(work_unit_id, "retry_launch_failed", SprintRunnerTransitionError::Unavailable(error.to_string())), };
-                if launch.launch_accepted { self.mark_retry(work_unit_id, "launch_accepted_at")?; } else {
+                let launch = match self.sessions.launch_prepared_application_invocation_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: prompt, title: None, working_directory: Some(package.working_directory().into()), requested_options: Some(runtime.requested_options) }}, Some(runtime.extension)) { Ok(launch) => launch, Err(error) => return self.fail_retry(&attempt, "retry_launch_failed", SprintRunnerTransitionError::Unavailable(error.to_string())), };
+                if launch.launch_accepted { self.mark_retry(&attempt, "launch_accepted_at")?; } else {
                     let history = self.sessions.load_session(&session).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
                     let terminal = history.invocations.iter().find(|entry| entry.invocation.id == invocation).is_some_and(|entry| entry.invocation.status == AgentInvocationStatus::Failed);
-                    return self.fail_retry(work_unit_id, if terminal { "retry_terminal_launch_failed" } else { "retry_launch_not_accepted" }, SprintRunnerTransitionError::Unavailable("retry Implementer launch was not accepted".into()));
+                    return self.fail_retry(&attempt, if terminal { "retry_terminal_launch_failed" } else { "retry_launch_not_accepted" }, SprintRunnerTransitionError::Unavailable("retry Implementer launch was not accepted".into()));
                 }
             }
-            Ok(ApplicationInvocationLaunchEvidence::NeverPersisted) => return self.fail_retry(work_unit_id, "retry_launch_missing_prepared_invocation", SprintRunnerTransitionError::Conflict),
+            Ok(ApplicationInvocationLaunchEvidence::NeverPersisted) => return self.fail_retry(&attempt, "retry_launch_missing_prepared_invocation", SprintRunnerTransitionError::Conflict),
         }
-        self.clear_retry_failure(work_unit_id)?;
-        if let Ok(observation) = package.observe_correlated_invocation() { if let Some(activity) = observation.provider_activity { self.mark_retry_at(work_unit_id, "provider_activation_observed_at", activity.recorded_at.to_rfc3339())?; } }
-        self.mark_retry(work_unit_id, "retry_ready_at")?;
+        self.clear_retry_failure(&attempt)?;
+        if let Ok(observation) = package.observe_correlated_invocation() { if let Some(activity) = observation.provider_activity { self.mark_retry_at(&attempt, "provider_activation_observed_at", activity.recorded_at.to_rfc3339())?; } }
+        self.mark_retry(&attempt, "retry_ready_at")?;
         Ok(())
     }
 
-    fn mark_retry(&self, work_unit_id: &str, column: &str) -> Result<(), SprintRunnerTransitionError> { self.mark_retry_at(work_unit_id, column, chrono::Utc::now().to_rfc3339()) }
-    fn mark_retry_at(&self, work_unit_id: &str, column: &str, at: String) -> Result<(), SprintRunnerTransitionError> {
+    fn mark_retry(&self, retry_attempt_id: &str, column: &str) -> Result<(), SprintRunnerTransitionError> { self.mark_retry_at(retry_attempt_id, column, chrono::Utc::now().to_rfc3339()) }
+    fn mark_retry_at(&self, retry_attempt_id: &str, column: &str, at: String) -> Result<(), SprintRunnerTransitionError> {
         if !["candidate_pinned_at","authorized_at","execution_support_granted_at","isolated_worktree_ready_at","implementer_session_created_at","implementer_invocation_prepared_at","implementer_harness_bound_at","launch_requested_at","launch_accepted_at","provider_activation_observed_at","retry_ready_at"].contains(&column) { return Err(SprintRunnerTransitionError::Unavailable("invalid retry stage".into())); }
-        self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute(&format!("UPDATE work_unit_retry_attempts SET {column}=COALESCE({column},?2) WHERE work_unit_id=?1 AND ordinal=1"), params![work_unit_id,at]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute(&format!("UPDATE work_unit_retry_attempts SET {column}=COALESCE({column},?2) WHERE retry_attempt_id=?1"), params![retry_attempt_id,at]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         Ok(())
     }
-    fn record_retry_failure(&self, work_unit_id: &str, reason: &str) -> Result<(), SprintRunnerTransitionError> {
-        self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_retry_attempts SET failure_reason=?2 WHERE work_unit_id=?1 AND ordinal=1", params![work_unit_id,reason]).map_err(|database_error| SprintRunnerTransitionError::Unavailable(database_error.to_string()))?;
+    fn record_retry_failure(&self, retry_attempt_id: &str, reason: &str) -> Result<(), SprintRunnerTransitionError> {
+        self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_retry_attempts SET failure_reason=?2 WHERE retry_attempt_id=?1", params![retry_attempt_id,reason]).map_err(|database_error| SprintRunnerTransitionError::Unavailable(database_error.to_string()))?;
         Ok(())
     }
     fn fail_retry_for_invocation<T>(&self, invocation: &AgentInvocationId, reason: &str) -> Result<T, SprintRunnerTransitionError> {
@@ -2611,11 +2618,15 @@ impl SprintRunnerTransitionService {
         if changed != 1 { return Err(SprintRunnerTransitionError::Conflict); }
         Err(SprintRunnerTransitionError::Forbidden)
     }
-    fn fail_retry<T>(&self, work_unit_id: &str, reason: &str, error: SprintRunnerTransitionError) -> Result<T, SprintRunnerTransitionError> {
-        self.record_retry_failure(work_unit_id, reason)?;
+    fn fail_retry<T>(&self, retry_attempt_id: &str, reason: &str, error: SprintRunnerTransitionError) -> Result<T, SprintRunnerTransitionError> {
+        self.record_retry_failure(retry_attempt_id, reason)?;
         Err(error)
     }
-    fn clear_retry_failure(&self, work_unit_id: &str) -> Result<(), SprintRunnerTransitionError> { self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_retry_attempts SET failure_reason=NULL WHERE work_unit_id=?1 AND ordinal=1", [work_unit_id]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?; Ok(()) }
+    fn fail_retry_for_origin<T>(&self, origin_attempt_id: &str, reason: &str, error: SprintRunnerTransitionError) -> Result<T, SprintRunnerTransitionError> {
+        self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_retry_attempts SET failure_reason=?2 WHERE origin_attempt_id=?1", params![origin_attempt_id,reason]).map_err(|database_error| SprintRunnerTransitionError::Unavailable(database_error.to_string()))?;
+        Err(error)
+    }
+    fn clear_retry_failure(&self, retry_attempt_id: &str) -> Result<(), SprintRunnerTransitionError> { self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_retry_attempts SET failure_reason=NULL WHERE retry_attempt_id=?1", [retry_attempt_id]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?; Ok(()) }
 
     fn reconcile_work_unit_handler(
         self: &Arc<Self>,

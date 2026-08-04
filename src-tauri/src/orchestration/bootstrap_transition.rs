@@ -6010,24 +6010,6 @@ mod tests {
     }
 
     #[test]
-    fn meaningful_progress_disposition_authorizes_without_launching_later_work() {
-        let meaningful = ReportingFixture::new();
-        let review = meaningful.ready_review();
-        meaningful.transition.record_handler_incomplete_disposition_for_test(&review, crate::orchestration::sprint_runner_transition::HandlerReviewIncompleteDisposition {
-            code: "needs_refinement".into(), explanation: "the attempted approach can be refined".into(),
-            classification: crate::orchestration::sprint_runner_transition::IncompleteAttemptClassification::RefinementNeeded,
-            meaningful_progress: true,
-        }).unwrap();
-        meaningful.base.runtime.finish(&review, AgentInvocationTerminalStatus::Completed);
-        meaningful.transition.reconcile_handler_reviews_for_test().unwrap();
-        let connection = Connection::open(&meaningful.base.database_path).unwrap();
-        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_incomplete_dispositions WHERE meaningful_progress=1 AND next_attempt_authorized_at IS NOT NULL", [], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_retry_attempts", [], |row| row.get(0)).unwrap(), 0);
-        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_no_progress_handbacks", [], |row| row.get(0)).unwrap(), 0);
-
-    }
-
-    #[test]
     fn no_progress_disposition_persists_one_handback_without_receiver_effects() {
         let no_progress = ReportingFixture::new();
         let review = no_progress.ready_review();
@@ -6469,13 +6451,13 @@ mod tests {
     fn returned_retry_two_independent_services_converge_on_one_ordinal_one_launch() {
         let fixture = ReportingFixture::new();
         let review = fixture.ready_review();
-        fixture.transition.record_handler_review_judgment_for_test(
+        fixture.transition.record_handler_incomplete_disposition_for_test(
             &review,
-            "return",
-            Some(crate::orchestration::sprint_runner_transition::HandlerReviewReturnReason {
-                code: "review_failed".into(),
-                explanation: "evidence requires correction".into(),
-            }),
+            crate::orchestration::sprint_runner_transition::HandlerReviewIncompleteDisposition {
+                code: "review_failed".into(), explanation: "evidence requires correction".into(),
+                classification: crate::orchestration::sprint_runner_transition::IncompleteAttemptClassification::RefinementNeeded,
+                meaningful_progress: true,
+            },
         ).unwrap();
         Connection::open(&fixture.base.database_path).unwrap().execute(
             "UPDATE agent_session_invocations SET status='completed',completed_at=?2 WHERE id=?1",
