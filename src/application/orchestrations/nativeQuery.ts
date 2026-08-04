@@ -2711,6 +2711,12 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
         retry.providerActivationObservedAt,
         'retry provider observation',
       );
+      if (retry.launchAcceptedAt)
+        timestampAtOrAfter(
+          retry.launchAcceptedAt,
+          retry.providerActivationObservedAt,
+          'retry provider observation',
+        );
     }
     if (retry.retryReadyAt && !retry.launchAcceptedAt)
       fail('retry readiness lacks launch acceptance');

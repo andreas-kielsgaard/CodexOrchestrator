@@ -726,6 +726,7 @@ describe('orchestration native query v1', () => {
       },
       { ...retryAttemptFixture('ready'), failureReason: 'retry_failed' },
       { ...retryAttemptFixture('partial'), providerActivationObservedAt: '2026-08-04T00:00:28Z', launchRequestedAt: undefined },
+      { ...retryAttemptFixture('ready'), providerActivationObservedAt: '2026-08-04T00:00:29Z' },
     ];
     for (const retryAttempt of malformed) {
       const malformedValue = implementerOutcomeNativeFixture();

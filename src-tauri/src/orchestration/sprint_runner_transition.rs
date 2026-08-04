@@ -1995,10 +1995,14 @@ impl SprintRunnerTransitionService {
             ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
             if changed == 0 {
                 let exact: bool = transaction.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=1 AND origin_attempt_id=?2 AND review_invocation_id=?3 AND decision_fingerprint=?4 AND sprint_git_authority_id=?5 AND retry_attempt_id=?6 AND capture_fingerprint=?7 AND handoff_fingerprint=?8 AND candidate_commit_id=?9 AND candidate_tree_id=?10 AND private_ref_name=?11)",
-                    params![source.work_unit_id,source.origin_attempt_id,source.review_invocation_id,source.decision_fingerprint,source.authority_id,retry_attempt,capture_fingerprint,handoff_fingerprint,candidate_commit,candidate_tree,private_ref], |row| row.get(0)
+                    "SELECT EXISTS(SELECT 1 FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=1 AND origin_attempt_id=?2 AND review_invocation_id=?3 AND decision_fingerprint=?4 AND sprint_git_authority_id=?5 AND sprint_baseline_object_id=?6 AND sprint_current_object_id=?7 AND retry_attempt_id=?8 AND implementer_session_id=?9 AND implementer_invocation_id=?10 AND implementer_harness_revision_id=?11 AND implementer_harness_configuration_digest=?12 AND implementer_harness_repository_commit_ref=?13 AND capture_intent_id=?14 AND capture_fingerprint=?15 AND handoff_json=?16 AND handoff_fingerprint=?17 AND candidate_commit_id=?18 AND candidate_tree_id=?19 AND private_ref_name=?20)",
+                    params![source.work_unit_id,source.origin_attempt_id,source.review_invocation_id,source.decision_fingerprint,source.authority_id,authority.baseline_object_id,authority.current_object_id,retry_attempt,session_id,invocation_id,desired.revision_id,desired.configuration_digest,desired.repository_commit_ref,capture_intent,capture_fingerprint,handoff,handoff_fingerprint,candidate_commit,candidate_tree,private_ref], |row| row.get(0)
                 ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
-                if !exact { return Err(SprintRunnerTransitionError::Conflict); }
+                if !exact {
+                    transaction.execute("UPDATE work_unit_retry_attempts SET failure_reason='retry_immutable_lineage_mismatch' WHERE work_unit_id=?1", [&source.work_unit_id]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+                    transaction.commit().map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+                    return Err(SprintRunnerTransitionError::Conflict);
+                }
             }
             transaction.commit().map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         }

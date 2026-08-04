@@ -6340,6 +6340,19 @@ mod tests {
             |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)),
         ).unwrap();
         assert_eq!((retry_after_reopen.0.clone(), retry_after_reopen.1.clone(), retry_after_reopen.2.clone()), retry_before_reopen);
+        Connection::open(&returned.base.database_path).unwrap().execute(
+            "UPDATE work_unit_retry_attempts SET sprint_baseline_object_id='tampered-baseline' WHERE work_unit_id=?1",
+            [&returned.work_unit_id],
+        ).unwrap();
+        assert!(matches!(reopened_retry.reconcile_handler_reviews_for_test(), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
+        assert_eq!(Connection::open(&returned.base.database_path).unwrap().query_row::<String,_,_>(
+            "SELECT failure_reason FROM work_unit_retry_attempts WHERE work_unit_id=?1", [&returned.work_unit_id], |row| row.get(0),
+        ).unwrap(), "retry_immutable_lineage_mismatch");
+        Connection::open(&returned.base.database_path).unwrap().execute(
+            "UPDATE work_unit_retry_attempts SET sprint_baseline_object_id=(SELECT baseline_object_id FROM initiated_sprint_git_authorities WHERE authority_id=?2),failure_reason=NULL WHERE work_unit_id=?1",
+            params![returned.work_unit_id, returned.authority_id],
+        ).unwrap();
+        reopened_retry.reconcile_handler_reviews_for_test().unwrap();
         let authority_root: String = Connection::open(&returned.base.database_path).unwrap().query_row(
             "SELECT repository_root FROM initiated_sprint_git_authorities WHERE authority_id=?1", [&returned.authority_id], |row| row.get(0),
         ).unwrap();
