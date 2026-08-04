@@ -470,3 +470,59 @@ activation, planning settlement, Sprint or Epic continuation, Pause/Restart, aut
 or process reattachment was created. No live provider, Codex, or MCP process turn, paid smoke, real
 OS/process reattachment, packaged Tauri release/build, or production migration was exercised.
 Live-provider compliance, production behavior, and user acceptance remain unproven.
+
+## HR-04: Independent Handler review, acceptance, and return
+
+The accepted baseline `d255461114ea359872ad71774143b5f12dcadf04` converged through the
+independently audited candidate `9223e25f81b3e9a300fd23ffd6e71b073cda0683` via
+`3efdaae`, `f7d4676`, `7548705`, `1deb186`, `96a725c`, `2341f19`, and `9223e25`. This is
+an independently audited local candidate for the bounded Handler-review movement. It is not
+merge, push, integration, release, production/provider observation, planning settlement, retry
+activation, dependent activation, or user acceptance.
+
+- One durably application-accepted, Handler-review-ready `review_pending` Implementer outcome
+  automatically persists one application-owned delivery/review record and one stable fresh review
+  invocation in the original Handler Session. That invocation uses a distinct immutable Handler
+  revision, `ReadOnly` sandbox, `Never` approval, the exact attempt worktree, and only
+  `read_handler_review_evidence`, `accept_implementation_outcome`, and
+  `return_implementation_outcome`.
+- Exact structured claims, the application-owned changed-file manifest, evidence references and
+  content fingerprints, and the comparison fingerprint are delivered and revalidated. Callers
+  supply neither routing identities nor unrestricted raw paths. Delivery request, delivery
+  persistence, Harness binding, launch request, launch acceptance, review readiness, semantic
+  judgment, lifecycle observation, conflict, final decision, implementation accepted/returned,
+  `retry_required`, and settlement readiness remain separate facts.
+- Only the exact live review invocation may submit one identity-free accept or bounded structured
+  return judgment. Judgment remains pending until that exact invocation is durably observed
+  `Completed`; `Failed`, `Canceled`, `Interrupted`, provider-terminal-without-judgment,
+  transcript, silence, or files never imply a decision. Accept and return are distinct. Return
+  retains code, explanation, and `retry_required_at`, creates no attempt ordinal 1, and leaves
+  `settlement_ready_at` absent.
+- Reopen/partial effects reuse the exact review identity and revision and do not double-launch;
+  exact replay is idempotent. True concurrent exact accepts replay, while simultaneous
+  accept-vs-return produces one authoritative judgment, one domain conflict, and one final
+  decision without a database-lock/unavailable loser. The production native query, strict
+  TypeScript decoder/read models, existing Work Unit activity UI, and Handler product skill
+  project these facts without manual review buttons or later-workflow implication.
+- No retry creation, Implementer relaunch, planning-point settlement, dependent activation,
+  Work Slice settlement, Sprint/Epic continuation, Pause/Restart change, process reattachment,
+  authority expansion, or upward continuation/callback exists.
+
+Validation evidence for this checkpoint:
+
+- HR-01E full Handler-review production transition test: **1 passed, 327 filtered, about 182s**.
+  Typed JSON regression: **1 passed**. Relevant Implementer reporting/Harness suite: **6 passed**.
+  Rust repository/native projection suite: **29 passed**.
+- Independent concurrent replay/divergent-race/no-downstream-effects test: **1 passed, 329
+  filtered, 58.80s**. `cargo check` passed at implementation, projection, and audit checkpoints
+  with only pre-existing dead-code warnings. `git diff --check` passed and the candidate worktree
+  is clean.
+- HR-03 attempted to rerun the pre-existing broad Handler-review test, but managed local-server
+  drain exceeded two minutes and the agent-owned process was terminated; that rerun is neither
+  passed nor failed. The earlier HR-01E completed pass is the evidence. Frontend Vitest/`tsc`
+  execution is unproven because this authorized clean checkout has no installed binaries and
+  dependencies were not installed; static independent TypeScript/TSX export/type/fixture/render
+  review found no defect.
+
+No retry, downstream activation, settlement, continuation, provider observation, process
+reattachment, authority expansion, or user acceptance is proven by this record.
