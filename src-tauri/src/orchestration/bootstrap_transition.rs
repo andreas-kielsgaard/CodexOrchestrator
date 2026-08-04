@@ -6076,6 +6076,11 @@ mod tests {
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_handback_dispositions WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap(),before);
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_handback_escalations WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap(),1);
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE epic_continuation_invocation_id IS NOT NULL OR epic_start_semantic_authorization_recorded_at IS NOT NULL OR sprint_start_persisted_at IS NOT NULL OR sprint_continuation_invocation_id IS NOT NULL OR planning_control_invocation_id IS NOT NULL",[],|row|row.get(0)).unwrap(),0);
+        let settlement_before: (Option<String>,Option<String>) = connection.query_row("SELECT d.settlement_ready_at,m.settled_at FROM work_unit_handler_decisions d JOIN work_units u ON u.work_unit_id=d.work_unit_id LEFT JOIN work_unit_materializations m ON m.materialization_id=u.materialization_id WHERE d.work_unit_id=?1",[&fixture.work_unit_id],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();
+        assert_eq!(settlement_before,(None,None));
+        // No Sprint/Epic final-blockage table exists in the authoritative schema or native DTO;
+        // this route deliberately records no substitute final-state effect.
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sprint_final_blockages','epic_final_blockages','epic_runner_handback_receivers','sprint_epic_settlements')",[],|row|row.get(0)).unwrap(),0);
     }
 
     #[test]
