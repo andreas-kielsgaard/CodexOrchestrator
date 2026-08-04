@@ -407,3 +407,66 @@ is created by this boundary. The deterministic `RecordingRuntime`, local SQLite,
 worktree, and local MCP server prove application behavior and correlations only. They do not prove
 live external-provider launch behavior, provider-private activation or compliance, provider result
 quality, receiver evaluation, or user acceptance.
+
+## IO-04: Implementer outcome submission and Handler-review readiness
+
+The accepted baseline `76b5b2f416f36c8a93de10e4edbdc9f737318855` converged through the
+independently corrected candidate `0d686299e6ed793d224ffdc8fbd44f6a904f3376`. This section is
+only the final candidate record returned for Plan Slice evaluation; it does not imply merge, push,
+publication, release, Handler review, overall-plan acceptance, or user acceptance.
+
+- The original immutable Implementer activation remains actionless. Only a later immutable
+  reporting continuation in the same Session may expose the identity-free
+  `submit_implementation_outcome { outcome: review_pending, summary, validationStatement }` and
+  zero-input `complete_implementation_outcome`. The application requires whitelist discovery and
+  `Available` policy for both tools. Independent audit correction `0d686299` closes the prior gap
+  where matching tool names alone were sufficient.
+- Every correlation is application-derived and revalidated: the exact Work Unit and stable
+  attempt, its isolated writable worktree and execution-support grant, the Implementer Session,
+  original `Completed` Implementer invocation, stable reporting invocation, and pinned reporting
+  revision ID, configuration digest, and repository commit reference. Agent-supplied identities do
+  not create or replace any of these records.
+- Reporting request, preparation, Harness binding, launch request, launch acceptance, reporting
+  readiness, outcome submission and validation, evidence readiness, semantic completion, terminal
+  lifecycle observation and status, application acceptance, and Handler-review readiness are
+  separate durable facts. The Implementer summary and validation statement remain claims, not
+  evidence.
+- The application owns File Review capture and later revalidation of the changed-file manifest,
+  comparison and its fingerprint, and each evidence reference and content fingerprint. Acceptance
+  requires the exact valid `review_pending` semantic payload and fingerprint plus exact revalidated
+  evidence state, semantic completion by the stable reporting invocation, and that exact
+  invocation's observed `Completed` reporting lifecycle. Reporting lifecycles observed as `Failed`,
+  `Canceled`, or `Interrupted` cannot produce application acceptance or Handler-review readiness.
+- Local/fake-only regressions prove exact duplicate and concurrent retry, divergent payload
+  rejection, evidence and payload drift rejection, missed-notification reopen reconciliation, and
+  reserved-row startup safety without replacement Work Unit, attempt, Session, original invocation,
+  or reporting invocation identities.
+- The Rust native query, strict TypeScript decoder and read models, approved Work Unit detail
+  activity UI, and product Implementer skill agree on this boundary. The UI renders **Ready for
+  Handler review** only from `handler_review_ready_at`; it explicitly records no Handler judgment
+  and does not treat readiness as implementation approval or Work Unit acceptance.
+
+Accepted validation evidence:
+
+- `cargo test -p codex-orchestrator implementer_reporting -- --nocapture`: **6 passed, 0 failed
+  (319 filtered)**.
+- `cargo test -p codex-orchestrator implementer_outcome_projection -- --nocapture`: **2 passed, 0
+  failed (323 filtered)**.
+- `npm test -- nativeQuery.test.ts sprintWorkspacePresentation.test.ts
+  WorkUnitDetailWorkspace.implementerOutcome.test.tsx`: **3 files, 24 passed**.
+- `npm run build`: `tsc --noEmit` plus Vite passed; **2056 modules transformed**.
+- `cargo check -p codex-orchestrator`: passed with **7 pre-existing dead-code warnings**.
+- `cargo test -p codex-orchestrator --lib -- --nocapture`: **316 passed, 1 baseline-existing and
+  noncausal failure, 8 ignored**.
+  The sole failure,
+  `orchestration::bootstrap_transition::tests::launch_accepted_epic_runner_authorizes_one_ready_sprint_runner_without_downstream_effects`,
+  is the `planning_ready_at.is_some()` assertion at candidate line 2551 and baseline line 2549. It
+  reproduces in isolation and predates the accepted baseline, so this aggregate is not recorded as
+  an accepted green gate.
+- `git diff --check`: passed.
+
+No Handler review or judgment, Work Unit accept or return, retry attempt, settlement, dependent
+activation, planning settlement, Sprint or Epic continuation, Pause/Restart, authority broadening,
+or process reattachment was created. No live provider, Codex, or MCP process turn, paid smoke, real
+OS/process reattachment, packaged Tauri release/build, or production migration was exercised.
+Live-provider compliance, production behavior, and user acceptance remain unproven.
