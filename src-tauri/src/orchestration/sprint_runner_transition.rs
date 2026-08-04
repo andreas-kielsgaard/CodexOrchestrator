@@ -579,6 +579,24 @@ pub(crate) struct HandlerReviewReturnReason { pub(crate) code: String, pub(crate
 #[derive(Clone)]
 struct HandlerReviewContext { work_unit_id:String, attempt_id:String, session_id:String, review_invocation_id:String, revision_id:String, configuration_digest:String, repository_commit_ref:String, delivered_payload_json:String, delivered_payload_fingerprint:String }
 
+fn handler_review_payload(
+    summary: &str,
+    validation_statement: &str,
+    manifest_json: &str,
+    comparison_fingerprint: &str,
+    content_fingerprints_json: &str,
+) -> Result<serde_json::Value, SprintRunnerTransitionError> {
+    Ok(serde_json::json!({
+        "summary": summary,
+        "validationStatement": validation_statement,
+        "changedFiles": serde_json::from_str::<serde_json::Value>(manifest_json)
+            .map_err(|_| SprintRunnerTransitionError::Conflict)?,
+        "comparisonFingerprint": comparison_fingerprint,
+        "evidenceContentFingerprints": serde_json::from_str::<serde_json::Value>(content_fingerprints_json)
+            .map_err(|_| SprintRunnerTransitionError::Conflict)?,
+    }))
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SprintRunnerTransitionQueryV1 {
@@ -1755,7 +1773,22 @@ impl SprintRunnerTransitionService {
     fn mark_handler_review(&self,work_unit:&str,column:&str)->Result<(),SprintRunnerTransitionError>{if !["delivery_persisted_at","harness_bound_at","launch_requested_at","launch_accepted_at","review_ready_at"].contains(&column){return Err(SprintRunnerTransitionError::Unavailable("invalid review stage".into()))}self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute(&format!("UPDATE work_unit_handler_reviews SET {column}=COALESCE({column},?2) WHERE work_unit_id=?1"),params![work_unit,chrono::Utc::now().to_rfc3339()]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;Ok(())}
 
     fn prelaunch_handler_review_context(&self,invocation:&AgentInvocationId)->Result<HandlerReviewContext,SprintRunnerTransitionError>{let context:Option<HandlerReviewContext>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT r.work_unit_id,r.attempt_id,r.handler_session_id,r.review_invocation_id,r.review_harness_revision_id,r.review_harness_configuration_digest,r.review_harness_repository_commit_ref,r.delivered_payload_json,r.delivered_payload_fingerprint FROM work_unit_handler_reviews r JOIN work_unit_implementer_outcomes o ON o.work_unit_id=r.work_unit_id AND o.attempt_id=r.attempt_id AND o.reporting_invocation_id=r.reporting_invocation_id JOIN work_unit_handler_activations h ON h.work_unit_id=r.work_unit_id AND h.attempt_id=r.attempt_id AND h.handler_session_id=r.handler_session_id AND h.handler_invocation_id=r.original_handler_invocation_id JOIN work_unit_handler_action_continuations a ON a.work_unit_id=r.work_unit_id AND a.attempt_id=r.attempt_id AND a.handler_session_id=r.handler_session_id AND a.original_handler_invocation_id=r.original_handler_invocation_id AND a.action_invocation_id=r.action_handler_invocation_id WHERE r.review_invocation_id=?1 AND o.application_accepted_at IS NOT NULL AND o.handler_review_ready_at IS NOT NULL",[invocation.as_str()],|r|Ok(HandlerReviewContext{work_unit_id:r.get(0)?,attempt_id:r.get(1)?,session_id:r.get(2)?,review_invocation_id:r.get(3)?,revision_id:r.get(4)?,configuration_digest:r.get(5)?,repository_commit_ref:r.get(6)?,delivered_payload_json:r.get(7)?,delivered_payload_fingerprint:r.get(8)?})).optional().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let context=context.ok_or(SprintRunnerTransitionError::Forbidden)?;if context.review_invocation_id!=invocation.as_str()||context.review_invocation_id!=stable_id("work-unit-handler-review-invocation",&context.attempt_id)||context.delivered_payload_fingerprint!=stable_id("work-unit-handler-review-delivery",&context.delivered_payload_json){return Err(SprintRunnerTransitionError::Conflict)}let handler=self.work_unit_handler.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("Work Unit Handler registry is poisoned".into()))?.clone().ok_or(SprintRunnerTransitionError::Forbidden)?;let pinned=handler.load_pinned_handler_revision(&context.revision_id,&context.configuration_digest,&context.repository_commit_ref).map_err(|_|SprintRunnerTransitionError::Conflict)?;if pinned.profile.mcp.enabled_tools!=["read_handler_review_evidence","accept_implementation_outcome","return_implementation_outcome"]{return Err(SprintRunnerTransitionError::Conflict)}handler.construct_for_pinned_profile(&context.attempt_id,WorkUnitHarnessRole::Handler,pinned.profile).map_err(|_|SprintRunnerTransitionError::Forbidden)?;Ok(context)}
-    fn handler_review_context(&self,invocation:&AgentInvocationId,live:bool)->Result<HandlerReviewContext,SprintRunnerTransitionError>{let context=self.prelaunch_handler_review_context(invocation)?;let ready:bool=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_handler_reviews WHERE review_invocation_id=?1 AND delivery_persisted_at IS NOT NULL AND harness_bound_at IS NOT NULL AND launch_accepted_at IS NOT NULL AND review_ready_at IS NOT NULL)",[invocation.as_str()],|r|r.get(0)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if !ready{return Err(SprintRunnerTransitionError::Forbidden)}let reporting=AgentInvocationId::new(stable_id("work-unit-implementer-reporting-invocation",&context.attempt_id)).map_err(|_|SprintRunnerTransitionError::Conflict)?;if !self.valid_accepted_outcome(&context.work_unit_id,&reporting)?{return Err(SprintRunnerTransitionError::Conflict)}let(_,snapshot)=self.evidence_snapshot(&reporting,false)?;let expected=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT json_object('summary',submitted_summary,'validationStatement',submitted_validation_statement,'changedFiles',json(evidence_manifest_json),'comparisonFingerprint',comparison_fingerprint,'evidenceContentFingerprints',json(evidence_content_fingerprints_json)) FROM work_unit_implementer_outcomes WHERE work_unit_id=?1 AND reporting_invocation_id=?2",params![context.work_unit_id,reporting.as_str()],|r|r.get::<_,String>(0)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if expected!=context.delivered_payload_json||!context.delivered_payload_json.contains(&snapshot.comparison_fingerprint)||!context.delivered_payload_json.contains(&snapshot.content_fingerprints_json){return Err(SprintRunnerTransitionError::Conflict)}let history=self.sessions.load_session(&AgentSessionId::new(context.session_id.clone()).map_err(|_|SprintRunnerTransitionError::Conflict)?).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let entry=history.invocations.iter().find(|entry|entry.invocation.id==*invocation).ok_or(SprintRunnerTransitionError::Forbidden)?;if live&&entry.invocation.status.is_terminal(){return Err(SprintRunnerTransitionError::Forbidden)}Ok(context)}
+    fn handler_review_context(&self,invocation:&AgentInvocationId,live:bool)->Result<HandlerReviewContext,SprintRunnerTransitionError>{
+        let context=self.prelaunch_handler_review_context(invocation)?;
+        let ready:bool=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_handler_reviews WHERE review_invocation_id=?1 AND delivery_persisted_at IS NOT NULL AND harness_bound_at IS NOT NULL AND launch_accepted_at IS NOT NULL AND review_ready_at IS NOT NULL)",[invocation.as_str()],|r|r.get(0)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        if !ready{return Err(SprintRunnerTransitionError::Forbidden)}
+        let reporting=AgentInvocationId::new(stable_id("work-unit-implementer-reporting-invocation",&context.attempt_id)).map_err(|_|SprintRunnerTransitionError::Conflict)?;
+        if !self.valid_accepted_outcome(&context.work_unit_id,&reporting)?{return Err(SprintRunnerTransitionError::Conflict)}
+        let(_,snapshot)=self.evidence_snapshot(&reporting,false)?;
+        let (summary,validation):(String,String)=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT submitted_summary,submitted_validation_statement FROM work_unit_implementer_outcomes WHERE work_unit_id=?1 AND reporting_invocation_id=?2",params![context.work_unit_id,reporting.as_str()],|r|Ok((r.get(0)?,r.get(1)?))).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let expected=handler_review_payload(&summary,&validation,&snapshot.manifest_json,&snapshot.comparison_fingerprint,&snapshot.content_fingerprints_json)?;
+        let delivered:serde_json::Value=serde_json::from_str(&context.delivered_payload_json).map_err(|_|SprintRunnerTransitionError::Conflict)?;
+        if delivered!=expected{return Err(SprintRunnerTransitionError::Conflict)}
+        let history=self.sessions.load_session(&AgentSessionId::new(context.session_id.clone()).map_err(|_|SprintRunnerTransitionError::Conflict)?).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let entry=history.invocations.iter().find(|entry|entry.invocation.id==*invocation).ok_or(SprintRunnerTransitionError::Forbidden)?;
+        if live&&entry.invocation.status.is_terminal(){return Err(SprintRunnerTransitionError::Forbidden)}
+        Ok(context)
+    }
 
     fn record_handler_review_judgment(&self,invocation:&AgentInvocationId,variant:&str,reason:Option<HandlerReviewReturnReason>)->Result<(),SprintRunnerTransitionError>{let context=self.handler_review_context(invocation,true)?;let reason=reason.map(|value|serde_json::to_string(&value).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))).transpose()?;let fingerprint=stable_id("work-unit-handler-review-judgment",&format!("{}:{variant}:{}",context.review_invocation_id,reason.as_deref().unwrap_or("")));let mut connection=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;let tx=connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let existing:Option<(Option<String>,Option<String>,Option<String>)>=tx.query_row("SELECT semantic_judgment_variant,semantic_return_reason_json,semantic_judgment_fingerprint FROM work_unit_handler_reviews WHERE work_unit_id=?1 AND review_invocation_id=?2",params![context.work_unit_id,invocation.as_str()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let Some((old_variant,old_reason,old_fingerprint))=existing else{return Err(SprintRunnerTransitionError::Forbidden)};if let Some(old_variant)=old_variant{if old_variant==variant&&old_reason==reason&&old_fingerprint.as_deref()==Some(&fingerprint){tx.commit().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;return Ok(())}tx.execute("UPDATE work_unit_handler_reviews SET conflict_at=COALESCE(conflict_at,?2),conflict_reason=COALESCE(conflict_reason,'divergent_review_judgment') WHERE work_unit_id=?1",params![context.work_unit_id,chrono::Utc::now().to_rfc3339()]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;tx.commit().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;return Err(SprintRunnerTransitionError::Conflict)}tx.execute("UPDATE work_unit_handler_reviews SET semantic_judgment_variant=?2,semantic_return_reason_json=?3,semantic_judgment_fingerprint=?4,semantic_judgment_at=?5 WHERE work_unit_id=?1 AND review_invocation_id=?6 AND semantic_judgment_at IS NULL",params![context.work_unit_id,variant,reason,fingerprint,chrono::Utc::now().to_rfc3339(),invocation.as_str()]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;tx.commit().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;Ok(())}
 
@@ -2780,5 +2813,32 @@ mod implementer_activation_migration_tests {
             "SELECT COUNT(*) FROM pragma_table_info('work_unit_handler_action_continuations')
              WHERE name='failure_reason'", [], |row| row.get(0),
         ).unwrap(), 1);
+    }
+}
+
+#[cfg(test)]
+mod handler_review_payload_tests {
+    use super::handler_review_payload;
+    use rusqlite::Connection;
+
+    #[test]
+    fn review_payload_revalidates_structured_evidence_across_json_key_ordering() {
+        let expected = handler_review_payload(
+            "completed implementation",
+            "focused test passed",
+            r#"[{"displayName":"README.md","evidenceRef":"file:README.md"}]"#,
+            "comparison-fingerprint",
+            r#"{"file:README.md":"content-fingerprint"}"#,
+        ).unwrap();
+        let canonical = expected.to_string();
+        let connection = Connection::open_in_memory().unwrap();
+        let sqlite_payload: String = connection.query_row(
+            "SELECT json_object('summary','completed implementation','validationStatement','focused test passed','changedFiles',json('[{\"displayName\":\"README.md\",\"evidenceRef\":\"file:README.md\"}]'),'comparisonFingerprint','comparison-fingerprint','evidenceContentFingerprints',json('{\"file:README.md\":\"content-fingerprint\"}'))",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+
+        assert_ne!(sqlite_payload, canonical);
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&sqlite_payload).unwrap(), expected);
     }
 }
