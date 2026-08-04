@@ -416,6 +416,11 @@ export type ProductSprintRunnerHandbackDependencyOwnerClassificationV1 =
   | 'work_slice_planner'
   | 'sprint_runner';
 
+export type ProductSprintRunnerHandbackBoundedDetailV1 = Readonly<{
+  readonly label: string;
+  readonly value: string;
+}>;
+
 export type ProductSprintRunnerHandbackMovementV1 = Readonly<
   | {
       readonly movementKind: 'continue_eligible_work';
@@ -444,7 +449,7 @@ export type ProductSprintRunnerHandbackMovementV1 = Readonly<
       readonly enablingResult?: string;
       readonly resumptionPath?: string;
       readonly localExhaustionSummary?: string;
-      readonly boundedDetail?: string;
+      readonly boundedDetails?: readonly ProductSprintRunnerHandbackBoundedDetailV1[];
     }
 >;
 

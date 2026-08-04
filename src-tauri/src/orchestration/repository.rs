@@ -3499,7 +3499,13 @@ struct SprintRunnerHandbackMovementDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     local_exhaustion_summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    bounded_detail: Option<String>,
+    bounded_details: Option<Vec<SprintRunnerHandbackBoundedDetailDto>>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SprintRunnerHandbackBoundedDetailDto {
+    label: String,
+    value: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -4597,10 +4603,10 @@ struct PersistedSprintRunnerHandbackMovement {
 
 fn sprint_runner_handback_movement(details: &str, movement_kind: &str) -> Result<SprintRunnerHandbackMovementDto, rusqlite::Error> {
     let value: PersistedSprintRunnerHandbackMovement = serde_json::from_str(details).map_err(|error| to_sql_error(error.to_string()))?;
-    if value.movement_kind != movement_kind || movement_kind.is_empty() || movement_kind.len() > 96 || !movement_kind.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.')) || value.rationale.trim().is_empty() || value.rationale.len() > 4_000 { return Err(to_sql_error("Handback movement detail is incoherent".into())); }
-    let text_ok = |value: &Option<String>| value.as_deref().is_none_or(|text| !text.trim().is_empty() && text.len() <= 4_000);
-    if [&value.eligible_work_summary, &value.dependency_owner, &value.enabling_result, &value.resumption_path, &value.local_exhaustion_summary].iter().any(|text| !text_ok(text)) { return Err(to_sql_error("Handback movement text is incoherent".into())); }
-    let mut bounded_detail = None;
+    if value.movement_kind != movement_kind || movement_kind.is_empty() || movement_kind.len() > 96 || !movement_kind.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.')) || value.rationale.trim().is_empty() || value.rationale.len() > 20_000 { return Err(to_sql_error("Handback movement detail is incoherent".into())); }
+    let text_ok = |value: &Option<String>| value.as_deref().is_none_or(|text| !text.trim().is_empty() && text.len() <= 20_000);
+    if [&value.eligible_work_summary, &value.dependency_owner, &value.dependency_owner_classification, &value.enabling_result, &value.resumption_path, &value.local_exhaustion_summary].iter().any(|text| !text_ok(text)) { return Err(to_sql_error("Handback movement text is incoherent".into())); }
+    let mut bounded_details = None;
     match movement_kind {
         "continue_eligible_work" if value.eligible_work_summary.is_some() && value.dependency_owner.is_none() && value.dependency_owner_classification.is_none() && value.enabling_result.is_none() && value.resumption_path.is_none() && value.local_exhaustion_summary.is_none() => {}
         "wait_for_agent_dependency" => {
@@ -4610,13 +4616,19 @@ fn sprint_runner_handback_movement(details: &str, movement_kind: &str) -> Result
         }
         "local_exhaustion_escalate" if value.local_exhaustion_summary.is_some() && value.eligible_work_summary.is_none() && value.dependency_owner.is_none() && value.dependency_owner_classification.is_none() && value.enabling_result.is_none() && value.resumption_path.is_none() => {}
         _ => {
-            if value.dependency_owner.is_some() || value.dependency_owner_classification.is_some() { return Err(to_sql_error("bounded Handback movement exposes dependency authority detail".into())); }
-            let generic_details = [value.eligible_work_summary.as_ref(), value.enabling_result.as_ref(), value.resumption_path.as_ref(), value.local_exhaustion_summary.as_ref()];
-            if generic_details.iter().filter(|detail| detail.is_some()).count() > 1 { return Err(to_sql_error("bounded Handback movement has contradictory detail".into())); }
-            bounded_detail = generic_details.into_iter().flatten().cloned().next();
+            if value.dependency_owner_classification.as_deref().is_some_and(|classification| !["work_unit_handler", "work_unit_implementer", "work_slice_planner", "sprint_runner"].contains(&classification)) { return Err(to_sql_error("bounded Handback movement has an invalid detail classification".into())); }
+            let details = [
+                ("eligibleWorkSummary", value.eligible_work_summary.as_ref()),
+                ("dependencyOwner", value.dependency_owner.as_ref()),
+                ("dependencyOwnerClassification", value.dependency_owner_classification.as_ref()),
+                ("enablingResult", value.enabling_result.as_ref()),
+                ("resumptionPath", value.resumption_path.as_ref()),
+                ("localExhaustionSummary", value.local_exhaustion_summary.as_ref()),
+            ].into_iter().filter_map(|(label, value)| value.map(|value| SprintRunnerHandbackBoundedDetailDto { label: label.into(), value: value.clone() })).collect::<Vec<_>>();
+            bounded_details = (!details.is_empty()).then_some(details);
         }
     }
-    Ok(SprintRunnerHandbackMovementDto { movement_kind: value.movement_kind, rationale: value.rationale, eligible_work_summary: if movement_kind == "continue_eligible_work" { value.eligible_work_summary } else { None }, dependency_owner: if movement_kind == "wait_for_agent_dependency" { value.dependency_owner } else { None }, dependency_owner_classification: if movement_kind == "wait_for_agent_dependency" { value.dependency_owner_classification } else { None }, enabling_result: if movement_kind == "wait_for_agent_dependency" { value.enabling_result } else { None }, resumption_path: if movement_kind == "wait_for_agent_dependency" { value.resumption_path } else { None }, local_exhaustion_summary: if movement_kind == "local_exhaustion_escalate" { value.local_exhaustion_summary } else { None }, bounded_detail })
+    Ok(SprintRunnerHandbackMovementDto { movement_kind: value.movement_kind, rationale: value.rationale, eligible_work_summary: if movement_kind == "continue_eligible_work" { value.eligible_work_summary } else { None }, dependency_owner: if movement_kind == "wait_for_agent_dependency" { value.dependency_owner } else { None }, dependency_owner_classification: if movement_kind == "wait_for_agent_dependency" { value.dependency_owner_classification } else { None }, enabling_result: if movement_kind == "wait_for_agent_dependency" { value.enabling_result } else { None }, resumption_path: if movement_kind == "wait_for_agent_dependency" { value.resumption_path } else { None }, local_exhaustion_summary: if movement_kind == "local_exhaustion_escalate" { value.local_exhaustion_summary } else { None }, bounded_details })
 }
 
 fn map_handler_review(row: &Row<'_>) -> Result<WorkUnitHandlerReviewDto, rusqlite::Error> {

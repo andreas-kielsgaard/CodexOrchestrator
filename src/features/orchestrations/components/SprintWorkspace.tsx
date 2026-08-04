@@ -563,9 +563,9 @@ export function SprintRunnerHandbackActivity({
     <section className="sprint-context__runner-transition" aria-label="Sprint Runner Handback reassessment">
       <h2>Sprint Runner Handback</h2>
       <p>
-        The handed-back concern remains unresolved while the recorded next movement proceeds. Local
-        exhaustion is an upward request, not final Sprint or Epic blockage; no Epic response is
-        recorded here.
+        The handed-back concern remains unresolved. Only recorded Handback and Sprint Runner stages
+        are shown. Any local exhaustion record is an upward request, not final Sprint or Epic
+        blockage; no Epic response is recorded here.
       </p>
       <ul>
         {entries.map(({ workUnit, handback }) => (
@@ -596,7 +596,6 @@ function handbackActivityDetail(
   if (delivery.providerActivationObservedAt) stages.push('Provider activity observed separately');
   if (delivery.semanticReassessmentRecordedAt) stages.push('Semantic reassessment recorded');
   if (delivery.selectedMovement) stages.push(handbackMovementDetail(delivery.selectedMovement));
-  else if (delivery.selectedMovementKind) stages.push(`Selected movement recorded: ${delivery.selectedMovementKind}`);
   if (delivery.escalationIntentRecordedAt) stages.push('Escalation intent recorded upward');
   if (delivery.escalationDeliveryRequestedAt) stages.push('Escalation delivery request recorded upward');
   return `${stages.join('; ')}.`;
@@ -619,7 +618,7 @@ function handbackMovementDetail(
     case 'local_exhaustion_escalate':
       return `Local exhaustion recorded: ${movement.localExhaustionSummary}`;
     default:
-      return `Bounded movement recorded: ${movement.rationale}${movement.boundedDetail ? ` (${movement.boundedDetail})` : ''}; no settlement or blockage is implied`;
+      return `Bounded movement recorded: ${movement.rationale}${movement.boundedDetails?.length ? ` (${movement.boundedDetails.map(({ value }) => `Additional bounded detail recorded: ${value}`).join('; ')})` : ''}; no settlement or blockage is implied`;
   }
 }
 

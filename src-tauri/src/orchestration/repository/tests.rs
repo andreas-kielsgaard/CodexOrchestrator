@@ -36,7 +36,7 @@ fn handback_native_dto_exposes_only_factual_stages() {
 fn handback_native_dto_exposes_qualified_dependency_movement_without_private_identity() {
     let dto = WorkUnitNoProgressHandbackDto {
         handback_id: "handback".into(), source_attempt_id: "attempt".into(), source_review_invocation_id: "review".into(), context_fingerprint: "context".into(), persisted_at: "persisted".into(), delivery_intended_at: "intended".into(), sprint_runner_receiver_activated_at: None, sprint_runner_receiver_decision_at: None,
-        sprint_runner_delivery: Some(SprintRunnerHandbackDeliveryDto { delivery_requested_at: "requested".into(), delivery_persisted_at: Some("delivered".into()), harness_bound_at: Some("bound".into()), launch_requested_at: Some("launch-requested".into()), launch_accepted_at: Some("launch-accepted".into()), provider_activation_observed_at: None, semantic_reassessment_recorded_at: Some("reassessed".into()), selected_movement_kind: Some("wait_for_agent_dependency".into()), selected_movement: Some(SprintRunnerHandbackMovementDto { movement_kind: "wait_for_agent_dependency".into(), rationale: "concern remains open".into(), eligible_work_summary: None, dependency_owner: Some("bounded Work Unit Handler".into()), dependency_owner_classification: Some("work_unit_handler".into()), enabling_result: Some("persisted result".into()), resumption_path: Some("reconcile exact Handback".into()), local_exhaustion_summary: None, bounded_detail: None }), escalation_intent_recorded_at: None, escalation_delivery_requested_at: None }),
+        sprint_runner_delivery: Some(SprintRunnerHandbackDeliveryDto { delivery_requested_at: "requested".into(), delivery_persisted_at: Some("delivered".into()), harness_bound_at: Some("bound".into()), launch_requested_at: Some("launch-requested".into()), launch_accepted_at: Some("launch-accepted".into()), provider_activation_observed_at: None, semantic_reassessment_recorded_at: Some("reassessed".into()), selected_movement_kind: Some("wait_for_agent_dependency".into()), selected_movement: Some(SprintRunnerHandbackMovementDto { movement_kind: "wait_for_agent_dependency".into(), rationale: "concern remains open".into(), eligible_work_summary: None, dependency_owner: Some("bounded Work Unit Handler".into()), dependency_owner_classification: Some("work_unit_handler".into()), enabling_result: Some("persisted result".into()), resumption_path: Some("reconcile exact Handback".into()), local_exhaustion_summary: None, bounded_details: None }), escalation_intent_recorded_at: None, escalation_delivery_requested_at: None }),
     };
     let value = serde_json::to_string(&dto).unwrap();
     for public in ["selectedMovement", "dependencyOwner", "dependencyOwnerClassification", "enablingResult", "resumptionPath"] { assert!(value.contains(public)); }
@@ -46,15 +46,14 @@ fn handback_native_dto_exposes_qualified_dependency_movement_without_private_ide
 #[test]
 fn handback_projection_accepts_safe_bounded_movement_without_authority_detail() {
     let dto = sprint_runner_handback_movement(
-        r#"{"movementKind":"future_bounded_move","rationale":"The concern remains open.","eligibleWorkSummary":"A bounded non-authoritative detail."}"#,
+        r#"{"movementKind":"future_bounded_move","rationale":"The concern remains open.","eligibleWorkSummary":"A bounded alternate detail.","dependencyOwner":"bounded owner-shaped detail","dependencyOwnerClassification":"work_unit_handler","enablingResult":"A bounded enabling detail.","resumptionPath":"A bounded resumption detail.","localExhaustionSummary":"A bounded exhaustion-shaped detail."}"#,
         "future_bounded_move",
     ).unwrap();
     assert_eq!(dto.movement_kind, "future_bounded_move");
-    assert_eq!(dto.bounded_detail.as_deref(), Some("A bounded non-authoritative detail."));
-    assert!(sprint_runner_handback_movement(
-        r#"{"movementKind":"future_bounded_move","rationale":"The concern remains open.","dependencyOwner":"human approval"}"#,
-        "future_bounded_move",
-    ).is_err());
+    let details = dto.bounded_details.unwrap();
+    assert_eq!(details.len(), 6);
+    assert_eq!(details[1].label, "dependencyOwner");
+    assert_eq!(details[1].value, "bounded owner-shaped detail");
 }
 
 #[test]

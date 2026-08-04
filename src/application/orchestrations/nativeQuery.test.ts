@@ -939,7 +939,14 @@ describe('orchestration native query v1', () => {
       selectedMovement: {
         movementKind: 'future_bounded_move',
         rationale: 'The concern remains open.',
-        boundedDetail: 'One bounded non-authoritative detail.',
+        boundedDetails: [
+          { label: 'eligibleWorkSummary', value: 'Alternate-shaped detail.' },
+          { label: 'dependencyOwner', value: 'Owner-shaped detail.' },
+          { label: 'dependencyOwnerClassification', value: 'work_unit_handler' },
+          { label: 'enablingResult', value: 'Enabling-shaped detail.' },
+          { label: 'resumptionPath', value: 'Resumption-shaped detail.' },
+          { label: 'localExhaustionSummary', value: 'Exhaustion-shaped detail.' },
+        ],
       },
     };
     expect(
@@ -950,7 +957,14 @@ describe('orchestration native query v1', () => {
       selectedMovement: {
         movementKind: 'future_bounded_move',
         rationale: 'The concern remains open.',
-        boundedDetail: 'One bounded non-authoritative detail.',
+        boundedDetails: [
+          { label: 'eligibleWorkSummary', value: 'Alternate-shaped detail.' },
+          { label: 'dependencyOwner', value: 'Owner-shaped detail.' },
+          { label: 'dependencyOwnerClassification', value: 'work_unit_handler' },
+          { label: 'enablingResult', value: 'Enabling-shaped detail.' },
+          { label: 'resumptionPath', value: 'Resumption-shaped detail.' },
+          { label: 'localExhaustionSummary', value: 'Exhaustion-shaped detail.' },
+        ],
       },
     });
 
@@ -974,6 +988,14 @@ describe('orchestration native query v1', () => {
       (value: Record<string, unknown>) => {
         const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
         (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovementKind: 'future_bounded_move', selectedMovement: { movementKind: 'future_bounded_move', rationale: 'x', dependencyOwner: 'bounded Work Unit Handler' } };
+      },
+      (value: Record<string, unknown>) => {
+        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovementKind: 'future_bounded_move' };
+      },
+      (value: Record<string, unknown>) => {
+        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovement: { movementKind: 'future_bounded_move', rationale: 'x' } };
       },
       (value: Record<string, unknown>) => {
         const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;

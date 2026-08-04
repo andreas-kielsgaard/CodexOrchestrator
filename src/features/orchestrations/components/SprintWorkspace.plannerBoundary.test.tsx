@@ -403,6 +403,53 @@ describe('Work Slice Planner boundary disclosure', () => {
 });
 
 describe('Sprint Runner Handback disclosure', () => {
+  it('keeps a Handback and delivery partial state factual without inventing movement or progress', () => {
+    render(
+      <SprintRunnerHandbackActivity
+        workUnits={[
+          {
+            workUnitId: 'unit-partial-handback',
+            title: 'Partial Handback concern',
+            attemptHistory: [
+              {
+                ordinal: 0,
+                attemptId: 'attempt-partial-handback',
+                incompleteDisposition: {
+                  attemptId: 'attempt-partial-handback',
+                  reviewInvocationId: 'review-partial-handback',
+                  decisionFingerprint: 'decision-partial-handback',
+                  classification: 'blocked',
+                  meaningfulProgress: false,
+                  recordedAt: '2026-08-04T00:00:00Z',
+                  noProgressHandback: {
+                    handbackId: 'handback-partial-handback',
+                    sourceAttemptId: 'attempt-partial-handback',
+                    sourceReviewInvocationId: 'review-partial-handback',
+                    contextFingerprint: 'context-partial-handback',
+                    persistedAt: '2026-08-04T00:00:01Z',
+                    deliveryIntendedAt: '2026-08-04T00:00:02Z',
+                    sprintRunnerDelivery: {
+                      deliveryRequestedAt: '2026-08-04T00:00:03Z',
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ] as never}
+      />,
+    );
+    const region = screen.getByRole('region', { name: 'Sprint Runner Handback reassessment' });
+    expect(region).toHaveTextContent('The handed-back concern remains unresolved.');
+    expect(region).toHaveTextContent('Only recorded Handback and Sprint Runner stages are shown.');
+    expect(region).toHaveTextContent('Delivery requested at');
+    expect(region).not.toHaveTextContent('recorded next movement proceeds');
+    expect(region).not.toHaveTextContent('Selected movement recorded');
+    expect(region).not.toHaveTextContent('meaningful progress');
+    expect(region).not.toHaveTextContent('Local exhaustion recorded');
+    expect(region).toHaveTextContent('no Epic response is recorded here');
+  });
+
   it('shows factual stages and qualified movement without final blockage or Epic response', () => {
     render(
       <SprintRunnerHandbackActivity
@@ -551,7 +598,11 @@ describe('Sprint Runner Handback disclosure', () => {
                       selectedMovement: {
                         movementKind: 'future_bounded_move',
                         rationale: 'The concern remains open.',
-                        boundedDetail: 'One bounded non-authoritative detail.',
+                        boundedDetails: [
+                          { label: 'dependencyOwner', value: 'owner-shaped detail only' },
+                          { label: 'dependencyOwnerClassification', value: 'work_unit_handler' },
+                          { label: 'eligibleWorkSummary', value: 'alternate-shaped detail only' },
+                        ],
                       },
                     },
                   },
@@ -564,7 +615,10 @@ describe('Sprint Runner Handback disclosure', () => {
     );
     const region = screen.getByRole('region', { name: 'Sprint Runner Handback reassessment' });
     expect(region).toHaveTextContent('Bounded movement recorded: The concern remains open.');
-    expect(region).toHaveTextContent('One bounded non-authoritative detail.');
+    expect(region).toHaveTextContent('owner-shaped detail only');
+    expect(region).toHaveTextContent('work_unit_handler');
+    expect(region).toHaveTextContent('alternate-shaped detail only');
+    expect(region).not.toHaveTextContent('Agent-achievable dependency wait');
     expect(region).toHaveTextContent('no settlement or blockage is implied');
   });
 });

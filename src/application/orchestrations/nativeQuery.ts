@@ -14,6 +14,7 @@ import type {
   ProductWorkUnitImplementerOutcomeV1,
   ProductWorkUnitRetryAttemptV1,
   ProductSprintRunnerHandbackDeliveryV1,
+  ProductSprintRunnerHandbackBoundedDetailV1,
   ProductSprintRunnerHandbackDependencyOwnerClassificationV1,
   ProductSprintRunnerHandbackMovementV1,
 } from './productReadModels';
@@ -2326,15 +2327,24 @@ const sprintRunnerHandbackMovement = (value: unknown): ProductSprintRunnerHandba
       'enablingResult',
       'resumptionPath',
       'localExhaustionSummary',
-      'boundedDetail',
+      'boundedDetails',
     ],
     'Sprint Runner Handback movement',
   );
   const movementKind = string(x.movementKind, 'Handback movementKind');
   if (!/^[A-Za-z0-9_.-]+$/.test(movementKind) || movementKind.length > 96) fail('invalid Handback movementKind');
-  const rationale = boundedString(x.rationale, 4000, 'Handback rationale');
+  const rationale = boundedString(x.rationale, 20_000, 'Handback rationale');
+  const boundedDetails = x.boundedDetails === undefined ? undefined : array(x.boundedDetails, 'boundedDetails').map((detail, index): ProductSprintRunnerHandbackBoundedDetailV1 => {
+    const item = object(detail, `boundedDetails[${index}]`);
+    keys(item, ['label', 'value'], `boundedDetails[${index}]`);
+    const label = boundedString(item.label, 96, `boundedDetails[${index}].label`);
+    if (!['eligibleWorkSummary', 'dependencyOwner', 'dependencyOwnerClassification', 'enablingResult', 'resumptionPath', 'localExhaustionSummary'].includes(label)) fail('invalid bounded Handback detail label');
+    return { label, value: boundedString(item.value, 20_000, `boundedDetails[${index}].value`) };
+  });
+  if (boundedDetails && new Set(boundedDetails.map((detail) => detail.label)).size !== boundedDetails.length)
+    fail('duplicate bounded Handback detail label');
   if (movementKind === 'continue_eligible_work') {
-    if (x.dependencyOwner !== undefined || x.dependencyOwnerClassification !== undefined || x.enablingResult !== undefined || x.resumptionPath !== undefined || x.localExhaustionSummary !== undefined || x.boundedDetail !== undefined)
+    if (x.dependencyOwner !== undefined || x.dependencyOwnerClassification !== undefined || x.enablingResult !== undefined || x.resumptionPath !== undefined || x.localExhaustionSummary !== undefined || boundedDetails !== undefined)
       fail('alternate Handback movement has contradictory detail');
     return { movementKind, rationale, eligibleWorkSummary: boundedString(x.eligibleWorkSummary, 4000, 'eligibleWorkSummary') };
   }
@@ -2345,7 +2355,7 @@ const sprintRunnerHandbackMovement = (value: unknown): ProductSprintRunnerHandba
     const owner = boundedString(x.dependencyOwner, 4000, 'dependencyOwner');
     if (['human', 'external', 'approval', 'manual', 'user'].some((term) => owner.toLowerCase().includes(term)))
       fail('dependency owner is outside the agent-achievable boundary');
-    if (x.eligibleWorkSummary !== undefined || x.localExhaustionSummary !== undefined || x.boundedDetail !== undefined)
+    if (x.eligibleWorkSummary !== undefined || x.localExhaustionSummary !== undefined || boundedDetails !== undefined)
       fail('dependency Handback movement has contradictory detail');
     return {
       movementKind,
@@ -2357,21 +2367,27 @@ const sprintRunnerHandbackMovement = (value: unknown): ProductSprintRunnerHandba
     };
   }
   if (movementKind === 'local_exhaustion_escalate') {
-    if (x.eligibleWorkSummary !== undefined || x.dependencyOwner !== undefined || x.dependencyOwnerClassification !== undefined || x.enablingResult !== undefined || x.resumptionPath !== undefined || x.boundedDetail !== undefined)
+    if (x.eligibleWorkSummary !== undefined || x.dependencyOwner !== undefined || x.dependencyOwnerClassification !== undefined || x.enablingResult !== undefined || x.resumptionPath !== undefined || boundedDetails !== undefined)
       fail('local exhaustion Handback movement has contradictory detail');
     return { movementKind, rationale, localExhaustionSummary: boundedString(x.localExhaustionSummary, 4000, 'localExhaustionSummary') };
   }
-  if (x.dependencyOwner !== undefined || x.dependencyOwnerClassification !== undefined)
-    fail('bounded Handback movement exposes contradictory or private detail');
-  const projectedBoundedDetail = x.boundedDetail === undefined ? undefined : boundedString(x.boundedDetail, 4000, 'boundedDetail');
-  const genericDetails = ['eligibleWorkSummary', 'enablingResult', 'resumptionPath', 'localExhaustionSummary']
-    .filter((key) => x[key] !== undefined)
-    .map((key) => boundedString(x[key], 4000, key));
-  if (genericDetails.length + (projectedBoundedDetail ? 1 : 0) > 1) fail('bounded Handback movement has contradictory detail');
+  const rawDetailValues = [
+    ['eligibleWorkSummary', x.eligibleWorkSummary],
+    ['dependencyOwner', x.dependencyOwner],
+    ['dependencyOwnerClassification', x.dependencyOwnerClassification],
+    ['enablingResult', x.enablingResult],
+    ['resumptionPath', x.resumptionPath],
+    ['localExhaustionSummary', x.localExhaustionSummary],
+  ].filter(([, value]) => value !== undefined);
+  if (x.dependencyOwnerClassification !== undefined && !['work_unit_handler', 'work_unit_implementer', 'work_slice_planner', 'sprint_runner'].includes(string(x.dependencyOwnerClassification, 'dependencyOwnerClassification')))
+    fail('invalid bounded Handback detail classification');
+  if (boundedDetails !== undefined && rawDetailValues.length > 0)
+    fail('bounded Handback movement mixes projected and persisted detail shapes');
+  const projectedDetails = boundedDetails ?? rawDetailValues.map(([label, value]) => ({ label: label as string, value: boundedString(value, 20_000, label as string) }));
   return {
     movementKind,
     rationale,
-    ...((projectedBoundedDetail ?? genericDetails[0]) ? { boundedDetail: projectedBoundedDetail ?? genericDetails[0] } : {}),
+    ...(projectedDetails.length > 0 ? { boundedDetails: projectedDetails } : {}),
   };
 };
 
@@ -2399,6 +2415,8 @@ const sprintRunnerHandbackDelivery = (value: unknown): ProductSprintRunnerHandba
   }
   const selectedMovement = x.selectedMovement === undefined ? undefined : sprintRunnerHandbackMovement(x.selectedMovement);
   const selectedMovementKind = x.selectedMovementKind === undefined ? undefined : boundedString(x.selectedMovementKind, 96, 'selectedMovementKind');
+  if ((selectedMovementKind === undefined) !== (selectedMovement === undefined))
+    fail('selected Handback movement kind and detail must be paired');
   if (selectedMovement && selectedMovementKind !== selectedMovement.movementKind)
     fail('selected Handback movement kind does not match its detail');
   if (selectedMovementKind && !semanticReassessmentRecordedAt)
