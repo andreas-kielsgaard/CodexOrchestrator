@@ -683,8 +683,8 @@ Audit baseline: clean detached `8e4faddf6fbe21bb8bb7289fa3dbba7faeb3d78a`, with 
 backend chain ending at `6ced5e4bc4cb6f8d6d9c5325c0a7b7e7072721aa` and the SRH-02 projection
 chain ending at the audit baseline. This audit made no product-code correction: the inspected
 cross-stack route is internally coherent at the source and strict-decoder boundaries below. This
-record is nevertheless **partial**, because current Rust completion status and any frontend runtime
-or TypeScript compilation result were not observed in this routed checkout.
+record remains **partial** because frontend runtime and TypeScript compilation results are not
+observed in this routed checkout.
 
 | Required boundary | Independent audit result | Evidence level |
 | --- | --- | --- |
@@ -702,16 +702,19 @@ Current audit checks:
 - The routed availability report records the focused Rust Handback suite as **8/8** and `cargo
   check` as passed with **seven pre-existing dead-code warnings**. Those reports are retained as
   implementation evidence, not relabelled as a successful SRH-03 rerun.
-- Two serial attempts to run `cargo test --manifest-path src-tauri/Cargo.toml --lib handback --
-  --test-threads=1` reached the test executable but did not return within the host command windows
-  (about 124 seconds and 64 seconds). The second audit-spawned process was stopped after its
-  timeout. Neither attempt is counted as a pass or failure.
+- Earlier serial attempts to run `cargo test --manifest-path src-tauri/Cargo.toml --lib handback
+  -- --test-threads=1` reached the test executable but did not return within host command windows;
+  neither is counted as a pass or failure. The independent SRH-03 rerun subsequently completed
+  naturally: **9 passed, 0 failed, 0 ignored, 369 filtered, 163.38s** (Cargo test-profile
+  preparation: **0.79s**). It emitted one existing dead-code warning for
+  `ProcessSupervisor::system`; this is separate from the implementation worker's `cargo check`
+  report.
 - `node_modules`, local `tsc`, and local `vitest` are absent. No dependency was installed, linked,
   or borrowed. Vitest and `tsc --noEmit` therefore remain unproven; esbuild/syntax transformation
   is not substituted for either gate.
 
-Residual gates: a completing serial focused Rust Handback run; a frontend dependency environment
-authorized for the routed checkout, followed by focused Handback Vitest and `tsc --noEmit`; and
-any separately authorized live-provider/human observation. This record neither requests nor
+Residual gates: a frontend dependency environment authorized for the routed checkout, followed by
+focused Handback Vitest and `tsc --noEmit`; and any separately authorized live-provider/human
+observation. This record neither requests nor
 claims Epic receiver activation, Epic response, final blockage, settlement, new Sprint start,
 higher continuation, raw route/Git authority, publication, or user acceptance.
