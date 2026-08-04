@@ -402,14 +402,6 @@ function ImplementerOutcomeActivity({
           label="Reporting Harness revision"
           value={outcome.reportingHarnessRevisionId}
         />
-        <RecordedFact
-          label="Reporting Harness configuration digest"
-          value={outcome.reportingHarnessConfigurationDigest}
-        />
-        <RecordedFact
-          label="Reporting Harness repository commit"
-          value={outcome.reportingHarnessRepositoryCommitRef}
-        />
         <RecordedFact label="Requested" value={outcome.reportingRequestedAt} />
         {outcome.reportingPreparedAt && (
           <RecordedFact label="Prepared" value={outcome.reportingPreparedAt} />
@@ -530,8 +522,6 @@ function HandlerReviewActivity({
         <RecordedFact label="Implementer reporting invocation" value={review.reportingInvocationId} />
         <RecordedFact label="Review invocation" value={review.reviewInvocationId} />
         <RecordedFact label="Review Harness revision" value={review.reviewHarnessRevisionId} />
-        <RecordedFact label="Review Harness configuration digest" value={review.reviewHarnessConfigurationDigest} />
-        <RecordedFact label="Review Harness repository commit" value={review.reviewHarnessRepositoryCommitRef} />
         <RecordedFact label="Delivery requested" value={review.deliveryRequestedAt} />
         {review.deliveryPersistedAt && <RecordedFact label="Delivery persisted" value={review.deliveryPersistedAt} />}
         {review.harnessBoundAt && <RecordedFact label="Harness bound" value={review.harnessBoundAt} />}

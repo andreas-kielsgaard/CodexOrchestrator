@@ -66,8 +66,6 @@ describe('WorkUnitDetailWorkspace Handler activation detail', () => {
           originalHandlerInvocationId: 'handler-invocation-accepted',
           actionInvocationId: 'handler-action-invocation-accepted',
           actionHarnessRevisionId: 'handler-action-revision',
-          actionHarnessConfigurationDigest: 'handler-action-digest',
-          actionHarnessRepositoryCommitRef: 'handler-action-commit',
           requestedAt: '2026-08-02T00:01:10Z',
           blockedReason: 'original_handler_invocation_active',
         },

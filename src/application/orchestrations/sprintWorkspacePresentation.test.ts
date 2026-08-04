@@ -309,8 +309,6 @@ function sprintReadModel(): ProductSprintReadModelV1 {
               originalImplementerInvocationId: 'implementer-invocation-1',
               reportingInvocationId: 'reporting-invocation-1',
               reportingHarnessRevisionId: 'reporting-revision-1',
-              reportingHarnessConfigurationDigest: 'reporting-digest-1',
-              reportingHarnessRepositoryCommitRef: 'reporting-commit-1',
               reportingRequestedAt: '2026-08-04T00:00:00Z',
               reportingPreparedAt: '2026-08-04T00:00:01Z',
               reportingHarnessBoundAt: '2026-08-04T00:00:02Z',

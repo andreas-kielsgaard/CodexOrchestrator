@@ -251,8 +251,6 @@ function reportingOutcome(): ProductWorkUnitImplementerOutcomeV1 {
     originalImplementerInvocationId: 'implementer-invocation-1',
     reportingInvocationId: 'reporting-invocation-1',
     reportingHarnessRevisionId: 'reporting-revision-1',
-    reportingHarnessConfigurationDigest: 'reporting-digest-1',
-    reportingHarnessRepositoryCommitRef: 'reporting-commit-1',
     reportingRequestedAt: '2026-08-04T00:00:00Z',
     reportingPreparedAt: '2026-08-04T00:00:01Z',
   };
@@ -314,8 +312,6 @@ function handlerReview(
     actionHandlerInvocationId: 'handler-action-1',
     reviewInvocationId: 'review-invocation-1',
     reviewHarnessRevisionId: 'review-revision-1',
-    reviewHarnessConfigurationDigest: 'review-digest-1',
-    reviewHarnessRepositoryCommitRef: 'review-commit-1',
     deliveryRequestedAt: '2026-08-04T00:00:12Z',
     deliveryPersistedAt: '2026-08-04T00:00:12Z',
     harnessBoundAt: '2026-08-04T00:00:13Z',

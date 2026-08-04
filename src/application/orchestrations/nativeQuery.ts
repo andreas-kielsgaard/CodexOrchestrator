@@ -79,7 +79,6 @@ export interface NativeWorkUnitHandlerActivationV1 {
   readonly handlerSessionId?: string;
   readonly handlerInvocationId?: string;
   readonly handlerHarnessRevisionId?: string;
-  readonly handlerHarnessConfigurationDigest?: string;
   readonly eligibilityState: 'blocked' | 'eligible';
   readonly blockedReason?: string;
   readonly requestedAt?: string;
@@ -101,8 +100,6 @@ export interface NativeWorkUnitHandlerActionContinuationV1 {
   readonly originalHandlerInvocationId: string;
   readonly actionInvocationId: string;
   readonly actionHarnessRevisionId: string;
-  readonly actionHarnessConfigurationDigest: string;
-  readonly actionHarnessRepositoryCommitRef: string;
   readonly requestedAt: string;
   readonly authorizedAt?: string;
   readonly invocationPreparedAt?: string;
@@ -120,8 +117,6 @@ export interface NativeWorkUnitImplementerActivationV1 {
   readonly implementerSessionId: string;
   readonly implementerInvocationId: string;
   readonly implementerHarnessRevisionId: string;
-  readonly implementerHarnessConfigurationDigest: string;
-  readonly implementerHarnessRepositoryCommitRef: string;
   readonly requestedAt: string;
   readonly authorizedAt?: string;
   readonly executionSupportGrantedAt?: string;
@@ -1272,7 +1267,6 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
       'handlerSessionId',
       'handlerInvocationId',
       'handlerHarnessRevisionId',
-      'handlerHarnessConfigurationDigest',
       'eligibilityState',
       'blockedReason',
       'requestedAt',
@@ -1309,9 +1303,6 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
       : {}),
     ...(optional('handlerHarnessRevisionId')
       ? { handlerHarnessRevisionId: optional('handlerHarnessRevisionId') }
-      : {}),
-    ...(optional('handlerHarnessConfigurationDigest')
-      ? { handlerHarnessConfigurationDigest: optional('handlerHarnessConfigurationDigest') }
       : {}),
     eligibilityState,
     ...(blockedReason ? { blockedReason } : {}),
@@ -1391,8 +1382,6 @@ const workUnitActionContinuation = (value: unknown): NativeWorkUnitHandlerAction
       'originalHandlerInvocationId',
       'actionInvocationId',
       'actionHarnessRevisionId',
-      'actionHarnessConfigurationDigest',
-      'actionHarnessRepositoryCommitRef',
       'requestedAt',
       'authorizedAt',
       'invocationPreparedAt',
@@ -1433,16 +1422,6 @@ const workUnitActionContinuation = (value: unknown): NativeWorkUnitHandlerAction
       x.actionHarnessRevisionId,
       240,
       'actionHarnessRevisionId',
-    ),
-    actionHarnessConfigurationDigest: boundedString(
-      x.actionHarnessConfigurationDigest,
-      240,
-      'actionHarnessConfigurationDigest',
-    ),
-    actionHarnessRepositoryCommitRef: boundedString(
-      x.actionHarnessRepositoryCommitRef,
-      240,
-      'actionHarnessRepositoryCommitRef',
     ),
     requestedAt: timestamp(x.requestedAt, 'action continuation requestedAt'),
     ...(optionalTime('authorizedAt') ? { authorizedAt: optionalTime('authorizedAt') } : {}),
@@ -1512,8 +1491,6 @@ const workUnitImplementerActivation = (value: unknown): NativeWorkUnitImplemente
       'implementerSessionId',
       'implementerInvocationId',
       'implementerHarnessRevisionId',
-      'implementerHarnessConfigurationDigest',
-      'implementerHarnessRepositoryCommitRef',
       'requestedAt',
       'authorizedAt',
       'executionSupportGrantedAt',
@@ -1552,16 +1529,6 @@ const workUnitImplementerActivation = (value: unknown): NativeWorkUnitImplemente
       x.implementerHarnessRevisionId,
       240,
       'implementerHarnessRevisionId',
-    ),
-    implementerHarnessConfigurationDigest: boundedString(
-      x.implementerHarnessConfigurationDigest,
-      240,
-      'implementerHarnessConfigurationDigest',
-    ),
-    implementerHarnessRepositoryCommitRef: boundedString(
-      x.implementerHarnessRepositoryCommitRef,
-      240,
-      'implementerHarnessRepositoryCommitRef',
     ),
     requestedAt: timestamp(x.requestedAt, 'Implementer requestedAt'),
     ...(optionalTime('authorizedAt') ? { authorizedAt: optionalTime('authorizedAt') } : {}),
@@ -1630,8 +1597,6 @@ const workUnitImplementerOutcome = (value: unknown): NativeWorkUnitImplementerOu
       'originalImplementerInvocationId',
       'reportingInvocationId',
       'reportingHarnessRevisionId',
-      'reportingHarnessConfigurationDigest',
-      'reportingHarnessRepositoryCommitRef',
       'reportingRequestedAt',
       'reportingPreparedAt',
       'reportingHarnessBoundAt',
@@ -1790,16 +1755,6 @@ const workUnitImplementerOutcome = (value: unknown): NativeWorkUnitImplementerOu
       240,
       'reportingHarnessRevisionId',
     ),
-    reportingHarnessConfigurationDigest: boundedString(
-      x.reportingHarnessConfigurationDigest,
-      240,
-      'reportingHarnessConfigurationDigest',
-    ),
-    reportingHarnessRepositoryCommitRef: boundedString(
-      x.reportingHarnessRepositoryCommitRef,
-      240,
-      'reportingHarnessRepositoryCommitRef',
-    ),
     reportingRequestedAt: timestamp(x.reportingRequestedAt, 'reportingRequestedAt'),
     ...(optionalTime('reportingPreparedAt')
       ? { reportingPreparedAt: optionalTime('reportingPreparedAt') }
@@ -1935,8 +1890,6 @@ const workUnitHandlerReview = (value: unknown): NativeWorkUnitHandlerReviewV1 =>
       'actionHandlerInvocationId',
       'reviewInvocationId',
       'reviewHarnessRevisionId',
-      'reviewHarnessConfigurationDigest',
-      'reviewHarnessRepositoryCommitRef',
       'deliveryRequestedAt',
       'deliveryPersistedAt',
       'harnessBoundAt',
@@ -2068,16 +2021,6 @@ const workUnitHandlerReview = (value: unknown): NativeWorkUnitHandlerReviewV1 =>
       x.reviewHarnessRevisionId,
       240,
       'Handler review reviewHarnessRevisionId',
-    ),
-    reviewHarnessConfigurationDigest: boundedString(
-      x.reviewHarnessConfigurationDigest,
-      240,
-      'Handler review reviewHarnessConfigurationDigest',
-    ),
-    reviewHarnessRepositoryCommitRef: boundedString(
-      x.reviewHarnessRepositoryCommitRef,
-      240,
-      'Handler review reviewHarnessRepositoryCommitRef',
     ),
     deliveryRequestedAt: timestamp(x.deliveryRequestedAt, 'Handler review deliveryRequestedAt'),
     ...(optionalTime('deliveryPersistedAt')
@@ -2691,11 +2634,7 @@ function validateActivationCorrelations(
       outcome.reportingInvocationId === continuation?.originalHandlerInvocationId
     )
       fail('Implementer outcome reuses an earlier invocation identity');
-    if (
-      outcome.reportingHarnessRevisionId === implementer.implementerHarnessRevisionId ||
-      outcome.reportingHarnessConfigurationDigest ===
-        implementer.implementerHarnessConfigurationDigest
-    )
+    if (outcome.reportingHarnessRevisionId === implementer.implementerHarnessRevisionId)
       fail('Implementer outcome reuses the original Implementer Harness revision');
   }
   const review = unit.handlerReview;

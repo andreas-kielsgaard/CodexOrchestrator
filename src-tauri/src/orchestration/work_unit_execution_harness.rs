@@ -123,7 +123,7 @@ impl WorkUnitExecutionHarnessService {
                 return Err(WorkUnitHarnessError::Unavailable)
             }
         };
-        if let Some(revision) = revisions.iter().rev().find(|revision| {
+        if let Some(revision) = revisions.iter().find(|revision| {
             self.pinned_handler_revision_from_revision((*revision).clone())
                 .map(|pinned| !pinned.profile.mcp.required && pinned.profile.mcp.enabled_tools.is_empty())
                 .unwrap_or(false)

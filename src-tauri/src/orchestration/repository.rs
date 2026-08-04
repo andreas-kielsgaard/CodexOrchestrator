@@ -3081,6 +3081,7 @@ struct WorkUnitHandlerActivationDto {
     handler_session_id: Option<String>,
     handler_invocation_id: Option<String>,
     handler_harness_revision_id: Option<String>,
+    #[serde(skip_serializing)]
     handler_harness_configuration_digest: Option<String>,
     #[serde(skip_serializing)]
     handler_harness_repository_commit_ref: Option<String>,
@@ -3107,7 +3108,9 @@ struct WorkUnitHandlerActionContinuationDto {
     original_handler_invocation_id: String,
     action_invocation_id: String,
     action_harness_revision_id: String,
+    #[serde(skip_serializing)]
     action_harness_configuration_digest: String,
+    #[serde(skip_serializing)]
     action_harness_repository_commit_ref: String,
     requested_at: String,
     authorized_at: Option<String>,
@@ -3128,7 +3131,9 @@ struct WorkUnitImplementerActivationDto {
     implementer_session_id: String,
     implementer_invocation_id: String,
     implementer_harness_revision_id: String,
+    #[serde(skip_serializing)]
     implementer_harness_configuration_digest: String,
+    #[serde(skip_serializing)]
     implementer_harness_repository_commit_ref: String,
     requested_at: String,
     authorized_at: Option<String>,
@@ -3242,7 +3247,9 @@ struct WorkUnitImplementerOutcomeDto {
     original_implementer_invocation_id: String,
     reporting_invocation_id: String,
     reporting_harness_revision_id: String,
+    #[serde(skip_serializing)]
     reporting_harness_configuration_digest: String,
+    #[serde(skip_serializing)]
     reporting_harness_repository_commit_ref: String,
     reporting_requested_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3372,7 +3379,9 @@ struct WorkUnitHandlerReviewDto {
     action_handler_invocation_id: String,
     review_invocation_id: String,
     review_harness_revision_id: String,
+    #[serde(skip_serializing)]
     review_harness_configuration_digest: String,
+    #[serde(skip_serializing)]
     review_harness_repository_commit_ref: String,
     delivery_requested_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]

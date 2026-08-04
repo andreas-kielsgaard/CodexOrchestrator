@@ -325,8 +325,6 @@ export type ProductWorkUnitHandlerReviewV1 = Readonly<{
   readonly actionHandlerInvocationId: string;
   readonly reviewInvocationId: string;
   readonly reviewHarnessRevisionId: string;
-  readonly reviewHarnessConfigurationDigest: string;
-  readonly reviewHarnessRepositoryCommitRef: string;
   readonly deliveryRequestedAt: string;
   readonly deliveryPersistedAt?: string;
   readonly harnessBoundAt?: string;
@@ -398,8 +396,6 @@ export type ProductWorkUnitImplementerOutcomeV1 = Readonly<{
   readonly originalImplementerInvocationId: string;
   readonly reportingInvocationId: string;
   readonly reportingHarnessRevisionId: string;
-  readonly reportingHarnessConfigurationDigest: string;
-  readonly reportingHarnessRepositoryCommitRef: string;
   readonly reportingRequestedAt: string;
   readonly reportingPreparedAt?: string;
   readonly reportingHarnessBoundAt?: string;

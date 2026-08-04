@@ -587,6 +587,15 @@ profiles exist. New downstream attempts derive their baseline from the durable s
 target, while the initiated authority record remains immutable. A return cannot create an accepted
 candidate, integration, contribution, retry, or later attempt.
 
+This correction also keeps productive projection free of Harness repository commit references and
+configuration digests for the initial Handler, Handler action, Implementer, reporting, and review
+records. Those values remain durable internal correlations. The native review projection accepts semantically equivalent
+object-key ordering only after strict field, duplicate/reference-correlation, and exact stored-byte
+delivery-fingerprint validation. Integration reservation time is the actual reservation time rounded
+to Git's second precision and bounded at-or-after the accepted candidate pin; it is not copied from
+the earlier pin time. Ordinal-0 Handler selection uses the first immutable no-tool revision, rather
+than a later actionless revision.
+
 Current deterministic validation in this candidate checkout:
 
 - Combined accepted/returned convergence: **1 passed, 368 filtered, 92.98s**. It records a
@@ -597,6 +606,10 @@ Current deterministic validation in this candidate checkout:
   effects, and proves the corresponding returned root records `retry_required` with no candidate,
   integration, settlement, contribution, dependent activation, or replacement Implementer attempt.
 - Concurrent exact replay and accept-vs-return race: **1 passed, 368 filtered, 96.48s**.
+- Privacy-strengthened combined reruns: **1 passed, 368 filtered, 156.37s** for repository
+  commit-reference absence and **1 passed, 368 filtered, 132.24s** for both commit-reference and
+  configuration-digest absence. An earlier run of this selector timed out at the 124-second
+  command boundary and is recorded as a timeout, not a pass.
 - `git diff --check` passed. Earlier selector/compilation attempts that matched zero tests or
   timed out are not passing gates.
 

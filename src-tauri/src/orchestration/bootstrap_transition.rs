@@ -6474,6 +6474,8 @@ mod tests {
         assert!(projected["handlerActivation"].get("handlerHarnessRepositoryCommitRef").is_none());
         let projected_root = native["workUnits"].as_array().unwrap().iter().find(|unit| unit["workUnitId"] == accepted.work_unit_id).unwrap();
         assert!(projected_root["integration"]["settlement"]["settledAt"].is_string());
+        assert!(!native.to_string().contains("RepositoryCommitRef"));
+        assert!(!native.to_string().contains("ConfigurationDigest"));
         assert!(!native.to_string().contains(&*accepted.working_directory.to_string_lossy()));
         drop(connection);
 

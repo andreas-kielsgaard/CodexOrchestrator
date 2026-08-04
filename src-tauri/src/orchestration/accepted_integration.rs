@@ -102,7 +102,10 @@ fn integration_recorded_at(c: &Connection, candidate: &str) -> Result<String, St
     ).map_err(|error| error.to_string())?;
     let pinned = chrono::DateTime::parse_from_rfc3339(&pinned_at)
         .map_err(|_| "accepted_candidate_pin_timestamp_invalid".to_string())?;
-    let seconds = pinned.timestamp() + i64::from(pinned.timestamp_subsec_nanos() > 0);
+    let actual = chrono::Utc::now();
+    let pinned_seconds = pinned.timestamp() + i64::from(pinned.timestamp_subsec_nanos() > 0);
+    let actual_seconds = actual.timestamp() + i64::from(actual.timestamp_subsec_nanos() > 0);
+    let seconds = pinned_seconds.max(actual_seconds);
     chrono::DateTime::from_timestamp(seconds, 0)
         .ok_or_else(|| "accepted_candidate_pin_timestamp_invalid".to_string())
         .map(|timestamp| timestamp.format("%Y-%m-%dT%H:%M:%SZ").to_string())
