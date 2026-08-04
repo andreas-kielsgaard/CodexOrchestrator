@@ -100,6 +100,32 @@ describe('orchestration native query v1', () => {
     });
   });
 
+  it('projects selected unresolved execution states and blocks terminal facts for targeted attention', () => {
+    const value = fixture('valid-execution-graph.json') as Record<string, unknown>;
+    value.workSliceExecutionGraphCompletions = [];
+    value.workSliceExecutionSettlements = [];
+    value.workSlicePlanningPointExecutionSettlements = [];
+    value.workSliceExecutionAttentions = [
+      { materializationId: 'execution-materialization-fixture', recordedAt: '2026-08-05T00:00:01Z' },
+    ];
+    const states = value.workUnitExecutionStates as Array<Record<string, unknown>>;
+    states[0]!.state = 'ready';
+    states[1]!.state = 'active';
+    states[2]!.state = 'retry_authorized';
+    states[3]!.state = 'handed_back';
+    states.push({
+      ...states[0], workUnitId: 'execution-root-a', state: 'attention', recordedAt: '2026-08-05T00:00:01Z',
+    });
+    states.splice(0, 1);
+    const query = decodeOrchestrationNativeQueryV2(value);
+    expect(query.workUnitExecutionStates.map((state) => state.state).sort()).toEqual([
+      'active', 'attention', 'handed_back', 'retry_authorized',
+    ]);
+    expect(query.workSliceExecutionGraphCompletions).toEqual([]);
+    expect(query.workSliceExecutionSettlements).toEqual([]);
+    expect(query.workSlicePlanningPointExecutionSettlements).toEqual([]);
+  });
+
   it('projects durable File Review ownership and rejects an unknown owner Sprint', () => {
     const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
     value.fileReviewDocuments = [
