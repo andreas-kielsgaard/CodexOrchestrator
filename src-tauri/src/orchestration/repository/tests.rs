@@ -2115,7 +2115,7 @@ fn retry_projection_exposes_only_semantic_stages_and_rejects_impossible_ordering
         settlement_ready_at: None,
     });
     work_unit.retry_attempt = Some(WorkUnitRetryAttemptDto {
-        origin_attempt_id: "attempt".into(), retry_attempt_id: "retry-attempt".into(),
+        ordinal: 1, origin_attempt_id: "attempt".into(), retry_attempt_id: "retry-attempt".into(),
         implementer_session_id: "retry-session".into(), implementer_invocation_id: "retry-invocation".into(),
         capture_requested_at: "2026-08-04T00:00:01Z".into(), candidate_pinned_at: Some("2026-08-04T00:00:02Z".into()),
         authorized_at: Some("2026-08-04T00:00:03Z".into()), execution_support_granted_at: Some("2026-08-04T00:00:04Z".into()),
@@ -2126,9 +2126,49 @@ fn retry_projection_exposes_only_semantic_stages_and_rejects_impossible_ordering
     });
     validate_work_unit_activation_projection(&work_unit).expect("truthful retry projection");
     let json = serde_json::to_string(&work_unit).expect("serialize projection");
-    assert!(json.contains("candidatePinnedAt") && json.contains("retryReadyAt"));
-    assert!(!json.contains("privateRef") && !json.contains("candidateCommit") && !json.contains("worktreeRoot") && !json.contains("repositoryRoot"));
+    assert!(json.contains("ordinal") && json.contains("candidatePinnedAt") && json.contains("retryReadyAt"));
+    for forbidden in [
+        "privateRef", "privateRefName", "candidateCommit", "candidateCommitId", "candidateTreeId",
+        "sprintBaselineObjectId", "sprintCurrentObjectId", "repositoryRoot", "repositoryCommonDir",
+        "worktreeRoot",
+    ] {
+        assert!(!json.contains(forbidden), "retry projection leaked {forbidden}");
+    }
 
+    let decision = work_unit.handler_decision.take();
+    assert!(validate_work_unit_activation_projection(&work_unit).is_err());
+    work_unit.handler_decision = decision;
+
+    work_unit.retry_attempt.as_mut().unwrap().failure_reason = Some("retry_terminal_launch_failed".into());
+    work_unit.retry_attempt.as_mut().unwrap().launch_accepted_at = None;
+    work_unit.retry_attempt.as_mut().unwrap().retry_ready_at = None;
+    assert!(validate_work_unit_activation_projection(&work_unit).is_ok());
+    work_unit.retry_attempt.as_mut().unwrap().failure_reason = Some("retry_launch_not_accepted".into());
+    work_unit.retry_attempt.as_mut().unwrap().launch_requested_at = None;
+    work_unit.retry_attempt.as_mut().unwrap().provider_activation_observed_at = None;
+    assert!(validate_work_unit_activation_projection(&work_unit).is_ok());
+    work_unit.retry_attempt.as_mut().unwrap().launch_requested_at = Some("2026-08-04T00:00:09Z".into());
+    work_unit.retry_attempt.as_mut().unwrap().launch_accepted_at = Some("2026-08-04T00:00:10Z".into());
+    work_unit.retry_attempt.as_mut().unwrap().provider_activation_observed_at = Some("2026-08-04T00:00:11Z".into());
+    work_unit.retry_attempt.as_mut().unwrap().retry_ready_at = Some("2026-08-04T00:00:12Z".into());
+    work_unit.retry_attempt.as_mut().unwrap().failure_reason = None;
+
+    work_unit.retry_attempt.as_mut().unwrap().candidate_pinned_at = Some("2026-08-04T00:00:00Z".into());
+    assert!(validate_work_unit_activation_projection(&work_unit).is_err());
+    work_unit.retry_attempt.as_mut().unwrap().candidate_pinned_at = Some("2026-08-04T00:00:02Z".into());
+
+    work_unit.retry_attempt.as_mut().unwrap().launch_requested_at = None;
+    work_unit.retry_attempt.as_mut().unwrap().launch_accepted_at = None;
+    work_unit.retry_attempt.as_mut().unwrap().provider_activation_observed_at = Some("2026-08-04T00:00:11Z".into());
+    work_unit.retry_attempt.as_mut().unwrap().retry_ready_at = None;
+    assert!(validate_work_unit_activation_projection(&work_unit).is_err());
+    work_unit.retry_attempt.as_mut().unwrap().launch_requested_at = Some("2026-08-04T00:00:09Z".into());
+    work_unit.retry_attempt.as_mut().unwrap().launch_accepted_at = Some("2026-08-04T00:00:10Z".into());
+    work_unit.retry_attempt.as_mut().unwrap().retry_ready_at = Some("2026-08-04T00:00:12Z".into());
+
+    work_unit.retry_attempt.as_mut().unwrap().ordinal = 2;
+    assert!(validate_work_unit_activation_projection(&work_unit).is_err());
+    work_unit.retry_attempt.as_mut().unwrap().ordinal = 1;
     work_unit.retry_attempt.as_mut().unwrap().launch_accepted_at = None;
     assert!(validate_work_unit_activation_projection(&work_unit).is_err());
     work_unit.retry_attempt.as_mut().unwrap().launch_accepted_at = Some("2026-08-04T00:00:10Z".into());

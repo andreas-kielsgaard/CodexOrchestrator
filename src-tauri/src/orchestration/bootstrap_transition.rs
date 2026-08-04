@@ -6529,6 +6529,7 @@ mod tests {
         let (attempt, session, invocation, private_ref) = fixture.return_one_retry();
         let launches = fixture.base.runtime.requests().len();
         let reopened = fixture.reopened();
+        let retry_identity = (attempt.clone(), session.clone(), invocation.clone(), private_ref.clone());
         let failure = |expected: &str| {
             assert!(reopened.reconcile_handler_reviews_for_test().is_err());
             assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<String, _, _>(
@@ -6542,6 +6543,13 @@ mod tests {
             reopened.reconcile_handler_reviews_for_test().unwrap();
             assert_eq!(fixture.retry_count(), 1);
             assert_eq!(fixture.base.runtime.requests().len(), launches);
+            let identity: (String,String,String,String) = Connection::open(&fixture.base.database_path).unwrap().query_row(
+                "SELECT retry_attempt_id,implementer_session_id,implementer_invocation_id,private_ref_name
+                 FROM work_unit_retry_attempts WHERE work_unit_id=?1",
+                [&fixture.work_unit_id],
+                |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+            ).unwrap();
+            assert_eq!(identity, retry_identity);
         };
 
         let authority_root: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
@@ -6571,6 +6579,98 @@ mod tests {
         failure("retry_workspace_validation_failed");
         fs::remove_file(&worktree_drift).unwrap();
         recover();
+
+        let baseline: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
+            "SELECT sprint_baseline_object_id FROM work_unit_retry_attempts WHERE work_unit_id=?1",
+            [&fixture.work_unit_id], |row| row.get(0),
+        ).unwrap();
+        assert_ne!(baseline, seed);
+        assert!(std::process::Command::new("git").args(["checkout", "--detach", &baseline])
+            .current_dir(&retry_worktree).output().unwrap().status.success());
+        failure("retry_workspace_validation_failed");
+        assert!(std::process::Command::new("git").args(["checkout", "--detach", &seed])
+            .current_dir(&retry_worktree).output().unwrap().status.success());
+        recover();
+
+        let original_common: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
+            "SELECT repository_common_dir FROM initiated_sprint_git_authorities WHERE authority_id=?1",
+            [&fixture.authority_id], |row| row.get(0),
+        ).unwrap();
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE initiated_sprint_git_authorities SET repository_common_dir='C:\\foreign-common' WHERE authority_id=?1",
+            [&fixture.authority_id],
+        ).unwrap();
+        failure("retry_evidence_revalidation_failed");
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE initiated_sprint_git_authorities SET repository_common_dir=?2 WHERE authority_id=?1",
+            params![fixture.authority_id, original_common],
+        ).unwrap();
+        recover();
+
+        let original_root: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
+            "SELECT repository_root FROM initiated_sprint_git_authorities WHERE authority_id=?1",
+            [&fixture.authority_id], |row| row.get(0),
+        ).unwrap();
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE initiated_sprint_git_authorities SET repository_root=?2 WHERE authority_id=?1",
+            params![fixture.authority_id, retry_worktree],
+        ).unwrap();
+        failure("retry_evidence_revalidation_failed");
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE initiated_sprint_git_authorities SET repository_root=?2 WHERE authority_id=?1",
+            params![fixture.authority_id, original_root],
+        ).unwrap();
+        recover();
+
+        let original_baseline: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
+            "SELECT baseline_object_id FROM execution_support_attempt_authorizations
+             WHERE attempt_id=?1 AND role_kind='work_unit_implementer'",
+            [&attempt], |row| row.get(0),
+        ).unwrap();
+        let foreign_baseline = String::from_utf8(
+            std::process::Command::new("git")
+                .args(["commit-tree", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "-m", "foreign retry baseline"])
+                .current_dir(&authority_root)
+                .env("GIT_AUTHOR_NAME", "Codex test")
+                .env("GIT_AUTHOR_EMAIL", "codex-test@example.invalid")
+                .env("GIT_COMMITTER_NAME", "Codex test")
+                .env("GIT_COMMITTER_EMAIL", "codex-test@example.invalid")
+                .output().unwrap().stdout,
+        ).unwrap().trim().to_owned();
+        assert_eq!(foreign_baseline.len(), 40);
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE execution_support_attempt_authorizations SET baseline_object_id=?2
+             WHERE attempt_id=?1 AND role_kind='work_unit_implementer'",
+            params![attempt, foreign_baseline],
+        ).unwrap();
+        failure("retry_execution_authorization_failed");
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE execution_support_attempt_authorizations SET baseline_object_id=?2
+             WHERE attempt_id=?1 AND role_kind='work_unit_implementer'",
+            params![attempt, original_baseline],
+        ).unwrap();
+        recover();
+
+        let (manifest, comparison, contents): (String,String,String) = Connection::open(&fixture.base.database_path).unwrap().query_row(
+            "SELECT evidence_manifest_json,comparison_fingerprint,evidence_content_fingerprints_json
+             FROM work_unit_implementer_outcomes WHERE work_unit_id=?1",
+            [&fixture.work_unit_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+        ).unwrap();
+        for (column, value, expected) in [
+            ("evidence_manifest_json", "[]", "retry_evidence_revalidation_failed"),
+            ("evidence_content_fingerprints_json", "[]", "retry_evidence_revalidation_failed"),
+        ] {
+            Connection::open(&fixture.base.database_path).unwrap().execute(
+                &format!("UPDATE work_unit_implementer_outcomes SET {column}=?1 WHERE work_unit_id=?2"),
+                params![value, fixture.work_unit_id],
+            ).unwrap();
+            failure(expected);
+            Connection::open(&fixture.base.database_path).unwrap().execute(
+                "UPDATE work_unit_implementer_outcomes SET evidence_manifest_json=?1,comparison_fingerprint=?2,evidence_content_fingerprints_json=?3 WHERE work_unit_id=?4",
+                params![manifest, comparison, contents, fixture.work_unit_id],
+            ).unwrap();
+            recover();
+        }
 
         Connection::open(&fixture.base.database_path).unwrap().execute(
             "UPDATE agent_sessions SET working_directory='divergent-session-route' WHERE id=?1",

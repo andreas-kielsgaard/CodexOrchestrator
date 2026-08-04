@@ -1952,7 +1952,22 @@ impl SprintRunnerTransitionService {
             Err(_) => return Err(SprintRunnerTransitionError::Conflict),
         };
         let source_root = PathBuf::from(origin_package.working_directory());
-        let (candidate_commit, candidate_tree) = match retry_git_candidate_facts(&authority, &source_root) {
+        let source_baseline = match self.connection.lock()
+            .map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?
+            .query_row(
+                "SELECT baseline_object_id FROM execution_support_attempt_authorizations
+                 WHERE attempt_id=?1 AND role_kind='work_unit_implementer'",
+                [&source.origin_attempt_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?
+        {
+            Some(value) => value,
+            None if retry_exists => return self.fail_retry(&source.work_unit_id, "retry_authorization_revalidation_failed", SprintRunnerTransitionError::Forbidden),
+            None => return Err(SprintRunnerTransitionError::Forbidden),
+        };
+        let (candidate_commit, candidate_tree) = match retry_git_candidate_facts(&authority, &source_root, &source_baseline) {
             Ok(value) => value,
             Err(error) if retry_exists => return self.fail_retry(&source.work_unit_id, "retry_candidate_revalidation_failed", error),
             Err(error) => return Err(error),
@@ -1987,7 +2002,7 @@ impl SprintRunnerTransitionService {
             }
             transaction.commit().map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         }
-        let (verified_commit, verified_tree) = match retry_git_candidate_facts(&authority, &source_root) {
+        let (verified_commit, verified_tree) = match retry_git_candidate_facts(&authority, &source_root, &source_baseline) {
             Ok(facts) => facts,
             Err(error) => return self.fail_retry(&source.work_unit_id, "retry_candidate_revalidation_failed", error),
         };
@@ -2065,10 +2080,10 @@ impl SprintRunnerTransitionService {
         self.mark_retry(work_unit_id, "launch_requested_at")?;
         match self.sessions.application_invocation_launch_evidence(&invocation, &session).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string())) {
             Err(error) => return self.fail_retry(work_unit_id, "retry_launch_inspection_failed", error),
-            Ok(ApplicationInvocationLaunchEvidence::LaunchAccepted) => { self.mark_retry(work_unit_id, "launch_accepted_at")?; self.mark_retry(work_unit_id, "retry_ready_at")?; }
+            Ok(ApplicationInvocationLaunchEvidence::LaunchAccepted) => { self.mark_retry(work_unit_id, "launch_accepted_at")?; }
             Ok(ApplicationInvocationLaunchEvidence::PersistedNotAccepted) => {
                 let launch = match self.sessions.launch_prepared_application_invocation_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: prompt, title: None, working_directory: Some(package.working_directory().into()), requested_options: Some(runtime.requested_options) }}, Some(runtime.extension)) { Ok(launch) => launch, Err(error) => return self.fail_retry(work_unit_id, "retry_launch_failed", SprintRunnerTransitionError::Unavailable(error.to_string())), };
-                if launch.launch_accepted { self.mark_retry(work_unit_id, "launch_accepted_at")?; self.mark_retry(work_unit_id, "retry_ready_at")?; } else {
+                if launch.launch_accepted { self.mark_retry(work_unit_id, "launch_accepted_at")?; } else {
                     let history = self.sessions.load_session(&session).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
                     let terminal = history.invocations.iter().find(|entry| entry.invocation.id == invocation).is_some_and(|entry| entry.invocation.status == AgentInvocationStatus::Failed);
                     return self.fail_retry(work_unit_id, if terminal { "retry_terminal_launch_failed" } else { "retry_launch_not_accepted" }, SprintRunnerTransitionError::Unavailable("retry Implementer launch was not accepted".into()));
@@ -2078,6 +2093,7 @@ impl SprintRunnerTransitionService {
         }
         self.clear_retry_failure(work_unit_id)?;
         if let Ok(observation) = package.observe_correlated_invocation() { if let Some(activity) = observation.provider_activity { self.mark_retry_at(work_unit_id, "provider_activation_observed_at", activity.recorded_at.to_rfc3339())?; } }
+        self.mark_retry(work_unit_id, "retry_ready_at")?;
         Ok(())
     }
 
@@ -2813,7 +2829,7 @@ fn retry_git_text(root: &Path, arguments: &[&str]) -> Result<String, SprintRunne
     if !output.status.success() || output.stdout.len() > 256_000 || output.stderr.len() > 256_000 { return Err(SprintRunnerTransitionError::Conflict); }
     String::from_utf8(output.stdout).map(|value| value.trim().to_owned()).map_err(|_| SprintRunnerTransitionError::Conflict)
 }
-fn retry_git_candidate_facts(authority: &InitiatedSprintGitAuthority, root: &Path) -> Result<(String, String), SprintRunnerTransitionError> {
+fn retry_git_candidate_facts(authority: &InitiatedSprintGitAuthority, root: &Path, source_baseline: &str) -> Result<(String, String), SprintRunnerTransitionError> {
     let root = root.canonicalize().map_err(|_| SprintRunnerTransitionError::Conflict)?;
     let authority_root = PathBuf::from(&authority.worktree_root).canonicalize().map_err(|_| SprintRunnerTransitionError::Conflict)?;
     let repository_root = PathBuf::from(&authority.repository_root).canonicalize().map_err(|_| SprintRunnerTransitionError::Conflict)?;
@@ -2824,7 +2840,10 @@ fn retry_git_candidate_facts(authority: &InitiatedSprintGitAuthority, root: &Pat
     if top != root || common != expected_common { return Err(SprintRunnerTransitionError::Conflict); }
     let commit = retry_git_text(&root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
     let tree = retry_git_text(&root, &["rev-parse", "--verify", "HEAD^{tree}"])?;
-    if commit.len() != 40 || tree.len() != 40 || retry_git_text(&root, &["merge-base", "--is-ancestor", &authority.current_object_id, &commit]).is_err() { return Err(SprintRunnerTransitionError::Conflict); }
+    if commit.len() != 40 || tree.len() != 40
+        || retry_git_text(&root, &["merge-base", "--is-ancestor", &authority.current_object_id, &commit]).is_err()
+        || retry_git_text(&root, &["merge-base", "--is-ancestor", source_baseline, &commit]).is_err()
+    { return Err(SprintRunnerTransitionError::Conflict); }
     Ok((commit, tree))
 }
 fn retry_git_workspace_facts(authority: &InitiatedSprintGitAuthority, root: &Path, expected_commit: &str, expected_tree: &str) -> Result<(), SprintRunnerTransitionError> {
