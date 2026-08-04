@@ -120,8 +120,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         transaction
             .execute_batch(crate::orchestration::execution_support::EXECUTION_SUPPORT_SCHEMA)
             .map_err(|error| format!("Unable to migrate execution-support schema: {error}"))?;
-        transaction
-            .execute_batch(crate::orchestration::accepted_candidate_authority::ACCEPTED_CANDIDATE_AUTHORITY_SCHEMA)
+        crate::orchestration::accepted_candidate_authority::initialize_accepted_candidate_authority_schema(&transaction)
             .map_err(|error| format!("Unable to migrate accepted-candidate authority schema: {error}"))?;
         crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
             .map_err(|error| format!("Unable to migrate accepted-integration schema: {error}"))?;
@@ -200,8 +199,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     transaction
         .execute_batch(crate::orchestration::execution_support::EXECUTION_SUPPORT_SCHEMA)
         .map_err(|error| format!("Unable to initialize execution-support schema: {error}"))?;
-    transaction
-        .execute_batch(crate::orchestration::accepted_candidate_authority::ACCEPTED_CANDIDATE_AUTHORITY_SCHEMA)
+    crate::orchestration::accepted_candidate_authority::initialize_accepted_candidate_authority_schema(&transaction)
         .map_err(|error| format!("Unable to initialize accepted-candidate authority schema: {error}"))?;
     crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
         .map_err(|error| format!("Unable to initialize accepted-integration schema: {error}"))?;
@@ -491,10 +489,16 @@ mod tests {
         let connection = open_active_database(&path).expect("current database");
         connection
             .execute_batch(
-                "DROP TABLE work_unit_prerequisite_contributions;
+                "PRAGMA foreign_keys=OFF;
+                 DROP TABLE work_unit_prerequisite_contributions;
                  DROP TABLE work_unit_settlements;
                  DROP TABLE accepted_work_unit_integration_evidence;
                  DROP TABLE accepted_work_unit_integrations;
+                 DROP TABLE accepted_handler_candidates;
+                 CREATE TABLE accepted_handler_candidates (candidate_id TEXT PRIMARY KEY,work_unit_id TEXT,authority_id TEXT,pinned_at TEXT,attention_reason TEXT,candidate_commit_id TEXT,candidate_tree_id TEXT,private_ref_name TEXT,evidence_fingerprint TEXT);
+                 INSERT INTO accepted_handler_candidates VALUES ('candidate','unit','authority','t',NULL,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','refs/codex/orchestrator/accepted/candidate','evidence');
+                 CREATE TABLE accepted_work_unit_integrations (integration_id TEXT PRIMARY KEY,work_unit_id TEXT,candidate_id TEXT,authority_id TEXT,target_ref_name TEXT,pre_object_id TEXT,pre_version INTEGER,candidate_commit_id TEXT,candidate_tree_id TEXT,baseline_object_id TEXT,intent_fingerprint TEXT,intent_recorded_at TEXT,integration_commit_id TEXT,integration_tree_id TEXT,settled_at TEXT,attention_code TEXT,attention_recorded_at TEXT);
+                 INSERT INTO accepted_work_unit_integrations VALUES ('integration','unit','candidate','authority','refs/heads/main','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','intent','t',NULL,NULL,NULL,NULL,NULL);
                  PRAGMA user_version=18;",
             )
             .expect("v18 predecessor");
@@ -509,6 +513,9 @@ mod tests {
         ] {
             assert!(table_exists(&reopened, table), "missing {table}");
         }
+        assert_eq!(reopened.query_row("SELECT candidate_id FROM accepted_handler_candidates WHERE candidate_id='candidate'", [], |row| row.get::<_, String>(0)).expect("preserved candidate"), "candidate");
+        assert_eq!(reopened.query_row("SELECT attempt_baseline_object_id FROM accepted_handler_candidates WHERE candidate_id='candidate'", [], |row| row.get::<_, Option<String>>(0)).expect("preserved missing baseline"), None);
+        assert_eq!(reopened.query_row("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='integration'", [], |row| row.get::<_, String>(0)).expect("open stage"), "intent_reserved");
         assert!(reopened.execute("INSERT INTO accepted_work_unit_integrations (integration_id,work_unit_id,candidate_id,authority_id,target_ref_name,pre_object_id,pre_version,candidate_commit_id,candidate_tree_id,baseline_object_id,intent_fingerprint,intent_recorded_at,stage) VALUES ('bad','unit','candidate','authority','refs/heads/main','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','intent','t','unknown')", []).is_err());
         assert_eq!(pragma_i64(&reopened, "user_version"), ACTIVE_SCHEMA_VERSION);
     }
