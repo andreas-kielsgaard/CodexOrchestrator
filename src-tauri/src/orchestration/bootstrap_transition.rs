@@ -5605,6 +5605,10 @@ mod tests {
         session_id: String,
         implementer_invocation_id: String,
         reporting_invocation_id: String,
+        handler_session_id: String,
+        handler_invocation_id: String,
+        handler_action_invocation_id: String,
+        authority_id: String,
         working_directory: PathBuf,
         expected_identities: (String, String, String, String, String),
     }
@@ -5817,6 +5821,10 @@ mod tests {
                 session_id,
                 implementer_invocation_id,
                 reporting_invocation_id,
+                handler_session_id: "implementer-review-handler-session".into(),
+                handler_invocation_id: "implementer-review-handler-original".into(),
+                handler_action_invocation_id: "implementer-review-handler-action".into(),
+                authority_id,
                 working_directory,
                 expected_identities,
             }
@@ -5917,6 +5925,49 @@ mod tests {
             ).unwrap();
             service.attach_reporting_test_harness(self.handler.clone());
             service
+        }
+
+        fn enable_handler_review_route(&self) {
+            self.handler.authorize_handler_attempt(&self.attempt_id, &self.work_unit_id, &self.authority_id).unwrap();
+            let original = self.handler.current_handler_revision().unwrap();
+            let action = self.handler.current_handler_action_revision().unwrap();
+            let original_package = self.handler.construct_for_pinned_profile(&self.attempt_id, WorkUnitHarnessRole::Handler, original.profile.clone()).unwrap();
+            let action_package = self.handler.construct_for_pinned_profile(&self.attempt_id, WorkUnitHarnessRole::Handler, action.profile.clone()).unwrap();
+            assert_eq!(original_package.working_directory(), action_package.working_directory());
+            let session = AgentSessionId::new(self.handler_session_id.clone()).unwrap();
+            let runtime = original_package.runtime_launch_configuration();
+            self.base.sessions.create_application_session(CreateApplicationAgentSessionCommand {
+                session_id: session.clone(),
+                session: CreateAgentSessionCommand { title: Some("Handler review test".into()), working_directory: Some(original_package.working_directory().into()), requested_options: runtime.requested_options.clone() },
+            }).unwrap();
+            self.base.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand {
+                invocation_id: AgentInvocationId::new(self.handler_invocation_id.clone()).unwrap(),
+                message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: "Original Handler.".into(), title: None, working_directory: Some(original_package.working_directory().into()), requested_options: Some(runtime.requested_options) },
+            }, Some(runtime.extension)).unwrap();
+            self.base.runtime.finish(&self.handler_invocation_id, AgentInvocationTerminalStatus::Completed);
+            let action_runtime = action_package.runtime_launch_configuration();
+            self.base.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand {
+                invocation_id: AgentInvocationId::new(self.handler_action_invocation_id.clone()).unwrap(),
+                message: SendAgentSessionMessageCommand { session_id: Some(session), submitted_text: "Handler action.".into(), title: None, working_directory: Some(action_package.working_directory().into()), requested_options: Some(action_runtime.requested_options) },
+            }, Some(action_runtime.extension)).unwrap();
+            self.base.runtime.finish(&self.handler_action_invocation_id, AgentInvocationTerminalStatus::Completed);
+            let connection = Connection::open(&self.base.database_path).unwrap();
+            connection.pragma_update(None, "foreign_keys", false).unwrap();
+            let now = "2026-08-04T00:00:00Z";
+            connection.execute("INSERT OR IGNORE INTO work_units (work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification) VALUES (?1,'reporting-materialization','reporting-slice','reporting-revision',0,'Reporting','Handler review test')", [&self.work_unit_id]).unwrap();
+            connection.execute("INSERT INTO work_unit_handler_activations (work_unit_id,materialization_id,sprint_id,attempt_id,handler_session_id,handler_invocation_id,handler_harness_key,handler_harness_version,handler_harness_revision_id,handler_harness_configuration_digest,handler_harness_repository_commit_ref,eligibility_state,requested_at,authorized_at,attempt_created_at,execution_support_granted_at,isolated_worktree_ready_at,handler_session_created_at,handler_invocation_prepared_at,handler_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,handler_ready_at) VALUES (?1,'reporting-materialization','reporting-sprint',?2,?3,?4,?5,?6,?7,?8,?9,'eligible',?10,?10,?10,?10,?10,?10,?10,?10,?10,?10,?10,?10)", params![self.work_unit_id,self.attempt_id,self.handler_session_id,self.handler_invocation_id,original.profile.key,original.profile.version,original.revision_id,original.configuration_digest,original.repository_commit_ref,now]).unwrap();
+            connection.execute("INSERT INTO work_unit_handler_action_continuations (work_unit_id,attempt_id,handler_session_id,original_handler_invocation_id,action_invocation_id,action_harness_revision_id,action_harness_configuration_digest,action_harness_repository_commit_ref,requested_at,authorized_at,invocation_prepared_at,harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,action_ready_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?9,?9,?9,?9,?9,?9,?9)", params![self.work_unit_id,self.attempt_id,self.handler_session_id,self.handler_invocation_id,self.handler_action_invocation_id,action.revision_id,action.configuration_digest,action.repository_commit_ref,now]).unwrap();
+            connection.pragma_update(None, "foreign_keys", true).unwrap();
+        }
+
+        fn ready_review(&self) -> String {
+            self.enable_handler_review_route();
+            self.transition.submit_implementation_outcome(&self.invocation(), self.claims()).unwrap();
+            self.write_evidence("review evidence\n");
+            self.transition.complete_implementation_outcome(&self.invocation()).unwrap();
+            self.enable_notifications();
+            self.finish(AgentInvocationTerminalStatus::Completed);
+            Connection::open(&self.base.database_path).unwrap().query_row("SELECT review_invocation_id FROM work_unit_handler_reviews WHERE work_unit_id=?1", [&self.work_unit_id], |row| row.get(0)).unwrap()
         }
 
         fn assert_no_submission_evidence_or_completion(&self) {
@@ -6172,6 +6223,83 @@ mod tests {
             [],
             |row| row.get(0),
         ).unwrap(), 1);
+    }
+
+    #[test]
+    fn handler_review_uses_one_exact_read_only_boundary_and_finalizes_only_completed_judgments() {
+        let accepted = ReportingFixture::new();
+        let review = accepted.ready_review();
+        let review_facts:(String,String,String,String,String,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>) = Connection::open(&accepted.base.database_path).unwrap().query_row(
+            "SELECT handler_session_id,review_invocation_id,review_harness_revision_id,review_harness_configuration_digest,review_harness_repository_commit_ref,delivery_persisted_at,harness_bound_at,launch_requested_at,launch_accepted_at,review_ready_at FROM work_unit_handler_reviews WHERE work_unit_id=?1", [&accepted.work_unit_id],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?,row.get(9)?)),
+        ).unwrap();
+        assert_eq!(review_facts.0, accepted.handler_session_id);
+        assert_eq!(review_facts.1, review);
+        assert!(review_facts.5.is_some() && review_facts.6.is_some() && review_facts.7.is_some() && review_facts.8.is_some() && review_facts.9.is_some());
+        let pinned = accepted.handler.load_pinned_handler_revision(&review_facts.2, &review_facts.3, &review_facts.4).unwrap();
+        assert_eq!(pinned.profile.runtime_options().sandbox, Some(crate::agent_sessions::domain::RuntimeSandboxMode::ReadOnly));
+        assert!(pinned.profile.runtime_configuration_args().iter().any(|value| value == "approval_policy=\"never\""));
+        assert_eq!(pinned.profile.mcp.enabled_tools, ["read_handler_review_evidence", "accept_implementation_outcome", "return_implementation_outcome"]);
+        let evidence: serde_json::Value = serde_json::from_str(&accepted.transition.handler_review_evidence_for_test(&review).unwrap()).unwrap();
+        assert_eq!(evidence["summary"], "Implemented the reporting boundary.");
+        assert!(!evidence["changedFiles"].is_null() && !evidence["evidenceContentFingerprints"].is_null());
+        let launches_before_reopen = accepted.base.runtime.requests().len();
+        Connection::open(&accepted.base.database_path).unwrap().execute("UPDATE work_unit_handler_reviews SET delivery_persisted_at=NULL,harness_bound_at=NULL,launch_requested_at=NULL,launch_accepted_at=NULL,review_ready_at=NULL WHERE work_unit_id=?1", [&accepted.work_unit_id]).unwrap();
+        let reopened = accepted.reopened();
+        reopened.reconcile_handler_reviews_for_test().unwrap();
+        assert_eq!(accepted.base.runtime.requests().len(), launches_before_reopen);
+        assert_eq!(Connection::open(&accepted.base.database_path).unwrap().query_row::<String,_,_>("SELECT review_invocation_id FROM work_unit_handler_reviews WHERE work_unit_id=?1", [&accepted.work_unit_id], |row| row.get(0)).unwrap(), review);
+        assert_eq!(Connection::open(&accepted.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_reviews", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(Connection::open(&accepted.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_reviews WHERE work_unit_id=?1 AND delivery_persisted_at IS NOT NULL AND harness_bound_at IS NOT NULL AND launch_requested_at IS NOT NULL AND launch_accepted_at IS NOT NULL AND review_ready_at IS NOT NULL", [&accepted.work_unit_id], |row| row.get(0)).unwrap(), 1);
+        let connection = Connection::open(&accepted.base.database_path).unwrap();
+        let (delivered,delivery_fingerprint):(String,String) = connection.query_row("SELECT delivered_payload_json,delivered_payload_fingerprint FROM work_unit_handler_reviews WHERE work_unit_id=?1", [&accepted.work_unit_id], |row| Ok((row.get(0)?,row.get(1)?))).unwrap();
+        connection.execute("UPDATE work_unit_handler_reviews SET delivered_payload_json='{}' WHERE work_unit_id=?1", [&accepted.work_unit_id]).unwrap();
+        assert!(matches!(reopened.handler_review_evidence_for_test(&review), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
+        connection.execute("UPDATE work_unit_handler_reviews SET delivered_payload_json=?1 WHERE work_unit_id=?2", params![delivered,accepted.work_unit_id]).unwrap();
+        let comparison:String = connection.query_row("SELECT comparison_fingerprint FROM work_unit_implementer_outcomes WHERE work_unit_id=?1", [&accepted.work_unit_id], |row| row.get(0)).unwrap();
+        connection.execute("UPDATE work_unit_implementer_outcomes SET comparison_fingerprint='drifted-comparison' WHERE work_unit_id=?1", [&accepted.work_unit_id]).unwrap();
+        assert!(matches!(reopened.handler_review_evidence_for_test(&review), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
+        connection.execute("UPDATE work_unit_implementer_outcomes SET comparison_fingerprint=?1 WHERE work_unit_id=?2", params![comparison,accepted.work_unit_id]).unwrap();
+        connection.execute("UPDATE work_unit_handler_reviews SET delivered_payload_fingerprint='drifted-delivery' WHERE work_unit_id=?1", [&accepted.work_unit_id]).unwrap();
+        assert!(matches!(reopened.handler_review_evidence_for_test(&review), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
+        connection.execute("UPDATE work_unit_handler_reviews SET delivered_payload_fingerprint=?1 WHERE work_unit_id=?2", params![delivery_fingerprint,accepted.work_unit_id]).unwrap();
+        for invocation in [&accepted.handler_invocation_id, &accepted.handler_action_invocation_id, &accepted.implementer_invocation_id, &accepted.reporting_invocation_id, "foreign-review"] {
+            assert!(matches!(reopened.handler_review_evidence_for_test(invocation), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));
+        }
+        reopened.record_handler_review_judgment_for_test(&review, "accept", None).unwrap();
+        reopened.record_handler_review_judgment_for_test(&review, "accept", None).unwrap();
+        assert_eq!(Connection::open(&accepted.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_decisions", [], |row| row.get(0)).unwrap(), 0);
+        assert!(matches!(reopened.record_handler_review_judgment_for_test(&review, "return", Some(crate::orchestration::sprint_runner_transition::HandlerReviewReturnReason { code: "review_failed".into(), explanation: "evidence requires correction".into() })), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
+        accepted.base.runtime.finish(&review, AgentInvocationTerminalStatus::Completed);
+        let decision:(String,Option<String>) = Connection::open(&accepted.base.database_path).unwrap().query_row("SELECT decision_variant,settlement_ready_at FROM work_unit_handler_decisions WHERE work_unit_id=?1", [&accepted.work_unit_id], |row| Ok((row.get(0)?,row.get(1)?))).unwrap();
+        assert_eq!(decision, ("accepted".into(), None));
+        assert!(matches!(reopened.handler_review_evidence_for_test(&review), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));
+
+        let returned = ReportingFixture::new();
+        let returned_review = returned.ready_review();
+        let reason = crate::orchestration::sprint_runner_transition::HandlerReviewReturnReason { code: "review_failed".into(), explanation: "evidence requires correction".into() };
+        returned.transition.record_handler_review_judgment_for_test(&returned_review, "return", Some(reason.clone())).unwrap();
+        returned.transition.record_handler_review_judgment_for_test(&returned_review, "return", Some(reason.clone())).unwrap();
+        assert!(matches!(returned.transition.record_handler_review_judgment_for_test(&returned_review, "accept", None), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
+        returned.base.runtime.finish(&returned_review, AgentInvocationTerminalStatus::Completed);
+        let return_decision:(String,String,Option<String>) = Connection::open(&returned.base.database_path).unwrap().query_row("SELECT decision_variant,return_reason_json,settlement_ready_at FROM work_unit_handler_decisions WHERE work_unit_id=?1", [&returned.work_unit_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
+        assert_eq!(return_decision.0, "returned");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&return_decision.1).unwrap()["code"], "review_failed");
+        assert!(return_decision.2.is_none());
+        assert_eq!(Connection::open(&returned.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1", [&returned.work_unit_id], |row| row.get(0)).unwrap(), 1);
+
+        let without_judgment = ReportingFixture::new();
+        let without_judgment_review = without_judgment.ready_review();
+        without_judgment.base.runtime.finish(&without_judgment_review, AgentInvocationTerminalStatus::Completed);
+        assert_eq!(Connection::open(&without_judgment.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_decisions", [], |row| row.get(0)).unwrap(), 0);
+
+        for status in [AgentInvocationTerminalStatus::Failed, AgentInvocationTerminalStatus::Canceled, AgentInvocationTerminalStatus::Interrupted] {
+            let terminal = ReportingFixture::new();
+            let terminal_review = terminal.ready_review();
+            terminal.transition.record_handler_review_judgment_for_test(&terminal_review, "accept", None).unwrap();
+            terminal.base.runtime.finish(&terminal_review, status);
+            assert_eq!(Connection::open(&terminal.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_decisions", [], |row| row.get(0)).unwrap(), 0);
+        }
     }
 }
 
