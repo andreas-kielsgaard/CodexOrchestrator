@@ -22,6 +22,17 @@ const ASSOCIATION_ID: &str = "planning-draft-agent-session-association-1";
 const ACTOR_ID: &str = "managed-plan-builder";
 
 #[test]
+fn handback_native_dto_exposes_only_factual_stages() {
+    let dto = WorkUnitNoProgressHandbackDto {
+        handback_id: "handback".into(), source_attempt_id: "attempt".into(), source_review_invocation_id: "review".into(), context_fingerprint: "context".into(), persisted_at: "persisted".into(), delivery_intended_at: "intended".into(), sprint_runner_receiver_activated_at: None, sprint_runner_receiver_decision_at: None,
+        sprint_runner_delivery: Some(SprintRunnerHandbackDeliveryDto { delivery_requested_at: "requested".into(), delivery_persisted_at: Some("delivered".into()), harness_bound_at: Some("bound".into()), launch_requested_at: Some("launch-requested".into()), launch_accepted_at: Some("launch-accepted".into()), provider_activation_observed_at: None, semantic_reassessment_recorded_at: Some("reassessed".into()), selected_movement_kind: Some("local_exhaustion_escalate".into()), escalation_delivery_requested_at: Some("escalation-requested".into()) }),
+    };
+    let value = serde_json::to_string(&dto).unwrap();
+    for public in ["deliveryIntendedAt","deliveryPersistedAt","harnessBoundAt","launchRequestedAt","launchAcceptedAt","semanticReassessmentRecordedAt","local_exhaustion_escalate","escalationDeliveryRequestedAt"] { assert!(value.contains(public)); }
+    for private in ["receiverSessionId","reassessmentInvocationId","deliveryFactId","semanticReassessmentFactId","escalationIntentId","deliveryRequestId","harnessKey","harnessVersion","route","worktree"] { assert!(!value.contains(private)); }
+}
+
+#[test]
 fn file_review_store_replays_exact_facts_and_reauthorizes_on_load() {
     let repository = repository_at(time());
     let saved = repository
