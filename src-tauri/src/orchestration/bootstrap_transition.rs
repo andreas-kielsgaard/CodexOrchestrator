@@ -5577,6 +5577,278 @@ mod tests {
         assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 6);
     }
 
+    #[test]
+    fn handler_drain_advances_independent_generations_from_durable_accepted_contributions() {
+        let fixture = Fixture::new();
+        let (service, planner, sprint_id) = fixture.prepare_work_slice_planner();
+        let lane = |title: &str, depends_on: Vec<&str>| {
+            crate::orchestration::sprint_runner_transition::WorkSliceLane {
+                title: title.into(),
+                specification: format!("Drain fixture for {title}."),
+                depends_on: depends_on.into_iter().map(str::to_owned).collect(),
+            }
+        };
+        service
+            .submit_work_slice_proposal(
+                &planner,
+                crate::orchestration::sprint_runner_transition::WorkSliceProposal {
+                    objective: "Prove bounded Handler graph draining.".into(),
+                    lanes: vec![
+                        lane("root-a", vec![]),
+                        lane("root-b", vec![]),
+                        lane("middle", vec!["root-a"]),
+                        lane("leaf", vec!["middle"]),
+                    ],
+                },
+            )
+            .unwrap();
+        service
+            .complete_work_slice_planning(
+                &planner,
+                crate::orchestration::sprint_runner_transition::WorkSliceCompletion {},
+            )
+            .unwrap();
+        fixture
+            .runtime
+            .finish(planner.as_str(), AgentInvocationTerminalStatus::Completed);
+
+        let repository_root = fixture._directory.path().join("drain-repository");
+        let sprint_root = fixture._directory.path().join("drain-sprint-worktree");
+        fs::create_dir_all(&repository_root).unwrap();
+        let git = |root: &Path, arguments: &[&str]| {
+            let output = std::process::Command::new("git")
+                .args(arguments)
+                .current_dir(root)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        git(&repository_root, &["init"]);
+        git(&repository_root, &["config", "user.email", "drain@example.test"]);
+        git(&repository_root, &["config", "user.name", "Drain Test"]);
+        fs::write(repository_root.join("README.md"), "drain base\n").unwrap();
+        git(&repository_root, &["add", "README.md"]);
+        git(&repository_root, &["commit", "-m", "drain base"]);
+        let initial = git(&repository_root, &["rev-parse", "HEAD"]);
+        git(
+            &repository_root,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "drain-sprint",
+                sprint_root.to_string_lossy().as_ref(),
+                &initial,
+            ],
+        );
+        fs::write(sprint_root.join("README.md"), "drain sprint\n").unwrap();
+        git(&sprint_root, &["add", "README.md"]);
+        git(&sprint_root, &["commit", "-m", "drain sprint"]);
+        let current = git(&sprint_root, &["rev-parse", "HEAD"]);
+        let repository_root = repository_root.canonicalize().unwrap();
+        let sprint_root = sprint_root.canonicalize().unwrap();
+        // The planning helper installs a deliberately non-Git route solely to authorize the
+        // Planner fixture. Replace it before exercising the actual Handler workspace boundary.
+        Connection::open(&fixture.database_path)
+            .unwrap()
+            .execute(
+                "DELETE FROM initiated_sprint_git_authorities WHERE sprint_id=?1",
+                [&sprint_id],
+            )
+            .unwrap();
+        let authority = match SqliteOrchestrationRepository::open(&fixture.database_path)
+            .unwrap()
+            .store_initiated_sprint_git_authority(InitiatedSprintGitAuthorityWrite {
+                sprint_id: sprint_id.clone(),
+                idempotency_key: "handler-drain-authority".into(),
+                repository_id: "handler-drain-repository".into(),
+                repository_root: repository_root.to_string_lossy().into_owned(),
+                repository_common_dir: repository_root
+                    .join(".git")
+                    .canonicalize()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+                worktree_id: "handler-drain-sprint-worktree".into(),
+                worktree_root: sprint_root.to_string_lossy().into_owned(),
+                baseline_object_id: initial.clone(),
+                current_object_id: current,
+                runtime_instance_ref: "handler-drain-runtime".into(),
+                runtime_source_ref: "handler-drain-source".into(),
+                source_fingerprint: "d".repeat(64),
+            })
+            .unwrap()
+        {
+            crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::Stored {
+                authority_id,
+            }
+            | crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::IdempotentReplay {
+                authority_id,
+            } => authority_id,
+        };
+        let repository = Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap());
+        let handler = Arc::new(WorkUnitExecutionHarnessService::new(
+            ProductExecutionSupportState::new(
+                &fixture.database_path,
+                fixture._directory.path().join("drain-workspaces"),
+                repository.clone(),
+            )
+            .unwrap()
+            .service(),
+            fixture.sessions.clone(),
+            Arc::new(OrchestrationApplication::new(repository)),
+        ));
+        fixture.notifier.set_sprint(&service);
+        service
+            .attach_work_unit_handler_activation(handler.clone())
+            .unwrap();
+
+        let materialization: (String, String) = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT materialization_id,accepted_revision_id FROM work_unit_materializations",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let units = Connection::open(&fixture.database_path)
+            .unwrap()
+            .prepare("SELECT work_unit_id,lane_title FROM work_units WHERE materialization_id=?1")
+            .unwrap()
+            .query_map([&materialization.0], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .unwrap()
+            .collect::<Result<HashMap<_, _>, _>>()
+            .unwrap();
+        let root_a = units
+            .iter()
+            .find_map(|(id, title)| (title == "root-a").then_some(id.clone()))
+            .unwrap();
+        let root_b = units
+            .iter()
+            .find_map(|(id, title)| (title == "root-b").then_some(id.clone()))
+            .unwrap();
+        let middle = units
+            .iter()
+            .find_map(|(id, title)| (title == "middle").then_some(id.clone()))
+            .unwrap();
+        let leaf = units
+            .iter()
+            .find_map(|(id, title)| (title == "leaf").then_some(id.clone()))
+            .unwrap();
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_handler_activations WHERE eligibility_state='eligible'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id IN (?1,?2) AND handler_ready_at IS NOT NULL",
+                    params![root_a, root_b],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1 AND eligibility_state='blocked'",
+                    [&middle],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            1
+        );
+        drop(connection);
+
+        // Model an already accepted integration boundary after the two application-owned root
+        // Handler activations. The service must consume these durable facts rather than a
+        // notification payload and must not duplicate either root activation on reopen.
+        let seed_accepted_generation = |unit: &str, dependent: &str| {
+            let connection = Connection::open(&fixture.database_path).unwrap();
+            connection.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
+            let integration = format!("drain-integration-{unit}");
+            connection.execute(
+                "INSERT INTO accepted_work_unit_integrations (integration_id,work_unit_id,candidate_id,authority_id,target_ref_name,pre_object_id,pre_version,candidate_commit_id,candidate_tree_id,baseline_object_id,intent_fingerprint,intent_recorded_at,authorization_recorded_at,stage,integration_commit_id,integration_tree_id,object_created_at,ref_advanced_at,runtime_advanced_at,db_advanced_at,settled_at,notification_intent_recorded_at) VALUES (?1,?2,?3,?4,'refs/heads/drain',?5,1,?5,?6,?5,?7,'t','t','settled',?5,?6,'t','t','t','t','t','t')",
+                params![integration, unit, format!("drain-candidate-{unit}"), authority, initial, "e".repeat(40), format!("drain-intent-{unit}")],
+            ).unwrap();
+            connection.execute(
+                "INSERT INTO work_unit_settlements(settlement_id,work_unit_id,integration_id,settled_at) VALUES(?1,?2,?3,'t')",
+                params![format!("drain-settlement-{unit}"), unit, integration],
+            ).unwrap();
+            let edge: String = connection.query_row(
+                "SELECT relationship_id FROM work_unit_relationships WHERE materialization_id=?1 AND relationship_kind='depends_on' AND from_id=?2 AND to_id=?3",
+                params![materialization.0, dependent, unit],
+                |row| row.get(0),
+            ).unwrap();
+            connection.execute(
+                "INSERT INTO work_unit_prerequisite_contributions(contribution_id,prerequisite_work_unit_id,dependent_work_unit_id,integration_id,relationship_id,recorded_at) VALUES(?1,?2,?3,?4,?5,'t')",
+                params![format!("drain-contribution-{unit}"), unit, dependent, integration, edge],
+            ).unwrap();
+            connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        };
+        seed_accepted_generation(&root_a, &middle);
+
+        // Simulate a crash after the root-b activation persisted but before its final readiness
+        // projection. Reopen must adopt that partial effect, keep it out of attention, and
+        // advance the independently unlocked middle generation exactly once.
+        Connection::open(&fixture.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE work_unit_handler_activations SET handler_ready_at=NULL WHERE work_unit_id=?1",
+                [&root_b],
+            )
+            .unwrap();
+        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+        )
+        .unwrap();
+        fixture.notifier.set_sprint(&reopened);
+        reopened
+            .attach_work_unit_handler_activation(handler.clone())
+            .unwrap();
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id IN (?1,?2) AND handler_ready_at IS NOT NULL", params![root_a, root_b], |row| row.get(0)).unwrap(), 2);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1 AND eligibility_state='eligible' AND handler_ready_at IS NOT NULL", [&middle], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_attentions", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id IN (?1,?2)", params![root_a, root_b], |row| row.get(0)).unwrap(), 2);
+        drop(connection);
+
+        seed_accepted_generation(&middle, &leaf);
+        // No callback is delivered for the second accepted generation. A fresh service instance
+        // must discover the durable contribution and activate the leaf without Sprint/Epic work.
+        let missed_notification_reopen = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+        )
+        .unwrap();
+        fixture.notifier.set_sprint(&missed_notification_reopen);
+        missed_notification_reopen
+            .attach_work_unit_handler_activation(handler)
+            .unwrap();
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE eligibility_state='eligible' AND handler_ready_at IS NOT NULL", [], |row| row.get(0)).unwrap(), 4);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(DISTINCT attempt_id) FROM work_unit_handler_activations", [], |row| row.get(0)).unwrap(), 4);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM accepted_work_unit_integrations WHERE stage='settled'", [], |row| row.get(0)).unwrap(), 2);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_settlements", [], |row| row.get(0)).unwrap(), 2);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_prerequisite_contributions", [], |row| row.get(0)).unwrap(), 2);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1", [&leaf], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sprint_settlements','epic_settlements')", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_settlements", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<String, _, _>("SELECT accepted_revision_id FROM work_unit_execution_states WHERE work_unit_id=?1", [&leaf], |row| row.get(0)).unwrap(), materialization.1);
+    }
+
     #[derive(Clone, Debug, Eq, PartialEq)]
     struct ReportingFacts {
         summary: Option<String>,

@@ -682,10 +682,12 @@ publication.
 - The application drains at most one follow-up dependency generation after each durable
   Handler/Implementer/review/integration pass. It validates the complete canonical `depends_on`
   graph before treating a Work Unit as eligible, and accepted integration settlements plus exact
-  prerequisite contributions remain the only downstream authority. Cycles, malformed or
-  duplicate graph facts, missing or foreign contribution endpoints, integration attention,
-  impossible terminal mixtures, and a fully evaluated non-progressing generation fail closed; a
-  no-progress handback remains a distinct unsettled Work Unit state.
+  prerequisite contributions remain the only downstream authority. A partial persisted Handler
+  activation is current recoverable progress, not a stall. Cycles, malformed or duplicate graph
+  facts, missing or foreign contribution endpoints, integration attention, current-attempt
+  terminal failures or review conflicts, impossible terminal mixtures, and a fully evaluated
+  non-progressing generation fail closed; a no-progress handback remains a distinct unsettled
+  Work Unit state.
 - The three terminal facts are separate and idempotent: graph completion, Work Slice execution
   settlement, and planning-point execution settlement. They are written only when every
   canonical Work Unit has a coherent settled accepted integration and every canonical dependency
@@ -694,10 +696,14 @@ publication.
   graph completion and both settlement facts, including after a source repair or reopen. Current
   execution-state projection validates stored Work Unit/materialization/revision correlation
   before updating it; it distinguishes ready, active, retry-authorized, handed-back, settled,
-  and attention from exact current facts.
-- Local deterministic validation: `cargo test --lib work_unit_dependency_wave -- --nocapture`
-  passed **10 tests** (multi-root/multi-level exact terminal facts, cycle and reachable-stall
-  attention, foreign/missing contribution endpoints, exact state matrix/correlation mismatch,
-  eligibility waves, activation replay, unresolved-attention replay, and concurrent reopen
-  settlement replay). `cargo check --lib` passed. These checks do not prove live-provider
-  behavior, user acceptance, or broad suite compliance.
+  and attention from the latest exact attempt rather than historical Handler readiness.
+- Local deterministic validation: `handler_drain_advances_independent_generations_from_durable_accepted_contributions`
+  exercises the service-owned Handler reconciler with two independent roots, a partial-effect
+  reopen, and two later durable contribution generations; Handler attempts are exact-once and no
+  Work Slice execution settlement, Sprint settlement, or Epic settlement follows. Its accepted
+  integration/settlement/contribution facts are fixture-owned pre-existing durable boundaries, not a proof of live
+  provider or Git integration. `cargo test --lib work_unit_dependency_wave -- --nocapture` passed
+  **13 tests** (including current-attempt failure/review-conflict attention, recoverable partial
+  activation, reachable stall, state correlation, contribution correlation, replay, and exact
+  terminal facts). These checks do not prove live-provider behavior, user acceptance, or broad
+  suite compliance.
