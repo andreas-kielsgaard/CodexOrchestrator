@@ -288,6 +288,25 @@ describe('Work Slice Planner boundary disclosure', () => {
         toId: 'unit-root',
       },
     ];
+    value.dependencyActivationIntents = [
+      {
+        workUnitId: 'unit-root',
+        materializationId: 'materialization-1',
+        acceptedRevisionId: 'accepted-revision-1',
+        eligibilityState: 'eligible',
+        eligibilityRecordedAt: '2026-08-02T00:01:12Z',
+        activationIntendedAt: '2026-08-02T00:01:13Z',
+      },
+      {
+        workUnitId: 'unit-dependent',
+        materializationId: 'materialization-1',
+        acceptedRevisionId: 'accepted-revision-1',
+        eligibilityState: 'blocked',
+        blockedReason: 'missing_prerequisite_contributions:dependency',
+        eligibilityRecordedAt: '2026-08-02T00:01:12Z',
+        activationIntendedAt: '2026-08-02T00:01:13Z',
+      },
+    ];
     const workspace = projectSprintWorkspacePresentation(
       composeProductOrchestrationReadModels(
         nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(value)),
@@ -309,6 +328,11 @@ describe('Work Slice Planner boundary disclosure', () => {
       },
     });
     expect(workUnits.find(({ workUnitId }) => workUnitId === 'unit-dependent')).toMatchObject({
+      dependencyActivationIntent: {
+        eligibilityState: 'blocked',
+        blockedReason: 'missing_prerequisite_contributions:dependency',
+        activationIntendedAt: '2026-08-02T00:01:13Z',
+      },
       handlerActivation: {
         eligibilityState: 'blocked',
         blockedReason: 'prerequisite_satisfaction_not_authoritative',
@@ -322,6 +346,12 @@ describe('Work Slice Planner boundary disclosure', () => {
     });
     expect(workUnits.find(({ workUnitId }) => workUnitId === 'unit-requested')).toMatchObject({
       handlerActivation: { eligibilityState: 'eligible', stage: 'launch_requested' },
+    });
+    expect(workUnits.find(({ workUnitId }) => workUnitId === 'unit-root')).toMatchObject({
+      dependencyActivationIntent: {
+        eligibilityState: 'eligible',
+        activationIntendedAt: '2026-08-02T00:01:13Z',
+      },
     });
 
     render(
@@ -338,6 +368,12 @@ describe('Work Slice Planner boundary disclosure', () => {
     );
     expect(activity).toHaveTextContent('Provider activity observed separately');
     expect(activity).toHaveTextContent('Dependent responsibility');
+    expect(activity).toHaveTextContent(
+      'Dependency activation blocked: missing_prerequisite_contributions:dependency.',
+    );
+    expect(activity).toHaveTextContent(
+      'Root responsibility: Dependencies eligible; Handler activation intent recorded.',
+    );
     expect(activity).toHaveTextContent(
       'Handler activation blocked: prerequisite_satisfaction_not_authoritative.',
     );

@@ -1184,20 +1184,7 @@ impl SqliteOrchestrationRepository {
             work_unit.integration = productive_integrations.remove(&work_unit.work_unit_id);
             validate_work_unit_activation_projection(work_unit)?;
         }
-        if dependency_activation_intents.iter().any(|intent| !work_units.iter().any(|unit| unit.work_unit_id == intent.work_unit_id)) {
-            return Err("Dependency activation intent references an unknown Work Unit".into());
-        }
-        for intent in &dependency_activation_intents {
-            let unit = work_units.iter().find(|unit| unit.work_unit_id == intent.work_unit_id).unwrap();
-            if unit.materialization_id != intent.materialization_id || unit.accepted_revision_id != intent.accepted_revision_id {
-                return Err("Dependency activation intent has a foreign materialization or accepted revision".into());
-            }
-            match intent.eligibility_state.as_str() {
-                "blocked" if intent.blocked_reason.is_some() && intent.activation_intended_at.is_none() => {}
-                "eligible" if intent.blocked_reason.is_none() && intent.activation_intended_at.is_some() => {}
-                _ => return Err("Dependency activation intent has contradictory eligibility facts".into()),
-            }
-        }
+        validate_dependency_activation_intents(&dependency_activation_intents, &work_units)?;
         if !implementer_outcomes.is_empty() {
             return Err("Implementer outcome references an unknown Work Unit".into());
         }
@@ -2985,6 +2972,34 @@ struct WorkUnitDependencyActivationIntentDto {
     eligibility_recorded_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     activation_intended_at: Option<String>,
+}
+
+fn validate_dependency_activation_intents(
+    intents: &[WorkUnitDependencyActivationIntentDto],
+    units: &[WorkUnitDto],
+) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    for intent in intents {
+        if !seen.insert(&intent.work_unit_id) {
+            return Err("Duplicate dependency activation intent Work Unit".into());
+        }
+        let Some(unit) = units.iter().find(|unit| unit.work_unit_id == intent.work_unit_id) else {
+            return Err("Dependency activation intent references an unknown Work Unit".into());
+        };
+        if unit.materialization_id != intent.materialization_id
+            || unit.accepted_revision_id != intent.accepted_revision_id
+        {
+            return Err("Dependency activation intent has a foreign materialization or accepted revision".into());
+        }
+        match intent.eligibility_state.as_str() {
+            // A blocked row may retain a prior durable intent timestamp: this is truthful history,
+            // not a current eligibility claim.
+            "blocked" if intent.blocked_reason.is_some() => {}
+            "eligible" if intent.blocked_reason.is_none() && intent.activation_intended_at.is_some() => {}
+            _ => return Err("Dependency activation intent has contradictory eligibility facts".into()),
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

@@ -105,6 +105,16 @@ describe('WorkUnitDetailWorkspace Handler activation detail', () => {
         ordinal: 0,
       },
     ];
+    value.dependencyActivationIntents = [
+      {
+        workUnitId: 'unit-launch-accepted',
+        materializationId: 'materialization-1',
+        acceptedRevisionId: 'accepted-revision-1',
+        eligibilityState: 'eligible',
+        eligibilityRecordedAt: '2026-08-02T00:00:05Z',
+        activationIntendedAt: '2026-08-02T00:00:06Z',
+      },
+    ];
 
     const workspace = projectSprintWorkspacePresentation(
       composeProductOrchestrationReadModels(
@@ -135,6 +145,9 @@ describe('WorkUnitDetailWorkspace Handler activation detail', () => {
     expect(detail).toHaveTextContent(
       'Handler launch accepted; application Handler readiness is not yet recorded.',
     );
+    expect(detail).toHaveTextContent(
+      'Dependencies are eligible and Handler activation intent is durably recorded.',
+    );
     expect(detail).not.toHaveTextContent('acceptance is not yet recorded');
     expect(detail).toHaveTextContent(
       'Handler action continuation is blocked: original_handler_invocation_active.',
@@ -161,6 +174,35 @@ describe('WorkUnitDetailWorkspace Handler activation detail', () => {
     );
     expect(screen.getByLabelText('Work Unit context')).toHaveTextContent(
       'Handler action continuation needs attention: handler_action_launch_not_accepted.',
+    );
+
+    value.dependencyActivationIntents = [
+      {
+        workUnitId: 'unit-launch-accepted',
+        materializationId: 'materialization-1',
+        acceptedRevisionId: 'accepted-revision-1',
+        eligibilityState: 'blocked',
+        blockedReason: 'missing_prerequisite_contributions:edge-1',
+        eligibilityRecordedAt: '2026-08-02T00:00:07Z',
+        activationIntendedAt: '2026-08-02T00:00:06Z',
+      },
+    ];
+    const blockedQuery = decodeOrchestrationNativeQueryV2(value);
+    const blockedUnit = projectSprintWorkspacePresentation(
+      composeProductOrchestrationReadModels(
+        nativeQueryProductCompositionInputV2(blockedQuery),
+      ).epics[0]!.sprints[0]!,
+    ).revisionViews[0]!.workUnits[0]!;
+    expect(blockedUnit.dependencyActivationIntent).toMatchObject({
+      eligibilityState: 'blocked',
+      blockedReason: 'missing_prerequisite_contributions:edge-1',
+      activationIntendedAt: '2026-08-02T00:00:06Z',
+    });
+    value.dependencyActivationIntents = [
+      { ...(value.dependencyActivationIntents as Array<Record<string, unknown>>)[0], workUnitId: 'foreign-unit' },
+    ];
+    expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow(
+      'invalid Work Unit/materialization/revision correlation',
     );
   });
 });

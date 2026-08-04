@@ -1672,6 +1672,56 @@ fn canonical_populated_query() -> NativeQueryV2 {
     }
 }
 
+fn dependency_projection_unit() -> WorkUnitDto {
+    WorkUnitDto {
+        work_unit_id: "unit-1".into(),
+        materialization_id: "materialization-1".into(),
+        work_slice_id: "slice-1".into(),
+        accepted_revision_id: "revision-1".into(),
+        lane_ordinal: 0,
+        lane_title: "Unit".into(),
+        specification: "Bounded unit".into(),
+        handler_activation: None,
+        action_continuation: None,
+        implementer_activation: None,
+        implementer_outcome: None,
+        handler_review: None,
+        handler_decision: None,
+        integration: None,
+    }
+}
+
+fn dependency_intent(state: &str, reason: Option<&str>, intended: Option<&str>) -> WorkUnitDependencyActivationIntentDto {
+    WorkUnitDependencyActivationIntentDto {
+        work_unit_id: "unit-1".into(),
+        materialization_id: "materialization-1".into(),
+        accepted_revision_id: "revision-1".into(),
+        eligibility_state: state.into(),
+        blocked_reason: reason.map(str::to_owned),
+        eligibility_recorded_at: "2026-08-04T00:00:00Z".into(),
+        activation_intended_at: intended.map(str::to_owned),
+    }
+}
+
+#[test]
+fn dependency_activation_intent_projection_is_strict_and_privacy_safe() {
+    assert!(validate_dependency_activation_intents(&[dependency_intent("blocked", Some("missing_prerequisite_contributions:edge-1"), None)], &[dependency_projection_unit()]).is_ok());
+    assert!(validate_dependency_activation_intents(&[dependency_intent("eligible", None, Some("2026-08-04T00:00:00Z"))], &[dependency_projection_unit()]).is_ok());
+    assert!(validate_dependency_activation_intents(&[dependency_intent("blocked", Some("canonical_dependency_edge_invalid"), Some("2026-08-04T00:00:00Z"))], &[dependency_projection_unit()]).is_ok());
+    let mut unknown = dependency_intent("blocked", Some("missing"), None);
+    unknown.work_unit_id = "foreign-unit".into();
+    assert!(validate_dependency_activation_intents(&[unknown], &[dependency_projection_unit()]).is_err());
+    let mut foreign = dependency_intent("blocked", Some("missing"), None);
+    foreign.accepted_revision_id = "foreign-revision".into();
+    assert!(validate_dependency_activation_intents(&[foreign], &[dependency_projection_unit()]).is_err());
+    assert!(validate_dependency_activation_intents(&[dependency_intent("eligible", Some("contradictory"), None)], &[dependency_projection_unit()]).is_err());
+    let json = serde_json::to_value(dependency_intent("eligible", None, Some("2026-08-04T00:00:00Z"))).unwrap();
+    let object = json.as_object().unwrap();
+    for private in ["repositoryCommitRef", "integrationId", "contributionId", "fingerprint", "objectId"] {
+        assert!(!object.contains_key(private), "private field crossed projection: {private}");
+    }
+}
+
 fn current_native_fixture(value: &str) -> Result<serde_json::Value, serde_json::Error> {
     let mut fixture = serde_json::from_str::<serde_json::Value>(value)?;
     fixture
