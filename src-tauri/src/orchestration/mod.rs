@@ -2,6 +2,7 @@
 
 pub(crate) mod application;
 pub(crate) mod accepted_candidate_authority;
+pub(crate) mod accepted_integration;
 pub(crate) mod bootstrap_transition;
 pub(crate) mod confirmation;
 pub(crate) mod conversation_harness;
