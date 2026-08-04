@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-const ACTIVE_SCHEMA_VERSION: i64 = 18;
+const ACTIVE_SCHEMA_VERSION: i64 = 19;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
@@ -30,7 +30,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     if current_version == ACTIVE_SCHEMA_VERSION {
         return Ok(());
     }
-    if (1..=17).contains(&current_version) {
+    if (1..=18).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -120,6 +120,12 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         transaction
             .execute_batch(crate::orchestration::execution_support::EXECUTION_SUPPORT_SCHEMA)
             .map_err(|error| format!("Unable to migrate execution-support schema: {error}"))?;
+        transaction
+            .execute_batch(crate::orchestration::accepted_candidate_authority::ACCEPTED_CANDIDATE_AUTHORITY_SCHEMA)
+            .map_err(|error| format!("Unable to migrate accepted-candidate authority schema: {error}"))?;
+        transaction
+            .execute_batch(crate::orchestration::accepted_integration::ACCEPTED_INTEGRATION_SCHEMA)
+            .map_err(|error| format!("Unable to migrate accepted-integration schema: {error}"))?;
         if current_version == 14 {
             transaction
                 .execute_batch(
@@ -195,6 +201,12 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     transaction
         .execute_batch(crate::orchestration::execution_support::EXECUTION_SUPPORT_SCHEMA)
         .map_err(|error| format!("Unable to initialize execution-support schema: {error}"))?;
+    transaction
+        .execute_batch(crate::orchestration::accepted_candidate_authority::ACCEPTED_CANDIDATE_AUTHORITY_SCHEMA)
+        .map_err(|error| format!("Unable to initialize accepted-candidate authority schema: {error}"))?;
+    transaction
+        .execute_batch(crate::orchestration::accepted_integration::ACCEPTED_INTEGRATION_SCHEMA)
+        .map_err(|error| format!("Unable to initialize accepted-integration schema: {error}"))?;
     transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
         .map_err(|error| format!("Unable to record active schema version: {error}"))?;
@@ -286,6 +298,10 @@ mod tests {
         assert_eq!(
             tables,
             vec![
+                "accepted_candidate_authority_attentions",
+                "accepted_handler_candidates",
+                "accepted_work_unit_integration_evidence",
+                "accepted_work_unit_integrations",
                 "agent_session_invocation_diagnostics",
                 "agent_session_invocation_launch_acceptances",
                 "agent_session_invocations",
@@ -313,6 +329,7 @@ mod tests {
                 "file_review_changed_files",
                 "file_review_documents",
                 "file_review_git_capture_authorizations",
+                "file_review_git_capture_documents",
                 "harness_revision_commands",
                 "harness_revision_publications",
                 "harness_revisions",
@@ -329,7 +346,11 @@ mod tests {
                 "proposal_commands",
                 "proposal_events",
                 "proposal_revisions",
+                "sprint_target_current_attentions",
+                "sprint_target_currents",
                 "stored_file_review_artifacts",
+                "work_unit_prerequisite_contributions",
+                "work_unit_settlements",
             ]
         );
         assert_eq!(
@@ -463,6 +484,34 @@ mod tests {
                 .unwrap(),
             2
         );
+    }
+
+    #[test]
+    fn migrates_v18_accepted_integration_schema_and_reopens() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("active-v18.sqlite");
+        let connection = open_active_database(&path).expect("current database");
+        connection
+            .execute_batch(
+                "DROP TABLE work_unit_prerequisite_contributions;
+                 DROP TABLE work_unit_settlements;
+                 DROP TABLE accepted_work_unit_integration_evidence;
+                 DROP TABLE accepted_work_unit_integrations;
+                 PRAGMA user_version=18;",
+            )
+            .expect("v18 predecessor");
+        initialize_active_database(&connection).expect("migrate v18");
+        drop(connection);
+        let reopened = open_active_database(&path).expect("reopen v19");
+        for table in [
+            "accepted_work_unit_integrations",
+            "accepted_work_unit_integration_evidence",
+            "work_unit_settlements",
+            "work_unit_prerequisite_contributions",
+        ] {
+            assert!(table_exists(&reopened, table), "missing {table}");
+        }
+        assert_eq!(pragma_i64(&reopened, "user_version"), ACTIVE_SCHEMA_VERSION);
     }
 
     #[test]
