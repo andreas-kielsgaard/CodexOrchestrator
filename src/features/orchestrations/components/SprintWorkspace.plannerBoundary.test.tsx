@@ -8,7 +8,11 @@ import {
 } from '../../../application/orchestrations';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { SprintRunnerActivationObservation, WorkSlicePlannerBoundary } from './SprintWorkspace';
+import {
+  SprintRunnerActivationObservation,
+  SprintRunnerHandbackActivity,
+  WorkSlicePlannerBoundary,
+} from './SprintWorkspace';
 
 const transition: ProductSprintRunnerTransitionStatusV1 = {
   label: 'Work Slice Planner request authorized; planning point pending',
@@ -395,5 +399,70 @@ describe('Work Slice Planner boundary disclosure', () => {
     expect(activity).not.toHaveTextContent(
       /Implementer|Handler review|implementation output|retry attempt|application acceptance|Sprint continuation/,
     );
+  });
+});
+
+describe('Sprint Runner Handback disclosure', () => {
+  it('shows factual stages and qualified movement without final blockage or Epic response', () => {
+    render(
+      <SprintRunnerHandbackActivity
+        workUnits={
+          [
+            {
+              workUnitId: 'unit-handback',
+              title: 'Handed-back concern',
+              attemptHistory: [
+                {
+                  ordinal: 0,
+                  attemptId: 'attempt-1',
+                  incompleteDisposition: {
+                    attemptId: 'attempt-1',
+                    reviewInvocationId: 'review-1',
+                    decisionFingerprint: 'decision-1',
+                    classification: 'blocked',
+                    meaningfulProgress: false,
+                    recordedAt: '2026-08-04T00:00:00Z',
+                    noProgressHandback: {
+                      handbackId: 'handback-1',
+                      sourceAttemptId: 'attempt-1',
+                      sourceReviewInvocationId: 'review-1',
+                      contextFingerprint: 'context-1',
+                      persistedAt: '2026-08-04T00:00:01Z',
+                      deliveryIntendedAt: '2026-08-04T00:00:02Z',
+                      sprintRunnerDelivery: {
+                        deliveryRequestedAt: '2026-08-04T00:00:03Z',
+                        deliveryPersistedAt: '2026-08-04T00:00:04Z',
+                        harnessBoundAt: '2026-08-04T00:00:05Z',
+                        launchRequestedAt: '2026-08-04T00:00:06Z',
+                        launchAcceptedAt: '2026-08-04T00:00:07Z',
+                        semanticReassessmentRecordedAt: '2026-08-04T00:00:08Z',
+                        selectedMovementKind: 'wait_for_agent_dependency',
+                        selectedMovement: {
+                          movementKind: 'wait_for_agent_dependency',
+                          rationale: 'The concern remains open.',
+                          dependencyOwner: 'bounded Work Unit Handler',
+                          dependencyOwnerClassification: 'work_unit_handler',
+                          enablingResult: 'A persisted Handler result.',
+                          resumptionPath: 'Reconcile this exact Handback.',
+                        },
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          ] as never
+        }
+      />,
+    );
+    const region = screen.getByRole('region', { name: 'Sprint Runner Handback reassessment' });
+    expect(region).toHaveTextContent('The handed-back concern remains unresolved');
+    expect(region).toHaveTextContent('Delivery persisted');
+    expect(region).toHaveTextContent('Semantic reassessment recorded');
+    expect(region).toHaveTextContent('Agent-achievable dependency wait');
+    expect(region).toHaveTextContent('enabling result: A persisted Handler result.');
+    expect(region).toHaveTextContent('resumption path: Reconcile this exact Handback.');
+    expect(region).toHaveTextContent('not final Sprint or Epic blockage');
+    expect(region).toHaveTextContent('no Epic response is recorded here');
   });
 });

@@ -13,6 +13,9 @@ import type {
   ProductWorkUnitImplementerActivationV1,
   ProductWorkUnitImplementerOutcomeV1,
   ProductWorkUnitRetryAttemptV1,
+  ProductSprintRunnerHandbackDeliveryV1,
+  ProductSprintRunnerHandbackDependencyOwnerClassificationV1,
+  ProductSprintRunnerHandbackMovementV1,
 } from './productReadModels';
 
 export const ORCHESTRATION_NATIVE_QUERY_V2 = 'orchestration-native-query/v2' as const;
@@ -2284,12 +2287,127 @@ const workUnitIncompleteDisposition = (value: unknown): NativeWorkUnitIncomplete
   const nextAttemptAuthorizedAt = x.nextAttemptAuthorizedAt === undefined ? undefined : timestamp(x.nextAttemptAuthorizedAt, 'nextAttemptAuthorizedAt');
   const noProgressHandback = x.noProgressHandback === undefined ? undefined : (() => {
     const handback = object(x.noProgressHandback, 'no-progress Work Unit handback');
-    keys(handback, ['handbackId', 'sourceAttemptId', 'sourceReviewInvocationId', 'contextFingerprint', 'persistedAt', 'deliveryIntendedAt', 'sprintRunnerReceiverActivatedAt', 'sprintRunnerReceiverDecisionAt'], 'no-progress Work Unit handback');
+    keys(handback, ['handbackId', 'sourceAttemptId', 'sourceReviewInvocationId', 'contextFingerprint', 'persistedAt', 'deliveryIntendedAt', 'sprintRunnerReceiverActivatedAt', 'sprintRunnerReceiverDecisionAt', 'sprintRunnerDelivery'], 'no-progress Work Unit handback');
     if (handback.sprintRunnerReceiverActivatedAt !== undefined || handback.sprintRunnerReceiverDecisionAt !== undefined) fail('no-progress Work Unit handback has forbidden receiver effects');
-    return { handbackId: boundedString(handback.handbackId, 240, 'handbackId'), sourceAttemptId: boundedString(handback.sourceAttemptId, 240, 'sourceAttemptId'), sourceReviewInvocationId: boundedString(handback.sourceReviewInvocationId, 240, 'sourceReviewInvocationId'), contextFingerprint: boundedString(handback.contextFingerprint, 240, 'contextFingerprint'), persistedAt: timestamp(handback.persistedAt, 'persistedAt'), deliveryIntendedAt: timestamp(handback.deliveryIntendedAt, 'deliveryIntendedAt') };
+    const persistedAt = timestamp(handback.persistedAt, 'persistedAt');
+    const deliveryIntendedAt = timestamp(handback.deliveryIntendedAt, 'deliveryIntendedAt');
+    if (Date.parse(deliveryIntendedAt) < Date.parse(persistedAt))
+      fail('no-progress handback delivery intent precedes persistence');
+    const sprintRunnerDelivery =
+      handback.sprintRunnerDelivery === undefined
+        ? undefined
+        : sprintRunnerHandbackDelivery(handback.sprintRunnerDelivery);
+    if (sprintRunnerDelivery && Date.parse(sprintRunnerDelivery.deliveryRequestedAt) < Date.parse(deliveryIntendedAt))
+      fail('Sprint Runner delivery request precedes delivery intent');
+    return {
+      handbackId: boundedString(handback.handbackId, 240, 'handbackId'),
+      sourceAttemptId: boundedString(handback.sourceAttemptId, 240, 'sourceAttemptId'),
+      sourceReviewInvocationId: boundedString(handback.sourceReviewInvocationId, 240, 'sourceReviewInvocationId'),
+      contextFingerprint: boundedString(handback.contextFingerprint, 240, 'contextFingerprint'),
+      persistedAt,
+      deliveryIntendedAt,
+      ...(sprintRunnerDelivery ? { sprintRunnerDelivery } : {}),
+    };
   })();
   if (x.meaningfulProgress ? !nextAttemptAuthorizedAt || noProgressHandback : nextAttemptAuthorizedAt !== undefined || !noProgressHandback) fail('incomplete disposition has incoherent later effects');
   return { attemptId: boundedString(x.attemptId, 240, 'incomplete disposition attemptId'), reviewInvocationId: boundedString(x.reviewInvocationId, 240, 'incomplete disposition reviewInvocationId'), decisionFingerprint: boundedString(x.decisionFingerprint, 240, 'incomplete disposition decisionFingerprint'), classification: x.classification as NativeWorkUnitIncompleteDispositionV1['classification'], meaningfulProgress: x.meaningfulProgress as boolean, recordedAt: timestamp(x.recordedAt, 'incomplete disposition recordedAt'), ...(nextAttemptAuthorizedAt ? { nextAttemptAuthorizedAt } : {}), ...(noProgressHandback ? { noProgressHandback } : {}) };
+};
+
+const sprintRunnerHandbackMovement = (value: unknown): ProductSprintRunnerHandbackMovementV1 => {
+  const x = object(value, 'Sprint Runner Handback movement');
+  keys(
+    x,
+    [
+      'movementKind',
+      'rationale',
+      'eligibleWorkSummary',
+      'dependencyOwner',
+      'dependencyOwnerClassification',
+      'enablingResult',
+      'resumptionPath',
+      'localExhaustionSummary',
+    ],
+    'Sprint Runner Handback movement',
+  );
+  const movementKind = string(x.movementKind, 'Handback movementKind');
+  const rationale = boundedString(x.rationale, 4000, 'Handback rationale');
+  if (movementKind === 'continue_eligible_work') {
+    if (x.dependencyOwner !== undefined || x.dependencyOwnerClassification !== undefined || x.enablingResult !== undefined || x.resumptionPath !== undefined || x.localExhaustionSummary !== undefined)
+      fail('alternate Handback movement has contradictory detail');
+    return { movementKind, rationale, eligibleWorkSummary: boundedString(x.eligibleWorkSummary, 4000, 'eligibleWorkSummary') };
+  }
+  if (movementKind === 'wait_for_agent_dependency') {
+    const classification = string(x.dependencyOwnerClassification, 'dependencyOwnerClassification');
+    if (!['work_unit_handler', 'work_unit_implementer', 'work_slice_planner', 'sprint_runner'].includes(classification))
+      fail('invalid dependencyOwnerClassification');
+    const owner = boundedString(x.dependencyOwner, 4000, 'dependencyOwner');
+    if (['human', 'external', 'approval', 'manual', 'user'].some((term) => owner.toLowerCase().includes(term)))
+      fail('dependency owner is outside the agent-achievable boundary');
+    if (x.eligibleWorkSummary !== undefined || x.localExhaustionSummary !== undefined)
+      fail('dependency Handback movement has contradictory detail');
+    return {
+      movementKind,
+      rationale,
+      dependencyOwner: owner,
+      dependencyOwnerClassification: classification as ProductSprintRunnerHandbackDependencyOwnerClassificationV1,
+      enablingResult: boundedString(x.enablingResult, 4000, 'enablingResult'),
+      resumptionPath: boundedString(x.resumptionPath, 4000, 'resumptionPath'),
+    };
+  }
+  if (movementKind === 'local_exhaustion_escalate') {
+    if (x.eligibleWorkSummary !== undefined || x.dependencyOwner !== undefined || x.dependencyOwnerClassification !== undefined || x.enablingResult !== undefined || x.resumptionPath !== undefined)
+      fail('local exhaustion Handback movement has contradictory detail');
+    return { movementKind, rationale, localExhaustionSummary: boundedString(x.localExhaustionSummary, 4000, 'localExhaustionSummary') };
+  }
+  fail('unsupported Handback movement kind');
+};
+
+const sprintRunnerHandbackDelivery = (value: unknown): ProductSprintRunnerHandbackDeliveryV1 => {
+  const x = object(value, 'Sprint Runner Handback delivery');
+  keys(x, ['deliveryRequestedAt', 'deliveryPersistedAt', 'harnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt', 'providerActivationObservedAt', 'semanticReassessmentRecordedAt', 'selectedMovementKind', 'selectedMovement', 'escalationDeliveryRequestedAt'], 'Sprint Runner Handback delivery');
+  const deliveryRequestedAt = timestamp(x.deliveryRequestedAt, 'deliveryRequestedAt');
+  const optionalTime = (key: string) => x[key] === undefined ? undefined : timestamp(x[key], key);
+  const deliveryPersistedAt = optionalTime('deliveryPersistedAt');
+  const harnessBoundAt = optionalTime('harnessBoundAt');
+  const launchRequestedAt = optionalTime('launchRequestedAt');
+  const launchAcceptedAt = optionalTime('launchAcceptedAt');
+  const providerActivationObservedAt = optionalTime('providerActivationObservedAt');
+  const semanticReassessmentRecordedAt = optionalTime('semanticReassessmentRecordedAt');
+  const escalationDeliveryRequestedAt = optionalTime('escalationDeliveryRequestedAt');
+  phaseCoherence({ deliveryRequestedAt, deliveryPersistedAt, harnessBoundAt, launchRequestedAt, launchAcceptedAt }, ['deliveryRequestedAt', 'deliveryPersistedAt', 'harnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt'], 'Sprint Runner Handback delivery');
+  if (providerActivationObservedAt) {
+    if (!launchAcceptedAt) fail('Handback provider observation lacks launch acceptance');
+    timestampAtOrAfter(launchAcceptedAt, providerActivationObservedAt, 'Handback provider observation');
+  }
+  if (semanticReassessmentRecordedAt) {
+    if (!launchAcceptedAt) fail('Handback reassessment lacks launch acceptance');
+    timestampAtOrAfter(launchAcceptedAt, semanticReassessmentRecordedAt, 'Handback semantic reassessment');
+  }
+  const selectedMovement = x.selectedMovement === undefined ? undefined : sprintRunnerHandbackMovement(x.selectedMovement);
+  const selectedMovementKind = x.selectedMovementKind === undefined ? undefined : boundedString(x.selectedMovementKind, 96, 'selectedMovementKind');
+  if (selectedMovement && selectedMovementKind !== selectedMovement.movementKind)
+    fail('selected Handback movement kind does not match its detail');
+  if (selectedMovementKind && !semanticReassessmentRecordedAt)
+    fail('selected Handback movement lacks semantic reassessment');
+  if (selectedMovementKind === 'wait_for_agent_dependency' && !selectedMovement)
+    fail('dependency movement lacks structured route detail');
+  if (escalationDeliveryRequestedAt) {
+    if (!selectedMovement || selectedMovement.movementKind !== 'local_exhaustion_escalate')
+      fail('escalation delivery lacks selected local exhaustion movement');
+    timestampAtOrAfter(selectedMovement ? semanticReassessmentRecordedAt! : deliveryRequestedAt, escalationDeliveryRequestedAt, 'Handback escalation delivery');
+  }
+  return {
+    deliveryRequestedAt,
+    ...(deliveryPersistedAt ? { deliveryPersistedAt } : {}),
+    ...(harnessBoundAt ? { harnessBoundAt } : {}),
+    ...(launchRequestedAt ? { launchRequestedAt } : {}),
+    ...(launchAcceptedAt ? { launchAcceptedAt } : {}),
+    ...(providerActivationObservedAt ? { providerActivationObservedAt } : {}),
+    ...(semanticReassessmentRecordedAt ? { semanticReassessmentRecordedAt } : {}),
+    ...(selectedMovementKind ? { selectedMovementKind } : {}),
+    ...(selectedMovement ? { selectedMovement } : {}),
+    ...(escalationDeliveryRequestedAt ? { escalationDeliveryRequestedAt } : {}),
+  };
 };
 const workUnitRelationship = (value: unknown): NativeWorkUnitRelationshipV1 => {
   const x = object(value, 'Work Unit relationship');

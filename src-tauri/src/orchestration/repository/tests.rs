@@ -25,11 +25,22 @@ const ACTOR_ID: &str = "managed-plan-builder";
 fn handback_native_dto_exposes_only_factual_stages() {
     let dto = WorkUnitNoProgressHandbackDto {
         handback_id: "handback".into(), source_attempt_id: "attempt".into(), source_review_invocation_id: "review".into(), context_fingerprint: "context".into(), persisted_at: "persisted".into(), delivery_intended_at: "intended".into(), sprint_runner_receiver_activated_at: None, sprint_runner_receiver_decision_at: None,
-        sprint_runner_delivery: Some(SprintRunnerHandbackDeliveryDto { delivery_requested_at: "requested".into(), delivery_persisted_at: Some("delivered".into()), harness_bound_at: Some("bound".into()), launch_requested_at: Some("launch-requested".into()), launch_accepted_at: Some("launch-accepted".into()), provider_activation_observed_at: None, semantic_reassessment_recorded_at: Some("reassessed".into()), selected_movement_kind: Some("local_exhaustion_escalate".into()), escalation_delivery_requested_at: Some("escalation-requested".into()) }),
+        sprint_runner_delivery: Some(SprintRunnerHandbackDeliveryDto { delivery_requested_at: "requested".into(), delivery_persisted_at: Some("delivered".into()), harness_bound_at: Some("bound".into()), launch_requested_at: Some("launch-requested".into()), launch_accepted_at: Some("launch-accepted".into()), provider_activation_observed_at: None, semantic_reassessment_recorded_at: Some("reassessed".into()), selected_movement_kind: Some("local_exhaustion_escalate".into()), selected_movement: None, escalation_delivery_requested_at: Some("escalation-requested".into()) }),
     };
     let value = serde_json::to_string(&dto).unwrap();
     for public in ["deliveryIntendedAt","deliveryPersistedAt","harnessBoundAt","launchRequestedAt","launchAcceptedAt","semanticReassessmentRecordedAt","local_exhaustion_escalate","escalationDeliveryRequestedAt"] { assert!(value.contains(public)); }
     for private in ["receiverSessionId","reassessmentInvocationId","deliveryFactId","semanticReassessmentFactId","escalationIntentId","deliveryRequestId","harnessKey","harnessVersion","route","worktree"] { assert!(!value.contains(private)); }
+}
+
+#[test]
+fn handback_native_dto_exposes_qualified_dependency_movement_without_private_identity() {
+    let dto = WorkUnitNoProgressHandbackDto {
+        handback_id: "handback".into(), source_attempt_id: "attempt".into(), source_review_invocation_id: "review".into(), context_fingerprint: "context".into(), persisted_at: "persisted".into(), delivery_intended_at: "intended".into(), sprint_runner_receiver_activated_at: None, sprint_runner_receiver_decision_at: None,
+        sprint_runner_delivery: Some(SprintRunnerHandbackDeliveryDto { delivery_requested_at: "requested".into(), delivery_persisted_at: Some("delivered".into()), harness_bound_at: Some("bound".into()), launch_requested_at: Some("launch-requested".into()), launch_accepted_at: Some("launch-accepted".into()), provider_activation_observed_at: None, semantic_reassessment_recorded_at: Some("reassessed".into()), selected_movement_kind: Some("wait_for_agent_dependency".into()), selected_movement: Some(SprintRunnerHandbackMovementDto { movement_kind: "wait_for_agent_dependency".into(), rationale: "concern remains open".into(), eligible_work_summary: None, dependency_owner: Some("bounded Work Unit Handler".into()), dependency_owner_classification: Some("work_unit_handler".into()), enabling_result: Some("persisted result".into()), resumption_path: Some("reconcile exact Handback".into()), local_exhaustion_summary: None }), escalation_delivery_requested_at: None }),
+    };
+    let value = serde_json::to_string(&dto).unwrap();
+    for public in ["selectedMovement", "dependencyOwner", "dependencyOwnerClassification", "enablingResult", "resumptionPath"] { assert!(value.contains(public)); }
+    for private in ["receiverSessionId", "reassessmentInvocationId", "deliveryFactId", "harnessKey", "route", "worktree", "dependencyOwnerId"] { assert!(!value.contains(private)); }
 }
 
 #[test]

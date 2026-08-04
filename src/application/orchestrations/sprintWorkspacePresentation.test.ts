@@ -109,6 +109,77 @@ describe('Sprint workspace presentation projector', () => {
       initiationObserved: false,
     });
   });
+
+  it('preserves unresolved Handback movement facts without settling the concern', () => {
+    const sprint = sprintReadModel();
+    const handbackSprint: ProductSprintReadModelV1 = {
+      ...sprint,
+      revisionViews: sprint.revisionViews.map((view, index) =>
+        index === 0
+          ? {
+              ...view,
+              workUnits: view.workUnits.map((workUnit, workUnitIndex) =>
+                workUnitIndex === 0
+                  ? {
+                      ...workUnit,
+                      attemptHistory: [
+                        {
+                          ordinal: 0,
+                          attemptId: 'attempt-handback',
+                          incompleteDisposition: {
+                            attemptId: 'attempt-handback',
+                            reviewInvocationId: 'review-handback',
+                            decisionFingerprint: 'decision-handback',
+                            classification: 'blocked',
+                            meaningfulProgress: false,
+                            recordedAt: '2026-08-04T00:00:00Z',
+                            noProgressHandback: {
+                              handbackId: 'handback-1',
+                              sourceAttemptId: 'attempt-handback',
+                              sourceReviewInvocationId: 'review-handback',
+                              contextFingerprint: 'context-1',
+                              persistedAt: '2026-08-04T00:00:01Z',
+                              deliveryIntendedAt: '2026-08-04T00:00:02Z',
+                              sprintRunnerDelivery: {
+                                deliveryRequestedAt: '2026-08-04T00:00:03Z',
+                                semanticReassessmentRecordedAt: '2026-08-04T00:00:04Z',
+                                selectedMovementKind: 'wait_for_agent_dependency',
+                                selectedMovement: {
+                                  movementKind: 'wait_for_agent_dependency',
+                                  rationale: 'The concern remains open.',
+                                  dependencyOwner: 'bounded Work Unit Handler',
+                                  dependencyOwnerClassification: 'work_unit_handler',
+                                  enablingResult: 'A persisted result.',
+                                  resumptionPath: 'Reconcile the exact Handback.',
+                                },
+                              },
+                            },
+                          },
+                        },
+                      ],
+                    }
+                  : workUnit,
+              ),
+            }
+          : view,
+      ),
+    };
+    const presentation = projectSprintWorkspacePresentation(handbackSprint);
+    expect(presentation.revisionViews[0].workUnits[0].attemptHistory[0]).toMatchObject({
+      incompleteDisposition: {
+        meaningfulProgress: false,
+        noProgressHandback: {
+          sprintRunnerDelivery: {
+            selectedMovement: {
+              dependencyOwner: 'bounded Work Unit Handler',
+              enablingResult: 'A persisted result.',
+              resumptionPath: 'Reconcile the exact Handback.',
+            },
+          },
+        },
+      },
+    });
+  });
 });
 
 function source() {

@@ -815,6 +815,143 @@ describe('orchestration native query v1', () => {
     );
   });
 
+  it('projects factual Handback phases and structured movement while failing closed on impossible effects', () => {
+    const partial = implementerOutcomeNativeFixture();
+    const partialUnit = (partial.workUnits as Array<Record<string, unknown>>)[0]!;
+    partialUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
+    partialUnit.handlerReview = handlerReviewFixture('returned');
+    partialUnit.handlerDecision = handlerDecisionFixture('returned');
+    delete (partialUnit.handlerDecision as Record<string, unknown>).retryRequiredAt;
+    partialUnit.attemptHistory = [
+      {
+        ordinal: 0,
+        attemptId: 'attempt-1',
+        implementerOutcome: partialUnit.implementerOutcome,
+        handlerReview: partialUnit.handlerReview,
+        handlerDecision: partialUnit.handlerDecision,
+        incompleteDisposition: {
+          attemptId: 'attempt-1',
+          reviewInvocationId: 'review-invocation-1',
+          decisionFingerprint: 'decision-1',
+          classification: 'blocked',
+          meaningfulProgress: false,
+          recordedAt: '2026-08-04T00:00:18Z',
+          noProgressHandback: {
+            handbackId: 'handback-1',
+            sourceAttemptId: 'attempt-1',
+            sourceReviewInvocationId: 'review-invocation-1',
+            contextFingerprint: 'context-1',
+            persistedAt: '2026-08-04T00:00:19Z',
+            deliveryIntendedAt: '2026-08-04T00:00:20Z',
+            sprintRunnerDelivery: {
+              deliveryRequestedAt: '2026-08-04T00:00:21Z',
+            },
+          },
+        },
+      },
+    ];
+    const partialModel = composeProductOrchestrationReadModels(
+      nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(partial)),
+    ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
+    expect(partialModel.attemptHistory[0]!.incompleteDisposition?.noProgressHandback).toMatchObject({
+      persistedAt: '2026-08-04T00:00:19Z',
+      sprintRunnerDelivery: { deliveryRequestedAt: '2026-08-04T00:00:21Z' },
+    });
+
+    const reopened = JSON.parse(JSON.stringify(partial)) as Record<string, unknown>;
+    const reopenedDisposition = (
+      ((reopened.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!
+        .incompleteDisposition as Record<string, unknown>
+    );
+    const reopenedHandback = reopenedDisposition.noProgressHandback as Record<string, unknown>;
+    reopenedHandback.sprintRunnerDelivery = {
+      deliveryRequestedAt: '2026-08-04T00:00:21Z',
+      deliveryPersistedAt: '2026-08-04T00:00:22Z',
+      harnessBoundAt: '2026-08-04T00:00:23Z',
+      launchRequestedAt: '2026-08-04T00:00:24Z',
+      launchAcceptedAt: '2026-08-04T00:00:25Z',
+      providerActivationObservedAt: '2026-08-04T00:00:26Z',
+      semanticReassessmentRecordedAt: '2026-08-04T00:00:27Z',
+      selectedMovementKind: 'wait_for_agent_dependency',
+      selectedMovement: {
+        movementKind: 'wait_for_agent_dependency',
+        rationale: 'The current concern remains open.',
+        dependencyOwner: 'bounded Work Unit Handler',
+        dependencyOwnerClassification: 'work_unit_handler',
+        enablingResult: 'A persisted Handler result.',
+        resumptionPath: 'Reconcile this exact Handback after that result.',
+      },
+    };
+    const reopenedModel = composeProductOrchestrationReadModels(
+      nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(reopened)),
+    ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
+    expect(reopenedModel.attemptHistory[0]!.incompleteDisposition?.noProgressHandback?.sprintRunnerDelivery).toMatchObject({
+      launchAcceptedAt: '2026-08-04T00:00:25Z',
+      selectedMovement: {
+        dependencyOwner: 'bounded Work Unit Handler',
+        enablingResult: 'A persisted Handler result.',
+        resumptionPath: 'Reconcile this exact Handback after that result.',
+      },
+    });
+
+    for (const movement of [
+      {
+        selectedMovementKind: 'continue_eligible_work',
+        selectedMovement: {
+          movementKind: 'continue_eligible_work',
+          rationale: 'Another authorized responsibility can proceed.',
+          eligibleWorkSummary: 'Continue the independent Work Unit.',
+        },
+      },
+      {
+        selectedMovementKind: 'local_exhaustion_escalate',
+        selectedMovement: {
+          movementKind: 'local_exhaustion_escalate',
+          rationale: 'No further local Sprint movement is recorded.',
+          localExhaustionSummary: 'Local Sprint Runner options are exhausted.',
+        },
+        escalationDeliveryRequestedAt: '2026-08-04T00:00:28Z',
+      },
+    ]) {
+      const value = JSON.parse(JSON.stringify(reopened)) as Record<string, unknown>;
+      const disposition = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
+      const handback = disposition.noProgressHandback as Record<string, unknown>;
+      const delivery = handback.sprintRunnerDelivery as Record<string, unknown>;
+      delete delivery.selectedMovement;
+      delete delivery.selectedMovementKind;
+      delete delivery.escalationDeliveryRequestedAt;
+      Object.assign(delivery, movement);
+      const model = composeProductOrchestrationReadModels(
+        nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(value)),
+      ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
+      expect(model.attemptHistory[0]!.incompleteDisposition?.noProgressHandback?.sprintRunnerDelivery).toMatchObject(movement);
+    }
+
+    const invalid = [
+      (value: Record<string, unknown>) => {
+        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z' };
+      },
+      (value: Record<string, unknown>) => {
+        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', deliveryPersistedAt: '2026-08-04T00:00:20Z' };
+      },
+      (value: Record<string, unknown>) => {
+        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', deliveryPersistedAt: '2026-08-04T00:00:22Z', harnessBoundAt: '2026-08-04T00:00:23Z', launchRequestedAt: '2026-08-04T00:00:24Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovementKind: 'wait_for_agent_dependency', selectedMovement: { movementKind: 'wait_for_agent_dependency', rationale: 'x', dependencyOwner: 'human approval', dependencyOwnerClassification: 'work_unit_handler', enablingResult: 'x', resumptionPath: 'x' } };
+      },
+      (value: Record<string, unknown>) => {
+        const handback = (((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>).noProgressHandback as Record<string, unknown>;
+        handback.receiverSessionId = 'private';
+      },
+    ];
+    for (const mutate of invalid) {
+      const value = JSON.parse(JSON.stringify(partial)) as Record<string, unknown>;
+      mutate(value);
+      expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow('Invalid orchestration native query');
+    }
+  });
+
   it('keeps partial materialization stages separate from Work Unit production truth', () => {
     const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
     value.workUnitMaterializations = [

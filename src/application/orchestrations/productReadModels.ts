@@ -406,7 +406,48 @@ export type ProductWorkUnitIncompleteDispositionV1 = Readonly<{
     readonly deliveryIntendedAt: string;
     readonly sprintRunnerReceiverActivatedAt?: string;
     readonly sprintRunnerReceiverDecisionAt?: string;
+    readonly sprintRunnerDelivery?: ProductSprintRunnerHandbackDeliveryV1;
   }>;
+}>;
+
+export type ProductSprintRunnerHandbackDependencyOwnerClassificationV1 =
+  | 'work_unit_handler'
+  | 'work_unit_implementer'
+  | 'work_slice_planner'
+  | 'sprint_runner';
+
+export type ProductSprintRunnerHandbackMovementV1 = Readonly<
+  | {
+      readonly movementKind: 'continue_eligible_work';
+      readonly rationale: string;
+      readonly eligibleWorkSummary: string;
+    }
+  | {
+      readonly movementKind: 'wait_for_agent_dependency';
+      readonly rationale: string;
+      readonly dependencyOwner: string;
+      readonly dependencyOwnerClassification: ProductSprintRunnerHandbackDependencyOwnerClassificationV1;
+      readonly enablingResult: string;
+      readonly resumptionPath: string;
+    }
+  | {
+      readonly movementKind: 'local_exhaustion_escalate';
+      readonly rationale: string;
+      readonly localExhaustionSummary: string;
+    }
+>;
+
+export type ProductSprintRunnerHandbackDeliveryV1 = Readonly<{
+  readonly deliveryRequestedAt: string;
+  readonly deliveryPersistedAt?: string;
+  readonly harnessBoundAt?: string;
+  readonly launchRequestedAt?: string;
+  readonly launchAcceptedAt?: string;
+  readonly providerActivationObservedAt?: string;
+  readonly semanticReassessmentRecordedAt?: string;
+  readonly selectedMovementKind?: string;
+  readonly selectedMovement?: ProductSprintRunnerHandbackMovementV1;
+  readonly escalationDeliveryRequestedAt?: string;
 }>;
 
 export type ProductWorkUnitRetryAttemptV1 = Readonly<{

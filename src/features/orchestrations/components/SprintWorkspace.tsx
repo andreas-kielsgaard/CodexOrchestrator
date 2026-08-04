@@ -338,6 +338,7 @@ export function SprintWorkspace({
             </section>
           ) : null}
           <WorkSlicePlannerBoundary sprint={workspace.sprint} workUnits={activeView.workUnits} />
+          <SprintRunnerHandbackActivity workUnits={activeView.workUnits} />
           <section className="sprint-context__objectives" aria-label="Epic Runner objectives">
             <h2>Epic Runner objectives</h2>
             {workspace.epicRunnerObjectives.length > 0 ? (
@@ -543,6 +544,91 @@ export function SprintWorkspace({
       }
     />
   );
+}
+
+export function SprintRunnerHandbackActivity({
+  workUnits,
+}: {
+  readonly workUnits: SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'];
+}) {
+  const entries = workUnits.flatMap((workUnit) =>
+    workUnit.attemptHistory.flatMap((attempt) =>
+      attempt.incompleteDisposition?.noProgressHandback
+        ? [{ workUnit, handback: attempt.incompleteDisposition.noProgressHandback }]
+        : [],
+    ),
+  );
+  if (entries.length === 0) return null;
+  return (
+    <section className="sprint-context__runner-transition" aria-label="Sprint Runner Handback reassessment">
+      <h2>Sprint Runner Handback</h2>
+      <p>
+        The handed-back concern remains unresolved while the recorded next movement proceeds. Local
+        exhaustion is an upward request, not final Sprint or Epic blockage; no Epic response is
+        recorded here.
+      </p>
+      <ul>
+        {entries.map(({ workUnit, handback }) => (
+          <li key={`${workUnit.workUnitId}-${handback.handbackId}`}>
+            <strong>{workUnit.title}</strong>: {handbackActivityDetail(handback)}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function handbackActivityDetail(
+  handback: NonNullable<
+    NonNullable<
+      SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['attemptHistory'][number]['incompleteDisposition']
+    >['noProgressHandback']
+  >,
+) {
+  const stages = [`Handback persisted at ${handback.persistedAt}`, `Delivery intent recorded at ${handback.deliveryIntendedAt}`];
+  const delivery = handback.sprintRunnerDelivery;
+  if (!delivery) return `${stages.join('; ')}. Sprint Runner delivery is not recorded.`;
+  stages.push(`Delivery requested at ${delivery.deliveryRequestedAt}`);
+  if (delivery.deliveryPersistedAt) stages.push('Delivery persisted');
+  if (delivery.harnessBoundAt) stages.push('Reassessment Harness binding recorded');
+  if (delivery.launchRequestedAt) stages.push('Sprint Runner launch requested');
+  if (delivery.launchAcceptedAt) stages.push('Sprint Runner launch accepted');
+  if (delivery.providerActivationObservedAt) stages.push('Provider activity observed separately');
+  if (delivery.semanticReassessmentRecordedAt) stages.push('Semantic reassessment recorded');
+  if (delivery.selectedMovement) stages.push(handbackMovementDetail(delivery.selectedMovement));
+  else if (delivery.selectedMovementKind) stages.push(`Selected movement recorded: ${delivery.selectedMovementKind}`);
+  if (delivery.escalationDeliveryRequestedAt) stages.push('Escalation delivery requested upward');
+  return `${stages.join('; ')}.`;
+}
+
+function handbackMovementDetail(
+  movement: NonNullable<
+    NonNullable<
+      NonNullable<
+        SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['attemptHistory'][number]['incompleteDisposition']
+      >['noProgressHandback']
+    >['sprintRunnerDelivery']
+  >['selectedMovement'],
+) {
+  switch (movement.movementKind) {
+    case 'continue_eligible_work':
+      return `Alternate eligible work recorded: ${movement.eligibleWorkSummary}`;
+    case 'wait_for_agent_dependency':
+      return `Agent-achievable dependency wait (${dependencyOwnerLabel(movement.dependencyOwnerClassification)}; owner: ${movement.dependencyOwner}; enabling result: ${movement.enablingResult}; resumption path: ${movement.resumptionPath})`;
+    case 'local_exhaustion_escalate':
+      return `Local exhaustion recorded: ${movement.localExhaustionSummary}`;
+  }
+}
+
+function dependencyOwnerLabel(
+  classification: 'work_unit_handler' | 'work_unit_implementer' | 'work_slice_planner' | 'sprint_runner',
+) {
+  return {
+    work_unit_handler: 'Work Unit Handler',
+    work_unit_implementer: 'Work Unit Implementer',
+    work_slice_planner: 'Work Slice Planner',
+    sprint_runner: 'Sprint Runner',
+  }[classification];
 }
 
 export function WorkSlicePlannerBoundary({
