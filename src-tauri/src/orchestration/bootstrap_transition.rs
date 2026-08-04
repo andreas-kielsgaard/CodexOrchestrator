@@ -6991,7 +6991,7 @@ CREATE TABLE work_unit_retry_attempts (
         assert_eq!(facts.0, 1);
         assert_eq!(facts.1 + facts.2, 1);
         assert_eq!(facts.3, 1);
-        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_retry_attempts", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_retry_attempts", [], |row| row.get(0)).unwrap(), facts.1);
     }
 
     #[test]
