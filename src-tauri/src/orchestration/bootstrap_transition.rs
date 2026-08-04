@@ -6517,6 +6517,99 @@ mod tests {
     }
 
     #[test]
+    fn meaningful_progress_replays_one_productive_ordinal_two_attempt() {
+        let fixture = ReportingFixture::new();
+        let first_review = fixture.ready_review();
+        fixture.transition.record_handler_incomplete_disposition_for_test(
+            &first_review,
+            crate::orchestration::sprint_runner_transition::HandlerReviewIncompleteDisposition {
+                code: "needs_refinement".into(), explanation: "the first correction remains bounded".into(),
+                classification: crate::orchestration::sprint_runner_transition::IncompleteAttemptClassification::RefinementNeeded,
+                meaningful_progress: true,
+            },
+        ).unwrap();
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE agent_session_invocations SET status='completed',completed_at=?2 WHERE id=?1",
+            params![first_review, "2026-08-04T00:00:01Z"],
+        ).unwrap();
+        fixture.transition.reconcile_handler_reviews_for_test().unwrap();
+
+        let (first_attempt, first_implementer, revision, digest, commit): (String, String, String, String, String) =
+            Connection::open(&fixture.base.database_path).unwrap().query_row(
+                "SELECT retry_attempt_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=1",
+                [&fixture.work_unit_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            ).unwrap();
+        let pinned = fixture.handler.load_pinned_implementer_revision(&revision, &digest, &commit).unwrap();
+        let package = fixture.handler.construct_for_pinned_profile(&first_attempt, WorkUnitHarnessRole::Implementer, pinned.profile).unwrap();
+        let workspace = PathBuf::from(package.working_directory());
+        fs::write(workspace.join("README.md"), "ordinal-one evidence\n").unwrap();
+        for arguments in [["add", "README.md"].as_slice(), ["commit", "-m", "ordinal one evidence"].as_slice()] {
+            let output = std::process::Command::new("git").args(arguments).current_dir(&workspace).output().unwrap();
+            assert!(output.status.success(), "{output:?}");
+        }
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE agent_session_invocations SET status='completed',completed_at=?2 WHERE id=?1",
+            params![first_implementer, "2026-08-04T00:00:02Z"],
+        ).unwrap();
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE work_unit_implementer_activations SET implementer_ready_at=NULL WHERE work_unit_id=?1",
+            [&fixture.work_unit_id],
+        ).unwrap();
+        fixture.transition.prepare_later_attempt_reporting_for_test().unwrap();
+
+        let reporting: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
+            "SELECT reporting_invocation_id FROM work_unit_implementer_outcomes WHERE attempt_id=?1", [&first_attempt], |row| row.get(0),
+        ).unwrap();
+        let reporting = AgentInvocationId::new(reporting).unwrap();
+        fixture.transition.submit_implementation_outcome(&reporting, fixture.claims()).unwrap();
+        fixture.transition.complete_implementation_outcome(&reporting).unwrap();
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE agent_session_invocations SET status='completed',completed_at=?2 WHERE id=?1",
+            params![reporting.as_str(), "2026-08-04T00:00:03Z"],
+        ).unwrap();
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE work_unit_implementer_activations SET implementer_ready_at=?2 WHERE work_unit_id=?1",
+            params![fixture.work_unit_id, "2026-08-04T00:00:00Z"],
+        ).unwrap();
+        fixture.transition.reconcile_later_attempt_for_test().unwrap();
+
+        let second_review: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
+            "SELECT review_invocation_id FROM work_unit_handler_reviews WHERE attempt_id=?1", [&first_attempt], |row| row.get(0),
+        ).unwrap();
+        fixture.transition.record_handler_incomplete_disposition_for_test(
+            &second_review,
+            crate::orchestration::sprint_runner_transition::HandlerReviewIncompleteDisposition {
+                code: "needs_another_refinement".into(), explanation: "the second correction remains bounded".into(),
+                classification: crate::orchestration::sprint_runner_transition::IncompleteAttemptClassification::RefinementNeeded,
+                meaningful_progress: true,
+            },
+        ).unwrap();
+        Connection::open(&fixture.base.database_path).unwrap().execute(
+            "UPDATE agent_session_invocations SET status='completed',completed_at=?2 WHERE id=?1",
+            params![second_review, "2026-08-04T00:00:04Z"],
+        ).unwrap();
+        fixture.transition.reconcile_handler_reviews_for_test().unwrap();
+
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        let second: (String, String, String, String, String, Option<String>, Option<String>) = connection.query_row(
+            "SELECT retry_attempt_id,implementer_session_id,implementer_invocation_id,origin_attempt_id,candidate_commit_id,launch_accepted_at,retry_ready_at FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=2",
+            [&fixture.work_unit_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
+        ).unwrap();
+        assert_eq!(second.3, first_attempt);
+        assert!(second.5.is_some() && second.6.is_some());
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE work_unit_id=?1 AND attempt_ordinal IN (0,1)", [&fixture.work_unit_id], |row| row.get(0)).unwrap(), 2);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_incomplete_dispositions WHERE work_unit_id=?1 AND meaningful_progress=1 AND next_attempt_authorized_at IS NOT NULL", [&fixture.work_unit_id], |row| row.get(0)).unwrap(), 2);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_no_progress_handbacks WHERE work_unit_id=?1", [&fixture.work_unit_id], |row| row.get(0)).unwrap(), 0);
+        drop(connection);
+
+        fixture.reopened().reconcile_handler_reviews_for_test().unwrap();
+        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<(String, String, String, String, String), _, _>(
+            "SELECT retry_attempt_id,implementer_session_id,implementer_invocation_id,origin_attempt_id,candidate_commit_id FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=2",
+            [&fixture.work_unit_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        ).unwrap(), (second.0, second.1, second.2, second.3, second.4));
+    }
+
+    #[test]
     fn populated_legacy_attempt_history_and_retry_migrate_without_overwriting_ordinal_zero() {
         let fixture = ReportingFixture::new();
         let connection = Connection::open(&fixture.base.database_path).unwrap();

@@ -1184,6 +1184,17 @@ impl SprintRunnerTransitionService {
     }
 
     #[cfg(test)]
+    pub(crate) fn prepare_later_attempt_reporting_for_test(self: &Arc<Self>) -> Result<(), SprintRunnerTransitionError> {
+        self.reconcile_implementer_reporting_continuations()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reconcile_later_attempt_for_test(self: &Arc<Self>) -> Result<(), SprintRunnerTransitionError> {
+        self.reconcile_implementer_outcomes_v3()?;
+        self.reconcile_handler_reviews()
+    }
+
+    #[cfg(test)]
     pub(crate) fn handler_review_evidence_for_test(
         &self,
         invocation_id: &str,

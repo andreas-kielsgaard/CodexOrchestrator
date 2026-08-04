@@ -648,8 +648,10 @@ lossless history only. The candidate remains private and is carried forward only
 bounded application-created handoff.
 
 The two-service meaningful-progress regression converged on one ordinal-1 attempt, Session,
-invocation, private candidate ref, and launch acceptance. It also verifies that a reopened
-reconciler reuses those identities. The implementation has no ordinal ceiling and derives a
-subsequent ordinal from `MAX(attempt_ordinal)+1`; an end-to-end ordinal-2 runtime regression,
-multi-process SQLite stress, live provider/desktop behavior, integration, settlement, receiver
-activation, publication, and user acceptance remain unproven.
+invocation, private candidate ref, and launch acceptance. A separate productive deterministic
+chain reaches accepted ordinal-1 evidence, a completed independent meaningful-progress Handler
+disposition, and one launch-ready ordinal-2 attempt. It retains the ordinal-1 predecessor,
+candidate lineage, Session, invocation, harness, and authorization facts; a reopened reconciler
+reuses the ordinal-2 identities without a handback, receiver effect, settlement, integration, or
+dependency activation. Multi-process SQLite stress, live provider/desktop behavior, integration,
+settlement, receiver activation, publication, and user acceptance remain unproven.
