@@ -833,7 +833,7 @@ higher continuation, raw route/Git authority, publication, or user acceptance.
 The convergence checkpoint merges the accepted graph-drain line at `7704b4b1` with the accepted
 Epic escalation reassessment line at `3b1020c5`. The only code overlap was Handler-review terminal
 reconciliation. A no-progress review durably routes its still-unsettled Handback; accepted-integration
-graph draining remains on the regular and reopen reconciliation passes. Handback delivery therefore
+graph draining also runs from the exact accepted review-terminal movement. Handback delivery therefore
 does not synthesize graph completion, Work Slice settlement, planning-point settlement, Sprint
 settlement, Epic settlement, or continuation.
 
@@ -842,8 +842,8 @@ Observed focused Rust evidence on the combined tree:
 - `work_unit_dependency_wave` passed **15/15**, covering multi-root and multi-level settlement,
   malformed and cyclic graphs, stalls, handbacks, targeted attention, reopen, replay, correlation,
   and exact terminal-fact separation.
-- `handler_drain_advances_independent_generations_from_durable_accepted_contributions` passed
-  **1/1** through the productive Handler drain.
+- `accepted_review_terminal_dispatch_drains_newly_eligible_dependent_in_same_activation` passed
+  **1/1** through the completed-review movement dispatcher and productive Handler drain.
 - `no_progress_handback_delivers_one_epic_receiver_without_higher_effects` passed **1/1**, including
   pending delivery, reopen/concurrency, exact local-exhaustion escalation, fresh Epic reassessment,
   concern-preserving disposition, bounded downstream request, attention, and higher-effect absence.
@@ -866,3 +866,35 @@ These local/fake checks do not prove live-provider behavior, publication, push, 
 Product Decisions navigation, Pause/Restart behavior, later-Sprint selection or start, or Sprint/Epic
 settlement. Request, delivery, receiver activation, reassessment, disposition, downstream request,
 attention, graph completion, Work Slice settlement, and planning-point settlement remain distinct.
+
+### Bounded review-terminal correction
+
+The descendant correction preserves the clean convergence checkpoint `36626da7` and restores the
+accepted graph line's same-activation movement after Handler-review finalization. A completed review
+with an exact accepted decision now reconciles missing or partial Handler activations for the durable
+graph, including newly eligible dependents, without replaying unrelated Implementer, retry, Handback,
+or higher-runner lifecycles. A completed returned decision still routes only its no-progress Handback.
+Non-completed review terminals and completed reviews without a semantic judgment create no movement;
+contradictory judgment/decision state fails closed.
+
+Observed correction evidence:
+
+- `accepted_review_terminal_dispatch_drains_newly_eligible_dependent_in_same_activation` passed
+  **1/1**. The exact completed-review decision dispatcher launched the newly eligible middle Work Unit
+  in its second bounded generation without reopen or another external reconciliation, retained the
+  blocked leaf projection, and recorded no Work Slice execution settlement or Sprint/Epic settlement.
+- `no_progress_handback_delivers_one_epic_receiver_without_higher_effects` passed **1/1** through the
+  actual review-terminal notification. It routed one Handback and explicitly observed zero graph
+  completion, Work Slice execution settlement, and planning-point settlement facts; its existing
+  assertions retained the no-Sprint/Epic-settlement and no-continuation boundary.
+- `handler_review_uses_one_exact_read_only_boundary_and_finalizes_only_completed_judgments` passed
+  **1/1**, covering accepted, returned, completed-without-judgment, failed, canceled, interrupted,
+  retry, reopen, and conflicting review states.
+- `work_unit_dependency_wave` passed **15/15** and
+  `native_query_projects_durable_epic_escalations_and_rejects_foreign_or_out_of_order_facts` passed
+  **1/1**. Rust emitted the existing dead-code warning for `ProcessSupervisor::system`.
+
+`git diff --check` passed. This correction did not alter TypeScript or presentation contracts, so the
+combined-tree frontend evidence above remains the applicable consumer proof. Live-provider behavior,
+publication, push, user acceptance, later-Sprint selection/start, Product Decisions navigation,
+Pause/Restart changes, and Sprint/Epic settlement remain unproven and outside this correction.

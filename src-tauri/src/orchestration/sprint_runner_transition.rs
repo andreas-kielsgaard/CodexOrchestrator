@@ -1328,6 +1328,13 @@ impl SprintRunnerTransitionService {
         self.reconcile_handler_reviews()
     }
     #[cfg(test)]
+    pub(crate) fn reconcile_handler_review_terminal_movement_for_test(
+        self: &Arc<Self>,
+        review_invocation_id: &str,
+    ) -> Result<(), SprintRunnerTransitionError> {
+        self.reconcile_handler_review_terminal_movement(review_invocation_id, "completed")
+    }
+    #[cfg(test)]
     pub(crate) fn reconcile_no_progress_handbacks_for_test(self: &Arc<Self>) -> Result<(), SprintRunnerTransitionError> {
         self.reconcile_no_progress_handbacks()
     }
@@ -1793,10 +1800,7 @@ impl SprintRunnerTransitionService {
             self.record_handler_review_lifecycle(&invocation.id,status)?;
             self.finalize_handler_review_decisions()?;
             self.reconcile_work_unit_retries()?;
-            // A no-progress handback is an unsettled Work Unit state. Its owning Sprint receives
-            // the durable route here; the regular and reopen graph passes reconcile eligible
-            // accepted-integration generations without treating this delivery as settlement.
-            return self.reconcile_no_progress_handbacks();
+            return self.reconcile_handler_review_terminal_movement(invocation.id.as_str(), status);
         }
         let handback: Option<String> = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT handback_id FROM sprint_runner_handback_deliveries WHERE reassessment_invocation_id=?1", [invocation.id.as_str()], |row| row.get(0)).optional().map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         if let Some(handback) = handback {
@@ -2280,6 +2284,70 @@ impl SprintRunnerTransitionService {
             if !next_generation { break; }
         }
         Ok(())
+    }
+
+    /// A completed accepted review can change dependent eligibility after the integration/wave
+    /// pass. Reconcile only missing or partial Handler activations for that durable graph here.
+    /// Unrelated Implementer, retry, Handback, and higher-runner lifecycles retain their own
+    /// reconciliation boundaries.
+    fn reconcile_newly_eligible_work_unit_handlers(
+        self: &Arc<Self>,
+    ) -> Result<(), SprintRunnerTransitionError> {
+        let Some(handler) = self.work_unit_handler.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Work Unit Handler registry is poisoned".into()))?.clone() else { return Ok(()) };
+        for _generation in 0..2 {
+            let units = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare(
+                "SELECT u.work_unit_id,u.materialization_id,m.sprint_id
+                 FROM work_units u
+                 JOIN work_unit_materializations m ON m.materialization_id=u.materialization_id
+                 JOIN work_unit_dependency_activation_intents i ON i.work_unit_id=u.work_unit_id AND i.materialization_id=u.materialization_id
+                 LEFT JOIN work_unit_handler_activations h ON h.work_unit_id=u.work_unit_id AND h.materialization_id=u.materialization_id
+                 WHERE m.settled_at IS NOT NULL
+                   AND (h.work_unit_id IS NULL OR h.launch_accepted_at IS NULL OR h.handler_ready_at IS NULL)
+                 ORDER BY m.sprint_id,u.lane_ordinal,u.work_unit_id"
+            ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?.query_map([], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?))).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?.collect::<Result<Vec<_>,_>>().map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+            for (work_unit, materialization, sprint) in &units {
+                self.reconcile_work_unit_handler(&handler, work_unit, materialization, sprint)?;
+            }
+            #[cfg(test)]
+            if let Some(hook) = self.test_work_unit_handler_post_pass_hook.lock().expect("test Work Unit Handler post-pass hook").take() { hook(); }
+            let mut connection = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;
+            reconcile_work_unit_dependency_wave(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
+            reconcile_work_slice_execution_settlement(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
+            if units.is_empty() { break; }
+        }
+        Ok(())
+    }
+
+    fn reconcile_handler_review_terminal_movement(
+        self: &Arc<Self>,
+        review_invocation_id: &str,
+        status: &str,
+    ) -> Result<(), SprintRunnerTransitionError> {
+        // A non-completed terminal cannot authorize either acceptance or return movement.
+        // Its durable lifecycle remains available for diagnosis and later explicit action.
+        if status != "completed" {
+            return Ok(());
+        }
+        let (judgment_recorded, decision): (bool, Option<String>) = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
+            "SELECT r.semantic_judgment_at IS NOT NULL,d.decision_variant
+             FROM work_unit_handler_reviews r
+             LEFT JOIN work_unit_handler_decisions d ON d.review_invocation_id=r.review_invocation_id
+             WHERE r.review_invocation_id=?1",
+            [review_invocation_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        match (judgment_recorded, decision.as_deref()) {
+            // Completion without a semantic judgment has no movement authority.
+            (false, None) => Ok(()),
+            // Accepted integration can make a dependent eligible in the finalization pass.
+            // Drain it in this same notification activation; no transcript or terminal label
+            // supplies the authority.
+            (true, Some("accepted")) => self.reconcile_newly_eligible_work_unit_handlers(),
+            // A returned review remains unsettled. Reconcile only its retry/Handback route;
+            // Handback delivery is not graph completion or later settlement authority.
+            (true, Some("returned")) => self.reconcile_no_progress_handbacks(),
+            _ => Err(SprintRunnerTransitionError::Conflict),
+        }
     }
 
     /// A persisted request is replayed through the same authenticated continuation boundary.

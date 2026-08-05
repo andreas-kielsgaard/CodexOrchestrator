@@ -5583,7 +5583,7 @@ mod tests {
     }
 
     #[test]
-    fn handler_drain_advances_independent_generations_from_durable_accepted_contributions() {
+    fn accepted_review_terminal_dispatch_drains_newly_eligible_dependent_in_same_activation() {
         let fixture = Fixture::new();
         let (service, planner, sprint_id) = fixture.prepare_work_slice_planner();
         let lane = |title: &str, depends_on: Vec<&str>| {
@@ -5730,6 +5730,17 @@ mod tests {
             .iter()
             .find_map(|(id, title)| (title == "middle").then_some(id.clone()))
             .unwrap();
+        let higher_continuations_before = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row::<i64, _, _>(
+                "SELECT COUNT(*) FROM sprint_runner_transitions
+                 WHERE epic_continuation_invocation_id IS NOT NULL
+                    OR sprint_continuation_invocation_id IS NOT NULL
+                    OR planning_control_invocation_id IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         let post_pass_calls = Arc::new(AtomicUsize::new(0));
         service.set_test_work_unit_handler_post_pass_hook(Arc::new({
             let database_path = fixture.database_path.clone();
@@ -5765,8 +5776,40 @@ mod tests {
             }
         }));
         fixture.notifier.set_sprint(&service);
+        service.attach_reporting_test_harness(handler.clone());
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        connection.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
+        connection.execute(
+            "INSERT INTO work_unit_handler_reviews (
+                attempt_id,work_unit_id,reporting_invocation_id,handler_session_id,
+                original_handler_invocation_id,action_handler_invocation_id,review_invocation_id,
+                review_harness_revision_id,review_harness_configuration_digest,
+                review_harness_repository_commit_ref,delivery_requested_at,launch_accepted_at,
+                delivered_payload_json,delivered_payload_fingerprint,semantic_judgment_variant,
+                semantic_judgment_fingerprint,semantic_judgment_at,lifecycle_observed_at,
+                lifecycle_status
+             ) VALUES ('accepted-review-terminal-attempt',?1,'accepted-review-reporting',
+                       'accepted-review-session','accepted-review-handler',
+                       'accepted-review-action','accepted-review-terminal-drain',
+                       'accepted-review-revision','accepted-review-digest',
+                       'accepted-review-commit','t','t','{}','accepted-review-delivery',
+                       'accept','accepted-review-judgment','t','t','completed')",
+            [&root_a],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO work_unit_handler_decisions (
+                review_invocation_id,attempt_id,work_unit_id,decision_variant,
+                decision_fingerprint,decision_recorded_at,implementation_accepted_at
+             ) VALUES ('accepted-review-terminal-drain','accepted-review-terminal-attempt',?1,
+                       'accepted','accepted-review-terminal-decision','t','t')",
+            [&root_a],
+        ).unwrap();
+        connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        drop(connection);
         service
-            .attach_work_unit_handler_activation(handler.clone())
+            .reconcile_handler_review_terminal_movement_for_test(
+                "accepted-review-terminal-drain",
+            )
             .unwrap();
 
         let materialization: (String, String) = Connection::open(&fixture.database_path)
@@ -5868,6 +5911,36 @@ mod tests {
                 "{unit}"
             );
         }
+        for table in [
+            "work_slice_execution_graph_completions",
+            "work_slice_execution_settlements",
+            "work_slice_planning_point_execution_settlements",
+        ] {
+            assert_eq!(
+                connection
+                    .query_row::<i64, _, _>(
+                        &format!("SELECT COUNT(*) FROM {table}"),
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap(),
+                0,
+                "{table}"
+            );
+        }
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sprint_runner_transitions
+                     WHERE epic_continuation_invocation_id IS NOT NULL
+                        OR sprint_continuation_invocation_id IS NOT NULL
+                        OR planning_control_invocation_id IS NOT NULL",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            higher_continuations_before
+        );
         drop(connection);
 
         // The first root contribution became durable inside the prior Handler reconciliation
@@ -6917,6 +6990,23 @@ mod tests {
         let (handback, invocation, persisted): (String,String,Option<String>) = connection.query_row("SELECT h.handback_id,d.reassessment_invocation_id,d.delivery_persisted_at FROM work_unit_no_progress_handbacks h JOIN sprint_runner_handback_deliveries d ON d.handback_id=h.handback_id WHERE h.work_unit_id=?1",[&fixture.work_unit_id],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
         assert!(persisted.is_none(), "an active Runner leaves the exact delivery visibly pending");
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_handback_deliveries WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap(),1);
+        for table in [
+            "work_slice_execution_graph_completions",
+            "work_slice_execution_settlements",
+            "work_slice_planning_point_execution_settlements",
+        ] {
+            assert_eq!(
+                connection
+                    .query_row::<i64, _, _>(
+                        &format!("SELECT COUNT(*) FROM {table}"),
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap(),
+                0,
+                "{table}"
+            );
+        }
         drop(connection);
         fixture.base.runtime.finish("handback-active-runner", AgentInvocationTerminalStatus::Completed);
         fixture.base.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: AgentInvocationId::new(invocation.clone()).unwrap(), message: SendAgentSessionMessageCommand { session_id: Some(runner_session), submitted_text: "The application delivered one exact no-progress Work Unit concern. Read only the supplied reassessment context, record one truthful next movement, then stop. Continuing eligible work does not settle the concern; do not contact an Epic Runner or declare Sprint/Epic blockage.".into(), title: None, working_directory: Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunnerHandbackReassessment).unwrap()), requested_options: Some(handback_harness.runtime_options()) } }).unwrap();
