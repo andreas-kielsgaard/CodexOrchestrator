@@ -466,6 +466,12 @@ CREATE TABLE IF NOT EXISTS sprint_runner_handback_dispositions (
   selected_at TEXT NOT NULL,
   preserves_handback INTEGER NOT NULL CHECK (preserves_handback=1)
 );
+CREATE TABLE IF NOT EXISTS sprint_handback_dependency_routes (
+  handback_id TEXT PRIMARY KEY REFERENCES sprint_runner_handback_dispositions(handback_id) ON DELETE RESTRICT,
+  work_unit_id TEXT NOT NULL REFERENCES work_units(work_unit_id) ON DELETE RESTRICT,
+  route_fingerprint TEXT NOT NULL UNIQUE,
+  recorded_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS sprint_runner_handback_escalations (
   handback_id TEXT PRIMARY KEY REFERENCES sprint_runner_handback_dispositions(handback_id) ON DELETE RESTRICT,
   escalation_intent_id TEXT NOT NULL UNIQUE,
@@ -2840,6 +2846,7 @@ impl SprintRunnerTransitionService {
         let changed = transaction.execute("INSERT OR IGNORE INTO sprint_runner_handback_dispositions (handback_id,disposition_id,movement_kind,details_json,disposition_fingerprint,selected_at,preserves_handback) VALUES (?1,?2,?3,?4,?5,?6,1)", params![handback,disposition,input.movement_kind,serialized,fingerprint,now]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         if changed == 0 { let exact: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM sprint_runner_handback_dispositions WHERE handback_id=?1 AND disposition_id=?2 AND disposition_fingerprint=?3 AND preserves_handback=1)",params![handback,disposition,fingerprint],|row|row.get(0)).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?; if !exact { return Err(SprintRunnerTransitionError::Conflict); } }
         transaction.execute("UPDATE sprint_runner_handback_deliveries SET semantic_reassessment_fact_id=COALESCE(semantic_reassessment_fact_id,?2),semantic_reassessment_recorded_at=COALESCE(semantic_reassessment_recorded_at,?3) WHERE handback_id=?1",params![handback,semantic,now]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        if input.movement_kind=="wait_for_agent_dependency" { let routes=transaction.prepare("SELECT h.work_unit_id FROM work_unit_handler_activations h LEFT JOIN work_unit_settlements s ON s.work_unit_id=h.work_unit_id JOIN sprint_runner_handback_deliveries d ON d.sprint_id=h.sprint_id WHERE d.handback_id=?1 AND h.eligibility_state='eligible' AND h.handler_ready_at IS NOT NULL AND s.work_unit_id IS NULL ORDER BY h.work_unit_id").and_then(|mut statement|statement.query_map([&handback],|row|row.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()).map_err(|error|SprintRunnerTransitionError::Unavailable(error.to_string()))?;if routes.len()!=1{return Err(SprintRunnerTransitionError::Conflict)}let route=&routes[0];let fingerprint=stable_id("sprint-handback-dependency-route",&format!("{handback}:{route}"));let changed=transaction.execute("INSERT OR IGNORE INTO sprint_handback_dependency_routes (handback_id,work_unit_id,route_fingerprint,recorded_at) VALUES (?1,?2,?3,?4)",params![handback,route,fingerprint,now]).map_err(|error|SprintRunnerTransitionError::Unavailable(error.to_string()))?;if changed==0{let exact:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM sprint_handback_dependency_routes WHERE handback_id=?1 AND work_unit_id=?2 AND route_fingerprint=?3)",params![handback,route,fingerprint],|row|row.get(0)).map_err(|error|SprintRunnerTransitionError::Unavailable(error.to_string()))?;if !exact{return Err(SprintRunnerTransitionError::Conflict)}} }
         let local_exhaustion=input.movement_kind=="local_exhaustion_escalate";if local_exhaustion { let intent=stable_id("sprint-runner-handback-escalation-intent",&handback);let request=stable_id("sprint-runner-handback-escalation-delivery-request",&handback); transaction.execute("INSERT OR IGNORE INTO sprint_runner_handback_escalations (handback_id,escalation_intent_id,delivery_request_id,requested_at,delivery_requested_at) VALUES (?1,?2,?3,?4,?4)",params![handback,intent,request,now]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?; }
         transaction.commit().map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         drop(conn);

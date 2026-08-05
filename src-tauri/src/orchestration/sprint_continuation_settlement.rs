@@ -5,6 +5,7 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
 
 pub(crate) const SPRINT_CONTINUATION_SETTLEMENT_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS sprint_handback_dependency_routes (handback_id TEXT PRIMARY KEY,work_unit_id TEXT NOT NULL,route_fingerprint TEXT,recorded_at TEXT);
 CREATE TABLE IF NOT EXISTS sprint_continuation_decisions (
   decision_id TEXT PRIMARY KEY,
   sprint_id TEXT NOT NULL,
@@ -331,11 +332,7 @@ fn canonical_rows(
         .map_err(|error| error.to_string())
 }
 fn valid_dependency_wait(tx: &rusqlite::Transaction<'_>, sprint: &str) -> Result<bool, String> {
-    let active = exists(tx, "SELECT 1 FROM work_unit_handler_activations h LEFT JOIN work_unit_settlements s ON s.work_unit_id=h.work_unit_id WHERE h.sprint_id=?1 AND h.eligibility_state='eligible' AND h.handler_ready_at IS NOT NULL AND s.work_unit_id IS NULL", sprint)?;
-    if !active {
-        return Ok(false);
-    }
-    let rows = tx.prepare("SELECT d.details_json FROM sprint_runner_handback_dispositions d JOIN sprint_runner_handback_deliveries delivery ON delivery.handback_id=d.handback_id WHERE delivery.sprint_id=?1 AND d.movement_kind='wait_for_agent_dependency' UNION ALL SELECT request_json FROM epic_runner_escalation_downstream_requests q JOIN epic_runner_escalation_receivers r ON r.handback_id=q.handback_id WHERE r.sprint_id=?1 AND q.request_kind='existing_agent_achievable_dependency'").map_err(|error| error.to_string())?.query_map([sprint], |row| row.get::<_, String>(0)).map_err(|error| error.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|error| error.to_string())?;
+    let rows = tx.prepare("SELECT d.details_json FROM sprint_runner_handback_dispositions d JOIN sprint_runner_handback_deliveries delivery ON delivery.handback_id=d.handback_id JOIN sprint_handback_dependency_routes route ON route.handback_id=d.handback_id JOIN work_unit_handler_activations h ON h.work_unit_id=route.work_unit_id AND h.sprint_id=delivery.sprint_id LEFT JOIN work_unit_settlements s ON s.work_unit_id=h.work_unit_id WHERE delivery.sprint_id=?1 AND d.movement_kind='wait_for_agent_dependency' AND h.eligibility_state='eligible' AND h.handler_ready_at IS NOT NULL AND s.work_unit_id IS NULL UNION ALL SELECT request_json FROM epic_runner_escalation_downstream_requests q JOIN epic_runner_escalation_receivers r ON r.handback_id=q.handback_id WHERE r.sprint_id=?1 AND q.request_kind='existing_agent_achievable_dependency'").map_err(|error| error.to_string())?.query_map([sprint], |row| row.get::<_, String>(0)).map_err(|error| error.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|error| error.to_string())?;
     for json in rows {
         let value: serde_json::Value = serde_json::from_str(&json)
             .map_err(|_| "malformed agent dependency route".to_owned())?;
@@ -374,7 +371,7 @@ mod tests {
 
     fn fixture() -> Connection {
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch("CREATE TABLE initiated_sprints(id TEXT PRIMARY KEY,epic_id TEXT);CREATE TABLE sprint_runner_transitions(sprint_id TEXT,epic_id TEXT);CREATE TABLE work_unit_materializations(materialization_id TEXT PRIMARY KEY,planning_point_id TEXT,accepted_revision_id TEXT,epic_id TEXT,sprint_id TEXT);CREATE TABLE work_slice_proposal_revisions(revision_id TEXT PRIMARY KEY,planning_point_id TEXT,accepted_at TEXT);CREATE TABLE work_slice_planning_episodes(planning_point_id TEXT PRIMARY KEY,sprint_id TEXT);CREATE TABLE work_slice_execution_graph_completions(materialization_id TEXT,accepted_revision_id TEXT);CREATE TABLE work_slice_execution_settlements(materialization_id TEXT,graph_completion_materialization_id TEXT);CREATE TABLE work_slice_planning_point_execution_settlements(planning_point_id TEXT,materialization_id TEXT,work_slice_execution_materialization_id TEXT);CREATE TABLE work_units(work_unit_id TEXT PRIMARY KEY,materialization_id TEXT);CREATE TABLE work_unit_settlements(work_unit_id TEXT);CREATE TABLE work_unit_retry_attempts(work_unit_id TEXT);CREATE TABLE work_unit_no_progress_handbacks(handback_id TEXT,work_unit_id TEXT,context_fingerprint TEXT);CREATE TABLE sprint_runner_handback_deliveries(handback_id TEXT,sprint_id TEXT);CREATE TABLE sprint_runner_handback_dispositions(handback_id TEXT,movement_kind TEXT,details_json TEXT);CREATE TABLE epic_runner_escalation_downstream_requests(handback_id TEXT,request_kind TEXT,request_json TEXT);CREATE TABLE epic_runner_escalation_receivers(handback_id TEXT,sprint_id TEXT,epic_id TEXT,correlation_fingerprint TEXT);CREATE TABLE epic_runner_escalation_dispositions(handback_id TEXT,movement_kind TEXT,details_json TEXT);CREATE TABLE work_slice_execution_attentions(materialization_id TEXT);CREATE TABLE work_unit_execution_attentions(materialization_id TEXT);CREATE TABLE epic_runner_escalation_attentions(handback_id TEXT);CREATE TABLE work_unit_handler_activations(work_unit_id TEXT,sprint_id TEXT,eligibility_state TEXT,handler_ready_at TEXT);CREATE TABLE work_unit_implementer_activations(work_unit_id TEXT);INSERT INTO initiated_sprints VALUES('sprint','epic');INSERT INTO sprint_runner_transitions VALUES('sprint','epic');").unwrap();
+        connection.execute_batch("CREATE TABLE initiated_sprints(id TEXT PRIMARY KEY,epic_id TEXT);CREATE TABLE sprint_runner_transitions(sprint_id TEXT,epic_id TEXT);CREATE TABLE work_unit_materializations(materialization_id TEXT PRIMARY KEY,planning_point_id TEXT,accepted_revision_id TEXT,epic_id TEXT,sprint_id TEXT);CREATE TABLE work_slice_proposal_revisions(revision_id TEXT PRIMARY KEY,planning_point_id TEXT,accepted_at TEXT);CREATE TABLE work_slice_planning_episodes(planning_point_id TEXT PRIMARY KEY,sprint_id TEXT);CREATE TABLE work_slice_execution_graph_completions(materialization_id TEXT,accepted_revision_id TEXT);CREATE TABLE work_slice_execution_settlements(materialization_id TEXT,graph_completion_materialization_id TEXT);CREATE TABLE work_slice_planning_point_execution_settlements(planning_point_id TEXT,materialization_id TEXT,work_slice_execution_materialization_id TEXT);CREATE TABLE work_units(work_unit_id TEXT PRIMARY KEY,materialization_id TEXT);CREATE TABLE work_unit_settlements(work_unit_id TEXT);CREATE TABLE work_unit_retry_attempts(work_unit_id TEXT);CREATE TABLE work_unit_no_progress_handbacks(handback_id TEXT,work_unit_id TEXT,context_fingerprint TEXT);CREATE TABLE sprint_runner_handback_deliveries(handback_id TEXT,sprint_id TEXT);CREATE TABLE sprint_runner_handback_dispositions(handback_id TEXT,movement_kind TEXT,details_json TEXT);CREATE TABLE sprint_handback_dependency_routes(handback_id TEXT,work_unit_id TEXT);CREATE TABLE epic_runner_escalation_downstream_requests(handback_id TEXT,request_kind TEXT,request_json TEXT);CREATE TABLE epic_runner_escalation_receivers(handback_id TEXT,sprint_id TEXT,epic_id TEXT,correlation_fingerprint TEXT);CREATE TABLE epic_runner_escalation_dispositions(handback_id TEXT,movement_kind TEXT,details_json TEXT);CREATE TABLE work_slice_execution_attentions(materialization_id TEXT);CREATE TABLE work_unit_execution_attentions(materialization_id TEXT);CREATE TABLE epic_runner_escalation_attentions(handback_id TEXT);CREATE TABLE work_unit_handler_activations(work_unit_id TEXT,sprint_id TEXT,eligibility_state TEXT,handler_ready_at TEXT);CREATE TABLE work_unit_implementer_activations(work_unit_id TEXT);INSERT INTO initiated_sprints VALUES('sprint','epic');INSERT INTO sprint_runner_transitions VALUES('sprint','epic');").unwrap();
         initialize(&connection).unwrap();
         connection
     }
@@ -409,7 +406,7 @@ mod tests {
             [],
         )
         .unwrap();
-        c.execute_batch("INSERT INTO sprint_runner_handback_deliveries VALUES('handback','sprint');INSERT INTO sprint_runner_handback_dispositions VALUES('handback','wait_for_agent_dependency','{\"dependencyOwner\":\"handler\",\"dependencyOwnerClassification\":\"work_unit_handler\",\"enablingResult\":\"review\",\"resumptionPath\":\"reassess\"}');").unwrap();
+        c.execute_batch("INSERT INTO sprint_runner_handback_deliveries VALUES('handback','sprint');INSERT INTO sprint_runner_handback_dispositions VALUES('handback','wait_for_agent_dependency','{\"dependencyOwner\":\"handler\",\"dependencyOwnerClassification\":\"work_unit_handler\",\"enablingResult\":\"review\",\"resumptionPath\":\"reassess\"}');INSERT INTO sprint_handback_dependency_routes VALUES('handback','unit');").unwrap();
         reconcile(&mut c).unwrap();
         assert_eq!(c.query_row::<String,_,_>("SELECT continuation_kind FROM sprint_continuation_decisions ORDER BY decision_sequence DESC LIMIT 1",[],|r|r.get(0)).unwrap(),"wait_for_agent_dependency");
         c.execute("DELETE FROM work_unit_handler_activations", [])
@@ -537,7 +534,7 @@ mod tests {
         });
         let one = one.join().unwrap();
         let two = two.join().unwrap();
-        assert!(one.is_ok() || two.is_ok());
+        assert!(one.is_ok() && two.is_ok());
         let mut c = Connection::open(&path).unwrap();
         reconcile(&mut c).unwrap();
         assert_eq!(
