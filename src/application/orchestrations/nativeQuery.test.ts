@@ -159,6 +159,87 @@ describe('orchestration native query v1', () => {
     expect(() => decodeOrchestrationNativeQueryV2(contradictory)).toThrow('state and reason contradict');
   });
 
+  it('preserves historical materialization snapshots while requiring the latest snapshot to be current', () => {
+    const materializations = [
+      {
+        materializationId: 'materialization-1', planningPointId: 'planning-point-1',
+        acceptedRevisionId: 'revision-1', epicId: 'epic-fixture', sprintId: 'sprint-fixture',
+        workSliceId: 'work-slice-1', authorizationRecordedAt: '2026-08-05T00:00:00Z',
+      },
+      {
+        materializationId: 'materialization-2', planningPointId: 'planning-point-2',
+        acceptedRevisionId: 'revision-2', epicId: 'epic-fixture', sprintId: 'sprint-fixture',
+        workSliceId: 'work-slice-2', authorizationRecordedAt: '2026-08-05T00:00:01Z',
+      },
+    ];
+    const makeValue = (counts: [number, number]) => {
+      const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
+      value.workUnitMaterializations = materializations;
+      value.sprintContinuationDecisions = counts.map((acceptedMaterializationCount, index) => ({
+        decisionId: `decision-${index + 1}`,
+        sprintId: 'sprint-fixture',
+        decisionSequence: index + 1,
+        state: 'continuing',
+        reason: 'continue_eligible_work',
+        acceptedMaterializationCount,
+        recordedAt: `2026-08-05T00:00:0${index}Z`,
+      }));
+      value.sprintContinuationCurrentDecisions = [{
+        sprintId: 'sprint-fixture', decisionId: 'decision-2', state: 'continuing',
+        updatedAt: '2026-08-05T00:00:02Z',
+      }];
+      value.sprintUpwardResults = counts.map((_, index) => ({
+        resultId: `result-${index + 1}`, decisionId: `decision-${index + 1}`,
+        sprintId: 'sprint-fixture', resultKind: 'continuing',
+        recordedAt: `2026-08-05T00:00:0${index}Z`,
+      }));
+      return value;
+    };
+
+    expect(() => decodeOrchestrationNativeQueryV2(makeValue([1, 2]))).not.toThrow();
+    expect(() => decodeOrchestrationNativeQueryV2(makeValue([2, 1]))).toThrow('snapshot decreases');
+    expect(() => decodeOrchestrationNativeQueryV2(makeValue([1, 3]))).toThrow('from the future');
+    const stale = makeValue([1, 1]);
+    expect(() => decodeOrchestrationNativeQueryV2(stale)).toThrow('latest materialization snapshot is stale');
+  });
+
+  it('projects repeated structured-attention history with distinct bounded contexts', () => {
+    const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
+    const structuredAttention = (attentionId: string, reason: string) => ({
+      attentionId,
+      code: 'structured_human_or_external_attention',
+      structuredAttention: {
+        reason,
+        authorityNeeded: 'designated product authority',
+        evidenceContext: `Evidence for ${attentionId}.`,
+        resumptionPath: 'Resume this exact Sprint decision.',
+      },
+    });
+    value.sprintContinuationDecisions = [1, 2].map((decisionSequence) => ({
+      decisionId: `decision-${decisionSequence}`,
+      sprintId: 'sprint-fixture', decisionSequence, state: 'attention',
+      reason: 'structured_human_or_external_attention', acceptedMaterializationCount: 0,
+      recordedAt: `2026-08-05T00:00:0${decisionSequence}Z`,
+      attention: structuredAttention(`attention-${decisionSequence}`, `Reason ${decisionSequence}.`),
+    }));
+    value.sprintContinuationCurrentDecisions = [{
+      sprintId: 'sprint-fixture', decisionId: 'decision-2', state: 'attention',
+      updatedAt: '2026-08-05T00:00:02Z',
+    }];
+    value.sprintUpwardResults = [1, 2].map((decisionSequence) => ({
+      resultId: `result-${decisionSequence}`, decisionId: `decision-${decisionSequence}`,
+      sprintId: 'sprint-fixture', resultKind: 'attention',
+      recordedAt: `2026-08-05T00:00:0${decisionSequence}Z`,
+    }));
+
+    const sprint = composeProductOrchestrationReadModels(
+      nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(value)),
+    ).epics[0]!.sprints[0]!;
+    expect(sprint.sprintContinuation?.history.map((item) => item.attention?.structuredAttention?.reason)).toEqual([
+      'Reason 1.', 'Reason 2.',
+    ]);
+  });
+
   it('decodes the Rust-authored settled multi-root execution graph into product read models', () => {
     const query = decodeOrchestrationNativeQueryV2(fixture('valid-execution-graph.json'));
     const sprint = composeProductOrchestrationReadModels(

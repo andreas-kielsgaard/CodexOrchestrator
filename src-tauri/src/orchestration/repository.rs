@@ -2877,7 +2877,7 @@ fn sprint_continuation_projection(
     )?;
     let mut structured_attention_by_sprint = std::collections::HashMap::<
         String,
-        EpicRunnerEscalationAttentionDto,
+        Vec<(String, String, EpicRunnerEscalationAttentionDto)>,
     >::new();
     let escalation_tables = [
         "epic_runner_escalation_receivers",
@@ -2895,19 +2895,24 @@ fn sprint_continuation_projection(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?;
     if escalation_present.iter().all(|value| *value) {
-        for (sprint_id, attention_json) in collect(
+        for (sprint_id, attention_id, requested_at, attention_json) in collect(
             connection,
-            "SELECT receiver.sprint_id,attention.attention_json FROM epic_runner_escalation_receivers receiver JOIN epic_runner_escalation_attentions attention ON attention.handback_id=receiver.handback_id ORDER BY receiver.sprint_id,attention.requested_at,attention.attention_id",
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            "SELECT receiver.sprint_id,attention.attention_id,attention.requested_at,attention.attention_json FROM epic_runner_escalation_receivers receiver JOIN epic_runner_escalation_attentions attention ON attention.handback_id=receiver.handback_id ORDER BY receiver.sprint_id,attention.requested_at,attention.attention_id",
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
         )? {
             let attention = serde_json::from_str::<EpicRunnerEscalationAttentionDto>(&attention_json)
                 .map_err(|error| format!("invalid public Sprint attention: {error}"))?;
-            if structured_attention_by_sprint
-                .insert(sprint_id.clone(), attention)
-                .is_some()
-            {
-                return Err("ambiguous public Sprint structured attention".into());
-            }
+            structured_attention_by_sprint
+                .entry(sprint_id)
+                .or_default()
+                .push((attention_id, requested_at, attention));
         }
     }
     let mut decisions = decisions;
@@ -2956,17 +2961,47 @@ fn sprint_continuation_projection(
         }
         chrono::DateTime::parse_from_rfc3339(&decision.recorded_at)
             .map_err(|_| "Sprint continuation decision chronology is invalid".to_owned())?;
-        if decision.state == "attention"
-            && decision.reason == "structured_human_or_external_attention"
-        {
-            let structured = structured_attention_by_sprint
-                .remove(&decision.sprint_id)
-                .ok_or_else(|| "structured Sprint attention context is missing".to_owned())?;
-            if let Some(attention) = decision.attention.as_mut() {
-                attention.structured_attention = Some(structured);
-            } else {
-                return Err("structured Sprint attention row is missing".into());
+    }
+    let mut structured_decision_indices = std::collections::HashMap::<String, Vec<usize>>::new();
+    for (index, decision) in decisions.iter().enumerate() {
+        if decision.reason == "structured_human_or_external_attention" {
+            structured_decision_indices
+                .entry(decision.sprint_id.clone())
+                .or_default()
+                .push(index);
+        }
+    }
+    let mut structured_sprints = structured_decision_indices
+        .keys()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
+    structured_sprints.extend(structured_attention_by_sprint.keys().cloned());
+    for sprint_id in structured_sprints {
+        let decision_indices = structured_decision_indices
+            .remove(&sprint_id)
+            .unwrap_or_default();
+        let sources = structured_attention_by_sprint
+            .remove(&sprint_id)
+            .unwrap_or_default();
+        if decision_indices.len() != sources.len() {
+            return Err("ambiguous public Sprint structured attention".into());
+        }
+        for (decision_index, (_, requested_at, structured)) in decision_indices.iter().zip(sources) {
+            let decision = decisions
+                .get_mut(*decision_index)
+                .ok_or_else(|| "structured Sprint attention decision is missing".to_owned())?;
+            let decision_time = chrono::DateTime::parse_from_rfc3339(&decision.recorded_at)
+                .map_err(|_| "Sprint continuation decision chronology is invalid".to_owned())?;
+            let requested_time = chrono::DateTime::parse_from_rfc3339(&requested_at)
+                .map_err(|_| "structured Sprint attention chronology is invalid".to_owned())?;
+            if requested_time > decision_time {
+                return Err("structured Sprint attention chronology is invalid".into());
             }
+            decision
+                .attention
+                .as_mut()
+                .ok_or_else(|| "structured Sprint attention row is missing".to_owned())?
+                .structured_attention = Some(structured);
         }
     }
     let mut last_sprint = None;

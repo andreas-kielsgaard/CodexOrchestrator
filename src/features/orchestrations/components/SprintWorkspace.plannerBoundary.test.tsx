@@ -39,7 +39,7 @@ describe('Work Slice Planner boundary disclosure', () => {
         { decisionId: 'decision-1', sequence: 1, state: 'continuing' as const, reason: 'wait_for_agent_dependency', recordedAt: '2026-08-05T00:00:00Z' },
         {
           decisionId: 'decision-3',
-          sequence: 3,
+          sequence: 2,
           state: 'attention' as const,
           reason: 'structured_human_or_external_attention',
           recordedAt: '2026-08-05T00:00:02Z',

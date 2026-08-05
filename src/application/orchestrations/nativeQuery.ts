@@ -3080,6 +3080,13 @@ function validateSprintContinuationProjection(query: OrchestrationNativeQueryV2)
   unique(results, (item) => item.resultId, 'Sprint upward result ID');
   unique(results, (item) => item.decisionId, 'Sprint upward result decision ID');
   const sprintIds = new Set(query.initiatedSprints.map((sprint) => sprint.sprintId));
+  const materializationCountBySprint = new Map<string, number>();
+  for (const materialization of query.workUnitMaterializations) {
+    materializationCountBySprint.set(
+      materialization.sprintId,
+      (materializationCountBySprint.get(materialization.sprintId) ?? 0) + 1,
+    );
+  }
   const decisionsById = new Map(decisions.map((decision) => [decision.decisionId, decision]));
   const decisionsBySprint = new Map<string, NativeSprintContinuationDecisionV1[]>();
   for (const decision of decisions) {
@@ -3098,21 +3105,26 @@ function validateSprintContinuationProjection(query: OrchestrationNativeQueryV2)
     const list = decisionsBySprint.get(decision.sprintId) ?? [];
     list.push(decision);
     decisionsBySprint.set(decision.sprintId, list);
-    const materializationCount = query.workUnitMaterializations.filter(
-      (materialization) => materialization.sprintId === decision.sprintId,
-    ).length;
-    if (decision.acceptedMaterializationCount !== materializationCount)
-      fail('Sprint continuation decision materialization count is stale');
   }
   for (const [sprintId, history] of decisionsBySprint) {
+    let previousMaterializationCount = -1;
     history.forEach((decision, index) => {
       if (decision.decisionSequence !== index + 1)
         fail('Sprint continuation decision chronology has a gap, duplicate, or out-of-order entry');
+      const materializationCount = materializationCountBySprint.get(sprintId) ?? 0;
+      if (decision.acceptedMaterializationCount < previousMaterializationCount)
+        fail('Sprint continuation materialization snapshot decreases');
+      if (decision.acceptedMaterializationCount > materializationCount)
+        fail('Sprint continuation materialization snapshot is from the future');
+      previousMaterializationCount = decision.acceptedMaterializationCount;
     });
     const pointer = current.find((item) => item.sprintId === sprintId);
     if (!pointer) fail('Sprint continuation history lacks its current decision pointer');
     if (pointer!.decisionId !== history.at(-1)!.decisionId)
       fail('Sprint current decision does not point to the latest decision');
+    const currentMaterializationCount = materializationCountBySprint.get(sprintId) ?? 0;
+    if (history.at(-1)!.acceptedMaterializationCount !== currentMaterializationCount)
+      fail('Sprint continuation latest materialization snapshot is stale');
   }
   for (const pointer of current) {
     if (!sprintIds.has(pointer.sprintId)) fail('Sprint current decision references an unknown Sprint');
@@ -3124,6 +3136,9 @@ function validateSprintContinuationProjection(query: OrchestrationNativeQueryV2)
       Date.parse(pointer.updatedAt) < Date.parse(decision.recordedAt)
     )
       fail('Sprint current decision correlation or chronology is invalid');
+    const materializationCount = materializationCountBySprint.get(pointer.sprintId) ?? 0;
+    if (decision.acceptedMaterializationCount !== materializationCount)
+      fail('Sprint current materialization snapshot is stale');
   }
   const resultDecisionIds = new Set<string>();
   for (const result of results) {

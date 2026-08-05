@@ -1524,6 +1524,73 @@ fn native_query_projects_ordered_sprint_decisions_current_result_and_privacy_bou
     assert!(repository.native_query().is_err());
 }
 
+#[test]
+fn native_query_projects_repeated_structured_sprint_attention_and_rejects_ambiguous_sources() {
+    let repository = repository_at(time());
+    let saved = repository
+        .save_epic_plan_proposal(command(None, proposal("repeated attention"), "repeated-attention-save"))
+        .expect("proposal");
+    repository
+        .initiate_epic(super::super::domain::InitiateEpicCommand {
+            epic_planning_draft_id: EpicPlanningDraftId::new("epic-planning-draft-1").unwrap(),
+            expected_revision_token: saved.revision_token,
+            actor_id: "application-user".into(),
+            idempotency_key: "repeated-attention-init".into(),
+        })
+        .expect("initiation");
+    let sprint = repository.native_query().unwrap().initiated_sprints[0]
+        .sprint_id
+        .clone();
+    let epic = repository.native_query().unwrap().initiated_epics[0]
+        .epic_id
+        .clone();
+    let connection = repository.connection.lock().unwrap();
+    crate::orchestration::sprint_continuation_settlement::initialize(&connection).unwrap();
+    connection
+        .execute_batch(
+            &format!(
+                "PRAGMA foreign_keys=OFF;DROP TABLE epic_runner_escalation_attentions;INSERT INTO epic_runner_escalation_receivers (handback_id,escalation_intent_id,delivery_request_id,sprint_id,epic_id,governing_runner_session_id,governing_runner_invocation_id,reassessment_invocation_id,delivery_fact_id,delivery_requested_at,harness_key,harness_version,correlation_fingerprint) VALUES ('handback-1','epic-intent-1','epic-request-1','{sprint}','{epic}','private-session-1','private-invocation-1','private-reassessment-1','private-delivery-1','2030-01-01T00:00:00Z','epic-harness',1,'correlation-1'),('handback-2','epic-intent-2','epic-request-2','{sprint}','{epic}','private-session-2','private-invocation-2','private-reassessment-2','private-delivery-2','2030-01-01T00:00:01Z','epic-harness',1,'correlation-2');PRAGMA foreign_keys=ON;CREATE TABLE epic_runner_escalation_attentions (handback_id TEXT PRIMARY KEY, attention_id TEXT NOT NULL, attention_json TEXT NOT NULL, requested_at TEXT NOT NULL);INSERT INTO epic_runner_escalation_attentions VALUES ('handback-1','public-attention-1','{{\"reason\":\"First decision.\",\"authorityNeeded\":\"authority\",\"evidenceContext\":\"evidence-1\",\"resumptionPath\":\"resume-1\"}}','2030-01-01T00:00:00Z'),('handback-2','public-attention-2','{{\"reason\":\"Second decision.\",\"authorityNeeded\":\"authority\",\"evidenceContext\":\"evidence-2\",\"resumptionPath\":\"resume-2\"}}','2030-01-01T00:00:01Z');INSERT INTO sprint_continuation_decisions VALUES ('decision-1','{sprint}',1,'attention','structured_human_or_external_attention',0,'private-input-1','2030-01-01T00:00:00Z'),('decision-2','{sprint}',2,'attention','structured_human_or_external_attention',0,'private-input-2','2030-01-01T00:00:02Z');INSERT INTO sprint_continuation_attentions VALUES ('decision-1','attention-1','structured_human_or_external_attention','private-attention-1','2030-01-01T00:00:00Z'),('decision-2','attention-2','structured_human_or_external_attention','private-attention-2','2030-01-01T00:00:02Z');INSERT INTO sprint_continuation_current_decisions VALUES ('{sprint}','decision-2','attention','2030-01-01T00:00:02Z');INSERT INTO sprint_upward_results VALUES ('result-1','decision-1','{sprint}','attention','private-result-1','2030-01-01T00:00:00Z'),('result-2','decision-2','{sprint}','attention','private-result-2','2030-01-01T00:00:02Z');"
+            ),
+        )
+        .unwrap();
+    drop(connection);
+
+    let projected = repository.native_query().expect("repeated attention projection");
+    assert_eq!(
+        projected.sprint_continuation_decisions[0]
+            .attention
+            .as_ref()
+            .unwrap()
+            .structured_attention
+            .as_ref()
+            .unwrap()
+            .reason,
+        "First decision."
+    );
+    assert_eq!(
+        projected.sprint_continuation_decisions[1]
+            .attention
+            .as_ref()
+            .unwrap()
+            .structured_attention
+            .as_ref()
+            .unwrap()
+            .reason,
+        "Second decision."
+    );
+    let json = serde_json::to_string(&projected).unwrap();
+    assert!(!json.contains("private-input"));
+    assert!(!json.contains("private-attention"));
+    assert!(!json.contains("private-result"));
+
+    let connection = repository.connection.lock().unwrap();
+    connection
+        .execute("DELETE FROM epic_runner_escalation_attentions WHERE handback_id='handback-2'", [])
+        .unwrap();
+    drop(connection);
+    assert!(repository.native_query().is_err());
+}
+
 fn connection_reopen_for_native_query_mutation(repository: &SqliteOrchestrationRepository, sql: &str) {
     let connection = repository.connection.lock().unwrap();
     if sql.contains("?1") { connection.execute(sql, ["epic-1"]).unwrap(); } else { connection.execute_batch(sql).unwrap(); }

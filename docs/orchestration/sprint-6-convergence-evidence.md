@@ -41,11 +41,16 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
 - The TypeScript decoder rejects partial Sprint bundles, duplicate or gapped chronology, foreign
   Sprint/current/result references, contradictory known state/reason pairs, stale chronology,
   private fields, and higher-effect result shapes. Unknown continuing and attention reasons remain
-  neutral; unknown settlement reasons cannot grant settlement authority.
+  neutral; unknown settlement reasons cannot grant settlement authority. Historical materialization
+  counts are accepted as nondecreasing snapshots only when the latest/current snapshot matches the
+  productive current total; decreases, future counts, and stale latest snapshots are rejected.
+- Repeated structured attention is projected by ordered Sprint history and ordered public attention
+  sources only when their counts and chronology are exact. Foreign, private, missing, or otherwise
+  unrepresentable sources fail closed rather than receiving arbitrary context.
 - Focused producer evidence: the new native-query SCS projection test passed **1/1**; the existing
   SCS-01 durable reconciliation group remains **10/10**; the repository projection suite passed
-  **41/41**. Consumer evidence in an isolated exact-checkpoint dependency-ready copy passed
-  **29/29** native-query tests, **3/3** workspace-presentation tests, and **11/11** bounded
+  **42/42**. Consumer evidence in an isolated exact-checkpoint dependency-ready copy passed
+  **31/31** native-query tests, **3/3** workspace-presentation tests, and **11/11** bounded
   Sprint Workspace tests. `npm run build` passed with TypeScript and Vite.
 - The Sprint Workspace visibly distinguishes continuing, dependency waiting, structured or
   technical attention, and settled. Settled wording does not imply Epic settlement, delivery,
