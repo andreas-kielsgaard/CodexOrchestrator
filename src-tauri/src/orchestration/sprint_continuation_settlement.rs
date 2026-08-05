@@ -223,7 +223,7 @@ impl Snapshot {
         let malformed_chronology = exists(tx, "SELECT 1 FROM work_slice_execution_settlements w JOIN work_unit_materializations m ON m.materialization_id=w.materialization_id LEFT JOIN work_slice_execution_graph_completions g ON g.materialization_id=w.graph_completion_materialization_id AND g.accepted_revision_id=m.accepted_revision_id WHERE m.sprint_id=?1 AND g.materialization_id IS NULL UNION ALL SELECT 1 FROM work_slice_planning_point_execution_settlements p JOIN work_unit_materializations m ON m.materialization_id=p.materialization_id LEFT JOIN work_slice_execution_settlements w ON w.materialization_id=p.work_slice_execution_materialization_id AND w.materialization_id=m.materialization_id WHERE m.sprint_id=?1 AND w.materialization_id IS NULL", sprint)?;
         let unresolved_retry = exists(tx, "SELECT 1 FROM work_unit_retry_attempts r JOIN work_units u ON u.work_unit_id=r.work_unit_id JOIN work_unit_materializations m ON m.materialization_id=u.materialization_id LEFT JOIN work_unit_settlements s ON s.work_unit_id=u.work_unit_id WHERE m.sprint_id=?1 AND s.work_unit_id IS NULL", sprint)?;
         let unresolved_handback = exists(tx, "SELECT 1 FROM work_unit_no_progress_handbacks h JOIN work_units u ON u.work_unit_id=h.work_unit_id JOIN work_unit_materializations m ON m.materialization_id=u.materialization_id LEFT JOIN work_unit_settlements s ON s.work_unit_id=u.work_unit_id WHERE m.sprint_id=?1 AND s.work_unit_id IS NULL", sprint)?;
-        let agent_dependency_wait = exists(tx, "SELECT 1 FROM sprint_runner_handback_dispositions d JOIN sprint_runner_handback_deliveries delivery ON delivery.handback_id=d.handback_id WHERE delivery.sprint_id=?1 AND d.movement_kind='wait_for_agent_dependency' UNION ALL SELECT 1 FROM epic_runner_escalation_downstream_requests r JOIN epic_runner_escalation_receivers receiver ON receiver.handback_id=r.handback_id WHERE receiver.sprint_id=?1 AND r.request_kind='existing_agent_achievable_dependency'", sprint)?;
+        let agent_dependency_wait = valid_dependency_wait(tx, sprint)?;
         let durable_attention = exists(tx, "SELECT 1 FROM work_slice_execution_attentions a JOIN work_unit_materializations m ON m.materialization_id=a.materialization_id WHERE m.sprint_id=?1 UNION ALL SELECT 1 FROM work_unit_execution_attentions a JOIN work_unit_materializations m ON m.materialization_id=a.materialization_id WHERE m.sprint_id=?1 UNION ALL SELECT 1 FROM epic_runner_escalation_attentions a JOIN epic_runner_escalation_receivers r ON r.handback_id=a.handback_id WHERE r.sprint_id=?1", sprint)?;
         let eligible_work = exists(tx, "SELECT 1 FROM work_unit_handler_activations h LEFT JOIN work_unit_settlements s ON s.work_unit_id=h.work_unit_id WHERE h.sprint_id=?1 AND h.eligibility_state='eligible' AND h.handler_ready_at IS NOT NULL AND s.work_unit_id IS NULL", sprint)?;
         let outstanding_continuation = exists(tx, "SELECT 1 FROM work_unit_handler_activations h LEFT JOIN work_unit_settlements s ON s.work_unit_id=h.work_unit_id WHERE h.sprint_id=?1 AND s.work_unit_id IS NULL UNION ALL SELECT 1 FROM work_unit_implementer_activations i JOIN work_units u ON u.work_unit_id=i.work_unit_id JOIN work_unit_materializations m ON m.materialization_id=u.materialization_id LEFT JOIN work_unit_settlements s ON s.work_unit_id=u.work_unit_id WHERE m.sprint_id=?1 AND s.work_unit_id IS NULL", sprint)?;
@@ -330,6 +330,36 @@ fn canonical_rows(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())
 }
+fn valid_dependency_wait(tx: &rusqlite::Transaction<'_>, sprint: &str) -> Result<bool, String> {
+    let active = exists(tx, "SELECT 1 FROM work_unit_handler_activations h LEFT JOIN work_unit_settlements s ON s.work_unit_id=h.work_unit_id WHERE h.sprint_id=?1 AND h.eligibility_state='eligible' AND h.handler_ready_at IS NOT NULL AND s.work_unit_id IS NULL", sprint)?;
+    if !active {
+        return Ok(false);
+    }
+    let rows = tx.prepare("SELECT d.details_json FROM sprint_runner_handback_dispositions d JOIN sprint_runner_handback_deliveries delivery ON delivery.handback_id=d.handback_id WHERE delivery.sprint_id=?1 AND d.movement_kind='wait_for_agent_dependency' UNION ALL SELECT request_json FROM epic_runner_escalation_downstream_requests q JOIN epic_runner_escalation_receivers r ON r.handback_id=q.handback_id WHERE r.sprint_id=?1 AND q.request_kind='existing_agent_achievable_dependency'").map_err(|error| error.to_string())?.query_map([sprint], |row| row.get::<_, String>(0)).map_err(|error| error.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|error| error.to_string())?;
+    for json in rows {
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|_| "malformed agent dependency route".to_owned())?;
+        let has = |key: &str| {
+            value
+                .get(key)
+                .and_then(|v| v.as_str())
+                .is_some_and(|v| !v.trim().is_empty())
+        };
+        let handback = has("dependencyOwner")
+            && has("dependencyOwnerClassification")
+            && has("enablingResult")
+            && has("resumptionPath");
+        let epic = value.get("target").and_then(|v| v.as_str())
+            == Some("existing_agent_achievable_dependency")
+            && has("dependency")
+            && has("request")
+            && has("resumptionPath");
+        if handback || epic {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
 fn digest(value: &str) -> String {
     let mut hash = Sha256::new();
     hash.update(value.as_bytes());
@@ -339,6 +369,7 @@ fn digest(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
     use tempfile::TempDir;
 
     fn fixture() -> Connection {
@@ -373,9 +404,18 @@ mod tests {
         assert_eq!(statuses(&c).unwrap()[0].1.state, "continuing");
         c.execute("DELETE FROM work_unit_retry_attempts", [])
             .unwrap();
-        c.execute_batch("INSERT INTO sprint_runner_handback_deliveries VALUES('handback','sprint');INSERT INTO sprint_runner_handback_dispositions VALUES('handback','wait_for_agent_dependency','{}');").unwrap();
+        c.execute(
+            "INSERT INTO work_unit_handler_activations VALUES('unit','sprint','eligible','now')",
+            [],
+        )
+        .unwrap();
+        c.execute_batch("INSERT INTO sprint_runner_handback_deliveries VALUES('handback','sprint');INSERT INTO sprint_runner_handback_dispositions VALUES('handback','wait_for_agent_dependency','{\"dependencyOwner\":\"handler\",\"dependencyOwnerClassification\":\"work_unit_handler\",\"enablingResult\":\"review\",\"resumptionPath\":\"reassess\"}');").unwrap();
         reconcile(&mut c).unwrap();
         assert_eq!(c.query_row::<String,_,_>("SELECT continuation_kind FROM sprint_continuation_decisions ORDER BY decision_sequence DESC LIMIT 1",[],|r|r.get(0)).unwrap(),"wait_for_agent_dependency");
+        c.execute("DELETE FROM work_unit_handler_activations", [])
+            .unwrap();
+        reconcile(&mut c).unwrap();
+        assert_ne!(c.query_row::<String,_,_>("SELECT continuation_kind FROM sprint_continuation_decisions ORDER BY decision_sequence DESC LIMIT 1",[],|r|r.get(0)).unwrap(),"wait_for_agent_dependency");
     }
     #[test]
     fn structured_attention_and_handback_are_not_settlement() {
@@ -483,6 +523,21 @@ mod tests {
             c.execute_batch("DELETE FROM sprint_continuation_current_decisions;DELETE FROM sprint_upward_results;")
                 .unwrap();
         }
+        let first = path.clone();
+        let second = path.clone();
+        let one = thread::spawn(move || {
+            let mut c = Connection::open(first).unwrap();
+            c.busy_timeout(std::time::Duration::from_secs(1)).unwrap();
+            reconcile(&mut c)
+        });
+        let two = thread::spawn(move || {
+            let mut c = Connection::open(second).unwrap();
+            c.busy_timeout(std::time::Duration::from_secs(1)).unwrap();
+            reconcile(&mut c)
+        });
+        let one = one.join().unwrap();
+        let two = two.join().unwrap();
+        assert!(one.is_ok() || two.is_ok());
         let mut c = Connection::open(&path).unwrap();
         reconcile(&mut c).unwrap();
         assert_eq!(
