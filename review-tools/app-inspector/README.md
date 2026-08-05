@@ -5,24 +5,27 @@ does not add a Tauri command, production route, driver permission, or orchestrat
 
 ## Explicit desktop interaction companion
 
-`interact-app.mjs` is a separate development-only input transport for a named Windows instance.
-It requires both the exact executable path and PID, addresses the WebView child with client
-coordinates, and never foregrounds the window. It deliberately has no semantic selectors: a
-receipt proves only that window messages were acknowledged, so retain a separate native-window or
-SQLite observation for every product, provider, or orchestration claim.
+`interact-app.mjs` is a separate development-only click transport for a named Windows instance.
+It requires both the exact executable path and PID, validates its client coordinates directly in
+the PowerShell boundary, and requires the target HWND to belong to that process or a live
+descendant. It never foregrounds the window and has no clipboard authority. A receipt proves only
+that the target acknowledged the explicit mouse-down and mouse-up messages, so retain a separate
+native-window or SQLite observation for every product, provider, or orchestration claim.
 
 ```powershell
-node review-tools/app-inspector/interact-app.mjs paste --exe "C:\path\to\codex-orchestrator.exe" --pid 19760 --x 470 --y 760 --text-file "C:\path\to\bounded-prompt.txt" --out "C:\path\to\interaction-receipt.json"
+node review-tools/app-inspector/interact-app.mjs click --exe "C:\path\to\codex-orchestrator.exe" --pid 19760 --x 470 --y 760 --out "C:\path\to\interaction-receipt.json"
 ```
 
-Use `click` with the same identity and coordinate inputs for a single pointer action. This tool is
-for explicitly authorized development/review interaction only; it does not become an application
-transport or infer that any requested workflow stage occurred.
+Coordinates must be from `0` through `32767` and fall in the selected main window's client area.
+This tool is for explicitly authorized development/review interaction only; it does not become an
+application transport or infer that any requested workflow stage occurred.
 
 For an isolated development instance deliberately launched with a loopback WebView2 debugging
 port, `webview-control.mjs` can instead type into or click a CSS selector without foregrounding the
-window. It requires one exact page target URL and writes a redacted dispatch receipt. The debugger
-port is a development-only launch choice, never a production application transport.
+window. It requires the exact owner executable and PID; the listener for the requested port must
+be exactly one descendant process whose command line declares that port. It then requires one exact
+page target URL and writes a redacted dispatch receipt. The debugger port is a development-only
+launch choice, never a production application transport.
 
 ## First snapshot
 

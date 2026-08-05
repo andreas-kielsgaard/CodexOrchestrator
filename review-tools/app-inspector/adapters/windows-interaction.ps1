@@ -4,7 +4,7 @@ param(
     [Parameter(Mandatory = $true)]
     [int]$ProcessId,
     [Parameter(Mandatory = $true)]
-    [ValidateSet('click', 'paste')]
+    [ValidateSet('click')]
     [string]$Action,
     [Parameter(Mandatory = $true)]
     [int]$X,
@@ -13,6 +13,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($X -lt 0 -or $Y -lt 0 -or $X -gt 32767 -or $Y -gt 32767) {
+    throw 'Client coordinates must be integers from 0 through 32767.'
+}
 
 function Emit-Payload($value) {
     $encoded = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($value | ConvertTo-Json -Depth 8 -Compress)))
@@ -71,6 +75,18 @@ function Find-TargetChild([IntPtr]$parent, $screenPoint) {
     return $selected
 }
 
+function Test-SelectedProcessOrDescendant([uint32]$candidateProcessId, [uint32]$selectedProcessId) {
+    $current = $candidateProcessId
+    $visited = [System.Collections.Generic.HashSet[uint32]]::new()
+    while ($current -ne 0 -and $visited.Add($current)) {
+        if ($current -eq $selectedProcessId) { return $true }
+        $record = Get-CimInstance Win32_Process -Filter "ProcessId=$current" -ErrorAction SilentlyContinue
+        if ($null -eq $record) { return $false }
+        $current = [uint32]$record.ParentProcessId
+    }
+    return $false
+}
+
 $resolvedExecutable = [System.IO.Path]::GetFullPath($ExecutablePath)
 $candidates = @(Get-CimInstance Win32_Process | Where-Object {
     $_.ProcessId -eq $ProcessId -and $_.ExecutablePath -and [string]::Equals(
@@ -87,7 +103,7 @@ $clientRect = New-Object ReviewAppInteractionNative+RECT
 if (-not [ReviewAppInteractionNative]::GetClientRect($process.MainWindowHandle, [ref]$clientRect)) {
     throw 'GetClientRect failed for the selected main window.'
 }
-if ($X -ge $clientRect.Right -or $Y -ge $clientRect.Bottom) {
+if ($X -lt $clientRect.Left -or $Y -lt $clientRect.Top -or $X -ge $clientRect.Right -or $Y -ge $clientRect.Bottom) {
     throw "The requested client coordinate ($X, $Y) lies outside the selected main window client area."
 }
 
@@ -101,6 +117,9 @@ $target = Find-TargetChild $process.MainWindowHandle $point
 if ($target -eq [IntPtr]::Zero) { throw 'No descendant child window exists at the requested client coordinate.' }
 $targetProcessId = 0
 [ReviewAppInteractionNative]::GetWindowThreadProcessId($target, [ref]$targetProcessId) | Out-Null
+if (-not (Test-SelectedProcessOrDescendant $targetProcessId $ProcessId)) {
+    throw "The target child window belongs to PID $targetProcessId, which is not the selected PID $ProcessId or its descendant."
+}
 if (-not [ReviewAppInteractionNative]::ScreenToClient($target, [ref]$point)) {
     throw 'ScreenToClient failed for the target child window.'
 }
@@ -108,12 +127,6 @@ if (-not [ReviewAppInteractionNative]::ScreenToClient($target, [ref]$point)) {
 $packedPoint = [Int64](($point.Y -band 0xffff) -shl 16) -bor [Int64]($point.X -band 0xffff)
 Send-TargetMessage $target 0x0201 ([IntPtr]$packedPoint)
 Send-TargetMessage $target 0x0202 ([IntPtr]$packedPoint)
-if ($Action -eq 'paste') {
-    $text = $env:REVIEW_APP_INTERACTION_TEXT
-    if ([string]::IsNullOrWhiteSpace($text)) { throw 'The paste action requires REVIEW_APP_INTERACTION_TEXT.' }
-    Set-Clipboard -Value $text
-    Send-TargetMessage $target 0x0302 ([IntPtr]::Zero)
-}
 
 Emit-Payload ([ordered]@{
     process = [ordered]@{ pid = $ProcessId; executablePath = $resolvedExecutable }

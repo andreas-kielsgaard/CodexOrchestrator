@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import test from 'node:test';
 
-import { clickExpression, loopbackUrl, typeExpression } from '../webview-control.mjs';
+import {
+  clickExpression,
+  debuggerPort,
+  loopbackUrl,
+  parseOwnershipOutput,
+  typeExpression,
+} from '../webview-control.mjs';
+
+const ownershipPrefix = 'REVIEW_APP_WEBVIEW_OWNER_V1:';
+const ownershipFrame = (value) =>
+  `${ownershipPrefix}${Buffer.from(JSON.stringify(value), 'utf8').toString('base64')}`;
 
 test('keeps selector and text literal in CDP expressions', () => {
   const expression = typeExpression('textarea[data-id="draft"]', 'line one\nline two');
@@ -10,8 +21,20 @@ test('keeps selector and text literal in CDP expressions', () => {
   assert.match(clickExpression('button[type="submit"]'), /button\[type=\\"submit\\"\]/u);
 });
 
-test('accepts only loopback debugger URLs', () => {
+test('accepts only explicit HTTP loopback debugger URLs', () => {
   assert.equal(loopbackUrl('http://127.0.0.1:9225/'), 'http://127.0.0.1:9225');
-  assert.equal(loopbackUrl('https://localhost:9225'), 'https://localhost:9225');
+  assert.equal(debuggerPort('http://127.0.0.1:9225'), 9225);
   assert.throws(() => loopbackUrl('http://example.com:9225'), /loopback/u);
+  assert.throws(() => loopbackUrl('https://localhost:9225'), /http loopback/u);
+  assert.throws(() => loopbackUrl('http://localhost'), /explicit debugger port/u);
+});
+
+test('parses one owned-debugger receipt and rejects malformed framing', () => {
+  const expected = { owner: { pid: 7 }, debugger: { pid: 9, port: 9225 } };
+  assert.deepEqual(parseOwnershipOutput(`native\n${ownershipFrame(expected)}\n`), expected);
+  assert.throws(() => parseOwnershipOutput('none'), /observed 0/u);
+  assert.throws(
+    () => parseOwnershipOutput(`${ownershipFrame(expected)}\n${ownershipFrame(expected)}`),
+    /observed 2/u,
+  );
 });
