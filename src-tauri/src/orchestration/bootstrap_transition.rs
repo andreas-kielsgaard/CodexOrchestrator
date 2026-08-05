@@ -6101,6 +6101,18 @@ mod tests {
         // No Sprint/Epic final-blockage table exists in the authoritative schema or native DTO;
         // this route deliberately records no substitute final-state effect.
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sprint_final_blockages','epic_final_blockages','epic_runner_handback_receivers','sprint_epic_settlements')",[],|row|row.get(0)).unwrap(),0);
+        drop(connection);
+        let semantic_context=reopened.epic_escalation_reassessment_context_for_test(&receiver.2).unwrap();
+        assert!(semantic_context.get("acceptedEpicPlan").is_some()&&semantic_context.get("currentSprintState").is_some());
+        assert!(!semantic_context.to_string().contains("handback-epic-runner-session"));
+        let return_context=crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition { movement_kind:"return_context_to_sprint_runner".into(),rationale:"the unresolved concern needs an explicit bounded decision from the Sprint Runner".into(),considered_intent:None,downstream_request:Some(crate::orchestration::sprint_runner_transition::EpicEscalationDownstreamRequest { target:crate::orchestration::sprint_runner_transition::EpicEscalationDownstreamTarget::SprintRunner,request:"return the missing dependency decision without clearing this concern".into(),resumption_path:"reassess this exact escalation after the Sprint Runner response".into() }),human_external_attention:None };
+        reopened.record_epic_escalation_disposition_for_test(&receiver.2,return_context.clone()).unwrap();
+        reopened.record_epic_escalation_disposition_for_test(&receiver.2,return_context).unwrap();
+        let connection=Connection::open(&fixture.base.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_escalation_dispositions WHERE handback_id=?1 AND preserves_handback=1",[&handback],|row|row.get(0)).unwrap(),1);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_escalation_downstream_requests WHERE handback_id=?1 AND request_kind='sprint_runner'",[&handback],|row|row.get(0)).unwrap(),1);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_escalation_attentions WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap(),0);
+        assert!(connection.query_row::<Option<String>,_,_>("SELECT semantic_reassessment_recorded_at FROM epic_runner_escalation_receivers WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap().is_some());
         reopened.shutdown(); reopened_receiver.shutdown(); concurrent_receiver.shutdown(); fixture.transition.shutdown();
     }
 

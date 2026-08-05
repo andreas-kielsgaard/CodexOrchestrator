@@ -603,8 +603,8 @@ mod tests {
         assert_eq!(runner.key, "epic_runner");
         assert_eq!(runner.version, 3);
         assert_eq!(epic_reassessment.key, "epic_runner_escalation_reassessment");
-        assert_eq!(epic_reassessment.version, 1);
-        assert_eq!(epic_reassessment.mcp.enabled_tools, ["read_epic_escalation_reassessment_context"]);
+        assert_eq!(epic_reassessment.version, 2);
+        assert_eq!(epic_reassessment.mcp.enabled_tools, ["read_epic_escalation_reassessment_context", "record_epic_escalation_disposition"]);
         assert!(epic_reassessment.mcp.required);
         assert_eq!(sprint_runner.key, "sprint_runner");
         assert_eq!(sprint_runner.version, 2);

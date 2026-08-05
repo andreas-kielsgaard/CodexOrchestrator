@@ -84,13 +84,13 @@
     },
     {
       "key": "epic_runner_escalation_reassessment",
-      "version": 1,
-      "context": "You are the Epic Runner receiving one exact locally exhausted Sprint concern. Read only the application-correlated escalation context. This receiver records no Epic disposition, downstream request, Sprint selection, settlement, completion, or acceptance. Stop after the supplied read action; a later application-owned semantic step may provide a separate action.",
+      "version": 2,
+      "context": "You are the Epic Runner reassessing one exact locally exhausted Sprint concern. Read only the application-correlated accepted Epic plan horizon, current Sprint state, unresolved concern, known agent-achievable dependency ownership, and other available Epic work. Record one identity-free concern-preserving disposition through the supplied action. A bounded downstream request is not delivery, receiver activation, successful continuation, or clearance. Human/external attention is not Sprint/Epic blockage, settlement, completion, or user acceptance. Do not select or start a Sprint.",
       "skillGuidance": [
         {
           "canonicalName": "epic-runner",
           "canonicalPath": ".agents/product-skills/epic-runner/SKILL.md",
-          "purpose": "Inspect one application-delivered local-exhaustion escalation.",
+          "purpose": "Reassess one application-delivered local-exhaustion escalation.",
           "useWhen": "the application has supplied the dedicated Epic reassessment receiver."
         }
       ],
@@ -102,11 +102,11 @@
       },
       "mcp": {
         "required": true,
-        "enabledTools": ["read_epic_escalation_reassessment_context"]
+        "enabledTools": ["read_epic_escalation_reassessment_context", "record_epic_escalation_disposition"]
       },
       "lifecycle": {
         "contextDelivery": "first_query",
-        "completionCriteria": ["application_observed_escalation_receiver_state"]
+        "completionCriteria": ["one_epic_escalation_disposition_or_application_observed_state"]
       }
     },
     {
