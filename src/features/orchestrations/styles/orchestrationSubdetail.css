@@ -560,6 +560,26 @@
   list-style: none;
 }
 
+.work-unit-activity__unsequenced {
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed #c7d2d7;
+}
+
+.work-unit-activity__unsequenced h3 {
+  margin: 0;
+  color: #756856;
+  font-size: 0.67rem;
+}
+
+.work-unit-activity__unsequenced > p {
+  margin: 0;
+  color: #756856;
+  font-size: 0.65rem;
+  line-height: 1.35;
+}
+
 .work-unit-activity__list > li {
   display: grid;
   gap: 7px;
@@ -887,6 +907,13 @@
 }
 
 .work-unit-lifecycle {
+  --work-unit-lifecycle-button-border: 1px;
+  --work-unit-lifecycle-button-padding: 5px;
+  --work-unit-lifecycle-identity-size: 28px;
+  --work-unit-lifecycle-identity-center: calc(
+    var(--work-unit-lifecycle-button-border) + var(--work-unit-lifecycle-button-padding) +
+      (var(--work-unit-lifecycle-identity-size) / 2)
+  );
   display: grid;
   gap: 7px;
   padding-top: 8px;
@@ -916,19 +943,20 @@
   position: absolute;
   top: 29px;
   bottom: -7px;
-  left: 13px;
+  left: var(--work-unit-lifecycle-identity-center);
   width: 1px;
   background: #b9c7ce;
+  transform: translateX(-50%);
   content: '';
 }
 
 .work-unit-lifecycle button {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: var(--work-unit-lifecycle-identity-size) minmax(0, 1fr);
   gap: 7px;
   width: 100%;
-  padding: 5px;
-  border: 1px solid transparent;
+  padding: var(--work-unit-lifecycle-button-padding);
+  border: var(--work-unit-lifecycle-button-border) solid transparent;
   border-radius: 6px;
   background: transparent;
   color: #344854;
@@ -977,8 +1005,8 @@
   position: relative;
   z-index: 2;
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: var(--work-unit-lifecycle-identity-size);
+  height: var(--work-unit-lifecycle-identity-size);
   place-items: center;
   border-radius: 50%;
   background: #dce9ef;
@@ -989,10 +1017,10 @@
 
 .work-unit-lifecycle__planner {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: var(--work-unit-lifecycle-identity-size) minmax(0, 1fr);
   align-items: center;
   gap: 7px;
-  padding: 5px;
+  padding: var(--work-unit-lifecycle-button-padding);
   color: #687b85;
 }
 

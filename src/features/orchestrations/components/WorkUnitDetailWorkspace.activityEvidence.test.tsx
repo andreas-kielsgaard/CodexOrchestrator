@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { SprintWorkspacePresentationV1 } from '../../../application/orchestrations';
@@ -21,9 +22,9 @@ describe('WorkUnitDetailWorkspace Activity and Evidence', () => {
     );
     expect(screen.queryByLabelText('Selected Agent Session turn')).toBeNull();
 
-    await user.click(screen.getByRole('button', { name: /Implementation reviewed invocation-1/ }));
+    await user.click(screen.getByRole('button', { name: /Review delivery recorded invocation-1/ }));
     expect(
-      screen.getByRole('button', { name: /Implementation reviewed invocation-1/ }),
+      screen.getByRole('button', { name: /Review delivery recorded invocation-1/ }),
     ).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByLabelText('Agent Session turn: invocation-1')).toHaveTextContent(
       'Do the work',
@@ -56,7 +57,13 @@ describe('WorkUnitDetailWorkspace Activity and Evidence', () => {
     const user = userEvent.setup();
     render(<Workspace missingSession />);
 
-    await user.click(screen.getByRole('button', { name: /Implementation reported invocation-2/ }));
+    expect(screen.getByLabelText('Chronological activity records')).not.toHaveTextContent(
+      'invocation-2',
+    );
+    expect(screen.getByLabelText('Unsequenced activity records')).toHaveTextContent('invocation-2');
+    await user.click(
+      screen.getByRole('button', { name: /Recorded activity detail unavailable invocation-2/ }),
+    );
     expect(screen.getByLabelText('Agent Session turn: invocation-2')).toHaveTextContent(
       'Agent Session turn unavailable',
     );
@@ -77,12 +84,12 @@ describe('WorkUnitDetailWorkspace Activity and Evidence', () => {
   it('highlights only the exactly correlated Lifecycle step when an Activity receives focus', () => {
     render(<Workspace />);
 
-    const activity = screen.getByRole('button', { name: /Implementation reviewed invocation-1/ });
+    const activity = screen.getByRole('button', { name: /Review delivery recorded invocation-1/ });
     fireEvent.focus(activity);
 
     expect(
       screen
-        .getByRole('button', { name: /Implementation reviewed.*Work Unit Handler/ })
+        .getByRole('button', { name: /Review delivery recorded.*Work Unit Handler/ })
         .closest('li'),
     ).toHaveClass('is-highlighted');
     expect(screen.getByText('Planner record').closest('section')).toHaveAttribute(
@@ -96,9 +103,9 @@ describe('WorkUnitDetailWorkspace Activity and Evidence', () => {
     render(<Workspace />);
 
     const lifecycle = screen.getByRole('button', {
-      name: /Implementation reviewed.*Work Unit Handler/,
+      name: /Review delivery recorded.*Work Unit Handler/,
     });
-    const activity = screen.getByRole('button', { name: /Implementation reviewed invocation-1/ });
+    const activity = screen.getByRole('button', { name: /Review delivery recorded invocation-1/ });
 
     fireEvent.mouseEnter(lifecycle);
     expect(activity.closest('li')).toHaveClass('is-highlighted');
@@ -115,7 +122,7 @@ describe('WorkUnitDetailWorkspace Activity and Evidence', () => {
   it('fails closed for a Lifecycle entry with a mismatched typed agent role', () => {
     render(<Workspace mismatchedLifecycle />);
 
-    const activity = screen.getByRole('button', { name: /Handler action recorded invocation-1/ });
+    const activity = screen.getByRole('button', { name: /Review delivery recorded invocation-1/ });
     const lifecycle = screen
       .getByLabelText('Work Unit lifecycle turn log')
       .querySelector<HTMLButtonElement>('ol > li > button');
@@ -123,6 +130,35 @@ describe('WorkUnitDetailWorkspace Activity and Evidence', () => {
     expect(lifecycle).toBeDisabled();
     fireEvent.focus(activity);
     expect(lifecycle?.closest('li')).not.toHaveClass('is-highlighted');
+    expect(screen.getByLabelText('Unsequenced activity records')).toHaveTextContent(
+      'Review delivery recorded',
+    );
+  });
+
+  it('keeps duplicate Lifecycle correlations out of chronological Activity', () => {
+    render(<Workspace duplicateLifecycle />);
+
+    expect(screen.queryByLabelText('Chronological activity records')).toBeNull();
+    expect(screen.getByLabelText('Unsequenced activity records')).toHaveTextContent(
+      'Review delivery recorded',
+    );
+    for (const lifecycle of screen
+      .getByLabelText('Work Unit lifecycle turn log')
+      .querySelectorAll<HTMLButtonElement>('ol > li > button')) {
+      expect(lifecycle).toBeDisabled();
+    }
+  });
+
+  it('anchors the Lifecycle trace to the shared identity-center track', () => {
+    const styles = readFileSync(
+      'src/features/orchestrations/styles/orchestrationSubdetail.css',
+      'utf8',
+    );
+
+    expect(styles).toContain('--work-unit-lifecycle-identity-size: 28px;');
+    expect(styles).toContain('--work-unit-lifecycle-identity-center: calc(');
+    expect(styles).toContain('left: var(--work-unit-lifecycle-identity-center);');
+    expect(styles).toContain('transform: translateX(-50%);');
   });
 
   it('fails closed for a stale requested Activity restore state', () => {
@@ -147,10 +183,12 @@ describe('WorkUnitDetailWorkspace Activity and Evidence', () => {
 function Workspace({
   missingSession = false,
   mismatchedLifecycle = false,
+  duplicateLifecycle = false,
   initialInspectionState,
 }: {
   readonly missingSession?: boolean;
   readonly mismatchedLifecycle?: boolean;
+  readonly duplicateLifecycle?: boolean;
   readonly initialInspectionState?: {
     readonly tab: 'activity' | 'evidence';
     readonly activityId: string;
@@ -213,6 +251,23 @@ function Workspace({
       reason: 'No application-owned test detail is available.',
     },
   };
+  const handlerLifecycle: SprintWorkspacePresentationV1['workUnitLifecycle'][number] = {
+    entryId: 'handler-entry',
+    sprintId: 'sprint-1',
+    workUnitId: 'unit-1',
+    sequence: 1,
+    kind: 'review',
+    title: 'Handler work',
+    summary: 'The exact Handler Activity is recorded.',
+    agentSessionId: 'session-1',
+    agentRole: mismatchedLifecycle ? 'work_unit_implementer' : 'work_unit_handler',
+    invocationId: 'invocation-1',
+    source: {
+      status: 'available',
+      sourceKind: 'repository',
+      sourceReferences: ['materialization-1'],
+    },
+  };
   return (
     <WorkUnitDetailWorkspace
       unit={{ ...unit(), inspection }}
@@ -234,23 +289,10 @@ function Workspace({
             sourceReferences: ['materialization-1'],
           },
         },
-        {
-          entryId: 'handler-entry',
-          sprintId: 'sprint-1',
-          workUnitId: 'unit-1',
-          sequence: 1,
-          kind: 'review',
-          title: 'Handler work',
-          summary: 'The exact Handler Activity is recorded.',
-          agentSessionId: 'session-1',
-          agentRole: mismatchedLifecycle ? 'work_unit_implementer' : 'work_unit_handler',
-          invocationId: 'invocation-1',
-          source: {
-            status: 'available',
-            sourceKind: 'repository',
-            sourceReferences: ['materialization-1'],
-          },
-        },
+        handlerLifecycle,
+        ...(duplicateLifecycle
+          ? [{ ...handlerLifecycle, entryId: 'handler-entry-duplicate', sequence: 2 }]
+          : []),
       ]}
       workSlicePlanningPointGroupTitle="Planning point"
       sessions={missingSession ? [handlerSession()] : [handlerSession(), implementerSession()]}

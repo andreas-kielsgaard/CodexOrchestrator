@@ -111,23 +111,40 @@ export function WorkUnitDetailWorkspace({
   const plannerLifecycle = lifecycleCorrelations.filter(
     ({ entry }) => entry.agentRole === 'work_slice_planner',
   );
-  const agentLifecycle = lifecycleCorrelations.filter(
+  const agentLifecycleCandidates = lifecycleCorrelations.filter(
     ({ entry }) =>
       entry.agentRole === 'work_unit_handler' || entry.agentRole === 'work_unit_implementer',
   );
+  const lifecycleActivityOccurrences = new Map<string, number>();
+  for (const correlation of agentLifecycleCandidates) {
+    if (!correlation.isExact || !correlation.activity) continue;
+    lifecycleActivityOccurrences.set(
+      correlation.activity.activityId,
+      (lifecycleActivityOccurrences.get(correlation.activity.activityId) ?? 0) + 1,
+    );
+  }
+  const agentLifecycle = agentLifecycleCandidates.map((correlation) => ({
+    ...correlation,
+    isExact:
+      correlation.isExact &&
+      correlation.activity !== undefined &&
+      lifecycleActivityOccurrences.get(correlation.activity.activityId) === 1,
+  }));
   const correlatedActivityIds = new Set(
     agentLifecycle.flatMap(({ activity, isExact }) =>
       isExact && activity ? [activity.activityId] : [],
     ),
   );
-  const orderedActivities = [
-    ...agentLifecycle.flatMap(({ activity, isExact }) => (isExact && activity ? [activity] : [])),
-    ...(unit.inspection?.activities.filter(
+  const orderedActivities = agentLifecycle.flatMap(({ activity, isExact }) =>
+    isExact && activity ? [activity] : [],
+  );
+  const unsequencedActivities =
+    unit.inspection?.activities.filter(
       ({ activityId }) => !correlatedActivityIds.has(activityId),
-    ) ?? []),
-  ];
+    ) ?? [];
+  const allActivities = [...orderedActivities, ...unsequencedActivities];
   const activityLabels = new Map(
-    orderedActivities.map((activity) => {
+    allActivities.map((activity) => {
       const lifecycle = agentLifecycle.find(
         ({ activity: candidate, isExact }) =>
           isExact && candidate?.activityId === activity.activityId,
@@ -343,6 +360,7 @@ export function WorkUnitDetailWorkspace({
             >
               <WorkUnitActivityView
                 activities={orderedActivities}
+                unsequencedActivities={unsequencedActivities}
                 activityLabels={activityLabels}
                 selectedActivityId={selectedActivityId}
                 onSelectActivity={(activityId) => setSelectedActivityId(activityId)}
@@ -376,6 +394,7 @@ export function WorkUnitDetailWorkspace({
 
 function WorkUnitActivityView({
   activities,
+  unsequencedActivities,
   activityLabels,
   selectedActivityId,
   onSelectActivity,
@@ -385,6 +404,7 @@ function WorkUnitActivityView({
   onOpenActivitySession,
 }: {
   readonly activities: readonly ProductWorkUnitInspectionActivityV1[];
+  readonly unsequencedActivities: readonly ProductWorkUnitInspectionActivityV1[];
   readonly activityLabels: ReadonlyMap<string, string>;
   readonly selectedActivityId: string | null;
   readonly onSelectActivity: (activityId: string) => void;
@@ -393,8 +413,51 @@ function WorkUnitActivityView({
   readonly sessions: readonly WorkUnitAgentSessionPresentation[];
   readonly onOpenActivitySession?: (target: WorkUnitActivitySessionTarget) => void;
 }) {
-  const selectedActivity = activities.find(
+  const allActivities = [...activities, ...unsequencedActivities];
+  const selectedActivity = allActivities.find(
     (activity) => activity.activityId === selectedActivityId,
+  );
+  const renderActivity = (activity: ProductWorkUnitInspectionActivityV1) => (
+    <li
+      key={activity.activityId}
+      className={[
+        selectedActivityId === activity.activityId ? 'is-selected' : undefined,
+        highlightedActivityId === activity.activityId ? 'is-highlighted' : undefined,
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      data-activity-id={activity.activityId}
+      onMouseEnter={() => onHighlightActivity(activity.activityId)}
+      onMouseLeave={() => onHighlightActivity(null)}
+    >
+      <button
+        type="button"
+        aria-pressed={selectedActivityId === activity.activityId}
+        onClick={() => onSelectActivity(activity.activityId)}
+        onFocus={() => onHighlightActivity(activity.activityId)}
+        onBlur={() => onHighlightActivity(null)}
+      >
+        <span className="work-unit-activity__role">{roleLabel(activity.role)}</span>
+        <strong>{activityLabels.get(activity.activityId) ?? activityLabel(activity)}</strong>
+        <small>{activity.invocationId}</small>
+      </button>
+      {activity.applicationSummary && (
+        <ApplicationActivitySummary
+          activity={activity}
+          activities={allActivities}
+          activityLabels={activityLabels}
+          onSelectActivity={onSelectActivity}
+        />
+      )}
+      {selectedActivityId === activity.activityId ? (
+        <SelectedActivityTurn
+          activity={activity}
+          activityLabel={activityLabels.get(activity.activityId) ?? activityLabel(activity)}
+          session={sessions.find((session) => session.sessionId === activity.agentSessionId)}
+          onOpenActivitySession={onOpenActivitySession}
+        />
+      ) : null}
+    </li>
   );
 
   return (
@@ -407,59 +470,27 @@ function WorkUnitActivityView({
         <p>Application summaries are nested beneath their owning Handler or Implementer turn.</p>
       </header>
       {activities.length ? (
-        <ol className="work-unit-activity__list">
-          {activities.map((activity) => (
-            <li
-              key={activity.activityId}
-              className={[
-                selectedActivityId === activity.activityId ? 'is-selected' : undefined,
-                highlightedActivityId === activity.activityId ? 'is-highlighted' : undefined,
-              ]
-                .filter(Boolean)
-                .join(' ')}
-              data-activity-id={activity.activityId}
-              onMouseEnter={() => onHighlightActivity(activity.activityId)}
-              onMouseLeave={() => onHighlightActivity(null)}
-            >
-              <button
-                type="button"
-                aria-pressed={selectedActivityId === activity.activityId}
-                onClick={() => onSelectActivity(activity.activityId)}
-                onFocus={() => onHighlightActivity(activity.activityId)}
-                onBlur={() => onHighlightActivity(null)}
-              >
-                <span className="work-unit-activity__role">{roleLabel(activity.role)}</span>
-                <strong>
-                  {activityLabels.get(activity.activityId) ?? activityLabel(activity)}
-                </strong>
-                <small>{activity.invocationId}</small>
-              </button>
-              {activity.applicationSummary && (
-                <ApplicationActivitySummary
-                  activity={activity}
-                  activities={activities}
-                  activityLabels={activityLabels}
-                  onSelectActivity={onSelectActivity}
-                />
-              )}
-              {selectedActivityId === activity.activityId ? (
-                <SelectedActivityTurn
-                  activity={activity}
-                  activityLabel={activityLabels.get(activity.activityId) ?? activityLabel(activity)}
-                  session={sessions.find(
-                    (session) => session.sessionId === activity.agentSessionId,
-                  )}
-                  onOpenActivitySession={onOpenActivitySession}
-                />
-              ) : null}
-            </li>
-          ))}
+        <ol className="work-unit-activity__list" aria-label="Chronological activity records">
+          {activities.map(renderActivity)}
         </ol>
       ) : (
         <p className="work-unit-inspection__unavailable">
-          No application-owned agent activity is available for this Work Unit.
+          No exact chronological Activity correlation is available for this Work Unit.
         </p>
       )}
+      {unsequencedActivities.length ? (
+        <section
+          className="work-unit-activity__unsequenced"
+          aria-label="Unsequenced activity records"
+        >
+          <h3>Unsequenced activity records</h3>
+          <p>
+            Exact Lifecycle correlation is unavailable, so these agent records are not assigned a
+            chronological position.
+          </p>
+          <ol className="work-unit-activity__list">{unsequencedActivities.map(renderActivity)}</ol>
+        </section>
+      ) : null}
       {!selectedActivity ? (
         <p className="work-unit-inspection__selection-hint">
           Select an activity to inspect its complete recorded turn.
@@ -762,11 +793,12 @@ function lifecycleActivityCorrelation(
   inspection: ProductWorkUnitInspectionV1 | undefined,
   sessions: readonly WorkUnitAgentSessionPresentation[],
 ): LifecycleActivityCorrelation {
-  const activity = inspection?.activities.find(
+  const activityMatches = inspection?.activities.filter(
     (candidate) =>
       candidate.agentSessionId === entry.agentSessionId &&
       candidate.invocationId === entry.invocationId,
   );
+  const activity = activityMatches?.length === 1 ? activityMatches[0] : undefined;
   const session = sessions.find(({ sessionId }) => sessionId === entry.agentSessionId);
   return {
     entry,
@@ -783,17 +815,18 @@ function activityLabel(
   const events = activity.applicationSummary?.applicationEvents ?? [];
   if (events.includes('application_acceptance_recorded')) return 'Application acceptance recorded';
   if (events.includes('review_judgment_recorded')) return 'Review judgment recorded';
+  if (events.includes('review_delivery_persisted')) return 'Review delivery recorded';
+  if (events.includes('review_lifecycle_observed')) return 'Review lifecycle observed';
+  if (events.includes('review_conflict_recorded')) return 'Review conflict recorded';
   if (lifecycleKind === 'renewed_work') return 'Corrected implementation returned';
   if (lifecycleKind === 'work') return 'Implementation returned';
   if (lifecycleKind === 'review') return 'Implementation reviewed';
-  return {
-    handler_activation: 'Handler activation recorded',
-    handler_action: 'Handler action recorded',
-    implementer_activation: 'Implementer activation recorded',
-    implementer_retry: 'Correction attempt recorded',
-    implementer_reporting: 'Implementation reported',
-    handler_review: 'Review recorded',
-  }[activity.primaryStage];
+  if (events.includes('handler_review_ready')) return 'Handler review ready';
+  if (events.includes('semantic_completion_recorded')) return 'Semantic completion recorded';
+  if (events.includes('file_evidence_recorded')) return 'File evidence recorded';
+  if (events.includes('submission_recorded')) return 'Submission recorded';
+  if (events.includes('terminal_lifecycle_observed')) return 'Terminal lifecycle observed';
+  return 'Recorded activity detail unavailable';
 }
 
 function applicationEventLabel(
