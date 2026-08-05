@@ -8,6 +8,7 @@ import {
   loopbackUrl,
   parseOwnershipOutput,
   typeExpression,
+  validateWebSocketDebuggerUrl,
 } from '../webview-control.mjs';
 
 const ownershipPrefix = 'REVIEW_APP_WEBVIEW_OWNER_V1:';
@@ -27,6 +28,26 @@ test('accepts only explicit HTTP loopback debugger URLs', () => {
   assert.throws(() => loopbackUrl('http://example.com:9225'), /loopback/u);
   assert.throws(() => loopbackUrl('https://localhost:9225'), /http loopback/u);
   assert.throws(() => loopbackUrl('http://localhost'), /explicit debugger port/u);
+});
+
+test('requires a loopback ws endpoint on the validated debugger port', () => {
+  const debugUrl = 'http://127.0.0.1:9226';
+  assert.equal(
+    validateWebSocketDebuggerUrl('ws://127.0.0.1:9226/devtools/page/one', debugUrl),
+    'ws://127.0.0.1:9226/devtools/page/one',
+  );
+  assert.throws(
+    () => validateWebSocketDebuggerUrl('ws://example.test:9226/devtools/page/one', debugUrl),
+    /host must be loopback/u,
+  );
+  assert.throws(
+    () => validateWebSocketDebuggerUrl('ws://127.0.0.1:9227/devtools/page/one', debugUrl),
+    /port must match/u,
+  );
+  assert.throws(
+    () => validateWebSocketDebuggerUrl('wss://127.0.0.1:9226/devtools/page/one', debugUrl),
+    /must expose a ws/u,
+  );
 });
 
 test('parses one owned-debugger receipt and rejects malformed framing', () => {

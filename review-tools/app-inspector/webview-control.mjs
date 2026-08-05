@@ -55,6 +55,8 @@ async function main() {
     transport: {
       foregrounded: false,
       delivery: 'Chrome DevTools Protocol Runtime.evaluate completed',
+      ownershipBoundary:
+        'ownership was verified before dispatch; it is not race-free identity proof',
       semanticOutcome:
         'not_observed; retain a separate visual, native-query, or provider observation',
     },
@@ -124,7 +126,28 @@ async function resolveTarget(debugUrl, targetUrl) {
     );
   if (!matches[0].webSocketDebuggerUrl)
     throw new Error('Matched target exposes no WebSocket debugger URL.');
-  return matches[0];
+  return {
+    ...matches[0],
+    webSocketDebuggerUrl: validateWebSocketDebuggerUrl(matches[0].webSocketDebuggerUrl, debugUrl),
+  };
+}
+
+export function validateWebSocketDebuggerUrl(value, debugUrl) {
+  const endpoint = new URL(value);
+  const debuggerEndpoint = new URL(debugUrl);
+  if (endpoint.protocol !== 'ws:') {
+    throw new Error('WebView target must expose a ws WebSocket debugger URL.');
+  }
+  if (!isLoopbackHost(endpoint.hostname)) {
+    throw new Error('WebView target WebSocket host must be loopback.');
+  }
+  if (endpoint.port !== debuggerEndpoint.port) {
+    throw new Error('WebView target WebSocket port must match the validated debugger port.');
+  }
+  if (endpoint.username || endpoint.password) {
+    throw new Error('WebView target WebSocket URL must not include credentials.');
+  }
+  return endpoint.toString();
 }
 
 async function evaluate(webSocketUrl, expression) {
@@ -217,16 +240,16 @@ async function resolveText(options) {
 
 export function loopbackUrl(value) {
   const parsed = new URL(value);
-  if (
-    parsed.protocol !== 'http:' ||
-    !['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname)
-  ) {
+  if (parsed.protocol !== 'http:' || !isLoopbackHost(parsed.hostname)) {
     throw new Error('--debug-url must use an http loopback host.');
   }
   if (!parsed.port) throw new Error('--debug-url must include an explicit debugger port.');
   if (parsed.username || parsed.password)
     throw new Error('--debug-url must not include credentials.');
   return parsed.toString().replace(/\/$/u, '');
+}
+function isLoopbackHost(hostname) {
+  return ['127.0.0.1', 'localhost', '[::1]'].includes(hostname);
 }
 export function debuggerPort(debugUrl) {
   const port = Number(new URL(debugUrl).port);
@@ -261,7 +284,7 @@ async function writeReceipt(filePath, receipt) {
   await rename(temporary, filePath);
 }
 function helpText() {
-  return `Codex Orchestrator owned loopback WebView control companion\n\nUse only against an isolated development instance launched with WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port>:\n  node review-tools/app-inspector/webview-control.mjs type --exe <absolute-owner-exe> --pid <owner-pid> --debug-url http://127.0.0.1:<port> --target-url http://127.0.0.1:1420/ --selector 'textarea' --text-file <utf8-file> --out <receipt.json>\n  node review-tools/app-inspector/webview-control.mjs click --exe <absolute-owner-exe> --pid <owner-pid> --debug-url http://127.0.0.1:<port> --target-url http://127.0.0.1:1420/ --selector 'button[type="submit"]' --out <receipt.json>\n\nThe tool permits only HTTP loopback debugger endpoints with an explicit port. Before dispatch it verifies that the selected owner EXE and PID are live, the port listener is exactly one descendant process, and that listener declares the requested debugging port. It then requires exactly one page target by URL, never foregrounds the window, and redacts entered text from receipts. It proves dispatch only, not UI or application semantics.\n`;
+  return `Codex Orchestrator owned loopback WebView control companion\n\nUse only against an isolated development instance launched with WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port>:\n  node review-tools/app-inspector/webview-control.mjs type --exe <absolute-owner-exe> --pid <owner-pid> --debug-url http://127.0.0.1:<port> --target-url http://127.0.0.1:1420/ --selector 'textarea' --text-file <utf8-file> --out <receipt.json>\n  node review-tools/app-inspector/webview-control.mjs click --exe <absolute-owner-exe> --pid <owner-pid> --debug-url http://127.0.0.1:<port> --target-url http://127.0.0.1:1420/ --selector 'button[type="submit"]' --out <receipt.json>\n\nThe tool permits only HTTP loopback debugger endpoints with an explicit port. Before dispatch it verifies that the selected owner EXE and PID are live, exactly one loopback listener endpoint belongs to a descendant process and declares the requested debugging port, and the returned WebSocket URL is ws, loopback, and on that same port. This is a point-in-time pre-dispatch check, not race-free identity proof. It then requires exactly one page target by URL, never foregrounds the window, and redacts entered text from receipts. It proves dispatch only, not UI or application semantics.\n`;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

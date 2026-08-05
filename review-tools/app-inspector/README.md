@@ -22,10 +22,12 @@ application transport or infer that any requested workflow stage occurred.
 
 For an isolated development instance deliberately launched with a loopback WebView2 debugging
 port, `webview-control.mjs` can instead type into or click a CSS selector without foregrounding the
-window. It requires the exact owner executable and PID; the listener for the requested port must
-be exactly one descendant process whose command line declares that port. It then requires one exact
-page target URL and writes a redacted dispatch receipt. The debugger port is a development-only
-launch choice, never a production application transport.
+window. It requires the exact owner executable and PID; exactly one listener endpoint must be on a
+loopback address, belong to a descendant process, and declare the requested port. The returned
+WebSocket URL must also be `ws`, loopback, and use the same port. These are point-in-time checks
+before dispatch, not race-free identity proof. The tool then requires one exact page target URL and
+writes a redacted dispatch receipt. The debugger port is a development-only launch choice, never a
+production application transport.
 
 ## First snapshot
 
@@ -105,6 +107,9 @@ storage inputs.
   rows are observed. SQLite rows are additionally labelled `recorded` evidence.
 - A source-to-executable relationship is inferred only from path containment; the binary does not
   embed its producing commit.
+- WebView ownership checks are point-in-time pre-dispatch observations. External launch provenance
+  records the clean source checkpoint and executable hash; neither is race-free process identity
+  proof or an MCP discovery inventory.
 - The already-running production WebView2 process has no debugging attachment endpoint. Windows UI
   Automation exposes its shell but not the semantic DOM, so the current route/screen name is
   unavailable. The PNG is real visual evidence for the reviewing agent or human.

@@ -40,13 +40,19 @@ if ($owners.Count -ne 1) {
     throw "No running owner matches PID $OwnerProcessId and executable $resolvedOwnerExecutable."
 }
 
-$listenerProcessIds = @(Get-NetTCPConnection -State Listen -LocalPort $DebugPort -ErrorAction SilentlyContinue |
-    Select-Object -ExpandProperty OwningProcess -Unique)
-if ($listenerProcessIds.Count -ne 1) {
-    throw "Expected exactly one local listener for debug port $DebugPort; observed $($listenerProcessIds.Count)."
+$listeners = @(Get-NetTCPConnection -State Listen -LocalPort $DebugPort -ErrorAction SilentlyContinue)
+$loopbackAddresses = @('127.0.0.1', '::1')
+$nonLoopbackListeners = @($listeners | Where-Object { $loopbackAddresses -notcontains $_.LocalAddress })
+if ($nonLoopbackListeners.Count -ne 0) {
+    throw "Debug port $DebugPort has $($nonLoopbackListeners.Count) non-loopback listener endpoint(s)."
 }
+$loopbackListeners = @($listeners | Where-Object { $loopbackAddresses -contains $_.LocalAddress })
+if ($loopbackListeners.Count -ne 1) {
+    throw "Expected exactly one loopback listener endpoint for debug port $DebugPort; observed $($loopbackListeners.Count)."
+}
+$listener = $loopbackListeners[0]
 
-$debugger = Get-CimInstance Win32_Process -Filter "ProcessId=$($listenerProcessIds[0])" -ErrorAction SilentlyContinue
+$debugger = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
 if ($null -eq $debugger) { throw "The debug-port listener process could not be inspected." }
 if (-not (Test-ProcessDescendantOf $debugger.ProcessId $OwnerProcessId)) {
     throw "Debug-port listener PID $($debugger.ProcessId) is not a descendant of owner PID $OwnerProcessId."
@@ -57,6 +63,6 @@ if ($debugger.CommandLine -notmatch "(?:^|\s)--remote-debugging-port=$DebugPort(
 
 Emit-Payload ([ordered]@{
     owner = [ordered]@{ pid = $OwnerProcessId; executablePath = $resolvedOwnerExecutable }
-    debugger = [ordered]@{ pid = $debugger.ProcessId; executablePath = $debugger.ExecutablePath; port = $DebugPort }
-    transport = [ordered]@{ foregrounded = $false; ownership = 'owner_pid_verified_with_descendant_debug_listener' }
+    debugger = [ordered]@{ pid = $debugger.ProcessId; executablePath = $debugger.ExecutablePath; port = $DebugPort; localAddress = $listener.LocalAddress; endpointCount = $loopbackListeners.Count }
+    transport = [ordered]@{ foregrounded = $false; ownership = 'pre_dispatch_owner_pid_verified_with_descendant_loopback_listener'; raceBoundary = 'point_in_time_check_not_race_free_identity_proof' }
 })
