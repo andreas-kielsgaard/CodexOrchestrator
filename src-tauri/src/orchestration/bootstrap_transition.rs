@@ -6469,7 +6469,16 @@ mod tests {
             [],
             |row| row.get(0),
         ).unwrap();
+        let epic_runner_invocation: String = connection.query_row(
+            "SELECT epic_runner_invocation_id FROM sprint_runner_transitions WHERE sprint_id=?1",
+            [&sprint_id],
+            |row| row.get(0),
+        ).unwrap();
         drop(connection);
+        fixture.runtime.finish(
+            &epic_runner_invocation,
+            AgentInvocationTerminalStatus::Completed,
+        );
 
         // This is the productive completed-review movement. It drains the authoritative graph
         // and both settlement layers, then records the Sprint decision and upward result before
@@ -6497,6 +6506,77 @@ mod tests {
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_upward_results result JOIN sprint_continuation_decisions decision ON decision.decision_id=result.decision_id WHERE result.sprint_id=?1 AND result.result_kind='settled' AND decision.decision_state='settled'", [&sprint_id], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sprint_settlements','epic_settlements')", [], |row| row.get(0)).unwrap(), 0);
         drop(connection);
+
+        let (result_id, receiver): (String, String) = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT result_id,reassessment_invocation_id FROM epic_runner_sprint_result_receivers WHERE sprint_id=?1 AND semantic_reassessment_recorded_at IS NULL",
+                [&sprint_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let receiver_facts: (Option<String>, Option<String>, Option<String>) = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT delivery_persisted_at,harness_bound_at,launch_accepted_at FROM epic_runner_sprint_result_receivers WHERE result_id=?1",
+                [&result_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert!(receiver_facts.0.is_some() && receiver_facts.1.is_some() && receiver_facts.2.is_some(), "{receiver_facts:?}");
+        let disposition = crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition {
+            movement_kind: "advance_to_next_approved_sprint".into(),
+            rationale: "the exact settled Sprint selects only its immediate approved successor".into(),
+            considered_intent: Some("derive one successor from durable plan order".into()),
+            downstream_request: None,
+            human_external_attention: None,
+        };
+        service.record_sprint_result_disposition_for_test(&receiver, disposition.clone()).unwrap();
+        service.record_sprint_result_disposition_for_test(&receiver, disposition).unwrap();
+
+        let (successor, session, invocation): (String, String, String) = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT r.successor_sprint_id,t.sprint_runner_session_id,t.sprint_runner_invocation_id FROM epic_runner_sprint_result_realizations r JOIN sprint_runner_transitions t ON t.sprint_id=r.successor_sprint_id WHERE r.result_id=?1 AND r.successor_request_id IS NOT NULL",
+                [&result_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE sprint_id=?1", [&successor], |row| row.get(0)).unwrap(), 1);
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "UPDATE epic_runner_sprint_result_realizations SET successor_request_id=NULL,successor_request_recorded_at=NULL WHERE result_id=?1",
+            [&result_id],
+        ).unwrap();
+        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+        ).unwrap();
+        let recovered: (String, String, String) = Connection::open(&fixture.database_path).unwrap().query_row(
+            "SELECT r.successor_request_id,t.sprint_runner_session_id,t.sprint_runner_invocation_id FROM epic_runner_sprint_result_realizations r JOIN sprint_runner_transitions t ON t.sprint_id=r.successor_sprint_id WHERE r.result_id=?1",
+            [&result_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(recovered.1, session);
+        assert_eq!(recovered.2, invocation);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE sprint_id=?1", [&successor], |row| row.get(0)).unwrap(), 1);
+        drop(reopened);
+        fixture.runtime.finish(&receiver, AgentInvocationTerminalStatus::Completed);
+        service.record_pre_start_outcome(&AgentInvocationId::new(invocation.clone()).unwrap(), crate::orchestration::sprint_runner_transition::PreStartOutcome { forecast_and_concerns: "successor forecast".into(), material_uncertainty: "successor uncertainty".into(), application_owned_prerequisite: "successor prerequisite".into() }).unwrap();
+        fixture.runtime.finish(&invocation, AgentInvocationTerminalStatus::Completed);
+        let terminal = fixture.sessions.load_session(&AgentSessionId::new(session.clone()).unwrap()).unwrap().invocations.into_iter().find(|entry| entry.invocation.id.as_str() == invocation).unwrap().invocation;
+        service.on_agent_notification(&AgentSessionNotification::InvocationTerminal { session_id: AgentSessionId::new(session.clone()).unwrap(), invocation: terminal }).unwrap();
+        let epic_start: String = Connection::open(&fixture.database_path).unwrap().query_row("SELECT epic_continuation_invocation_id FROM sprint_runner_transitions WHERE sprint_id=?1", [&successor], |row| row.get(0)).unwrap();
+        service.start_selected_sprint(&AgentInvocationId::new(epic_start).unwrap()).unwrap();
+        let started: String = Connection::open(&fixture.database_path).unwrap().query_row("SELECT sprint_continuation_invocation_id FROM sprint_runner_transitions WHERE sprint_id=?1", [&successor], |row| row.get(0)).unwrap();
+        service.record_started_reevaluation(&AgentInvocationId::new(started.clone()).unwrap(), crate::orchestration::sprint_runner_transition::StartedReevaluation { repository_branch_evaluation: "successor repository branch".into(), started_forecast_and_concerns: "before planning".into() }).unwrap();
+        fixture.runtime.finish(&started, AgentInvocationTerminalStatus::Completed);
+        let terminal = fixture.sessions.load_session(&AgentSessionId::new(session.clone()).unwrap()).unwrap().invocations.into_iter().find(|entry| entry.invocation.id.as_str() == started).unwrap().invocation;
+        service.on_agent_notification(&AgentSessionNotification::InvocationTerminal { session_id: AgentSessionId::new(session).unwrap(), invocation: terminal }).unwrap();
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        let stages: (Option<String>, Option<String>, Option<String>, Option<String>, Option<String>) = connection.query_row("SELECT pre_start_outcome_accepted_at,epic_continuation_launch_accepted_at,sprint_start_persisted_at,repository_branch_reevaluation_recorded_at,planning_ready_at FROM sprint_runner_transitions WHERE sprint_id=?1", [&successor], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))).unwrap();
+        assert!(stages.0.is_some() && stages.1.is_some() && stages.2.is_some() && stages.3.is_some() && stages.4.is_some(), "{stages:?}");
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_slice_planning_requests WHERE sprint_id=?1", [&successor], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_units u JOIN work_unit_materializations m ON m.materialization_id=u.materialization_id WHERE m.sprint_id=?1", [&successor], |row| row.get(0)).unwrap(), 0);
 
         let native = serde_json::to_value(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap().native_query().unwrap()).unwrap();
         let canonical: serde_json::Value = serde_json::from_str(include_str!("fixtures/orchestration-native-query-v2/valid-execution-graph.json")).unwrap();
@@ -6991,6 +7071,33 @@ mod tests {
     fn settled_last_sprint_result_records_terminal_readiness_without_another_sprint() {
         let fixture=ReportingFixture::new();let (source,epic):(String,String)=Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT id,epic_id FROM initiated_sprints ORDER BY ordinal DESC LIMIT 1",[],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();let harness=conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap();let session=AgentSessionId::new("terminal-result-epic-session").unwrap();fixture.base.sessions.create_application_session(CreateApplicationAgentSessionCommand{session_id:session.clone(),session:CreateAgentSessionCommand{title:Some("Terminal result Epic Runner".into()),working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunner).unwrap()),requested_options:harness.runtime_options()}}).unwrap();fixture.base.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:AgentInvocationId::new("terminal-result-origin").unwrap(),message:SendAgentSessionMessageCommand{session_id:Some(session.clone()),submitted_text:"Origin.".into(),title:None,working_directory:None,requested_options:Some(harness.runtime_options())}},None).unwrap();fixture.base.runtime.finish("terminal-result-origin",AgentInvocationTerminalStatus::Completed);
         let connection=Connection::open(&fixture.base.database_path).unwrap();connection.execute("INSERT INTO sprint_runner_transitions (sprint_id,epic_id,request_id,epic_runner_session_id,epic_runner_invocation_id,epic_runner_harness_key,epic_runner_harness_version,sprint_runner_harness_key,sprint_runner_harness_version,sprint_runner_session_id,sprint_runner_invocation_id,requested_at,authorized_at) VALUES (?1,?2,'terminal-result-request',?3,'terminal-result-origin','epic_runner',3,'sprint_runner',2,'terminal-result-sprint-session','terminal-result-sprint-invocation','now','now')",params![source,epic,session.as_str()]).unwrap();let priors:Vec<String>=connection.prepare("SELECT id FROM initiated_sprints WHERE epic_id=?1 AND ordinal<(SELECT ordinal FROM initiated_sprints WHERE id=?2) ORDER BY ordinal").unwrap().query_map(params![epic,source],|row|row.get(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();for (ordinal,prior) in priors.iter().enumerate(){connection.execute("DELETE FROM sprint_upward_results WHERE sprint_id=?1",[prior]).unwrap();connection.execute("DELETE FROM sprint_continuation_attentions WHERE decision_id IN (SELECT decision_id FROM sprint_continuation_decisions WHERE sprint_id=?1)",[prior]).unwrap();connection.execute("DELETE FROM sprint_continuation_current_decisions WHERE sprint_id=?1",[prior]).unwrap();connection.execute("DELETE FROM sprint_continuation_decisions WHERE sprint_id=?1",[prior]).unwrap();let decision=format!("terminal-prior-decision-{ordinal}");let result=format!("terminal-prior-result-{ordinal}");connection.execute("INSERT INTO sprint_continuation_decisions VALUES(?1,?2,1,'settled','settled',0,?3,'now')",params![decision,prior,format!("terminal-prior-input-{ordinal}")]).unwrap();connection.execute("INSERT INTO sprint_continuation_current_decisions VALUES(?1,?2,'settled','now')",params![prior,decision]).unwrap();connection.execute("INSERT INTO sprint_upward_results VALUES(?1,?2,?3,'settled',?4,'now')",params![result,decision,prior,format!("terminal-prior-chronology-{ordinal}")]).unwrap();}connection.execute("INSERT INTO sprint_continuation_decisions VALUES('terminal-result-decision',?1,1,'settled','settled',0,'terminal-result-input','now')",[&source]).unwrap();connection.execute("INSERT INTO sprint_continuation_current_decisions VALUES(?1,'terminal-result-decision','settled','now')",[&source]).unwrap();connection.execute("INSERT INTO sprint_upward_results VALUES('terminal-result','terminal-result-decision',?1,'settled','terminal-result-chronology','now')",[&source]).unwrap();drop(connection);fixture.transition.reconcile_sprint_result_receivers_for_test().unwrap();let receiver:String=Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT reassessment_invocation_id FROM epic_runner_sprint_result_receivers WHERE result_id='terminal-result'",[],|row|row.get(0)).unwrap();fixture.transition.record_sprint_result_disposition_for_test(&receiver,crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition{movement_kind:"advance_to_next_approved_sprint".into(),rationale:"the settled final Sprint has no approved successor".into(),considered_intent:Some("derive terminal readiness from the durable plan horizon".into()),downstream_request:None,human_external_attention:None}).unwrap();let connection=Connection::open(&fixture.base.database_path).unwrap();assert_eq!(connection.query_row::<String,_,_>("SELECT outcome_kind FROM epic_runner_sprint_result_realizations WHERE result_id='terminal-result'",[],|row|row.get(0)).unwrap(),"terminal_readiness");assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_sprint_result_terminal_readiness WHERE result_id='terminal-result'",[],|row|row.get(0)).unwrap(),1);assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE epic_id=?1",[&epic],|row|row.get(0)).unwrap(),1);
+    }
+
+    #[test]
+    fn settled_last_sprint_with_an_earlier_unsettled_sprint_retains_attention() {
+        let fixture = ReportingFixture::new();
+        let (source, epic): (String, String) = Connection::open(&fixture.base.database_path).unwrap().query_row(
+            "SELECT id,epic_id FROM initiated_sprints ORDER BY ordinal DESC LIMIT 1", [], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        let harness = conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap();
+        let session = AgentSessionId::new("terminal-unsettled-epic-session").unwrap();
+        fixture.base.sessions.create_application_session(CreateApplicationAgentSessionCommand { session_id: session.clone(), session: CreateAgentSessionCommand { title: Some("Terminal unsettled Epic Runner".into()), working_directory: Some(conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunner).unwrap()), requested_options: harness.runtime_options() } }).unwrap();
+        fixture.base.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: AgentInvocationId::new("terminal-unsettled-origin").unwrap(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: "Origin.".into(), title: None, working_directory: None, requested_options: Some(harness.runtime_options()) } }, None).unwrap();
+        fixture.base.runtime.finish("terminal-unsettled-origin", AgentInvocationTerminalStatus::Completed);
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        connection.execute("INSERT INTO sprint_runner_transitions (sprint_id,epic_id,request_id,epic_runner_session_id,epic_runner_invocation_id,epic_runner_harness_key,epic_runner_harness_version,sprint_runner_harness_key,sprint_runner_harness_version,sprint_runner_session_id,sprint_runner_invocation_id,requested_at,authorized_at) VALUES (?1,?2,'terminal-unsettled-request',?3,'terminal-unsettled-origin','epic_runner',3,'sprint_runner',2,'terminal-unsettled-sprint-session','terminal-unsettled-sprint-invocation','now','now')", params![source,epic,session.as_str()]).unwrap();
+        connection.execute("INSERT INTO sprint_continuation_decisions VALUES('terminal-unsettled-decision',?1,1,'settled','settled',0,'terminal-unsettled-input','now')", [&source]).unwrap();
+        connection.execute("INSERT INTO sprint_continuation_current_decisions VALUES(?1,'terminal-unsettled-decision','settled','now')", [&source]).unwrap();
+        connection.execute("INSERT INTO sprint_upward_results VALUES('terminal-unsettled-result','terminal-unsettled-decision',?1,'settled','terminal-unsettled-chronology','now')", [&source]).unwrap();
+        drop(connection);
+        fixture.transition.reconcile_sprint_result_receivers_for_test().unwrap();
+        let receiver: String = Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT reassessment_invocation_id FROM epic_runner_sprint_result_receivers WHERE result_id='terminal-unsettled-result'", [], |row| row.get(0)).unwrap();
+        fixture.transition.record_sprint_result_disposition_for_test(&receiver, crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition { movement_kind: "advance_to_next_approved_sprint".into(), rationale: "an earlier approved Sprint is not settled".into(), considered_intent: Some("retain plan-order attention".into()), downstream_request: None, human_external_attention: None }).unwrap();
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        assert_eq!(connection.query_row::<String,_,_>("SELECT outcome_kind FROM epic_runner_sprint_result_realizations WHERE result_id='terminal-unsettled-result'", [], |row| row.get(0)).unwrap(), "retained_attention");
+        assert_eq!(connection.query_row::<String,_,_>("SELECT attention_code FROM epic_runner_sprint_result_retained_attentions WHERE result_id='terminal-unsettled-result'", [], |row| row.get(0)).unwrap(), "nonconsecutive_plan_state");
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_sprint_result_terminal_readiness WHERE result_id='terminal-unsettled-result'", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE epic_id=?1", [&epic], |row| row.get(0)).unwrap(), 1);
     }
 
     #[test]
