@@ -4790,6 +4790,149 @@ mod tests {
         server.stop();
     }
 
+    #[test]
+    fn planner_context_carries_the_exact_current_sprint_movement_and_rejects_drift() {
+        let fixture = Fixture::new();
+        let (service, planner, sprint_id) = fixture.prepare_work_slice_planner();
+        let intended_movement = "Update the exact README marker, verify git status, and create one local-only commit.";
+        Connection::open(&fixture.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE initiated_sprints SET intended_movement=?2 WHERE id=?1",
+                params![sprint_id, intended_movement],
+            )
+            .unwrap();
+        let initial_launch = fixture
+            .runtime
+            .requests()
+            .into_iter()
+            .find(|request| request.invocation_id == planner)
+            .unwrap();
+        assert!(initial_launch
+            .submitted_text
+            .contains("Read the application-bound current planning context before proposing work."));
+
+        let context = service.read_work_slice_planning_context(&planner).unwrap();
+        assert_eq!(context["sprint"], sprint_id);
+        assert_eq!(context["currentSprint"]["id"], sprint_id);
+        assert_eq!(context["currentSprint"]["intendedMovement"], intended_movement);
+
+        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            reopened.read_work_slice_planning_context(&planner).unwrap()["currentSprint"]["intendedMovement"],
+            intended_movement,
+        );
+
+        let proposal = crate::orchestration::sprint_runner_transition::WorkSliceProposal {
+            objective: intended_movement.into(),
+            lanes: vec![crate::orchestration::sprint_runner_transition::WorkSliceLane {
+                title: "README marker candidate".into(),
+                specification: intended_movement.into(),
+                depends_on: vec![],
+            }],
+        };
+        reopened.submit_work_slice_proposal(&planner, proposal).unwrap();
+        reopened.complete_work_slice_planning(
+            &planner,
+            crate::orchestration::sprint_runner_transition::WorkSliceCompletion {},
+        ).unwrap();
+        fixture.runtime.finish(planner.as_str(), AgentInvocationTerminalStatus::Completed);
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        let persisted_proposal: String = connection.query_row(
+            "SELECT proposal_json FROM work_slice_proposal_revisions WHERE is_current=1",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        let materialized_specification: String = connection.query_row(
+            "SELECT specification FROM work_units ORDER BY lane_ordinal LIMIT 1",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert!(persisted_proposal.contains(intended_movement));
+        assert_eq!(materialized_specification, intended_movement);
+        drop(connection);
+
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        connection
+            .execute(
+                "UPDATE initiated_sprints SET intended_movement='' WHERE id=?1",
+                [&sprint_id],
+            )
+            .unwrap();
+        assert!(matches!(
+            reopened.read_work_slice_planning_context(&planner),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        connection
+            .execute(
+                "UPDATE initiated_sprints SET intended_movement=?2 WHERE id=?1",
+                params![sprint_id, intended_movement],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE initiated_sprints SET intended_movement=?2 WHERE id=?1",
+                params![sprint_id, "x".repeat(4_001)],
+            )
+            .unwrap();
+        assert!(matches!(
+            reopened.read_work_slice_planning_context(&planner),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        connection
+            .execute(
+                "UPDATE initiated_sprints SET intended_movement=?2 WHERE id=?1",
+                params![sprint_id, intended_movement],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE work_slice_planning_episodes SET repository_worktree_route='foreign-route' WHERE sprint_id=?1",
+                [&sprint_id],
+            )
+            .unwrap();
+        assert!(matches!(
+            reopened.read_work_slice_planning_context(&planner),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        connection
+            .execute(
+                "UPDATE work_slice_planning_episodes SET repository_worktree_route=(SELECT repository_worktree_route FROM work_slice_planning_requests WHERE sprint_id=?1 AND is_current=1) WHERE sprint_id=?1",
+                [&sprint_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE work_slice_planning_episodes SET planner_invocation_id='foreign-planner' WHERE sprint_id=?1",
+                [&sprint_id],
+            )
+            .unwrap();
+        assert!(matches!(
+            reopened.read_work_slice_planning_context(&planner),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        connection
+            .execute(
+                "UPDATE work_slice_planning_episodes SET planner_invocation_id=(SELECT planner_invocation_id FROM work_slice_planning_requests WHERE sprint_id=?1 AND is_current=1) WHERE sprint_id=?1",
+                [&sprint_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE work_slice_planning_requests SET authority_current_object_id=?2 WHERE sprint_id=?1",
+                params![sprint_id, "f".repeat(40)],
+            )
+            .unwrap();
+        assert!(matches!(
+            reopened.read_work_slice_planning_context(&planner),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+    }
+
     async fn mcp_response_json(response: reqwest::Response) -> serde_json::Value {
         let text = response.text().await.unwrap();
         let json = text
@@ -5095,7 +5238,6 @@ mod tests {
         Connection::open(&fixture.database_path).unwrap().execute("UPDATE work_slice_planning_requests SET planner_harness_json='{}' WHERE sprint_id=?1", [&sprint_id]).unwrap();
         assert!(matches!(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
         Connection::open(&fixture.database_path).unwrap().execute("UPDATE work_slice_planning_requests SET planner_harness_json=?2 WHERE sprint_id=?1", params![sprint_id, snapshot]).unwrap();
-
         let mut ambiguous_authority = initial_authority.clone();
         ambiguous_authority.idempotency_key = "wsp1-route-authority-ambiguous".into();
         ambiguous_authority.runtime_instance_ref = "wsp1-runtime-ambiguous".into();
@@ -5122,7 +5264,6 @@ mod tests {
             reopened.request_work_slice_planner(&control, crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {}),
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)
         ));
-
         // The application-owned Planner exchange is identity-free at the tool boundary but
         // remains bound to the exact current invocation, Harness, and durable revision.
         fixture.notifier.set_sprint(&reopened);
@@ -5133,10 +5274,10 @@ mod tests {
                 |row| row.get::<_, String>(0),
             ).unwrap(),
         ).unwrap();
-        assert_eq!(
-            reopened.read_work_slice_planning_context(&planner_invocation).unwrap()["hasCurrentRevision"],
-            false,
-        );
+        assert!(matches!(
+            reopened.read_work_slice_planning_context(&planner_invocation),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
         assert!(matches!(
             reopened.read_work_slice_planning_context(&AgentInvocationId::new("foreign-planner").unwrap()),
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)

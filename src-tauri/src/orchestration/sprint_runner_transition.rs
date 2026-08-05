@@ -3548,7 +3548,7 @@ impl SprintRunnerTransitionService {
             return self.fail_implementer(&work_unit, "implementer_session_creation_failed", SprintRunnerTransitionError::Unavailable(error.to_string()));
         }
         self.mark_implementer(&work_unit, "implementer_session_created_at")?;
-        let prompt = format!("Work Unit Implementer activation. Perform the one bounded candidate change described below, only in the application-provided isolated execution workspace. Do not submit outcomes, accept, review, settle, retry, activate dependents, or continue any Sprint or Epic.\n\nApplication-derived Work Unit specification:\n{specification}");
+        let prompt = work_unit_implementer_prompt(&specification);
         if let Err(error) = self.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: prompt.clone(), title: None, working_directory: None, requested_options: Some(runtime.requested_options.clone()) }}) {
             return self.fail_implementer(&work_unit, "implementer_invocation_preparation_failed", SprintRunnerTransitionError::Unavailable(error.to_string()));
         }
@@ -3653,10 +3653,45 @@ impl SprintRunnerTransitionService {
         ).optional().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?.ok_or(SprintRunnerTransitionError::Forbidden)
     }
     pub(crate) fn read_work_slice_planning_context(&self, invocation_id:&AgentInvocationId)->Result<serde_json::Value,SprintRunnerTransitionError>{
-        let (point,_)=self.planner_point_for_invocation(invocation_id)?;
-        self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
-            "SELECT episode.sprint_id,episode.repository_worktree_route,revision.revision_id,revision.validation_result,revision.refinement_requested_at FROM work_slice_planning_episodes episode LEFT JOIN work_slice_proposal_revisions revision ON revision.planning_point_id=episode.planning_point_id AND revision.is_current=1 WHERE episode.planning_point_id=?1",[&point],|r|Ok(serde_json::json!({"planningPoint":point,"sprint":r.get::<_,String>(0)?,"repositoryRoute":r.get::<_,String>(1)?,"hasCurrentRevision":r.get::<_,Option<String>>(2)?.is_some(),"validation":r.get::<_,Option<String>>(3)?,"refinementRequested":r.get::<_,Option<String>>(4)?.is_some()})))
-        .map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))
+        let (point,sprint_id)=self.planner_point_for_invocation(invocation_id)?;
+        let authority=self.establish_planning_route_authority(&sprint_id)?;
+        let context:Option<(String,String,String,Option<String>,Option<String>,Option<String>)>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
+            "SELECT sprint.id,sprint.intended_movement,episode.repository_worktree_route,revision.revision_id,revision.validation_result,revision.refinement_requested_at
+             FROM work_slice_planning_requests planning
+             JOIN work_slice_planning_episodes episode
+               ON episode.planning_point_id=planning.planning_point_id
+              AND episode.sprint_id=planning.sprint_id
+              AND episode.authority_id=planning.authority_id
+              AND episode.planner_session_id=planning.planner_session_id
+              AND episode.planner_invocation_id=planning.planner_invocation_id
+              AND episode.repository_worktree_route=planning.repository_worktree_route
+             JOIN sprint_runner_transitions transition ON transition.sprint_id=planning.sprint_id
+             JOIN initiated_sprints sprint ON sprint.id=planning.sprint_id AND sprint.epic_id=transition.epic_id
+             JOIN epic_initiations initiation ON initiation.epic_id=transition.epic_id AND initiation.provenance_id=planning.authority_provenance_id
+             JOIN initiated_sprint_git_authorities bound
+               ON bound.authority_id=planning.authority_id
+              AND bound.epic_id=planning.authority_epic_id
+              AND bound.sprint_id=planning.sprint_id
+              AND bound.provenance_id=planning.authority_provenance_id
+              AND bound.repository_id=planning.authority_repository_id
+              AND bound.worktree_id=planning.authority_worktree_id
+              AND bound.worktree_root=planning.repository_worktree_route
+              AND bound.baseline_object_id=planning.authority_baseline_object_id
+              AND bound.current_object_id=planning.authority_current_object_id
+              AND bound.source_fingerprint=planning.authority_source_fingerprint
+             LEFT JOIN work_slice_proposal_revisions revision ON revision.planning_point_id=episode.planning_point_id AND revision.is_current=1
+             WHERE planning.planning_point_id=?1 AND planning.sprint_id=?2 AND planning.is_current=1
+               AND planning.authority_id=?3 AND planning.authority_epic_id=?4
+               AND planning.authority_provenance_id=?5 AND planning.authority_repository_id=?6
+               AND planning.authority_worktree_id=?7 AND planning.authority_baseline_object_id=?8
+               AND planning.authority_current_object_id=?9 AND planning.authority_source_fingerprint=?10
+               AND planning.repository_worktree_route=?11",
+            params![&point,&sprint_id,authority.authority_id,authority.epic_id,authority.provenance_id,authority.repository_id,authority.worktree_id,authority.baseline_object_id,authority.current_object_id,authority.source_fingerprint,authority.worktree_root],
+            |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))
+        ).optional().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let Some((current_sprint,intended_movement,route,revision,validation,refinement_requested))=context else{return Err(SprintRunnerTransitionError::Forbidden)};
+        if current_sprint!=sprint_id || intended_movement.trim().is_empty() || intended_movement.len()>4_000{return Err(SprintRunnerTransitionError::Forbidden)}
+        Ok(serde_json::json!({"planningPoint":point,"sprint":current_sprint,"currentSprint":{"id":sprint_id,"intendedMovement":intended_movement},"repositoryRoute":route,"hasCurrentRevision":revision.is_some(),"validation":validation,"refinementRequested":refinement_requested.is_some()}))
     }
     pub(crate) fn submit_work_slice_proposal(self:&Arc<Self>, invocation_id:&AgentInvocationId, input:WorkSliceProposal)->Result<serde_json::Value,SprintRunnerTransitionError>{
         validate_work_slice_proposal(&input)?;
@@ -3703,7 +3738,7 @@ impl SprintRunnerTransitionService {
         self.sessions.create_application_session(CreateApplicationAgentSessionCommand { session_id: session.clone(), session: CreateAgentSessionCommand { title: Some("Work Slice Planner".into()), working_directory: Some(route.clone()), requested_options: harness.runtime_options() }}).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         self.mark_planner(sprint_id, "planner_session_created_at", None)?;
         let invocation = AgentInvocationId::new(invocation_id).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        self.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: format!("Work Slice Planner launch boundary. Planning point: {point}. Parent Sprint: {sprint_id}. Submit only proposal-local lanes through the supplied actions and complete only the application-derived current validated revision. Do not accept a proposal, create Work Units, Handler or Implementer Sessions, settle the Sprint, or advance to a later planning point."), title: None, working_directory: None, requested_options: Some(harness.runtime_options()) }}).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        self.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: format!("Work Slice Planner launch boundary. Read the application-bound current planning context before proposing work. Planning point: {point}. Parent Sprint: {sprint_id}. Submit only proposal-local lanes through the supplied actions and complete only the application-derived current validated revision. Do not accept a proposal, create Work Units, Handler or Implementer Sessions, settle the Sprint, or advance to a later planning point."), title: None, working_directory: None, requested_options: Some(harness.runtime_options()) }}).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         self.mark_planner(sprint_id, "planner_invocation_created_at", Some(serialized))?;
         self.mark_planner(sprint_id, "planner_harness_applied_at", None)?;
         self.reconcile_productive_work_slice_planner(sprint_id, &point, session, invocation, route, harness)
@@ -3741,7 +3776,7 @@ impl SprintRunnerTransitionService {
                             invocation_id: invocation,
                             message: SendAgentSessionMessageCommand {
                                 session_id: Some(session),
-                                submitted_text: format!("Work Slice Planner launch boundary. Planning point: {point}. Parent Sprint: {sprint_id}. Submit only proposal-local lanes through the supplied actions and complete only the application-derived current validated revision. Do not accept a proposal, create Work Units, Handler or Implementer Sessions, settle the Sprint, or advance to a later planning point."),
+                                submitted_text: format!("Work Slice Planner launch boundary. Read the application-bound current planning context before proposing work. Planning point: {point}. Parent Sprint: {sprint_id}. Submit only proposal-local lanes through the supplied actions and complete only the application-derived current validated revision. Do not accept a proposal, create Work Units, Handler or Implementer Sessions, settle the Sprint, or advance to a later planning point."),
                                 title: None,
                                 working_directory: Some(route),
                                 requested_options: Some(harness.runtime_options()),
@@ -3901,6 +3936,9 @@ fn validate_work_slice_proposal(value:&WorkSliceProposal)->Result<(),SprintRunne
     for lane in &value.lanes {for dependency in &lane.depends_on {if dependency==&lane.title || !names.contains(dependency.as_str()){return Err(SprintRunnerTransitionError::Invalid)}}}
     fn visit<'a>(name:&'a str,lanes:&'a [WorkSliceLane],active:&mut std::collections::HashSet<&'a str>,seen:&mut std::collections::HashSet<&'a str>)->bool{if !active.insert(name){return false}if seen.insert(name){let lane=lanes.iter().find(|lane|lane.title==name).expect("validated lane");for dep in &lane.depends_on{if !visit(dep,lanes,active,seen){return false}}}active.remove(name);true}
     let mut active=std::collections::HashSet::new();let mut seen=std::collections::HashSet::new();for lane in &value.lanes{if !visit(&lane.title,&value.lanes,&mut active,&mut seen){return Err(SprintRunnerTransitionError::Invalid)}}Ok(())
+}
+fn work_unit_implementer_prompt(specification:&str)->String{
+    format!("Work Unit Implementer activation. Perform the one bounded candidate change described below, only in the application-provided isolated execution workspace. Do not submit outcomes, accept, review, settle, retry, activate dependents, or continue any Sprint or Epic.\n\nApplication-derived Work Unit specification:\n{specification}")
 }
 fn validate_handler_review_return(value:&HandlerReviewReturnReason)->Result<(),SprintRunnerTransitionError>{if !safe_id(&value.code)||value.code.len()>96||value.explanation.trim().is_empty()||value.explanation.len()>2_000{return Err(SprintRunnerTransitionError::Invalid)}Ok(())}
 fn validate_handback_disposition(value:&SprintHandbackDisposition)->Result<(),SprintRunnerTransitionError>{
@@ -4189,6 +4227,19 @@ mod handler_activation_boundary_tests {
             Some("initiated_sprint_git_authority_missing")
         );
         assert_eq!(handler_activation_blocked_reason(0, true), None);
+    }
+}
+
+#[cfg(test)]
+mod implementer_specification_tests {
+    use super::work_unit_implementer_prompt;
+
+    #[test]
+    fn application_issued_implementer_prompt_preserves_the_bounded_specification() {
+        let specification = "Update the exact README marker, verify git status, and create one local-only commit.";
+        let prompt = work_unit_implementer_prompt(specification);
+        assert!(prompt.contains("Application-derived Work Unit specification:"));
+        assert!(prompt.contains(specification));
     }
 }
 
