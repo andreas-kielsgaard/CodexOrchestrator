@@ -2265,6 +2265,7 @@ impl SprintRunnerTransitionService {
             reconcile_work_unit_dependency_wave(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
             reconcile_work_slice_execution_settlement(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
         }
+        self.reconcile_sprint_continuation_boundary()?;
         let Some(handler) = self.work_unit_handler.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Work Unit Handler registry is poisoned".into()))?.clone() else { return Ok(()) };
         // A pass can settle accepted integration effects and make a later dependency generation
         // eligible. Drain one follow-up generation in this activation; later asynchronous
@@ -2298,7 +2299,7 @@ impl SprintRunnerTransitionService {
             ).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
             if !next_generation { break; }
         }
-        Ok(())
+        self.reconcile_sprint_continuation_boundary()
     }
 
     /// A completed accepted review can change dependent eligibility after the integration/wave
@@ -2330,7 +2331,7 @@ impl SprintRunnerTransitionService {
             reconcile_work_slice_execution_settlement(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
             if units.is_empty() { break; }
         }
-        Ok(())
+        self.reconcile_sprint_continuation_boundary()
     }
 
     fn reconcile_handler_review_terminal_movement(
@@ -2698,7 +2699,7 @@ impl SprintRunnerTransitionService {
         reconcile_accepted_candidate_authorities(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
         reconcile_accepted_integrations(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
         reconcile_work_unit_dependency_wave(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
-        reconcile_work_slice_execution_settlement(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)
+        reconcile_work_slice_execution_settlement(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;drop(connection);self.reconcile_sprint_continuation_boundary()
     }
 
     /// A completed meaningful-progress disposition is application authority for exactly one
