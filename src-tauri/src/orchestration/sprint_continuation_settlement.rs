@@ -420,7 +420,12 @@ fn dependency_wait_state(tx: &rusqlite::Transaction<'_>, sprint: &str) -> Result
         } else if eligibility == "eligible" && !ready.is_empty() && settled.is_empty() {
             state.active = true;
             "active"
-        } else { "resolved" };
+        } else if !settled.is_empty() {
+            "resolved"
+        } else {
+            state.unavailable = true;
+            "unavailable"
+        };
         state.identity.push(format!("dependency-wait\u{1e}{kind}\u{1e}{handback}\u{1e}{json}\u{1e}{route}\u{1e}{fingerprint}\u{1e}{handler_sprint}\u{1e}{eligibility}\u{1e}{ready}\u{1e}{settled}\u{1e}{route_state}"));
     }
     Ok(state)
@@ -535,7 +540,39 @@ mod tests {
         c.execute("DELETE FROM work_unit_handler_activations", [])
             .unwrap();
         reconcile(&mut c).unwrap();
-        assert_ne!(c.query_row::<String,_,_>("SELECT continuation_kind FROM sprint_continuation_decisions ORDER BY decision_sequence DESC LIMIT 1",[],|r|r.get(0)).unwrap(),"wait_for_agent_dependency");
+        assert_eq!(c.query_row::<String,_,_>("SELECT continuation_kind FROM sprint_continuation_decisions ORDER BY decision_sequence DESC LIMIT 1",[],|r|r.get(0)).unwrap(),"dependency_route_unavailable");
+    }
+
+    #[test]
+    fn exact_handback_and_epic_waits_fail_closed_until_each_handler_settles() {
+        let mut c = fixture();
+        accepted_materialization(&c);
+        second_accepted_materialization(&c);
+        terminal_facts(&c);
+        c.execute_batch("INSERT INTO work_slice_execution_graph_completions VALUES('materialization-2','revision-2');INSERT INTO work_slice_execution_settlements VALUES('materialization-2','materialization-2');INSERT INTO work_slice_planning_point_execution_settlements VALUES('point-2','materialization-2','materialization-2');INSERT INTO work_unit_settlements VALUES('unit-2');").unwrap();
+        c.execute("DELETE FROM work_unit_settlements", []).unwrap();
+        c.execute_batch("INSERT INTO work_unit_handler_activations VALUES('unit','sprint','eligible','now');INSERT INTO work_unit_handler_activations VALUES('unit-2','sprint','eligible','now');INSERT INTO sprint_runner_handback_deliveries VALUES('handback','sprint');INSERT INTO sprint_runner_handback_dispositions VALUES('handback','wait_for_agent_dependency','{\"dependencyOwner\":\"handler\",\"dependencyOwnerClassification\":\"work_unit_handler\",\"enablingResult\":\"review\",\"resumptionPath\":\"reassess\"}');INSERT INTO epic_runner_escalation_receivers VALUES('epic-wait','sprint','epic','correlation');INSERT INTO epic_runner_escalation_downstream_requests VALUES('epic-wait','existing_agent_achievable_dependency','{\"target\":\"existing_agent_achievable_dependency\",\"dependency\":\"handler result\",\"request\":\"continue\",\"resumptionPath\":\"reassess\"}');").unwrap();
+        c.execute("INSERT INTO sprint_handback_dependency_routes VALUES('handback','unit',?1,'now')", [dependency_route_fingerprint("handback", "unit")]).unwrap();
+        c.execute("INSERT INTO sprint_handback_dependency_routes VALUES('epic-wait','unit-2',?1,'now')", [dependency_route_fingerprint("epic-wait", "unit-2")]).unwrap();
+        reconcile(&mut c).unwrap();
+        assert_eq!(statuses(&c).unwrap()[0].1.state, "continuing");
+        c.execute("UPDATE work_unit_handler_activations SET eligibility_state='ineligible' WHERE work_unit_id='unit'", []).unwrap();
+        reconcile(&mut c).unwrap();
+        assert_eq!(c.query_row::<String,_,_>("SELECT continuation_kind FROM sprint_continuation_decisions ORDER BY decision_sequence DESC LIMIT 1", [], |r| r.get(0)).unwrap(), "dependency_route_unavailable");
+        assert_eq!(c.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_upward_results WHERE result_kind='settled'", [], |r| r.get(0)).unwrap(), 0);
+        c.execute("UPDATE work_unit_handler_activations SET eligibility_state='eligible',handler_ready_at=NULL WHERE work_unit_id='unit'", []).unwrap();
+        reconcile(&mut c).unwrap();
+        assert_eq!(c.query_row::<String,_,_>("SELECT continuation_kind FROM sprint_continuation_decisions ORDER BY decision_sequence DESC LIMIT 1", [], |r| r.get(0)).unwrap(), "dependency_route_unavailable");
+        c.execute("UPDATE work_unit_handler_activations SET handler_ready_at='ready' WHERE work_unit_id='unit'", []).unwrap();
+        c.execute("UPDATE work_unit_handler_activations SET handler_ready_at=NULL WHERE work_unit_id='unit-2'", []).unwrap();
+        reconcile(&mut c).unwrap();
+        assert_eq!(c.query_row::<String,_,_>("SELECT continuation_kind FROM sprint_continuation_decisions ORDER BY decision_sequence DESC LIMIT 1", [], |r| r.get(0)).unwrap(), "dependency_route_unavailable");
+        c.execute_batch("INSERT INTO work_unit_settlements VALUES('unit');INSERT INTO work_unit_settlements VALUES('unit-2');").unwrap();
+        reconcile(&mut c).unwrap();
+        assert_eq!(statuses(&c).unwrap()[0].1.state, "settled");
+        let counts: (i64, i64) = c.query_row("SELECT (SELECT COUNT(*) FROM sprint_continuation_decisions),(SELECT COUNT(*) FROM sprint_upward_results)", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        reconcile(&mut c).unwrap();
+        assert_eq!(c.query_row::<(i64,i64),_,_>("SELECT (SELECT COUNT(*) FROM sprint_continuation_decisions),(SELECT COUNT(*) FROM sprint_upward_results)", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap(), counts);
     }
 
     #[test]
