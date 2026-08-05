@@ -250,7 +250,7 @@ describe('orchestration native query v1', () => {
           launchRequestedAt: '2026-08-05T00:00:04Z',
           launchAcceptedAt: '2026-08-05T00:00:05Z',
           reassessmentLifecycleStatus: 'completed',
-          reassessmentLifecycleObservedAt: '2026-08-05T00:00:06Z',
+          reassessmentLifecycleObservedAt: '2026-08-05T00:00:10Z',
           semanticReassessmentRecordedAt: '2026-08-05T00:00:07Z',
         },
         dispositionRecordedAt: '2026-08-05T00:00:08Z',
@@ -262,7 +262,7 @@ describe('orchestration native query v1', () => {
         realization: {
           outcomeKind: 'terminal_readiness',
           consideredAt: '2026-08-05T00:00:09Z',
-          terminalReadinessRecordedAt: '2026-08-05T00:00:10Z',
+          terminalReadinessRecordedAt: '2026-08-05T00:00:11Z',
         },
       },
     ];

@@ -6601,6 +6601,45 @@ mod tests {
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_units u JOIN work_unit_materializations m ON m.materialization_id=u.materialization_id WHERE m.sprint_id=?1", [&successor], |row| row.get(0)).unwrap(), 0);
 
         let native = serde_json::to_value(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap().native_query().unwrap()).unwrap();
+        let direct_result = native["sprintResultProjections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|projection| projection["resultId"].as_str() == Some(result_id.as_str()))
+            .expect("production fixture direct Sprint result projection");
+        assert_eq!(direct_result["realization"]["outcomeKind"], "successor_request");
+        assert_eq!(direct_result["realization"]["successorSprintId"], successor);
+        assert!(direct_result["realization"]["successorRequestRecordedAt"].is_string());
+        let successor_transition = &direct_result["realization"]["successorTransition"];
+        for field in [
+            "requestedAt",
+            "authorizedAt",
+            "launchAcceptedAt",
+            "preStartSemanticOutcomeRecordedAt",
+            "preStartLifecycleObservedAt",
+            "preStartOutcomeAcceptedAt",
+            "epicContinuationLaunchAcceptedAt",
+            "sprintStartAuthorizedAt",
+            "sprintStartPersistedAt",
+            "sprintContinuationLaunchAcceptedAt",
+            "repositoryBranchReevaluationRecordedAt",
+            "startedReevaluationLifecycleObservedAt",
+        ] {
+            assert!(successor_transition[field].is_string(), "missing direct-result successor stage {field}");
+        }
+        let direct_serialized = serde_json::to_string(direct_result).unwrap();
+        for private_field in [
+            "successor-request",
+            "sprintRunnerSessionId",
+            "sprintRunnerInvocationId",
+            "epicRunnerInvocationId",
+            "harnessKey",
+            "harnessVersion",
+            "route",
+            "worktree",
+        ] {
+            assert!(!direct_serialized.contains(private_field), "private direct-result field leaked: {private_field}");
+        }
         let canonical: serde_json::Value = serde_json::from_str(include_str!("fixtures/orchestration-native-query-v2/valid-execution-graph.json")).unwrap();
         assert_eq!(
             normalized_terminal_execution_projection(&native),

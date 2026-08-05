@@ -1720,9 +1720,9 @@ const sprintResultReceiver = (value: unknown): NativeSprintResultReceiverV1 => {
     fail('Sprint-result receiver lifecycle bundle is incomplete');
   if (launchAcceptedAt) {
     for (const [label, observed] of [
+      ['semantic reassessment', semanticReassessmentRecordedAt],
       ['provider activation', providerActivationObservedAt],
       ['lifecycle', reassessmentLifecycleObservedAt],
-      ['semantic reassessment', semanticReassessmentRecordedAt],
     ] as const) {
       if (observed)
         timestampAtOrAfter(launchAcceptedAt, observed, `Sprint-result receiver ${label}`);
@@ -1828,6 +1828,31 @@ const sprintResultSuccessorTransition = (
     launchAcceptedAt,
     ...optionalTimes.map((key) => parsedOptionalTimes[key]),
   ].filter((item): item is string => item !== undefined);
+  if (
+    (harnessAppliedAt !== undefined && sessionCreatedAt === undefined) ||
+    (launchAcceptedAt !== undefined && harnessAppliedAt === undefined) ||
+    (parsedOptionalTimes.preStartLifecycleObservedAt !== undefined &&
+      parsedOptionalTimes.preStartSemanticOutcomeRecordedAt === undefined) ||
+    (parsedOptionalTimes.preStartOutcomeAcceptedAt !== undefined &&
+      parsedOptionalTimes.preStartLifecycleObservedAt === undefined) ||
+    (parsedOptionalTimes.parentContinuationDeliveryPersistedAt !== undefined &&
+      parsedOptionalTimes.parentContinuationDeliveryRequestedAt === undefined) ||
+    (parsedOptionalTimes.epicContinuationLaunchAcceptedAt !== undefined &&
+      parsedOptionalTimes.parentContinuationDeliveryPersistedAt === undefined) ||
+    (parsedOptionalTimes.providerReceiverActivationObservedAt !== undefined &&
+      parsedOptionalTimes.epicContinuationLaunchAcceptedAt === undefined) ||
+    (parsedOptionalTimes.sprintStartAuthorizedAt !== undefined &&
+      parsedOptionalTimes.epicContinuationLaunchAcceptedAt === undefined) ||
+    (parsedOptionalTimes.sprintStartPersistedAt !== undefined &&
+      parsedOptionalTimes.sprintStartAuthorizedAt === undefined) ||
+    (parsedOptionalTimes.sprintContinuationLaunchAcceptedAt !== undefined &&
+      parsedOptionalTimes.sprintStartPersistedAt === undefined) ||
+    (parsedOptionalTimes.repositoryBranchReevaluationRecordedAt !== undefined &&
+      parsedOptionalTimes.sprintContinuationLaunchAcceptedAt === undefined) ||
+    (parsedOptionalTimes.startedReevaluationLifecycleObservedAt !== undefined &&
+      parsedOptionalTimes.repositoryBranchReevaluationRecordedAt === undefined)
+  )
+    fail('Sprint-result successor transition has an incomplete phase prefix');
   chronology
     .slice(1)
     .forEach((item, index) =>
@@ -1929,6 +1954,7 @@ const sprintResultRealization = (value: unknown): NativeSprintResultRealizationV
     successorTransition?.sessionCreatedAt,
     successorTransition?.harnessAppliedAt,
     successorTransition?.launchAcceptedAt,
+    successorRequestRecordedAt,
     successorTransition?.preStartSemanticOutcomeRecordedAt,
     successorTransition?.preStartLifecycleObservedAt,
     successorTransition?.preStartOutcomeAcceptedAt,
@@ -1941,7 +1967,6 @@ const sprintResultRealization = (value: unknown): NativeSprintResultRealizationV
     successorTransition?.sprintContinuationLaunchAcceptedAt,
     successorTransition?.repositoryBranchReevaluationRecordedAt,
     successorTransition?.startedReevaluationLifecycleObservedAt,
-    successorRequestRecordedAt,
     terminalReadinessRecordedAt,
     retainedAttentionRecordedAt,
   ].filter((item): item is string => item !== undefined);
@@ -2001,20 +2026,44 @@ const sprintResultProjection = (value: unknown): NativeSprintResultProjectionV1 
     fail(
       'Sprint-result successor or readiness is not authorized by the exact settled advance disposition',
     );
-  if (dispositionRecordedAt && receiver?.semanticReassessmentRecordedAt)
-    timestampAtOrAfter(
-      receiver.semanticReassessmentRecordedAt,
-      dispositionRecordedAt,
-      'Sprint-result disposition',
+  const chronology = [
+    recordedAt,
+    receiver?.deliveryRequestedAt,
+    receiver?.deliveryPersistedAt,
+    receiver?.harnessBoundAt,
+    receiver?.launchRequestedAt,
+    receiver?.launchAcceptedAt,
+    receiver?.semanticReassessmentRecordedAt,
+    dispositionRecordedAt,
+    realization?.consideredAt,
+    realization?.successorTransition?.requestedAt,
+    realization?.successorTransition?.authorizedAt,
+    realization?.successorTransition?.sessionCreatedAt,
+    realization?.successorTransition?.harnessAppliedAt,
+    realization?.successorTransition?.launchAcceptedAt,
+    realization?.successorRequestRecordedAt,
+    receiver?.providerActivationObservedAt,
+    receiver?.reassessmentLifecycleObservedAt,
+    realization?.successorTransition?.preStartSemanticOutcomeRecordedAt,
+    realization?.successorTransition?.preStartLifecycleObservedAt,
+    realization?.successorTransition?.preStartOutcomeAcceptedAt,
+    realization?.successorTransition?.parentContinuationDeliveryRequestedAt,
+    realization?.successorTransition?.parentContinuationDeliveryPersistedAt,
+    realization?.successorTransition?.epicContinuationLaunchAcceptedAt,
+    realization?.successorTransition?.providerReceiverActivationObservedAt,
+    realization?.successorTransition?.sprintStartAuthorizedAt,
+    realization?.successorTransition?.sprintStartPersistedAt,
+    realization?.successorTransition?.sprintContinuationLaunchAcceptedAt,
+    realization?.successorTransition?.repositoryBranchReevaluationRecordedAt,
+    realization?.successorTransition?.startedReevaluationLifecycleObservedAt,
+    realization?.terminalReadinessRecordedAt,
+    realization?.retainedAttentionRecordedAt,
+  ].filter((item): item is string => item !== undefined);
+  chronology
+    .slice(1)
+    .forEach((item, index) =>
+      timestampAtOrAfter(chronology[index], item, 'Sprint-result projection'),
     );
-  if (dispositionRecordedAt && realization)
-    timestampAtOrAfter(
-      dispositionRecordedAt,
-      realization.consideredAt,
-      'Sprint-result realization',
-    );
-  if (receiver)
-    timestampAtOrAfter(recordedAt, receiver.deliveryRequestedAt, 'Sprint-result receiver delivery');
   return {
     resultId: string(x.resultId, 'Sprint-result resultId'),
     decisionId: string(x.decisionId, 'Sprint-result decisionId'),

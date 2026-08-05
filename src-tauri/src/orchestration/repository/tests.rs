@@ -94,9 +94,9 @@ fn sprint_result_native_projection_uses_exact_successor_transition_correlation()
          INSERT INTO sprint_continuation_decisions VALUES('decision','source',1,'settled','settled',1,'input','2026-08-05T00:00:00Z');
          INSERT INTO sprint_continuation_current_decisions VALUES('source','decision','settled','2026-08-05T00:00:00Z');
          INSERT INTO sprint_upward_results VALUES('result','decision','source','settled','2026-08-05T00:00:00Z');
-         INSERT INTO epic_runner_sprint_result_receivers VALUES('result','decision','source','epic','2026-08-05T00:00:01Z','2026-08-05T00:00:02Z','2026-08-05T00:00:03Z','2026-08-05T00:00:04Z','2026-08-05T00:00:05Z',NULL,'completed','2026-08-05T00:00:06Z','2026-08-05T00:00:07Z');
+         INSERT INTO epic_runner_sprint_result_receivers VALUES('result','decision','source','epic','2026-08-05T00:00:01Z','2026-08-05T00:00:02Z','2026-08-05T00:00:03Z','2026-08-05T00:00:04Z','2026-08-05T00:00:05Z',NULL,'completed','2026-08-05T00:00:15Z','2026-08-05T00:00:07Z');
          INSERT INTO epic_runner_sprint_result_dispositions VALUES('result','2026-08-05T00:00:08Z','{\"movementKind\":\"advance_to_next_approved_sprint\",\"rationale\":\"advance exact successor\",\"consideredIntent\":\"advance the approved Sprint sequence\"}');
-         INSERT INTO epic_runner_sprint_result_realizations VALUES('result','successor_request','successor','successor-request','2026-08-05T00:00:09Z','2026-08-05T00:00:26Z');
+         INSERT INTO epic_runner_sprint_result_realizations VALUES('result','successor_request','successor','successor-request','2026-08-05T00:00:09Z','2026-08-05T00:00:15Z');
          INSERT INTO sprint_runner_transitions VALUES('successor','epic','successor-request','2026-08-05T00:00:10Z','2026-08-05T00:00:11Z','2026-08-05T00:00:12Z','2026-08-05T00:00:13Z','2026-08-05T00:00:14Z','2026-08-05T00:00:15Z','2026-08-05T00:00:16Z','2026-08-05T00:00:17Z','2026-08-05T00:00:18Z','2026-08-05T00:00:19Z','2026-08-05T00:00:20Z','2026-08-05T00:00:21Z','2026-08-05T00:00:22Z','2026-08-05T00:00:23Z','2026-08-05T00:00:24Z','2026-08-05T00:00:25Z','2026-08-05T00:00:25Z');",
     ).unwrap();
     let sprints = vec![

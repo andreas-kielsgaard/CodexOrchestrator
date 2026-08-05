@@ -3295,6 +3295,7 @@ fn sprint_result_projection(
                             successor_sprint_id.as_deref().expect("validated successor"),
                             epic_id.as_str(),
                         )?;
+                        validate_successor_transition_phases(&successor_transition)?;
                         if successor_request_recorded_at.is_none() {
                             return Err(to_sql_error("Sprint-result successor request persistence is incoherent".into()));
                         }
@@ -3342,8 +3343,6 @@ fn sprint_result_projection(
                     receiver.harness_bound_at.as_deref(),
                     receiver.launch_requested_at.as_deref(),
                     receiver.launch_accepted_at.as_deref(),
-                    receiver.provider_activation_observed_at.as_deref(),
-                    receiver.reassessment_lifecycle_observed_at.as_deref(),
                     receiver.semantic_reassessment_recorded_at.as_deref(),
                 ]);
             }
@@ -3370,6 +3369,27 @@ fn sprint_result_projection(
                     .as_ref()
                     .and_then(|item| item.successor_transition.as_ref())
                     .and_then(|item| item.launch_accepted_at.as_deref()),
+                realization.as_ref().and_then(|item| item.successor_request_recorded_at.as_deref()),
+            ]);
+            if let Some(receiver) = receiver.as_ref() {
+                chronology.extend([
+                    receiver.provider_activation_observed_at.as_deref(),
+                    receiver.reassessment_lifecycle_observed_at.as_deref(),
+                ]);
+            }
+            chronology.extend([
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .and_then(|item| item.pre_start_semantic_outcome_recorded_at.as_deref()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .and_then(|item| item.pre_start_lifecycle_observed_at.as_deref()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .and_then(|item| item.pre_start_outcome_accepted_at.as_deref()),
                 realization
                     .as_ref()
                     .and_then(|item| item.successor_transition.as_ref())
@@ -3406,7 +3426,6 @@ fn sprint_result_projection(
                     .as_ref()
                     .and_then(|item| item.successor_transition.as_ref())
                     .and_then(|item| item.started_reevaluation_lifecycle_observed_at.as_deref()),
-                realization.as_ref().and_then(|item| item.successor_request_recorded_at.as_deref()),
                 realization.as_ref().and_then(|item| item.terminal_readiness_recorded_at.as_deref()),
                 realization.as_ref().and_then(|item| item.retained_attention_recorded_at.as_deref()),
             ]);
@@ -3478,13 +3497,46 @@ fn successor_transition_projection(
         .ok_or_else(|| to_sql_error("Sprint-result successor request lacks its exact Sprint Runner transition".into()))
 }
 
+fn validate_successor_transition_phases(
+    transition: &SprintResultSuccessorTransitionDto,
+) -> Result<(), rusqlite::Error> {
+    if transition.harness_applied_at.is_some() && transition.session_created_at.is_none()
+        || transition.launch_accepted_at.is_some() && transition.harness_applied_at.is_none()
+        || transition.pre_start_lifecycle_observed_at.is_some()
+            && transition.pre_start_semantic_outcome_recorded_at.is_none()
+        || transition.pre_start_outcome_accepted_at.is_some()
+            && transition.pre_start_lifecycle_observed_at.is_none()
+        || transition.parent_continuation_delivery_persisted_at.is_some()
+            && transition.parent_continuation_delivery_requested_at.is_none()
+        || transition.epic_continuation_launch_accepted_at.is_some()
+            && transition.parent_continuation_delivery_persisted_at.is_none()
+        || transition.provider_receiver_activation_observed_at.is_some()
+            && transition.epic_continuation_launch_accepted_at.is_none()
+        || transition.sprint_start_authorized_at.is_some()
+            && transition.epic_continuation_launch_accepted_at.is_none()
+        || transition.sprint_start_persisted_at.is_some()
+            && transition.sprint_start_authorized_at.is_none()
+        || transition.sprint_continuation_launch_accepted_at.is_some()
+            && transition.sprint_start_persisted_at.is_none()
+        || transition.repository_branch_reevaluation_recorded_at.is_some()
+            && transition.sprint_continuation_launch_accepted_at.is_none()
+        || transition.started_reevaluation_lifecycle_observed_at.is_some()
+            && transition.repository_branch_reevaluation_recorded_at.is_none()
+    {
+        return Err(to_sql_error("Sprint-result successor transition has an incomplete phase prefix".into()));
+    }
+    Ok(())
+}
+
 fn validate_public_chronology(values: &[Option<&str>]) -> Result<(), rusqlite::Error> {
     let mut previous = None;
     for value in values.iter().flatten() {
         let current = DateTime::parse_from_rfc3339(value)
             .map_err(|_| to_sql_error("Sprint-result public chronology is invalid".into()))?;
-        if previous.is_some_and(|prior| current < prior) {
-            return Err(to_sql_error("Sprint-result public chronology is out of order".into()));
+        if let Some(prior) = previous {
+            if current < prior {
+                return Err(to_sql_error("Sprint-result public chronology is out of order".into()));
+            }
         }
         previous = Some(current);
     }
