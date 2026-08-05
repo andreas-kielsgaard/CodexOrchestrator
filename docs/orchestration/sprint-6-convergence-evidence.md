@@ -90,6 +90,37 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
   This remains deterministic local serialization evidence only; it does not claim receiver
   activation, downstream delivery, Sprint selection/start, settlement, completion, or acceptance.
 
+## ER-4 independent integrated convergence checkpoint (2026-08-05)
+
+- Independent review covered `9e918cc1ec252c3ca27662e3ca3c1e6e94543dfd..92dbc00` at a clean
+  `92dbc00` worktree. The range is confined to the direct Sprint-result producer/receiver,
+  reassessment realization, native-query/read-model composition, and existing Epic/Sprint
+  presentation paths. `git diff --check` passed; no slice-local correction was exposed.
+- Deterministic Rust evidence: the production-equivalent
+  `terminal_authority_fixture_converges_product_materialization_and_real_git_gateway` passed
+  **1/1**. It exercises settled Sprint result receipt, one exact Epic reassessment/disposition,
+  immediate approved-successor request/pre-start/start/reevaluation, reopen recovery, native
+  projection, and zero successor Work Slice planning or Work Unit effects. Direct-result
+  replay/concurrency/foreign/conflict checks passed **3/3**; terminal-readiness and retained-
+  attention checks passed **2/2**; and the distinct receiver-schema check passed **1/1**. These
+  checks include delivery, launch acceptance, observed reassessment lifecycle, semantic
+  disposition, terminal readiness/attention, private-field redaction, and no final Epic
+  settlement.
+- Strict frontend evidence: the native-query, read-model composition, Sprint presentation, Epic
+  Detail, and Sprint Workspace reassessment suites passed **72/72**. `npm run build` and
+  `npm run lint` passed. The broad frontend aggregate reported **740 passed / 24 failed** across
+  **114** files; the observed failures are Harness-management availability/presentation paths
+  outside this checkpoint's changed files, so no ER-4 source was altered. `prettier --check`
+  reports existing drift in **50** files (including historical artifacts); no formatting mutation
+  was made.
+- Broad Rust-library aggregate remains an explicit residual: Cargo independently enumerated
+  **422** library tests, but serialized runs bounded at 15 and 30 minutes and a normal-concurrency
+  run bounded at 10 minutes produced no terminal harness count. The timed-out child processes
+  were stopped; no aggregate pass or failure is claimed. No live/provider prompt was attempted:
+  the deterministic tests above exercise the product-owned lifecycle, but do not prove a live
+  provider, production receiver activation, Epic settlement, publication, merge, or user
+  acceptance.
+
 ## CPS-1: dependent execution and generalized attempts convergence
 
 This local checkpoint combines the accepted dependent-cycle and generalized-attempt lines without
