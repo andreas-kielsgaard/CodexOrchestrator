@@ -1733,6 +1733,8 @@ impl SprintRunnerTransitionService {
         }
         let escalation: Option<String> = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT handback_id FROM epic_runner_escalation_receivers WHERE reassessment_invocation_id=?1",[invocation.id.as_str()],|row|row.get(0)).optional().map_err(|error|SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         if escalation.is_some() { return self.observe_epic_escalation_receiver_terminals(); }
+        let unblocked_escalation: bool = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT EXISTS(SELECT 1 FROM epic_runner_escalation_receivers WHERE governing_runner_session_id=?1 AND launch_accepted_at IS NULL)",[invocation.session_id.as_str()],|row|row.get(0)).map_err(|error|SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        if unblocked_escalation { return self.reconcile_epic_escalation_receivers(); }
         let sprint: Option<String> = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?.query_row(
             "SELECT sprint_id FROM sprint_runner_transitions WHERE epic_runner_invocation_id=?1 OR sprint_runner_invocation_id=?1 OR pre_start_upgrade_invocation_id=?1 OR epic_continuation_invocation_id=?1 OR sprint_continuation_invocation_id=?1 OR planning_control_invocation_id=?1 UNION SELECT sprint_id FROM work_slice_planning_requests WHERE planner_invocation_id=?1",
             [invocation.id.as_str()], |row| row.get(0),
