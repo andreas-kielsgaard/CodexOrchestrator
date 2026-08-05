@@ -1,0 +1,172 @@
+import type { AgentSessionProductOrigin } from './agentSessionNavigation';
+import {
+  canNavigateBack,
+  createProductNavigation,
+  productNavigationReducer,
+  restoreProductNavigation,
+  type ProductNavigationDestination,
+} from './productNavigation';
+
+describe('Product navigation history', () => {
+  const overview: ProductNavigationDestination = { kind: 'orchestration', location: null };
+  const fileReview: ProductNavigationDestination = {
+    kind: 'file_review',
+    target: { kind: 'file_evidence', reviewId: 'review-1', changedFileId: 'file-1' },
+  };
+  const workUnitOrigin: AgentSessionProductOrigin = {
+    sessionId: 'session-handler',
+    invocationId: 'invocation-handler',
+    location: {
+      kind: 'work_unit',
+      epicId: 'epic-1',
+      sprintId: 'sprint-1',
+      revisionId: 'revision-1',
+      workSlicePlanningPointId: 'activity-1',
+      workUnitId: 'work-unit-1',
+      label: 'Typed Work Unit',
+      inspectionState: {
+        tab: 'activity',
+        activityId: 'activity-1',
+        sessionId: 'session-handler',
+        invocationId: 'invocation-handler',
+      },
+    },
+  };
+
+  it('pushes and pops actual typed destinations deterministically', () => {
+    let state = createProductNavigation(overview);
+    expect(canNavigateBack(state)).toBe(false);
+
+    state = productNavigationReducer(state, {
+      type: 'navigate',
+      intent: 'push',
+      destination: fileReview,
+    });
+    expect(canNavigateBack(state)).toBe(true);
+    expect(state.history).toEqual([{ destination: overview, intent: 'direct' }]);
+
+    state = productNavigationReducer(state, { type: 'back' });
+    expect(state.current).toEqual({ destination: overview, intent: 'restore' });
+    expect(state.history).toEqual([]);
+    expect(canNavigateBack(state)).toBe(false);
+  });
+
+  it('keeps contextual Return separate from generic Back and preserves exact Work Unit state', () => {
+    let state = createProductNavigation(overview);
+    state = productNavigationReducer(state, {
+      type: 'open_contextual_agent_session',
+      origin: workUnitOrigin,
+      focusedInvocationId: 'invocation-handler',
+    });
+    expect(state.current.destination).toEqual({
+      kind: 'agent_sessions',
+      selectedSessionId: 'session-handler',
+      focusedInvocationId: 'invocation-handler',
+    });
+    expect(state.contextualOrigin).toBe(workUnitOrigin);
+    expect(state.history).toEqual([{ destination: overview, intent: 'direct' }]);
+
+    state = productNavigationReducer(state, {
+      type: 'return_to_contextual_origin',
+      origin: workUnitOrigin,
+    });
+    expect(state.current).toEqual({
+      destination: { kind: 'orchestration', location: workUnitOrigin.location },
+      intent: 'restore',
+    });
+    expect(state.history).toEqual([{ destination: overview, intent: 'direct' }]);
+    expect(state.contextualOrigin).toBeNull();
+  });
+
+  it('keeps the contextual pointer while changing Session selection, but clears it for direct entry', () => {
+    let state = productNavigationReducer(createProductNavigation(overview), {
+      type: 'open_contextual_agent_session',
+      origin: workUnitOrigin,
+      focusedInvocationId: 'invocation-handler',
+    });
+    state = productNavigationReducer(state, {
+      type: 'navigate',
+      intent: 'replace',
+      destination: {
+        kind: 'agent_sessions',
+        selectedSessionId: 'session-implementer',
+        focusedInvocationId: null,
+      },
+    });
+    expect(state.contextualOrigin).toBe(workUnitOrigin);
+
+    state = productNavigationReducer(state, { type: 'enter_agent_sessions_directly' });
+    expect(state.contextualOrigin).toBeNull();
+    expect(state.current.destination).toEqual({
+      kind: 'agent_sessions',
+      selectedSessionId: 'session-implementer',
+      focusedInvocationId: null,
+    });
+  });
+
+  it('does not restore Back or contextual return state for direct, deep, or reload initialization', () => {
+    const restored = restoreProductNavigation(
+      {
+        current: {
+          destination: { kind: 'orchestration', location: workUnitOrigin.location },
+          intent: 'push',
+        },
+        history: [fileReview],
+        contextualOrigin: workUnitOrigin,
+      },
+      overview,
+      () => true,
+    );
+    expect(restored).toEqual({
+      current: {
+        destination: { kind: 'orchestration', location: workUnitOrigin.location },
+        intent: 'restore',
+      },
+      history: [],
+      contextualOrigin: null,
+    });
+  });
+
+  it('fails closed for unsupported, stale, mismatched, and foreign return state', () => {
+    const fallback = { kind: 'orchestration', location: null } as const;
+    expect(
+      restoreProductNavigation(
+        { kind: 'agent_sessions', selectedSessionId: 'session-1', focusedInvocationId: null },
+        fallback,
+        () => false,
+      ),
+    ).toEqual(createProductNavigation(fallback, 'restore'));
+    expect(
+      restoreProductNavigation(
+        { kind: 'route-from-transcript', name: 'Return to WU-ECS2E' },
+        fallback,
+        () => true,
+      ),
+    ).toEqual(createProductNavigation(fallback, 'restore'));
+
+    let state = productNavigationReducer(createProductNavigation(overview), {
+      type: 'open_contextual_agent_session',
+      origin: workUnitOrigin,
+      focusedInvocationId: 'invocation-handler',
+    });
+    state = productNavigationReducer(state, {
+      type: 'return_to_contextual_origin',
+      origin: { ...workUnitOrigin },
+    });
+    expect(state.contextualOrigin).toBeNull();
+    expect(state.current.destination.kind).toBe('agent_sessions');
+  });
+
+  it('clears an invalid historical destination instead of inventing a Back target', () => {
+    let state = productNavigationReducer(createProductNavigation(overview), {
+      type: 'navigate',
+      intent: 'push',
+      destination: fileReview,
+    });
+    expect(canNavigateBack(state, () => false)).toBe(false);
+    state = productNavigationReducer(state, { type: 'back' }, () => false);
+    expect(state.current.destination).toBe(fileReview);
+    expect(state.history).toEqual([]);
+    expect(canNavigateBack(state)).toBe(false);
+  });
+});
