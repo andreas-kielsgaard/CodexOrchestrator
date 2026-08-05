@@ -56,13 +56,36 @@ export interface NativeWorkUnitExecutionStateV1 {
   readonly workUnitId: string;
   readonly materializationId: string;
   readonly acceptedRevisionId: string;
-  readonly state: 'waiting_on_prerequisites' | 'ready' | 'active' | 'retry_authorized' | 'handed_back' | 'settled' | 'attention';
+  readonly state:
+    | 'waiting_on_prerequisites'
+    | 'ready'
+    | 'active'
+    | 'retry_authorized'
+    | 'handed_back'
+    | 'settled'
+    | 'attention';
   readonly recordedAt: string;
 }
-export interface NativeWorkSliceExecutionGraphCompletionV1 { readonly materializationId: string; readonly acceptedRevisionId: string; readonly completedAt: string; }
-export interface NativeWorkSliceExecutionSettlementV1 { readonly materializationId: string; readonly graphCompletionMaterializationId: string; readonly settledAt: string; }
-export interface NativeWorkSlicePlanningPointExecutionSettlementV1 { readonly planningPointId: string; readonly materializationId: string; readonly workSliceExecutionMaterializationId: string; readonly settledAt: string; }
-export interface NativeWorkSliceExecutionAttentionV1 { readonly materializationId: string; readonly recordedAt: string; }
+export interface NativeWorkSliceExecutionGraphCompletionV1 {
+  readonly materializationId: string;
+  readonly acceptedRevisionId: string;
+  readonly completedAt: string;
+}
+export interface NativeWorkSliceExecutionSettlementV1 {
+  readonly materializationId: string;
+  readonly graphCompletionMaterializationId: string;
+  readonly settledAt: string;
+}
+export interface NativeWorkSlicePlanningPointExecutionSettlementV1 {
+  readonly planningPointId: string;
+  readonly materializationId: string;
+  readonly workSliceExecutionMaterializationId: string;
+  readonly settledAt: string;
+}
+export interface NativeWorkSliceExecutionAttentionV1 {
+  readonly materializationId: string;
+  readonly recordedAt: string;
+}
 export interface NativeWorkUnitDependencyActivationIntentV1 {
   readonly workUnitId: string;
   readonly materializationId: string;
@@ -344,7 +367,13 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
     'native query',
   );
   if (root.contractVersion !== ORCHESTRATION_NATIVE_QUERY_V2) fail('unsupported contractVersion');
-  const executionFields = ['workUnitExecutionStates', 'workSliceExecutionGraphCompletions', 'workSliceExecutionSettlements', 'workSlicePlanningPointExecutionSettlements', 'workSliceExecutionAttentions'] as const;
+  const executionFields = [
+    'workUnitExecutionStates',
+    'workSliceExecutionGraphCompletions',
+    'workSliceExecutionSettlements',
+    'workSlicePlanningPointExecutionSettlements',
+    'workSliceExecutionAttentions',
+  ] as const;
   const executionFieldCount = executionFields.filter((field) => root[field] !== undefined).length;
   if (executionFieldCount !== 0 && executionFieldCount !== executionFields.length)
     fail('productive execution projection bundle is incomplete');
@@ -391,11 +420,37 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
         : array(root.dependencyActivationIntents, 'dependencyActivationIntents').map(
             dependencyActivationIntent,
           ),
-    workUnitExecutionStates: root.workUnitExecutionStates === undefined ? [] : array(root.workUnitExecutionStates, 'workUnitExecutionStates').map(workUnitExecutionState),
-    workSliceExecutionGraphCompletions: root.workSliceExecutionGraphCompletions === undefined ? [] : array(root.workSliceExecutionGraphCompletions, 'workSliceExecutionGraphCompletions').map(workSliceExecutionGraphCompletion),
-    workSliceExecutionSettlements: root.workSliceExecutionSettlements === undefined ? [] : array(root.workSliceExecutionSettlements, 'workSliceExecutionSettlements').map(workSliceExecutionSettlement),
-    workSlicePlanningPointExecutionSettlements: root.workSlicePlanningPointExecutionSettlements === undefined ? [] : array(root.workSlicePlanningPointExecutionSettlements, 'workSlicePlanningPointExecutionSettlements').map(workSlicePlanningPointExecutionSettlement),
-    workSliceExecutionAttentions: root.workSliceExecutionAttentions === undefined ? [] : array(root.workSliceExecutionAttentions, 'workSliceExecutionAttentions').map(workSliceExecutionAttention),
+    workUnitExecutionStates:
+      root.workUnitExecutionStates === undefined
+        ? []
+        : array(root.workUnitExecutionStates, 'workUnitExecutionStates').map(
+            workUnitExecutionState,
+          ),
+    workSliceExecutionGraphCompletions:
+      root.workSliceExecutionGraphCompletions === undefined
+        ? []
+        : array(root.workSliceExecutionGraphCompletions, 'workSliceExecutionGraphCompletions').map(
+            workSliceExecutionGraphCompletion,
+          ),
+    workSliceExecutionSettlements:
+      root.workSliceExecutionSettlements === undefined
+        ? []
+        : array(root.workSliceExecutionSettlements, 'workSliceExecutionSettlements').map(
+            workSliceExecutionSettlement,
+          ),
+    workSlicePlanningPointExecutionSettlements:
+      root.workSlicePlanningPointExecutionSettlements === undefined
+        ? []
+        : array(
+            root.workSlicePlanningPointExecutionSettlements,
+            'workSlicePlanningPointExecutionSettlements',
+          ).map(workSlicePlanningPointExecutionSettlement),
+    workSliceExecutionAttentions:
+      root.workSliceExecutionAttentions === undefined
+        ? []
+        : array(root.workSliceExecutionAttentions, 'workSliceExecutionAttentions').map(
+            workSliceExecutionAttention,
+          ),
     workUnitInspections:
       root.workUnitInspections === undefined
         ? []
@@ -465,9 +520,9 @@ export function nativeQueryProductCompositionInputV2(
   const materializedUnits = query.workUnitMaterializations
     .filter((materialization) => materialization.settledAt !== undefined)
     .flatMap((materialization) =>
-    query.workUnits
-      .filter((unit) => unit.materializationId === materialization.materializationId)
-      .sort((left, right) => left.laneOrdinal - right.laneOrdinal),
+      query.workUnits
+        .filter((unit) => unit.materializationId === materialization.materializationId)
+        .sort((left, right) => left.laneOrdinal - right.laneOrdinal),
     );
   const inspectionsByWorkUnitId = new Map(
     query.workUnitInspections.map((inspection) => [inspection.workUnitId, inspection]),
@@ -510,13 +565,28 @@ export function nativeQueryProductCompositionInputV2(
   const dependencyIntentByWorkUnitId = new Map(
     query.dependencyActivationIntents.map((intent) => [intent.workUnitId, intent]),
   );
-  const executionStateByWorkUnitId = new Map(query.workUnitExecutionStates.map((state) => [state.workUnitId, state]));
-  const executionByMaterializationId = new Map(query.workUnitMaterializations.map((materialization) => [materialization.materializationId, {
-    graphCompletion: query.workSliceExecutionGraphCompletions.find((item) => item.materializationId === materialization.materializationId),
-    settlement: query.workSliceExecutionSettlements.find((item) => item.materializationId === materialization.materializationId),
-    planningPointSettlement: query.workSlicePlanningPointExecutionSettlements.find((item) => item.materializationId === materialization.materializationId),
-    attention: query.workSliceExecutionAttentions.find((item) => item.materializationId === materialization.materializationId),
-  }]));
+  const executionStateByWorkUnitId = new Map(
+    query.workUnitExecutionStates.map((state) => [state.workUnitId, state]),
+  );
+  const executionByMaterializationId = new Map(
+    query.workUnitMaterializations.map((materialization) => [
+      materialization.materializationId,
+      {
+        graphCompletion: query.workSliceExecutionGraphCompletions.find(
+          (item) => item.materializationId === materialization.materializationId,
+        ),
+        settlement: query.workSliceExecutionSettlements.find(
+          (item) => item.materializationId === materialization.materializationId,
+        ),
+        planningPointSettlement: query.workSlicePlanningPointExecutionSettlements.find(
+          (item) => item.materializationId === materialization.materializationId,
+        ),
+        attention: query.workSliceExecutionAttentions.find(
+          (item) => item.materializationId === materialization.materializationId,
+        ),
+      },
+    ]),
+  );
   const events = {
     version: ORCHESTRATION_EVENTS_V1,
     epics: initiated.map((x) => ({ epicId: x.epicId })),
@@ -549,16 +619,18 @@ export function nativeQueryProductCompositionInputV2(
         ),
       gateIds: [],
     })),
-    workSlicePlanningPoints: query.workUnitMaterializations.filter((materialization) => materialization.settledAt !== undefined).map((materialization) => ({
-      workSlicePlanningPointId: materialization.planningPointId,
-      sprintPlanId: query.initiatedSprints.find(
-        (sprint) => sprint.sprintId === materialization.sprintId,
-      )!.sprintPlanId,
-      assessedSprintPlanRevisionIds: [
-        query.initiatedSprints.find((sprint) => sprint.sprintId === materialization.sprintId)!
-          .sprintPlanRevisionId,
-      ],
-    })),
+    workSlicePlanningPoints: query.workUnitMaterializations
+      .filter((materialization) => materialization.settledAt !== undefined)
+      .map((materialization) => ({
+        workSlicePlanningPointId: materialization.planningPointId,
+        sprintPlanId: query.initiatedSprints.find(
+          (sprint) => sprint.sprintId === materialization.sprintId,
+        )!.sprintPlanId,
+        assessedSprintPlanRevisionIds: [
+          query.initiatedSprints.find((sprint) => sprint.sprintId === materialization.sprintId)!
+            .sprintPlanRevisionId,
+        ],
+      })),
     workUnitExecutions: productiveExecutions.map(({ unit, attemptId }) => ({
       workUnitExecutionId: executionId(unit, attemptId),
       workUnitId: unit.workUnitId,
@@ -576,7 +648,8 @@ export function nativeQueryProductCompositionInputV2(
       ...productiveSessions.map(({ agentSessionId }) => ({ agentSessionId })),
     ].filter(
       (session, index, sessions) =>
-        sessions.findIndex((candidate) => candidate.agentSessionId === session.agentSessionId) === index,
+        sessions.findIndex((candidate) => candidate.agentSessionId === session.agentSessionId) ===
+        index,
     ),
     // Plan Builder Sessions remain associated with their durable planning drafts. Initiation does
     // not relabel them as one of the five orchestration runtime roles.
@@ -702,12 +775,14 @@ export function nativeQueryProductCompositionInputV2(
         summary: 'Preparatory initial Sprint Plan revision.',
         source: source(initiated.find((e) => e.epicId === x.epicId)!.provenanceId),
       })),
-      workSlicePlanningPoints: query.workUnitMaterializations.filter((materialization) => materialization.settledAt !== undefined).map((materialization) => ({
-        workSlicePlanningPointId: materialization.planningPointId,
-        title: 'Accepted Work Slice',
-        purpose: `Accepted immutable revision ${materialization.acceptedRevisionId}.`,
-        source: source(materialization.materializationId),
-      })),
+      workSlicePlanningPoints: query.workUnitMaterializations
+        .filter((materialization) => materialization.settledAt !== undefined)
+        .map((materialization) => ({
+          workSlicePlanningPointId: materialization.planningPointId,
+          title: 'Accepted Work Slice',
+          purpose: `Accepted immutable revision ${materialization.acceptedRevisionId}.`,
+          source: source(materialization.materializationId),
+        })),
       workUnits: materializedUnits.map((unit) => ({
         workUnitId: unit.workUnitId,
         title: unit.laneTitle,
@@ -759,15 +834,16 @@ export function nativeQueryProductCompositionInputV2(
           ...session,
           source: source(
             materializedUnits.find((unit) =>
-              inspectionsByWorkUnitId.get(unit.workUnitId)?.activities.some(
-                (activity) => activity.agentSessionId === session.agentSessionId,
-              ),
+              inspectionsByWorkUnitId
+                .get(unit.workUnitId)
+                ?.activities.some((activity) => activity.agentSessionId === session.agentSessionId),
             )!.materializationId,
           ),
         })),
       ].filter(
         (session, index, sessions) =>
-          sessions.findIndex((candidate) => candidate.agentSessionId === session.agentSessionId) === index,
+          sessions.findIndex((candidate) => candidate.agentSessionId === session.agentSessionId) ===
+          index,
       ),
       artifactOwnership: query.fileReviewDocuments.map((x) => ({
         artifactId: x.artifactId,
@@ -780,17 +856,19 @@ export function nativeQueryProductCompositionInputV2(
         source: source(x.provenanceId),
       })),
       sprintWorkspacePresentation: {
-        workSlicePlanningPointMembership: query.workUnitMaterializations.filter((materialization) => materialization.settledAt !== undefined).map((materialization) => ({
-          workSlicePlanningPointId: materialization.planningPointId,
-          sprintPlanRevisionId: query.initiatedSprints.find(
-            (sprint) => sprint.sprintId === materialization.sprintId,
-          )!.sprintPlanRevisionId,
-          workUnitScopeIds: query.workUnits
-            .filter((unit) => unit.materializationId === materialization.materializationId)
-            .sort((left, right) => left.laneOrdinal - right.laneOrdinal)
-            .map(scopeId),
-          source: source(materialization.materializationId),
-        })),
+        workSlicePlanningPointMembership: query.workUnitMaterializations
+          .filter((materialization) => materialization.settledAt !== undefined)
+          .map((materialization) => ({
+            workSlicePlanningPointId: materialization.planningPointId,
+            sprintPlanRevisionId: query.initiatedSprints.find(
+              (sprint) => sprint.sprintId === materialization.sprintId,
+            )!.sprintPlanRevisionId,
+            workUnitScopeIds: query.workUnits
+              .filter((unit) => unit.materializationId === materialization.materializationId)
+              .sort((left, right) => left.laneOrdinal - right.laneOrdinal)
+              .map(scopeId),
+            source: source(materialization.materializationId),
+          })),
         gates: [],
         documents: query.fileReviewDocuments.map((x) => ({
           documentRefId: x.documentRefId,
@@ -811,7 +889,9 @@ export function nativeQueryProductCompositionInputV2(
       acceptedRevisionId: materialization.acceptedRevisionId,
       sprintId: materialization.sprintId,
       stage: materializationStage(materialization),
-      ...(executionByMaterializationId.get(materialization.materializationId) ? { execution: executionByMaterializationId.get(materialization.materializationId) } : {}),
+      ...(executionByMaterializationId.get(materialization.materializationId)
+        ? { execution: executionByMaterializationId.get(materialization.materializationId) }
+        : {}),
       source: source(materialization.materializationId),
     })),
     ...(transitionQuery
@@ -1336,95 +1416,438 @@ const workUnitMaterialization = (value: unknown): NativeWorkUnitMaterializationV
 };
 const workUnitExecutionState = (value: unknown): NativeWorkUnitExecutionStateV1 => {
   const x = object(value, 'Work Unit execution state');
-  keys(x, ['workUnitId', 'materializationId', 'acceptedRevisionId', 'state', 'recordedAt'], 'Work Unit execution state');
-  if (!['waiting_on_prerequisites', 'ready', 'active', 'retry_authorized', 'handed_back', 'settled', 'attention'].includes(x.state as string)) fail('invalid Work Unit execution state');
-  return { workUnitId: string(x.workUnitId, 'workUnitId'), materializationId: string(x.materializationId, 'materializationId'), acceptedRevisionId: string(x.acceptedRevisionId, 'acceptedRevisionId'), state: x.state as NativeWorkUnitExecutionStateV1['state'], recordedAt: timestamp(x.recordedAt, 'Work Unit execution state recordedAt') };
+  keys(
+    x,
+    ['workUnitId', 'materializationId', 'acceptedRevisionId', 'state', 'recordedAt'],
+    'Work Unit execution state',
+  );
+  if (
+    ![
+      'waiting_on_prerequisites',
+      'ready',
+      'active',
+      'retry_authorized',
+      'handed_back',
+      'settled',
+      'attention',
+    ].includes(x.state as string)
+  )
+    fail('invalid Work Unit execution state');
+  return {
+    workUnitId: string(x.workUnitId, 'workUnitId'),
+    materializationId: string(x.materializationId, 'materializationId'),
+    acceptedRevisionId: string(x.acceptedRevisionId, 'acceptedRevisionId'),
+    state: x.state as NativeWorkUnitExecutionStateV1['state'],
+    recordedAt: timestamp(x.recordedAt, 'Work Unit execution state recordedAt'),
+  };
 };
-const workSliceExecutionGraphCompletion = (value: unknown): NativeWorkSliceExecutionGraphCompletionV1 => {
+const workSliceExecutionGraphCompletion = (
+  value: unknown,
+): NativeWorkSliceExecutionGraphCompletionV1 => {
   const x = object(value, 'Work Slice graph completion');
-  keys(x, ['materializationId', 'acceptedRevisionId', 'completedAt'], 'Work Slice graph completion');
-  return { materializationId: string(x.materializationId, 'materializationId'), acceptedRevisionId: string(x.acceptedRevisionId, 'acceptedRevisionId'), completedAt: timestamp(x.completedAt, 'Work Slice graph completion completedAt') };
+  keys(
+    x,
+    ['materializationId', 'acceptedRevisionId', 'completedAt'],
+    'Work Slice graph completion',
+  );
+  return {
+    materializationId: string(x.materializationId, 'materializationId'),
+    acceptedRevisionId: string(x.acceptedRevisionId, 'acceptedRevisionId'),
+    completedAt: timestamp(x.completedAt, 'Work Slice graph completion completedAt'),
+  };
 };
 const workSliceExecutionSettlement = (value: unknown): NativeWorkSliceExecutionSettlementV1 => {
   const x = object(value, 'Work Slice execution settlement');
-  keys(x, ['materializationId', 'graphCompletionMaterializationId', 'settledAt'], 'Work Slice execution settlement');
-  return { materializationId: string(x.materializationId, 'materializationId'), graphCompletionMaterializationId: string(x.graphCompletionMaterializationId, 'graphCompletionMaterializationId'), settledAt: timestamp(x.settledAt, 'Work Slice execution settlement settledAt') };
+  keys(
+    x,
+    ['materializationId', 'graphCompletionMaterializationId', 'settledAt'],
+    'Work Slice execution settlement',
+  );
+  return {
+    materializationId: string(x.materializationId, 'materializationId'),
+    graphCompletionMaterializationId: string(
+      x.graphCompletionMaterializationId,
+      'graphCompletionMaterializationId',
+    ),
+    settledAt: timestamp(x.settledAt, 'Work Slice execution settlement settledAt'),
+  };
 };
-const workSlicePlanningPointExecutionSettlement = (value: unknown): NativeWorkSlicePlanningPointExecutionSettlementV1 => {
+const workSlicePlanningPointExecutionSettlement = (
+  value: unknown,
+): NativeWorkSlicePlanningPointExecutionSettlementV1 => {
   const x = object(value, 'Work Slice planning-point execution settlement');
-  keys(x, ['planningPointId', 'materializationId', 'workSliceExecutionMaterializationId', 'settledAt'], 'Work Slice planning-point execution settlement');
-  return { planningPointId: string(x.planningPointId, 'planningPointId'), materializationId: string(x.materializationId, 'materializationId'), workSliceExecutionMaterializationId: string(x.workSliceExecutionMaterializationId, 'workSliceExecutionMaterializationId'), settledAt: timestamp(x.settledAt, 'Work Slice planning-point execution settlement settledAt') };
+  keys(
+    x,
+    ['planningPointId', 'materializationId', 'workSliceExecutionMaterializationId', 'settledAt'],
+    'Work Slice planning-point execution settlement',
+  );
+  return {
+    planningPointId: string(x.planningPointId, 'planningPointId'),
+    materializationId: string(x.materializationId, 'materializationId'),
+    workSliceExecutionMaterializationId: string(
+      x.workSliceExecutionMaterializationId,
+      'workSliceExecutionMaterializationId',
+    ),
+    settledAt: timestamp(x.settledAt, 'Work Slice planning-point execution settlement settledAt'),
+  };
 };
 const workSliceExecutionAttention = (value: unknown): NativeWorkSliceExecutionAttentionV1 => {
   const x = object(value, 'Work Slice execution attention');
   keys(x, ['materializationId', 'recordedAt'], 'Work Slice execution attention');
-  return { materializationId: string(x.materializationId, 'materializationId'), recordedAt: timestamp(x.recordedAt, 'Work Slice execution attention recordedAt') };
+  return {
+    materializationId: string(x.materializationId, 'materializationId'),
+    recordedAt: timestamp(x.recordedAt, 'Work Slice execution attention recordedAt'),
+  };
 };
 const inspectionUnavailable = (value: unknown, label: string) => {
   const x = object(value, label);
   keys(x, ['owner', 'reason'], label);
   if (x.owner !== 'application') fail(`${label} owner must be application`);
-  return { owner: 'application' as const, reason: boundedString(x.reason, 4_000, `${label} reason`) };
+  return {
+    owner: 'application' as const,
+    reason: boundedString(x.reason, 4_000, `${label} reason`),
+  };
+};
+const inspectionTestEvidence = (value: unknown) => {
+  const x = object(value, 'Work Unit inspection test evidence');
+  if (x.status !== 'available') {
+    keys(x, ['status', 'owner', 'reason'], 'Work Unit inspection unavailable test evidence');
+    if (x.status !== undefined && x.status !== 'unavailable')
+      fail('invalid Work Unit inspection test evidence status');
+    if (x.owner !== 'application')
+      fail('Work Unit inspection test evidence owner must be application');
+    return {
+      status: 'unavailable' as const,
+      owner: 'application' as const,
+      reason: boundedString(x.reason, 4_000, 'Work Unit inspection test evidence reason'),
+    };
+  }
+  keys(
+    x,
+    [
+      'status',
+      'owner',
+      'sourceActivityId',
+      'runId',
+      'whatRan',
+      'command',
+      'environment',
+      'result',
+      'cases',
+    ],
+    'Work Unit inspection available test evidence',
+  );
+  if (x.owner !== 'application')
+    fail('Work Unit inspection test evidence owner must be application');
+  if (!['passed', 'failed', 'canceled', 'timed_out', 'inconclusive'].includes(x.result as string))
+    fail('invalid Work Unit inspection test evidence result');
+  const cases = array(x.cases, 'Work Unit inspection test cases').map((value) => {
+    const item = object(value, 'Work Unit inspection test case');
+    keys(item, ['caseId', 'label', 'result'], 'Work Unit inspection test case');
+    if (!['passed', 'failed', 'skipped'].includes(item.result as string))
+      fail('invalid Work Unit inspection test case result');
+    return {
+      caseId: boundedString(item.caseId, 240, 'Work Unit inspection test case ID'),
+      label: boundedString(item.label, 1_000, 'Work Unit inspection test case label'),
+      result: item.result as 'passed' | 'failed' | 'skipped',
+    };
+  });
+  if (cases.length > 500) fail('Work Unit inspection test cases exceed the bounded limit');
+  unique(cases, (item) => item.caseId, 'Work Unit inspection test case ID');
+  return {
+    status: 'available' as const,
+    owner: 'application' as const,
+    sourceActivityId: boundedString(
+      x.sourceActivityId,
+      240,
+      'Work Unit inspection test source activity ID',
+    ),
+    runId: boundedString(x.runId, 240, 'Work Unit inspection test run ID'),
+    whatRan: boundedString(x.whatRan, 4_000, 'Work Unit inspection what ran'),
+    command: boundedString(x.command, 4_000, 'Work Unit inspection test command'),
+    environment: boundedString(x.environment, 1_000, 'Work Unit inspection test environment'),
+    result: x.result as 'passed' | 'failed' | 'canceled' | 'timed_out' | 'inconclusive',
+    cases,
+  };
 };
 const workUnitInspection = (value: unknown): NativeWorkUnitInspectionV1 => {
   const x = object(value, 'Work Unit inspection');
-  keys(x, ['workUnitId', 'materializationId', 'activities', 'fileEvidence', 'testEvidence'], 'Work Unit inspection');
+  keys(
+    x,
+    ['workUnitId', 'materializationId', 'activities', 'fileEvidence', 'testEvidence'],
+    'Work Unit inspection',
+  );
   const activities = array(x.activities, 'Work Unit inspection activities').map((value) => {
     const activity = object(value, 'Work Unit inspection activity');
-    keys(activity, ['activityId', 'attemptId', 'role', 'agentSessionId', 'invocationId', 'primaryStage', 'applicationSummary'], 'Work Unit inspection activity');
-    if (!['handler', 'implementer'].includes(activity.role as string)) fail('invalid Work Unit inspection role');
-    if (!['handler_activation', 'handler_action', 'implementer_activation', 'implementer_retry', 'implementer_reporting', 'handler_review'].includes(activity.primaryStage as string)) fail('invalid Work Unit inspection primary stage');
-    const applicationSummary = activity.applicationSummary === undefined ? undefined : (() => {
-      const summary = object(activity.applicationSummary, 'Work Unit inspection application summary');
-      keys(summary, ['owner', 'applicationEvents', 'peerEvidenceActivityIds', 'mcpCallDetail'], 'Work Unit inspection application summary');
-      if (summary.owner !== 'application') fail('Work Unit inspection application summary owner must be application');
-      const applicationEvents = array(summary.applicationEvents, 'Work Unit inspection application events').map((event) => {
-        const value = string(event, 'Work Unit inspection application event');
-        if (!['submission_recorded', 'file_evidence_recorded', 'semantic_completion_recorded', 'terminal_lifecycle_observed', 'application_acceptance_recorded', 'handler_review_ready', 'review_delivery_persisted', 'review_judgment_recorded', 'review_lifecycle_observed', 'review_conflict_recorded'].includes(value)) fail('invalid Work Unit inspection application event');
-        return value as NonNullable<NativeWorkUnitInspectionV1['activities'][number]['applicationSummary']>['applicationEvents'][number];
-      });
-      unique(applicationEvents, (event) => event, 'Work Unit inspection application event');
-      const peerEvidenceActivityIds = array(summary.peerEvidenceActivityIds, 'Work Unit inspection peer evidence activities').map((id) => boundedString(id, 240, 'Work Unit inspection peer evidence activity ID'));
-      unique(peerEvidenceActivityIds, (id) => id, 'Work Unit inspection peer evidence activity ID');
-      return { owner: 'application' as const, applicationEvents, peerEvidenceActivityIds, mcpCallDetail: inspectionUnavailable(summary.mcpCallDetail, 'Work Unit inspection MCP-call detail') };
-    })();
+    keys(
+      activity,
+      [
+        'activityId',
+        'attemptId',
+        'role',
+        'agentSessionId',
+        'invocationId',
+        'primaryStage',
+        'applicationSummary',
+      ],
+      'Work Unit inspection activity',
+    );
+    if (!['handler', 'implementer'].includes(activity.role as string))
+      fail('invalid Work Unit inspection role');
+    if (
+      ![
+        'handler_activation',
+        'handler_action',
+        'implementer_activation',
+        'implementer_retry',
+        'implementer_reporting',
+        'handler_review',
+      ].includes(activity.primaryStage as string)
+    )
+      fail('invalid Work Unit inspection primary stage');
+    const applicationSummary =
+      activity.applicationSummary === undefined
+        ? undefined
+        : (() => {
+            const summary = object(
+              activity.applicationSummary,
+              'Work Unit inspection application summary',
+            );
+            keys(
+              summary,
+              ['owner', 'applicationEvents', 'peerEvidenceActivityIds', 'mcpCallDetail'],
+              'Work Unit inspection application summary',
+            );
+            if (summary.owner !== 'application')
+              fail('Work Unit inspection application summary owner must be application');
+            const applicationEvents = array(
+              summary.applicationEvents,
+              'Work Unit inspection application events',
+            ).map((event) => {
+              const value = string(event, 'Work Unit inspection application event');
+              if (
+                ![
+                  'submission_recorded',
+                  'file_evidence_recorded',
+                  'semantic_completion_recorded',
+                  'terminal_lifecycle_observed',
+                  'application_acceptance_recorded',
+                  'handler_review_ready',
+                  'review_delivery_persisted',
+                  'review_judgment_recorded',
+                  'review_lifecycle_observed',
+                  'review_conflict_recorded',
+                ].includes(value)
+              )
+                fail('invalid Work Unit inspection application event');
+              return value as NonNullable<
+                NativeWorkUnitInspectionV1['activities'][number]['applicationSummary']
+              >['applicationEvents'][number];
+            });
+            unique(applicationEvents, (event) => event, 'Work Unit inspection application event');
+            const peerEvidenceActivityIds = array(
+              summary.peerEvidenceActivityIds,
+              'Work Unit inspection peer evidence activities',
+            ).map((id) => boundedString(id, 240, 'Work Unit inspection peer evidence activity ID'));
+            unique(
+              peerEvidenceActivityIds,
+              (id) => id,
+              'Work Unit inspection peer evidence activity ID',
+            );
+            return {
+              owner: 'application' as const,
+              applicationEvents,
+              peerEvidenceActivityIds,
+              mcpCallDetail: inspectionUnavailable(
+                summary.mcpCallDetail,
+                'Work Unit inspection MCP-call detail',
+              ),
+            };
+          })();
     return {
       activityId: boundedString(activity.activityId, 240, 'Work Unit inspection activityId'),
       attemptId: boundedString(activity.attemptId, 240, 'Work Unit inspection attemptId'),
       role: activity.role as 'handler' | 'implementer',
-      agentSessionId: boundedString(activity.agentSessionId, 240, 'Work Unit inspection agentSessionId'),
+      agentSessionId: boundedString(
+        activity.agentSessionId,
+        240,
+        'Work Unit inspection agentSessionId',
+      ),
       invocationId: boundedString(activity.invocationId, 240, 'Work Unit inspection invocationId'),
-      primaryStage: activity.primaryStage as NativeWorkUnitInspectionV1['activities'][number]['primaryStage'],
+      primaryStage:
+        activity.primaryStage as NativeWorkUnitInspectionV1['activities'][number]['primaryStage'],
       ...(applicationSummary ? { applicationSummary } : {}),
     };
   });
   unique(activities, (activity) => activity.activityId, 'Work Unit inspection activity ID');
   const fileEvidenceValue = object(x.fileEvidence, 'Work Unit inspection file evidence');
-  const fileEvidence = fileEvidenceValue.status === 'available' ? (() => {
-    keys(fileEvidenceValue, ['status', 'owner', 'sourceActivityId', 'changedFiles'], 'Work Unit inspection available file evidence');
-    if (fileEvidenceValue.owner !== 'application') fail('Work Unit inspection file evidence owner must be application');
-    const changedFiles = array(fileEvidenceValue.changedFiles, 'Work Unit inspection changed files').map((value) => {
-      const file = object(value, 'Work Unit inspection changed file');
-      keys(file, ['evidenceRef', 'displayName', 'changeKind', 'contentFingerprint'], 'Work Unit inspection changed file');
-      if (!['added', 'modified', 'deleted', 'renamed'].includes(file.changeKind as string)) fail('invalid Work Unit inspection changed file kind');
-      return { evidenceRef: boundedString(file.evidenceRef, 240, 'Work Unit inspection evidenceRef'), displayName: boundedString(file.displayName, 1_000, 'Work Unit inspection displayName'), changeKind: file.changeKind as 'added' | 'modified' | 'deleted' | 'renamed', contentFingerprint: boundedString(file.contentFingerprint, 240, 'Work Unit inspection contentFingerprint') };
-    });
-    if (!changedFiles.length || changedFiles.length > 500) fail('Work Unit inspection file evidence must be bounded and nonempty');
-    unique(changedFiles, (file) => file.evidenceRef, 'Work Unit inspection evidence reference');
-    return { status: 'available' as const, owner: 'application' as const, sourceActivityId: boundedString(fileEvidenceValue.sourceActivityId, 240, 'Work Unit inspection sourceActivityId'), changedFiles };
-  })() : (() => {
-    keys(fileEvidenceValue, ['status', 'owner', 'reason'], 'Work Unit inspection unavailable file evidence');
-    if (fileEvidenceValue.status !== 'unavailable') fail('invalid Work Unit inspection file evidence status');
-    if (fileEvidenceValue.owner !== 'application') fail('Work Unit inspection file evidence owner must be application');
-    return { status: 'unavailable' as const, owner: 'application' as const, reason: boundedString(fileEvidenceValue.reason, 4_000, 'Work Unit inspection unavailable file evidence reason') };
-  })();
+  const fileEvidence =
+    fileEvidenceValue.status === 'available'
+      ? (() => {
+          keys(
+            fileEvidenceValue,
+            ['status', 'owner', 'sourceActivityId', 'changedFiles'],
+            'Work Unit inspection available file evidence',
+          );
+          if (fileEvidenceValue.owner !== 'application')
+            fail('Work Unit inspection file evidence owner must be application');
+          const changedFiles = array(
+            fileEvidenceValue.changedFiles,
+            'Work Unit inspection changed files',
+          ).map((value) => {
+            const file = object(value, 'Work Unit inspection changed file');
+            keys(
+              file,
+              [
+                'evidenceRef',
+                'fileId',
+                'displayName',
+                'changeKind',
+                'contentFingerprint',
+                'diffDestination',
+              ],
+              'Work Unit inspection changed file',
+            );
+            if (!['added', 'modified', 'deleted', 'renamed'].includes(file.changeKind as string))
+              fail('invalid Work Unit inspection changed file kind');
+            const fileId =
+              file.fileId === undefined
+                ? boundedString(file.evidenceRef, 240, 'Work Unit inspection evidenceRef')
+                : boundedString(file.fileId, 240, 'Work Unit inspection file ID');
+            const destination =
+              file.diffDestination === undefined
+                ? {
+                    status: 'unavailable' as const,
+                    owner: 'application' as const,
+                    reason:
+                      'No application-owned diff destination is available for this changed file.',
+                  }
+                : file.diffDestination &&
+                    typeof file.diffDestination === 'object' &&
+                    (file.diffDestination as Record<string, unknown>).status === 'available'
+                  ? (() => {
+                      const destination = object(
+                        file.diffDestination,
+                        'Work Unit inspection diff destination',
+                      );
+                      keys(
+                        destination,
+                        ['status', 'owner', 'reviewId', 'changedFileId'],
+                        'Work Unit inspection available diff destination',
+                      );
+                      if (destination.owner !== 'application')
+                        fail('Work Unit inspection diff destination owner must be application');
+                      const changedFileId = boundedString(
+                        destination.changedFileId,
+                        240,
+                        'Work Unit inspection diff changed-file ID',
+                      );
+                      if (changedFileId !== fileId)
+                        fail('Work Unit inspection diff destination has foreign file identity');
+                      return {
+                        status: 'available' as const,
+                        owner: 'application' as const,
+                        reviewId: boundedString(
+                          destination.reviewId,
+                          240,
+                          'Work Unit inspection diff review ID',
+                        ),
+                        changedFileId,
+                      };
+                    })()
+                  : (() => {
+                      const destination = object(
+                        file.diffDestination,
+                        'Work Unit inspection diff destination',
+                      );
+                      keys(
+                        destination,
+                        ['status', 'owner', 'reason'],
+                        'Work Unit inspection unavailable diff destination',
+                      );
+                      if (
+                        destination.status !== 'unavailable' ||
+                        destination.owner !== 'application'
+                      )
+                        fail('invalid Work Unit inspection unavailable diff destination');
+                      return {
+                        status: 'unavailable' as const,
+                        owner: 'application' as const,
+                        reason: boundedString(
+                          destination.reason,
+                          4_000,
+                          'Work Unit inspection diff destination reason',
+                        ),
+                      };
+                    })();
+            return {
+              evidenceRef: boundedString(file.evidenceRef, 240, 'Work Unit inspection evidenceRef'),
+              fileId,
+              displayName: inspectionDisplayName(file.displayName),
+              changeKind: file.changeKind as 'added' | 'modified' | 'deleted' | 'renamed',
+              contentFingerprint: boundedString(
+                file.contentFingerprint,
+                240,
+                'Work Unit inspection contentFingerprint',
+              ),
+              diffDestination: destination,
+            };
+          });
+          if (!changedFiles.length || changedFiles.length > 500)
+            fail('Work Unit inspection file evidence must be bounded and nonempty');
+          unique(
+            changedFiles,
+            (file) => file.evidenceRef,
+            'Work Unit inspection evidence reference',
+          );
+          return {
+            status: 'available' as const,
+            owner: 'application' as const,
+            sourceActivityId: boundedString(
+              fileEvidenceValue.sourceActivityId,
+              240,
+              'Work Unit inspection sourceActivityId',
+            ),
+            changedFiles,
+          };
+        })()
+      : (() => {
+          keys(
+            fileEvidenceValue,
+            ['status', 'owner', 'reason'],
+            'Work Unit inspection unavailable file evidence',
+          );
+          if (fileEvidenceValue.status !== 'unavailable')
+            fail('invalid Work Unit inspection file evidence status');
+          if (fileEvidenceValue.owner !== 'application')
+            fail('Work Unit inspection file evidence owner must be application');
+          return {
+            status: 'unavailable' as const,
+            owner: 'application' as const,
+            reason: boundedString(
+              fileEvidenceValue.reason,
+              4_000,
+              'Work Unit inspection unavailable file evidence reason',
+            ),
+          };
+        })();
   return {
     workUnitId: boundedString(x.workUnitId, 240, 'Work Unit inspection workUnitId'),
-    materializationId: boundedString(x.materializationId, 240, 'Work Unit inspection materializationId'),
+    materializationId: boundedString(
+      x.materializationId,
+      240,
+      'Work Unit inspection materializationId',
+    ),
     activities,
     fileEvidence,
-    testEvidence: inspectionUnavailable(x.testEvidence, 'Work Unit inspection test evidence'),
+    testEvidence: inspectionTestEvidence(x.testEvidence),
   };
+};
+const inspectionDisplayName = (value: unknown) => {
+  const name = boundedString(value, 1_000, 'Work Unit inspection displayName');
+  if (/^(?:[A-Za-z]:[\\/]|\\\\|\/|~[\\/])/.test(name) || name.split(/[\\/]/).includes('..'))
+    fail('Work Unit inspection displayName must be a safe relative display name');
+  return name;
 };
 const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
   const x = object(value, 'materialized Work Unit');
@@ -1475,7 +1898,14 @@ const workUnitAttemptHistory = (value: unknown): NativeWorkUnitAttemptHistoryV1 
   const x = object(value, 'Work Unit attempt history member');
   keys(
     x,
-    ['ordinal', 'attemptId', 'implementerOutcome', 'handlerReview', 'handlerDecision', 'incompleteDisposition'],
+    [
+      'ordinal',
+      'attemptId',
+      'implementerOutcome',
+      'handlerReview',
+      'handlerDecision',
+      'incompleteDisposition',
+    ],
     'Work Unit attempt history member',
   );
   if (!Number.isSafeInteger(x.ordinal) || (x.ordinal as number) < 0)
@@ -1486,7 +1916,9 @@ const workUnitAttemptHistory = (value: unknown): NativeWorkUnitAttemptHistoryV1 
     ...(x.implementerOutcome === undefined
       ? {}
       : { implementerOutcome: workUnitImplementerOutcome(x.implementerOutcome) }),
-    ...(x.handlerReview === undefined ? {} : { handlerReview: workUnitHandlerReview(x.handlerReview) }),
+    ...(x.handlerReview === undefined
+      ? {}
+      : { handlerReview: workUnitHandlerReview(x.handlerReview) }),
     ...(x.handlerDecision === undefined
       ? {}
       : { handlerDecision: workUnitHandlerDecision(x.handlerDecision) }),
@@ -1533,11 +1965,7 @@ const workUnitRetryAttempt = (value: unknown): NativeWorkUnitRetryAttemptV1 => {
     ordinal: x.ordinal as number,
     originAttemptId: boundedString(x.originAttemptId, 240, 'retry originAttemptId'),
     retryAttemptId: boundedString(x.retryAttemptId, 240, 'retry retryAttemptId'),
-    implementerSessionId: boundedString(
-      x.implementerSessionId,
-      240,
-      'retry implementerSessionId',
-    ),
+    implementerSessionId: boundedString(x.implementerSessionId, 240, 'retry implementerSessionId'),
     implementerInvocationId: boundedString(
       x.implementerInvocationId,
       240,
@@ -1578,26 +2006,148 @@ const workUnitRetryAttempt = (value: unknown): NativeWorkUnitRetryAttemptV1 => {
 };
 const workUnitIntegration = (value: unknown): NativeWorkUnitIntegrationV1 => {
   const x = object(value, 'Work Unit integration');
-  keys(x, ['requestedAt', 'authorizedAt', 'progress', 'attention', 'success', 'settlement', 'prerequisiteContribution'], 'Work Unit integration');
+  keys(
+    x,
+    [
+      'requestedAt',
+      'authorizedAt',
+      'progress',
+      'attention',
+      'success',
+      'settlement',
+      'prerequisiteContribution',
+    ],
+    'Work Unit integration',
+  );
   const requestedAt = timestamp(x.requestedAt, 'Work Unit integration requestedAt');
   const authorizedAt = timestamp(x.authorizedAt, 'Work Unit integration authorizedAt');
   timestampAtOrAfter(requestedAt, authorizedAt, 'Work Unit integration authorization');
-  const progress = x.progress === undefined ? undefined : (() => { const entry = object(x.progress, 'Work Unit integration progress'); keys(entry, ['phase', 'recordedAt'], 'Work Unit integration progress'); if (!['preparing', 'applying', 'recording'].includes(entry.phase as string)) fail('invalid Work Unit integration progress phase'); const recordedAt = timestamp(entry.recordedAt, 'Work Unit integration progress recordedAt'); timestampAtOrAfter(authorizedAt, recordedAt, 'Work Unit integration progress'); return { phase: entry.phase as 'preparing' | 'applying' | 'recording', recordedAt }; })();
-  const attention = x.attention === undefined ? undefined : (() => { const entry = object(x.attention, 'Work Unit integration attention'); keys(entry, ['kind', 'safeCode', 'recordedAt'], 'Work Unit integration attention'); if (!['conflict', 'failure'].includes(entry.kind as string)) fail('invalid Work Unit integration attention kind'); const safeCode = entry.kind === 'conflict' ? 'integration_conflict' : 'integration_failure'; if (entry.safeCode !== safeCode) fail('invalid Work Unit integration attention code'); const recordedAt = timestamp(entry.recordedAt, 'Work Unit integration attention recordedAt'); timestampAtOrAfter(progress?.recordedAt ?? authorizedAt, recordedAt, 'Work Unit integration attention'); return { kind: entry.kind as 'conflict' | 'failure', safeCode: safeCode as 'integration_conflict' | 'integration_failure', recordedAt }; })();
-  const success = x.success === undefined ? undefined : (() => { const entry = object(x.success, 'Work Unit integration success'); keys(entry, ['recordedAt'], 'Work Unit integration success'); const recordedAt = timestamp(entry.recordedAt, 'Work Unit integration success recordedAt'); timestampAtOrAfter(progress?.recordedAt ?? authorizedAt, recordedAt, 'Work Unit integration success'); return { recordedAt }; })();
-  const settlement = x.settlement === undefined ? undefined : (() => { const entry = object(x.settlement, 'Work Unit settlement'); keys(entry, ['settledAt'], 'Work Unit settlement'); const settledAt = timestamp(entry.settledAt, 'Work Unit settlement settledAt'); if (!success) fail('Work Unit settlement requires integration success'); timestampAtOrAfter(success.recordedAt, settledAt, 'Work Unit settlement'); return { settledAt }; })();
-  const prerequisiteContribution = x.prerequisiteContribution === undefined ? undefined : (() => { const entry = object(x.prerequisiteContribution, 'Work Unit prerequisite contribution'); keys(entry, ['recordedAt', 'dependentCount'], 'Work Unit prerequisite contribution'); if (!Number.isSafeInteger(entry.dependentCount) || (entry.dependentCount as number) < 0) fail('invalid Work Unit prerequisite contribution count'); if (!settlement) fail('Work Unit prerequisite contribution requires settlement'); const recordedAt = timestamp(entry.recordedAt, 'Work Unit prerequisite contribution recordedAt'); timestampAtOrAfter(settlement.settledAt, recordedAt, 'Work Unit prerequisite contribution'); return { recordedAt, dependentCount: entry.dependentCount as number }; })();
-  if (attention && (success || settlement || prerequisiteContribution)) fail('Work Unit integration attention contradicts terminal facts');
-  return { requestedAt, authorizedAt, ...(progress ? { progress } : {}), ...(attention ? { attention } : {}), ...(success ? { success } : {}), ...(settlement ? { settlement } : {}), ...(prerequisiteContribution ? { prerequisiteContribution } : {}) };
+  const progress =
+    x.progress === undefined
+      ? undefined
+      : (() => {
+          const entry = object(x.progress, 'Work Unit integration progress');
+          keys(entry, ['phase', 'recordedAt'], 'Work Unit integration progress');
+          if (!['preparing', 'applying', 'recording'].includes(entry.phase as string))
+            fail('invalid Work Unit integration progress phase');
+          const recordedAt = timestamp(
+            entry.recordedAt,
+            'Work Unit integration progress recordedAt',
+          );
+          timestampAtOrAfter(authorizedAt, recordedAt, 'Work Unit integration progress');
+          return { phase: entry.phase as 'preparing' | 'applying' | 'recording', recordedAt };
+        })();
+  const attention =
+    x.attention === undefined
+      ? undefined
+      : (() => {
+          const entry = object(x.attention, 'Work Unit integration attention');
+          keys(entry, ['kind', 'safeCode', 'recordedAt'], 'Work Unit integration attention');
+          if (!['conflict', 'failure'].includes(entry.kind as string))
+            fail('invalid Work Unit integration attention kind');
+          const safeCode =
+            entry.kind === 'conflict' ? 'integration_conflict' : 'integration_failure';
+          if (entry.safeCode !== safeCode) fail('invalid Work Unit integration attention code');
+          const recordedAt = timestamp(
+            entry.recordedAt,
+            'Work Unit integration attention recordedAt',
+          );
+          timestampAtOrAfter(
+            progress?.recordedAt ?? authorizedAt,
+            recordedAt,
+            'Work Unit integration attention',
+          );
+          return {
+            kind: entry.kind as 'conflict' | 'failure',
+            safeCode: safeCode as 'integration_conflict' | 'integration_failure',
+            recordedAt,
+          };
+        })();
+  const success =
+    x.success === undefined
+      ? undefined
+      : (() => {
+          const entry = object(x.success, 'Work Unit integration success');
+          keys(entry, ['recordedAt'], 'Work Unit integration success');
+          const recordedAt = timestamp(
+            entry.recordedAt,
+            'Work Unit integration success recordedAt',
+          );
+          timestampAtOrAfter(
+            progress?.recordedAt ?? authorizedAt,
+            recordedAt,
+            'Work Unit integration success',
+          );
+          return { recordedAt };
+        })();
+  const settlement =
+    x.settlement === undefined
+      ? undefined
+      : (() => {
+          const entry = object(x.settlement, 'Work Unit settlement');
+          keys(entry, ['settledAt'], 'Work Unit settlement');
+          const settledAt = timestamp(entry.settledAt, 'Work Unit settlement settledAt');
+          if (!success) fail('Work Unit settlement requires integration success');
+          timestampAtOrAfter(success.recordedAt, settledAt, 'Work Unit settlement');
+          return { settledAt };
+        })();
+  const prerequisiteContribution =
+    x.prerequisiteContribution === undefined
+      ? undefined
+      : (() => {
+          const entry = object(x.prerequisiteContribution, 'Work Unit prerequisite contribution');
+          keys(entry, ['recordedAt', 'dependentCount'], 'Work Unit prerequisite contribution');
+          if (!Number.isSafeInteger(entry.dependentCount) || (entry.dependentCount as number) < 0)
+            fail('invalid Work Unit prerequisite contribution count');
+          if (!settlement) fail('Work Unit prerequisite contribution requires settlement');
+          const recordedAt = timestamp(
+            entry.recordedAt,
+            'Work Unit prerequisite contribution recordedAt',
+          );
+          timestampAtOrAfter(
+            settlement.settledAt,
+            recordedAt,
+            'Work Unit prerequisite contribution',
+          );
+          return { recordedAt, dependentCount: entry.dependentCount as number };
+        })();
+  if (attention && (success || settlement || prerequisiteContribution))
+    fail('Work Unit integration attention contradicts terminal facts');
+  return {
+    requestedAt,
+    authorizedAt,
+    ...(progress ? { progress } : {}),
+    ...(attention ? { attention } : {}),
+    ...(success ? { success } : {}),
+    ...(settlement ? { settlement } : {}),
+    ...(prerequisiteContribution ? { prerequisiteContribution } : {}),
+  };
 };
 const dependencyActivationIntent = (value: unknown): NativeWorkUnitDependencyActivationIntentV1 => {
   const x = object(value, 'dependency activation intent');
-  keys(x, ['workUnitId', 'materializationId', 'acceptedRevisionId', 'eligibilityState', 'blockedReason', 'eligibilityRecordedAt', 'activationIntendedAt'], 'dependency activation intent');
-  const eligibilityState = x.eligibilityState === 'blocked' || x.eligibilityState === 'eligible'
-    ? x.eligibilityState
-    : fail('invalid dependency eligibility state');
-  const blockedReason = x.blockedReason === undefined ? undefined : string(x.blockedReason, 'blockedReason');
-  const activationIntendedAt = x.activationIntendedAt === undefined ? undefined : timestamp(x.activationIntendedAt, 'activationIntendedAt');
+  keys(
+    x,
+    [
+      'workUnitId',
+      'materializationId',
+      'acceptedRevisionId',
+      'eligibilityState',
+      'blockedReason',
+      'eligibilityRecordedAt',
+      'activationIntendedAt',
+    ],
+    'dependency activation intent',
+  );
+  const eligibilityState =
+    x.eligibilityState === 'blocked' || x.eligibilityState === 'eligible'
+      ? x.eligibilityState
+      : fail('invalid dependency eligibility state');
+  const blockedReason =
+    x.blockedReason === undefined ? undefined : string(x.blockedReason, 'blockedReason');
+  const activationIntendedAt =
+    x.activationIntendedAt === undefined
+      ? undefined
+      : timestamp(x.activationIntendedAt, 'activationIntendedAt');
   if (eligibilityState === 'blocked' && !blockedReason)
     fail('blocked dependency intent requires a reason');
   if (eligibilityState === 'eligible' && blockedReason)
@@ -1619,8 +2169,8 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
     [
       'attemptId',
       'handlerSessionId',
-        'handlerInvocationId',
-        'handlerHarnessRevisionId',
+      'handlerInvocationId',
+      'handlerHarnessRevisionId',
       'eligibilityState',
       'blockedReason',
       'requestedAt',
@@ -2370,7 +2920,11 @@ const workUnitHandlerReview = (value: unknown): NativeWorkUnitHandlerReviewV1 =>
       240,
       'Handler review actionHandlerInvocationId',
     ),
-    reviewInvocationId: boundedString(x.reviewInvocationId, 240, 'Handler review reviewInvocationId'),
+    reviewInvocationId: boundedString(
+      x.reviewInvocationId,
+      240,
+      'Handler review reviewInvocationId',
+    ),
     reviewHarnessRevisionId: boundedString(
       x.reviewHarnessRevisionId,
       240,
@@ -2428,8 +2982,7 @@ const workUnitHandlerReview = (value: unknown): NativeWorkUnitHandlerReviewV1 =>
     'Handler review',
   );
   if (result.semanticJudgment) {
-    if (!result.reviewReadyAt)
-      fail('Handler review judgment requires review readiness');
+    if (!result.reviewReadyAt) fail('Handler review judgment requires review readiness');
     timestampAtOrAfter(
       result.reviewReadyAt,
       result.semanticJudgment.recordedAt,
@@ -2438,7 +2991,11 @@ const workUnitHandlerReview = (value: unknown): NativeWorkUnitHandlerReviewV1 =>
   }
   if (result.lifecycle) {
     if (!result.reviewReadyAt) fail('Handler review lifecycle requires review readiness');
-    timestampAtOrAfter(result.reviewReadyAt, result.lifecycle.observedAt, 'Handler review lifecycle');
+    timestampAtOrAfter(
+      result.reviewReadyAt,
+      result.lifecycle.observedAt,
+      'Handler review lifecycle',
+    );
     if (result.semanticJudgment)
       timestampAtOrAfter(
         result.semanticJudgment.recordedAt,
@@ -2466,8 +3023,10 @@ const workUnitHandlerDecision = (value: unknown): NativeWorkUnitHandlerDecisionV
     ],
     'Work Unit Handler decision',
   );
-  if (x.settlementReadyAt !== undefined) fail('Handler decision has forbidden settlement readiness');
-  if (x.variant !== 'accepted' && x.variant !== 'returned') fail('invalid Handler decision variant');
+  if (x.settlementReadyAt !== undefined)
+    fail('Handler decision has forbidden settlement readiness');
+  if (x.variant !== 'accepted' && x.variant !== 'returned')
+    fail('invalid Handler decision variant');
   const returnReason =
     x.returnReason === undefined
       ? undefined
@@ -2476,7 +3035,11 @@ const workUnitHandlerDecision = (value: unknown): NativeWorkUnitHandlerDecisionV
     x[key] === undefined ? undefined : timestamp(x[key], key);
   const result: NativeWorkUnitHandlerDecisionV1 = {
     attemptId: boundedString(x.attemptId, 240, 'Handler decision attemptId'),
-    reviewInvocationId: boundedString(x.reviewInvocationId, 240, 'Handler decision reviewInvocationId'),
+    reviewInvocationId: boundedString(
+      x.reviewInvocationId,
+      240,
+      'Handler decision reviewInvocationId',
+    ),
     variant: x.variant as 'accepted' | 'returned',
     fingerprint: boundedString(x.fingerprint, 240, 'Handler decision fingerprint'),
     ...(returnReason ? { returnReason } : {}),
@@ -2487,10 +3050,17 @@ const workUnitHandlerDecision = (value: unknown): NativeWorkUnitHandlerDecisionV
     ...(optionalTime('implementationReturnedAt')
       ? { implementationReturnedAt: optionalTime('implementationReturnedAt') }
       : {}),
-    ...(optionalTime('retryRequiredAt') ? { retryRequiredAt: optionalTime('retryRequiredAt') } : {}),
+    ...(optionalTime('retryRequiredAt')
+      ? { retryRequiredAt: optionalTime('retryRequiredAt') }
+      : {}),
   };
   if (result.variant === 'accepted') {
-    if (returnReason || !result.implementationAcceptedAt || result.implementationReturnedAt || result.retryRequiredAt)
+    if (
+      returnReason ||
+      !result.implementationAcceptedAt ||
+      result.implementationReturnedAt ||
+      result.retryRequiredAt
+    )
       fail('accepted Handler decision facts contradict their variant');
   } else if (!returnReason || !result.implementationReturnedAt || result.implementationAcceptedAt) {
     fail('returned Handler decision facts contradict their variant');
@@ -2499,43 +3069,141 @@ const workUnitHandlerDecision = (value: unknown): NativeWorkUnitHandlerDecisionV
 };
 const workUnitIncompleteDisposition = (value: unknown): NativeWorkUnitIncompleteDispositionV1 => {
   const x = object(value, 'Work Unit incomplete disposition');
-  keys(x, ['attemptId', 'reviewInvocationId', 'decisionFingerprint', 'classification', 'meaningfulProgress', 'recordedAt', 'nextAttemptAuthorizedAt', 'noProgressHandback'], 'Work Unit incomplete disposition');
-  if (!['refinement_needed', 'functional_objective_not_satisfied', 'blocked'].includes(x.classification as string) || typeof x.meaningfulProgress !== 'boolean') fail('invalid Work Unit incomplete disposition');
-  const nextAttemptAuthorizedAt = x.nextAttemptAuthorizedAt === undefined ? undefined : timestamp(x.nextAttemptAuthorizedAt, 'nextAttemptAuthorizedAt');
-  const noProgressHandback = x.noProgressHandback === undefined ? undefined : (() => {
-    const handback = object(x.noProgressHandback, 'no-progress Work Unit handback');
-    keys(handback, ['handbackId', 'sourceAttemptId', 'sourceReviewInvocationId', 'contextFingerprint', 'persistedAt', 'deliveryIntendedAt', 'sprintRunnerReceiverActivatedAt', 'sprintRunnerReceiverDecisionAt', 'sprintRunnerDelivery', 'epicRunnerReceiver'], 'no-progress Work Unit handback');
-    if (handback.sprintRunnerReceiverActivatedAt !== undefined || handback.sprintRunnerReceiverDecisionAt !== undefined) fail('no-progress Work Unit handback has forbidden receiver effects');
-    const persistedAt = timestamp(handback.persistedAt, 'persistedAt');
-    const deliveryIntendedAt = timestamp(handback.deliveryIntendedAt, 'deliveryIntendedAt');
-    if (Date.parse(deliveryIntendedAt) < Date.parse(persistedAt))
-      fail('no-progress handback delivery intent precedes persistence');
-    const sprintRunnerDelivery =
-      handback.sprintRunnerDelivery === undefined
-        ? undefined
-        : sprintRunnerHandbackDelivery(handback.sprintRunnerDelivery);
-    const epicRunnerReceiver = handback.epicRunnerReceiver === undefined ? undefined : epicEscalationReceiver(handback.epicRunnerReceiver);
-    if (sprintRunnerDelivery && Date.parse(sprintRunnerDelivery.deliveryRequestedAt) < Date.parse(deliveryIntendedAt))
-      fail('Sprint Runner delivery request precedes delivery intent');
-    return {
-      handbackId: boundedString(handback.handbackId, 240, 'handbackId'),
-      sourceAttemptId: boundedString(handback.sourceAttemptId, 240, 'sourceAttemptId'),
-      sourceReviewInvocationId: boundedString(handback.sourceReviewInvocationId, 240, 'sourceReviewInvocationId'),
-      contextFingerprint: boundedString(handback.contextFingerprint, 240, 'contextFingerprint'),
-      persistedAt,
-      deliveryIntendedAt,
-      ...(sprintRunnerDelivery ? { sprintRunnerDelivery } : {}),
-      ...(epicRunnerReceiver ? { epicRunnerReceiver } : {}),
-    };
-  })();
-  if (x.meaningfulProgress ? !nextAttemptAuthorizedAt || noProgressHandback : nextAttemptAuthorizedAt !== undefined || !noProgressHandback) fail('incomplete disposition has incoherent later effects');
-  return { attemptId: boundedString(x.attemptId, 240, 'incomplete disposition attemptId'), reviewInvocationId: boundedString(x.reviewInvocationId, 240, 'incomplete disposition reviewInvocationId'), decisionFingerprint: boundedString(x.decisionFingerprint, 240, 'incomplete disposition decisionFingerprint'), classification: x.classification as NativeWorkUnitIncompleteDispositionV1['classification'], meaningfulProgress: x.meaningfulProgress as boolean, recordedAt: timestamp(x.recordedAt, 'incomplete disposition recordedAt'), ...(nextAttemptAuthorizedAt ? { nextAttemptAuthorizedAt } : {}), ...(noProgressHandback ? { noProgressHandback } : {}) };
+  keys(
+    x,
+    [
+      'attemptId',
+      'reviewInvocationId',
+      'decisionFingerprint',
+      'classification',
+      'meaningfulProgress',
+      'recordedAt',
+      'nextAttemptAuthorizedAt',
+      'noProgressHandback',
+    ],
+    'Work Unit incomplete disposition',
+  );
+  if (
+    !['refinement_needed', 'functional_objective_not_satisfied', 'blocked'].includes(
+      x.classification as string,
+    ) ||
+    typeof x.meaningfulProgress !== 'boolean'
+  )
+    fail('invalid Work Unit incomplete disposition');
+  const nextAttemptAuthorizedAt =
+    x.nextAttemptAuthorizedAt === undefined
+      ? undefined
+      : timestamp(x.nextAttemptAuthorizedAt, 'nextAttemptAuthorizedAt');
+  const noProgressHandback =
+    x.noProgressHandback === undefined
+      ? undefined
+      : (() => {
+          const handback = object(x.noProgressHandback, 'no-progress Work Unit handback');
+          keys(
+            handback,
+            [
+              'handbackId',
+              'sourceAttemptId',
+              'sourceReviewInvocationId',
+              'contextFingerprint',
+              'persistedAt',
+              'deliveryIntendedAt',
+              'sprintRunnerReceiverActivatedAt',
+              'sprintRunnerReceiverDecisionAt',
+              'sprintRunnerDelivery',
+              'epicRunnerReceiver',
+            ],
+            'no-progress Work Unit handback',
+          );
+          if (
+            handback.sprintRunnerReceiverActivatedAt !== undefined ||
+            handback.sprintRunnerReceiverDecisionAt !== undefined
+          )
+            fail('no-progress Work Unit handback has forbidden receiver effects');
+          const persistedAt = timestamp(handback.persistedAt, 'persistedAt');
+          const deliveryIntendedAt = timestamp(handback.deliveryIntendedAt, 'deliveryIntendedAt');
+          if (Date.parse(deliveryIntendedAt) < Date.parse(persistedAt))
+            fail('no-progress handback delivery intent precedes persistence');
+          const sprintRunnerDelivery =
+            handback.sprintRunnerDelivery === undefined
+              ? undefined
+              : sprintRunnerHandbackDelivery(handback.sprintRunnerDelivery);
+          const epicRunnerReceiver =
+            handback.epicRunnerReceiver === undefined
+              ? undefined
+              : epicEscalationReceiver(handback.epicRunnerReceiver);
+          if (
+            sprintRunnerDelivery &&
+            Date.parse(sprintRunnerDelivery.deliveryRequestedAt) < Date.parse(deliveryIntendedAt)
+          )
+            fail('Sprint Runner delivery request precedes delivery intent');
+          return {
+            handbackId: boundedString(handback.handbackId, 240, 'handbackId'),
+            sourceAttemptId: boundedString(handback.sourceAttemptId, 240, 'sourceAttemptId'),
+            sourceReviewInvocationId: boundedString(
+              handback.sourceReviewInvocationId,
+              240,
+              'sourceReviewInvocationId',
+            ),
+            contextFingerprint: boundedString(
+              handback.contextFingerprint,
+              240,
+              'contextFingerprint',
+            ),
+            persistedAt,
+            deliveryIntendedAt,
+            ...(sprintRunnerDelivery ? { sprintRunnerDelivery } : {}),
+            ...(epicRunnerReceiver ? { epicRunnerReceiver } : {}),
+          };
+        })();
+  if (
+    x.meaningfulProgress
+      ? !nextAttemptAuthorizedAt || noProgressHandback
+      : nextAttemptAuthorizedAt !== undefined || !noProgressHandback
+  )
+    fail('incomplete disposition has incoherent later effects');
+  return {
+    attemptId: boundedString(x.attemptId, 240, 'incomplete disposition attemptId'),
+    reviewInvocationId: boundedString(
+      x.reviewInvocationId,
+      240,
+      'incomplete disposition reviewInvocationId',
+    ),
+    decisionFingerprint: boundedString(
+      x.decisionFingerprint,
+      240,
+      'incomplete disposition decisionFingerprint',
+    ),
+    classification: x.classification as NativeWorkUnitIncompleteDispositionV1['classification'],
+    meaningfulProgress: x.meaningfulProgress as boolean,
+    recordedAt: timestamp(x.recordedAt, 'incomplete disposition recordedAt'),
+    ...(nextAttemptAuthorizedAt ? { nextAttemptAuthorizedAt } : {}),
+    ...(noProgressHandback ? { noProgressHandback } : {}),
+  };
 };
 
 const epicEscalationReceiver = (value: unknown): NativeEpicEscalationReceiverV1 => {
   const x = object(value, 'Epic escalation receiver');
-  keys(x, ['sprintId', 'epicId', 'deliveryRequestedAt', 'deliveryPersistedAt', 'harnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt', 'providerActivationObservedAt', 'reassessmentLifecycleStatus', 'reassessmentLifecycleObservedAt', 'semanticReassessmentRecordedAt', 'disposition'], 'Epic escalation receiver');
-  const time = (key: string) => x[key] === undefined ? undefined : timestamp(x[key], `Epic receiver ${key}`);
+  keys(
+    x,
+    [
+      'sprintId',
+      'epicId',
+      'deliveryRequestedAt',
+      'deliveryPersistedAt',
+      'harnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+      'providerActivationObservedAt',
+      'reassessmentLifecycleStatus',
+      'reassessmentLifecycleObservedAt',
+      'semanticReassessmentRecordedAt',
+      'disposition',
+    ],
+    'Epic escalation receiver',
+  );
+  const time = (key: string) =>
+    x[key] === undefined ? undefined : timestamp(x[key], `Epic receiver ${key}`);
   const deliveryRequestedAt = timestamp(x.deliveryRequestedAt, 'Epic receiver deliveryRequestedAt');
   const deliveryPersistedAt = time('deliveryPersistedAt');
   const harnessBoundAt = time('harnessBoundAt');
@@ -2543,35 +3211,155 @@ const epicEscalationReceiver = (value: unknown): NativeEpicEscalationReceiverV1 
   const launchAcceptedAt = time('launchAcceptedAt');
   const providerActivationObservedAt = time('providerActivationObservedAt');
   const semanticReassessmentRecordedAt = time('semanticReassessmentRecordedAt');
-  phaseCoherence({ deliveryRequestedAt, deliveryPersistedAt, harnessBoundAt, launchRequestedAt, launchAcceptedAt }, ['deliveryRequestedAt', 'deliveryPersistedAt', 'harnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt'], 'Epic escalation receiver');
-  if ((providerActivationObservedAt || semanticReassessmentRecordedAt) && !launchAcceptedAt) fail('Epic receiver later observation lacks launch acceptance');
-  if (semanticReassessmentRecordedAt && x.disposition === undefined) { /* reassessment may end without a semantic disposition */ }
-  const disposition = x.disposition === undefined ? undefined : epicEscalationDisposition(x.disposition);
-  if (disposition && !semanticReassessmentRecordedAt) fail('Epic disposition lacks semantic reassessment');
-  return { sprintId: boundedString(x.sprintId, 240, 'Epic receiver sprintId'), epicId: boundedString(x.epicId, 240, 'Epic receiver epicId'), deliveryRequestedAt, ...(deliveryPersistedAt ? { deliveryPersistedAt } : {}), ...(harnessBoundAt ? { harnessBoundAt } : {}), ...(launchRequestedAt ? { launchRequestedAt } : {}), ...(launchAcceptedAt ? { launchAcceptedAt } : {}), ...(providerActivationObservedAt ? { providerActivationObservedAt } : {}), ...(x.reassessmentLifecycleStatus === undefined ? {} : { reassessmentLifecycleStatus: boundedString(x.reassessmentLifecycleStatus, 96, 'Epic receiver lifecycle status') }), ...(x.reassessmentLifecycleObservedAt === undefined ? {} : { reassessmentLifecycleObservedAt: timestamp(x.reassessmentLifecycleObservedAt, 'Epic receiver lifecycle observedAt') }), ...(semanticReassessmentRecordedAt ? { semanticReassessmentRecordedAt } : {}), ...(disposition ? { disposition } : {}) };
+  phaseCoherence(
+    {
+      deliveryRequestedAt,
+      deliveryPersistedAt,
+      harnessBoundAt,
+      launchRequestedAt,
+      launchAcceptedAt,
+    },
+    [
+      'deliveryRequestedAt',
+      'deliveryPersistedAt',
+      'harnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+    ],
+    'Epic escalation receiver',
+  );
+  if ((providerActivationObservedAt || semanticReassessmentRecordedAt) && !launchAcceptedAt)
+    fail('Epic receiver later observation lacks launch acceptance');
+  if (semanticReassessmentRecordedAt && x.disposition === undefined) {
+    /* reassessment may end without a semantic disposition */
+  }
+  const disposition =
+    x.disposition === undefined ? undefined : epicEscalationDisposition(x.disposition);
+  if (disposition && !semanticReassessmentRecordedAt)
+    fail('Epic disposition lacks semantic reassessment');
+  return {
+    sprintId: boundedString(x.sprintId, 240, 'Epic receiver sprintId'),
+    epicId: boundedString(x.epicId, 240, 'Epic receiver epicId'),
+    deliveryRequestedAt,
+    ...(deliveryPersistedAt ? { deliveryPersistedAt } : {}),
+    ...(harnessBoundAt ? { harnessBoundAt } : {}),
+    ...(launchRequestedAt ? { launchRequestedAt } : {}),
+    ...(launchAcceptedAt ? { launchAcceptedAt } : {}),
+    ...(providerActivationObservedAt ? { providerActivationObservedAt } : {}),
+    ...(x.reassessmentLifecycleStatus === undefined
+      ? {}
+      : {
+          reassessmentLifecycleStatus: boundedString(
+            x.reassessmentLifecycleStatus,
+            96,
+            'Epic receiver lifecycle status',
+          ),
+        }),
+    ...(x.reassessmentLifecycleObservedAt === undefined
+      ? {}
+      : {
+          reassessmentLifecycleObservedAt: timestamp(
+            x.reassessmentLifecycleObservedAt,
+            'Epic receiver lifecycle observedAt',
+          ),
+        }),
+    ...(semanticReassessmentRecordedAt ? { semanticReassessmentRecordedAt } : {}),
+    ...(disposition ? { disposition } : {}),
+  };
 };
 
 const epicEscalationDisposition = (value: unknown): ProductEpicEscalationDispositionV1 => {
   const x = object(value, 'Epic escalation disposition');
-  keys(x, ['movementKind', 'rationale', 'consideredIntent', 'downstreamRequest', 'humanExternalAttention'], 'Epic escalation disposition');
+  keys(
+    x,
+    [
+      'movementKind',
+      'rationale',
+      'consideredIntent',
+      'downstreamRequest',
+      'humanExternalAttention',
+    ],
+    'Epic escalation disposition',
+  );
   const movementKind = boundedString(x.movementKind, 96, 'Epic disposition movementKind');
   if (!/^[A-Za-z0-9_.-]+$/.test(movementKind)) fail('invalid Epic disposition movementKind');
   const rationale = boundedString(x.rationale, 20_000, 'Epic disposition rationale');
-  const downstreamRequest = x.downstreamRequest === undefined ? undefined : (() => {
-    const request = object(x.downstreamRequest, 'Epic downstream request');
-    keys(request, ['target', 'dependency', 'request', 'resumptionPath'], 'Epic downstream request');
-    if (!['sprint_runner', 'existing_agent_achievable_dependency'].includes(request.target as string)) fail('invalid Epic downstream target');
-    if (request.target === 'existing_agent_achievable_dependency' && request.dependency !== 'work_unit_handler') fail('invalid Epic known dependency');
-    if (request.target === 'sprint_runner' && request.dependency !== undefined) fail('Sprint Runner request has dependency detail');
-    return { target: request.target as 'sprint_runner' | 'existing_agent_achievable_dependency', ...(request.dependency === undefined ? {} : { dependency: 'work_unit_handler' as const }), request: boundedString(request.request, 20_000, 'Epic downstream request text'), resumptionPath: boundedString(request.resumptionPath, 20_000, 'Epic downstream resumption path') };
-  })();
-  const humanExternalAttention = x.humanExternalAttention === undefined ? undefined : (() => {
-    const attention = object(x.humanExternalAttention, 'Epic human/external attention');
-    keys(attention, ['reason', 'authorityNeeded', 'evidenceContext', 'resumptionPath'], 'Epic human/external attention');
-    return { reason: boundedString(attention.reason, 20_000, 'Epic attention reason'), authorityNeeded: boundedString(attention.authorityNeeded, 20_000, 'Epic attention authority'), evidenceContext: boundedString(attention.evidenceContext, 20_000, 'Epic attention evidence'), resumptionPath: boundedString(attention.resumptionPath, 20_000, 'Epic attention resumption path') };
-  })();
-  if (downstreamRequest && humanExternalAttention) fail('Epic disposition mixes downstream request and attention');
-  return { movementKind, rationale, ...(x.consideredIntent === undefined ? {} : { consideredIntent: boundedString(x.consideredIntent, 20_000, 'Epic considered intent') }), ...(downstreamRequest ? { downstreamRequest } : {}), ...(humanExternalAttention ? { humanExternalAttention } : {}) };
+  const downstreamRequest =
+    x.downstreamRequest === undefined
+      ? undefined
+      : (() => {
+          const request = object(x.downstreamRequest, 'Epic downstream request');
+          keys(
+            request,
+            ['target', 'dependency', 'request', 'resumptionPath'],
+            'Epic downstream request',
+          );
+          if (
+            !['sprint_runner', 'existing_agent_achievable_dependency'].includes(
+              request.target as string,
+            )
+          )
+            fail('invalid Epic downstream target');
+          if (
+            request.target === 'existing_agent_achievable_dependency' &&
+            request.dependency !== 'work_unit_handler'
+          )
+            fail('invalid Epic known dependency');
+          if (request.target === 'sprint_runner' && request.dependency !== undefined)
+            fail('Sprint Runner request has dependency detail');
+          return {
+            target: request.target as 'sprint_runner' | 'existing_agent_achievable_dependency',
+            ...(request.dependency === undefined
+              ? {}
+              : { dependency: 'work_unit_handler' as const }),
+            request: boundedString(request.request, 20_000, 'Epic downstream request text'),
+            resumptionPath: boundedString(
+              request.resumptionPath,
+              20_000,
+              'Epic downstream resumption path',
+            ),
+          };
+        })();
+  const humanExternalAttention =
+    x.humanExternalAttention === undefined
+      ? undefined
+      : (() => {
+          const attention = object(x.humanExternalAttention, 'Epic human/external attention');
+          keys(
+            attention,
+            ['reason', 'authorityNeeded', 'evidenceContext', 'resumptionPath'],
+            'Epic human/external attention',
+          );
+          return {
+            reason: boundedString(attention.reason, 20_000, 'Epic attention reason'),
+            authorityNeeded: boundedString(
+              attention.authorityNeeded,
+              20_000,
+              'Epic attention authority',
+            ),
+            evidenceContext: boundedString(
+              attention.evidenceContext,
+              20_000,
+              'Epic attention evidence',
+            ),
+            resumptionPath: boundedString(
+              attention.resumptionPath,
+              20_000,
+              'Epic attention resumption path',
+            ),
+          };
+        })();
+  if (downstreamRequest && humanExternalAttention)
+    fail('Epic disposition mixes downstream request and attention');
+  return {
+    movementKind,
+    rationale,
+    ...(x.consideredIntent === undefined
+      ? {}
+      : { consideredIntent: boundedString(x.consideredIntent, 20_000, 'Epic considered intent') }),
+    ...(downstreamRequest ? { downstreamRequest } : {}),
+    ...(humanExternalAttention ? { humanExternalAttention } : {}),
+  };
 };
 
 const sprintRunnerHandbackMovement = (value: unknown): ProductSprintRunnerHandbackMovementV1 => {
@@ -2592,44 +3380,108 @@ const sprintRunnerHandbackMovement = (value: unknown): ProductSprintRunnerHandba
     'Sprint Runner Handback movement',
   );
   const movementKind = string(x.movementKind, 'Handback movementKind');
-  if (!/^[A-Za-z0-9_.-]+$/.test(movementKind) || movementKind.length > 96) fail('invalid Handback movementKind');
+  if (!/^[A-Za-z0-9_.-]+$/.test(movementKind) || movementKind.length > 96)
+    fail('invalid Handback movementKind');
   const rationale = boundedString(x.rationale, 20_000, 'Handback rationale');
-  const boundedDetails = x.boundedDetails === undefined ? undefined : array(x.boundedDetails, 'boundedDetails').map((detail, index): ProductSprintRunnerHandbackBoundedDetailV1 => {
-    const item = object(detail, `boundedDetails[${index}]`);
-    keys(item, ['label', 'value'], `boundedDetails[${index}]`);
-    const label = boundedString(item.label, 96, `boundedDetails[${index}].label`);
-    if (!['eligibleWorkSummary', 'dependencyOwner', 'dependencyOwnerClassification', 'enablingResult', 'resumptionPath', 'localExhaustionSummary'].includes(label)) fail('invalid bounded Handback detail label');
-    return { label, value: boundedString(item.value, 20_000, `boundedDetails[${index}].value`) };
-  });
-  if (boundedDetails && new Set(boundedDetails.map((detail) => detail.label)).size !== boundedDetails.length)
+  const boundedDetails =
+    x.boundedDetails === undefined
+      ? undefined
+      : array(x.boundedDetails, 'boundedDetails').map(
+          (detail, index): ProductSprintRunnerHandbackBoundedDetailV1 => {
+            const item = object(detail, `boundedDetails[${index}]`);
+            keys(item, ['label', 'value'], `boundedDetails[${index}]`);
+            const label = boundedString(item.label, 96, `boundedDetails[${index}].label`);
+            if (
+              ![
+                'eligibleWorkSummary',
+                'dependencyOwner',
+                'dependencyOwnerClassification',
+                'enablingResult',
+                'resumptionPath',
+                'localExhaustionSummary',
+              ].includes(label)
+            )
+              fail('invalid bounded Handback detail label');
+            return {
+              label,
+              value: boundedString(item.value, 20_000, `boundedDetails[${index}].value`),
+            };
+          },
+        );
+  if (
+    boundedDetails &&
+    new Set(boundedDetails.map((detail) => detail.label)).size !== boundedDetails.length
+  )
     fail('duplicate bounded Handback detail label');
   if (movementKind === 'continue_eligible_work') {
-    if (x.dependencyOwner !== undefined || x.dependencyOwnerClassification !== undefined || x.enablingResult !== undefined || x.resumptionPath !== undefined || x.localExhaustionSummary !== undefined || boundedDetails !== undefined)
+    if (
+      x.dependencyOwner !== undefined ||
+      x.dependencyOwnerClassification !== undefined ||
+      x.enablingResult !== undefined ||
+      x.resumptionPath !== undefined ||
+      x.localExhaustionSummary !== undefined ||
+      boundedDetails !== undefined
+    )
       fail('alternate Handback movement has contradictory detail');
-    return { movementKind, rationale, eligibleWorkSummary: boundedString(x.eligibleWorkSummary, 4000, 'eligibleWorkSummary') };
+    return {
+      movementKind,
+      rationale,
+      eligibleWorkSummary: boundedString(x.eligibleWorkSummary, 4000, 'eligibleWorkSummary'),
+    };
   }
   if (movementKind === 'wait_for_agent_dependency') {
     const classification = string(x.dependencyOwnerClassification, 'dependencyOwnerClassification');
-    if (!['work_unit_handler', 'work_unit_implementer', 'work_slice_planner', 'sprint_runner'].includes(classification))
+    if (
+      ![
+        'work_unit_handler',
+        'work_unit_implementer',
+        'work_slice_planner',
+        'sprint_runner',
+      ].includes(classification)
+    )
       fail('invalid dependencyOwnerClassification');
     const owner = boundedString(x.dependencyOwner, 4000, 'dependencyOwner');
-    if (['human', 'external', 'approval', 'manual', 'user'].some((term) => owner.toLowerCase().includes(term)))
+    if (
+      ['human', 'external', 'approval', 'manual', 'user'].some((term) =>
+        owner.toLowerCase().includes(term),
+      )
+    )
       fail('dependency owner is outside the agent-achievable boundary');
-    if (x.eligibleWorkSummary !== undefined || x.localExhaustionSummary !== undefined || boundedDetails !== undefined)
+    if (
+      x.eligibleWorkSummary !== undefined ||
+      x.localExhaustionSummary !== undefined ||
+      boundedDetails !== undefined
+    )
       fail('dependency Handback movement has contradictory detail');
     return {
       movementKind,
       rationale,
       dependencyOwner: owner,
-      dependencyOwnerClassification: classification as ProductSprintRunnerHandbackDependencyOwnerClassificationV1,
+      dependencyOwnerClassification:
+        classification as ProductSprintRunnerHandbackDependencyOwnerClassificationV1,
       enablingResult: boundedString(x.enablingResult, 4000, 'enablingResult'),
       resumptionPath: boundedString(x.resumptionPath, 4000, 'resumptionPath'),
     };
   }
   if (movementKind === 'local_exhaustion_escalate') {
-    if (x.eligibleWorkSummary !== undefined || x.dependencyOwner !== undefined || x.dependencyOwnerClassification !== undefined || x.enablingResult !== undefined || x.resumptionPath !== undefined || boundedDetails !== undefined)
+    if (
+      x.eligibleWorkSummary !== undefined ||
+      x.dependencyOwner !== undefined ||
+      x.dependencyOwnerClassification !== undefined ||
+      x.enablingResult !== undefined ||
+      x.resumptionPath !== undefined ||
+      boundedDetails !== undefined
+    )
       fail('local exhaustion Handback movement has contradictory detail');
-    return { movementKind, rationale, localExhaustionSummary: boundedString(x.localExhaustionSummary, 4000, 'localExhaustionSummary') };
+    return {
+      movementKind,
+      rationale,
+      localExhaustionSummary: boundedString(
+        x.localExhaustionSummary,
+        4000,
+        'localExhaustionSummary',
+      ),
+    };
   }
   const rawDetailValues = [
     ['eligibleWorkSummary', x.eligibleWorkSummary],
@@ -2639,11 +3491,21 @@ const sprintRunnerHandbackMovement = (value: unknown): ProductSprintRunnerHandba
     ['resumptionPath', x.resumptionPath],
     ['localExhaustionSummary', x.localExhaustionSummary],
   ].filter(([, value]) => value !== undefined);
-  if (x.dependencyOwnerClassification !== undefined && !['work_unit_handler', 'work_unit_implementer', 'work_slice_planner', 'sprint_runner'].includes(string(x.dependencyOwnerClassification, 'dependencyOwnerClassification')))
+  if (
+    x.dependencyOwnerClassification !== undefined &&
+    !['work_unit_handler', 'work_unit_implementer', 'work_slice_planner', 'sprint_runner'].includes(
+      string(x.dependencyOwnerClassification, 'dependencyOwnerClassification'),
+    )
+  )
     fail('invalid bounded Handback detail classification');
   if (boundedDetails !== undefined && rawDetailValues.length > 0)
     fail('bounded Handback movement mixes projected and persisted detail shapes');
-  const projectedDetails = boundedDetails ?? rawDetailValues.map(([label, value]) => ({ label: label as string, value: boundedString(value, 20_000, label as string) }));
+  const projectedDetails =
+    boundedDetails ??
+    rawDetailValues.map(([label, value]) => ({
+      label: label as string,
+      value: boundedString(value, 20_000, label as string),
+    }));
   return {
     movementKind: movementKind as ProductSprintRunnerHandbackUnknownMovementKindV1,
     rationale,
@@ -2653,9 +3515,25 @@ const sprintRunnerHandbackMovement = (value: unknown): ProductSprintRunnerHandba
 
 const sprintRunnerHandbackDelivery = (value: unknown): ProductSprintRunnerHandbackDeliveryV1 => {
   const x = object(value, 'Sprint Runner Handback delivery');
-  keys(x, ['deliveryRequestedAt', 'deliveryPersistedAt', 'harnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt', 'providerActivationObservedAt', 'semanticReassessmentRecordedAt', 'selectedMovementKind', 'selectedMovement', 'escalationIntentRecordedAt', 'escalationDeliveryRequestedAt'], 'Sprint Runner Handback delivery');
+  keys(
+    x,
+    [
+      'deliveryRequestedAt',
+      'deliveryPersistedAt',
+      'harnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+      'providerActivationObservedAt',
+      'semanticReassessmentRecordedAt',
+      'selectedMovementKind',
+      'selectedMovement',
+      'escalationIntentRecordedAt',
+      'escalationDeliveryRequestedAt',
+    ],
+    'Sprint Runner Handback delivery',
+  );
   const deliveryRequestedAt = timestamp(x.deliveryRequestedAt, 'deliveryRequestedAt');
-  const optionalTime = (key: string) => x[key] === undefined ? undefined : timestamp(x[key], key);
+  const optionalTime = (key: string) => (x[key] === undefined ? undefined : timestamp(x[key], key));
   const deliveryPersistedAt = optionalTime('deliveryPersistedAt');
   const harnessBoundAt = optionalTime('harnessBoundAt');
   const launchRequestedAt = optionalTime('launchRequestedAt');
@@ -2664,17 +3542,45 @@ const sprintRunnerHandbackDelivery = (value: unknown): ProductSprintRunnerHandba
   const semanticReassessmentRecordedAt = optionalTime('semanticReassessmentRecordedAt');
   const escalationIntentRecordedAt = optionalTime('escalationIntentRecordedAt');
   const escalationDeliveryRequestedAt = optionalTime('escalationDeliveryRequestedAt');
-  phaseCoherence({ deliveryRequestedAt, deliveryPersistedAt, harnessBoundAt, launchRequestedAt, launchAcceptedAt }, ['deliveryRequestedAt', 'deliveryPersistedAt', 'harnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt'], 'Sprint Runner Handback delivery');
+  phaseCoherence(
+    {
+      deliveryRequestedAt,
+      deliveryPersistedAt,
+      harnessBoundAt,
+      launchRequestedAt,
+      launchAcceptedAt,
+    },
+    [
+      'deliveryRequestedAt',
+      'deliveryPersistedAt',
+      'harnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+    ],
+    'Sprint Runner Handback delivery',
+  );
   if (providerActivationObservedAt) {
     if (!launchAcceptedAt) fail('Handback provider observation lacks launch acceptance');
-    timestampAtOrAfter(launchAcceptedAt, providerActivationObservedAt, 'Handback provider observation');
+    timestampAtOrAfter(
+      launchAcceptedAt,
+      providerActivationObservedAt,
+      'Handback provider observation',
+    );
   }
   if (semanticReassessmentRecordedAt) {
     if (!launchAcceptedAt) fail('Handback reassessment lacks launch acceptance');
-    timestampAtOrAfter(launchAcceptedAt, semanticReassessmentRecordedAt, 'Handback semantic reassessment');
+    timestampAtOrAfter(
+      launchAcceptedAt,
+      semanticReassessmentRecordedAt,
+      'Handback semantic reassessment',
+    );
   }
-  const selectedMovement = x.selectedMovement === undefined ? undefined : sprintRunnerHandbackMovement(x.selectedMovement);
-  const selectedMovementKind = x.selectedMovementKind === undefined ? undefined : boundedString(x.selectedMovementKind, 96, 'selectedMovementKind');
+  const selectedMovement =
+    x.selectedMovement === undefined ? undefined : sprintRunnerHandbackMovement(x.selectedMovement);
+  const selectedMovementKind =
+    x.selectedMovementKind === undefined
+      ? undefined
+      : boundedString(x.selectedMovementKind, 96, 'selectedMovementKind');
   if ((selectedMovementKind === undefined) !== (selectedMovement === undefined))
     fail('selected Handback movement kind and detail must be paired');
   if (selectedMovement && selectedMovementKind !== selectedMovement.movementKind)
@@ -2688,10 +3594,22 @@ const sprintRunnerHandbackDelivery = (value: unknown): ProductSprintRunnerHandba
       fail('escalation delivery lacks selected local exhaustion movement');
     if (!semanticReassessmentRecordedAt) fail('escalation intent lacks semantic reassessment');
     if (!escalationIntentRecordedAt) fail('escalation delivery request lacks recorded intent');
-    timestampAtOrAfter(semanticReassessmentRecordedAt, escalationIntentRecordedAt, 'Handback escalation intent');
+    timestampAtOrAfter(
+      semanticReassessmentRecordedAt,
+      escalationIntentRecordedAt,
+      'Handback escalation intent',
+    );
     if (escalationDeliveryRequestedAt) {
-      timestampAtOrAfter(escalationIntentRecordedAt, escalationDeliveryRequestedAt, 'Handback escalation delivery');
-      timestampAtOrAfter(semanticReassessmentRecordedAt, escalationDeliveryRequestedAt, 'Handback escalation delivery');
+      timestampAtOrAfter(
+        escalationIntentRecordedAt,
+        escalationDeliveryRequestedAt,
+        'Handback escalation delivery',
+      );
+      timestampAtOrAfter(
+        semanticReassessmentRecordedAt,
+        escalationDeliveryRequestedAt,
+        'Handback escalation delivery',
+      );
     }
   }
   return {
@@ -2985,26 +3903,66 @@ function validate(query: OrchestrationNativeQueryV2) {
     'Work Unit materialization planning point',
   );
   unique(query.workUnits, (x) => x.workUnitId, 'materialized Work Unit ID');
-  unique(query.workUnitExecutionStates, (x) => x.workUnitId, 'Work Unit execution state Work Unit ID');
-  unique(query.workSliceExecutionGraphCompletions, (x) => x.materializationId, 'Work Slice graph completion materialization ID');
-  unique(query.workSliceExecutionSettlements, (x) => x.materializationId, 'Work Slice execution settlement materialization ID');
-  unique(query.workSlicePlanningPointExecutionSettlements, (x) => x.planningPointId, 'Work Slice planning-point execution settlement planning point ID');
-  unique(query.workSliceExecutionAttentions, (x) => x.materializationId, 'Work Slice execution attention materialization ID');
+  unique(
+    query.workUnitExecutionStates,
+    (x) => x.workUnitId,
+    'Work Unit execution state Work Unit ID',
+  );
+  unique(
+    query.workSliceExecutionGraphCompletions,
+    (x) => x.materializationId,
+    'Work Slice graph completion materialization ID',
+  );
+  unique(
+    query.workSliceExecutionSettlements,
+    (x) => x.materializationId,
+    'Work Slice execution settlement materialization ID',
+  );
+  unique(
+    query.workSlicePlanningPointExecutionSettlements,
+    (x) => x.planningPointId,
+    'Work Slice planning-point execution settlement planning point ID',
+  );
+  unique(
+    query.workSliceExecutionAttentions,
+    (x) => x.materializationId,
+    'Work Slice execution attention materialization ID',
+  );
   unique(query.workUnitRelationships, (x) => x.relationshipId, 'Work Unit relationship ID');
-  unique(query.dependencyActivationIntents, (x) => x.workUnitId, 'dependency activation intent Work Unit ID');
+  unique(
+    query.dependencyActivationIntents,
+    (x) => x.workUnitId,
+    'dependency activation intent Work Unit ID',
+  );
   const materializations = new Map(
     query.workUnitMaterializations.map((x) => [x.materializationId, x]),
   );
   const unitsById = new Map(query.workUnits.map((unit) => [unit.workUnitId, unit]));
-  const stateByUnitId = new Map(query.workUnitExecutionStates.map((state) => [state.workUnitId, state]));
-  const completionByMaterializationId = new Map(query.workSliceExecutionGraphCompletions.map((item) => [item.materializationId, item]));
-  const settlementByMaterializationId = new Map(query.workSliceExecutionSettlements.map((item) => [item.materializationId, item]));
-  const attentionByMaterializationId = new Map(query.workSliceExecutionAttentions.map((item) => [item.materializationId, item]));
+  const stateByUnitId = new Map(
+    query.workUnitExecutionStates.map((state) => [state.workUnitId, state]),
+  );
+  const completionByMaterializationId = new Map(
+    query.workSliceExecutionGraphCompletions.map((item) => [item.materializationId, item]),
+  );
+  const settlementByMaterializationId = new Map(
+    query.workSliceExecutionSettlements.map((item) => [item.materializationId, item]),
+  );
+  const attentionByMaterializationId = new Map(
+    query.workSliceExecutionAttentions.map((item) => [item.materializationId, item]),
+  );
   query.dependencyActivationIntents.forEach((intent) => {
     const unit = unitsById.get(intent.workUnitId);
     const materialization = materializations.get(intent.materializationId);
-    if (!unit || !materialization || unit.materializationId !== intent.materializationId || unit.acceptedRevisionId !== intent.acceptedRevisionId || materialization.acceptedRevisionId !== intent.acceptedRevisionId)
-      fail('dependency activation intent has invalid Work Unit/materialization/revision correlation');
+    if (
+      !unit ||
+      !materialization ||
+      unit.materializationId !== intent.materializationId ||
+      unit.acceptedRevisionId !== intent.acceptedRevisionId ||
+      materialization.acceptedRevisionId !== intent.acceptedRevisionId
+    )
+      fail(
+        'dependency activation intent has invalid Work Unit/materialization/revision correlation',
+      );
   });
   query.workUnitMaterializations.forEach((materialization) => {
     if (!query.initiatedEpics.some((epic) => epic.epicId === materialization.epicId))
@@ -3046,18 +4004,55 @@ function validate(query: OrchestrationNativeQueryV2) {
         fail('materialized Work Unit does not match its materialization');
       validateActivationCorrelations(unit);
     });
-    if (query.workUnitExecutionStates.length && units.some((unit) => !stateByUnitId.has(unit.workUnitId))) fail('productive execution state is incomplete');
+    if (
+      query.workUnitExecutionStates.length &&
+      units.some((unit) => !stateByUnitId.has(unit.workUnitId))
+    )
+      fail('productive execution state is incomplete');
     const completion = completionByMaterializationId.get(materialization.materializationId);
     const attention = attentionByMaterializationId.get(materialization.materializationId);
     if (completion) {
-      if (completion.acceptedRevisionId !== materialization.acceptedRevisionId || attention || units.some((unit) => stateByUnitId.get(unit.workUnitId)?.state !== 'settled')) fail('Work Slice graph completion is incoherent');
+      if (
+        completion.acceptedRevisionId !== materialization.acceptedRevisionId ||
+        attention ||
+        units.some((unit) => stateByUnitId.get(unit.workUnitId)?.state !== 'settled')
+      )
+        fail('Work Slice graph completion is incoherent');
       const settlement = settlementByMaterializationId.get(materialization.materializationId);
-      if (settlement && (settlement.graphCompletionMaterializationId !== materialization.materializationId || Date.parse(settlement.settledAt) < Date.parse(completion.completedAt))) fail('Work Slice execution settlement is incoherent');
-    } else if (settlementByMaterializationId.has(materialization.materializationId)) fail('Work Slice execution settlement lacks graph completion');
+      if (
+        settlement &&
+        (settlement.graphCompletionMaterializationId !== materialization.materializationId ||
+          Date.parse(settlement.settledAt) < Date.parse(completion.completedAt))
+      )
+        fail('Work Slice execution settlement is incoherent');
+    } else if (settlementByMaterializationId.has(materialization.materializationId))
+      fail('Work Slice execution settlement lacks graph completion');
   });
-  query.workUnitExecutionStates.forEach((state) => { const unit = unitsById.get(state.workUnitId); if (!unit || unit.materializationId !== state.materializationId || unit.acceptedRevisionId !== state.acceptedRevisionId) fail('Work Unit execution state has invalid correlation'); });
-  query.workSliceExecutionAttentions.forEach((attention) => { if (!materializations.has(attention.materializationId)) fail('Work Slice execution attention references unknown materialization'); });
-  query.workSlicePlanningPointExecutionSettlements.forEach((item) => { const materialization = materializations.get(item.materializationId); const settlement = settlementByMaterializationId.get(item.materializationId); if (!materialization || item.planningPointId !== materialization.planningPointId || item.workSliceExecutionMaterializationId !== item.materializationId || !settlement || Date.parse(item.settledAt) < Date.parse(settlement.settledAt)) fail('Work Slice planning-point execution settlement is incoherent'); });
+  query.workUnitExecutionStates.forEach((state) => {
+    const unit = unitsById.get(state.workUnitId);
+    if (
+      !unit ||
+      unit.materializationId !== state.materializationId ||
+      unit.acceptedRevisionId !== state.acceptedRevisionId
+    )
+      fail('Work Unit execution state has invalid correlation');
+  });
+  query.workSliceExecutionAttentions.forEach((attention) => {
+    if (!materializations.has(attention.materializationId))
+      fail('Work Slice execution attention references unknown materialization');
+  });
+  query.workSlicePlanningPointExecutionSettlements.forEach((item) => {
+    const materialization = materializations.get(item.materializationId);
+    const settlement = settlementByMaterializationId.get(item.materializationId);
+    if (
+      !materialization ||
+      item.planningPointId !== materialization.planningPointId ||
+      item.workSliceExecutionMaterializationId !== item.materializationId ||
+      !settlement ||
+      Date.parse(item.settledAt) < Date.parse(settlement.settledAt)
+    )
+      fail('Work Slice planning-point execution settlement is incoherent');
+  });
   if (query.workUnits.some((unit) => !materializations.has(unit.materializationId)))
     fail('materialized Work Unit references unknown materialization');
   if (query.workUnitRelationships.some((item) => !materializations.has(item.materializationId)))
@@ -3066,92 +4061,229 @@ function validate(query: OrchestrationNativeQueryV2) {
 }
 function validateWorkUnitInspections(query: OrchestrationNativeQueryV2) {
   if (!query.workUnitInspections.length) return;
-  unique(query.workUnitInspections, (entry) => entry.workUnitId, 'Work Unit inspection Work Unit ID');
+  unique(
+    query.workUnitInspections,
+    (entry) => entry.workUnitId,
+    'Work Unit inspection Work Unit ID',
+  );
   if (query.workUnitInspections.length !== query.workUnits.length)
     fail('Work Unit inspection projection is incomplete');
   for (const inspection of query.workUnitInspections) {
-    const unit = query.workUnits.find((candidate) => candidate.workUnitId === inspection.workUnitId);
+    const unit = query.workUnits.find(
+      (candidate) => candidate.workUnitId === inspection.workUnitId,
+    );
     if (!unit || unit.materializationId !== inspection.materializationId)
       fail('Work Unit inspection has foreign Work Unit correlation');
-    const expected = new Map<string, Readonly<{ role: 'handler' | 'implementer'; primaryStage: NativeWorkUnitInspectionV1['activities'][number]['primaryStage']; attemptId: string; agentSessionId: string; invocationId: string }>>();
-    const activityId = (attemptId: string, primaryStage: NativeWorkUnitInspectionV1['activities'][number]['primaryStage'], invocationId: string) =>
+    const expected = new Map<
+      string,
+      Readonly<{
+        role: 'handler' | 'implementer';
+        primaryStage: NativeWorkUnitInspectionV1['activities'][number]['primaryStage'];
+        attemptId: string;
+        agentSessionId: string;
+        invocationId: string;
+      }>
+    >();
+    const activityId = (
+      attemptId: string,
+      primaryStage: NativeWorkUnitInspectionV1['activities'][number]['primaryStage'],
+      invocationId: string,
+    ) =>
       `work-unit-inspection:${unit.workUnitId}:${attemptId}:${primaryStage.replace(/_/g, '-')}:${invocationId}`;
-    const addExpected = (role: 'handler' | 'implementer', primaryStage: NativeWorkUnitInspectionV1['activities'][number]['primaryStage'], attemptId: string, agentSessionId: string, invocationId: string) => {
+    const addExpected = (
+      role: 'handler' | 'implementer',
+      primaryStage: NativeWorkUnitInspectionV1['activities'][number]['primaryStage'],
+      attemptId: string,
+      agentSessionId: string,
+      invocationId: string,
+    ) => {
       const canonicalId = activityId(attemptId, primaryStage, invocationId);
       expected.set(canonicalId, { role, primaryStage, attemptId, agentSessionId, invocationId });
     };
     const handler = unit.handlerActivation;
-    if (handler?.handlerSessionId && handler.handlerInvocationId && handler.handlerInvocationPreparedAt)
-      addExpected('handler', 'handler_activation', handler.attemptId, handler.handlerSessionId, handler.handlerInvocationId);
+    if (
+      handler?.handlerSessionId &&
+      handler.handlerInvocationId &&
+      handler.handlerInvocationPreparedAt
+    )
+      addExpected(
+        'handler',
+        'handler_activation',
+        handler.attemptId,
+        handler.handlerSessionId,
+        handler.handlerInvocationId,
+      );
     const action = unit.actionContinuation;
     if (action?.invocationPreparedAt)
-      addExpected('handler', 'handler_action', action.attemptId, action.handlerSessionId, action.actionInvocationId);
+      addExpected(
+        'handler',
+        'handler_action',
+        action.attemptId,
+        action.handlerSessionId,
+        action.actionInvocationId,
+      );
     const implementer = unit.implementerActivation;
     if (implementer?.implementerSessionCreatedAt && implementer.implementerInvocationPreparedAt)
-      addExpected('implementer', 'implementer_activation', implementer.attemptId, implementer.implementerSessionId, implementer.implementerInvocationId);
+      addExpected(
+        'implementer',
+        'implementer_activation',
+        implementer.attemptId,
+        implementer.implementerSessionId,
+        implementer.implementerInvocationId,
+      );
     unit.retryAttempts.forEach((retry) => {
       if (retry.implementerInvocationPreparedAt)
-        addExpected('implementer', 'implementer_retry', retry.retryAttemptId, retry.implementerSessionId, retry.implementerInvocationId);
+        addExpected(
+          'implementer',
+          'implementer_retry',
+          retry.retryAttemptId,
+          retry.implementerSessionId,
+          retry.implementerInvocationId,
+        );
     });
     unit.attemptHistory.forEach((attempt) => {
       const outcome = attempt.implementerOutcome;
       if (outcome?.reportingPreparedAt)
-        addExpected('implementer', 'implementer_reporting', attempt.attemptId, outcome.implementerSessionId, outcome.reportingInvocationId);
+        addExpected(
+          'implementer',
+          'implementer_reporting',
+          attempt.attemptId,
+          outcome.implementerSessionId,
+          outcome.reportingInvocationId,
+        );
       const review = attempt.handlerReview;
       if (review?.reviewReadyAt)
-        addExpected('handler', 'handler_review', attempt.attemptId, review.handlerSessionId, review.reviewInvocationId);
+        addExpected(
+          'handler',
+          'handler_review',
+          attempt.attemptId,
+          review.handlerSessionId,
+          review.reviewInvocationId,
+        );
     });
     const actual = new Set<string>();
     const byId = new Map(inspection.activities.map((activity) => [activity.activityId, activity]));
     for (const activity of inspection.activities) {
       const expectedActivity = expected.get(activity.activityId);
-      if (!expectedActivity || actual.has(activity.activityId) || expectedActivity.role !== activity.role || expectedActivity.primaryStage !== activity.primaryStage || expectedActivity.attemptId !== activity.attemptId || expectedActivity.agentSessionId !== activity.agentSessionId || expectedActivity.invocationId !== activity.invocationId)
+      if (
+        !expectedActivity ||
+        actual.has(activity.activityId) ||
+        expectedActivity.role !== activity.role ||
+        expectedActivity.primaryStage !== activity.primaryStage ||
+        expectedActivity.attemptId !== activity.attemptId ||
+        expectedActivity.agentSessionId !== activity.agentSessionId ||
+        expectedActivity.invocationId !== activity.invocationId
+      )
         fail('Work Unit inspection activity is foreign, stale, mismatched, or duplicated');
       actual.add(activity.activityId);
-      const needsSummary = activity.primaryStage === 'implementer_reporting' || activity.primaryStage === 'handler_review';
+      const needsSummary =
+        activity.primaryStage === 'implementer_reporting' ||
+        activity.primaryStage === 'handler_review';
       if (needsSummary !== (activity.applicationSummary !== undefined))
         fail('Work Unit inspection application summary is not owned by its exact activity');
       const summary = activity.applicationSummary;
       if (!summary) continue;
-      const attempt = unit.attemptHistory.find((candidate) => candidate.attemptId === activity.attemptId);
+      const attempt = unit.attemptHistory.find(
+        (candidate) => candidate.attemptId === activity.attemptId,
+      );
       if (!attempt) fail('Work Unit inspection summary references an unknown attempt');
-      const expectedEvents = activity.primaryStage === 'implementer_reporting'
-        ? [
-            ...(attempt.implementerOutcome?.submittedOutcome ? ['submission_recorded'] : []),
-            ...(attempt.implementerOutcome?.evidence ? ['file_evidence_recorded'] : []),
-            ...(attempt.implementerOutcome?.semanticCompletion ? ['semantic_completion_recorded'] : []),
-            ...(attempt.implementerOutcome?.terminalLifecycle ? ['terminal_lifecycle_observed'] : []),
-            ...(attempt.implementerOutcome?.applicationAcceptedAt ? ['application_acceptance_recorded'] : []),
-            ...(attempt.implementerOutcome?.handlerReviewReadyAt ? ['handler_review_ready'] : []),
-          ]
-        : [
-            ...(attempt.handlerReview?.deliveryPersistedAt ? ['review_delivery_persisted'] : []),
-            ...(attempt.handlerReview?.semanticJudgment ? ['review_judgment_recorded'] : []),
-            ...(attempt.handlerReview?.lifecycle ? ['review_lifecycle_observed'] : []),
-            ...(attempt.handlerReview?.conflict ? ['review_conflict_recorded'] : []),
-          ];
+      const expectedEvents =
+        activity.primaryStage === 'implementer_reporting'
+          ? [
+              ...(attempt.implementerOutcome?.submittedOutcome ? ['submission_recorded'] : []),
+              ...(attempt.implementerOutcome?.evidence ? ['file_evidence_recorded'] : []),
+              ...(attempt.implementerOutcome?.semanticCompletion
+                ? ['semantic_completion_recorded']
+                : []),
+              ...(attempt.implementerOutcome?.terminalLifecycle
+                ? ['terminal_lifecycle_observed']
+                : []),
+              ...(attempt.implementerOutcome?.applicationAcceptedAt
+                ? ['application_acceptance_recorded']
+                : []),
+              ...(attempt.implementerOutcome?.handlerReviewReadyAt ? ['handler_review_ready'] : []),
+            ]
+          : [
+              ...(attempt.handlerReview?.deliveryPersistedAt ? ['review_delivery_persisted'] : []),
+              ...(attempt.handlerReview?.semanticJudgment ? ['review_judgment_recorded'] : []),
+              ...(attempt.handlerReview?.lifecycle ? ['review_lifecycle_observed'] : []),
+              ...(attempt.handlerReview?.conflict ? ['review_conflict_recorded'] : []),
+            ];
       if (JSON.stringify(summary.applicationEvents) !== JSON.stringify(expectedEvents))
         fail('Work Unit inspection application events are not the exact owned summary');
       if (activity.primaryStage === 'implementer_reporting') {
-        if (summary.peerEvidenceActivityIds.length) fail('Implementer reporting summary has foreign peer evidence');
+        if (summary.peerEvidenceActivityIds.length)
+          fail('Implementer reporting summary has foreign peer evidence');
       } else {
-        if (summary.peerEvidenceActivityIds.length !== 1) fail('Handler review summary lacks exact peer evidence');
+        if (summary.peerEvidenceActivityIds.length !== 1)
+          fail('Handler review summary lacks exact peer evidence');
         const peer = byId.get(summary.peerEvidenceActivityIds[0]!);
-        if (!peer || peer.primaryStage !== 'implementer_reporting' || peer.attemptId !== activity.attemptId || !attempt.implementerOutcome?.evidence)
+        if (
+          !peer ||
+          peer.primaryStage !== 'implementer_reporting' ||
+          peer.attemptId !== activity.attemptId ||
+          !attempt.implementerOutcome?.evidence
+        )
           fail('Handler review summary has foreign peer evidence');
       }
     }
-    if (actual.size !== expected.size) fail('Work Unit inspection projection omits a supported activity');
-    const evidenceOutcome = [...unit.attemptHistory].reverse().find((attempt) => attempt.implementerOutcome?.evidence)?.implementerOutcome;
+    if (actual.size !== expected.size)
+      fail('Work Unit inspection projection omits a supported activity');
+    const evidenceOutcome = [...unit.attemptHistory]
+      .reverse()
+      .find((attempt) => attempt.implementerOutcome?.evidence)?.implementerOutcome;
     if (evidenceOutcome?.evidence) {
-      if (inspection.fileEvidence.status !== 'available') fail('Work Unit inspection hides available file evidence');
+      if (inspection.fileEvidence.status !== 'available')
+        fail('Work Unit inspection hides available file evidence');
       const source = byId.get(inspection.fileEvidence.sourceActivityId);
-      if (!source || source.primaryStage !== 'implementer_reporting' || source.attemptId !== evidenceOutcome.attemptId || source.invocationId !== evidenceOutcome.reportingInvocationId || JSON.stringify(inspection.fileEvidence.changedFiles) !== JSON.stringify(evidenceOutcome.evidence.changedFiles))
+      if (
+        !source ||
+        source.primaryStage !== 'implementer_reporting' ||
+        source.attemptId !== evidenceOutcome.attemptId ||
+        source.invocationId !== evidenceOutcome.reportingInvocationId ||
+        !sameInspectionChangedFiles(
+          inspection.fileEvidence.changedFiles,
+          evidenceOutcome.evidence.changedFiles,
+        )
+      )
         fail('Work Unit inspection file evidence has foreign correlation');
     } else if (inspection.fileEvidence.status !== 'unavailable') {
       fail('Work Unit inspection file evidence is available without application authority');
     }
+    if ('status' in inspection.testEvidence && inspection.testEvidence.status === 'available') {
+      const source = byId.get(inspection.testEvidence.sourceActivityId);
+      if (!source || source.primaryStage !== 'implementer_reporting')
+        fail('Work Unit inspection test evidence has foreign activity correlation');
+    }
   }
+}
+function sameInspectionChangedFiles(
+  inspectionFiles: readonly {
+    readonly evidenceRef: string;
+    readonly displayName: string;
+    readonly changeKind: string;
+    readonly contentFingerprint: string;
+  }[],
+  evidenceFiles: readonly {
+    readonly evidenceRef: string;
+    readonly displayName: string;
+    readonly changeKind: string;
+    readonly contentFingerprint: string;
+  }[],
+) {
+  return (
+    inspectionFiles.length === evidenceFiles.length &&
+    inspectionFiles.every((file, index) => {
+      const evidence = evidenceFiles[index];
+      return (
+        Boolean(evidence) &&
+        file.evidenceRef === evidence.evidenceRef &&
+        file.displayName === evidence.displayName &&
+        file.changeKind === evidence.changeKind &&
+        file.contentFingerprint === evidence.contentFingerprint
+      );
+    })
+  );
 }
 function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
   const handler = unit.handlerActivation;
@@ -3163,7 +4295,11 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
   const retries = unit.retryAttempts;
   if (unit.integration) {
     const terminal = history.at(-1);
-    if (!terminal?.handlerDecision || terminal.handlerDecision.variant !== 'accepted' || terminal.incompleteDisposition)
+    if (
+      !terminal?.handlerDecision ||
+      terminal.handlerDecision.variant !== 'accepted' ||
+      terminal.incompleteDisposition
+    )
       fail('productive integration requires the final attempt to be accepted');
   }
   if (continuation) {
@@ -3221,10 +4357,21 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
       origin.incompleteDisposition === undefined &&
       origin.handlerDecision?.variant === 'returned' &&
       origin.handlerDecision.retryRequiredAt !== undefined;
-    if (!origin || !predecessor || predecessor.attemptId !== origin.attemptId || !originOutcome || retry.ordinal !== origin.ordinal + 1)
+    if (
+      !origin ||
+      !predecessor ||
+      predecessor.attemptId !== origin.attemptId ||
+      !originOutcome ||
+      retry.ordinal !== origin.ordinal + 1
+    )
       fail('retry attempt does not match its exact predecessor history member');
-    if (!legacyOrdinalOne && (!disposition || !disposition.meaningfulProgress || !disposition.nextAttemptAuthorizedAt))
-      fail('retry attempt requires a returned Handler decision or exact meaningful-progress authorization from its predecessor');
+    if (
+      !legacyOrdinalOne &&
+      (!disposition || !disposition.meaningfulProgress || !disposition.nextAttemptAuthorizedAt)
+    )
+      fail(
+        'retry attempt requires a returned Handler decision or exact meaningful-progress authorization from its predecessor',
+      );
     if (
       retry.implementerSessionId === originOutcome.implementerSessionId ||
       retry.implementerInvocationId === originOutcome.originalImplementerInvocationId
@@ -3240,19 +4387,33 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
     phaseCoherence(
       retry,
       [
-        'captureRequestedAt', 'candidatePinnedAt', 'authorizedAt',
-        'executionSupportGrantedAt', 'isolatedWorktreeReadyAt', 'implementerSessionCreatedAt',
-        'implementerInvocationPreparedAt', 'implementerHarnessBoundAt', 'launchRequestedAt',
-        'launchAcceptedAt', 'retryReadyAt',
+        'captureRequestedAt',
+        'candidatePinnedAt',
+        'authorizedAt',
+        'executionSupportGrantedAt',
+        'isolatedWorktreeReadyAt',
+        'implementerSessionCreatedAt',
+        'implementerInvocationPreparedAt',
+        'implementerHarnessBoundAt',
+        'launchRequestedAt',
+        'launchAcceptedAt',
+        'retryReadyAt',
       ],
       'retry Implementer activation',
     );
     if (retry.providerActivationObservedAt) {
-      if (!retry.launchRequestedAt)
-        fail('retry provider observation lacks launch request');
-      timestampAtOrAfter(retry.launchRequestedAt, retry.providerActivationObservedAt, 'retry provider observation');
+      if (!retry.launchRequestedAt) fail('retry provider observation lacks launch request');
+      timestampAtOrAfter(
+        retry.launchRequestedAt,
+        retry.providerActivationObservedAt,
+        'retry provider observation',
+      );
       if (retry.launchAcceptedAt)
-        timestampAtOrAfter(retry.launchAcceptedAt, retry.providerActivationObservedAt, 'retry provider observation');
+        timestampAtOrAfter(
+          retry.launchAcceptedAt,
+          retry.providerActivationObservedAt,
+          'retry provider observation',
+        );
     }
     if (retry.retryReadyAt && !retry.launchAcceptedAt)
       fail('retry readiness lacks launch acceptance');
@@ -3264,7 +4425,8 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
     if (
       retryHistory?.implementerOutcome &&
       (retryHistory.implementerOutcome.implementerSessionId !== retry.implementerSessionId ||
-        retryHistory.implementerOutcome.originalImplementerInvocationId !== retry.implementerInvocationId)
+        retryHistory.implementerOutcome.originalImplementerInvocationId !==
+          retry.implementerInvocationId)
     )
       fail('retry attempt history does not match its exact Session and invocation');
     if (!retryHistory && history.some((member) => member.attemptId === retry.retryAttemptId))
@@ -3274,7 +4436,9 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
   const attemptIds = new Set<string>();
   for (const member of history) {
     if (member.ordinal !== expectedOrdinal || attemptIds.has(member.attemptId))
-      fail('Work Unit attempt history must be strictly ordered without gaps and use unique identities');
+      fail(
+        'Work Unit attempt history must be strictly ordered without gaps and use unique identities',
+      );
     expectedOrdinal += 1;
     attemptIds.add(member.attemptId);
     const memberOutcome = member.implementerOutcome;
@@ -3298,9 +4462,12 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
         fail('Handler review requires the accepted Implementer claims and evidence');
       if (
         memberReview.delivered.summaryClaim !== memberOutcome.submittedOutcome.summaryClaim ||
-        memberReview.delivered.validationStatementClaim !== memberOutcome.submittedOutcome.validationStatementClaim ||
-        memberReview.delivered.comparisonFingerprint !== memberOutcome.evidence.comparisonFingerprint ||
-        JSON.stringify(memberReview.delivered.changedFiles) !== JSON.stringify(memberOutcome.evidence.changedFiles)
+        memberReview.delivered.validationStatementClaim !==
+          memberOutcome.submittedOutcome.validationStatementClaim ||
+        memberReview.delivered.comparisonFingerprint !==
+          memberOutcome.evidence.comparisonFingerprint ||
+        JSON.stringify(memberReview.delivered.changedFiles) !==
+          JSON.stringify(memberOutcome.evidence.changedFiles)
       )
         fail('Handler review delivered evidence differs from the Implementer outcome');
       if (memberReview.semanticJudgment && !memberReview.launchAcceptedAt)
@@ -3315,16 +4482,24 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
         memberReview.lifecycle?.status !== 'completed'
       )
         fail('Handler decision lacks exact completed review correlation');
-      const expectedVariant = memberReview.semanticJudgment.variant === 'accept' ? 'accepted' : 'returned';
+      const expectedVariant =
+        memberReview.semanticJudgment.variant === 'accept' ? 'accepted' : 'returned';
       if (memberDecision.variant !== expectedVariant)
         fail('Handler decision contradicts semantic judgment');
       if (memberDecision.variant === 'returned') {
-        if (JSON.stringify(memberDecision.returnReason) !== JSON.stringify(memberReview.semanticJudgment.reason))
+        if (
+          JSON.stringify(memberDecision.returnReason) !==
+          JSON.stringify(memberReview.semanticJudgment.reason)
+        )
           fail('Handler decision return reason differs from semantic judgment');
       } else if (memberDecision.returnReason) {
         fail('accepted Handler decision cannot have a return reason');
       }
-      timestampAtOrAfter(memberReview.lifecycle.observedAt, memberDecision.recordedAt, 'Handler decision');
+      timestampAtOrAfter(
+        memberReview.lifecycle.observedAt,
+        memberDecision.recordedAt,
+        'Handler decision',
+      );
     }
     const memberDisposition = member.incompleteDisposition;
     if (memberDisposition) {

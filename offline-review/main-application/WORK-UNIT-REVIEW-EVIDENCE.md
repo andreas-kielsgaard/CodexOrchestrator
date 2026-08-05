@@ -9,36 +9,41 @@ MCP availability, acceptance, or user acceptance.
 
 ## Executed route flow
 
-- Epic → **Sprint Control Surface Discovery** → **WU-ECS2E** was opened successfully.
-- Activity and Evidence appeared as peer tabs; Activity was selected initially and no turn inspector
-  was present.
-- The Handler action selected the exact recorded Session/invocation pair
-  `recorded-session-WU-ECS2E` / `recorded-handler-WU-ECS2E-first-review`.
-- The shared inspector displayed complete recorded input/output, recorded start time and duration,
-  and the **Recorded steps** disclosure expanded to show one processing update. No textbox or
-  composer was present.
-- Evidence showed two typed changed-file entries and explicit unavailable test detail.
-- **View owning activity** returned to Activity and selected/highlighted the exact Implementer
-  reporting activity for the same attempt:
-  `work-unit-inspection:WU-ECS2E:WU-ECS2E-attempt-2:implementer-reporting:recorded-implementer-WU-ECS2E-second-return`.
+- The local browser opened Epic, **Sprint Control Surface Discovery**, and **WU-ECS2E**. At the
+  ordinary local viewport (`754px` wide), Activity and Evidence were peer tabs and Activity had no
+  initial selected turn.
+- A correlated Lifecycle step opened only its exact Handler Activity. The selected Activity card
+  contained the reusable read-only complete turn, including recorded steps and authoritative
+  timing; the former full-session workspace and separate selected-turn panel were absent.
+- The second Implementer reporting Activity showed its immediately preceding authoritative input.
+  Its **Open in Agent Sessions** control opened the exact Session/invocation. The standalone view
+  focused that invocation and displayed **Return to Work Unit Activity**; returning restored the
+  Activity selection without a composer.
+- Evidence exposed a typed available changed-file destination and a typed unavailable changed-file
+  destination. The available item opened the isolated read-only File and diff review on
+  `WorkUnitDetailWorkspace.tsx`; the unavailable item did not navigate. Explicit MCP detail
+  unavailability remained nested beneath its owning Activity.
+- The fixture displayed a typed available test run, command, environment, result, and individual
+  case. Focused component and decoder evidence exercise the separate typed unavailable test path.
 
 ## Accessibility and viewport observations
 
-- The browser DOM exposed `main`, `tablist`, `tab`, `tabpanel`, named regions, and selected-tab
-  state. The focused consumer test executes ArrowRight tab movement and verifies focus/selection.
-- At `640×900`, the browser reported `document.documentElement.scrollWidth === 640` and
-  `clientWidth === 640`; no document-level horizontal overflow was observed. The Activity list,
-  nested summaries, disclosure, and selected-turn content remained readable in the captured view.
-- A `430×900` exploratory capture exposed clipped/scrollable top application navigation. That width
-  is retained as a responsive residual, not claimed as passing evidence; the focused representative
-  narrow evidence is `640×900`.
+- The focused interaction test exercises peer-tab ArrowRight focus movement, exact Lifecycle
+  highlighting on Activity focus, disclosure interaction, unavailable states, and no composer.
+- In the executed `640px x 900px` browser flow, exact standalone focus/return, Activity/Evidence,
+  available file navigation, and nested content all completed with
+  `document.documentElement.scrollWidth === clientWidth === 640`.
+- The known `430px` top-navigation clipping/scrolling remains an unclaimed responsive residual.
+  It is not presented as passing evidence.
 
-Executable evidence:
+## Executable evidence
 
-- `src/dev/orchestrationSection/recordedWorkUnitReview.consumer.test.tsx` — recorded route payload
-  through the Work Unit consumer, exact selection, disclosure, navigation/highlighting, keyboard,
-  accessibility roles, and no composer.
-- `src/dev/orchestrationSection/recordedOrchestrationClient.test.ts` — canonical-read isolation and
-  accepted activity-summary/peer/file correlation shape.
-- `src/features/orchestrations/components/WorkUnitDetailWorkspace.activityEvidence.test.tsx` —
-  focused component interaction and fail-closed inspector coverage.
+- `src/dev/orchestrationSection/recordedWorkUnitReview.consumer.test.tsx` covers the explicitly
+  recorded route payload, exact selection, disclosure, evidence ownership, and no composer.
+- `src/features/orchestrations/components/WorkUnitDetailWorkspace.activityEvidence.test.tsx`
+  covers focused tab keyboard behavior, Lifecycle focus highlighting, unavailable inspection, and
+  Activity/Evidence navigation.
+- `src/application/orchestrations/nativeQuery.test.ts` covers typed test detail and changed-file
+  destination decoding, including foreign correlation rejection.
+- `src/app/App.agentSessions.test.tsx` covers exact standalone Session focus, typed return
+  restoration, and available recorded file-review navigation.

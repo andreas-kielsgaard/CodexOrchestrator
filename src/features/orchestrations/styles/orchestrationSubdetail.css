@@ -461,14 +461,6 @@
   text-align: center;
 }
 
-.work-unit-sessions {
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  background: #cfd8dd;
-}
-
 .work-unit-inspection {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -579,6 +571,12 @@
 
 .work-unit-activity__list > li.is-selected {
   border-color: #7295a6;
+  box-shadow: 0 0 0 2px rgb(114 149 166 / 16%);
+}
+
+.work-unit-lifecycle li.is-highlighted button {
+  border-color: #7295a6;
+  background: #eef6f9;
   box-shadow: 0 0 0 2px rgb(114 149 166 / 16%);
 }
 
@@ -737,6 +735,64 @@
   font-size: 0.67rem;
 }
 
+.work-unit-evidence__group li > button,
+.work-unit-evidence__group li > span {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.work-unit-evidence__group li > button {
+  cursor: pointer;
+}
+
+.work-unit-evidence__group li > button:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid #587f93;
+  outline-offset: 2px;
+}
+
+.work-unit-evidence__group li > span small,
+.work-unit-evidence__group li > button small {
+  grid-column: 1 / -1;
+  white-space: normal;
+}
+
+.work-unit-test-evidence {
+  display: grid;
+  gap: 7px;
+}
+
+.work-unit-test-evidence dl {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.work-unit-test-evidence dl > div {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.work-unit-test-evidence dt {
+  color: #71818a;
+  font-size: 0.58rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.work-unit-test-evidence dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .work-unit-evidence__group li small {
   grid-column: 1 / -1;
 }
@@ -760,81 +816,6 @@
   .work-unit-activity__list small {
     grid-column: 2;
   }
-}
-
-.work-unit-session-slot {
-  display: grid;
-  grid-template-rows: 38px minmax(0, 1fr);
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  background: #fff;
-}
-
-.work-unit-primary-session,
-.work-unit-execution-session {
-  position: relative;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-}
-
-.work-unit-primary-session > nav,
-.work-unit-execution-session > nav {
-  position: absolute;
-  z-index: 4;
-  top: 6px;
-  right: 8px;
-  display: flex;
-  gap: 3px;
-}
-
-.work-unit-primary-session > nav button,
-.work-unit-execution-session > nav button {
-  min-height: 27px;
-  padding: 0 8px;
-  border: 1px solid #bac6cc;
-  border-radius: 5px;
-  background: #fff;
-  color: #536670;
-  font: inherit;
-  font-size: 0.64rem;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.work-unit-primary-session > nav button[aria-pressed='true'],
-.work-unit-execution-session > nav button[aria-pressed='true'] {
-  border-color: #708e9d;
-  background: #e9f1f5;
-  color: #274f64;
-}
-.work-unit-session-slot > h2 {
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-  border-bottom: 1px solid #d9e0e4;
-  background: #f3f6f7;
-  color: #536670;
-  font-size: 0.7rem;
-}
-.work-unit-session-slot > .shared-agent-session {
-  min-width: 0;
-  min-height: 0;
-}
-.work-unit-session-empty {
-  display: grid;
-  align-content: center;
-  gap: 6px;
-  padding: 18px;
-  color: #60717b;
-  font-size: 0.75rem;
-  text-align: center;
-}
-.work-unit-session-empty strong {
-  color: #344854;
 }
 
 .work-unit-lifecycle {
@@ -867,7 +848,7 @@
   position: absolute;
   top: 29px;
   bottom: -7px;
-  left: 13px;
+  left: 50%;
   width: 1px;
   background: #b9c7ce;
   content: '';
@@ -875,7 +856,7 @@
 
 .work-unit-lifecycle button {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 7px;
   width: 100%;
   padding: 5px;
@@ -936,6 +917,11 @@
   color: #315c72;
   font-size: 0.63rem;
   font-weight: 900;
+  justify-self: center;
+}
+
+.work-unit-lifecycle button > span:last-child {
+  text-align: center;
 }
 
 .work-unit-lifecycle__identity--work_slice_planner {
@@ -959,8 +945,5 @@
   }
   .plan-workflow__canvas {
     padding: 12px;
-  }
-  .work-unit-session-slot {
-    min-height: 220px;
   }
 }

@@ -117,7 +117,9 @@ describe('App application surfaces', () => {
   });
 
   it('round-trips the WU-ECS2E handler without manufacturing a Reviewer Session', async () => {
-    const composition = createRecordedDevelopmentApplicationComposition();
+    const composition = createRecordedDevelopmentApplicationComposition({
+      includeWorkUnitReview: true,
+    });
     const loadedSessionIds: string[] = [];
     const tracingClient: AgentSessionClient = {
       ...composition.agentSessionClient,
@@ -154,32 +156,41 @@ describe('App application surfaces', () => {
     expect(await screen.findByRole('button', { name: 'Go to Work Unit' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Go to Work Unit' }));
     expect(await screen.findByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
-    const handler = screen.getByRole('region', { name: 'Work Unit Handler Agent Session' });
-    expect(
-      screen.getByRole('region', { name: 'Work Unit Implementer Agent Session' }),
-    ).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Work Slice Planner' }));
-    expect(screen.getByRole('region', { name: 'Work Slice Planner Agent Session' })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Work Unit Handler' }));
+    expect(screen.queryByRole('region', { name: /Agent Session$/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Reviewer' })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Reviewer' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'Reviewer Agent Session' })).toBeNull();
-    expect(
-      screen.getByRole('separator', {
-        name: 'Resize Planning and handling conversation and Work Unit Implementer conversation',
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: /Handler action.*recorded-handler-WU-ECS2E-first-review/,
       }),
-    ).toHaveAttribute('aria-orientation', 'vertical');
-
-    fireEvent.click(within(handler).getByRole('button', { name: 'Open in Agent Sessions' }));
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Agent Sessions' }));
     expect(
       await screen.findByRole('heading', { name: 'Recorded WU-ECS2E Work Unit Handler' }),
     ).toBeVisible();
     expect(
       screen.getByRole('treeitem', { name: /Recorded WU-ECS2E Work Unit Handler/ }),
     ).toHaveAttribute('aria-selected', 'true');
-    expect(new Set(loadedSessionIds.filter((sessionId) => sessionId.includes('WU-ECS2E')))).toEqual(
-      new Set(['recorded-session-WU-ECS2E', 'recorded-implementer-WU-ECS2E']),
+    expect(screen.getByRole('region', { name: 'Work Unit return context' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Return to Work Unit Activity' }));
+    expect(await screen.findByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
+    expect(
+      screen.getByLabelText('Agent Session turn: recorded-handler-WU-ECS2E-first-review'),
+    ).toBeVisible();
+    expect(loadedSessionIds).toContain('recorded-session-WU-ECS2E');
+    fireEvent.click(screen.getByRole('tab', { name: 'Evidence' }));
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: /src\/features\/orchestrations\/components\/WorkUnitDetailWorkspace.tsx/,
+      }),
     );
+    expect(await screen.findByRole('main', { name: 'Files and diffs' })).toBeVisible();
+    expect(
+      screen.getByRole('region', {
+        name: 'src/features/orchestrations/components/WorkUnitDetailWorkspace.tsx',
+      }),
+    ).toBeVisible();
     expect(loadedSessionIds).not.toContain('recorded-session-reviewer-WU-ECS2E');
   });
 

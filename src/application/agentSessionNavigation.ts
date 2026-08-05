@@ -34,6 +34,12 @@ export type AgentSessionProductLocation =
       readonly workSlicePlanningPointId: string;
       readonly workUnitId: string;
       readonly label: string;
+      readonly inspectionState?: Readonly<{
+        readonly tab: 'activity' | 'evidence';
+        readonly activityId: string;
+        readonly sessionId: string;
+        readonly invocationId: string;
+      }>;
     }
   | {
       readonly kind: 'epic_planning_draft';

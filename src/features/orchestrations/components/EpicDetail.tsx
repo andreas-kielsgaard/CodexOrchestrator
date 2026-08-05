@@ -19,6 +19,8 @@ import type {
   EpicAutomaticContinuationPolicyController,
 } from '../../../application/orchestrations';
 import type { ContextualFileReviewResult } from '../../../application/contextualFileReview';
+import type { AgentSessionProductLocation } from '../../../application/agentSessionNavigation';
+import type { WorkUnitActivitySessionTarget } from './WorkUnitDetailWorkspace';
 
 export interface EpicDetailProps {
   readonly epic: EpicPresentation;
@@ -36,6 +38,14 @@ export interface EpicDetailProps {
   readonly onBack: () => void;
   readonly onOpenAgentSession?: (sessionId: string) => void;
   readonly onRequestFileReview?: (sprintId: string) => Promise<ContextualFileReviewResult>;
+  readonly onOpenFileEvidence?: (target: {
+    readonly reviewId: string;
+    readonly changedFileId: string;
+  }) => void;
+  readonly onOpenWorkUnitActivitySession?: (
+    target: WorkUnitActivitySessionTarget,
+    origin: Extract<AgentSessionProductLocation, { readonly kind: 'work_unit' }>,
+  ) => void;
 }
 
 export function EpicDetail({
@@ -54,6 +64,8 @@ export function EpicDetail({
   onBack,
   onOpenAgentSession,
   onRequestFileReview,
+  onOpenFileEvidence,
+  onOpenWorkUnitActivitySession,
 }: EpicDetailProps) {
   const restoreSprintIdRef = useRef<string | null>(null);
   const [selectedSprintOpener, setSelectedSprintOpener] = useState<{
@@ -94,6 +106,8 @@ export function EpicDetail({
         }}
         onOpenAgentSession={onOpenAgentSession}
         onRequestFileReview={onRequestFileReview}
+        onOpenFileEvidence={onOpenFileEvidence}
+        onOpenWorkUnitActivitySession={onOpenWorkUnitActivitySession}
       />
     );
   }
@@ -144,11 +158,22 @@ export function EpicDetail({
                 <p className="eyebrow">Epic reassessment</p>
                 <p>The Epic received the exact Sprint concern. The concern remains unresolved.</p>
                 {(epic.epicEscalationReceivers ?? []).map((receiver) => (
-                  <div key={`${receiver.epicId}:${receiver.sprintId}:${receiver.deliveryRequestedAt}`}>
+                  <div
+                    key={`${receiver.epicId}:${receiver.sprintId}:${receiver.deliveryRequestedAt}`}
+                  >
                     <strong>Receiver delivery and reassessment</strong>
                     <p>Delivery requested: {receiver.deliveryRequestedAt}</p>
-                    {receiver.semanticReassessmentRecordedAt && <p>Semantic reassessment recorded: {receiver.semanticReassessmentRecordedAt}</p>}
-                    {receiver.disposition && <p>Disposition: {receiver.disposition.movementKind}. This is not Sprint selection, start, settlement, completion, or acceptance.</p>}
+                    {receiver.semanticReassessmentRecordedAt && (
+                      <p>
+                        Semantic reassessment recorded: {receiver.semanticReassessmentRecordedAt}
+                      </p>
+                    )}
+                    {receiver.disposition && (
+                      <p>
+                        Disposition: {receiver.disposition.movementKind}. This is not Sprint
+                        selection, start, settlement, completion, or acceptance.
+                      </p>
+                    )}
                   </div>
                 ))}
               </section>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { SprintWorkspacePresentationV1 } from '../../../application/orchestrations';
 import {
   AgentSessionTurnInspector,
@@ -6,8 +6,6 @@ import {
 } from '../../agentSessions';
 import type { WorkUnitAgentSessionPresentation } from '../orchestrationModel';
 import { DetailWorkspace } from './DetailWorkspace';
-import { ResizableSplitSurface } from './ResizableSplitSurface';
-import { SharedAgentSessionPanel } from './SharedAgentSessionPanel';
 import type {
   ProductWorkUnitHandlerDecisionV1,
   ProductWorkUnitHandlerReviewV1,
@@ -26,17 +24,33 @@ export interface WorkUnitDetailWorkspaceProps {
   readonly lifecycleEntries: SprintWorkspacePresentationV1['workUnitLifecycle'];
   readonly workSlicePlanningPointGroupTitle: string;
   readonly sessions: readonly WorkUnitAgentSessionPresentation[];
+  /** Retained for callers during the read-only migration; this detail renders no embedded workspace. */
   readonly agentSessionComposition?: EmbeddedAgentSessionComposition;
   readonly backLabel?: string;
   readonly onBack: () => void;
   readonly onOpenAgentSession?: (sessionId: string) => void;
+  readonly onOpenActivitySession?: (target: WorkUnitActivitySessionTarget) => void;
+  readonly onOpenFileEvidence?: (target: WorkUnitFileEvidenceTarget) => void;
+  readonly initialInspectionState?: WorkUnitInspectionState;
   readonly sprintControl?: ReactNode;
 }
 
-interface SessionFocusTarget {
+export interface WorkUnitActivitySessionTarget {
   readonly sessionId: string;
   readonly invocationId: string;
-  readonly request: number;
+  readonly activityId: string;
+}
+
+export interface WorkUnitFileEvidenceTarget {
+  readonly reviewId: string;
+  readonly changedFileId: string;
+}
+
+export interface WorkUnitInspectionState {
+  readonly tab: WorkUnitInspectionTab;
+  readonly activityId: string;
+  readonly sessionId: string;
+  readonly invocationId: string;
 }
 
 type WorkUnitInspectionTab = 'activity' | 'evidence';
@@ -46,53 +60,56 @@ export function WorkUnitDetailWorkspace({
   lifecycleEntries,
   workSlicePlanningPointGroupTitle,
   sessions,
-  agentSessionComposition,
   backLabel = 'Back to Work Slice planning point',
   onBack,
   onOpenAgentSession,
+  onOpenActivitySession,
+  onOpenFileEvidence,
+  initialInspectionState,
   sprintControl,
 }: WorkUnitDetailWorkspaceProps) {
   const workUnitId = unit.workUnitId;
-  const workSlicePlanner = sessions.find(
-    (session) => session.workUnitId === workUnitId && session.role === 'work_slice_planner',
+  const validInitialState =
+    initialInspectionState &&
+    unit.inspection?.activities.some(
+      (activity) =>
+        activity.activityId === initialInspectionState.activityId &&
+        activity.agentSessionId === initialInspectionState.sessionId &&
+        activity.invocationId === initialInspectionState.invocationId,
+    )
+      ? initialInspectionState
+      : undefined;
+  const [inspectionTab, setInspectionTab] = useState<WorkUnitInspectionTab>(
+    validInitialState?.tab ?? 'activity',
   );
-  const handler = sessions.find(
-    (session) => session.workUnitId === workUnitId && session.role === 'handler',
+  const [selectedActivityId, setSelectedActivityId] = useState<string | null>(
+    validInitialState?.activityId ?? null,
   );
-  const implementer = sessions.find(
-    (session) => session.workUnitId === workUnitId && session.role === 'implementer',
-  );
-  const [primarySessionId, setPrimarySessionId] = useState(
-    handler?.sessionId ?? workSlicePlanner?.sessionId ?? '',
-  );
-  const [focusTarget, setFocusTarget] = useState<SessionFocusTarget | null>(null);
-  const [inspectionTab, setInspectionTab] = useState<WorkUnitInspectionTab>('activity');
-  const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
-  const primarySession =
-    sessions.find(({ sessionId }) => sessionId === primarySessionId) ?? handler ?? workSlicePlanner;
+  const [highlightedActivityId, setHighlightedActivityId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!validInitialState) return;
+    setInspectionTab(validInitialState.tab);
+    setSelectedActivityId(validInitialState.activityId);
+  }, [validInitialState]);
   const attemptHistory = unit.attemptHistory ?? [];
   const retryAttempts = unit.retryAttempts ?? [];
-  const activityOrdinals = [...new Set([
-    ...attemptHistory.map((attempt) => attempt.ordinal),
-    ...retryAttempts.map((retry) => retry.ordinal),
-  ])].sort((left, right) => left - right);
+  const activityOrdinals = [
+    ...new Set([
+      ...attemptHistory.map((attempt) => attempt.ordinal),
+      ...retryAttempts.map((retry) => retry.ordinal),
+    ]),
+  ].sort((left, right) => left - right);
 
   const navigateToLifecycleTurn = (
     entry: SprintWorkspacePresentationV1['workUnitLifecycle'][number],
   ) => {
-    if ([handler?.sessionId, workSlicePlanner?.sessionId].includes(entry.agentSessionId))
-      setPrimarySessionId(entry.agentSessionId);
-    setFocusTarget((current) => ({
-      sessionId: entry.agentSessionId,
-      invocationId: entry.invocationId,
-      request: (current?.request ?? 0) + 1,
-    }));
     const activity = unit.inspection?.activities.find(
       (candidate) =>
         candidate.agentSessionId === entry.agentSessionId &&
         candidate.invocationId === entry.invocationId,
     );
-    if (activity) {
+    const session = sessions.find(({ sessionId }) => sessionId === entry.agentSessionId);
+    if (activity && session && roleMatchesLifecycle(activity.role, entry.agentRole)) {
       setInspectionTab('activity');
       setSelectedActivityId(activity.activityId);
     }
@@ -124,7 +141,10 @@ export function WorkUnitDetailWorkspace({
           <p>{unit.summary}</p>
           <p>{unit.details}</p>
           {unit.executionState && (
-            <section className="work-unit-execution-progress" aria-label="Work Unit execution progress">
+            <section
+              className="work-unit-execution-progress"
+              aria-label="Work Unit execution progress"
+            >
               <h2>Execution progress</h2>
               <p>{executionStateDetail(unit.executionState.state)}</p>
             </section>
@@ -193,15 +213,30 @@ export function WorkUnitDetailWorkspace({
             {lifecycleEntries.length ? (
               <ol>
                 {lifecycleEntries.map((entry) => {
+                  const activity = unit.inspection?.activities.find(
+                    (candidate) =>
+                      candidate.agentSessionId === entry.agentSessionId &&
+                      candidate.invocationId === entry.invocationId,
+                  );
                   const session = sessions.find(
                     ({ sessionId }) => sessionId === entry.agentSessionId,
                   );
+                  const correlated = Boolean(
+                    activity && session && roleMatchesLifecycle(activity.role, entry.agentRole),
+                  );
                   return (
-                    <li key={entry.entryId}>
+                    <li
+                      key={entry.entryId}
+                      className={
+                        highlightedActivityId === activity?.activityId
+                          ? 'is-highlighted'
+                          : undefined
+                      }
+                    >
                       <button
                         type="button"
                         onClick={() => navigateToLifecycleTurn(entry)}
-                        disabled={!session}
+                        disabled={!correlated}
                       >
                         <span
                           className={`work-unit-lifecycle__identity work-unit-lifecycle__identity--${entry.agentRole}`}
@@ -265,61 +300,11 @@ export function WorkUnitDetailWorkspace({
                 inspection={unit.inspection}
                 selectedActivityId={selectedActivityId}
                 onSelectActivity={(activityId) => setSelectedActivityId(activityId)}
+                onHighlightActivity={setHighlightedActivityId}
                 sessions={sessions}
                 onOpenAgentSession={onOpenAgentSession}
+                onOpenActivitySession={onOpenActivitySession}
               />
-              <section className="work-unit-sessions" aria-label="Work Unit Agent Sessions">
-                <ResizableSplitSurface
-                  axis="horizontal"
-                  primary={
-                    <div className="work-unit-primary-session">
-                      {workSlicePlanner && handler ? (
-                        <nav aria-label="Planning and handling Agent Session">
-                          {[workSlicePlanner, handler].map((session) => (
-                            <button
-                              key={session.sessionId}
-                              type="button"
-                              aria-pressed={primarySession?.sessionId === session.sessionId}
-                              onClick={() => setPrimarySessionId(session.sessionId)}
-                            >
-                              {session.role === 'work_slice_planner'
-                                ? 'Work Slice Planner'
-                                : 'Work Unit Handler'}
-                            </button>
-                          ))}
-                        </nav>
-                      ) : null}
-                      <SessionSlot
-                        label={
-                          primarySession?.role === 'work_slice_planner'
-                            ? 'Work Slice Planner'
-                            : 'Work Unit Handler'
-                        }
-                        session={primarySession}
-                        agentSessionComposition={agentSessionComposition}
-                        focusTarget={focusTarget}
-                        onOpenAgentSession={onOpenAgentSession}
-                      />
-                    </div>
-                  }
-                  secondary={
-                    <div className="work-unit-execution-session">
-                      <SessionSlot
-                        label="Work Unit Implementer"
-                        session={implementer}
-                        agentSessionComposition={agentSessionComposition}
-                        focusTarget={focusTarget}
-                        onOpenAgentSession={onOpenAgentSession}
-                      />
-                    </div>
-                  }
-                  primaryLabel="Planning and handling conversation"
-                  secondaryLabel="Work Unit Implementer conversation"
-                  initialPrimaryPercent={50}
-                  minimumPrimaryPixels={220}
-                  minimumSecondaryPixels={220}
-                />
-              </section>
             </div>
           ) : (
             <div
@@ -333,6 +318,7 @@ export function WorkUnitDetailWorkspace({
                   setSelectedActivityId(activityId);
                   setInspectionTab('activity');
                 }}
+                onOpenFileEvidence={onOpenFileEvidence}
               />
             </div>
           )}
@@ -346,21 +332,22 @@ function WorkUnitActivityView({
   inspection,
   selectedActivityId,
   onSelectActivity,
+  onHighlightActivity,
   sessions,
   onOpenAgentSession,
+  onOpenActivitySession,
 }: {
   readonly inspection?: ProductWorkUnitInspectionV1;
   readonly selectedActivityId: string | null;
   readonly onSelectActivity: (activityId: string) => void;
+  readonly onHighlightActivity: (activityId: string | null) => void;
   readonly sessions: readonly WorkUnitAgentSessionPresentation[];
   readonly onOpenAgentSession?: (sessionId: string) => void;
+  readonly onOpenActivitySession?: (target: WorkUnitActivitySessionTarget) => void;
 }) {
   const selectedActivity = inspection?.activities.find(
     (activity) => activity.activityId === selectedActivityId,
   );
-  const selectedSession = selectedActivity
-    ? sessions.find((session) => session.sessionId === selectedActivity.agentSessionId)
-    : undefined;
 
   return (
     <section className="work-unit-activity" aria-label="Work Unit Activity">
@@ -378,11 +365,15 @@ function WorkUnitActivityView({
               key={activity.activityId}
               className={selectedActivityId === activity.activityId ? 'is-selected' : undefined}
               data-activity-id={activity.activityId}
+              onMouseEnter={() => onHighlightActivity(activity.activityId)}
+              onMouseLeave={() => onHighlightActivity(null)}
             >
               <button
                 type="button"
                 aria-pressed={selectedActivityId === activity.activityId}
                 onClick={() => onSelectActivity(activity.activityId)}
+                onFocus={() => onHighlightActivity(activity.activityId)}
+                onBlur={() => onHighlightActivity(null)}
               >
                 <span className="work-unit-activity__role">{roleLabel(activity.role)}</span>
                 <strong>{stageLabel(activity.primaryStage)}</strong>
@@ -395,6 +386,16 @@ function WorkUnitActivityView({
                   onSelectActivity={onSelectActivity}
                 />
               )}
+              {selectedActivityId === activity.activityId ? (
+                <SelectedActivityTurn
+                  activity={activity}
+                  session={sessions.find(
+                    (session) => session.sessionId === activity.agentSessionId,
+                  )}
+                  onOpenAgentSession={onOpenAgentSession}
+                  onOpenActivitySession={onOpenActivitySession}
+                />
+              ) : null}
             </li>
           ))}
         </ol>
@@ -403,34 +404,74 @@ function WorkUnitActivityView({
           No application-owned agent activity is available for this Work Unit.
         </p>
       )}
-      {selectedActivity ? (
-        <section
-          className="work-unit-activity__inspection"
-          aria-label="Selected Agent Session turn"
-        >
-          <header>
-            <div>
-              <span>Exact recorded pointer</span>
-              <h3>{stageLabel(selectedActivity.primaryStage)}</h3>
-            </div>
-            {onOpenAgentSession && selectedSession ? (
-              <button type="button" onClick={() => onOpenAgentSession(selectedSession.sessionId)}>
-                Open in Agent Sessions
-              </button>
-            ) : null}
-          </header>
-          <AgentSessionTurnInspector
-            sessionId={selectedActivity.agentSessionId}
-            invocationId={selectedActivity.invocationId}
-            transcript={selectedSession?.transcript ?? null}
-            ariaLabel={`Agent Session turn: ${selectedActivity.invocationId}`}
-          />
-        </section>
-      ) : (
+      {!selectedActivity ? (
         <p className="work-unit-inspection__selection-hint">
           Select an activity to inspect its complete recorded turn.
         </p>
-      )}
+      ) : null}
+    </section>
+  );
+}
+
+function SelectedActivityTurn({
+  activity,
+  session,
+  onOpenAgentSession,
+  onOpenActivitySession,
+}: {
+  readonly activity: ProductWorkUnitInspectionActivityV1;
+  readonly session?: WorkUnitAgentSessionPresentation;
+  readonly onOpenAgentSession?: (sessionId: string) => void;
+  readonly onOpenActivitySession?: (target: WorkUnitActivitySessionTarget) => void;
+}) {
+  const invocationIndex = session?.transcript?.invocations.findIndex(
+    ({ id }) => id === activity.invocationId,
+  );
+  const previous =
+    invocationIndex !== undefined && invocationIndex > 0
+      ? session?.transcript?.invocations[invocationIndex - 1]
+      : undefined;
+  return (
+    <section className="work-unit-activity__inspection" aria-label="Selected activity turn">
+      <header>
+        <div>
+          <span>Exact recorded pointer</span>
+          <h3>{stageLabel(activity.primaryStage)}</h3>
+        </div>
+        {onOpenActivitySession ? (
+          <button
+            type="button"
+            onClick={() =>
+              onOpenActivitySession({
+                sessionId: activity.agentSessionId,
+                invocationId: activity.invocationId,
+                activityId: activity.activityId,
+              })
+            }
+          >
+            Open in Agent Sessions
+          </button>
+        ) : onOpenAgentSession && session ? (
+          <button type="button" onClick={() => onOpenAgentSession(session.sessionId)}>
+            Open in Agent Sessions
+          </button>
+        ) : null}
+      </header>
+      <AgentSessionTurnInspector
+        sessionId={activity.agentSessionId}
+        invocationId={activity.invocationId}
+        transcript={session?.transcript ?? null}
+        precedingInput={
+          previous
+            ? {
+                invocationId: previous.id,
+                text: previous.submittedText,
+                provenance: previous.inputProvenance,
+              }
+            : undefined
+        }
+        ariaLabel={`Agent Session turn: ${activity.invocationId}`}
+      />
     </section>
   );
 }
@@ -478,9 +519,11 @@ function ApplicationActivitySummary({
 function WorkUnitEvidenceView({
   inspection,
   onSelectActivity,
+  onOpenFileEvidence,
 }: {
   readonly inspection?: ProductWorkUnitInspectionV1;
   readonly onSelectActivity: (activityId: string) => void;
+  readonly onOpenFileEvidence?: (target: WorkUnitFileEvidenceTarget) => void;
 }) {
   const fileEvidence = inspection?.fileEvidence;
   const sourceActivity =
@@ -513,9 +556,28 @@ function WorkUnitEvidenceView({
             <ul>
               {fileEvidence.changedFiles.map((file) => (
                 <li key={file.evidenceRef}>
-                  <strong>{file.displayName}</strong>
-                  <span>{file.changeKind}</span>
-                  <small>Evidence reference: {file.evidenceRef}</small>
+                  {isAvailableDiffDestination(file.diffDestination) && onOpenFileEvidence ? (
+                    <button
+                      type="button"
+                      data-evidence-id={file.evidenceRef}
+                      data-file-id={file.fileId}
+                      onClick={() => openFileEvidence(file.diffDestination, onOpenFileEvidence)}
+                    >
+                      <strong>{file.displayName}</strong>
+                      <span>{file.changeKind}</span>
+                    </button>
+                  ) : (
+                    <span data-evidence-id={file.evidenceRef} data-file-id={file.fileId}>
+                      <strong>{file.displayName}</strong>
+                      <span>{file.changeKind}</span>
+                      <small>
+                        Unavailable:{' '}
+                        {isAvailableDiffDestination(file.diffDestination)
+                          ? 'The application file-review destination is unavailable.'
+                          : file.diffDestination.reason}
+                      </small>
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -531,14 +593,90 @@ function WorkUnitEvidenceView({
       </section>
       <section className="work-unit-evidence__group" aria-label="Test evidence">
         <h3>Tests</h3>
-        <p>
-          Unavailable:{' '}
-          {inspection?.testEvidence.reason ??
-            'No application-owned test detail is available for this Work Unit.'}
-        </p>
+        {!inspection?.testEvidence || !isAvailableTestEvidence(inspection.testEvidence) ? (
+          <p>
+            Unavailable:{' '}
+            {inspection?.testEvidence && !isAvailableTestEvidence(inspection.testEvidence)
+              ? inspection.testEvidence.reason
+              : 'No application-owned test detail is available for this Work Unit.'}
+          </p>
+        ) : (
+          <div className="work-unit-test-evidence">
+            <p>
+              <strong>{inspection.testEvidence.whatRan}</strong> · {inspection.testEvidence.result}
+            </p>
+            <dl>
+              <div>
+                <dt>Command</dt>
+                <dd>{inspection.testEvidence.command}</dd>
+              </div>
+              <div>
+                <dt>Environment</dt>
+                <dd>{inspection.testEvidence.environment}</dd>
+              </div>
+              <div>
+                <dt>Run</dt>
+                <dd>{inspection.testEvidence.runId}</dd>
+              </div>
+            </dl>
+            {inspection.testEvidence.cases.length ? (
+              <ul>
+                {inspection.testEvidence.cases.map((item) => (
+                  <li key={item.caseId}>
+                    {item.label} · {item.result}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {(() => {
+              const testEvidence = inspection.testEvidence;
+              if (!isAvailableTestEvidence(testEvidence)) return null;
+              const source = inspection.activities.find(
+                (activity) => activity.activityId === testEvidence.sourceActivityId,
+              );
+              return source ? (
+                <button type="button" onClick={() => onSelectActivity(source.activityId)}>
+                  View owning activity
+                </button>
+              ) : (
+                <p>Owning activity unavailable; navigation is not supported.</p>
+              );
+            })()}
+          </div>
+        )}
       </section>
     </section>
   );
+}
+
+function isAvailableTestEvidence(
+  evidence: NonNullable<ProductWorkUnitInspectionV1['testEvidence']>,
+): evidence is Extract<
+  NonNullable<ProductWorkUnitInspectionV1['testEvidence']>,
+  { readonly status: 'available' }
+> {
+  return 'status' in evidence && evidence.status === 'available';
+}
+
+function isAvailableDiffDestination(destination: unknown): destination is {
+  readonly status: 'available';
+  readonly owner: 'application';
+  readonly reviewId: string;
+  readonly changedFileId: string;
+} {
+  return Boolean(
+    destination &&
+    typeof destination === 'object' &&
+    (destination as { readonly status?: unknown }).status === 'available',
+  );
+}
+
+function openFileEvidence(
+  destination: unknown,
+  onOpen: (target: WorkUnitFileEvidenceTarget) => void,
+) {
+  if (!isAvailableDiffDestination(destination)) return;
+  onOpen({ reviewId: destination.reviewId, changedFileId: destination.changedFileId });
 }
 
 function roleLabel(role: ProductWorkUnitInspectionActivityV1['role']) {
@@ -575,45 +713,6 @@ function applicationEventLabel(
   }[event];
 }
 
-function SessionSlot({
-  label,
-  session,
-  agentSessionComposition,
-  onOpenAgentSession,
-  focusTarget,
-}: {
-  readonly label: string;
-  readonly session?: WorkUnitAgentSessionPresentation;
-  readonly agentSessionComposition?: EmbeddedAgentSessionComposition;
-  readonly onOpenAgentSession?: (sessionId: string) => void;
-  readonly focusTarget: SessionFocusTarget | null;
-}) {
-  return (
-    <div className="work-unit-session-slot">
-      <h2>{label}</h2>
-      {session ? (
-        <SharedAgentSessionPanel
-          ariaLabel={`${label} Agent Session`}
-          conversationAriaLabel={`${label} conversation`}
-          session={session}
-          composition={agentSessionComposition}
-          onOpenStandalone={onOpenAgentSession}
-          displayMode="always_open"
-          focusInvocationId={
-            focusTarget?.sessionId === session.sessionId ? focusTarget.invocationId : undefined
-          }
-          focusRequest={focusTarget?.request}
-        />
-      ) : (
-        <section className="work-unit-session-empty" aria-label={`${label} unavailable`}>
-          <strong>No recorded session</strong>
-          <p>This projected Work Unit has no manufactured launch or conversation.</p>
-        </section>
-      )}
-    </div>
-  );
-}
-
 function agentInitial(
   role: SprintWorkspacePresentationV1['workUnitLifecycle'][number]['agentRole'],
 ) {
@@ -625,6 +724,16 @@ function agentInitial(
     work_unit_implementer: 'I',
   }[role];
   return detail;
+}
+
+function roleMatchesLifecycle(
+  role: ProductWorkUnitInspectionActivityV1['role'],
+  lifecycleRole: SprintWorkspacePresentationV1['workUnitLifecycle'][number]['agentRole'],
+) {
+  return (
+    (role === 'handler' && lifecycleRole === 'work_unit_handler') ||
+    (role === 'implementer' && lifecycleRole === 'work_unit_implementer')
+  );
 }
 
 function workUnitStatusLabel(
@@ -874,25 +983,48 @@ function HandlerReviewActivity({
       <dl>
         <RecordedFact label="Attempt" value={review.attemptId} />
         <RecordedFact label="Handler Session" value={review.handlerSessionId} />
-        <RecordedFact label="Original Handler invocation" value={review.originalHandlerInvocationId} />
+        <RecordedFact
+          label="Original Handler invocation"
+          value={review.originalHandlerInvocationId}
+        />
         <RecordedFact label="Handler action invocation" value={review.actionHandlerInvocationId} />
-        <RecordedFact label="Implementer reporting invocation" value={review.reportingInvocationId} />
+        <RecordedFact
+          label="Implementer reporting invocation"
+          value={review.reportingInvocationId}
+        />
         <RecordedFact label="Review invocation" value={review.reviewInvocationId} />
         <RecordedFact label="Review Harness revision" value={review.reviewHarnessRevisionId} />
         <RecordedFact label="Delivery requested" value={review.deliveryRequestedAt} />
-        {review.deliveryPersistedAt && <RecordedFact label="Delivery persisted" value={review.deliveryPersistedAt} />}
-        {review.harnessBoundAt && <RecordedFact label="Harness bound" value={review.harnessBoundAt} />}
-        {review.launchRequestedAt && <RecordedFact label="Launch requested" value={review.launchRequestedAt} />}
-        {review.launchAcceptedAt && <RecordedFact label="Launch accepted" value={review.launchAcceptedAt} />}
+        {review.deliveryPersistedAt && (
+          <RecordedFact label="Delivery persisted" value={review.deliveryPersistedAt} />
+        )}
+        {review.harnessBoundAt && (
+          <RecordedFact label="Harness bound" value={review.harnessBoundAt} />
+        )}
+        {review.launchRequestedAt && (
+          <RecordedFact label="Launch requested" value={review.launchRequestedAt} />
+        )}
+        {review.launchAcceptedAt && (
+          <RecordedFact label="Launch accepted" value={review.launchAcceptedAt} />
+        )}
         {review.reviewReadyAt && <RecordedFact label="Review ready" value={review.reviewReadyAt} />}
       </dl>
       <details>
         <summary>Application-bound claims and evidence</summary>
         <dl>
           <RecordedFact label="Summary claim" value={review.delivered.summaryClaim} />
-          <RecordedFact label="Validation claim" value={review.delivered.validationStatementClaim} />
-          <RecordedFact label="Delivered payload fingerprint" value={review.delivered.deliveredPayloadFingerprint} />
-          <RecordedFact label="Comparison fingerprint" value={review.delivered.comparisonFingerprint} />
+          <RecordedFact
+            label="Validation claim"
+            value={review.delivered.validationStatementClaim}
+          />
+          <RecordedFact
+            label="Delivered payload fingerprint"
+            value={review.delivered.deliveredPayloadFingerprint}
+          />
+          <RecordedFact
+            label="Comparison fingerprint"
+            value={review.delivered.comparisonFingerprint}
+          />
         </dl>
         <ul>
           {review.delivered.changedFiles.map((file) => (
@@ -942,10 +1074,14 @@ function HandlerReviewActivity({
             </p>
           )}
           {decision.implementationAcceptedAt && (
-            <p>Implementation accepted by the Handler review at {decision.implementationAcceptedAt}.</p>
+            <p>
+              Implementation accepted by the Handler review at {decision.implementationAcceptedAt}.
+            </p>
           )}
           {decision.implementationReturnedAt && (
-            <p>Implementation returned by the Handler review at {decision.implementationReturnedAt}.</p>
+            <p>
+              Implementation returned by the Handler review at {decision.implementationReturnedAt}.
+            </p>
           )}
           {decision.retryRequiredAt && (
             <p>
@@ -969,16 +1105,42 @@ function HandlerReviewActivity({
   );
 }
 
-function IntegrationActivity({ integration }: { readonly integration: ProductWorkUnitIntegrationV1 }) {
+function IntegrationActivity({
+  integration,
+}: {
+  readonly integration: ProductWorkUnitIntegrationV1;
+}) {
   return (
     <div className="work-unit-integration">
       <h3>Integration and settlement</h3>
-      <p>Integration was requested at {integration.requestedAt} and authorized at {integration.authorizedAt}.</p>
-      {integration.progress && <p>Integration progress: {integration.progress.phase} at {integration.progress.recordedAt}.</p>}
-      {integration.attention && <p>Integration needs attention: {integration.attention.safeCode.replaceAll('_', ' ')}. No settlement or contribution is recorded.</p>}
-      {integration.success && <p>Integration success was recorded at {integration.success.recordedAt}.</p>}
-      {integration.settlement && <p>Work Unit settlement was recorded at {integration.settlement.settledAt}.</p>}
-      {integration.prerequisiteContribution && <p>Prerequisite contribution was recorded for {integration.prerequisiteContribution.dependentCount} dependent Work Unit{integration.prerequisiteContribution.dependentCount === 1 ? '' : 's'}.</p>}
+      <p>
+        Integration was requested at {integration.requestedAt} and authorized at{' '}
+        {integration.authorizedAt}.
+      </p>
+      {integration.progress && (
+        <p>
+          Integration progress: {integration.progress.phase} at {integration.progress.recordedAt}.
+        </p>
+      )}
+      {integration.attention && (
+        <p>
+          Integration needs attention: {integration.attention.safeCode.replaceAll('_', ' ')}. No
+          settlement or contribution is recorded.
+        </p>
+      )}
+      {integration.success && (
+        <p>Integration success was recorded at {integration.success.recordedAt}.</p>
+      )}
+      {integration.settlement && (
+        <p>Work Unit settlement was recorded at {integration.settlement.settledAt}.</p>
+      )}
+      {integration.prerequisiteContribution && (
+        <p>
+          Prerequisite contribution was recorded for{' '}
+          {integration.prerequisiteContribution.dependentCount} dependent Work Unit
+          {integration.prerequisiteContribution.dependentCount === 1 ? '' : 's'}.
+        </p>
+      )}
     </div>
   );
 }
@@ -1154,7 +1316,9 @@ function RetryAttemptActivity({
         </p>
       )}
       {!retryAttempt.failureReason && !retryAttempt.retryReadyAt && (
-        <p>Retry readiness is not yet recorded. This surface does not imply recovery or relaunch.</p>
+        <p>
+          Retry readiness is not yet recorded. This surface does not imply recovery or relaunch.
+        </p>
       )}
     </div>
   );

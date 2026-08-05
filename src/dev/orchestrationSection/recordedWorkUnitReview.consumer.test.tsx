@@ -10,6 +10,7 @@ import { WorkUnitDetailWorkspace } from '../../features/orchestrations/component
 describe('recorded Work Unit review consumer', () => {
   it('exercises exact turn inspection, disclosure, evidence navigation, and read-only behavior', async () => {
     const user = userEvent.setup();
+    const openFileEvidence = vi.fn();
     const loaded = await recordedDevelopmentOrchestrationClient.load();
     if (loaded.kind !== 'ready') throw new Error('Recorded orchestration fixture did not load.');
     const view = createRecordedDevelopmentOrchestrationPresentation({
@@ -36,11 +37,12 @@ describe('recorded Work Unit review consumer', () => {
         workSlicePlanningPointGroupTitle="Recorded integration"
         sessions={sessions}
         onBack={vi.fn()}
+        onOpenFileEvidence={openFileEvidence}
       />,
     );
 
     expect(screen.getByRole('tab', { name: 'Activity' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.queryByLabelText('Selected Agent Session turn')).toBeNull();
+    expect(screen.queryByLabelText('Selected activity turn')).toBeNull();
     expect(screen.getAllByRole('region', { name: 'Application summary' })).toHaveLength(3);
     expect(screen.queryByRole('textbox')).toBeNull();
 
@@ -71,11 +73,23 @@ describe('recorded Work Unit review consumer', () => {
     ).toBeVisible();
 
     await user.click(screen.getByRole('tab', { name: 'Evidence' }));
+    await user.click(
+      screen.getByRole('button', {
+        name: /src\/features\/orchestrations\/components\/WorkUnitDetailWorkspace.tsx/,
+      }),
+    );
+    expect(openFileEvidence).toHaveBeenCalledWith({
+      reviewId: 'recorded-work-unit-review',
+      changedFileId: 'recorded-file-work-unit-detail',
+    });
     expect(
-      screen.getByText('src/features/orchestrations/components/WorkUnitDetailWorkspace.tsx'),
+      screen.getByText('Focused Work Unit Activity and Evidence interaction checks'),
     ).toBeVisible();
-    expect(screen.getByText(/No application-owned test-detail evidence/)).toBeVisible();
-    await user.click(screen.getByRole('button', { name: 'View owning activity' }));
+    await user.click(
+      within(screen.getByRole('region', { name: 'File evidence' })).getByRole('button', {
+        name: 'View owning activity',
+      }),
+    );
 
     const selected = screen.getByRole('button', {
       name: /Implementer reporting.*recorded-implementer-WU-ECS2E-second-return/,
@@ -84,6 +98,16 @@ describe('recorded Work Unit review consumer', () => {
     expect(selected.closest('li')).toHaveClass('is-selected');
     expect(
       screen.getByLabelText('Agent Session turn: recorded-implementer-WU-ECS2E-second-return'),
+    ).toBeVisible();
+    expect(screen.getByText('Previous input')).toBeVisible();
+
+    await user.click(
+      screen.getByRole('button', {
+        name: /Acceptance.*Recorded WU-ECS2E Work Unit Handler/,
+      }),
+    );
+    expect(
+      screen.getByLabelText('Agent Session turn: recorded-handler-WU-ECS2E-acceptance'),
     ).toBeVisible();
   });
 });

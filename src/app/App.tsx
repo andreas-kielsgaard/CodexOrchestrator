@@ -45,6 +45,7 @@ import type {
   ContextualFileReviewResult,
 } from '../application/contextualFileReview';
 import { FileReviewScreen } from '../features/fileReview';
+import type { WorkUnitActivitySessionTarget } from '../features/orchestrations/components/WorkUnitDetailWorkspace';
 
 export type ApplicationSurface =
   'epics' | 'agent-sessions' | 'harness-inspector' | 'file-review' | 'worktree-review';
@@ -75,6 +76,11 @@ export interface AppProps {
   readonly harnessManagementPreviewSurface?: ReactNode;
   readonly fileReviewSource?: FileReviewSource;
   readonly contextualFileReviewClient?: ContextualFileReviewClient;
+  /** Explicit application-owned destinations only; display names never become file-review input. */
+  readonly fileReviewSourceForEvidence?: (target: {
+    readonly reviewId: string;
+    readonly changedFileId: string;
+  }) => FileReviewSource | undefined;
   /** Present only in the injected development launcher composition. */
   readonly humanReviewLauncherView?: ReactNode;
   /** Enumerated proof navigation; it cannot activate or focus a native window. */
@@ -108,6 +114,7 @@ export function App({
   harnessManagementPreviewSurface,
   fileReviewSource,
   contextualFileReviewClient,
+  fileReviewSourceForEvidence,
   humanReviewLauncherView,
   humanReviewLauncherNavigation,
   initialSurface = 'epics',
@@ -120,8 +127,14 @@ export function App({
       : initialSurface,
   );
   const [contextualFileReviewSource, setContextualFileReviewSource] = useState<FileReviewSource>();
+  const [fileReviewInitialFileId, setFileReviewInitialFileId] = useState<string>();
   const activeFileReviewSource = fileReviewSource ?? contextualFileReviewSource;
   const [selectedAgentSessionId, setSelectedAgentSessionId] = useState<string | null>(null);
+  const [focusedAgentSessionInvocationId, setFocusedAgentSessionInvocationId] = useState<string>();
+  const [workUnitReturnOrigin, setWorkUnitReturnOrigin] = useState<Extract<
+    AgentSessionProductLocation,
+    { readonly kind: 'work_unit' }
+  > | null>(null);
   const [expandedAgentSessionNodes, setExpandedAgentSessionNodes] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -359,8 +372,29 @@ export function App({
   );
   const openStandaloneAgentSession = useCallback((sessionId: string) => {
     setSelectedAgentSessionId(sessionId);
+    setFocusedAgentSessionInvocationId(undefined);
+    setWorkUnitReturnOrigin(null);
     setSurface('agent-sessions');
   }, []);
+  const openWorkUnitActivitySession = useCallback(
+    (
+      target: WorkUnitActivitySessionTarget,
+      origin: Extract<AgentSessionProductLocation, { readonly kind: 'work_unit' }>,
+    ) => {
+      if (
+        !origin.inspectionState ||
+        origin.inspectionState.sessionId !== target.sessionId ||
+        origin.inspectionState.invocationId !== target.invocationId ||
+        origin.inspectionState.activityId !== target.activityId
+      )
+        return;
+      setSelectedAgentSessionId(target.sessionId);
+      setFocusedAgentSessionInvocationId(target.invocationId);
+      setWorkUnitReturnOrigin(origin);
+      setSurface('agent-sessions');
+    },
+    [],
+  );
   const navigateToProductLocation = useCallback(
     (location: AgentSessionProductLocation) => {
       if (location.kind === 'epic_planning_draft') {
@@ -407,6 +441,16 @@ export function App({
       return result;
     },
     [contextualFileReviewClient],
+  );
+  const openFileEvidence = useCallback(
+    (target: { readonly reviewId: string; readonly changedFileId: string }) => {
+      const source = fileReviewSourceForEvidence?.(target);
+      if (!source) return;
+      setContextualFileReviewSource(source);
+      setFileReviewInitialFileId(target.changedFileId);
+      setSurface('file-review');
+    },
+    [fileReviewSourceForEvidence],
   );
 
   return (
@@ -506,10 +550,12 @@ export function App({
           }}
           requestedLocation={requestedProductLocation}
           onOpenAgentSession={openStandaloneAgentSession}
+          onOpenWorkUnitActivitySession={openWorkUnitActivitySession}
           onRequestFileReview={contextualFileReviewClient ? requestContextualFileReview : undefined}
+          onOpenFileEvidence={fileReviewSourceForEvidence ? openFileEvidence : undefined}
         />
       ) : surface === 'file-review' && activeFileReviewSource ? (
-        <FileReviewScreen source={activeFileReviewSource} />
+        <FileReviewScreen source={activeFileReviewSource} initialFileId={fileReviewInitialFileId} />
       ) : surface === 'worktree-review' && humanReviewLauncherView ? (
         humanReviewLauncherView
       ) : surface === 'agent-sessions' ? (
@@ -522,10 +568,23 @@ export function App({
           }
           planningDrafts={planningDrafts}
           selectedSessionId={selectedAgentSessionId}
+          focusInvocationId={focusedAgentSessionInvocationId}
+          returnOrigin={workUnitReturnOrigin}
           onSelectedSessionChange={setSelectedAgentSessionId}
           expandedNodeIds={expandedAgentSessionNodes}
           onExpandedNodeIdsChange={setExpandedAgentSessionNodes}
           onNavigateToProduct={navigateToProductLocation}
+          onReturnToProduct={(origin) => {
+            if (
+              !workUnitReturnOrigin ||
+              !origin.inspectionState ||
+              origin !== workUnitReturnOrigin ||
+              selectedAgentSessionId !== origin.inspectionState.sessionId
+            )
+              return;
+            setWorkUnitReturnOrigin(null);
+            navigateToProductLocation(origin);
+          }}
         />
       ) : (
         harnessManagementPreviewSurface
@@ -546,7 +605,9 @@ function OrchestrationSurface({
   onOpenDraft,
   requestedLocation,
   onOpenAgentSession,
+  onOpenWorkUnitActivitySession,
   onRequestFileReview,
+  onOpenFileEvidence,
 }: {
   readonly load: ReturnType<typeof useOrchestrationLoad>;
   readonly presentation: OrchestrationPresentationAdapter;
@@ -559,7 +620,15 @@ function OrchestrationSurface({
   readonly onOpenDraft: (draft: EpicPlanningDraftSummary) => void;
   readonly requestedLocation: AgentSessionProductLocation | null;
   readonly onOpenAgentSession: (sessionId: string) => void;
+  readonly onOpenWorkUnitActivitySession: (
+    target: WorkUnitActivitySessionTarget,
+    origin: Extract<AgentSessionProductLocation, { readonly kind: 'work_unit' }>,
+  ) => void;
   readonly onRequestFileReview?: (sprintId: string) => Promise<ContextualFileReviewResult>;
+  readonly onOpenFileEvidence?: (target: {
+    readonly reviewId: string;
+    readonly changedFileId: string;
+  }) => void;
 }) {
   if (load.kind === 'ready')
     return (
@@ -574,7 +643,9 @@ function OrchestrationSurface({
         onOpenPlanningDraft={onOpenDraft}
         requestedLocation={requestedLocation}
         onOpenAgentSession={onOpenAgentSession}
+        onOpenWorkUnitActivitySession={onOpenWorkUnitActivitySession}
         onRequestFileReview={onRequestFileReview}
+        onOpenFileEvidence={onOpenFileEvidence}
       />
     );
   const copy =

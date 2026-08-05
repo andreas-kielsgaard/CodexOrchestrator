@@ -15,6 +15,12 @@ export interface AgentSessionTurnInspectorProps {
   readonly error?: string | null;
   readonly agentIdentity?: AgentIdentity;
   readonly ariaLabel?: string;
+  /** Optional explicit prior invocation supplied by the owning product context. */
+  readonly precedingInput?: Readonly<{
+    readonly invocationId: string;
+    readonly text: string;
+    readonly provenance: 'user' | 'application';
+  }>;
 }
 
 /** Read-only presentation of exactly one durable Session/invocation turn. */
@@ -26,6 +32,7 @@ export function AgentSessionTurnInspector({
   error = null,
   agentIdentity,
   ariaLabel = 'Agent Session turn inspector',
+  precedingInput,
 }: AgentSessionTurnInspectorProps) {
   const [expandedProcessing, setExpandedProcessing] = useState<ReadonlySet<string>>(new Set());
   const invocation = selectTranscriptInvocation(transcript, sessionId, invocationId);
@@ -87,6 +94,14 @@ export function AgentSessionTurnInspector({
           </dl>
         )}
       </header>
+      {precedingInput ? (
+        <article className="agent-session-turn-inspector__preceding-input">
+          <header>
+            {precedingInput.provenance === 'application' ? 'Application input' : 'Previous input'}
+          </header>
+          <p>{precedingInput.text}</p>
+        </article>
+      ) : null}
       <AgentSessionTranscript
         transcript={transcript}
         content={content}

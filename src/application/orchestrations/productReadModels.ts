@@ -397,7 +397,14 @@ export type ProductWorkUnitIntegrationV1 = Readonly<{
   }>;
 }>;
 export type ProductWorkUnitExecutionStateV1 = Readonly<{
-  readonly state: 'waiting_on_prerequisites' | 'ready' | 'active' | 'retry_authorized' | 'handed_back' | 'settled' | 'attention';
+  readonly state:
+    | 'waiting_on_prerequisites'
+    | 'ready'
+    | 'active'
+    | 'retry_authorized'
+    | 'handed_back'
+    | 'settled'
+    | 'attention';
   readonly recordedAt: string;
 }>;
 
@@ -448,9 +455,23 @@ export type ProductWorkUnitInspectionFileEvidenceV1 =
       readonly sourceActivityId: string;
       readonly changedFiles: readonly Readonly<{
         readonly evidenceRef: string;
+        /** Stable application-owned identity; never a filesystem path. */
+        readonly fileId: string;
         readonly displayName: string;
         readonly changeKind: 'added' | 'modified' | 'deleted' | 'renamed';
         readonly contentFingerprint: string;
+        readonly diffDestination:
+          | Readonly<{
+              readonly status: 'available';
+              readonly owner: 'application';
+              readonly reviewId: string;
+              readonly changedFileId: string;
+            }>
+          | Readonly<{
+              readonly status: 'unavailable';
+              readonly owner: 'application';
+              readonly reason: string;
+            }>;
       }>[];
     }>
   | Readonly<{
@@ -459,13 +480,35 @@ export type ProductWorkUnitInspectionFileEvidenceV1 =
       readonly reason: string;
     }>;
 
+export type ProductWorkUnitInspectionTestEvidenceV1 =
+  | Readonly<{
+      readonly status: 'unavailable';
+      readonly owner: 'application';
+      readonly reason: string;
+    }>
+  | Readonly<{
+      readonly status: 'available';
+      readonly owner: 'application';
+      readonly sourceActivityId: string;
+      readonly runId: string;
+      readonly whatRan: string;
+      readonly command: string;
+      readonly environment: string;
+      readonly result: 'passed' | 'failed' | 'canceled' | 'timed_out' | 'inconclusive';
+      readonly cases: readonly Readonly<{
+        readonly caseId: string;
+        readonly label: string;
+        readonly result: 'passed' | 'failed' | 'skipped';
+      }>[];
+    }>;
+
 export type ProductWorkUnitInspectionV1 = Readonly<{
   readonly workUnitId: string;
   readonly materializationId: string;
   readonly activities: readonly ProductWorkUnitInspectionActivityV1[];
   readonly fileEvidence: ProductWorkUnitInspectionFileEvidenceV1;
   /** Test detail is unavailable unless application-owned detail is separately recorded. */
-  readonly testEvidence: ProductWorkUnitInspectionUnavailableV1;
+  readonly testEvidence: ProductWorkUnitInspectionTestEvidenceV1;
 }>;
 
 export type ProductWorkUnitIncompleteDispositionV1 = Readonly<{
@@ -491,10 +534,7 @@ export type ProductWorkUnitIncompleteDispositionV1 = Readonly<{
 }>;
 
 export type ProductSprintRunnerHandbackDependencyOwnerClassificationV1 =
-  | 'work_unit_handler'
-  | 'work_unit_implementer'
-  | 'work_slice_planner'
-  | 'sprint_runner';
+  'work_unit_handler' | 'work_unit_implementer' | 'work_slice_planner' | 'sprint_runner';
 
 export type ProductSprintRunnerHandbackBoundedDetailV1 = Readonly<{
   readonly label: string;
@@ -506,9 +546,7 @@ export type ProductSprintRunnerHandbackUnknownMovementKindV1 = string & {
 };
 
 export type ProductSprintRunnerHandbackKnownMovementKindV1 =
-  | 'continue_eligible_work'
-  | 'wait_for_agent_dependency'
-  | 'local_exhaustion_escalate';
+  'continue_eligible_work' | 'wait_for_agent_dependency' | 'local_exhaustion_escalate';
 
 export type ProductSprintRunnerHandbackMovementV1 = Readonly<
   | {

@@ -59,14 +59,25 @@ describe('orchestration native query v1', () => {
   it('requires the productive execution bundle to be all present or all absent and rejects private additions', () => {
     const value = fixture('valid-empty.json') as Record<string, unknown>;
     value.workUnitExecutionStates = [];
-    expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow('execution projection bundle is incomplete');
+    expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow(
+      'execution projection bundle is incomplete',
+    );
     Object.assign(value, {
-      workSliceExecutionGraphCompletions: [], workSliceExecutionSettlements: [],
-      workSlicePlanningPointExecutionSettlements: [], workSliceExecutionAttentions: [],
+      workSliceExecutionGraphCompletions: [],
+      workSliceExecutionSettlements: [],
+      workSlicePlanningPointExecutionSettlements: [],
+      workSliceExecutionAttentions: [],
     });
     const query = decodeOrchestrationNativeQueryV2(value);
     expect(query.workUnitExecutionStates).toEqual([]);
-    (value.workUnitExecutionStates as unknown[]).push({ workUnitId: 'private', materializationId: 'private', acceptedRevisionId: 'private', state: 'ready', recordedAt: '2026-08-05T00:00:00Z', graphFingerprint: 'private' });
+    (value.workUnitExecutionStates as unknown[]).push({
+      workUnitId: 'private',
+      materializationId: 'private',
+      acceptedRevisionId: 'private',
+      state: 'ready',
+      recordedAt: '2026-08-05T00:00:00Z',
+      graphFingerprint: 'private',
+    });
     expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow('unknown field');
   });
 
@@ -115,7 +126,10 @@ describe('orchestration native query v1', () => {
     value.workSliceExecutionSettlements = [];
     value.workSlicePlanningPointExecutionSettlements = [];
     value.workSliceExecutionAttentions = [
-      { materializationId: 'execution-materialization-fixture', recordedAt: '2026-08-05T00:00:01Z' },
+      {
+        materializationId: 'execution-materialization-fixture',
+        recordedAt: '2026-08-05T00:00:01Z',
+      },
     ];
     const states = value.workUnitExecutionStates as Array<Record<string, unknown>>;
     states[0]!.state = 'ready';
@@ -123,12 +137,18 @@ describe('orchestration native query v1', () => {
     states[2]!.state = 'retry_authorized';
     states[3]!.state = 'handed_back';
     states.push({
-      ...states[0], workUnitId: 'execution-root-a', state: 'attention', recordedAt: '2026-08-05T00:00:01Z',
+      ...states[0],
+      workUnitId: 'execution-root-a',
+      state: 'attention',
+      recordedAt: '2026-08-05T00:00:01Z',
     });
     states.splice(0, 1);
     const query = decodeOrchestrationNativeQueryV2(value);
     expect(query.workUnitExecutionStates.map((state) => state.state).sort()).toEqual([
-      'active', 'attention', 'handed_back', 'retry_authorized',
+      'active',
+      'attention',
+      'handed_back',
+      'retry_authorized',
     ]);
     expect(query.workSliceExecutionGraphCompletions).toEqual([]);
     expect(query.workSliceExecutionSettlements).toEqual([]);
@@ -598,13 +618,15 @@ describe('orchestration native query v1', () => {
     const inProgressInput = nativeQueryProductCompositionInputV2(
       decodeOrchestrationNativeQueryV2(inProgress),
     );
-    expect(primaryAttempt(inProgressInput.referenceIndex.workUnits[0]!)?.implementerOutcome).toMatchObject({
+    expect(
+      primaryAttempt(inProgressInput.referenceIndex.workUnits[0]!)?.implementerOutcome,
+    ).toMatchObject({
       reportingRequestedAt: '2026-08-04T00:00:00Z',
       reportingPreparedAt: '2026-08-04T00:00:01Z',
     });
-    expect(primaryAttempt(inProgressInput.referenceIndex.workUnits[0]!)?.implementerOutcome).not.toHaveProperty(
-      'submittedOutcome',
-    );
+    expect(
+      primaryAttempt(inProgressInput.referenceIndex.workUnits[0]!)?.implementerOutcome,
+    ).not.toHaveProperty('submittedOutcome');
 
     for (const status of ['failed', 'canceled'] as const) {
       const terminal = implementerOutcomeNativeFixture();
@@ -633,7 +655,8 @@ describe('orchestration native query v1', () => {
     expect(readyOutcome.handlerReviewReadyAt).toBe('2026-08-04T00:00:11Z');
     expect(
       composeProductOrchestrationReadModels(nativeQueryProductCompositionInputV2(readyQuery))
-        .epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!.attemptHistory[0]?.implementerOutcome,
+        .epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!.attemptHistory[0]
+        ?.implementerOutcome,
     ).toEqual(readyOutcome);
 
     const malformed = [
@@ -708,14 +731,18 @@ describe('orchestration native query v1', () => {
       expect(primaryAttempt(query.workUnits[0]!)?.handlerReview?.semanticJudgment?.variant).toBe(
         variant === 'accepted' ? 'accept' : 'return',
       );
-      expect(primaryAttempt(query.workUnits[0]!)?.handlerReview?.lifecycle?.status).toBe('completed');
+      expect(primaryAttempt(query.workUnits[0]!)?.handlerReview?.lifecycle?.status).toBe(
+        'completed',
+      );
     }
 
     const failed = implementerOutcomeNativeFixture();
     const failedUnit = (failed.workUnits as Array<Record<string, unknown>>)[0]!;
     failedUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
     failedUnit.handlerReview = handlerReviewFixture('failed');
-    expect(primaryAttempt(decodeOrchestrationNativeQueryV2(failed).workUnits[0]!)?.handlerDecision).toBeUndefined();
+    expect(
+      primaryAttempt(decodeOrchestrationNativeQueryV2(failed).workUnits[0]!)?.handlerDecision,
+    ).toBeUndefined();
 
     const malformed = [
       (() => {
@@ -778,9 +805,8 @@ describe('orchestration native query v1', () => {
       providerActivationObservedAt: '2026-08-04T00:00:31Z',
       retryReadyAt: '2026-08-04T00:00:32Z',
     });
-    const model = composeProductOrchestrationReadModels(
-      nativeQueryProductCompositionInputV2(query),
-    ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
+    const model = composeProductOrchestrationReadModels(nativeQueryProductCompositionInputV2(query))
+      .epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
     expect(model.retryAttempts).toEqual(query.workUnits[0]!.retryAttempts);
     expect(model.retryAttempts[0]).not.toHaveProperty('candidateCommitId');
     expect(model.retryAttempts[0]).not.toHaveProperty('candidateTreeId');
@@ -816,7 +842,9 @@ describe('orchestration native query v1', () => {
     extensibleUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
     extensibleUnit.handlerReview = handlerReviewFixture('returned');
     extensibleUnit.handlerDecision = handlerDecisionFixture('returned');
-    extensibleUnit.retryAttempts = [{ ...retryAttemptFixture('partial'), ordinal: 2, retryAttemptId: 'retry-attempt-2' }];
+    extensibleUnit.retryAttempts = [
+      { ...retryAttemptFixture('partial'), ordinal: 2, retryAttemptId: 'retry-attempt-2' },
+    ];
     expect(() => decodeOrchestrationNativeQueryV2(structurallyExtensible)).toThrow(
       'exact predecessor history member',
     );
@@ -834,7 +862,11 @@ describe('orchestration native query v1', () => {
         launchAcceptedAt: undefined,
       },
       { ...retryAttemptFixture('ready'), failureReason: 'retry_failed' },
-      { ...retryAttemptFixture('partial'), providerActivationObservedAt: '2026-08-04T00:00:28Z', launchRequestedAt: undefined },
+      {
+        ...retryAttemptFixture('partial'),
+        providerActivationObservedAt: '2026-08-04T00:00:28Z',
+        launchRequestedAt: undefined,
+      },
       { ...retryAttemptFixture('ready'), providerActivationObservedAt: '2026-08-04T00:00:29Z' },
     ];
     for (const retryAttempt of malformed) {
@@ -907,12 +939,21 @@ describe('orchestration native query v1', () => {
     const gapped = implementerOutcomeNativeFixture();
     const gappedUnit = (gapped.workUnits as Array<Record<string, unknown>>)[0]!;
     gappedUnit.attemptHistory = [
-      { ordinal: 0, attemptId: 'attempt-1', implementerOutcome: implementerOutcomeFixture('review_ready') },
-      { ordinal: 2, attemptId: 'attempt-3', implementerOutcome: { ...implementerOutcomeFixture('review_ready'), attemptId: 'attempt-3' } },
+      {
+        ordinal: 0,
+        attemptId: 'attempt-1',
+        implementerOutcome: implementerOutcomeFixture('review_ready'),
+      },
+      {
+        ordinal: 2,
+        attemptId: 'attempt-3',
+        implementerOutcome: {
+          ...implementerOutcomeFixture('review_ready'),
+          attemptId: 'attempt-3',
+        },
+      },
     ];
-    expect(() => decodeOrchestrationNativeQueryV2(gapped)).toThrow(
-      'strictly ordered without gaps',
-    );
+    expect(() => decodeOrchestrationNativeQueryV2(gapped)).toThrow('strictly ordered without gaps');
   });
 
   it('projects factual Handback phases and structured movement while failing closed on impossible effects', () => {
@@ -953,16 +994,19 @@ describe('orchestration native query v1', () => {
     const partialModel = composeProductOrchestrationReadModels(
       nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(partial)),
     ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
-    expect(partialModel.attemptHistory[0]!.incompleteDisposition?.noProgressHandback).toMatchObject({
-      persistedAt: '2026-08-04T00:00:19Z',
-      sprintRunnerDelivery: { deliveryRequestedAt: '2026-08-04T00:00:21Z' },
-    });
+    expect(partialModel.attemptHistory[0]!.incompleteDisposition?.noProgressHandback).toMatchObject(
+      {
+        persistedAt: '2026-08-04T00:00:19Z',
+        sprintRunnerDelivery: { deliveryRequestedAt: '2026-08-04T00:00:21Z' },
+      },
+    );
 
     const reopened = JSON.parse(JSON.stringify(partial)) as Record<string, unknown>;
     const reopenedDisposition = (
-      ((reopened.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!
-        .incompleteDisposition as Record<string, unknown>
-    );
+      (reopened.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+        Record<string, unknown>
+      >
+    )[0]!.incompleteDisposition as Record<string, unknown>;
     const reopenedHandback = reopenedDisposition.noProgressHandback as Record<string, unknown>;
     reopenedHandback.sprintRunnerDelivery = {
       deliveryRequestedAt: '2026-08-04T00:00:21Z',
@@ -1004,7 +1048,10 @@ describe('orchestration native query v1', () => {
     const reopenedModel = composeProductOrchestrationReadModels(
       nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(reopened)),
     ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
-    expect(reopenedModel.attemptHistory[0]!.incompleteDisposition?.noProgressHandback?.sprintRunnerDelivery).toMatchObject({
+    expect(
+      reopenedModel.attemptHistory[0]!.incompleteDisposition?.noProgressHandback
+        ?.sprintRunnerDelivery,
+    ).toMatchObject({
       launchAcceptedAt: '2026-08-04T00:00:25Z',
       selectedMovement: {
         dependencyOwner: 'bounded Work Unit Handler',
@@ -1012,14 +1059,23 @@ describe('orchestration native query v1', () => {
         resumptionPath: 'Reconcile this exact Handback after that result.',
       },
     });
-    expect(reopenedModel.attemptHistory[0]!.incompleteDisposition?.noProgressHandback?.epicRunnerReceiver).toMatchObject({
+    expect(
+      reopenedModel.attemptHistory[0]!.incompleteDisposition?.noProgressHandback
+        ?.epicRunnerReceiver,
+    ).toMatchObject({
       sprintId: 'sprint-fixture',
       epicId: 'epic-fixture',
       disposition: { movementKind: 'return_context_to_sprint_runner' },
     });
 
     const attention = JSON.parse(JSON.stringify(reopened)) as Record<string, unknown>;
-    const attentionHandback = (((attention.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>).noProgressHandback as Record<string, unknown>;
+    const attentionHandback = (
+      (
+        (attention.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+          Record<string, unknown>
+        >
+      )[0]!.incompleteDisposition as Record<string, unknown>
+    ).noProgressHandback as Record<string, unknown>;
     const attentionReceiver = attentionHandback.epicRunnerReceiver as Record<string, unknown>;
     delete attentionReceiver.disposition;
     attentionReceiver.disposition = {
@@ -1061,7 +1117,11 @@ describe('orchestration native query v1', () => {
       },
     ]) {
       const value = JSON.parse(JSON.stringify(reopened)) as Record<string, unknown>;
-      const disposition = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
+      const disposition = (
+        (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+          Record<string, unknown>
+        >
+      )[0]!.incompleteDisposition as Record<string, unknown>;
       const handback = disposition.noProgressHandback as Record<string, unknown>;
       const delivery = handback.sprintRunnerDelivery as Record<string, unknown>;
       delete delivery.selectedMovement;
@@ -1072,11 +1132,19 @@ describe('orchestration native query v1', () => {
       const model = composeProductOrchestrationReadModels(
         nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(value)),
       ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
-      expect(model.attemptHistory[0]!.incompleteDisposition?.noProgressHandback?.sprintRunnerDelivery).toMatchObject(movement);
+      expect(
+        model.attemptHistory[0]!.incompleteDisposition?.noProgressHandback?.sprintRunnerDelivery,
+      ).toMatchObject(movement);
     }
 
     const boundedMovement = JSON.parse(JSON.stringify(reopened)) as Record<string, unknown>;
-    const boundedDelivery = (((boundedMovement.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>).noProgressHandback as Record<string, unknown>;
+    const boundedDelivery = (
+      (
+        (boundedMovement.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+          Record<string, unknown>
+        >
+      )[0]!.incompleteDisposition as Record<string, unknown>
+    ).noProgressHandback as Record<string, unknown>;
     boundedDelivery.sprintRunnerDelivery = {
       deliveryRequestedAt: '2026-08-04T00:00:21Z',
       deliveryPersistedAt: '2026-08-04T00:00:22Z',
@@ -1101,7 +1169,8 @@ describe('orchestration native query v1', () => {
     expect(
       composeProductOrchestrationReadModels(
         nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(boundedMovement)),
-      ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!.attemptHistory[0]!.incompleteDisposition?.noProgressHandback?.sprintRunnerDelivery,
+      ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!.attemptHistory[0]!
+        .incompleteDisposition?.noProgressHandback?.sprintRunnerDelivery,
     ).toMatchObject({
       selectedMovement: {
         movementKind: 'future_bounded_move',
@@ -1119,51 +1188,166 @@ describe('orchestration native query v1', () => {
 
     const invalid = [
       (value: Record<string, unknown>) => {
-        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
-        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z' };
+        const delivery = (
+          (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+            Record<string, unknown>
+          >
+        )[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = {
+          deliveryRequestedAt: '2026-08-04T00:00:21Z',
+          launchAcceptedAt: '2026-08-04T00:00:25Z',
+        };
       },
       (value: Record<string, unknown>) => {
-        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
-        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', deliveryPersistedAt: '2026-08-04T00:00:20Z' };
+        const delivery = (
+          (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+            Record<string, unknown>
+          >
+        )[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = {
+          deliveryRequestedAt: '2026-08-04T00:00:21Z',
+          deliveryPersistedAt: '2026-08-04T00:00:20Z',
+        };
       },
       (value: Record<string, unknown>) => {
-        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
-        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', deliveryPersistedAt: '2026-08-04T00:00:22Z', harnessBoundAt: '2026-08-04T00:00:23Z', launchRequestedAt: '2026-08-04T00:00:24Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovementKind: 'wait_for_agent_dependency', selectedMovement: { movementKind: 'wait_for_agent_dependency', rationale: 'x', dependencyOwner: 'human approval', dependencyOwnerClassification: 'work_unit_handler', enablingResult: 'x', resumptionPath: 'x' } };
+        const delivery = (
+          (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+            Record<string, unknown>
+          >
+        )[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = {
+          deliveryRequestedAt: '2026-08-04T00:00:21Z',
+          deliveryPersistedAt: '2026-08-04T00:00:22Z',
+          harnessBoundAt: '2026-08-04T00:00:23Z',
+          launchRequestedAt: '2026-08-04T00:00:24Z',
+          launchAcceptedAt: '2026-08-04T00:00:25Z',
+          semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z',
+          selectedMovementKind: 'wait_for_agent_dependency',
+          selectedMovement: {
+            movementKind: 'wait_for_agent_dependency',
+            rationale: 'x',
+            dependencyOwner: 'human approval',
+            dependencyOwnerClassification: 'work_unit_handler',
+            enablingResult: 'x',
+            resumptionPath: 'x',
+          },
+        };
       },
       (value: Record<string, unknown>) => {
-        const handback = (((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>).noProgressHandback as Record<string, unknown>;
+        const handback = (
+          (
+            (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+              Record<string, unknown>
+            >
+          )[0]!.incompleteDisposition as Record<string, unknown>
+        ).noProgressHandback as Record<string, unknown>;
         handback.receiverSessionId = 'private';
       },
       (value: Record<string, unknown>) => {
-        const handback = (((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>).noProgressHandback as Record<string, unknown>;
+        const handback = (
+          (
+            (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+              Record<string, unknown>
+            >
+          )[0]!.incompleteDisposition as Record<string, unknown>
+        ).noProgressHandback as Record<string, unknown>;
         const receiver = handback.epicRunnerReceiver as Record<string, unknown>;
         receiver.epicId = 'foreign-epic';
       },
       (value: Record<string, unknown>) => {
-        const handback = (((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>).noProgressHandback as Record<string, unknown>;
+        const handback = (
+          (
+            (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+              Record<string, unknown>
+            >
+          )[0]!.incompleteDisposition as Record<string, unknown>
+        ).noProgressHandback as Record<string, unknown>;
         const receiver = handback.epicRunnerReceiver as Record<string, unknown>;
         receiver.launchAcceptedAt = '2026-08-04T00:00:30Z';
         receiver.launchRequestedAt = '2026-08-04T00:00:31Z';
       },
       (value: Record<string, unknown>) => {
-        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
-        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovementKind: 'future_bounded_move', selectedMovement: { movementKind: 'future_bounded_move', rationale: 'x', dependencyOwner: 'bounded Work Unit Handler' } };
+        const delivery = (
+          (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+            Record<string, unknown>
+          >
+        )[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = {
+          deliveryRequestedAt: '2026-08-04T00:00:21Z',
+          launchAcceptedAt: '2026-08-04T00:00:25Z',
+          semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z',
+          selectedMovementKind: 'future_bounded_move',
+          selectedMovement: {
+            movementKind: 'future_bounded_move',
+            rationale: 'x',
+            dependencyOwner: 'bounded Work Unit Handler',
+          },
+        };
       },
       (value: Record<string, unknown>) => {
-        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
-        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovementKind: 'future_bounded_move' };
+        const delivery = (
+          (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+            Record<string, unknown>
+          >
+        )[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = {
+          deliveryRequestedAt: '2026-08-04T00:00:21Z',
+          launchAcceptedAt: '2026-08-04T00:00:25Z',
+          semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z',
+          selectedMovementKind: 'future_bounded_move',
+        };
       },
       (value: Record<string, unknown>) => {
-        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
-        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovement: { movementKind: 'future_bounded_move', rationale: 'x' } };
+        const delivery = (
+          (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+            Record<string, unknown>
+          >
+        )[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = {
+          deliveryRequestedAt: '2026-08-04T00:00:21Z',
+          launchAcceptedAt: '2026-08-04T00:00:25Z',
+          semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z',
+          selectedMovement: { movementKind: 'future_bounded_move', rationale: 'x' },
+        };
       },
       (value: Record<string, unknown>) => {
-        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
-        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovementKind: 'local_exhaustion_escalate', selectedMovement: { movementKind: 'local_exhaustion_escalate', rationale: 'x', localExhaustionSummary: 'x' }, escalationDeliveryRequestedAt: '2026-08-04T00:00:28Z' };
+        const delivery = (
+          (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+            Record<string, unknown>
+          >
+        )[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = {
+          deliveryRequestedAt: '2026-08-04T00:00:21Z',
+          launchAcceptedAt: '2026-08-04T00:00:25Z',
+          semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z',
+          selectedMovementKind: 'local_exhaustion_escalate',
+          selectedMovement: {
+            movementKind: 'local_exhaustion_escalate',
+            rationale: 'x',
+            localExhaustionSummary: 'x',
+          },
+          escalationDeliveryRequestedAt: '2026-08-04T00:00:28Z',
+        };
       },
       (value: Record<string, unknown>) => {
-        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
-        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovementKind: 'local_exhaustion_escalate', selectedMovement: { movementKind: 'local_exhaustion_escalate', rationale: 'x', localExhaustionSummary: 'x' }, escalationIntentRecordedAt: '2026-08-04T00:00:28Z', escalationDeliveryRequestedAt: '2026-08-04T00:00:27Z' };
+        const delivery = (
+          (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+            Record<string, unknown>
+          >
+        )[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = {
+          deliveryRequestedAt: '2026-08-04T00:00:21Z',
+          launchAcceptedAt: '2026-08-04T00:00:25Z',
+          semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z',
+          selectedMovementKind: 'local_exhaustion_escalate',
+          selectedMovement: {
+            movementKind: 'local_exhaustion_escalate',
+            rationale: 'x',
+            localExhaustionSummary: 'x',
+          },
+          escalationIntentRecordedAt: '2026-08-04T00:00:28Z',
+          escalationDeliveryRequestedAt: '2026-08-04T00:00:27Z',
+        };
       },
     ];
     for (const mutate of invalid) {
@@ -1370,7 +1554,9 @@ describe('orchestration native query v1', () => {
           invocationId: 'review-invocation-1',
           primaryStage: 'handler_review',
           applicationSummary: expect.objectContaining({
-            peerEvidenceActivityIds: ['work-unit-inspection:unit-1:attempt-1:implementer-reporting:reporting-invocation-1'],
+            peerEvidenceActivityIds: [
+              'work-unit-inspection:unit-1:attempt-1:implementer-reporting:reporting-invocation-1',
+            ],
           }),
         }),
         expect.objectContaining({
@@ -1384,7 +1570,8 @@ describe('orchestration native query v1', () => {
     expect(inspection.fileEvidence).toMatchObject({
       status: 'available',
       owner: 'application',
-      sourceActivityId: 'work-unit-inspection:unit-1:attempt-1:implementer-reporting:reporting-invocation-1',
+      sourceActivityId:
+        'work-unit-inspection:unit-1:attempt-1:implementer-reporting:reporting-invocation-1',
     });
     expect(inspection.testEvidence).toMatchObject({ owner: 'application' });
 
@@ -1404,7 +1591,9 @@ describe('orchestration native query v1', () => {
       ]),
     );
     const readModels = composeProductOrchestrationReadModels(input);
-    expect(readModels.epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!.inspection).toMatchObject({
+    expect(
+      readModels.epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!.inspection,
+    ).toMatchObject({
       fileEvidence: { status: 'available' },
     });
     expect(
@@ -1421,8 +1610,11 @@ describe('orchestration native query v1', () => {
     );
 
     const foreign = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
-    ((foreign.workUnitInspections as Array<Record<string, unknown>>)[0]!.activities as Array<Record<string, unknown>>)[0]!
-      .invocationId = 'foreign-invocation';
+    (
+      (foreign.workUnitInspections as Array<Record<string, unknown>>)[0]!.activities as Array<
+        Record<string, unknown>
+      >
+    )[0]!.invocationId = 'foreign-invocation';
     expect(() => decodeOrchestrationNativeQueryV2(foreign)).toThrow(
       'Work Unit inspection activity is foreign, stale, mismatched, or duplicated',
     );
@@ -1439,17 +1631,32 @@ describe('orchestration native query v1', () => {
     delete handler.handlerReadyAt;
     delete handlerUnit.actionContinuation;
     delete handlerUnit.implementerActivation;
-    unpreparedHandler.workUnitInspections = [{
-      workUnitId: 'unit-1', materializationId: 'materialization-1', activities: [],
-      fileEvidence: { status: 'unavailable', owner: 'application', reason: 'No application-owned changed-file evidence is available for this Work Unit.' },
-      testEvidence: { owner: 'application', reason: 'No application-owned test-detail evidence is available for this Work Unit.' },
-    }];
-    expect(decodeOrchestrationNativeQueryV2(unpreparedHandler).workUnitInspections[0]!.activities).toEqual([]);
+    unpreparedHandler.workUnitInspections = [
+      {
+        workUnitId: 'unit-1',
+        materializationId: 'materialization-1',
+        activities: [],
+        fileEvidence: {
+          status: 'unavailable',
+          owner: 'application',
+          reason: 'No application-owned changed-file evidence is available for this Work Unit.',
+        },
+        testEvidence: {
+          owner: 'application',
+          reason: 'No application-owned test-detail evidence is available for this Work Unit.',
+        },
+      },
+    ];
+    expect(
+      decodeOrchestrationNativeQueryV2(unpreparedHandler).workUnitInspections[0]!.activities,
+    ).toEqual([]);
     const forgedHandler = JSON.parse(JSON.stringify(unpreparedHandler)) as Record<string, unknown>;
     (forgedHandler.workUnitInspections as Array<Record<string, unknown>>)[0]!.activities = [
       (workUnitInspectionFixture().activities as Array<Record<string, unknown>>)[0]!,
     ];
-    expect(() => decodeOrchestrationNativeQueryV2(forgedHandler)).toThrow('Work Unit inspection activity is foreign, stale, mismatched, or duplicated');
+    expect(() => decodeOrchestrationNativeQueryV2(forgedHandler)).toThrow(
+      'Work Unit inspection activity is foreign, stale, mismatched, or duplicated',
+    );
 
     const preparedRetry = implementerOutcomeNativeFixture();
     const retryUnit = (preparedRetry.workUnits as Array<Record<string, unknown>>)[0]!;
@@ -1459,26 +1666,131 @@ describe('orchestration native query v1', () => {
     retryUnit.retryAttempts = [retryAttemptFixture('partial')];
     preparedRetry.workUnitInspections = [workUnitInspectionFixture(true)];
     const query = decodeOrchestrationNativeQueryV2(preparedRetry);
-    expect(query.workUnitInspections[0]!.activities.filter((activity) => activity.primaryStage === 'implementer_retry')).toEqual([
-      expect.objectContaining({ attemptId: 'retry-attempt-1', role: 'implementer', agentSessionId: 'retry-implementer-session-1', invocationId: 'retry-implementer-invocation-1' }),
+    expect(
+      query.workUnitInspections[0]!.activities.filter(
+        (activity) => activity.primaryStage === 'implementer_retry',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        attemptId: 'retry-attempt-1',
+        role: 'implementer',
+        agentSessionId: 'retry-implementer-session-1',
+        invocationId: 'retry-implementer-invocation-1',
+      }),
     ]);
     const input = nativeQueryProductCompositionInputV2(query);
-    expect(input.events.agentSessionReferences).toEqual(expect.arrayContaining([expect.objectContaining({ agentSessionId: 'retry-implementer-session-1', agentInvocationId: 'retry-implementer-invocation-1', semanticRole: 'work_unit_implementer' })]));
-    expect(presentProductOrchestrations(composeProductOrchestrationReadModels(input)).epics[0]!.plan.items[0]!.workspaceAdjunct?.workUnitSessions).toEqual(expect.arrayContaining([expect.objectContaining({ sessionId: 'retry-implementer-session-1', invocationId: 'retry-implementer-invocation-1', role: 'implementer' })]));
+    expect(input.events.agentSessionReferences).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          agentSessionId: 'retry-implementer-session-1',
+          agentInvocationId: 'retry-implementer-invocation-1',
+          semanticRole: 'work_unit_implementer',
+        }),
+      ]),
+    );
+    expect(
+      presentProductOrchestrations(composeProductOrchestrationReadModels(input)).epics[0]!.plan
+        .items[0]!.workspaceAdjunct?.workUnitSessions,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: 'retry-implementer-session-1',
+          invocationId: 'retry-implementer-invocation-1',
+          role: 'implementer',
+        }),
+      ]),
+    );
 
     const unpreparedRetry = JSON.parse(JSON.stringify(preparedRetry)) as Record<string, unknown>;
-    const retry = ((unpreparedRetry.workUnits as Array<Record<string, unknown>>)[0]!.retryAttempts as Array<Record<string, unknown>>)[0]!;
+    const retry = (
+      (unpreparedRetry.workUnits as Array<Record<string, unknown>>)[0]!.retryAttempts as Array<
+        Record<string, unknown>
+      >
+    )[0]!;
     delete retry.implementerInvocationPreparedAt;
     delete retry.implementerHarnessBoundAt;
-    (unpreparedRetry.workUnitInspections as Array<Record<string, unknown>>)[0]!.activities = workUnitInspectionFixture().activities as Array<Record<string, unknown>>;
-    expect(decodeOrchestrationNativeQueryV2(unpreparedRetry).workUnitInspections[0]!.activities.some((activity) => activity.primaryStage === 'implementer_retry')).toBe(false);
+    (unpreparedRetry.workUnitInspections as Array<Record<string, unknown>>)[0]!.activities =
+      workUnitInspectionFixture().activities as Array<Record<string, unknown>>;
+    expect(
+      decodeOrchestrationNativeQueryV2(unpreparedRetry).workUnitInspections[0]!.activities.some(
+        (activity) => activity.primaryStage === 'implementer_retry',
+      ),
+    ).toBe(false);
 
     const roleTampered = JSON.parse(JSON.stringify(preparedRetry)) as Record<string, unknown>;
-    ((roleTampered.workUnitInspections as Array<Record<string, unknown>>)[0]!.activities as Array<Record<string, unknown>>)[0]!.role = 'implementer';
-    expect(() => decodeOrchestrationNativeQueryV2(roleTampered)).toThrow('Work Unit inspection activity is foreign, stale, mismatched, or duplicated');
+    (
+      (roleTampered.workUnitInspections as Array<Record<string, unknown>>)[0]!.activities as Array<
+        Record<string, unknown>
+      >
+    )[0]!.role = 'implementer';
+    expect(() => decodeOrchestrationNativeQueryV2(roleTampered)).toThrow(
+      'Work Unit inspection activity is foreign, stale, mismatched, or duplicated',
+    );
     const idTampered = JSON.parse(JSON.stringify(preparedRetry)) as Record<string, unknown>;
-    ((idTampered.workUnitInspections as Array<Record<string, unknown>>)[0]!.activities as Array<Record<string, unknown>>)[0]!.activityId = 'forged-activity-id';
-    expect(() => decodeOrchestrationNativeQueryV2(idTampered)).toThrow('Work Unit inspection activity is foreign, stale, mismatched, or duplicated');
+    (
+      (idTampered.workUnitInspections as Array<Record<string, unknown>>)[0]!.activities as Array<
+        Record<string, unknown>
+      >
+    )[0]!.activityId = 'forged-activity-id';
+    expect(() => decodeOrchestrationNativeQueryV2(idTampered)).toThrow(
+      'Work Unit inspection activity is foreign, stale, mismatched, or duplicated',
+    );
+  });
+
+  it('accepts typed test detail only for its exact reporting activity and rejects a foreign correlation', () => {
+    const value = implementerOutcomeNativeFixture();
+    const unit = (value.workUnits as Array<Record<string, unknown>>)[0]!;
+    unit.implementerOutcome = implementerOutcomeFixture('review_ready');
+    unit.handlerReview = handlerReviewFixture('accepted');
+    const inspection = workUnitInspectionFixture() as Record<string, unknown>;
+    inspection.testEvidence = {
+      status: 'available',
+      owner: 'application',
+      sourceActivityId:
+        'work-unit-inspection:unit-1:attempt-1:implementer-reporting:reporting-invocation-1',
+      runId: 'run-1',
+      whatRan: 'Focused inspection checks',
+      command: 'npm exec vitest run inspection',
+      environment: 'recorded test environment',
+      result: 'passed',
+      cases: [{ caseId: 'case-1', label: 'Exact reporting correlation', result: 'passed' }],
+    };
+    value.workUnitInspections = [inspection];
+    expect(
+      decodeOrchestrationNativeQueryV2(value).workUnitInspections[0]!.testEvidence,
+    ).toMatchObject({
+      status: 'available',
+      runId: 'run-1',
+    });
+
+    const foreign = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (
+      (foreign.workUnitInspections as Array<Record<string, unknown>>)[0]!.testEvidence as Record<
+        string,
+        unknown
+      >
+    ).sourceActivityId = 'foreign-activity';
+    expect(() => decodeOrchestrationNativeQueryV2(foreign)).toThrow(
+      'Work Unit inspection test evidence has foreign activity correlation',
+    );
+
+    const foreignDiff = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    const changedFile = (
+      (
+        (foreignDiff.workUnitInspections as Array<Record<string, unknown>>)[0]!
+          .fileEvidence as Record<string, unknown>
+      ).changedFiles as Array<Record<string, unknown>>
+    )[0]!;
+    changedFile.fileId = 'file-1';
+    changedFile.diffDestination = {
+      status: 'available',
+      owner: 'application',
+      reviewId: 'review-1',
+      changedFileId: 'foreign-file',
+    };
+    expect(() => decodeOrchestrationNativeQueryV2(foreignDiff)).toThrow(
+      'Work Unit inspection diff destination has foreign file identity',
+    );
   });
 });
 
@@ -1572,9 +1884,27 @@ function implementerOutcomeNativeFixture(): Record<string, unknown> {
     return created;
   };
   Object.defineProperties(unit, {
-    implementerOutcome: { enumerable: false, get: () => member().implementerOutcome, set: (value) => { member().implementerOutcome = value; } },
-    handlerReview: { enumerable: false, get: () => member().handlerReview, set: (value) => { member().handlerReview = value; } },
-    handlerDecision: { enumerable: false, get: () => member().handlerDecision, set: (value) => { member().handlerDecision = value; } },
+    implementerOutcome: {
+      enumerable: false,
+      get: () => member().implementerOutcome,
+      set: (value) => {
+        member().implementerOutcome = value;
+      },
+    },
+    handlerReview: {
+      enumerable: false,
+      get: () => member().handlerReview,
+      set: (value) => {
+        member().handlerReview = value;
+      },
+    },
+    handlerDecision: {
+      enumerable: false,
+      get: () => member().handlerDecision,
+      set: (value) => {
+        member().handlerDecision = value;
+      },
+    },
   });
   value.workUnitRelationships = [
     {
@@ -1611,48 +1941,125 @@ function implementerOutcomeNativeFixture(): Record<string, unknown> {
   return value;
 }
 
-function primaryAttempt<T extends { readonly attemptHistory: readonly { readonly ordinal: number }[] }>(
-  unit: T,
-): T['attemptHistory'][number] | undefined {
+function primaryAttempt<
+  T extends { readonly attemptHistory: readonly { readonly ordinal: number }[] },
+>(unit: T): T['attemptHistory'][number] | undefined {
   return unit.attemptHistory.find((member) => member.ordinal === 0);
 }
 
 function workUnitInspectionFixture(includePreparedRetry = false): Record<string, unknown> {
   const unavailable = (reason: string) => ({ owner: 'application', reason });
-  const activityId = (attemptId: string, stage: string, invocationId: string) => `work-unit-inspection:unit-1:${attemptId}:${stage}:${invocationId}`;
-  const reportingActivityId = activityId('attempt-1', 'implementer-reporting', 'reporting-invocation-1');
+  const activityId = (attemptId: string, stage: string, invocationId: string) =>
+    `work-unit-inspection:unit-1:${attemptId}:${stage}:${invocationId}`;
+  const reportingActivityId = activityId(
+    'attempt-1',
+    'implementer-reporting',
+    'reporting-invocation-1',
+  );
   return {
     workUnitId: 'unit-1',
     materializationId: 'materialization-1',
     activities: [
-      { activityId: activityId('attempt-1', 'handler-activation', 'handler-invocation-1'), attemptId: 'attempt-1', role: 'handler', agentSessionId: 'handler-session-1', invocationId: 'handler-invocation-1', primaryStage: 'handler_activation' },
-      { activityId: activityId('attempt-1', 'handler-action', 'handler-action-1'), attemptId: 'attempt-1', role: 'handler', agentSessionId: 'handler-session-1', invocationId: 'handler-action-1', primaryStage: 'handler_action' },
-      { activityId: activityId('attempt-1', 'implementer-activation', 'implementer-invocation-1'), attemptId: 'attempt-1', role: 'implementer', agentSessionId: 'implementer-session-1', invocationId: 'implementer-invocation-1', primaryStage: 'implementer_activation' },
       {
-        activityId: reportingActivityId, attemptId: 'attempt-1', role: 'implementer', agentSessionId: 'implementer-session-1', invocationId: 'reporting-invocation-1', primaryStage: 'implementer_reporting',
+        activityId: activityId('attempt-1', 'handler-activation', 'handler-invocation-1'),
+        attemptId: 'attempt-1',
+        role: 'handler',
+        agentSessionId: 'handler-session-1',
+        invocationId: 'handler-invocation-1',
+        primaryStage: 'handler_activation',
+      },
+      {
+        activityId: activityId('attempt-1', 'handler-action', 'handler-action-1'),
+        attemptId: 'attempt-1',
+        role: 'handler',
+        agentSessionId: 'handler-session-1',
+        invocationId: 'handler-action-1',
+        primaryStage: 'handler_action',
+      },
+      {
+        activityId: activityId('attempt-1', 'implementer-activation', 'implementer-invocation-1'),
+        attemptId: 'attempt-1',
+        role: 'implementer',
+        agentSessionId: 'implementer-session-1',
+        invocationId: 'implementer-invocation-1',
+        primaryStage: 'implementer_activation',
+      },
+      {
+        activityId: reportingActivityId,
+        attemptId: 'attempt-1',
+        role: 'implementer',
+        agentSessionId: 'implementer-session-1',
+        invocationId: 'reporting-invocation-1',
+        primaryStage: 'implementer_reporting',
         applicationSummary: {
           owner: 'application',
-          applicationEvents: ['submission_recorded', 'file_evidence_recorded', 'semantic_completion_recorded', 'terminal_lifecycle_observed', 'application_acceptance_recorded', 'handler_review_ready'],
+          applicationEvents: [
+            'submission_recorded',
+            'file_evidence_recorded',
+            'semantic_completion_recorded',
+            'terminal_lifecycle_observed',
+            'application_acceptance_recorded',
+            'handler_review_ready',
+          ],
           peerEvidenceActivityIds: [],
-          mcpCallDetail: unavailable('No application-owned MCP-call detail is available for this reporting turn.'),
+          mcpCallDetail: unavailable(
+            'No application-owned MCP-call detail is available for this reporting turn.',
+          ),
         },
       },
       {
-        activityId: activityId('attempt-1', 'handler-review', 'review-invocation-1'), attemptId: 'attempt-1', role: 'handler', agentSessionId: 'handler-session-1', invocationId: 'review-invocation-1', primaryStage: 'handler_review',
+        activityId: activityId('attempt-1', 'handler-review', 'review-invocation-1'),
+        attemptId: 'attempt-1',
+        role: 'handler',
+        agentSessionId: 'handler-session-1',
+        invocationId: 'review-invocation-1',
+        primaryStage: 'handler_review',
         applicationSummary: {
           owner: 'application',
-          applicationEvents: ['review_delivery_persisted', 'review_judgment_recorded', 'review_lifecycle_observed'],
+          applicationEvents: [
+            'review_delivery_persisted',
+            'review_judgment_recorded',
+            'review_lifecycle_observed',
+          ],
           peerEvidenceActivityIds: [reportingActivityId],
-          mcpCallDetail: unavailable('No application-owned MCP-call detail is available for this review turn.'),
+          mcpCallDetail: unavailable(
+            'No application-owned MCP-call detail is available for this review turn.',
+          ),
         },
       },
-      ...(includePreparedRetry ? [{ activityId: activityId('retry-attempt-1', 'implementer-retry', 'retry-implementer-invocation-1'), attemptId: 'retry-attempt-1', role: 'implementer', agentSessionId: 'retry-implementer-session-1', invocationId: 'retry-implementer-invocation-1', primaryStage: 'implementer_retry' }] : []),
+      ...(includePreparedRetry
+        ? [
+            {
+              activityId: activityId(
+                'retry-attempt-1',
+                'implementer-retry',
+                'retry-implementer-invocation-1',
+              ),
+              attemptId: 'retry-attempt-1',
+              role: 'implementer',
+              agentSessionId: 'retry-implementer-session-1',
+              invocationId: 'retry-implementer-invocation-1',
+              primaryStage: 'implementer_retry',
+            },
+          ]
+        : []),
     ],
     fileEvidence: {
-      status: 'available', owner: 'application', sourceActivityId: reportingActivityId,
-      changedFiles: [{ evidenceRef: 'evidence-1', displayName: 'src/feature.ts', changeKind: 'modified', contentFingerprint: 'content-1' }],
+      status: 'available',
+      owner: 'application',
+      sourceActivityId: reportingActivityId,
+      changedFiles: [
+        {
+          evidenceRef: 'evidence-1',
+          displayName: 'src/feature.ts',
+          changeKind: 'modified',
+          contentFingerprint: 'content-1',
+        },
+      ],
     },
-    testEvidence: unavailable('No application-owned test-detail evidence is available for this Work Unit.'),
+    testEvidence: unavailable(
+      'No application-owned test-detail evidence is available for this Work Unit.',
+    ),
   };
 }
 

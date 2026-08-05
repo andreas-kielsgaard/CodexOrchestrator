@@ -23,7 +23,11 @@ import {
   type PlanningPointWorkUnitRelationship,
   WorkSlicePlanningPointDetailWorkspace,
 } from './WorkSlicePlanningPointDetailWorkspace';
-import { WorkUnitDetailWorkspace } from './WorkUnitDetailWorkspace';
+import {
+  WorkUnitDetailWorkspace,
+  type WorkUnitActivitySessionTarget,
+} from './WorkUnitDetailWorkspace';
+import type { AgentSessionProductLocation } from '../../../application/agentSessionNavigation';
 import '../styles/sprintWorkspace.css';
 import type { EmbeddedAgentSessionComposition } from '../../agentSessions';
 import type {
@@ -52,6 +56,14 @@ export interface SprintWorkspaceProps {
   readonly onBack: () => void;
   readonly onOpenAgentSession?: (sessionId: string) => void;
   readonly onRequestFileReview?: (sprintId: string) => Promise<ContextualFileReviewResult>;
+  readonly onOpenFileEvidence?: (target: {
+    readonly reviewId: string;
+    readonly changedFileId: string;
+  }) => void;
+  readonly onOpenWorkUnitActivitySession?: (
+    target: WorkUnitActivitySessionTarget,
+    origin: Extract<AgentSessionProductLocation, { readonly kind: 'work_unit' }>,
+  ) => void;
 }
 
 export function SprintWorkspace({
@@ -67,6 +79,8 @@ export function SprintWorkspace({
   onBack,
   onOpenAgentSession,
   onRequestFileReview,
+  onOpenFileEvidence,
+  onOpenWorkUnitActivitySession,
 }: SprintWorkspaceProps) {
   const [selectedTab, setSelectedTab] = useState<SprintWorkspaceTab>('flow');
   const [selectedConcernId, setSelectedConcernId] = useState<string | null>(null);
@@ -189,6 +203,25 @@ export function SprintWorkspace({
           });
         }}
         onOpenAgentSession={onOpenAgentSession}
+        onOpenActivitySession={(target) =>
+          onOpenWorkUnitActivitySession?.(target, {
+            kind: 'work_unit',
+            epicId: workspace.sprint.epicId,
+            sprintId: workspace.sprint.sprintId,
+            revisionId: detailLocation.revisionId,
+            workSlicePlanningPointId: detailLocation.workSlicePlanningPointId,
+            workUnitId: detailLocation.workUnitId,
+            label: unit.title,
+            inspectionState: {
+              tab: 'activity',
+              activityId: target.activityId,
+              sessionId: target.sessionId,
+              invocationId: target.invocationId,
+            },
+          })
+        }
+        onOpenFileEvidence={onOpenFileEvidence}
+        initialInspectionState={detailLocation.inspectionState}
         sprintControl={fileReviewControl}
       />
     );
@@ -416,15 +449,41 @@ export function SprintWorkspace({
       primary={
         <>
           {(workspace.epicEscalationReceivers ?? []).length > 0 && (
-            <section aria-label="Unresolved Epic reassessment" className="orchestration-reassessment">
+            <section
+              aria-label="Unresolved Epic reassessment"
+              className="orchestration-reassessment"
+            >
               <p className="eyebrow">Unresolved Sprint concern</p>
-              <p>Epic reassessment context returned to this Sprint. The concern remains unresolved.</p>
+              <p>
+                Epic reassessment context returned to this Sprint. The concern remains unresolved.
+              </p>
               {(workspace.epicEscalationReceivers ?? []).map((receiver) => (
-                <div key={`${receiver.epicId}:${receiver.sprintId}:${receiver.deliveryRequestedAt}`}>
-                  {receiver.disposition?.downstreamRequest && <p>Downstream request recorded only: {receiver.disposition.downstreamRequest.request}. It is not delivery or activation.</p>}
-                  {receiver.disposition?.humanExternalAttention && <p>Attention requested: {receiver.disposition.humanExternalAttention.reason}. Authority needed: {receiver.disposition.humanExternalAttention.authorityNeeded}.</p>}
-                  {receiver.disposition?.consideredIntent && <p>Other Epic work remains intent only: {receiver.disposition.consideredIntent}.</p>}
-                  <p>Context return, dependency request, alternate work, or attention has not cleared this Sprint concern.</p>
+                <div
+                  key={`${receiver.epicId}:${receiver.sprintId}:${receiver.deliveryRequestedAt}`}
+                >
+                  {receiver.disposition?.downstreamRequest && (
+                    <p>
+                      Downstream request recorded only:{' '}
+                      {receiver.disposition.downstreamRequest.request}. It is not delivery or
+                      activation.
+                    </p>
+                  )}
+                  {receiver.disposition?.humanExternalAttention && (
+                    <p>
+                      Attention requested: {receiver.disposition.humanExternalAttention.reason}.
+                      Authority needed:{' '}
+                      {receiver.disposition.humanExternalAttention.authorityNeeded}.
+                    </p>
+                  )}
+                  {receiver.disposition?.consideredIntent && (
+                    <p>
+                      Other Epic work remains intent only: {receiver.disposition.consideredIntent}.
+                    </p>
+                  )}
+                  <p>
+                    Context return, dependency request, alternate work, or attention has not cleared
+                    this Sprint concern.
+                  </p>
                 </div>
               ))}
             </section>
@@ -576,7 +635,10 @@ export function SprintRunnerHandbackActivity({
   );
   if (entries.length === 0) return null;
   return (
-    <section className="sprint-context__runner-transition" aria-label="Sprint Runner Handback reassessment">
+    <section
+      className="sprint-context__runner-transition"
+      aria-label="Sprint Runner Handback reassessment"
+    >
       <h2>Sprint Runner Handback</h2>
       <p>
         The handed-back concern remains unresolved. Only recorded Handback and Sprint Runner stages
@@ -601,7 +663,10 @@ function handbackActivityDetail(
     >['noProgressHandback']
   >,
 ) {
-  const stages = [`Handback persisted at ${handback.persistedAt}`, `Delivery intent recorded at ${handback.deliveryIntendedAt}`];
+  const stages = [
+    `Handback persisted at ${handback.persistedAt}`,
+    `Delivery intent recorded at ${handback.deliveryIntendedAt}`,
+  ];
   const delivery = handback.sprintRunnerDelivery;
   if (!delivery) return `${stages.join('; ')}. Sprint Runner delivery is not recorded.`;
   stages.push(`Delivery requested at ${delivery.deliveryRequestedAt}`);
@@ -613,7 +678,8 @@ function handbackActivityDetail(
   if (delivery.semanticReassessmentRecordedAt) stages.push('Semantic reassessment recorded');
   if (delivery.selectedMovement) stages.push(handbackMovementDetail(delivery.selectedMovement));
   if (delivery.escalationIntentRecordedAt) stages.push('Escalation intent recorded upward');
-  if (delivery.escalationDeliveryRequestedAt) stages.push('Escalation delivery request recorded upward');
+  if (delivery.escalationDeliveryRequestedAt)
+    stages.push('Escalation delivery request recorded upward');
   return `${stages.join('; ')}.`;
 }
 
@@ -645,7 +711,8 @@ function isKnownMovementKind<K extends ProductSprintRunnerHandbackKnownMovementK
 }
 
 function dependencyOwnerLabel(
-  classification: 'work_unit_handler' | 'work_unit_implementer' | 'work_slice_planner' | 'sprint_runner',
+  classification:
+    'work_unit_handler' | 'work_unit_implementer' | 'work_slice_planner' | 'sprint_runner',
 ) {
   return {
     work_unit_handler: 'Work Unit Handler',
@@ -722,7 +789,8 @@ export function WorkSlicePlannerBoundary({
             {materializations.map((materialization) => (
               <li key={materialization.materializationId}>
                 Accepted revision {materialization.acceptedRevisionId}:{' '}
-                {materializationLabel(materialization.stage)}. {executionSummary(materialization.execution)}
+                {materializationLabel(materialization.stage)}.{' '}
+                {executionSummary(materialization.execution)}
               </li>
             ))}
           </ul>
@@ -732,7 +800,8 @@ export function WorkSlicePlannerBoundary({
               <ul>
                 {dependencyActivityWorkUnits.map((workUnit) => (
                   <li key={`${workUnit.workUnitId}-dependency`}>
-                    {workUnit.title}: {dependencyActivationActivityDetail(workUnit.dependencyActivationIntent!)}
+                    {workUnit.title}:{' '}
+                    {dependencyActivationActivityDetail(workUnit.dependencyActivationIntent!)}
                   </li>
                 ))}
                 {handlerActivityWorkUnits.map((workUnit) => (
@@ -837,10 +906,12 @@ function executionSummary(
     | undefined,
 ) {
   if (!execution) return 'Execution progress is not recorded.';
-  if (execution.attention) return 'Execution needs attention; no Work Slice settlement is recorded.';
+  if (execution.attention)
+    return 'Execution needs attention; no Work Slice settlement is recorded.';
   if (execution.planningPointSettlement) return 'Planning-point execution settlement is recorded.';
   if (execution.settlement) return 'Work Slice execution settlement is recorded.';
-  if (execution.graphCompletion) return 'Graph completion is recorded; Work Slice execution settlement is not recorded.';
+  if (execution.graphCompletion)
+    return 'Graph completion is recorded; Work Slice execution settlement is not recorded.';
   return 'Execution progress is not recorded.';
 }
 

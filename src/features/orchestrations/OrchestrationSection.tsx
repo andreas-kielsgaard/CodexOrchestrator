@@ -13,6 +13,7 @@ import './styles/orchestrationSection.css';
 import type { EpicPlanningDraftSummary } from '../../application/orchestrations';
 import type { AgentSessionProductLocation } from '../../application/agentSessionNavigation';
 import type { ContextualFileReviewResult } from '../../application/contextualFileReview';
+import type { WorkUnitActivitySessionTarget } from './components/WorkUnitDetailWorkspace';
 
 export interface OrchestrationSectionProps {
   readonly view: OrchestrationSectionView;
@@ -26,6 +27,14 @@ export interface OrchestrationSectionProps {
   readonly requestedLocation?: AgentSessionProductLocation | null;
   readonly onOpenAgentSession?: (sessionId: string) => void;
   readonly onRequestFileReview?: (sprintId: string) => Promise<ContextualFileReviewResult>;
+  readonly onOpenFileEvidence?: (target: {
+    readonly reviewId: string;
+    readonly changedFileId: string;
+  }) => void;
+  readonly onOpenWorkUnitActivitySession?: (
+    target: WorkUnitActivitySessionTarget,
+    origin: Extract<AgentSessionProductLocation, { readonly kind: 'work_unit' }>,
+  ) => void;
 }
 
 export function OrchestrationSection({
@@ -40,6 +49,8 @@ export function OrchestrationSection({
   requestedLocation,
   onOpenAgentSession,
   onRequestFileReview,
+  onOpenFileEvidence,
+  onOpenWorkUnitActivitySession,
 }: OrchestrationSectionProps) {
   const workspace = useOrchestrationWorkspace(requestedLocation);
   const selected = view.epics.find(({ id }) => id === workspace.epicId);
@@ -62,6 +73,8 @@ export function OrchestrationSection({
         onBack={workspace.backToOverview}
         onOpenAgentSession={onOpenAgentSession}
         onRequestFileReview={onRequestFileReview}
+        onOpenFileEvidence={onOpenFileEvidence}
+        onOpenWorkUnitActivitySession={onOpenWorkUnitActivitySession}
       />
     );
   }
@@ -178,6 +191,9 @@ function useOrchestrationWorkspace(requestedLocation?: AgentSessionProductLocati
       workSlicePlanningPointId: requestedLocation.workSlicePlanningPointId,
       workUnitId: requestedLocation.workUnitId,
       origin: 'work_slice_planning_point',
+      ...(requestedLocation.inspectionState
+        ? { inspectionState: requestedLocation.inspectionState }
+        : {}),
     });
   }, [requestedLocation]);
   return {

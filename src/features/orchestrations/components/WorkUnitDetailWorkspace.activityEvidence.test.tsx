@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { SprintWorkspacePresentationV1 } from '../../../application/orchestrations';
 import { projectAgentSessionTranscript } from '../../agentSessions/transcriptProjector';
@@ -67,9 +67,50 @@ describe('WorkUnitDetailWorkspace Activity and Evidence', () => {
     expect(screen.getByRole('tab', { name: 'Evidence' })).toHaveAttribute('aria-selected', 'true');
     expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Evidence' }));
   });
+
+  it('highlights only the exactly correlated Lifecycle step when an Activity receives focus', () => {
+    render(<Workspace />);
+
+    const activity = screen.getByRole('button', { name: /Handler action invocation-1/ });
+    fireEvent.focus(activity);
+
+    expect(screen.getByRole('button', { name: /Handler work/ }).closest('li')).toHaveClass(
+      'is-highlighted',
+    );
+    expect(screen.getByRole('button', { name: /Planner record/ })).toBeDisabled();
+  });
+
+  it('fails closed for a stale requested Activity restore state', () => {
+    render(
+      <Workspace
+        initialInspectionState={{
+          tab: 'activity',
+          activityId: 'activity-handler',
+          sessionId: 'session-1',
+          invocationId: 'foreign-invocation',
+        }}
+      />,
+    );
+
+    expect(screen.queryByLabelText('Agent Session turn: invocation-1')).toBeNull();
+    expect(
+      screen.getByText('Select an activity to inspect its complete recorded turn.'),
+    ).toBeVisible();
+  });
 });
 
-function Workspace({ missingSession = false }: { readonly missingSession?: boolean }) {
+function Workspace({
+  missingSession = false,
+  initialInspectionState,
+}: {
+  readonly missingSession?: boolean;
+  readonly initialInspectionState?: {
+    readonly tab: 'activity' | 'evidence';
+    readonly activityId: string;
+    readonly sessionId: string;
+    readonly invocationId: string;
+  };
+}) {
   const inspection = {
     workUnitId: 'unit-1',
     materializationId: 'materialization-1',
@@ -107,13 +148,20 @@ function Workspace({ missingSession = false }: { readonly missingSession?: boole
       changedFiles: [
         {
           evidenceRef: 'evidence-1',
+          fileId: 'file-1',
           displayName: 'src/feature.ts',
           changeKind: 'modified' as const,
           contentFingerprint: 'content-1',
+          diffDestination: {
+            status: 'unavailable' as const,
+            owner: 'application' as const,
+            reason: 'No application-owned diff destination is available.',
+          },
         },
       ],
     },
     testEvidence: {
+      status: 'unavailable' as const,
       owner: 'application' as const,
       reason: 'No application-owned test detail is available.',
     },
@@ -121,10 +169,46 @@ function Workspace({ missingSession = false }: { readonly missingSession?: boole
   return (
     <WorkUnitDetailWorkspace
       unit={{ ...unit(), inspection }}
-      lifecycleEntries={[]}
+      lifecycleEntries={[
+        {
+          entryId: 'planner-entry',
+          sprintId: 'sprint-1',
+          workUnitId: 'unit-1',
+          sequence: 0,
+          kind: 'planning',
+          title: 'Planner record',
+          summary: 'No primary Activity is recorded for this Planner lifecycle entry.',
+          agentSessionId: 'planner-session',
+          agentRole: 'work_slice_planner',
+          invocationId: 'planner-invocation',
+          source: {
+            status: 'available',
+            sourceKind: 'repository',
+            sourceReferences: ['materialization-1'],
+          },
+        },
+        {
+          entryId: 'handler-entry',
+          sprintId: 'sprint-1',
+          workUnitId: 'unit-1',
+          sequence: 1,
+          kind: 'work',
+          title: 'Handler work',
+          summary: 'The exact Handler Activity is recorded.',
+          agentSessionId: 'session-1',
+          agentRole: 'work_unit_handler',
+          invocationId: 'invocation-1',
+          source: {
+            status: 'available',
+            sourceKind: 'repository',
+            sourceReferences: ['materialization-1'],
+          },
+        },
+      ]}
       workSlicePlanningPointGroupTitle="Planning point"
       sessions={missingSession ? [handlerSession()] : [handlerSession(), implementerSession()]}
       onBack={vi.fn()}
+      initialInspectionState={initialInspectionState}
     />
   );
 }

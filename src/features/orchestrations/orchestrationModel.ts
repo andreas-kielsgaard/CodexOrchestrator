@@ -47,6 +47,12 @@ export type SprintWorkspaceDetailLocation =
       readonly workSlicePlanningPointId: string;
       readonly workUnitId: string;
       readonly origin: 'work_slice_planning_point' | 'concern';
+      readonly inspectionState?: Readonly<{
+        readonly tab: 'activity' | 'evidence';
+        readonly activityId: string;
+        readonly sessionId: string;
+        readonly invocationId: string;
+      }>;
     };
 
 export interface EpicBlocker {

@@ -1,5 +1,5 @@
 import { AlertCircle, ArrowUpRight, ChevronDown, X } from 'lucide-react';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AgentIdentity, AgentSessionClient } from '../../application/agentSessions';
 import type { ConversationHarnessManagementSource } from '../../application/conversationHarnesses';
 import {
@@ -30,6 +30,14 @@ export interface AgentSessionScreenProps {
   readonly onNavigateToProduct?: (location: AgentSessionProductLocation) => void;
   readonly harnessManagementSource?: ConversationHarnessManagementSource;
   readonly agentIdentityForSession?: (sessionId: string) => AgentIdentity | undefined;
+  readonly focusInvocationId?: string;
+  readonly returnOrigin?: Extract<
+    AgentSessionProductLocation,
+    { readonly kind: 'work_unit' }
+  > | null;
+  readonly onReturnToProduct?: (
+    origin: Extract<AgentSessionProductLocation, { readonly kind: 'work_unit' }>,
+  ) => void;
 }
 
 export function StandaloneAgentSessionScreen({
@@ -44,6 +52,9 @@ export function StandaloneAgentSessionScreen({
   onNavigateToProduct,
   harnessManagementSource,
   agentIdentityForSession,
+  focusInvocationId,
+  returnOrigin,
+  onReturnToProduct,
 }: AgentSessionScreenProps) {
   const [localExpandedNodeIds, setLocalExpandedNodeIds] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -99,6 +110,28 @@ export function StandaloneAgentSessionScreen({
   const selectedIdentity = collection.selectedSessionId
     ? agentIdentityForSession?.(collection.selectedSessionId)
     : undefined;
+  const returnIsExact = Boolean(
+    returnOrigin?.inspectionState &&
+    collection.selectedSessionId === returnOrigin.inspectionState.sessionId &&
+    focusInvocationId === returnOrigin.inspectionState.invocationId,
+  );
+  useEffect(() => {
+    if (
+      !focusInvocationId ||
+      collection.selectedSessionId !== returnOrigin?.inspectionState?.sessionId
+    )
+      return;
+    const element = document.querySelector<HTMLElement>(
+      `[data-invocation-id="${CSS.escape(focusInvocationId)}"]`,
+    );
+    element?.focus();
+    element?.scrollIntoView({ block: 'center' });
+  }, [
+    collection.selectedSessionId,
+    focusInvocationId,
+    session.transcript,
+    returnOrigin?.inspectionState?.sessionId,
+  ]);
 
   return (
     <main className="agent-session-screen">
@@ -124,6 +157,18 @@ export function StandaloneAgentSessionScreen({
         }
         secondary={
           <div className="agent-session-content">
+            {returnIsExact && returnOrigin && onReturnToProduct ? (
+              <div
+                className="agent-session-return-bar"
+                role="region"
+                aria-label="Work Unit return context"
+              >
+                <span>Opened from Work Unit Activity</span>
+                <button type="button" onClick={() => onReturnToProduct(returnOrigin)}>
+                  Return to Work Unit Activity
+                </button>
+              </div>
+            ) : null}
             {collection.error && (
               <section className="agent-session-error" role="alert">
                 <AlertCircle size={17} aria-hidden="true" />

@@ -14,6 +14,33 @@
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+.agent-session-return-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 10px;
+  padding: 8px 10px;
+  border: 1px solid #9db0ba;
+  border-radius: 7px;
+  background: #eef6f9;
+  color: #425d6b;
+  font-size: 0.7rem;
+  font-weight: 750;
+}
+
+.agent-session-return-bar button {
+  min-height: 28px;
+  border: 1px solid #7e9cab;
+  border-radius: 5px;
+  background: #fff;
+  color: #315f78;
+  font: inherit;
+  font-size: 0.66rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
 .agent-session-content > .agent-session-workspace:first-child {
   grid-row: 1 / -1;
 }
