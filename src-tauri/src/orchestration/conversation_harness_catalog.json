@@ -110,6 +110,15 @@
       }
     },
     {
+      "key": "epic_runner_sprint_result_reassessment",
+      "version": 1,
+      "context": "You are the Epic Runner reassessing one exact application-delivered Sprint result. Read only the correlated context and record one identity-free, concern-preserving disposition. A request is not delivery, activation, continuation, Sprint selection or start. Do not settle, complete, or accept the Epic or Sprint.",
+      "skillGuidance": [{"canonicalName":"epic-runner","canonicalPath":".agents/product-skills/epic-runner/SKILL.md","purpose":"Reassess one durable Sprint result.","useWhen":"the application has supplied the dedicated result receiver."}],
+      "runtime": {"model":null,"reasoningEffort":null,"sandbox":"read_only","approvalPolicy":"never"},
+      "mcp": {"required":true,"enabledTools":["read_epic_sprint_result_reassessment_context","record_epic_sprint_result_disposition"]},
+      "lifecycle": {"contextDelivery":"first_query","completionCriteria":["one_epic_sprint_result_disposition_or_application_observed_state"]}
+    },
+    {
       "key": "sprint_runner",
       "version": 2,
       "context": "You are the Sprint Runner for one application-authorized Sprint. In pre-start, record the one low-resolution outcome through the supplied action. After an application-delivered start, record repository/branch reevaluation through the supplied action. Do not create planning, Work Units, child sessions, or continuations.",

@@ -41,6 +41,37 @@ CREATE TABLE IF NOT EXISTS sprint_upward_results (
   chronology_fingerprint TEXT NOT NULL UNIQUE,
   recorded_at TEXT NOT NULL
 );
+-- A direct Sprint result is received by its owning Epic Runner through a separate route from
+-- Handback escalation.  Delivery and later semantic consideration remain distinct facts.
+CREATE TABLE IF NOT EXISTS epic_runner_sprint_result_receivers (
+  result_id TEXT PRIMARY KEY REFERENCES sprint_upward_results(result_id) ON DELETE RESTRICT,
+  decision_id TEXT NOT NULL UNIQUE REFERENCES sprint_continuation_decisions(decision_id) ON DELETE RESTRICT,
+  sprint_id TEXT NOT NULL, epic_id TEXT NOT NULL,
+  governing_runner_session_id TEXT NOT NULL, governing_runner_invocation_id TEXT NOT NULL,
+  reassessment_invocation_id TEXT NOT NULL UNIQUE, delivery_fact_id TEXT NOT NULL UNIQUE,
+  delivery_requested_at TEXT NOT NULL, delivery_persisted_at TEXT,
+  harness_key TEXT NOT NULL, harness_version INTEGER NOT NULL, harness_bound_at TEXT,
+  launch_requested_at TEXT, launch_accepted_at TEXT, provider_activation_observed_at TEXT,
+  reassessment_lifecycle_status TEXT, reassessment_lifecycle_observed_at TEXT,
+  semantic_reassessment_fact_id TEXT UNIQUE, semantic_reassessment_recorded_at TEXT,
+  correlation_fingerprint TEXT NOT NULL UNIQUE
+);
+CREATE TABLE IF NOT EXISTS epic_runner_sprint_result_dispositions (
+  result_id TEXT PRIMARY KEY REFERENCES epic_runner_sprint_result_receivers(result_id) ON DELETE RESTRICT,
+  disposition_id TEXT NOT NULL UNIQUE, movement_kind TEXT NOT NULL,
+  details_json TEXT NOT NULL CHECK (json_valid(details_json)), disposition_fingerprint TEXT NOT NULL UNIQUE,
+  selected_at TEXT NOT NULL, preserves_result INTEGER NOT NULL CHECK (preserves_result=1)
+);
+CREATE TABLE IF NOT EXISTS epic_runner_sprint_result_downstream_requests (
+  result_id TEXT PRIMARY KEY REFERENCES epic_runner_sprint_result_dispositions(result_id) ON DELETE RESTRICT,
+  request_id TEXT NOT NULL UNIQUE, request_kind TEXT NOT NULL, request_json TEXT NOT NULL CHECK (json_valid(request_json)),
+  request_fingerprint TEXT NOT NULL UNIQUE, requested_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS epic_runner_sprint_result_attentions (
+  result_id TEXT PRIMARY KEY REFERENCES epic_runner_sprint_result_dispositions(result_id) ON DELETE RESTRICT,
+  attention_id TEXT NOT NULL UNIQUE, attention_json TEXT NOT NULL CHECK (json_valid(attention_json)),
+  attention_fingerprint TEXT NOT NULL UNIQUE, requested_at TEXT NOT NULL
+);
 "#;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -494,6 +525,23 @@ mod tests {
         connection.execute_batch("ALTER TABLE epic_runner_escalation_attentions ADD COLUMN attention_id TEXT;ALTER TABLE epic_runner_escalation_attentions ADD COLUMN attention_json TEXT;ALTER TABLE epic_runner_escalation_attentions ADD COLUMN requested_at TEXT;").unwrap();
         initialize(&connection).unwrap();
         connection
+    }
+
+    #[test]
+    fn direct_result_receiver_schema_preserves_distinct_delivery_and_disposition_facts() {
+        let connection = fixture();
+        for table in [
+            "epic_runner_sprint_result_receivers",
+            "epic_runner_sprint_result_dispositions",
+            "epic_runner_sprint_result_downstream_requests",
+            "epic_runner_sprint_result_attentions",
+        ] {
+            assert!(connection.query_row::<bool, _, _>(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                [table],
+                |row| row.get(0),
+            ).unwrap());
+        }
     }
     fn accepted_materialization(connection: &Connection) {
         connection.execute_batch("INSERT INTO work_slice_proposal_revisions VALUES('revision','point','now');INSERT INTO work_slice_planning_episodes VALUES('point','sprint');INSERT INTO work_unit_materializations VALUES('materialization','point','revision','epic','sprint');INSERT INTO work_units VALUES('unit','materialization');").unwrap();
