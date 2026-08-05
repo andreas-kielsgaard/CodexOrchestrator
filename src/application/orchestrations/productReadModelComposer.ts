@@ -57,6 +57,7 @@ export function composeProductOrchestrationReadModels(
           sprint.sprintId,
           input.selection,
           input.workUnitMaterializations,
+          input.sprintContinuation,
           input.sprintRunnerTransition?.query.transitions.find(
             (transition) => transition.sprintId === sprint.sprintId,
           ),
@@ -139,6 +140,7 @@ function composeSprint(
   sprintId: string,
   selection: ProductReadCompositionInputV1['selection'],
   workUnitMaterializations: ProductReadCompositionInputV1['workUnitMaterializations'],
+  sprintContinuation: ProductReadCompositionInputV1['sprintContinuation'],
   sprintRunnerTransition?: import('./sprintRunnerTransition').SprintRunnerTransitionV1,
 ): ProductSprintReadModelV1 {
   const sprint = required(index.sprints, sprintId, 'Sprint reference index');
@@ -230,6 +232,11 @@ function composeSprint(
     workUnitMaterializations: (workUnitMaterializations ?? []).filter(
       (materialization) => materialization.sprintId === sprintId,
     ),
+    ...(sprintContinuation
+      ? {
+          sprintContinuation: projectSprintContinuation(sprintContinuation, sprintId),
+        }
+      : {}),
     sprintPlan: {
       sprintPlanId: plan.sprintPlanId,
       currentSprintPlanRevisionId: current.sprintPlanRevisionId,
@@ -547,6 +554,48 @@ function composeWorkUnit(
       ),
     },
     presentationState: 'not_started' as ProductWorkUnitPresentationState,
+  };
+}
+
+function projectSprintContinuation(
+  projection: NonNullable<ProductReadCompositionInputV1['sprintContinuation']>,
+  sprintId: string,
+) {
+  const decisions = projection.decisions.filter((decision) => decision.sprintId === sprintId);
+  const current = projection.currentDecisions.find((decision) => decision.sprintId === sprintId);
+  return {
+    current: current
+      ? {
+          decisionId: current.decisionId,
+          state: current.state,
+          updatedAt: current.updatedAt,
+        }
+      : null,
+    history: decisions.map((decision) => ({
+      decisionId: decision.decisionId,
+      sequence: decision.decisionSequence,
+      state: decision.state,
+      reason: decision.reason,
+      recordedAt: decision.recordedAt,
+      ...(decision.attention
+        ? {
+            attention: {
+              code: decision.attention.code,
+              ...(decision.attention.structuredAttention
+                ? { structuredAttention: decision.attention.structuredAttention }
+                : {}),
+            },
+          }
+        : {}),
+    })),
+    upwardResults: projection.upwardResults
+      .filter((result) => result.sprintId === sprintId)
+      .map(({ resultId, decisionId, recordedAt, resultKind }) => ({
+        resultId,
+        decisionId,
+        recordedAt,
+        resultKind,
+      })),
   };
 }
 

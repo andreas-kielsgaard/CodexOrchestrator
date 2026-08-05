@@ -31,6 +31,28 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
   No live provider, Epic receipt, Epic settlement, delivery, activation, or user acceptance is
   claimed.
 
+## SCS-02: strict productive Sprint decision projection and bounded presentation
+
+- The productive Rust native query now projects ordered Sprint decision history, the exact current
+  decision pointer, and one separate local upward result per decision. Public attention carries
+  only its bounded code and, when durably available, structured reason, authority, evidence, and
+  resumption context. Input, route, chronology, repository, worktree, and other internal
+  correlation fingerprints remain private.
+- The TypeScript decoder rejects partial Sprint bundles, duplicate or gapped chronology, foreign
+  Sprint/current/result references, contradictory known state/reason pairs, stale chronology,
+  private fields, and higher-effect result shapes. Unknown continuing and attention reasons remain
+  neutral; unknown settlement reasons cannot grant settlement authority.
+- Focused producer evidence: the new native-query SCS projection test passed **1/1**; the existing
+  SCS-01 durable reconciliation group remains **10/10**; the repository projection suite passed
+  **41/41**. Consumer evidence in an isolated exact-checkpoint dependency-ready copy passed
+  **29/29** native-query tests, **3/3** workspace-presentation tests, and **11/11** bounded
+  Sprint Workspace tests. `npm run build` passed with TypeScript and Vite.
+- The Sprint Workspace visibly distinguishes continuing, dependency waiting, structured or
+  technical attention, and settled. Settled wording does not imply Epic settlement, delivery,
+  later-Sprint selection, or acceptance; local result wording does not imply receipt or
+  continuation. No broad layout redesign, live-provider proof, publication, push, or user
+  acceptance is claimed.
+
 ## ER-3 strict public projection checkpoint (2026-08-05)
 
 - Fresh routed validation: Rust `cargo check -p codex-orchestrator` passed (**0 errors**; existing

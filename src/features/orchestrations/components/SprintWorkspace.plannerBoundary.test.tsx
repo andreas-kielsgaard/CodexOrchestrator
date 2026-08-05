@@ -11,6 +11,7 @@ import { resolve } from 'node:path';
 import {
   SprintRunnerActivationObservation,
   SprintRunnerHandbackActivity,
+  SprintContinuationBoundary,
   WorkSlicePlannerBoundary,
 } from './SprintWorkspace';
 
@@ -31,6 +32,61 @@ const sprint = (
 ) => ({ sprintRunnerTransition, workUnitMaterializations }) as never;
 
 describe('Work Slice Planner boundary disclosure', () => {
+  it('presents continuing, attention, settled, and local-result boundaries without higher effects', () => {
+    const base = {
+      current: { decisionId: 'decision-3', state: 'attention' as const, updatedAt: '2026-08-05T00:00:02Z' },
+      history: [
+        { decisionId: 'decision-1', sequence: 1, state: 'continuing' as const, reason: 'wait_for_agent_dependency', recordedAt: '2026-08-05T00:00:00Z' },
+        {
+          decisionId: 'decision-3',
+          sequence: 3,
+          state: 'attention' as const,
+          reason: 'structured_human_or_external_attention',
+          recordedAt: '2026-08-05T00:00:02Z',
+          attention: {
+            code: 'structured_human_or_external_attention',
+            structuredAttention: {
+              reason: 'Policy decision required.',
+              authorityNeeded: 'Product authority',
+              evidenceContext: 'Unresolved concern.',
+              resumptionPath: 'Resume exact Sprint.',
+            },
+          },
+        },
+      ],
+      upwardResults: [{ resultId: 'result-3', decisionId: 'decision-3', recordedAt: '2026-08-05T00:00:02Z', resultKind: 'attention' as const }],
+    };
+    const { rerender } = render(<SprintContinuationBoundary boundary={base} />);
+    let region = screen.getByRole('region', { name: 'Sprint continuation boundary' });
+    expect(region).toHaveTextContent('Sprint needs attention');
+    expect(region).toHaveTextContent('Policy decision required.');
+    expect(region).toHaveTextContent('not delivery, Epic receipt, later-Sprint selection, continuation, or acceptance');
+    rerender(
+      <SprintContinuationBoundary
+        boundary={{
+          ...base,
+          current: { decisionId: 'decision-1', state: 'continuing', updatedAt: '2026-08-05T00:00:00Z' },
+        }}
+      />,
+    );
+    region = screen.getByRole('region', { name: 'Sprint continuation boundary' });
+    expect(region).toHaveTextContent('Sprint is continuing');
+    expect(region).toHaveTextContent('exact agent-achievable dependency route');
+    rerender(
+      <SprintContinuationBoundary
+        boundary={{
+          ...base,
+          current: { decisionId: 'decision-4', state: 'settled', updatedAt: '2026-08-05T00:00:03Z' },
+          history: [{ decisionId: 'decision-4', sequence: 4, state: 'settled', reason: 'all_authoritative_sprint_work_settled', recordedAt: '2026-08-05T00:00:03Z' }],
+          upwardResults: [{ resultId: 'result-4', decisionId: 'decision-4', recordedAt: '2026-08-05T00:00:03Z', resultKind: 'settled' }],
+        }}
+      />,
+    );
+    region = screen.getByRole('region', { name: 'Sprint continuation boundary' });
+    expect(region).toHaveTextContent('Sprint is settled');
+    expect(region).toHaveTextContent('does not imply Epic settlement, delivery, a later Sprint, or acceptance');
+  });
+
   it('is absent before a durable Planner request', () => {
     render(<WorkSlicePlannerBoundary sprint={sprint(undefined)} />);
     expect(screen.queryByRole('region', { name: 'Work Slice Planner boundary' })).toBeNull();

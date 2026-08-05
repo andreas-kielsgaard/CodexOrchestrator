@@ -1171,6 +1171,8 @@ impl SqliteOrchestrationRepository {
         let work_slice_execution_settlements = if execution_enabled { collect(&connection, "SELECT materialization_id,graph_completion_materialization_id,settled_at FROM work_slice_execution_settlements ORDER BY materialization_id", |row| Ok(WorkSliceExecutionSettlementDto { materialization_id:row.get(0)?, graph_completion_materialization_id:row.get(1)?, settled_at:row.get(2)? }))? } else { Vec::new() };
         let work_slice_planning_point_execution_settlements = if execution_enabled { collect(&connection, "SELECT planning_point_id,materialization_id,work_slice_execution_materialization_id,settled_at FROM work_slice_planning_point_execution_settlements ORDER BY planning_point_id", |row| Ok(WorkSlicePlanningPointExecutionSettlementDto { planning_point_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_execution_materialization_id:row.get(2)?, settled_at:row.get(3)? }))? } else { Vec::new() };
         let work_slice_execution_attentions = if execution_enabled { collect(&connection, "SELECT materialization_id,recorded_at FROM work_slice_execution_attentions ORDER BY materialization_id", |row| Ok(WorkSliceExecutionAttentionDto { materialization_id:row.get(0)?, recorded_at:row.get(1)? }))? } else { Vec::new() };
+        let (sprint_continuation_decisions, sprint_continuation_current_decisions, sprint_upward_results) =
+            sprint_continuation_projection(&connection, &initiated_sprints)?;
         let action_continuations = activation_rows(&connection, "work_unit_handler_action_continuations", "attempt_id,handler_session_id,original_handler_invocation_id,action_invocation_id,action_harness_revision_id,action_harness_configuration_digest,action_harness_repository_commit_ref,requested_at,authorized_at,invocation_prepared_at,harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,action_ready_at,blocked_reason,failure_reason", |row| Ok(WorkUnitHandlerActionContinuationDto { attempt_id:row.get(1)?, handler_session_id:row.get(2)?, original_handler_invocation_id:row.get(3)?, action_invocation_id:row.get(4)?, action_harness_revision_id:row.get(5)?, action_harness_configuration_digest:row.get(6)?, action_harness_repository_commit_ref:row.get(7)?, requested_at:row.get(8)?, authorized_at:row.get(9)?, invocation_prepared_at:row.get(10)?, harness_bound_at:row.get(11)?, launch_requested_at:row.get(12)?, launch_accepted_at:row.get(13)?, provider_activation_observed_at:row.get(14)?, action_ready_at:row.get(15)?, blocked_reason:row.get(16)?, failure_reason:row.get(17)? }))?;
         let implementer_activations = activation_rows(&connection, "work_unit_implementer_activations", "attempt_id,handler_invocation_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at,authorized_at,execution_support_granted_at,isolated_worktree_ready_at,implementer_session_created_at,implementer_invocation_prepared_at,implementer_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,implementer_ready_at,failure_reason", map_implementer_activation)?;
         let mut implementer_outcomes = implementer_outcome_rows(&connection)?;
@@ -1243,6 +1245,9 @@ impl SqliteOrchestrationRepository {
             work_unit_relationships,
             dependency_activation_intents,
             work_unit_execution_states, work_slice_execution_graph_completions, work_slice_execution_settlements, work_slice_planning_point_execution_settlements, work_slice_execution_attentions,
+            sprint_continuation_decisions,
+            sprint_continuation_current_decisions,
+            sprint_upward_results,
         })
     }
 
@@ -2785,6 +2790,269 @@ fn parse_proposal_json(value: String) -> rusqlite::Result<PlanBuilderProposal> {
     Ok(proposal)
 }
 
+fn sprint_continuation_projection(
+    connection: &Connection,
+    initiated_sprints: &[InitiatedSprintDto],
+) -> Result<(
+    Vec<SprintContinuationDecisionDto>,
+    Vec<SprintContinuationCurrentDecisionDto>,
+    Vec<SprintUpwardResultDto>,
+), String> {
+    let tables = [
+        "sprint_continuation_decisions",
+        "sprint_continuation_current_decisions",
+        "sprint_continuation_attentions",
+        "sprint_upward_results",
+    ];
+    let present = tables
+        .iter()
+        .map(|name| {
+            connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                [name],
+                |row| row.get::<_, bool>(0),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let present_count = present.iter().filter(|value| **value).count();
+    if present_count == 0 {
+        return Ok((Vec::new(), Vec::new(), Vec::new()));
+    }
+    if present_count != tables.len() {
+        return Err("Productive Sprint continuation projection tables are incomplete".into());
+    }
+
+    let sprint_ids = initiated_sprints
+        .iter()
+        .map(|sprint| sprint.sprint_id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let decisions = collect(
+        connection,
+        "SELECT d.decision_id,d.sprint_id,d.decision_sequence,d.decision_state,d.continuation_kind,d.accepted_materialization_count,d.recorded_at,a.attention_id,a.attention_code FROM sprint_continuation_decisions d LEFT JOIN sprint_continuation_attentions a ON a.decision_id=d.decision_id ORDER BY d.sprint_id,d.decision_sequence",
+        |row| {
+            Ok(SprintContinuationDecisionDto {
+                    decision_id: row.get(0)?,
+                    sprint_id: row.get(1)?,
+                    decision_sequence: row.get(2)?,
+                    state: row.get(3)?,
+                    reason: row.get(4)?,
+                    accepted_materialization_count: row.get(5)?,
+                    recorded_at: row.get(6)?,
+                    attention: row
+                        .get::<_, Option<String>>(7)?
+                        .zip(row.get::<_, Option<String>>(8)?)
+                        .map(|(attention_id, code)| SprintContinuationAttentionDto {
+                            attention_id,
+                            code,
+                            structured_attention: None,
+                        }),
+            })
+        },
+    )?;
+    let current = collect(
+        connection,
+        "SELECT sprint_id,decision_id,decision_state,updated_at FROM sprint_continuation_current_decisions ORDER BY sprint_id",
+        |row| {
+            Ok(SprintContinuationCurrentDecisionDto {
+                sprint_id: row.get(0)?,
+                decision_id: row.get(1)?,
+                state: row.get(2)?,
+                updated_at: row.get(3)?,
+            })
+        },
+    )?;
+    let results = collect(
+        connection,
+        "SELECT result_id,decision_id,sprint_id,result_kind,recorded_at FROM sprint_upward_results ORDER BY sprint_id,recorded_at,result_id",
+        |row| {
+            Ok(SprintUpwardResultDto {
+                result_id: row.get(0)?,
+                decision_id: row.get(1)?,
+                sprint_id: row.get(2)?,
+                result_kind: row.get(3)?,
+                recorded_at: row.get(4)?,
+            })
+        },
+    )?;
+    let mut structured_attention_by_sprint = std::collections::HashMap::<
+        String,
+        EpicRunnerEscalationAttentionDto,
+    >::new();
+    let escalation_tables = [
+        "epic_runner_escalation_receivers",
+        "epic_runner_escalation_attentions",
+    ];
+    let escalation_present = escalation_tables
+        .iter()
+        .map(|name| {
+            connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                [name],
+                |row| row.get::<_, bool>(0),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    if escalation_present.iter().all(|value| *value) {
+        for (sprint_id, attention_json) in collect(
+            connection,
+            "SELECT receiver.sprint_id,attention.attention_json FROM epic_runner_escalation_receivers receiver JOIN epic_runner_escalation_attentions attention ON attention.handback_id=receiver.handback_id ORDER BY receiver.sprint_id,attention.requested_at,attention.attention_id",
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )? {
+            let attention = serde_json::from_str::<EpicRunnerEscalationAttentionDto>(&attention_json)
+                .map_err(|error| format!("invalid public Sprint attention: {error}"))?;
+            if structured_attention_by_sprint
+                .insert(sprint_id.clone(), attention)
+                .is_some()
+            {
+                return Err("ambiguous public Sprint structured attention".into());
+            }
+        }
+    }
+    let mut decisions = decisions;
+    for decision in &mut decisions {
+        if !sprint_ids.contains(decision.sprint_id.as_str()) {
+            return Err("Sprint continuation decision references an unknown Sprint".into());
+        }
+        if decision.decision_id.trim().is_empty()
+            || decision.decision_sequence < 1
+            || decision.accepted_materialization_count < 0
+            || decision.recorded_at.trim().is_empty()
+            || decision.reason.trim().is_empty()
+        {
+            return Err("Sprint continuation decision is malformed".into());
+        }
+        if !matches!(decision.state.as_str(), "continuing" | "attention" | "settled") {
+            return Err("Sprint continuation decision has an unsupported state".into());
+        }
+        let known_state = match decision.reason.as_str() {
+            "continue_eligible_work"
+            | "wait_for_agent_dependency"
+            | "retry_reassessment_pending"
+            | "continuation_pending"
+            | "planning_or_execution_pending" => "continuing",
+            "structured_human_or_external_attention"
+            | "stale_epic_context"
+            | "dependency_route_unavailable"
+            | "correlation_or_chronology_unavailable"
+            | "unresolved_handback" => "attention",
+            "all_authoritative_sprint_work_settled" => "settled",
+            _ => "unknown",
+        };
+        if (known_state != "unknown" && known_state != decision.state)
+            || (decision.state == "settled" && known_state != "settled")
+        {
+            return Err("Sprint continuation decision state and reason contradict".into());
+        }
+        if decision.state == "settled" && decision.accepted_materialization_count < 1 {
+            return Err("Sprint settlement lacks accepted materialization".into());
+        }
+        if decision.state != "attention" && decision.attention.is_some() {
+            return Err("non-attention Sprint decision has attention context".into());
+        }
+        if decision.state == "attention" && decision.attention.is_none() {
+            return Err("attention Sprint decision has no attention record".into());
+        }
+        chrono::DateTime::parse_from_rfc3339(&decision.recorded_at)
+            .map_err(|_| "Sprint continuation decision chronology is invalid".to_owned())?;
+        if decision.state == "attention"
+            && decision.reason == "structured_human_or_external_attention"
+        {
+            let structured = structured_attention_by_sprint
+                .remove(&decision.sprint_id)
+                .ok_or_else(|| "structured Sprint attention context is missing".to_owned())?;
+            if let Some(attention) = decision.attention.as_mut() {
+                attention.structured_attention = Some(structured);
+            } else {
+                return Err("structured Sprint attention row is missing".into());
+            }
+        }
+    }
+    let mut last_sprint = None;
+    let mut expected_sequence = 1;
+    for decision in &decisions {
+        if last_sprint == Some(decision.sprint_id.as_str()) {
+            if decision.decision_sequence != expected_sequence {
+                return Err("Sprint continuation decision chronology has a gap".into());
+            }
+            expected_sequence += 1;
+        } else {
+            if decision.decision_sequence != 1 {
+                return Err("Sprint continuation decision chronology has a gap".into());
+            }
+            last_sprint = Some(decision.sprint_id.as_str());
+            expected_sequence = 2;
+        }
+    }
+    for result in &results {
+        chrono::DateTime::parse_from_rfc3339(&result.recorded_at)
+            .map_err(|_| "Sprint upward result chronology is invalid".to_owned())?;
+    }
+    for pointer in &current {
+        chrono::DateTime::parse_from_rfc3339(&pointer.updated_at)
+            .map_err(|_| "Sprint current decision chronology is invalid".to_owned())?;
+    }
+    let decision_by_id = decisions
+        .iter()
+        .map(|decision| (decision.decision_id.as_str(), decision))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut result_decision_ids = std::collections::HashSet::new();
+    for result in &results {
+        let decision = decision_by_id
+            .get(result.decision_id.as_str())
+            .ok_or_else(|| "Sprint upward result references an unknown decision".to_owned())?;
+        let decision_time = chrono::DateTime::parse_from_rfc3339(&decision.recorded_at)
+            .map_err(|_| "Sprint continuation decision chronology is invalid".to_owned())?;
+        let result_time = chrono::DateTime::parse_from_rfc3339(&result.recorded_at)
+            .map_err(|_| "Sprint upward result chronology is invalid".to_owned())?;
+        if !result_decision_ids.insert(result.decision_id.as_str())
+            || result.sprint_id != decision.sprint_id
+            || result.result_kind != decision.state
+            || result.recorded_at != decision.recorded_at
+            || result_time < decision_time
+        {
+            return Err("Sprint upward result correlation is invalid".into());
+        }
+    }
+    if result_decision_ids.len() != decisions.len() {
+        return Err("Sprint continuation decision has no separate upward result".into());
+    }
+    let decision_by_sprint = decisions
+        .iter()
+        .filter(|decision| decision.decision_sequence > 0)
+        .fold(std::collections::HashMap::<&str, &SprintContinuationDecisionDto>::new(), |mut map, decision| {
+            map.insert(decision.sprint_id.as_str(), decision);
+            map
+        });
+    let mut current_sprints = std::collections::HashSet::new();
+    for pointer in &current {
+        let decision = decision_by_id
+            .get(pointer.decision_id.as_str())
+            .ok_or_else(|| "Sprint current decision references an unknown decision".to_owned())?;
+        let decision_time = chrono::DateTime::parse_from_rfc3339(&decision.recorded_at)
+            .map_err(|_| "Sprint continuation decision chronology is invalid".to_owned())?;
+        let pointer_time = chrono::DateTime::parse_from_rfc3339(&pointer.updated_at)
+            .map_err(|_| "Sprint current decision chronology is invalid".to_owned())?;
+        if !current_sprints.insert(pointer.sprint_id.as_str())
+            || pointer.sprint_id != decision.sprint_id
+            || pointer.state != decision.state
+            || pointer_time < decision_time
+            || decision_by_sprint.get(pointer.sprint_id.as_str()).map(|item| item.decision_id.as_str())
+                != Some(pointer.decision_id.as_str())
+        {
+            return Err("Sprint current decision correlation is invalid".into());
+        }
+    }
+    if current.iter().any(|pointer| !sprint_ids.contains(pointer.sprint_id.as_str())) {
+        return Err("Sprint current decision references an unknown Sprint".into());
+    }
+    if decisions.iter().any(|decision| !current_sprints.contains(decision.sprint_id.as_str())) {
+        return Err("Sprint continuation history lacks its current decision pointer".into());
+    }
+    Ok((decisions, current, results))
+}
+
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NativeQueryV2 {
@@ -2808,6 +3076,9 @@ pub(crate) struct NativeQueryV2 {
     work_unit_relationships: Vec<WorkUnitRelationshipDto>,
     dependency_activation_intents: Vec<WorkUnitDependencyActivationIntentDto>,
     work_unit_execution_states: Vec<WorkUnitExecutionStateDto>, work_slice_execution_graph_completions: Vec<WorkSliceExecutionGraphCompletionDto>, work_slice_execution_settlements: Vec<WorkSliceExecutionSettlementDto>, work_slice_planning_point_execution_settlements: Vec<WorkSlicePlanningPointExecutionSettlementDto>, work_slice_execution_attentions: Vec<WorkSliceExecutionAttentionDto>,
+    sprint_continuation_decisions: Vec<SprintContinuationDecisionDto>,
+    sprint_continuation_current_decisions: Vec<SprintContinuationCurrentDecisionDto>,
+    sprint_upward_results: Vec<SprintUpwardResultDto>,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2987,6 +3258,44 @@ struct WorkSliceExecutionSettlementDto { materialization_id: String, graph_compl
 struct WorkSlicePlanningPointExecutionSettlementDto { planning_point_id: String, materialization_id: String, work_slice_execution_materialization_id: String, settled_at: String }
 #[derive(Debug, PartialEq, Eq, Serialize)] #[serde(rename_all = "camelCase")]
 struct WorkSliceExecutionAttentionDto { materialization_id: String, recorded_at: String }
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SprintContinuationDecisionDto {
+    decision_id: String,
+    sprint_id: String,
+    decision_sequence: i64,
+    state: String,
+    reason: String,
+    accepted_materialization_count: i64,
+    recorded_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attention: Option<SprintContinuationAttentionDto>,
+}
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SprintContinuationAttentionDto {
+    attention_id: String,
+    code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    structured_attention: Option<EpicRunnerEscalationAttentionDto>,
+}
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SprintContinuationCurrentDecisionDto {
+    sprint_id: String,
+    decision_id: String,
+    state: String,
+    updated_at: String,
+}
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SprintUpwardResultDto {
+    result_id: String,
+    decision_id: String,
+    sprint_id: String,
+    result_kind: String,
+    recorded_at: String,
+}
 fn validate_execution_projection(states:&[WorkUnitExecutionStateDto], completions:&[WorkSliceExecutionGraphCompletionDto], settlements:&[WorkSliceExecutionSettlementDto], planning:&[WorkSlicePlanningPointExecutionSettlementDto], attentions:&[WorkSliceExecutionAttentionDto], materializations:&[WorkUnitMaterializationDto], units:&[WorkUnitDto])->Result<(),String>{
  let mut seen=std::collections::HashSet::new(); for state in states { if !seen.insert(&state.work_unit_id)||!matches!(state.state.as_str(),"waiting_on_prerequisites"|"ready"|"active"|"retry_authorized"|"handed_back"|"settled"|"attention"){return Err("Productive Work Unit execution state is duplicate or unknown".into())} let unit=units.iter().find(|u|u.work_unit_id==state.work_unit_id).ok_or_else(||"Productive Work Unit execution state references an unknown Work Unit".to_string())?; if unit.materialization_id!=state.materialization_id||unit.accepted_revision_id!=state.accepted_revision_id{return Err("Productive Work Unit execution state has foreign correlation".into())} }
  if !states.is_empty()&&states.len()!=units.len(){return Err("Productive execution state is incomplete".into())} let mut ids=std::collections::HashSet::new(); for c in completions {if !ids.insert(&c.materialization_id){return Err("Productive graph completion is duplicated".into())} let m=materializations.iter().find(|m|m.materialization_id==c.materialization_id).ok_or_else(||"Productive graph completion references an unknown materialization".to_string())?;if m.accepted_revision_id!=c.accepted_revision_id||attentions.iter().any(|a|a.materialization_id==c.materialization_id)||units.iter().filter(|u|u.materialization_id==c.materialization_id).any(|u|!states.iter().any(|s|s.work_unit_id==u.work_unit_id&&s.state=="settled")){return Err("Productive graph completion is incoherent".into())}} ids.clear(); for a in attentions {if !ids.insert(&a.materialization_id)||!materializations.iter().any(|m|m.materialization_id==a.materialization_id){return Err("Productive Work Slice attention is duplicate or foreign".into())}}

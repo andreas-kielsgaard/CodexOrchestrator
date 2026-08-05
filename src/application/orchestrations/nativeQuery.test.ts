@@ -69,6 +69,96 @@ describe('orchestration native query v1', () => {
     expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow('unknown field');
   });
 
+  it('strictly decodes ordered Sprint decisions, neutralizes unknown safe variants, and preserves local results', () => {
+    const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
+    value.sprintContinuationDecisions = [
+      {
+        decisionId: 'decision-1',
+        sprintId: 'sprint-fixture',
+        decisionSequence: 1,
+        state: 'continuing',
+        reason: 'continue_eligible_work',
+        acceptedMaterializationCount: 0,
+        recordedAt: '2026-08-05T00:00:00Z',
+      },
+      {
+        decisionId: 'decision-2',
+        sprintId: 'sprint-fixture',
+        decisionSequence: 2,
+        state: 'continuing',
+        reason: 'future_safe_continuing_variant',
+        acceptedMaterializationCount: 0,
+        recordedAt: '2026-08-05T00:00:01Z',
+      },
+      {
+        decisionId: 'decision-3',
+        sprintId: 'sprint-fixture',
+        decisionSequence: 3,
+        state: 'attention',
+        reason: 'structured_human_or_external_attention',
+        acceptedMaterializationCount: 0,
+        recordedAt: '2026-08-05T00:00:02Z',
+        attention: {
+          attentionId: 'attention-3',
+          code: 'structured_human_or_external_attention',
+          structuredAttention: {
+            reason: 'A bounded policy decision is required.',
+            authorityNeeded: 'designated product authority',
+            evidenceContext: 'The unresolved Sprint concern.',
+            resumptionPath: 'Resume this exact Sprint decision.',
+          },
+        },
+      },
+    ];
+    value.sprintContinuationCurrentDecisions = [
+      {
+        sprintId: 'sprint-fixture',
+        decisionId: 'decision-3',
+        state: 'attention',
+        updatedAt: '2026-08-05T00:00:02Z',
+      },
+    ];
+    value.sprintUpwardResults = [
+      { resultId: 'result-1', decisionId: 'decision-1', sprintId: 'sprint-fixture', resultKind: 'continuing', recordedAt: '2026-08-05T00:00:00Z' },
+      { resultId: 'result-2', decisionId: 'decision-2', sprintId: 'sprint-fixture', resultKind: 'continuing', recordedAt: '2026-08-05T00:00:01Z' },
+      { resultId: 'result-3', decisionId: 'decision-3', sprintId: 'sprint-fixture', resultKind: 'attention', recordedAt: '2026-08-05T00:00:02Z' },
+    ];
+    const query = decodeOrchestrationNativeQueryV2(value);
+    const sprint = composeProductOrchestrationReadModels(
+      nativeQueryProductCompositionInputV2(query),
+    ).epics[0]!.sprints[0]!;
+    expect(sprint.sprintContinuation).toMatchObject({
+      current: { decisionId: 'decision-3', state: 'attention' },
+      history: [
+        { sequence: 1, state: 'continuing' },
+        { sequence: 2, reason: 'future_safe_continuing_variant' },
+        {
+          sequence: 3,
+          attention: {
+            structuredAttention: { authorityNeeded: 'designated product authority' },
+          },
+        },
+      ],
+      upwardResults: [{ resultId: 'result-1' }, { resultId: 'result-2' }, { resultId: 'result-3' }],
+    });
+
+    const partial = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    delete partial.sprintContinuationCurrentDecisions;
+    expect(() => decodeOrchestrationNativeQueryV2(partial)).toThrow('projection bundle is incomplete');
+    const gapped = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    ((gapped.sprintContinuationDecisions as Array<Record<string, unknown>>)[1]!).decisionSequence = 4;
+    expect(() => decodeOrchestrationNativeQueryV2(gapped)).toThrow('chronology has a gap');
+    const foreign = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    ((foreign.sprintUpwardResults as Array<Record<string, unknown>>)[0]!).sprintId = 'foreign-sprint';
+    expect(() => decodeOrchestrationNativeQueryV2(foreign)).toThrow('correlation or chronology');
+    const privateShape = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    ((privateShape.sprintUpwardResults as Array<Record<string, unknown>>)[0]!).chronologyFingerprint = 'private';
+    expect(() => decodeOrchestrationNativeQueryV2(privateShape)).toThrow('unknown field');
+    const contradictory = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    ((contradictory.sprintContinuationDecisions as Array<Record<string, unknown>>)[0]!).state = 'settled';
+    expect(() => decodeOrchestrationNativeQueryV2(contradictory)).toThrow('state and reason contradict');
+  });
+
   it('decodes the Rust-authored settled multi-root execution graph into product read models', () => {
     const query = decodeOrchestrationNativeQueryV2(fixture('valid-execution-graph.json'));
     const sprint = composeProductOrchestrationReadModels(

@@ -49,6 +49,9 @@ export interface OrchestrationNativeQueryV2 {
   readonly workSliceExecutionSettlements: readonly NativeWorkSliceExecutionSettlementV1[];
   readonly workSlicePlanningPointExecutionSettlements: readonly NativeWorkSlicePlanningPointExecutionSettlementV1[];
   readonly workSliceExecutionAttentions: readonly NativeWorkSliceExecutionAttentionV1[];
+  readonly sprintContinuationDecisions: readonly NativeSprintContinuationDecisionV1[];
+  readonly sprintContinuationCurrentDecisions: readonly NativeSprintContinuationCurrentDecisionV1[];
+  readonly sprintUpwardResults: readonly NativeSprintUpwardResultV1[];
 }
 export interface NativeWorkUnitExecutionStateV1 {
   readonly workUnitId: string;
@@ -61,6 +64,41 @@ export interface NativeWorkSliceExecutionGraphCompletionV1 { readonly materializ
 export interface NativeWorkSliceExecutionSettlementV1 { readonly materializationId: string; readonly graphCompletionMaterializationId: string; readonly settledAt: string; }
 export interface NativeWorkSlicePlanningPointExecutionSettlementV1 { readonly planningPointId: string; readonly materializationId: string; readonly workSliceExecutionMaterializationId: string; readonly settledAt: string; }
 export interface NativeWorkSliceExecutionAttentionV1 { readonly materializationId: string; readonly recordedAt: string; }
+export interface NativeSprintContinuationStructuredAttentionV1 {
+  readonly reason: string;
+  readonly authorityNeeded: string;
+  readonly evidenceContext: string;
+  readonly resumptionPath: string;
+}
+export interface NativeSprintContinuationAttentionV1 {
+  readonly attentionId: string;
+  readonly code: string;
+  readonly structuredAttention?: NativeSprintContinuationStructuredAttentionV1;
+}
+export type NativeSprintContinuationStateV1 = 'continuing' | 'attention' | 'settled';
+export interface NativeSprintContinuationDecisionV1 {
+  readonly decisionId: string;
+  readonly sprintId: string;
+  readonly decisionSequence: number;
+  readonly state: NativeSprintContinuationStateV1;
+  readonly reason: string;
+  readonly acceptedMaterializationCount: number;
+  readonly recordedAt: string;
+  readonly attention?: NativeSprintContinuationAttentionV1;
+}
+export interface NativeSprintContinuationCurrentDecisionV1 {
+  readonly sprintId: string;
+  readonly decisionId: string;
+  readonly state: NativeSprintContinuationStateV1;
+  readonly updatedAt: string;
+}
+export interface NativeSprintUpwardResultV1 {
+  readonly resultId: string;
+  readonly decisionId: string;
+  readonly sprintId: string;
+  readonly resultKind: NativeSprintContinuationStateV1;
+  readonly recordedAt: string;
+}
 export interface NativeWorkUnitDependencyActivationIntentV1 {
   readonly workUnitId: string;
   readonly materializationId: string;
@@ -336,6 +374,9 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
       'workSliceExecutionSettlements',
       'workSlicePlanningPointExecutionSettlements',
       'workSliceExecutionAttentions',
+      'sprintContinuationDecisions',
+      'sprintContinuationCurrentDecisions',
+      'sprintUpwardResults',
     ],
     'native query',
   );
@@ -344,6 +385,16 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
   const executionFieldCount = executionFields.filter((field) => root[field] !== undefined).length;
   if (executionFieldCount !== 0 && executionFieldCount !== executionFields.length)
     fail('productive execution projection bundle is incomplete');
+  const sprintContinuationFields = [
+    'sprintContinuationDecisions',
+    'sprintContinuationCurrentDecisions',
+    'sprintUpwardResults',
+  ] as const;
+  const sprintContinuationFieldCount = sprintContinuationFields.filter(
+    (field) => root[field] !== undefined,
+  ).length;
+  if (sprintContinuationFieldCount !== 0 && sprintContinuationFieldCount !== sprintContinuationFields.length)
+    fail('productive Sprint continuation projection bundle is incomplete');
   const query: OrchestrationNativeQueryV2 = {
     contractVersion: ORCHESTRATION_NATIVE_QUERY_V2,
     generatedAt: string(root.generatedAt, 'generatedAt'),
@@ -392,6 +443,9 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
     workSliceExecutionSettlements: root.workSliceExecutionSettlements === undefined ? [] : array(root.workSliceExecutionSettlements, 'workSliceExecutionSettlements').map(workSliceExecutionSettlement),
     workSlicePlanningPointExecutionSettlements: root.workSlicePlanningPointExecutionSettlements === undefined ? [] : array(root.workSlicePlanningPointExecutionSettlements, 'workSlicePlanningPointExecutionSettlements').map(workSlicePlanningPointExecutionSettlement),
     workSliceExecutionAttentions: root.workSliceExecutionAttentions === undefined ? [] : array(root.workSliceExecutionAttentions, 'workSliceExecutionAttentions').map(workSliceExecutionAttention),
+    sprintContinuationDecisions: root.sprintContinuationDecisions === undefined ? [] : array(root.sprintContinuationDecisions, 'sprintContinuationDecisions').map(sprintContinuationDecision),
+    sprintContinuationCurrentDecisions: root.sprintContinuationCurrentDecisions === undefined ? [] : array(root.sprintContinuationCurrentDecisions, 'sprintContinuationCurrentDecisions').map(sprintContinuationCurrentDecision),
+    sprintUpwardResults: root.sprintUpwardResults === undefined ? [] : array(root.sprintUpwardResults, 'sprintUpwardResults').map(sprintUpwardResult),
   };
   validate(query);
   return query;
@@ -734,6 +788,15 @@ export function nativeQueryProductCompositionInputV2(
       ...(executionByMaterializationId.get(materialization.materializationId) ? { execution: executionByMaterializationId.get(materialization.materializationId) } : {}),
       source: source(materialization.materializationId),
     })),
+    ...(query.sprintContinuationDecisions.length > 0
+      ? {
+          sprintContinuation: {
+            decisions: query.sprintContinuationDecisions,
+            currentDecisions: query.sprintContinuationCurrentDecisions,
+            upwardResults: query.sprintUpwardResults,
+          },
+        }
+      : {}),
     ...(transitionQuery
       ? {
           bootstrapTransition: {
@@ -1279,6 +1342,89 @@ const workSliceExecutionAttention = (value: unknown): NativeWorkSliceExecutionAt
   const x = object(value, 'Work Slice execution attention');
   keys(x, ['materializationId', 'recordedAt'], 'Work Slice execution attention');
   return { materializationId: string(x.materializationId, 'materializationId'), recordedAt: timestamp(x.recordedAt, 'Work Slice execution attention recordedAt') };
+};
+const sprintContinuationStructuredAttention = (
+  value: unknown,
+): NativeSprintContinuationStructuredAttentionV1 => {
+  const x = object(value, 'Sprint structured attention');
+  keys(x, ['reason', 'authorityNeeded', 'evidenceContext', 'resumptionPath'], 'Sprint structured attention');
+  return {
+    reason: boundedString(x.reason, 2000, 'Sprint attention reason'),
+    authorityNeeded: boundedString(x.authorityNeeded, 2000, 'Sprint attention authorityNeeded'),
+    evidenceContext: boundedString(x.evidenceContext, 4000, 'Sprint attention evidenceContext'),
+    resumptionPath: boundedString(x.resumptionPath, 4000, 'Sprint attention resumptionPath'),
+  };
+};
+const sprintContinuationAttention = (value: unknown): NativeSprintContinuationAttentionV1 => {
+  const x = object(value, 'Sprint continuation attention');
+  keys(x, ['attentionId', 'code', 'structuredAttention'], 'Sprint continuation attention');
+  return {
+    attentionId: string(x.attentionId, 'Sprint attentionId'),
+    code: boundedString(x.code, 160, 'Sprint attention code'),
+    ...(x.structuredAttention === undefined
+      ? {}
+      : { structuredAttention: sprintContinuationStructuredAttention(x.structuredAttention) }),
+  };
+};
+const sprintContinuationDecision = (value: unknown): NativeSprintContinuationDecisionV1 => {
+  const x = object(value, 'Sprint continuation decision');
+  keys(
+    x,
+    [
+      'decisionId',
+      'sprintId',
+      'decisionSequence',
+      'state',
+      'reason',
+      'acceptedMaterializationCount',
+      'recordedAt',
+      'attention',
+    ],
+    'Sprint continuation decision',
+  );
+  if (!['continuing', 'attention', 'settled'].includes(x.state as string))
+    fail('invalid Sprint continuation state');
+  if (!Number.isSafeInteger(x.decisionSequence) || (x.decisionSequence as number) < 1)
+    fail('invalid Sprint continuation decision sequence');
+  if (!Number.isSafeInteger(x.acceptedMaterializationCount) || (x.acceptedMaterializationCount as number) < 0)
+    fail('invalid Sprint continuation materialization count');
+  return {
+    decisionId: string(x.decisionId, 'Sprint decisionId'),
+    sprintId: string(x.sprintId, 'Sprint decision sprintId'),
+    decisionSequence: x.decisionSequence as number,
+    state: x.state as NativeSprintContinuationStateV1,
+    reason: boundedString(x.reason, 200, 'Sprint continuation reason'),
+    acceptedMaterializationCount: x.acceptedMaterializationCount as number,
+    recordedAt: timestamp(x.recordedAt, 'Sprint decision recordedAt'),
+    ...(x.attention === undefined ? {} : { attention: sprintContinuationAttention(x.attention) }),
+  };
+};
+const sprintContinuationCurrentDecision = (
+  value: unknown,
+): NativeSprintContinuationCurrentDecisionV1 => {
+  const x = object(value, 'Sprint current continuation decision');
+  keys(x, ['sprintId', 'decisionId', 'state', 'updatedAt'], 'Sprint current continuation decision');
+  if (!['continuing', 'attention', 'settled'].includes(x.state as string))
+    fail('invalid current Sprint continuation state');
+  return {
+    sprintId: string(x.sprintId, 'current Sprint decision sprintId'),
+    decisionId: string(x.decisionId, 'current Sprint decisionId'),
+    state: x.state as NativeSprintContinuationStateV1,
+    updatedAt: timestamp(x.updatedAt, 'current Sprint decision updatedAt'),
+  };
+};
+const sprintUpwardResult = (value: unknown): NativeSprintUpwardResultV1 => {
+  const x = object(value, 'Sprint upward result');
+  keys(x, ['resultId', 'decisionId', 'sprintId', 'resultKind', 'recordedAt'], 'Sprint upward result');
+  if (!['continuing', 'attention', 'settled'].includes(x.resultKind as string))
+    fail('invalid Sprint upward result kind');
+  return {
+    resultId: string(x.resultId, 'Sprint upward resultId'),
+    decisionId: string(x.decisionId, 'Sprint upward decisionId'),
+    sprintId: string(x.sprintId, 'Sprint upward sprintId'),
+    resultKind: x.resultKind as NativeSprintContinuationStateV1,
+    recordedAt: timestamp(x.recordedAt, 'Sprint upward result recordedAt'),
+  };
 };
 const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
   const x = object(value, 'materialized Work Unit');
@@ -2652,6 +2798,7 @@ function validate(query: OrchestrationNativeQueryV2) {
   unique(query.initiatedEpics, (x) => x.epicId, 'initiated Epic ID');
   unique(query.initiatedEpics, (x) => x.epicPlanningDraftId, 'initiated Epic planning draft ID');
   unique(query.initiatedSprints, (x) => x.sprintId, 'initiated Sprint ID');
+  validateSprintContinuationProjection(query);
   const drafts = new Set(query.planningDrafts.map((x) => x.epicPlanningDraftId));
   const revisions = new Map(query.proposalRevisions.map((x) => [x.proposalRevisionId, x]));
   const associations = new Map(
@@ -2916,6 +3063,107 @@ function validate(query: OrchestrationNativeQueryV2) {
     fail('materialized Work Unit references unknown materialization');
   if (query.workUnitRelationships.some((item) => !materializations.has(item.materializationId)))
     fail('Work Unit relationship references unknown materialization');
+}
+
+function validateSprintContinuationProjection(query: OrchestrationNativeQueryV2) {
+  const decisions = query.sprintContinuationDecisions;
+  const current = query.sprintContinuationCurrentDecisions;
+  const results = query.sprintUpwardResults;
+  if (!decisions.length && !current.length && !results.length) return;
+  unique(decisions, (item) => item.decisionId, 'Sprint continuation decision ID');
+  unique(
+    decisions,
+    (item) => `${item.sprintId}:${item.decisionSequence}`,
+    'Sprint continuation decision sequence',
+  );
+  unique(current, (item) => item.sprintId, 'Sprint current decision Sprint ID');
+  unique(results, (item) => item.resultId, 'Sprint upward result ID');
+  unique(results, (item) => item.decisionId, 'Sprint upward result decision ID');
+  const sprintIds = new Set(query.initiatedSprints.map((sprint) => sprint.sprintId));
+  const decisionsById = new Map(decisions.map((decision) => [decision.decisionId, decision]));
+  const decisionsBySprint = new Map<string, NativeSprintContinuationDecisionV1[]>();
+  for (const decision of decisions) {
+    if (!sprintIds.has(decision.sprintId)) fail('Sprint continuation decision references an unknown Sprint');
+    const knownReason = knownSprintContinuationReason(decision.reason);
+    if (knownReason !== 'unknown' && knownReason !== decision.state)
+      fail('Sprint continuation decision state and reason contradict');
+    if (decision.state === 'settled' && knownReason !== 'settled')
+      fail('unknown Sprint settlement reason cannot grant settlement authority');
+    if (decision.state === 'settled' && decision.acceptedMaterializationCount < 1)
+      fail('Sprint settlement requires accepted materialization');
+    if (decision.state !== 'attention' && decision.attention !== undefined)
+      fail('non-attention Sprint decision has attention context');
+    if (decision.state === 'attention' && decision.attention === undefined)
+      fail('attention Sprint decision lacks its attention record');
+    const list = decisionsBySprint.get(decision.sprintId) ?? [];
+    list.push(decision);
+    decisionsBySprint.set(decision.sprintId, list);
+    const materializationCount = query.workUnitMaterializations.filter(
+      (materialization) => materialization.sprintId === decision.sprintId,
+    ).length;
+    if (decision.acceptedMaterializationCount !== materializationCount)
+      fail('Sprint continuation decision materialization count is stale');
+  }
+  for (const [sprintId, history] of decisionsBySprint) {
+    history.forEach((decision, index) => {
+      if (decision.decisionSequence !== index + 1)
+        fail('Sprint continuation decision chronology has a gap, duplicate, or out-of-order entry');
+    });
+    const pointer = current.find((item) => item.sprintId === sprintId);
+    if (!pointer) fail('Sprint continuation history lacks its current decision pointer');
+    if (pointer!.decisionId !== history.at(-1)!.decisionId)
+      fail('Sprint current decision does not point to the latest decision');
+  }
+  for (const pointer of current) {
+    if (!sprintIds.has(pointer.sprintId)) fail('Sprint current decision references an unknown Sprint');
+    const decision = decisionsById.get(pointer.decisionId);
+    if (
+      !decision ||
+      decision.sprintId !== pointer.sprintId ||
+      decision.state !== pointer.state ||
+      Date.parse(pointer.updatedAt) < Date.parse(decision.recordedAt)
+    )
+      fail('Sprint current decision correlation or chronology is invalid');
+  }
+  const resultDecisionIds = new Set<string>();
+  for (const result of results) {
+    const decision = decisionsById.get(result.decisionId);
+    if (
+      !decision ||
+      result.sprintId !== decision.sprintId ||
+      result.resultKind !== decision.state ||
+      Date.parse(result.recordedAt) < Date.parse(decision.recordedAt)
+    )
+      fail('Sprint upward result correlation or chronology is invalid');
+    resultDecisionIds.add(result.decisionId);
+  }
+  if (resultDecisionIds.size !== decisions.length)
+    fail('Sprint continuation history lacks one separate upward result per decision');
+}
+
+function knownSprintContinuationReason(reason: string): NativeSprintContinuationStateV1 | 'unknown' {
+  if (
+    [
+      'continue_eligible_work',
+      'wait_for_agent_dependency',
+      'retry_reassessment_pending',
+      'continuation_pending',
+      'planning_or_execution_pending',
+    ].includes(reason)
+  )
+    return 'continuing';
+  if (
+    [
+      'structured_human_or_external_attention',
+      'stale_epic_context',
+      'dependency_route_unavailable',
+      'correlation_or_chronology_unavailable',
+      'unresolved_handback',
+    ].includes(reason)
+  )
+    return 'attention';
+  if (reason === 'all_authoritative_sprint_work_settled') return 'settled';
+  return 'unknown';
 }
 function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
   const handler = unit.handlerActivation;

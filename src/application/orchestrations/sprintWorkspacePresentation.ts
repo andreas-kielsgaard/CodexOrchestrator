@@ -62,6 +62,7 @@ export interface SprintWorkspacePresentationV1 {
   readonly internalArtifacts: readonly Artifact[];
   readonly agentSessionReferences: readonly AgentSessionReference[];
   readonly continuation: ProductSprintReadModelV1['continuation'];
+  readonly sprintContinuation?: ProductSprintReadModelV1['sprintContinuation'];
   readonly narratives?: ProductSprintReadModelV1['workspacePresentation']['narratives'];
 }
 
@@ -140,6 +141,9 @@ export function projectSprintWorkspacePresentation(
     internalArtifacts: sprint.internalArtifacts.map((artifact) => ({ ...artifact })),
     agentSessionReferences: sprint.agentSessionReferences.map((reference) => ({ ...reference })),
     continuation: sprint.continuation,
+    ...(sprint.sprintContinuation
+      ? { sprintContinuation: sprint.sprintContinuation }
+      : {}),
     ...(sprint.workspacePresentation.narratives
       ? { narratives: sprint.workspacePresentation.narratives }
       : {}),

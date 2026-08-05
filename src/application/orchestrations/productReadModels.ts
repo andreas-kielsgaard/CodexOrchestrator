@@ -251,6 +251,40 @@ export interface ProductReadCompositionInputV1 {
       readonly attention?: Readonly<{ readonly recordedAt: string }>;
     }>;
   }[];
+  readonly sprintContinuation?: Readonly<{
+    readonly decisions: readonly {
+      readonly decisionId: string;
+      readonly sprintId: string;
+      readonly decisionSequence: number;
+      readonly state: 'continuing' | 'attention' | 'settled';
+      readonly reason: string;
+      readonly acceptedMaterializationCount: number;
+      readonly recordedAt: string;
+      readonly attention?: Readonly<{
+        readonly attentionId: string;
+        readonly code: string;
+        readonly structuredAttention?: Readonly<{
+          readonly reason: string;
+          readonly authorityNeeded: string;
+          readonly evidenceContext: string;
+          readonly resumptionPath: string;
+        }>;
+      }>;
+    }[];
+    readonly currentDecisions: readonly {
+      readonly sprintId: string;
+      readonly decisionId: string;
+      readonly state: 'continuing' | 'attention' | 'settled';
+      readonly updatedAt: string;
+    }[];
+    readonly upwardResults: readonly {
+      readonly resultId: string;
+      readonly decisionId: string;
+      readonly sprintId: string;
+      readonly resultKind: 'continuing' | 'attention' | 'settled';
+      readonly recordedAt: string;
+    }[];
+  }>;
   readonly selection?: ProductReadSelectionV1;
   readonly bootstrapTransition?: Readonly<{
     readonly query: import('./epicBootstrapTransition').EpicBootstrapTransitionQueryV2;
@@ -621,6 +655,37 @@ export interface ProductContinuationReadModelV1 {
   readonly initiationObserved: boolean;
 }
 
+export interface ProductSprintContinuationReadModelV1 {
+  readonly current: Readonly<{
+    readonly decisionId: string;
+    readonly state: 'continuing' | 'attention' | 'settled';
+    readonly updatedAt: string;
+  }> | null;
+  readonly history: readonly Readonly<{
+    readonly decisionId: string;
+    readonly sequence: number;
+    readonly state: 'continuing' | 'attention' | 'settled';
+    readonly reason: string;
+    readonly recordedAt: string;
+    readonly attention?: Readonly<{
+      readonly code: string;
+      readonly structuredAttention?: Readonly<{
+        readonly reason: string;
+        readonly authorityNeeded: string;
+        readonly evidenceContext: string;
+        readonly resumptionPath: string;
+      }>;
+    }>;
+  }>[];
+  /** Local persistence only; this does not imply delivery, receipt, or higher continuation. */
+  readonly upwardResults: readonly Readonly<{
+    readonly resultId: string;
+    readonly decisionId: string;
+    readonly recordedAt: string;
+    readonly resultKind: 'continuing' | 'attention' | 'settled';
+  }>[];
+}
+
 export interface ProductAgentSessionReferenceReadModelV1 {
   readonly agentSessionRefId: string;
   readonly agentSessionId: string;
@@ -828,6 +893,7 @@ export interface ProductSprintReadModelV1 {
   }>;
   readonly agentSessionReferences: readonly ProductAgentSessionReferenceReadModelV1[];
   readonly continuation: ProductContinuationReadModelV1;
+  readonly sprintContinuation?: ProductSprintContinuationReadModelV1;
 }
 
 export interface ProductEpicReadModelV1 {

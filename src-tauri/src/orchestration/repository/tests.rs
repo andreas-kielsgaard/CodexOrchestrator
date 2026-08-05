@@ -1480,6 +1480,50 @@ fn native_query_projects_durable_epic_escalations_and_rejects_foreign_or_out_of_
     assert!(repository.native_query().is_err());
 }
 
+#[test]
+fn native_query_projects_ordered_sprint_decisions_current_result_and_privacy_boundary() {
+    let repository = repository_at(time());
+    let saved = repository
+        .save_epic_plan_proposal(command(None, proposal("SCS projection"), "scs-save"))
+        .expect("proposal");
+    repository
+        .initiate_epic(super::super::domain::InitiateEpicCommand {
+            epic_planning_draft_id: EpicPlanningDraftId::new("epic-planning-draft-1").unwrap(),
+            expected_revision_token: saved.revision_token,
+            actor_id: "application-user".into(),
+            idempotency_key: "scs-init".into(),
+        })
+        .expect("initiation");
+    let sprint = repository.native_query().unwrap().initiated_sprints[0]
+        .sprint_id
+        .clone();
+    let connection = repository.connection.lock().unwrap();
+    crate::orchestration::sprint_continuation_settlement::initialize(&connection).unwrap();
+    connection.execute_batch(&format!(
+        "INSERT INTO sprint_continuation_decisions VALUES ('decision-1','{sprint}',1,'continuing','continue_eligible_work',0,'private-input-1','2030-01-01T00:00:01Z'),('decision-2','{sprint}',2,'attention','dependency_route_unavailable',0,'private-input-2','2030-01-01T00:00:02Z');INSERT INTO sprint_continuation_attentions VALUES ('decision-2','attention-2','dependency_route_unavailable','private-attention','2030-01-01T00:00:02Z');INSERT INTO sprint_continuation_current_decisions VALUES ('{sprint}','decision-2','attention','2030-01-01T00:00:02Z');INSERT INTO sprint_upward_results VALUES ('result-1','decision-1','{sprint}','continuing','private-chronology-1','2030-01-01T00:00:01Z'),('result-2','decision-2','{sprint}','attention','private-chronology-2','2030-01-01T00:00:02Z');"
+    )).unwrap();
+    drop(connection);
+
+    let projected = repository.native_query().expect("SCS projection");
+    assert_eq!(projected.sprint_continuation_decisions.len(), 2);
+    assert_eq!(projected.sprint_continuation_current_decisions[0].decision_id, "decision-2");
+    assert_eq!(projected.sprint_upward_results.len(), 2);
+    let json = serde_json::to_string(&projected).unwrap();
+    assert!(!json.contains("private-input"));
+    assert!(!json.contains("private-chronology"));
+    assert!(!json.contains("private-attention"));
+
+    let connection = repository.connection.lock().unwrap();
+    connection
+        .execute(
+            "UPDATE sprint_continuation_current_decisions SET sprint_id='foreign-sprint' WHERE sprint_id=?1",
+            [&sprint],
+        )
+        .unwrap();
+    drop(connection);
+    assert!(repository.native_query().is_err());
+}
+
 fn connection_reopen_for_native_query_mutation(repository: &SqliteOrchestrationRepository, sql: &str) {
     let connection = repository.connection.lock().unwrap();
     if sql.contains("?1") { connection.execute(sql, ["epic-1"]).unwrap(); } else { connection.execute_batch(sql).unwrap(); }
@@ -1832,6 +1876,7 @@ fn canonical_populated_query() -> NativeQueryV2 {
         work_unit_relationships: vec![],
         dependency_activation_intents: vec![],
         work_unit_execution_states: vec![], work_slice_execution_graph_completions: vec![], work_slice_execution_settlements: vec![], work_slice_planning_point_execution_settlements: vec![], work_slice_execution_attentions: vec![],
+        sprint_continuation_decisions: vec![], sprint_continuation_current_decisions: vec![], sprint_upward_results: vec![],
     }
 }
 
@@ -1854,6 +1899,7 @@ fn current_native_fixture(value: &str) -> Result<serde_json::Value, serde_json::
         .unwrap()
         .insert("workUnitRelationships".into(), serde_json::json!([]));
     for field in ["workUnitExecutionStates", "workSliceExecutionGraphCompletions", "workSliceExecutionSettlements", "workSlicePlanningPointExecutionSettlements", "workSliceExecutionAttentions"] { fixture.as_object_mut().unwrap().entry(field).or_insert(serde_json::json!([])); }
+    for field in ["sprintContinuationDecisions", "sprintContinuationCurrentDecisions", "sprintUpwardResults"] { fixture.as_object_mut().unwrap().entry(field).or_insert(serde_json::json!([])); }
     Ok(fixture)
 }
 
