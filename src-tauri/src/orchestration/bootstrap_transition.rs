@@ -1785,9 +1785,6 @@ mod tests {
             work_unit_execution_harness::{
                 WorkUnitExecutionHarnessService, WorkUnitHarnessRole,
             },
-            work_unit_dependency_wave::{
-                reconcile_work_slice_execution_settlement, reconcile_work_unit_dependency_wave,
-            },
         },
     };
     use sha2::{Digest, Sha256};
@@ -6467,9 +6464,21 @@ mod tests {
         }
         reconcile_accepted_integrations(&mut connection).unwrap();
         reconcile_accepted_integrations(&mut connection).unwrap();
-        reconcile_work_unit_dependency_wave(&mut connection).unwrap();
-        reconcile_work_slice_execution_settlement(&mut connection).unwrap();
-        reconcile_work_slice_execution_settlement(&mut connection).unwrap();
+        let terminal_review: String = connection.query_row(
+            "SELECT review_invocation_id FROM work_unit_handler_reviews ORDER BY review_invocation_id LIMIT 1",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        drop(connection);
+
+        // This is the productive completed-review movement. It drains the authoritative graph
+        // and both settlement layers, then records the Sprint decision and upward result before
+        // this call returns; the service is deliberately not reopened.
+        service
+            .reconcile_handler_review_terminal_movement_for_test(&terminal_review)
+            .unwrap();
+
+        let connection = Connection::open(&fixture.database_path).unwrap();
 
         let candidate_status = connection.prepare("SELECT candidate_id,pinned_at,attention_reason FROM accepted_handler_candidates ORDER BY candidate_id").unwrap().query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
         let candidate_attentions = connection.prepare("SELECT candidate_id,attention_reason FROM accepted_candidate_authority_attentions ORDER BY candidate_id").unwrap().query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
@@ -6483,6 +6492,9 @@ mod tests {
             assert_eq!(connection.query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0)).unwrap(), 1, "{table}");
         }
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_attentions", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_decisions WHERE sprint_id=?1 AND decision_state='settled'", [&sprint_id], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_current_decisions current JOIN sprint_continuation_decisions decision ON decision.decision_id=current.decision_id WHERE current.sprint_id=?1 AND current.decision_state='settled' AND decision.decision_state='settled'", [&sprint_id], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_upward_results result JOIN sprint_continuation_decisions decision ON decision.decision_id=result.decision_id WHERE result.sprint_id=?1 AND result.result_kind='settled' AND decision.decision_state='settled'", [&sprint_id], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sprint_settlements','epic_settlements')", [], |row| row.get(0)).unwrap(), 0);
         drop(connection);
 

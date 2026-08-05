@@ -15,10 +15,16 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
   unresolved retry, Handback, attention, dependency wait, or continuation. Foreign, stale, or
   malformed chronology fails closed into attention rather than settling.
 - Focused local Rust evidence: `cargo test --manifest-path src-tauri/Cargo.toml
-  sprint_continuation_settlement --lib -- --test-threads=1` passed **5/5**. The tests cover eligible-work, retry, and
+  sprint_continuation_settlement --lib -- --test-threads=1` passed **6/6**. The tests cover eligible-work, retry, and
   agent-dependency continuing paths; structured attention and Handback preservation; exact
-  settlement/result separation; incomplete, foreign, stale, or malformed facts; and reopened
-  replay after partial result/current-state recovery.
+  settlement/result separation; conflicting persisted-result failure without overwrite;
+  incomplete, foreign, stale, or malformed facts; and reopened replay after partial
+  result/current-state recovery.
+- The real completed Handler-review terminal regression passed **1/1** (400 filtered). In one
+  service activation, after accepted integrations are durable, it records graph completion, Work
+  Slice settlement, planning-point settlement, one settled Sprint decision/current pointer, and
+  one separate settled upward result before the terminal-movement call returns. The test does not
+  reopen the service for that movement.
   No live provider, Epic receipt, Epic settlement, delivery, activation, or user acceptance is
   claimed.
 

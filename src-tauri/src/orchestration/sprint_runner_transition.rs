@@ -2315,7 +2315,16 @@ impl SprintRunnerTransitionService {
     fn reconcile_newly_eligible_work_unit_handlers(
         self: &Arc<Self>,
     ) -> Result<(), SprintRunnerTransitionError> {
-        let Some(handler) = self.work_unit_handler.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Work Unit Handler registry is poisoned".into()))?.clone() else { return Ok(()) };
+        let Some(handler) = self.work_unit_handler.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Work Unit Handler registry is poisoned".into()))?.clone() else {
+            // A terminal review can be the last productive movement after all Handler work is
+            // already durable. It must still drain graph and Work Slice settlement before the
+            // continuation boundary observes the current Sprint; no Handler launch is needed.
+            let mut connection = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;
+            reconcile_work_unit_dependency_wave(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
+            reconcile_work_slice_execution_settlement(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
+            drop(connection);
+            return self.reconcile_sprint_continuation_boundary();
+        };
         for _generation in 0..2 {
             let units = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare(
                 "SELECT u.work_unit_id,u.materialization_id,m.sprint_id
