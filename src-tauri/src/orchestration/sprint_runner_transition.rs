@@ -2957,7 +2957,8 @@ impl SprintRunnerTransitionService {
     fn reconcile_sprint_result_realization(self:&Arc<Self>,result:&str)->Result<(),SprintRunnerTransitionError>{
         let source:Option<(String,String,String,String,String,String,String,String,String,Option<String>,String)>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT x.decision_id,x.sprint_id,x.epic_id,x.governing_runner_session_id,x.governing_runner_invocation_id,x.reassessment_invocation_id,r.result_kind,d.decision_state,disposition.disposition_id,current.decision_id,disposition.movement_kind FROM epic_runner_sprint_result_receivers x JOIN sprint_upward_results r ON r.result_id=x.result_id AND r.decision_id=x.decision_id AND r.sprint_id=x.sprint_id JOIN sprint_continuation_decisions d ON d.decision_id=x.decision_id AND d.sprint_id=x.sprint_id JOIN epic_runner_sprint_result_dispositions disposition ON disposition.result_id=x.result_id LEFT JOIN sprint_continuation_current_decisions current ON current.sprint_id=x.sprint_id WHERE x.result_id=?1 AND x.semantic_reassessment_fact_id IS NOT NULL AND x.semantic_reassessment_recorded_at IS NOT NULL",[result],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?,row.get(9)?,row.get(10)?))).optional().map_err(|error|SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         let Some((decision,sprint,epic,_session,_governing,reassessment,result_kind,decision_state,_disposition,current,movement_kind))=source else{return Err(SprintRunnerTransitionError::Conflict)};
-        let lock=self.transition_lock(&format!("epic-result-realization:{epic}"))?;let _guard=lock.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("Epic result realization lock is poisoned".into()))?;
+        let lock = sprint_result_realization_lock(&self.database_lock_key, &epic)?;
+        let _guard = lock.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint-result realization lock is poisoned".into()))?;
         let settled=result_kind=="settled"&&decision_state=="settled"&&current.as_deref()==Some(decision.as_str());
         let prior_unsettled:bool=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT EXISTS(SELECT 1 FROM initiated_sprints prior WHERE prior.epic_id=?1 AND prior.ordinal < (SELECT ordinal FROM initiated_sprints WHERE id=?2 AND epic_id=?1) AND NOT EXISTS (SELECT 1 FROM sprint_continuation_current_decisions current JOIN sprint_continuation_decisions decision ON decision.decision_id=current.decision_id JOIN sprint_upward_results result ON result.decision_id=decision.decision_id WHERE current.sprint_id=prior.id AND decision.decision_state='settled' AND result.result_kind='settled'))",params![epic,sprint],|row|row.get(0)).map_err(|error|SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         if movement_kind!="advance_to_next_approved_sprint" { return self.persist_sprint_result_retained_attention(result,&decision,&sprint,&epic,"disposition_retains_attention"); }
@@ -3874,6 +3875,21 @@ fn handler_review_reconciliation_lock(
         .map_err(|_| SprintRunnerTransitionError::Unavailable("Handler review lock registry is poisoned".into()))?;
     Ok(locks
         .entry(database_lock_key.to_owned())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone())
+}
+
+fn sprint_result_realization_lock(
+    database_lock_key: &str,
+    epic_id: &str,
+) -> Result<Arc<Mutex<()>>, SprintRunnerTransitionError> {
+    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+    let mut locks = LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint-result realization lock registry is poisoned".into()))?;
+    Ok(locks
+        .entry(format!("{database_lock_key}:{epic_id}"))
         .or_insert_with(|| Arc::new(Mutex::new(())))
         .clone())
 }

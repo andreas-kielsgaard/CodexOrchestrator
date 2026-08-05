@@ -6531,8 +6531,22 @@ mod tests {
             downstream_request: None,
             human_external_attention: None,
         };
-        service.record_sprint_result_disposition_for_test(&receiver, disposition.clone()).unwrap();
-        service.record_sprint_result_disposition_for_test(&receiver, disposition).unwrap();
+        let launches_before_successor = fixture.runtime.requests().len();
+        let concurrent = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+        ).unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+        let results = [service.clone(), concurrent].into_iter().map(|service| {
+            let barrier = barrier.clone();
+            let receiver = receiver.clone();
+            let disposition = disposition.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                service.record_sprint_result_disposition_for_test(&receiver, disposition)
+            })
+        }).collect::<Vec<_>>().into_iter().map(|call| call.join().unwrap()).collect::<Vec<_>>();
+        assert!(results.iter().all(Result::is_ok), "{results:?}");
 
         let (successor, session, invocation): (String, String, String) = Connection::open(&fixture.database_path)
             .unwrap()
@@ -6543,6 +6557,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE sprint_id=?1", [&successor], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(fixture.runtime.requests().len(), launches_before_successor + 1);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_sprint_result_realizations WHERE result_id=?1", [&result_id], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_sessions WHERE id=?1", [&session], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1", [&invocation], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_sprint_result_terminal_readiness WHERE result_id=?1", [&result_id], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='epic_settlements'", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_slice_planning_requests WHERE sprint_id=?1", [&successor], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_units u JOIN work_unit_materializations m ON m.materialization_id=u.materialization_id WHERE m.sprint_id=?1", [&successor], |row| row.get(0)).unwrap(), 0);
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE epic_runner_sprint_result_realizations SET successor_request_id=NULL,successor_request_recorded_at=NULL WHERE result_id=?1",
             [&result_id],
