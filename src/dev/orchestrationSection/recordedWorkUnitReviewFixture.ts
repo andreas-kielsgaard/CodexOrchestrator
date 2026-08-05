@@ -135,9 +135,7 @@ export function addRecordedWorkUnitReviewInspection(
                   : {
                       ...view,
                       workUnits: view.workUnits.map((unit) =>
-                        unit.workUnitId === inspection.workUnitId
-                          ? { ...unit, inspection }
-                          : unit,
+                        unit.workUnitId === inspection.workUnitId ? { ...unit, inspection } : unit,
                       ),
                     },
               ),

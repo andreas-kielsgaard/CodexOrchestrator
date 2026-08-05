@@ -22,8 +22,9 @@ describe('recorded Work Unit review consumer', () => {
       ({ sprintPlanRevisionId }) => sprintPlanRevisionId === 'ECS-R4',
     )!;
     const unit = revision.workUnits.find(({ workUnitId }) => workUnitId === 'WU-ECS2E')!;
-    const sessions = recordedPresentationAdjunct.sprints?.['sprint-control-surface']!
-      .workspaceAdjunct!.workUnitSessions.filter(({ workUnitId }) => workUnitId === 'WU-ECS2E');
+    const sessions = recordedPresentationAdjunct.sprints?.[
+      'sprint-control-surface'
+    ]!.workspaceAdjunct!.workUnitSessions.filter(({ workUnitId }) => workUnitId === 'WU-ECS2E');
     if (!sessions) throw new Error('Recorded Work Unit sessions are missing.');
 
     render(
@@ -38,10 +39,7 @@ describe('recorded Work Unit review consumer', () => {
       />,
     );
 
-    expect(screen.getByRole('tab', { name: 'Activity' })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
+    expect(screen.getByRole('tab', { name: 'Activity' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByLabelText('Selected Agent Session turn')).toBeNull();
     expect(screen.getAllByRole('region', { name: 'Application summary' })).toHaveLength(3);
     expect(screen.queryByRole('textbox')).toBeNull();
@@ -49,10 +47,7 @@ describe('recorded Work Unit review consumer', () => {
     const activityTab = screen.getByRole('tab', { name: 'Activity' });
     activityTab.focus();
     await user.keyboard('{ArrowRight}');
-    expect(screen.getByRole('tab', { name: 'Evidence' })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
+    expect(screen.getByRole('tab', { name: 'Evidence' })).toHaveAttribute('aria-selected', 'true');
     expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Evidence' }));
     await user.click(activityTab);
 
@@ -76,7 +71,9 @@ describe('recorded Work Unit review consumer', () => {
     ).toBeVisible();
 
     await user.click(screen.getByRole('tab', { name: 'Evidence' }));
-    expect(screen.getByText('src/features/orchestrations/components/WorkUnitDetailWorkspace.tsx')).toBeVisible();
+    expect(
+      screen.getByText('src/features/orchestrations/components/WorkUnitDetailWorkspace.tsx'),
+    ).toBeVisible();
     expect(screen.getByText(/No application-owned test-detail evidence/)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'View owning activity' }));
 
@@ -86,9 +83,7 @@ describe('recorded Work Unit review consumer', () => {
     expect(selected).toHaveAttribute('aria-pressed', 'true');
     expect(selected.closest('li')).toHaveClass('is-selected');
     expect(
-      screen.getByLabelText(
-        'Agent Session turn: recorded-implementer-WU-ECS2E-second-return',
-      ),
+      screen.getByLabelText('Agent Session turn: recorded-implementer-WU-ECS2E-second-return'),
     ).toBeVisible();
   });
 });
