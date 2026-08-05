@@ -175,7 +175,7 @@ describe('App application surfaces', () => {
     expect(screen.queryByRole('region', { name: 'Reviewer Agent Session' })).toBeNull();
     fireEvent.click(
       screen.getByRole('button', {
-        name: /Handler action.*recorded-handler-WU-ECS2E-first-review/,
+        name: /Implementation reviewed.*recorded-handler-WU-ECS2E-first-review/,
       }),
     );
     fireEvent.click(screen.getByRole('button', { name: 'Open in Agent Sessions' }));
@@ -204,7 +204,7 @@ describe('App application surfaces', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Evidence' }));
     fireEvent.click(
       screen.getByRole('button', {
-        name: /src\/features\/orchestrations\/components\/WorkUnitDetailWorkspace.tsx/,
+        name: /Open exact diff for src\/features\/orchestrations\/components\/WorkUnitDetailWorkspace.tsx/,
       }),
     );
     expect(await screen.findByRole('main', { name: 'Files and diffs' })).toBeVisible();

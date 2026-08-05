@@ -21,11 +21,10 @@ describe('WorkUnitDetailWorkspace Activity and Evidence', () => {
     );
     expect(screen.queryByLabelText('Selected Agent Session turn')).toBeNull();
 
-    await user.click(screen.getByRole('button', { name: /Handler action invocation-1/ }));
-    expect(screen.getByRole('button', { name: /Handler action invocation-1/ })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+    await user.click(screen.getByRole('button', { name: /Implementation reviewed invocation-1/ }));
+    expect(
+      screen.getByRole('button', { name: /Implementation reviewed invocation-1/ }),
+    ).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByLabelText('Agent Session turn: invocation-1')).toHaveTextContent(
       'Do the work',
     );
@@ -36,6 +35,13 @@ describe('WorkUnitDetailWorkspace Activity and Evidence', () => {
     await user.click(screen.getByRole('tab', { name: 'Evidence' }));
     expect(screen.getByRole('tab', { name: 'Evidence' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByText('src/feature.ts')).toBeInTheDocument();
+    const unavailableFile = screen.getByText('src/feature.ts').closest('li');
+    expect(unavailableFile).toHaveClass('work-unit-file-evidence--unavailable');
+    expect(unavailableFile).toHaveAttribute('data-evidence-id', 'evidence-1');
+    expect(unavailableFile).toHaveAttribute('data-file-id', 'file-1');
+    expect(unavailableFile).toHaveAttribute('data-source-activity-id', 'activity-implementer');
+    expect(unavailableFile?.querySelector('button')).toBeNull();
+    expect(screen.getByText('Unavailable diff')).toBeInTheDocument();
     expect(
       screen.getByText('Unavailable: No application-owned test detail is available.'),
     ).toBeInTheDocument();
@@ -50,7 +56,7 @@ describe('WorkUnitDetailWorkspace Activity and Evidence', () => {
     const user = userEvent.setup();
     render(<Workspace missingSession />);
 
-    await user.click(screen.getByRole('button', { name: /Implementer reporting invocation-2/ }));
+    await user.click(screen.getByRole('button', { name: /Implementation reported invocation-2/ }));
     expect(screen.getByLabelText('Agent Session turn: invocation-2')).toHaveTextContent(
       'Agent Session turn unavailable',
     );
@@ -71,13 +77,52 @@ describe('WorkUnitDetailWorkspace Activity and Evidence', () => {
   it('highlights only the exactly correlated Lifecycle step when an Activity receives focus', () => {
     render(<Workspace />);
 
-    const activity = screen.getByRole('button', { name: /Handler action invocation-1/ });
+    const activity = screen.getByRole('button', { name: /Implementation reviewed invocation-1/ });
     fireEvent.focus(activity);
 
-    expect(screen.getByRole('button', { name: /Handler work/ }).closest('li')).toHaveClass(
-      'is-highlighted',
+    expect(
+      screen
+        .getByRole('button', { name: /Implementation reviewed.*Work Unit Handler/ })
+        .closest('li'),
+    ).toHaveClass('is-highlighted');
+    expect(screen.getByText('Planner record').closest('section')).toHaveAttribute(
+      'aria-label',
+      'Planner context',
     );
-    expect(screen.getByRole('button', { name: /Planner record/ })).toBeDisabled();
+  });
+
+  it('highlights and selects an exact Activity from Lifecycle hover, focus, and click', async () => {
+    const user = userEvent.setup();
+    render(<Workspace />);
+
+    const lifecycle = screen.getByRole('button', {
+      name: /Implementation reviewed.*Work Unit Handler/,
+    });
+    const activity = screen.getByRole('button', { name: /Implementation reviewed invocation-1/ });
+
+    fireEvent.mouseEnter(lifecycle);
+    expect(activity.closest('li')).toHaveClass('is-highlighted');
+    fireEvent.mouseLeave(lifecycle);
+    expect(activity.closest('li')).not.toHaveClass('is-highlighted');
+
+    fireEvent.focus(lifecycle);
+    expect(activity.closest('li')).toHaveClass('is-highlighted');
+    await user.click(lifecycle);
+    expect(activity).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByLabelText('Agent Session turn: invocation-1')).toBeVisible();
+  });
+
+  it('fails closed for a Lifecycle entry with a mismatched typed agent role', () => {
+    render(<Workspace mismatchedLifecycle />);
+
+    const activity = screen.getByRole('button', { name: /Handler action recorded invocation-1/ });
+    const lifecycle = screen
+      .getByLabelText('Work Unit lifecycle turn log')
+      .querySelector<HTMLButtonElement>('ol > li > button');
+
+    expect(lifecycle).toBeDisabled();
+    fireEvent.focus(activity);
+    expect(lifecycle?.closest('li')).not.toHaveClass('is-highlighted');
   });
 
   it('fails closed for a stale requested Activity restore state', () => {
@@ -101,9 +146,11 @@ describe('WorkUnitDetailWorkspace Activity and Evidence', () => {
 
 function Workspace({
   missingSession = false,
+  mismatchedLifecycle = false,
   initialInspectionState,
 }: {
   readonly missingSession?: boolean;
+  readonly mismatchedLifecycle?: boolean;
   readonly initialInspectionState?: {
     readonly tab: 'activity' | 'evidence';
     readonly activityId: string;
@@ -192,11 +239,11 @@ function Workspace({
           sprintId: 'sprint-1',
           workUnitId: 'unit-1',
           sequence: 1,
-          kind: 'work',
+          kind: 'review',
           title: 'Handler work',
           summary: 'The exact Handler Activity is recorded.',
           agentSessionId: 'session-1',
-          agentRole: 'work_unit_handler',
+          agentRole: mismatchedLifecycle ? 'work_unit_implementer' : 'work_unit_handler',
           invocationId: 'invocation-1',
           source: {
             status: 'available',

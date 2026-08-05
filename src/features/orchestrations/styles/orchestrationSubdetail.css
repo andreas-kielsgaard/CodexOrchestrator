@@ -574,6 +574,11 @@
   box-shadow: 0 0 0 2px rgb(114 149 166 / 16%);
 }
 
+.work-unit-activity__list > li.is-highlighted:not(.is-selected) {
+  border-color: #9db0ba;
+  background: #f7fbfc;
+}
+
 .work-unit-lifecycle li.is-highlighted button {
   border-color: #7295a6;
   background: #eef6f9;
@@ -704,6 +709,34 @@
   color: #315f78;
 }
 
+.work-unit-activity__correlation {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  margin: 0;
+}
+
+.work-unit-activity__correlation div {
+  display: grid;
+  gap: 1px;
+}
+
+.work-unit-activity__correlation dt {
+  color: #71818a;
+  font-size: 0.52rem;
+  font-weight: 850;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.work-unit-activity__correlation dd {
+  overflow-wrap: anywhere;
+  margin: 0;
+  color: #52646f;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.55rem;
+}
+
 .work-unit-inspection__selection-hint,
 .work-unit-inspection__unavailable,
 .work-unit-evidence__group > p {
@@ -727,40 +760,75 @@
   font-size: 0.72rem;
 }
 
-.work-unit-evidence__group li {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 2px 8px;
-  color: #425a66;
-  font-size: 0.67rem;
-}
-
 .work-unit-evidence__group li > button,
 .work-unit-evidence__group li > span {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 2px 8px;
+  gap: 3px;
   min-width: 0;
-  border: 0;
-  background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
 }
 
-.work-unit-evidence__group li > button {
+.work-unit-file-evidence {
+  display: grid;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid #cfd9de;
+  border-radius: 6px;
+  color: #425a66;
+  font-size: 0.67rem;
+}
+
+.work-unit-file-evidence--available {
+  border-color: #9ebac8;
+  background: #f4fafc;
+}
+
+.work-unit-file-evidence--unavailable {
+  border-color: #d7c9b5;
+  background: #fbf7f0;
+  color: #756856;
+}
+
+.work-unit-file-evidence > button {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
   cursor: pointer;
 }
 
-.work-unit-evidence__group li > button:focus-visible {
+.work-unit-file-evidence > button:focus-visible {
   border-radius: 4px;
   outline: 2px solid #587f93;
   outline-offset: 2px;
 }
 
-.work-unit-evidence__group li > span small,
-.work-unit-evidence__group li > button small {
-  grid-column: 1 / -1;
+.work-unit-file-evidence__name {
+  overflow-wrap: anywhere;
+  color: #344f5d;
+  font-weight: 800;
+}
+
+.work-unit-file-evidence__status {
+  font-size: 0.59rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.work-unit-file-evidence--available .work-unit-file-evidence__status {
+  color: #315f78;
+}
+
+.work-unit-file-evidence--unavailable .work-unit-file-evidence__status {
+  color: #80602f;
+}
+
+.work-unit-file-evidence small {
+  color: inherit;
+  line-height: 1.35;
   white-space: normal;
 }
 
@@ -793,10 +861,6 @@
   overflow-wrap: anywhere;
 }
 
-.work-unit-evidence__group li small {
-  grid-column: 1 / -1;
-}
-
 @media (max-width: 720px) {
   .work-unit-inspection__heading,
   .work-unit-activity__inspection > header {
@@ -815,6 +879,10 @@
 
   .work-unit-activity__list small {
     grid-column: 2;
+  }
+
+  .work-unit-activity__correlation {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -848,7 +916,7 @@
   position: absolute;
   top: 29px;
   bottom: -7px;
-  left: 50%;
+  left: 13px;
   width: 1px;
   background: #b9c7ce;
   content: '';
@@ -856,7 +924,7 @@
 
 .work-unit-lifecycle button {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: 28px minmax(0, 1fr);
   gap: 7px;
   width: 100%;
   padding: 5px;
@@ -917,11 +985,28 @@
   color: #315c72;
   font-size: 0.63rem;
   font-weight: 900;
-  justify-self: center;
 }
 
-.work-unit-lifecycle button > span:last-child {
-  text-align: center;
+.work-unit-lifecycle__planner {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 5px;
+  color: #687b85;
+}
+
+.work-unit-lifecycle__planner div {
+  display: grid;
+  gap: 1px;
+}
+
+.work-unit-lifecycle__planner strong {
+  color: #5c4a79;
+}
+
+.work-unit-lifecycle__planner small {
+  font-size: 0.59rem;
 }
 
 .work-unit-lifecycle__identity--work_slice_planner {

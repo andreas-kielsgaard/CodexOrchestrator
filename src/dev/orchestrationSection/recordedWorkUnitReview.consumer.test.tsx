@@ -45,6 +45,38 @@ describe('recorded Work Unit review consumer', () => {
     expect(screen.queryByLabelText('Selected activity turn')).toBeNull();
     expect(screen.getAllByRole('region', { name: 'Application summary' })).toHaveLength(3);
     expect(screen.queryByRole('textbox')).toBeNull();
+    expect(
+      Array.from(
+        screen
+          .getByLabelText('Work Unit Activity')
+          .querySelectorAll<HTMLButtonElement>('.work-unit-activity__list > li > button'),
+      ).map((button) => button.textContent),
+    ).toEqual([
+      expect.stringContaining('Implementation returned'),
+      expect.stringContaining('Implementation reviewed'),
+      expect.stringContaining('Application acceptance recorded'),
+      expect.stringContaining('Review judgment recorded'),
+    ]);
+    const matchedLifecycleLabels = Array.from(
+      screen
+        .getByLabelText('Work Unit lifecycle turn log')
+        .querySelectorAll<HTMLButtonElement>('ol > li > button'),
+    )
+      .map((button) => button.textContent)
+      .filter((label) =>
+        [
+          'Implementation returned',
+          'Implementation reviewed',
+          'Application acceptance recorded',
+          'Review judgment recorded',
+        ].some((expected) => label?.includes(expected)),
+      );
+    expect(matchedLifecycleLabels).toEqual([
+      expect.stringContaining('Implementation returned'),
+      expect.stringContaining('Implementation reviewed'),
+      expect.stringContaining('Application acceptance recorded'),
+      expect.stringContaining('Review judgment recorded'),
+    ]);
 
     const activityTab = screen.getByRole('tab', { name: 'Activity' });
     activityTab.focus();
@@ -55,7 +87,7 @@ describe('recorded Work Unit review consumer', () => {
 
     await user.click(
       screen.getByRole('button', {
-        name: /Handler action.*recorded-handler-WU-ECS2E-first-review/,
+        name: /Implementation reviewed.*recorded-handler-WU-ECS2E-first-review/,
       }),
     );
     const firstInspector = screen.getByLabelText(
@@ -75,7 +107,7 @@ describe('recorded Work Unit review consumer', () => {
     await user.click(screen.getByRole('tab', { name: 'Evidence' }));
     await user.click(
       screen.getByRole('button', {
-        name: /src\/features\/orchestrations\/components\/WorkUnitDetailWorkspace.tsx/,
+        name: /Open exact diff for src\/features\/orchestrations\/components\/WorkUnitDetailWorkspace.tsx/,
       }),
     );
     expect(openFileEvidence).toHaveBeenCalledWith({
@@ -85,6 +117,7 @@ describe('recorded Work Unit review consumer', () => {
     expect(
       screen.getByText('Focused Work Unit Activity and Evidence interaction checks'),
     ).toBeVisible();
+    expect(screen.getByText('Unavailable diff')).toBeVisible();
     await user.click(
       within(screen.getByRole('region', { name: 'File evidence' })).getByRole('button', {
         name: 'View owning activity',
@@ -92,7 +125,7 @@ describe('recorded Work Unit review consumer', () => {
     );
 
     const selected = screen.getByRole('button', {
-      name: /Implementer reporting.*recorded-implementer-WU-ECS2E-second-return/,
+      name: /Application acceptance recorded.*recorded-implementer-WU-ECS2E-second-return/,
     });
     expect(selected).toHaveAttribute('aria-pressed', 'true');
     expect(selected.closest('li')).toHaveClass('is-selected');
@@ -103,7 +136,7 @@ describe('recorded Work Unit review consumer', () => {
 
     await user.click(
       screen.getByRole('button', {
-        name: /Acceptance.*Recorded WU-ECS2E Work Unit Handler/,
+        name: /Review judgment recorded.*Recorded WU-ECS2E Work Unit Handler/,
       }),
     );
     expect(
