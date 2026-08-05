@@ -4,6 +4,24 @@ Status: **partial**. Deterministic convergence and isolated installed-Codex Plan
 Bootstrap Generator, and Epic Runner paths pass. The production user-confirmation click and the
 integrated post-click chain remain a manual gate; no confirmation was bypassed.
 
+## SCS-01: durable Sprint continuation and settlement boundary
+
+- The application now reconciles one exact initiated Sprint against its accepted materializations,
+  graph completion, Work Slice settlement, and planning-point settlement facts. It records a
+  durable `continuing`, `attention`, or `settled` Sprint decision and an independently persisted
+  upward Sprint result. The result contains no delivery, receiver, Epic settlement, next-Sprint,
+  acceptance, repository, worktree, or internal correlation fact.
+- Settlement requires every correlated materialization to have all three terminal facts and no
+  unresolved retry, Handback, attention, dependency wait, or continuation. Foreign, stale, or
+  malformed chronology fails closed into attention rather than settling.
+- Focused local Rust evidence: `cargo test --manifest-path src-tauri/Cargo.toml
+  sprint_continuation_settlement --lib -- --test-threads=1` passed **5/5**. The tests cover eligible-work, retry, and
+  agent-dependency continuing paths; structured attention and Handback preservation; exact
+  settlement/result separation; incomplete, foreign, stale, or malformed facts; and reopened
+  replay after partial result/current-state recovery.
+  No live provider, Epic receipt, Epic settlement, delivery, activation, or user acceptance is
+  claimed.
+
 ## ER-3 strict public projection checkpoint (2026-08-05)
 
 - Fresh routed validation: Rust `cargo check -p codex-orchestrator` passed (**0 errors**; existing

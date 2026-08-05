@@ -5,6 +5,7 @@ use super::accepted_candidate_authority::{reconcile_accepted_candidate_authoriti
 use super::accepted_integration::reconcile_accepted_integrations;
 use super::work_unit_execution_harness::{WorkUnitExecutionHarnessService, WorkUnitHarnessRole};
 use super::work_unit_dependency_wave::{reconcile_work_slice_execution_settlement, reconcile_work_unit_dependency_wave};
+use super::sprint_continuation_settlement;
 use super::mcp::CodexMcpInjection;
 use super::repository::{InitiatedSprintGitAuthority, InitiatedSprintGitAuthorityError, SqliteOrchestrationRepository};
 use crate::agent_sessions::{
@@ -1112,6 +1113,9 @@ pub(crate) struct SprintRunnerTransitionStatus {
     pub(crate) work_slice_terminal_lifecycle_observed_at: Option<String>,
     pub(crate) work_slice_application_accepted_at: Option<String>,
     pub(crate) work_slice_materialization_ready_at: Option<String>,
+    pub(crate) sprint_decision_state: Option<String>,
+    pub(crate) sprint_decision_recorded_at: Option<String>,
+    pub(crate) sprint_upward_result_recorded_at: Option<String>,
     pub(crate) downstream_not_started: bool,
 }
 
@@ -1196,6 +1200,7 @@ impl SprintRunnerTransitionService {
         })?;
         connection.execute_batch(ACCEPTED_CANDIDATE_AUTHORITY_SCHEMA).map_err(|e| SprintRunnerTransitionError::Unavailable(format!("initialize accepted candidate authority schema: {e}")))?;
         connection.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA).map_err(|e| SprintRunnerTransitionError::Unavailable(format!("initialize dependency-wave schema: {e}")))?;
+        sprint_continuation_settlement::initialize(&connection).map_err(SprintRunnerTransitionError::Unavailable)?;
         // The first pre-start route was shipped before these evidence boundaries.  Keep an
         // existing local database readable without treating an absent fact as a positive fact.
         for column in [
@@ -1632,6 +1637,7 @@ impl SprintRunnerTransitionService {
             reconcile_accepted_integrations(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
             reconcile_work_unit_dependency_wave(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
             reconcile_work_slice_execution_settlement(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
+            sprint_continuation_settlement::reconcile(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)?;
         }
         self.reconcile_work_unit_handlers()?;
         Ok(ids.len())
@@ -1655,7 +1661,7 @@ impl SprintRunnerTransitionService {
                 "Sprint Runner transition database lock is poisoned".into(),
             )
         })?;
-        let mut statement = conn.prepare("SELECT t.sprint_id,t.epic_id,t.request_id,t.epic_runner_invocation_id,t.sprint_runner_session_id,t.sprint_runner_invocation_id,t.requested_at,t.authorized_at,t.session_created_at,t.harness_applied_at,t.launch_accepted_at,t.pre_start_semantic_outcome_recorded_at,t.pre_start_lifecycle_observed_at,t.pre_start_outcome_accepted_at,t.parent_continuation_delivery_requested_at,t.parent_continuation_delivery_persisted_at,t.epic_continuation_invocation_id,t.epic_continuation_launch_accepted_at,t.provider_receiver_activation_observed_at,t.sprint_start_authorized_at,t.sprint_start_persisted_at,t.sprint_continuation_invocation_id,t.sprint_continuation_launch_accepted_at,t.repository_branch_reevaluation_recorded_at,t.started_reevaluation_lifecycle_observed_at,t.planning_control_delivery_requested_at,t.planning_control_delivery_persisted_at,t.planning_control_invocation_id,t.planning_control_launch_accepted_at,t.planning_ready_at,p.request_fact_id,p.requested_at,p.authorized_at,p.planning_point_id,p.repository_worktree_route,p.planner_harness_key,p.planner_harness_version,p.planner_session_id,p.planner_invocation_id,p.planner_session_created_at,p.planner_invocation_created_at,p.planner_harness_applied_at,p.planner_launch_requested_at,p.planner_launch_accepted_at,p.planner_ready_at,p.planner_provider_activation_observed_at,p.planner_lifecycle_observed_at,r.submitted_at,r.validation_result,r.refinement_requested_at,r.semantic_completed_at,r.lifecycle_observed_at,r.accepted_at,r.materialization_ready_at FROM sprint_runner_transitions t LEFT JOIN work_slice_planning_requests p ON p.sprint_id=t.sprint_id AND p.is_current=1 LEFT JOIN work_slice_proposal_revisions r ON r.planning_point_id=p.planning_point_id AND r.is_current=1 ORDER BY t.requested_at,t.sprint_id").map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let mut statement = conn.prepare("SELECT t.sprint_id,t.epic_id,t.request_id,t.epic_runner_invocation_id,t.sprint_runner_session_id,t.sprint_runner_invocation_id,t.requested_at,t.authorized_at,t.session_created_at,t.harness_applied_at,t.launch_accepted_at,t.pre_start_semantic_outcome_recorded_at,t.pre_start_lifecycle_observed_at,t.pre_start_outcome_accepted_at,t.parent_continuation_delivery_requested_at,t.parent_continuation_delivery_persisted_at,t.epic_continuation_invocation_id,t.epic_continuation_launch_accepted_at,t.provider_receiver_activation_observed_at,t.sprint_start_authorized_at,t.sprint_start_persisted_at,t.sprint_continuation_invocation_id,t.sprint_continuation_launch_accepted_at,t.repository_branch_reevaluation_recorded_at,t.started_reevaluation_lifecycle_observed_at,t.planning_control_delivery_requested_at,t.planning_control_delivery_persisted_at,t.planning_control_invocation_id,t.planning_control_launch_accepted_at,t.planning_ready_at,p.request_fact_id,p.requested_at,p.authorized_at,p.planning_point_id,p.repository_worktree_route,p.planner_harness_key,p.planner_harness_version,p.planner_session_id,p.planner_invocation_id,p.planner_session_created_at,p.planner_invocation_created_at,p.planner_harness_applied_at,p.planner_launch_requested_at,p.planner_launch_accepted_at,p.planner_ready_at,p.planner_provider_activation_observed_at,p.planner_lifecycle_observed_at,r.submitted_at,r.validation_result,r.refinement_requested_at,r.semantic_completed_at,r.lifecycle_observed_at,r.accepted_at,r.materialization_ready_at,c.decision_state,c.recorded_at,u.recorded_at FROM sprint_runner_transitions t LEFT JOIN work_slice_planning_requests p ON p.sprint_id=t.sprint_id AND p.is_current=1 LEFT JOIN work_slice_proposal_revisions r ON r.planning_point_id=p.planning_point_id AND r.is_current=1 LEFT JOIN sprint_continuation_current_decisions current ON current.sprint_id=t.sprint_id LEFT JOIN sprint_continuation_decisions c ON c.decision_id=current.decision_id LEFT JOIN sprint_upward_results u ON u.decision_id=c.decision_id ORDER BY t.requested_at,t.sprint_id").map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         let transitions = statement
             .query_map([], |r| {
                 Ok(SprintRunnerTransitionStatus {
@@ -1716,6 +1722,9 @@ impl SprintRunnerTransitionService {
                     work_slice_terminal_lifecycle_observed_at: r.get(51)?,
                     work_slice_application_accepted_at: r.get(52)?,
                     work_slice_materialization_ready_at: r.get(53)?,
+                    sprint_decision_state: r.get(54)?,
+                    sprint_decision_recorded_at: r.get(55)?,
+                    sprint_upward_result_recorded_at: r.get(56)?,
                     downstream_not_started: r.get::<_, Option<String>>(33)?.is_none(),
                 })
             })
