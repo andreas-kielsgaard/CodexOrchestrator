@@ -38,12 +38,15 @@ export function ProcessingDisclosure({
         {activity.map((item) => (
           <li className={`activity-${item.kind}`} key={item.id}>
             <span>{activityLabel(item.kind)}</span>
-            {item.kind === 'agent_intermediate' ? (
+            {safeOnly && item.kind === 'tool' ? (
+              <p>{formatSafeToolDetail(item.safeDetail)}</p>
+            ) : item.kind === 'agent_intermediate' ? (
               <AgentMarkdown className="agent-activity-markdown">{item.text}</AgentMarkdown>
             ) : (
               <p>{item.text}</p>
             )}
             {safeOnly ? (
+              item.kind !== 'tool' &&
               item.safeDetail && (
                 <p className="recorded-step-detail">{formatSafeDetail(item.safeDetail)}</p>
               )
@@ -94,7 +97,13 @@ function formatSafeDetail(detail: NonNullable<TranscriptActivity['safeDetail']>)
     return parts.length ? `Usage detail: ${parts.join(', ')}` : 'Usage detail unavailable';
   }
 
+  return formatSafeToolDetail(detail);
+}
+
+function formatSafeToolDetail(detail: TranscriptActivity['safeDetail']): string {
+  if (!detail || detail.kind !== 'tool') return 'Tool activity detail unavailable';
   const label = [detail.server, detail.tool].filter(Boolean).join(' / ');
-  const status = detail.status ?? detail.resultClassification;
-  return [label || 'Tool activity', detail.phase, status].join(' · ');
+  return [label || 'Tool identity unavailable', detail.phase, detail.resultClassification].join(
+    ' · ',
+  );
 }

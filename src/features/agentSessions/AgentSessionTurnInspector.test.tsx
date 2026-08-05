@@ -26,15 +26,15 @@ describe('AgentSessionTurnInspector', () => {
     expect(screen.getByText('1m 5s')).toBeVisible();
   });
 
-  it('makes recorded steps expandable while keeping private raw payloads out of the inspector', () => {
-    const step = runtimeEvent(1, 'tool_activity', 'Reading files');
-    step.rawPayload = { private: 'do not render' };
+  it('keeps provider text, raw payloads, and free-form status out of safe tool steps', () => {
+    const step = runtimeEvent(1, 'tool_activity', 'provider secret query');
+    step.rawPayload = { private: 'raw secret result' };
     step.normalized!.toolActivity = {
       phase: 'completed',
       itemId: 'item-1',
       server: 'workspace',
       tool: 'read_file',
-      status: 'succeeded',
+      status: 'free-form status secret',
       resultClassification: 'succeeded',
     };
     const transcript = projectAgentSessionTranscript(sessionDetails('completed', [step]));
@@ -50,9 +50,10 @@ describe('AgentSessionTurnInspector', () => {
     const recordedSteps = screen.getByText('Recorded steps');
     expect(recordedSteps).toBeVisible();
     fireEvent.click(recordedSteps);
-    expect(screen.getByText('Reading files')).toBeVisible();
     expect(screen.getByText('workspace / read_file · completed · succeeded')).toBeVisible();
-    expect(screen.queryByText('do not render')).toBeNull();
+    expect(screen.queryByText('provider secret query')).toBeNull();
+    expect(screen.queryByText('raw secret result')).toBeNull();
+    expect(screen.queryByText('free-form status secret')).toBeNull();
     expect(screen.queryByText('Raw event')).toBeNull();
   });
 
