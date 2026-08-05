@@ -250,7 +250,7 @@ describe('orchestration native query v1', () => {
           launchRequestedAt: '2026-08-05T00:00:04Z',
           launchAcceptedAt: '2026-08-05T00:00:05Z',
           reassessmentLifecycleStatus: 'completed',
-          reassessmentLifecycleObservedAt: '2026-08-05T00:00:10Z',
+          reassessmentLifecycleObservedAt: '2026-08-05T00:00:12Z',
           semanticReassessmentRecordedAt: '2026-08-05T00:00:07Z',
         },
         dispositionRecordedAt: '2026-08-05T00:00:08Z',
@@ -274,6 +274,23 @@ describe('orchestration native query v1', () => {
       { resultKind: 'settled', realization: { outcomeKind: 'terminal_readiness' } },
     ]);
     expect(readModels.epics[0]!.sprints[0]!.sprintResultProjections).toHaveLength(1);
+
+    const inverseTerminal = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (inverseTerminal.sprintResultProjections as Array<Record<string, unknown>>)[0]!.realization = {
+      ...((inverseTerminal.sprintResultProjections as Array<Record<string, unknown>>)[0]!
+        .realization as Record<string, unknown>),
+      terminalReadinessRecordedAt: '2026-08-05T00:00:13Z',
+    };
+    expect(() => decodeOrchestrationNativeQueryV2(inverseTerminal)).toThrow('precedes');
+
+    const inverseRetained = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (inverseRetained.sprintResultProjections as Array<Record<string, unknown>>)[0]!.realization = {
+      outcomeKind: 'retained_attention',
+      consideredAt: '2026-08-05T00:00:09Z',
+      retainedAttentionCode: 'retained_concern',
+      retainedAttentionRecordedAt: '2026-08-05T00:00:13Z',
+    };
+    expect(() => decodeOrchestrationNativeQueryV2(inverseRetained)).toThrow('precedes');
 
     const privateShape = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
     (

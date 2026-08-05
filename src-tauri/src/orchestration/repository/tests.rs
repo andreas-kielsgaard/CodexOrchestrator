@@ -51,7 +51,7 @@ fn sprint_result_native_projection_redacts_private_receiver_and_realization_iden
          INSERT INTO sprint_continuation_decisions VALUES('decision','sprint',1,'settled','settled',1,'input','2026-08-05T00:00:00Z');
          INSERT INTO sprint_continuation_current_decisions VALUES('sprint','decision','settled','2026-08-05T00:00:00Z');
          INSERT INTO sprint_upward_results VALUES('result','decision','sprint','settled','2026-08-05T00:00:00Z');
-         INSERT INTO epic_runner_sprint_result_receivers VALUES('result','decision','sprint','epic','2026-08-05T00:00:01Z','2026-08-05T00:00:02Z','2026-08-05T00:00:03Z','2026-08-05T00:00:04Z','2026-08-05T00:00:05Z',NULL,'completed','2026-08-05T00:00:06Z','2026-08-05T00:00:07Z');
+         INSERT INTO epic_runner_sprint_result_receivers VALUES('result','decision','sprint','epic','2026-08-05T00:00:01Z','2026-08-05T00:00:02Z','2026-08-05T00:00:03Z','2026-08-05T00:00:04Z','2026-08-05T00:00:05Z',NULL,'completed','2026-08-05T00:00:11Z','2026-08-05T00:00:07Z');
          INSERT INTO epic_runner_sprint_result_dispositions VALUES('result','2026-08-05T00:00:08Z','{\"movementKind\":\"advance_to_next_approved_sprint\",\"rationale\":\"All local Sprint facts are present.\",\"consideredIntent\":\"advance the approved Sprint sequence\"}');
          INSERT INTO epic_runner_sprint_result_realizations VALUES('result','terminal_readiness',NULL,NULL,'2026-08-05T00:00:09Z',NULL);
          INSERT INTO epic_runner_sprint_result_terminal_readiness VALUES('result','2026-08-05T00:00:10Z');",
@@ -72,6 +72,8 @@ fn sprint_result_native_projection_redacts_private_receiver_and_realization_iden
     assert!(value[0]["receiver"].get("harnessVersion").is_none());
     assert!(value[0].get("correlationFingerprint").is_none());
     assert!(value[0].get("realization").unwrap().get("realizationId").is_none());
+    connection.execute("UPDATE epic_runner_sprint_result_terminal_readiness SET recorded_at='2026-08-05T00:00:12Z' WHERE result_id='result'", []).unwrap();
+    assert!(sprint_result_projection(&connection, &sprints, &results).is_err());
 }
 
 #[test]

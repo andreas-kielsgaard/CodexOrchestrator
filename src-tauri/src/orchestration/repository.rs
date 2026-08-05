@@ -3371,64 +3371,75 @@ fn sprint_result_projection(
                     .and_then(|item| item.launch_accepted_at.as_deref()),
                 realization.as_ref().and_then(|item| item.successor_request_recorded_at.as_deref()),
             ]);
-            if let Some(receiver) = receiver.as_ref() {
+            if matches!(realization.as_ref().map(|item| item.outcome_kind.as_str()), Some("successor_request")) {
+                if let Some(receiver) = receiver.as_ref() {
+                    chronology.extend([
+                        receiver.provider_activation_observed_at.as_deref(),
+                        receiver.reassessment_lifecycle_observed_at.as_deref(),
+                    ]);
+                }
                 chronology.extend([
-                    receiver.provider_activation_observed_at.as_deref(),
-                    receiver.reassessment_lifecycle_observed_at.as_deref(),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.pre_start_semantic_outcome_recorded_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.pre_start_lifecycle_observed_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.pre_start_outcome_accepted_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.parent_continuation_delivery_requested_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.parent_continuation_delivery_persisted_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.epic_continuation_launch_accepted_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.provider_receiver_activation_observed_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.sprint_start_authorized_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.sprint_start_persisted_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.sprint_continuation_launch_accepted_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.repository_branch_reevaluation_recorded_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.started_reevaluation_lifecycle_observed_at.as_deref()),
                 ]);
+            } else {
+                chronology.extend([
+                    realization.as_ref().and_then(|item| item.terminal_readiness_recorded_at.as_deref()),
+                    realization.as_ref().and_then(|item| item.retained_attention_recorded_at.as_deref()),
+                ]);
+                if let Some(receiver) = receiver.as_ref() {
+                    chronology.extend([
+                        receiver.provider_activation_observed_at.as_deref(),
+                        receiver.reassessment_lifecycle_observed_at.as_deref(),
+                    ]);
+                }
             }
-            chronology.extend([
-                realization
-                    .as_ref()
-                    .and_then(|item| item.successor_transition.as_ref())
-                    .and_then(|item| item.pre_start_semantic_outcome_recorded_at.as_deref()),
-                realization
-                    .as_ref()
-                    .and_then(|item| item.successor_transition.as_ref())
-                    .and_then(|item| item.pre_start_lifecycle_observed_at.as_deref()),
-                realization
-                    .as_ref()
-                    .and_then(|item| item.successor_transition.as_ref())
-                    .and_then(|item| item.pre_start_outcome_accepted_at.as_deref()),
-                realization
-                    .as_ref()
-                    .and_then(|item| item.successor_transition.as_ref())
-                    .and_then(|item| item.parent_continuation_delivery_requested_at.as_deref()),
-                realization
-                    .as_ref()
-                    .and_then(|item| item.successor_transition.as_ref())
-                    .and_then(|item| item.parent_continuation_delivery_persisted_at.as_deref()),
-                realization
-                    .as_ref()
-                    .and_then(|item| item.successor_transition.as_ref())
-                    .and_then(|item| item.epic_continuation_launch_accepted_at.as_deref()),
-                realization
-                    .as_ref()
-                    .and_then(|item| item.successor_transition.as_ref())
-                    .and_then(|item| item.provider_receiver_activation_observed_at.as_deref()),
-                realization
-                    .as_ref()
-                    .and_then(|item| item.successor_transition.as_ref())
-                    .and_then(|item| item.sprint_start_authorized_at.as_deref()),
-                realization
-                    .as_ref()
-                    .and_then(|item| item.successor_transition.as_ref())
-                    .and_then(|item| item.sprint_start_persisted_at.as_deref()),
-                realization
-                    .as_ref()
-                    .and_then(|item| item.successor_transition.as_ref())
-                    .and_then(|item| item.sprint_continuation_launch_accepted_at.as_deref()),
-                realization
-                    .as_ref()
-                    .and_then(|item| item.successor_transition.as_ref())
-                    .and_then(|item| item.repository_branch_reevaluation_recorded_at.as_deref()),
-                realization
-                    .as_ref()
-                    .and_then(|item| item.successor_transition.as_ref())
-                    .and_then(|item| item.started_reevaluation_lifecycle_observed_at.as_deref()),
-                realization.as_ref().and_then(|item| item.terminal_readiness_recorded_at.as_deref()),
-                realization.as_ref().and_then(|item| item.retained_attention_recorded_at.as_deref()),
-            ]);
             validate_public_chronology(&chronology)?;
             if disposition.is_some() && receiver.as_ref().and_then(|item| item.semantic_reassessment_recorded_at.as_ref()).is_none() {
                 return Err(to_sql_error("Sprint-result disposition lacks semantic reassessment".into()));
