@@ -48,6 +48,7 @@ const ecs2eHandlerDetails = lifecycleSession(
     ['recorded-handler-WU-ECS2E-reprompt', 'Recorded the bounded correction request.'],
     ['recorded-handler-WU-ECS2E-acceptance', 'Accepted the corrected result.'],
   ],
+  true,
 );
 const ecs2eImplementerDetails = lifecycleSession(
   'recorded-implementer-WU-ECS2E',
@@ -62,6 +63,7 @@ const ecs2eImplementerDetails = lifecycleSession(
       'Returned the corrected detail-surface implementation.',
     ],
   ],
+  true,
 );
 const rdPlannerDetails = lifecycleSession(
   'recorded-planner-rd-r2',
@@ -419,6 +421,7 @@ function lifecycleSession(
   id: string,
   title: string,
   turns: readonly (readonly [string, string])[],
+  includeRecordedSteps = false,
 ): AgentSessionDetailsDto {
   const details = session(id, title, turns[0]?.[1] ?? 'Recorded lifecycle turn.');
   return {
@@ -433,10 +436,28 @@ function lifecycleSession(
       },
       observation: details.invocations[0].observation,
       events: [
+        ...(includeRecordedSteps
+          ? [
+              {
+                ...details.invocations[0].events[0],
+                id: `${invocationId}-step`,
+                invocationId,
+                sequence: 1,
+                normalized: {
+                  ...details.invocations[0].events[0].normalized!,
+                  kind: 'processing_update' as const,
+                  text: 'Recorded step: reviewing the bounded Work Unit turn.',
+                  details: null,
+                },
+                recordedAt: new Date(Date.parse(time) + index * 1_000).toISOString(),
+              },
+            ]
+          : []),
         {
           ...details.invocations[0].events[0],
           id: `${invocationId}-response`,
           invocationId,
+          sequence: includeRecordedSteps ? 2 : 1,
           normalized: {
             ...details.invocations[0].events[0].normalized!,
             text: response,

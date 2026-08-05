@@ -124,7 +124,8 @@ Exercise the recorded review flow:
 The focused automated evidence is
 `src/features/orchestrations/components/WorkUnitDetailWorkspace.activityEvidence.test.tsx`; the
 recorded composition test also verifies that the inspection payload is absent from canonical reads
-and added only by the explicit recorded presentation route.
+and added only by the explicit recorded presentation route. The executed route, accessibility, and
+viewport observations are recorded in `WORK-UNIT-REVIEW-EVIDENCE.md`.
 
 ## Optional native application review
 

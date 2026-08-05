@@ -9,24 +9,17 @@ const inspection: ProductWorkUnitInspectionV1 = {
   materializationId: 'recorded-materialization-ECS-R4',
   activities: [
     {
-      activityId: 'recorded-wu-ecs2e-handler-action',
+      activityId:
+        'work-unit-inspection:WU-ECS2E:WU-ECS2E-attempt-1:handler-action:recorded-handler-WU-ECS2E-first-review',
       attemptId: 'WU-ECS2E-attempt-1',
       role: 'handler',
       agentSessionId: 'recorded-session-WU-ECS2E',
       invocationId: 'recorded-handler-WU-ECS2E-first-review',
       primaryStage: 'handler_action',
-      applicationSummary: {
-        owner: 'application',
-        applicationEvents: ['submission_recorded', 'handler_review_ready'],
-        peerEvidenceActivityIds: ['recorded-wu-ecs2e-missing-activity'],
-        mcpCallDetail: {
-          owner: 'application',
-          reason: 'No application-owned MCP-call detail is available for this recorded turn.',
-        },
-      },
     },
     {
-      activityId: 'recorded-wu-ecs2e-implementer-report',
+      activityId:
+        'work-unit-inspection:WU-ECS2E:WU-ECS2E-attempt-1:implementer-reporting:recorded-implementer-WU-ECS2E-first-return',
       attemptId: 'WU-ECS2E-attempt-1',
       role: 'implementer',
       agentSessionId: 'recorded-implementer-WU-ECS2E',
@@ -34,7 +27,14 @@ const inspection: ProductWorkUnitInspectionV1 = {
       primaryStage: 'implementer_reporting',
       applicationSummary: {
         owner: 'application',
-        applicationEvents: ['submission_recorded', 'file_evidence_recorded'],
+        applicationEvents: [
+          'submission_recorded',
+          'file_evidence_recorded',
+          'semantic_completion_recorded',
+          'terminal_lifecycle_observed',
+          'application_acceptance_recorded',
+          'handler_review_ready',
+        ],
         peerEvidenceActivityIds: [],
         mcpCallDetail: {
           owner: 'application',
@@ -43,7 +43,8 @@ const inspection: ProductWorkUnitInspectionV1 = {
       },
     },
     {
-      activityId: 'recorded-wu-ecs2e-handler-review',
+      activityId:
+        'work-unit-inspection:WU-ECS2E:WU-ECS2E-attempt-2:handler-review:recorded-handler-WU-ECS2E-acceptance',
       attemptId: 'WU-ECS2E-attempt-2',
       role: 'handler',
       agentSessionId: 'recorded-session-WU-ECS2E',
@@ -52,7 +53,9 @@ const inspection: ProductWorkUnitInspectionV1 = {
       applicationSummary: {
         owner: 'application',
         applicationEvents: ['review_delivery_persisted', 'application_acceptance_recorded'],
-        peerEvidenceActivityIds: ['recorded-wu-ecs2e-implementer-report'],
+        peerEvidenceActivityIds: [
+          'work-unit-inspection:WU-ECS2E:WU-ECS2E-attempt-2:implementer-reporting:recorded-implementer-WU-ECS2E-second-return',
+        ],
         mcpCallDetail: {
           owner: 'application',
           reason: 'MCP-call detail is unavailable in this recorded review.',
@@ -60,18 +63,36 @@ const inspection: ProductWorkUnitInspectionV1 = {
       },
     },
     {
-      activityId: 'recorded-wu-ecs2e-implementer-correction',
+      activityId:
+        'work-unit-inspection:WU-ECS2E:WU-ECS2E-attempt-2:implementer-reporting:recorded-implementer-WU-ECS2E-second-return',
       attemptId: 'WU-ECS2E-attempt-2',
       role: 'implementer',
       agentSessionId: 'recorded-implementer-WU-ECS2E',
       invocationId: 'recorded-implementer-WU-ECS2E-second-return',
       primaryStage: 'implementer_reporting',
+      applicationSummary: {
+        owner: 'application',
+        applicationEvents: [
+          'submission_recorded',
+          'file_evidence_recorded',
+          'semantic_completion_recorded',
+          'terminal_lifecycle_observed',
+          'application_acceptance_recorded',
+          'handler_review_ready',
+        ],
+        peerEvidenceActivityIds: [],
+        mcpCallDetail: {
+          owner: 'application',
+          reason: 'MCP-call detail is unavailable in this recorded review.',
+        },
+      },
     },
   ],
   fileEvidence: {
     status: 'available',
     owner: 'application',
-    sourceActivityId: 'recorded-wu-ecs2e-implementer-report',
+    sourceActivityId:
+      'work-unit-inspection:WU-ECS2E:WU-ECS2E-attempt-2:implementer-reporting:recorded-implementer-WU-ECS2E-second-return',
     changedFiles: [
       {
         evidenceRef: 'recorded-evidence-work-unit-detail',

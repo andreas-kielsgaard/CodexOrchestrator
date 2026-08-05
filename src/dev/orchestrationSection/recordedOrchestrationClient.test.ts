@@ -122,6 +122,33 @@ describe('recorded orchestration composition', () => {
         }),
       ]),
     );
+
+    const activities = inspectedUnit.inspection!.activities;
+    expect(activities.filter(({ applicationSummary }) => applicationSummary)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ primaryStage: 'implementer_reporting' }),
+        expect.objectContaining({ primaryStage: 'handler_review' }),
+      ]),
+    );
+    expect(activities.every(({ primaryStage, applicationSummary }) =>
+      (primaryStage === 'implementer_reporting' || primaryStage === 'handler_review') ===
+        (applicationSummary !== undefined),
+    )).toBe(true);
+    const reporting = activities.filter(({ primaryStage }) => primaryStage === 'implementer_reporting');
+    expect(reporting.every(({ applicationSummary }) => applicationSummary !== undefined)).toBe(true);
+    const handlerReview = activities.find(({ primaryStage }) => primaryStage === 'handler_review')!;
+    const peer = activities.find(
+      ({ activityId }) => activityId === handlerReview.applicationSummary!.peerEvidenceActivityIds[0],
+    )!;
+    expect(peer.primaryStage).toBe('implementer_reporting');
+    expect(peer.attemptId).toBe(handlerReview.attemptId);
+    expect(inspectedUnit.inspection!.fileEvidence).toMatchObject({
+      status: 'available',
+      sourceActivityId: peer.activityId,
+    });
+    expect(inspectedUnit.inspection!.activities.some(({ activityId }) =>
+      activityId === 'recorded-wu-ecs2e-missing-activity',
+    )).toBe(false);
   });
 
   it('keeps feature tests off the disposable compatibility fixture', () => {
