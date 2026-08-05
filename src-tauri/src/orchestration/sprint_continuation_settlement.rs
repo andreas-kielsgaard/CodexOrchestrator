@@ -506,6 +506,27 @@ mod tests {
         assert_eq!(statuses(&c).unwrap()[0].1.state, "attention");
     }
     #[test]
+    fn conflicting_persisted_upward_result_fails_closed_without_overwrite() {
+        let mut c = fixture();
+        accepted_materialization(&c);
+        reconcile(&mut c).unwrap();
+        c.execute(
+            "UPDATE sprint_upward_results SET result_kind='attention'",
+            [],
+        )
+        .unwrap();
+        assert!(reconcile(&mut c).is_err());
+        assert_eq!(
+            c.query_row::<String, _, _>(
+                "SELECT result_kind FROM sprint_upward_results",
+                [],
+                |row| row.get(0)
+            )
+            .unwrap(),
+            "attention"
+        );
+    }
+    #[test]
     fn reopen_and_replay_keep_one_decision_and_result() {
         let directory = TempDir::new().unwrap();
         let path = directory.path().join("state.sqlite");
