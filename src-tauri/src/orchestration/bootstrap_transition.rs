@@ -2903,7 +2903,7 @@ mod tests {
         ).unwrap();
         assert!(matches!(
             sprint.request_next_sprint_runner(
-                &AgentInvocationId::new(recovery_id.clone()).unwrap(),
+                &recovery_id,
                 crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id: "Foundation".into() },
             ),
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
@@ -2914,13 +2914,13 @@ mod tests {
         ).unwrap();
         assert!(matches!(
             sprint.request_next_sprint_runner(
-                &AgentInvocationId::new(recovery_id.clone()).unwrap(),
+                &recovery_id,
                 crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id: later_sprint },
             ),
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
         ));
         sprint.request_next_sprint_runner(
-            &AgentInvocationId::new(recovery_id).unwrap(),
+            &recovery_id,
             crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id: sprint_id.clone() },
         ).unwrap();
         fixture.service.reconcile_startup().unwrap();
