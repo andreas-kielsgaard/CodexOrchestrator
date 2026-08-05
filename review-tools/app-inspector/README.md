@@ -3,6 +3,27 @@
 This development/review-only CLI observes an explicitly identified Codex Orchestrator instance. It
 does not add a Tauri command, production route, driver permission, or orchestration action.
 
+## Explicit desktop interaction companion
+
+`interact-app.mjs` is a separate development-only input transport for a named Windows instance.
+It requires both the exact executable path and PID, addresses the WebView child with client
+coordinates, and never foregrounds the window. It deliberately has no semantic selectors: a
+receipt proves only that window messages were acknowledged, so retain a separate native-window or
+SQLite observation for every product, provider, or orchestration claim.
+
+```powershell
+node review-tools/app-inspector/interact-app.mjs paste --exe "C:\path\to\codex-orchestrator.exe" --pid 19760 --x 470 --y 760 --text-file "C:\path\to\bounded-prompt.txt" --out "C:\path\to\interaction-receipt.json"
+```
+
+Use `click` with the same identity and coordinate inputs for a single pointer action. This tool is
+for explicitly authorized development/review interaction only; it does not become an application
+transport or infer that any requested workflow stage occurred.
+
+For an isolated development instance deliberately launched with a loopback WebView2 debugging
+port, `webview-control.mjs` can instead type into or click a CSS selector without foregrounding the
+window. It requires one exact page target URL and writes a redacted dispatch receipt. The debugger
+port is a development-only launch choice, never a production application transport.
+
 ## First snapshot
 
 Run from any PowerShell directory:

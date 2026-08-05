@@ -380,6 +380,33 @@ fn assembles_enforced_plan_builder_runtime_and_child_configuration() {
 }
 
 #[test]
+fn resume_places_child_configuration_before_the_session_id() {
+    let context = ExternalRuntimeContextId::new("thread-resume").unwrap();
+    let extension = RuntimeLaunchExtension {
+        additional_args: vec!["-c".into(), "mcp_servers.plan_builder.required=true".into()],
+        environment: vec![],
+        initial_prompt_prefix: None,
+    };
+    assert_eq!(
+        build_args_from_effective_options(
+            InvocationCommand::Resume(&context),
+            "build",
+            &AgentRuntimeOptions::default(),
+            Some(&extension),
+        ),
+        [
+            "exec",
+            "resume",
+            "--json",
+            "-c",
+            "mcp_servers.plan_builder.required=true",
+            "thread-resume",
+            "build",
+        ]
+    );
+}
+
+#[test]
 fn rejects_a_confirmed_unsupported_resume_sandbox() {
     let options = AgentRuntimeOptions {
         model: None,
