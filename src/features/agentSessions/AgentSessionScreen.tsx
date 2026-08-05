@@ -6,6 +6,7 @@ import {
   buildAgentSessionNavigation,
   type AgentSessionNavigationIdentity,
   type AgentSessionProductLocation,
+  type AgentSessionProductOrigin,
 } from '../../application/agentSessionNavigation';
 import type {
   EpicPlanningDraftSummary,
@@ -31,13 +32,8 @@ export interface AgentSessionScreenProps {
   readonly harnessManagementSource?: ConversationHarnessManagementSource;
   readonly agentIdentityForSession?: (sessionId: string) => AgentIdentity | undefined;
   readonly focusInvocationId?: string;
-  readonly returnOrigin?: Extract<
-    AgentSessionProductLocation,
-    { readonly kind: 'work_unit' }
-  > | null;
-  readonly onReturnToProduct?: (
-    origin: Extract<AgentSessionProductLocation, { readonly kind: 'work_unit' }>,
-  ) => void;
+  readonly returnOrigin?: AgentSessionProductOrigin | null;
+  readonly onReturnToProduct?: (origin: AgentSessionProductOrigin) => void;
 }
 
 export function StandaloneAgentSessionScreen({
@@ -110,27 +106,20 @@ export function StandaloneAgentSessionScreen({
   const selectedIdentity = collection.selectedSessionId
     ? agentIdentityForSession?.(collection.selectedSessionId)
     : undefined;
-  const returnIsExact = Boolean(
-    returnOrigin?.inspectionState &&
-    collection.selectedSessionId === returnOrigin.inspectionState.sessionId &&
-    focusInvocationId === returnOrigin.inspectionState.invocationId,
-  );
+  const focusedInvocationId =
+    collection.selectedSessionId === returnOrigin?.sessionId ? focusInvocationId : undefined;
   useEffect(() => {
-    if (
-      !focusInvocationId ||
-      collection.selectedSessionId !== returnOrigin?.inspectionState?.sessionId
-    )
-      return;
+    if (!focusedInvocationId || collection.selectedSessionId !== returnOrigin?.sessionId) return;
     const element = document.querySelector<HTMLElement>(
-      `[data-invocation-id="${CSS.escape(focusInvocationId)}"]`,
+      `[data-invocation-id="${CSS.escape(focusedInvocationId)}"]`,
     );
     element?.focus();
     element?.scrollIntoView({ block: 'center' });
   }, [
     collection.selectedSessionId,
-    focusInvocationId,
+    focusedInvocationId,
     session.transcript,
-    returnOrigin?.inspectionState?.sessionId,
+    returnOrigin?.sessionId,
   ]);
 
   return (
@@ -157,15 +146,15 @@ export function StandaloneAgentSessionScreen({
         }
         secondary={
           <div className="agent-session-content">
-            {returnIsExact && returnOrigin && onReturnToProduct ? (
+            {returnOrigin && onReturnToProduct ? (
               <div
                 className="agent-session-return-bar"
                 role="region"
-                aria-label="Work Unit return context"
+                aria-label={returnContextLabel(returnOrigin.location)}
               >
-                <span>Opened from Work Unit Activity</span>
+                <span>{returnContextText(returnOrigin.location)}</span>
                 <button type="button" onClick={() => onReturnToProduct(returnOrigin)}>
-                  Return to Work Unit Activity
+                  {returnActionLabel(returnOrigin.location)}
                 </button>
               </div>
             ) : null}
@@ -261,6 +250,20 @@ function directActionLabel(location: AgentSessionProductLocation) {
   if (location.kind === 'work_slice_planning_point') return 'Go to planning view';
   if (location.kind === 'work_unit') return 'Go to Work Unit';
   return `Go to ${location.kind === 'epic' ? 'Epic' : 'Sprint'}`;
+}
+
+function returnContextLabel(location: AgentSessionProductLocation) {
+  return `${locationKindLabel(location)} return context`;
+}
+
+function returnContextText(location: AgentSessionProductLocation) {
+  return `Opened from ${locationKindLabel(location)}`;
+}
+
+function returnActionLabel(location: AgentSessionProductLocation) {
+  return location.kind === 'work_unit'
+    ? 'Return to Work Unit Activity'
+    : `Return to ${locationKindLabel(location)}`;
 }
 
 function locationKindLabel(location: AgentSessionProductLocation) {

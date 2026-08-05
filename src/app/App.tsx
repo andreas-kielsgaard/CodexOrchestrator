@@ -38,7 +38,10 @@ import { useOrchestrationLoad } from './useOrchestrationLoad';
 import type { ManagedPlanBuilderSessionClient } from '../infrastructure/orchestrations/tauriManagedPlanBuilderSessionClient';
 import { useEpicInitiationConfirmation } from './useEpicInitiationConfirmation';
 import { EpicInitiationConfirmationModal } from './EpicInitiationConfirmationModal';
-import type { AgentSessionProductLocation } from '../application/agentSessionNavigation';
+import type {
+  AgentSessionProductLocation,
+  AgentSessionProductOrigin,
+} from '../application/agentSessionNavigation';
 import type { FileReviewSource } from '../application/fileReview';
 import type {
   ContextualFileReviewClient,
@@ -131,10 +134,9 @@ export function App({
   const activeFileReviewSource = fileReviewSource ?? contextualFileReviewSource;
   const [selectedAgentSessionId, setSelectedAgentSessionId] = useState<string | null>(null);
   const [focusedAgentSessionInvocationId, setFocusedAgentSessionInvocationId] = useState<string>();
-  const [workUnitReturnOrigin, setWorkUnitReturnOrigin] = useState<Extract<
-    AgentSessionProductLocation,
-    { readonly kind: 'work_unit' }
-  > | null>(null);
+  const [productReturnOrigin, setProductReturnOrigin] = useState<AgentSessionProductOrigin | null>(
+    null,
+  );
   const [expandedAgentSessionNodes, setExpandedAgentSessionNodes] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -370,27 +372,27 @@ export function App({
     },
     [epicPlanningDraftLifecycleClient, refreshDrafts],
   );
-  const openStandaloneAgentSession = useCallback((sessionId: string) => {
-    setSelectedAgentSessionId(sessionId);
+  const openProductAgentSession = useCallback((origin: AgentSessionProductOrigin) => {
+    setSelectedAgentSessionId(origin.sessionId);
     setFocusedAgentSessionInvocationId(undefined);
-    setWorkUnitReturnOrigin(null);
+    setProductReturnOrigin(origin);
     setSurface('agent-sessions');
   }, []);
   const openWorkUnitActivitySession = useCallback(
-    (
-      target: WorkUnitActivitySessionTarget,
-      origin: Extract<AgentSessionProductLocation, { readonly kind: 'work_unit' }>,
-    ) => {
+    (target: WorkUnitActivitySessionTarget, origin: AgentSessionProductOrigin) => {
       if (
-        !origin.inspectionState ||
-        origin.inspectionState.sessionId !== target.sessionId ||
-        origin.inspectionState.invocationId !== target.invocationId ||
-        origin.inspectionState.activityId !== target.activityId
+        origin.location.kind !== 'work_unit' ||
+        !origin.location.inspectionState ||
+        origin.sessionId !== target.sessionId ||
+        origin.invocationId !== target.invocationId ||
+        origin.location.inspectionState.sessionId !== target.sessionId ||
+        origin.location.inspectionState.invocationId !== target.invocationId ||
+        origin.location.inspectionState.activityId !== target.activityId
       )
         return;
       setSelectedAgentSessionId(target.sessionId);
       setFocusedAgentSessionInvocationId(target.invocationId);
-      setWorkUnitReturnOrigin(origin);
+      setProductReturnOrigin(origin);
       setSurface('agent-sessions');
     },
     [],
@@ -474,7 +476,11 @@ export function App({
           className={surface === 'agent-sessions' ? 'active' : undefined}
           type="button"
           aria-current={surface === 'agent-sessions' ? 'page' : undefined}
-          onClick={() => setSurface('agent-sessions')}
+          onClick={() => {
+            setProductReturnOrigin(null);
+            setFocusedAgentSessionInvocationId(undefined);
+            setSurface('agent-sessions');
+          }}
         >
           Agent Sessions
         </button>
@@ -549,7 +555,7 @@ export function App({
             setOrchestrationRoute('plan-builder');
           }}
           requestedLocation={requestedProductLocation}
-          onOpenAgentSession={openStandaloneAgentSession}
+          onOpenAgentSession={openProductAgentSession}
           onOpenWorkUnitActivitySession={openWorkUnitActivitySession}
           onRequestFileReview={contextualFileReviewClient ? requestContextualFileReview : undefined}
           onOpenFileEvidence={fileReviewSourceForEvidence ? openFileEvidence : undefined}
@@ -569,21 +575,16 @@ export function App({
           planningDrafts={planningDrafts}
           selectedSessionId={selectedAgentSessionId}
           focusInvocationId={focusedAgentSessionInvocationId}
-          returnOrigin={workUnitReturnOrigin}
+          returnOrigin={productReturnOrigin}
           onSelectedSessionChange={setSelectedAgentSessionId}
           expandedNodeIds={expandedAgentSessionNodes}
           onExpandedNodeIdsChange={setExpandedAgentSessionNodes}
           onNavigateToProduct={navigateToProductLocation}
           onReturnToProduct={(origin) => {
-            if (
-              !workUnitReturnOrigin ||
-              !origin.inspectionState ||
-              origin !== workUnitReturnOrigin ||
-              selectedAgentSessionId !== origin.inspectionState.sessionId
-            )
-              return;
-            setWorkUnitReturnOrigin(null);
-            navigateToProductLocation(origin);
+            if (origin !== productReturnOrigin) return;
+            setProductReturnOrigin(null);
+            setFocusedAgentSessionInvocationId(undefined);
+            navigateToProductLocation(origin.location);
           }}
         />
       ) : (
@@ -619,10 +620,10 @@ function OrchestrationSurface({
   readonly planningDrafts: readonly EpicPlanningDraftSummary[];
   readonly onOpenDraft: (draft: EpicPlanningDraftSummary) => void;
   readonly requestedLocation: AgentSessionProductLocation | null;
-  readonly onOpenAgentSession: (sessionId: string) => void;
+  readonly onOpenAgentSession: (origin: AgentSessionProductOrigin) => void;
   readonly onOpenWorkUnitActivitySession: (
     target: WorkUnitActivitySessionTarget,
-    origin: Extract<AgentSessionProductLocation, { readonly kind: 'work_unit' }>,
+    origin: AgentSessionProductOrigin,
   ) => void;
   readonly onRequestFileReview?: (sprintId: string) => Promise<ContextualFileReviewResult>;
   readonly onOpenFileEvidence?: (target: {

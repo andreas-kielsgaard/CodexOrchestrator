@@ -99,7 +99,8 @@ describe('App application surfaces', () => {
       ).toHaveAttribute('aria-selected', 'true'),
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Go to Epic' }));
+    expect(screen.getByRole('region', { name: 'Epic return context' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Return to Epic' }));
     expect(await screen.findByRole('main', { name: 'Epic detail' })).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Agent Sessions' }));
@@ -114,6 +115,18 @@ describe('App application surfaces', () => {
     expect(new Set(loadedSessionIds)).toEqual(
       new Set(['recorded-epic-runner-manual-continuation-ready']),
     );
+  });
+
+  it('clears a stale product return when Agent Sessions is entered directly', async () => {
+    const composition = createRecordedDevelopmentApplicationComposition();
+    render(<App {...composition} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Open Codex Epic Runner/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Agent Sessions' }));
+    expect(await screen.findByRole('region', { name: 'Epic return context' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Sessions' }));
+    expect(screen.queryByRole('region', { name: /return context/i })).toBeNull();
   });
 
   it('round-trips the WU-ECS2E handler without manufacturing a Reviewer Session', async () => {
@@ -173,6 +186,15 @@ describe('App application surfaces', () => {
       screen.getByRole('treeitem', { name: /Recorded WU-ECS2E Work Unit Handler/ }),
     ).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('region', { name: 'Work Unit return context' })).toBeVisible();
+
+    fireEvent.click(
+      screen.getByRole('treeitem', { name: /Recorded WU-ECS2E Work Unit Implementer/ }),
+    );
+    expect(screen.getByRole('region', { name: 'Work Unit return context' })).toBeVisible();
+    expect(
+      screen.queryByLabelText('Agent Session turn: recorded-handler-WU-ECS2E-first-review'),
+    ).toBeNull();
+
     fireEvent.click(screen.getByRole('button', { name: 'Return to Work Unit Activity' }));
     expect(await screen.findByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
     expect(

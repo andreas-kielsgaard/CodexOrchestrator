@@ -19,7 +19,7 @@ import type {
   EpicAutomaticContinuationPolicyController,
 } from '../../../application/orchestrations';
 import type { ContextualFileReviewResult } from '../../../application/contextualFileReview';
-import type { AgentSessionProductLocation } from '../../../application/agentSessionNavigation';
+import type { AgentSessionProductOrigin } from '../../../application/agentSessionNavigation';
 import type { WorkUnitActivitySessionTarget } from './WorkUnitDetailWorkspace';
 
 export interface EpicDetailProps {
@@ -36,7 +36,7 @@ export interface EpicDetailProps {
   readonly onSelectedRevisionChange: (revisionId: string) => void;
   readonly onDetailLocationChange: (location: SprintWorkspaceDetailLocation) => void;
   readonly onBack: () => void;
-  readonly onOpenAgentSession?: (sessionId: string) => void;
+  readonly onOpenAgentSession?: (origin: AgentSessionProductOrigin) => void;
   readonly onRequestFileReview?: (sprintId: string) => Promise<ContextualFileReviewResult>;
   readonly onOpenFileEvidence?: (target: {
     readonly reviewId: string;
@@ -44,7 +44,7 @@ export interface EpicDetailProps {
   }) => void;
   readonly onOpenWorkUnitActivitySession?: (
     target: WorkUnitActivitySessionTarget,
-    origin: Extract<AgentSessionProductLocation, { readonly kind: 'work_unit' }>,
+    origin: AgentSessionProductOrigin,
   ) => void;
 }
 
@@ -194,7 +194,16 @@ export function EpicDetail({
               conversationAriaLabel="Epic Runner Agent Session conversation"
               session={epic.epicRunnerSession}
               composition={agentSessionComposition}
-              onOpenStandalone={onOpenAgentSession}
+              onOpenStandalone={(sessionId) =>
+                onOpenAgentSession?.({
+                  sessionId,
+                  location: {
+                    kind: 'epic',
+                    epicId: epic.id,
+                    label: epic.name,
+                  },
+                })
+              }
             />
           ) : undefined
         }

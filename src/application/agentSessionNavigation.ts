@@ -47,6 +47,14 @@ export type AgentSessionProductLocation =
       readonly label: string;
     };
 
+/** An immutable application-owned return destination for a standalone Session visit. */
+export interface AgentSessionProductOrigin {
+  readonly sessionId: string;
+  readonly location: AgentSessionProductLocation;
+  /** Present only when the opening product control has an exact durable invocation pointer. */
+  readonly invocationId?: string;
+}
+
 export interface AgentSessionNavigationIdentity {
   readonly sessionId: string;
   readonly agentName: string;

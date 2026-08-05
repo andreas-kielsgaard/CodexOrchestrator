@@ -11,7 +11,10 @@ import {
 } from '../../application/orchestrations';
 import './styles/orchestrationSection.css';
 import type { EpicPlanningDraftSummary } from '../../application/orchestrations';
-import type { AgentSessionProductLocation } from '../../application/agentSessionNavigation';
+import type {
+  AgentSessionProductLocation,
+  AgentSessionProductOrigin,
+} from '../../application/agentSessionNavigation';
 import type { ContextualFileReviewResult } from '../../application/contextualFileReview';
 import type { WorkUnitActivitySessionTarget } from './components/WorkUnitDetailWorkspace';
 
@@ -25,7 +28,7 @@ export interface OrchestrationSectionProps {
   readonly planningDrafts?: readonly EpicPlanningDraftSummary[];
   readonly onOpenPlanningDraft?: (draft: EpicPlanningDraftSummary) => void;
   readonly requestedLocation?: AgentSessionProductLocation | null;
-  readonly onOpenAgentSession?: (sessionId: string) => void;
+  readonly onOpenAgentSession?: (origin: AgentSessionProductOrigin) => void;
   readonly onRequestFileReview?: (sprintId: string) => Promise<ContextualFileReviewResult>;
   readonly onOpenFileEvidence?: (target: {
     readonly reviewId: string;
@@ -33,7 +36,7 @@ export interface OrchestrationSectionProps {
   }) => void;
   readonly onOpenWorkUnitActivitySession?: (
     target: WorkUnitActivitySessionTarget,
-    origin: Extract<AgentSessionProductLocation, { readonly kind: 'work_unit' }>,
+    origin: AgentSessionProductOrigin,
   ) => void;
 }
 

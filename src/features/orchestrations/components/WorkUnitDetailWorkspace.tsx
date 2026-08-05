@@ -28,7 +28,6 @@ export interface WorkUnitDetailWorkspaceProps {
   readonly agentSessionComposition?: EmbeddedAgentSessionComposition;
   readonly backLabel?: string;
   readonly onBack: () => void;
-  readonly onOpenAgentSession?: (sessionId: string) => void;
   readonly onOpenActivitySession?: (target: WorkUnitActivitySessionTarget) => void;
   readonly onOpenFileEvidence?: (target: WorkUnitFileEvidenceTarget) => void;
   readonly initialInspectionState?: WorkUnitInspectionState;
@@ -62,7 +61,6 @@ export function WorkUnitDetailWorkspace({
   sessions,
   backLabel = 'Back to Work Slice planning point',
   onBack,
-  onOpenAgentSession,
   onOpenActivitySession,
   onOpenFileEvidence,
   initialInspectionState,
@@ -302,7 +300,6 @@ export function WorkUnitDetailWorkspace({
                 onSelectActivity={(activityId) => setSelectedActivityId(activityId)}
                 onHighlightActivity={setHighlightedActivityId}
                 sessions={sessions}
-                onOpenAgentSession={onOpenAgentSession}
                 onOpenActivitySession={onOpenActivitySession}
               />
             </div>
@@ -334,7 +331,6 @@ function WorkUnitActivityView({
   onSelectActivity,
   onHighlightActivity,
   sessions,
-  onOpenAgentSession,
   onOpenActivitySession,
 }: {
   readonly inspection?: ProductWorkUnitInspectionV1;
@@ -342,7 +338,6 @@ function WorkUnitActivityView({
   readonly onSelectActivity: (activityId: string) => void;
   readonly onHighlightActivity: (activityId: string | null) => void;
   readonly sessions: readonly WorkUnitAgentSessionPresentation[];
-  readonly onOpenAgentSession?: (sessionId: string) => void;
   readonly onOpenActivitySession?: (target: WorkUnitActivitySessionTarget) => void;
 }) {
   const selectedActivity = inspection?.activities.find(
@@ -392,7 +387,6 @@ function WorkUnitActivityView({
                   session={sessions.find(
                     (session) => session.sessionId === activity.agentSessionId,
                   )}
-                  onOpenAgentSession={onOpenAgentSession}
                   onOpenActivitySession={onOpenActivitySession}
                 />
               ) : null}
@@ -416,12 +410,10 @@ function WorkUnitActivityView({
 function SelectedActivityTurn({
   activity,
   session,
-  onOpenAgentSession,
   onOpenActivitySession,
 }: {
   readonly activity: ProductWorkUnitInspectionActivityV1;
   readonly session?: WorkUnitAgentSessionPresentation;
-  readonly onOpenAgentSession?: (sessionId: string) => void;
   readonly onOpenActivitySession?: (target: WorkUnitActivitySessionTarget) => void;
 }) {
   const invocationIndex = session?.transcript?.invocations.findIndex(
@@ -449,10 +441,6 @@ function SelectedActivityTurn({
               })
             }
           >
-            Open in Agent Sessions
-          </button>
-        ) : onOpenAgentSession && session ? (
-          <button type="button" onClick={() => onOpenAgentSession(session.sessionId)}>
             Open in Agent Sessions
           </button>
         ) : null}

@@ -27,7 +27,7 @@ import {
   WorkUnitDetailWorkspace,
   type WorkUnitActivitySessionTarget,
 } from './WorkUnitDetailWorkspace';
-import type { AgentSessionProductLocation } from '../../../application/agentSessionNavigation';
+import type { AgentSessionProductOrigin } from '../../../application/agentSessionNavigation';
 import '../styles/sprintWorkspace.css';
 import type { EmbeddedAgentSessionComposition } from '../../agentSessions';
 import type {
@@ -54,7 +54,7 @@ export interface SprintWorkspaceProps {
   readonly detailLocation: SprintWorkspaceDetailLocation;
   readonly onDetailLocationChange: (location: SprintWorkspaceDetailLocation) => void;
   readonly onBack: () => void;
-  readonly onOpenAgentSession?: (sessionId: string) => void;
+  readonly onOpenAgentSession?: (origin: AgentSessionProductOrigin) => void;
   readonly onRequestFileReview?: (sprintId: string) => Promise<ContextualFileReviewResult>;
   readonly onOpenFileEvidence?: (target: {
     readonly reviewId: string;
@@ -62,7 +62,7 @@ export interface SprintWorkspaceProps {
   }) => void;
   readonly onOpenWorkUnitActivitySession?: (
     target: WorkUnitActivitySessionTarget,
-    origin: Extract<AgentSessionProductLocation, { readonly kind: 'work_unit' }>,
+    origin: AgentSessionProductOrigin,
   ) => void;
 }
 
@@ -202,21 +202,24 @@ export function SprintWorkspace({
             workSlicePlanningPointId: detailLocation.workSlicePlanningPointId,
           });
         }}
-        onOpenAgentSession={onOpenAgentSession}
         onOpenActivitySession={(target) =>
           onOpenWorkUnitActivitySession?.(target, {
-            kind: 'work_unit',
-            epicId: workspace.sprint.epicId,
-            sprintId: workspace.sprint.sprintId,
-            revisionId: detailLocation.revisionId,
-            workSlicePlanningPointId: detailLocation.workSlicePlanningPointId,
-            workUnitId: detailLocation.workUnitId,
-            label: unit.title,
-            inspectionState: {
-              tab: 'activity',
-              activityId: target.activityId,
-              sessionId: target.sessionId,
-              invocationId: target.invocationId,
+            sessionId: target.sessionId,
+            invocationId: target.invocationId,
+            location: {
+              kind: 'work_unit',
+              epicId: workspace.sprint.epicId,
+              sprintId: workspace.sprint.sprintId,
+              revisionId: detailLocation.revisionId,
+              workSlicePlanningPointId: detailLocation.workSlicePlanningPointId,
+              workUnitId: detailLocation.workUnitId,
+              label: unit.title,
+              inspectionState: {
+                tab: 'activity',
+                activityId: target.activityId,
+                sessionId: target.sessionId,
+                invocationId: target.invocationId,
+              },
             },
           })
         }
@@ -265,7 +268,19 @@ export function SprintWorkspace({
             origin: 'work_slice_planning_point',
           });
         }}
-        onOpenAgentSession={onOpenAgentSession}
+        onOpenAgentSession={(sessionId) =>
+          onOpenAgentSession?.({
+            sessionId,
+            location: {
+              kind: 'work_slice_planning_point',
+              epicId: workspace.sprint.epicId,
+              sprintId: workspace.sprint.sprintId,
+              revisionId: detailLocation.revisionId,
+              workSlicePlanningPointId: workSlicePlanningPointGroup.workSlicePlanningPointId,
+              label: workSlicePlanningPointGroup.title,
+            },
+          })
+        }
         sprintControl={fileReviewControl}
       />
     );
@@ -612,7 +627,17 @@ export function SprintWorkspace({
             conversationAriaLabel="Sprint Agent Session conversation"
             session={adjunct.agentSession}
             composition={agentSessionComposition}
-            onOpenStandalone={onOpenAgentSession}
+            onOpenStandalone={(sessionId) =>
+              onOpenAgentSession?.({
+                sessionId,
+                location: {
+                  kind: 'sprint',
+                  epicId: workspace.sprint.epicId,
+                  sprintId: workspace.sprint.sprintId,
+                  label: workspace.sprint.title,
+                },
+              })
+            }
             displayMode="always_open"
           />
         ) : undefined
