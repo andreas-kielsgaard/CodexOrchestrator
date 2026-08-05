@@ -18,6 +18,8 @@ import type {
 import type { ContextualFileReviewResult } from '../../application/contextualFileReview';
 import type { WorkUnitActivitySessionTarget } from './components/WorkUnitDetailWorkspace';
 
+export type OrchestrationNavigationChangeIntent = 'push' | 'back';
+
 export interface OrchestrationSectionProps {
   readonly view: OrchestrationSectionView;
   readonly agentSessionComposition?: EmbeddedAgentSessionComposition;
@@ -28,6 +30,10 @@ export interface OrchestrationSectionProps {
   readonly planningDrafts?: readonly EpicPlanningDraftSummary[];
   readonly onOpenPlanningDraft?: (draft: EpicPlanningDraftSummary) => void;
   readonly requestedLocation?: AgentSessionProductLocation | null;
+  readonly onProductLocationChange?: (
+    location: AgentSessionProductLocation | null,
+    intent: OrchestrationNavigationChangeIntent,
+  ) => void;
   readonly onOpenAgentSession?: (origin: AgentSessionProductOrigin) => void;
   readonly onRequestFileReview?: (
     sprintId: string,
@@ -56,12 +62,13 @@ export function OrchestrationSection({
   planningDrafts = [],
   onOpenPlanningDraft,
   requestedLocation,
+  onProductLocationChange,
   onOpenAgentSession,
   onRequestFileReview,
   onOpenFileEvidence,
   onOpenWorkUnitActivitySession,
 }: OrchestrationSectionProps) {
-  const workspace = useOrchestrationWorkspace(requestedLocation);
+  const workspace = useOrchestrationWorkspace(view, requestedLocation, onProductLocationChange);
   const selected = view.epics.find(({ id }) => id === workspace.epicId);
 
   if (selected) {
@@ -163,7 +170,14 @@ export function OrchestrationSection({
 }
 
 /** The feature tree has one owner for Orchestration, Sprint, and revision selection. */
-function useOrchestrationWorkspace(requestedLocation?: AgentSessionProductLocation | null) {
+function useOrchestrationWorkspace(
+  view: OrchestrationSectionView,
+  requestedLocation: AgentSessionProductLocation | null | undefined,
+  onProductLocationChange?: (
+    location: AgentSessionProductLocation | null,
+    intent: OrchestrationNavigationChangeIntent,
+  ) => void,
+) {
   const [epicId, setEpicId] = useState<string | null>(null);
   const [sprintId, setSprintId] = useState<string | null>(null);
   const [selectedRevisionId, setSelectedRevisionId] = useState<string | null>(null);
@@ -171,7 +185,14 @@ function useOrchestrationWorkspace(requestedLocation?: AgentSessionProductLocati
     kind: 'sprint',
   });
   useEffect(() => {
-    if (!requestedLocation || requestedLocation.kind === 'epic_planning_draft') return;
+    if (!requestedLocation) {
+      setEpicId(null);
+      setSprintId(null);
+      setSelectedRevisionId(null);
+      setDetailLocation({ kind: 'sprint' });
+      return;
+    }
+    if (requestedLocation.kind === 'epic_planning_draft') return;
     setEpicId(requestedLocation.epicId);
     if (requestedLocation.kind === 'epic') {
       setSprintId(null);
@@ -215,28 +236,110 @@ function useOrchestrationWorkspace(requestedLocation?: AgentSessionProductLocati
       setSprintId(null);
       setSelectedRevisionId(null);
       setDetailLocation({ kind: 'sprint' });
+      onProductLocationChange?.(epicProductLocation(view, id), 'push');
     },
     openSprint(id: string, revisionId: string) {
       setSprintId(id);
       setSelectedRevisionId(revisionId);
       setDetailLocation({ kind: 'sprint' });
+      onProductLocationChange?.(sprintProductLocation(view, epicId, id), 'push');
     },
     closeSprint() {
       setSprintId(null);
       setSelectedRevisionId(null);
       setDetailLocation({ kind: 'sprint' });
+      onProductLocationChange?.(epicProductLocation(view, epicId), 'back');
     },
     selectRevision(id: string) {
       setSelectedRevisionId(id);
     },
     setDetailLocation(location: SprintWorkspaceDetailLocation) {
       setDetailLocation(location);
+      onProductLocationChange?.(
+        detailProductLocation(view, epicId, sprintId, location),
+        detailNavigationIntent(detailLocation, location),
+      );
     },
     backToOverview() {
       setEpicId(null);
       setSprintId(null);
       setSelectedRevisionId(null);
       setDetailLocation({ kind: 'sprint' });
+      onProductLocationChange?.(null, 'back');
     },
   };
+}
+
+function epicProductLocation(
+  view: OrchestrationSectionView,
+  epicId: string | null,
+): AgentSessionProductLocation | null {
+  if (!epicId) return null;
+  const epic = view.epics.find(({ id }) => id === epicId);
+  return epic ? { kind: 'epic', epicId: epic.id, label: epic.name } : null;
+}
+
+function sprintProductLocation(
+  view: OrchestrationSectionView,
+  epicId: string | null,
+  sprintId: string,
+): AgentSessionProductLocation | null {
+  const epic = view.epics.find(({ id }) => id === epicId);
+  const sprint = epic?.plan.items.find(({ id }) => id === sprintId);
+  return epic && sprint ? { kind: 'sprint', epicId: epic.id, sprintId, label: sprint.name } : null;
+}
+
+function detailProductLocation(
+  view: OrchestrationSectionView,
+  epicId: string | null,
+  sprintId: string | null,
+  detailLocation: SprintWorkspaceDetailLocation,
+): AgentSessionProductLocation | null {
+  const sprintLocation = sprintProductLocation(view, epicId, sprintId ?? '');
+  if (!sprintLocation) return null;
+  if (detailLocation.kind === 'sprint') return sprintLocation;
+
+  const epic = view.epics.find(({ id }) => id === epicId);
+  const sprint = epic?.plan.items.find(({ id }) => id === sprintId);
+  const revision = sprint?.workspace?.revisionViews.find(
+    ({ sprintPlanRevisionId }) => sprintPlanRevisionId === detailLocation.revisionId,
+  );
+  const planningPoint = revision?.workSlicePlanningPointGroups.find(
+    ({ workSlicePlanningPointId }) =>
+      workSlicePlanningPointId === detailLocation.workSlicePlanningPointId,
+  );
+  if (!revision || !planningPoint || !epic || !sprint) return null;
+  if (detailLocation.kind === 'work_slice_planning_point') {
+    return {
+      kind: 'work_slice_planning_point',
+      epicId: epic.id,
+      sprintId: sprint.id,
+      revisionId: revision.sprintPlanRevisionId,
+      workSlicePlanningPointId: planningPoint.workSlicePlanningPointId,
+      label: planningPoint.title,
+    };
+  }
+  const unit = revision.workUnits.find(
+    ({ workUnitId }) => workUnitId === detailLocation.workUnitId,
+  );
+  if (!unit) return null;
+  return {
+    kind: 'work_unit',
+    epicId: epic.id,
+    sprintId: sprint.id,
+    revisionId: revision.sprintPlanRevisionId,
+    workSlicePlanningPointId: planningPoint.workSlicePlanningPointId,
+    workUnitId: unit.workUnitId,
+    label: unit.title,
+    ...(detailLocation.inspectionState ? { inspectionState: detailLocation.inspectionState } : {}),
+  };
+}
+
+function detailNavigationIntent(
+  current: SprintWorkspaceDetailLocation,
+  next: SprintWorkspaceDetailLocation,
+): 'push' | 'back' {
+  if (current.kind === 'sprint' && next.kind !== 'sprint') return 'push';
+  if (current.kind === 'work_slice_planning_point' && next.kind === 'work_unit') return 'push';
+  return 'back';
 }

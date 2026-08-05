@@ -19,7 +19,11 @@ import {
   unavailableEpicInitiationCapability,
   unsupportedArtifactAccessController,
 } from '../application/orchestrations';
-import { EpicPlanBuilder, OrchestrationSection } from '../features/orchestrations';
+import {
+  EpicPlanBuilder,
+  OrchestrationSection,
+  type OrchestrationNavigationChangeIntent,
+} from '../features/orchestrations';
 import type { EmbeddedAgentSessionComposition } from '../features/agentSessions';
 import {
   useCallback,
@@ -265,12 +269,10 @@ export function App({
       setSurface('harness-inspector');
     } else if (destination.kind === 'worktree_review') {
       setSurface('worktree-review');
+    } else if (destination.kind === 'file_review') {
+      setSurface('file-review');
     }
   }, [currentProductDestination]);
-
-  useEffect(() => {
-    if (currentProductDestination.kind !== 'file_review') clearFileReviewState();
-  }, [clearFileReviewState, currentProductDestination]);
 
   useEffect(() => {
     if (!humanReviewLauncherView || !humanReviewLauncherNavigation) return;
@@ -579,6 +581,26 @@ export function App({
     },
     [planningDrafts],
   );
+  const navigateFromOrchestration = useCallback(
+    (location: AgentSessionProductLocation | null, intent: OrchestrationNavigationChangeIntent) => {
+      productNavigationEpoch.current += 1;
+      const destination: ProductNavigationDestination = { kind: 'orchestration', location };
+      const previous = productNavigation.history.at(-1)?.destination;
+      const canRestorePrevious =
+        intent === 'back' &&
+        previous !== undefined &&
+        sameProductNavigationDestination(previous, destination) &&
+        !sameProductNavigationDestination(productNavigation.current.destination, destination);
+      dispatchProductNavigation(
+        canRestorePrevious
+          ? { type: 'back' }
+          : { type: 'navigate', intent: intent === 'push' ? 'push' : 'replace', destination },
+      );
+      setSurface('epics');
+      setOrchestrationRoute('overview');
+    },
+    [productNavigation],
+  );
   const requestContextualFileReview = useCallback(
     async (
       sprintId: string,
@@ -766,7 +788,6 @@ export function App({
             onClick={() => {
               productNavigationEpoch.current += 1;
               fileReviewRequestSequence.current += 1;
-              clearFileReviewState();
               dispatchProductNavigation({
                 type: 'navigate',
                 intent: 'push',
@@ -846,6 +867,7 @@ export function App({
             setOrchestrationRoute('plan-builder');
           }}
           requestedLocation={requestedProductLocation}
+          onProductLocationChange={navigateFromOrchestration}
           onOpenAgentSession={openProductAgentSession}
           onOpenWorkUnitActivitySession={openWorkUnitActivitySession}
           onRequestFileReview={contextualFileReviewClient ? requestContextualFileReview : undefined}
@@ -916,6 +938,7 @@ function OrchestrationSurface({
   planningDrafts,
   onOpenDraft,
   requestedLocation,
+  onProductLocationChange,
   onOpenAgentSession,
   onOpenWorkUnitActivitySession,
   onRequestFileReview,
@@ -931,6 +954,10 @@ function OrchestrationSurface({
   readonly planningDrafts: readonly EpicPlanningDraftSummary[];
   readonly onOpenDraft: (draft: EpicPlanningDraftSummary) => void;
   readonly requestedLocation: AgentSessionProductLocation | null;
+  readonly onProductLocationChange: (
+    location: AgentSessionProductLocation | null,
+    intent: OrchestrationNavigationChangeIntent,
+  ) => void;
   readonly onOpenAgentSession: (origin: AgentSessionProductOrigin) => void;
   readonly onOpenWorkUnitActivitySession: (
     target: WorkUnitActivitySessionTarget,
@@ -960,6 +987,7 @@ function OrchestrationSurface({
         planningDrafts={planningDrafts}
         onOpenPlanningDraft={onOpenDraft}
         requestedLocation={requestedLocation}
+        onProductLocationChange={onProductLocationChange}
         onOpenAgentSession={onOpenAgentSession}
         onOpenWorkUnitActivitySession={onOpenWorkUnitActivitySession}
         onRequestFileReview={onRequestFileReview}
@@ -1023,6 +1051,13 @@ function sameFileReviewTarget(
   right: FileReviewNavigationTarget,
 ): boolean {
   return left !== undefined && JSON.stringify(left) === JSON.stringify(right);
+}
+
+function sameProductNavigationDestination(
+  left: ProductNavigationDestination,
+  right: ProductNavigationDestination,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function fileReviewTarget(

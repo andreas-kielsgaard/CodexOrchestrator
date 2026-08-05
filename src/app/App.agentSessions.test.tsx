@@ -78,6 +78,12 @@ describe('App application surfaces', () => {
       'aria-current',
       'page',
     );
+    expect(
+      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
+        name: 'Back',
+      }),
+    ).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /Return to/ })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Agent Sessions' }));
     await waitFor(() => expect(screen.getByText('Start with a message')).toBeVisible());
@@ -85,6 +91,52 @@ describe('App application surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Files & diffs' }));
     expect(screen.getByRole('main', { name: 'Files and diffs' })).toBeVisible();
     expect(await screen.findByText('5 changed files')).toBeVisible();
+  });
+
+  it('records the normal Orchestration journey in the shared typed Back history', async () => {
+    render(
+      <App {...createRecordedDevelopmentApplicationComposition({ includeWorkUnitReview: true })} />,
+    );
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Open Codex Epic Runner workspace development',
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Sprint: Sprint Control Surface Discovery' }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Open Work Slice planning point: Integrated detail surfaces',
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Open Work Unit WU-ECS2E/ }));
+    expect(screen.getByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
+
+    const back = async () => {
+      const button = within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole(
+        'button',
+        { name: 'Back' },
+      );
+      await waitFor(() => expect(button).toBeEnabled());
+      fireEvent.click(button);
+    };
+    await back();
+    expect(
+      await screen.findByRole('main', { name: /Work Slice planning point detail/ }),
+    ).toBeVisible();
+    await back();
+    expect(await screen.findByRole('main', { name: 'Sprint detail' })).toBeVisible();
+    await back();
+    expect(await screen.findByRole('main', { name: 'Epic detail' })).toBeVisible();
+    await back();
+    expect(await screen.findByRole('main', { name: 'Orchestration' })).toBeVisible();
+    expect(
+      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
+        name: 'Back',
+      }),
+    ).toBeDisabled();
   });
 
   it('adds Worktree Review only through the injected development composition', async () => {
@@ -120,11 +172,12 @@ describe('App application surfaces', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Harness Management' }));
     expect(screen.getByRole('main', { name: 'Harness Management preview' })).toBeVisible();
-    fireEvent.click(
-      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
-        name: 'Back',
-      }),
+    const back = within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole(
+      'button',
+      { name: 'Back' },
     );
+    await waitFor(() => expect(back).toBeEnabled());
+    fireEvent.click(back);
     expect(await screen.findByText('Start with a message')).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Worktree Review Dev' }));
@@ -385,6 +438,56 @@ describe('App application surfaces', () => {
     expect(screen.queryByRole('button', { name: 'Return to Sprint' })).toBeNull();
   });
 
+  it('retains contextual File Review source across direct Files and diffs navigation without Return revival', async () => {
+    const composition = createRecordedDevelopmentApplicationComposition();
+    let settle!: (result: ContextualFileReviewResult) => void;
+    const contextualFileReviewClient: ContextualFileReviewClient = {
+      requestForSprint: vi.fn(
+        () =>
+          new Promise<ContextualFileReviewResult>((resolve) => {
+            settle = resolve;
+          }),
+      ),
+    };
+    render(
+      <App
+        {...composition}
+        fileReviewSource={createRecordedFileReviewSource('working-tree')}
+        contextualFileReviewClient={contextualFileReviewClient}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Open Codex Epic Runner workspace development',
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Sprint: Sprint Control Surface Discovery' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Review files' }));
+    await act(async () => {
+      settle({
+        status: 'ready',
+        source: createRecordedFileReviewSource('working-tree'),
+        idempotentReplay: false,
+      });
+    });
+    expect(await screen.findByRole('main', { name: 'Files and diffs' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Return to Sprint' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Files & diffs' }));
+    expect(screen.getByRole('main', { name: 'Files and diffs' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Return to Sprint' })).toBeNull();
+    const back = within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole(
+      'button',
+      { name: 'Back' },
+    );
+    await waitFor(() => expect(back).toBeEnabled());
+    fireEvent.click(back);
+    expect(await screen.findByRole('main', { name: 'Files and diffs' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Return to Sprint' })).toBeNull();
+  });
+
   it('does not revive a late Sprint File Review result after direct navigation', async () => {
     const composition = createRecordedDevelopmentApplicationComposition();
     let settle!: (result: ContextualFileReviewResult) => void;
@@ -420,6 +523,70 @@ describe('App application surfaces', () => {
     expect(await screen.findByRole('heading', { name: 'Agent Sessions' })).toBeVisible();
     expect(screen.queryByRole('main', { name: 'Files and diffs' })).toBeNull();
     expect(screen.queryByRole('button', { name: /Return to/ })).toBeNull();
+  });
+
+  it('invalidates a pending Sprint File Review when a page-local navigation leaves the Sprint', async () => {
+    const composition = createRecordedDevelopmentApplicationComposition();
+    let settle!: (result: ContextualFileReviewResult) => void;
+    const contextualFileReviewClient: ContextualFileReviewClient = {
+      requestForSprint: vi.fn(
+        () =>
+          new Promise<ContextualFileReviewResult>((resolve) => {
+            settle = resolve;
+          }),
+      ),
+    };
+    render(<App {...composition} contextualFileReviewClient={contextualFileReviewClient} />);
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Open Codex Epic Runner workspace development',
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Sprint: Sprint Control Surface Discovery' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Review files' }));
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Open Work Slice planning point: Integrated detail surfaces',
+      }),
+    );
+    expect(
+      await screen.findByRole('main', { name: /Work Slice planning point detail/ }),
+    ).toBeVisible();
+
+    await act(async () => {
+      settle({
+        status: 'ready',
+        source: createRecordedFileReviewSource('working-tree'),
+        idempotentReplay: false,
+      });
+    });
+
+    expect(screen.getByRole('main', { name: /Work Slice planning point detail/ })).toBeVisible();
+    expect(screen.queryByRole('main', { name: 'Files and diffs' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Return to/ })).toBeNull();
+  });
+
+  it('restores direct File Review after leaving to Orchestration without reviving contextual Return', async () => {
+    render(<App {...createRecordedFileReviewApplicationComposition()} />);
+    expect(await screen.findByRole('main', { name: 'Files and diffs' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestration' }));
+    expect(await screen.findByRole('main', { name: 'Orchestration' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Return to/ })).toBeNull();
+
+    fireEvent.click(
+      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
+        name: 'Back',
+      }),
+    );
+    expect(await screen.findByRole('main', { name: 'Files and diffs' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Return to/ })).toBeNull();
+    expect(
+      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
+        name: 'Back',
+      }),
+    ).toBeDisabled();
   });
 });
 
