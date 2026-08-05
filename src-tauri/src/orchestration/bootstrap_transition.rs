@@ -1776,12 +1776,17 @@ mod tests {
         },
         orchestration::{
             application::OrchestrationApplication,
+            accepted_candidate_authority::reconcile_accepted_candidate_authorities,
+            accepted_integration::reconcile_accepted_integrations,
             conversation_harness::{self, ConversationHarnessRole},
             domain::{InitiateEpicCommand, ProposedSprint, SaveEpicPlanProposalCommand},
             execution_support::ProductExecutionSupportState,
             repository::{InitiatedSprintGitAuthorityWrite, SqliteOrchestrationRepository},
             work_unit_execution_harness::{
                 WorkUnitExecutionHarnessService, WorkUnitHarnessRole,
+            },
+            work_unit_dependency_wave::{
+                reconcile_work_slice_execution_settlement, reconcile_work_unit_dependency_wave,
             },
         },
     };
@@ -5941,6 +5946,364 @@ mod tests {
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sprint_settlements','epic_settlements')", [], |row| row.get(0)).unwrap(), 0);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_settlements", [], |row| row.get(0)).unwrap(), 0);
         assert_eq!(connection.query_row::<String, _, _>("SELECT accepted_revision_id FROM work_unit_execution_states WHERE work_unit_id=?1", [&leaf], |row| row.get(0)).unwrap(), materialization.1);
+    }
+
+    fn terminal_authority_fingerprint(parts: &[&str]) -> String {
+        let mut hash = Sha256::new();
+        for part in parts {
+            hash.update((part.len() as u64).to_be_bytes());
+            hash.update(part.as_bytes());
+        }
+        format!("{:x}", hash.finalize())
+    }
+
+    fn terminal_authority_fingerprint_bytes(prefix: &str, value: &[u8]) -> String {
+        let hex = value.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let mut hash = Sha256::new();
+        hash.update(prefix.as_bytes());
+        hash.update([0]);
+        hash.update(hex.as_bytes());
+        format!("{prefix}-{:x}", hash.finalize())
+    }
+
+    fn terminal_authority_projection_id(prefix: &str, value: &str) -> String {
+        let mut hash = Sha256::new();
+        hash.update(prefix.as_bytes());
+        hash.update([0]);
+        hash.update(value.as_bytes());
+        format!("{prefix}-{:x}", hash.finalize())
+    }
+
+    fn terminal_authority_base64(value: &[u8]) -> String {
+        const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut encoded = String::new();
+        for chunk in value.chunks(3) {
+            let first = chunk[0];
+            let second = *chunk.get(1).unwrap_or(&0);
+            let third = *chunk.get(2).unwrap_or(&0);
+            encoded.push(TABLE[(first >> 2) as usize] as char);
+            encoded.push(TABLE[(((first & 0b0000_0011) << 4) | (second >> 4)) as usize] as char);
+            encoded.push(if chunk.len() > 1 { TABLE[(((second & 0b0000_1111) << 2) | (third >> 6)) as usize] as char } else { '=' });
+            encoded.push(if chunk.len() > 2 { TABLE[(third & 0b0011_1111) as usize] as char } else { '=' });
+        }
+        encoded
+    }
+
+    fn terminal_authority_git(root: &Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "NUL")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    /// Creates the private accepted-Handler lineage that the real retained-candidate and
+    /// accepted-integration reconcilers consume. Product code, rather than this helper, owns
+    /// candidate pinning, target advancement, settlement, and prerequisite contribution rows.
+    fn record_terminal_authority_candidate(
+        fixture: &Fixture,
+        repository_root: &Path,
+        baseline: &str,
+        authority_id: &str,
+        work_unit_id: &str,
+        ordinal: usize,
+    ) -> PathBuf {
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        let (materialization_id, sprint_id, epic_id, provenance_id): (String, String, String, String) = connection
+            .query_row(
+                "SELECT m.materialization_id,m.sprint_id,m.epic_id,e.provenance_id
+                   FROM work_unit_materializations m
+                   JOIN epic_initiations e ON e.epic_id=m.epic_id
+                  WHERE m.materialization_id=(SELECT materialization_id FROM work_units WHERE work_unit_id=?1)",
+                [work_unit_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        let attempt_root = fixture._directory.path().join(format!("terminal-attempt-{ordinal}"));
+        terminal_authority_git(
+            repository_root,
+            &["worktree", "add", "-b", &format!("terminal-candidate-{ordinal}"), attempt_root.to_string_lossy().as_ref(), baseline],
+        );
+        let content = format!("terminal candidate {ordinal}\n");
+        let filename = format!("terminal-{ordinal}.txt");
+        fs::write(attempt_root.join(&filename), &content).unwrap();
+        terminal_authority_git(&attempt_root, &["add", &filename]);
+        terminal_authority_git(&attempt_root, &["commit", "-m", &format!("terminal candidate {ordinal}")]);
+        let candidate = terminal_authority_git(&attempt_root, &["rev-parse", "HEAD"]);
+
+        let suffix = ordinal.to_string();
+        let attempt_id = format!("terminal-attempt-{suffix}");
+        let reporting = terminal_authority_projection_id(
+            "work-unit-implementer-reporting-invocation",
+            &attempt_id,
+        );
+        let review = terminal_authority_projection_id(
+            "work-unit-handler-review-invocation",
+            &attempt_id,
+        );
+        let document = format!("terminal-document-{suffix}");
+        let artifact = format!("terminal-artifact-{suffix}");
+        let capture = format!("terminal-capture-{suffix}");
+        let evidence_ref = format!("terminal-evidence-{suffix}");
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "files": [{
+                "changedFileReferenceId": evidence_ref,
+                "content": {"encoding": "base64", "bytesBase64": terminal_authority_base64(content.as_bytes())}
+            }]
+        }))
+        .unwrap();
+        let payload_value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        let manifest = serde_json::json!([{
+            "evidenceRef": evidence_ref,
+            "displayName": filename,
+            "changeKind": "added"
+        }])
+        .to_string();
+        let contents = serde_json::json!([{
+            "evidenceRef": evidence_ref,
+            "contentFingerprint": terminal_authority_fingerprint_bytes(
+                "implementer-evidence-content",
+                &serde_json::to_vec(&payload_value["files"][0]).unwrap(),
+            )
+        }])
+        .to_string();
+        let comparison = terminal_authority_fingerprint_bytes("implementer-evidence-comparison", &payload);
+        let review_payload = format!(
+            r#"{{"summary":{},"validationStatement":"Local Git candidate captured.","changedFiles":[{{"evidenceRef":{},"displayName":{},"changeKind":"added"}}],"comparisonFingerprint":{},"evidenceContentFingerprints":[{{"evidenceRef":{},"contentFingerprint":{}}}]}}"#,
+            serde_json::to_string(&format!("Accepted terminal candidate {ordinal}.")).unwrap(),
+            serde_json::to_string(&evidence_ref).unwrap(),
+            serde_json::to_string(&filename).unwrap(),
+            serde_json::to_string(&comparison).unwrap(),
+            serde_json::to_string(&evidence_ref).unwrap(),
+            serde_json::to_string(&terminal_authority_fingerprint_bytes(
+                "implementer-evidence-content",
+                &serde_json::to_vec(&payload_value["files"][0]).unwrap(),
+            )).unwrap(),
+        );
+        let delivery_fingerprint = terminal_authority_projection_id(
+            "work-unit-handler-review-delivery",
+            &review_payload,
+        );
+        let outcome_payload = format!(
+            r#"{{"outcome":"review_pending","summary":{},"validationStatement":"Local Git candidate captured."}}"#,
+            serde_json::to_string(&format!("Accepted terminal candidate {ordinal}.")).unwrap(),
+        );
+        let outcome_fingerprint = terminal_authority_projection_id("implementer-outcome", &outcome_payload);
+        let repository_route = repository_root.to_string_lossy().to_string();
+        let attempt_route = attempt_root.to_string_lossy().to_string();
+        let capture_fingerprint = terminal_authority_fingerprint(&[
+            &capture, &format!("terminal-capture-key-{suffix}"), &epic_id, &sprint_id, &provenance_id, "terminal-repository",
+            &repository_route, &format!("terminal-attempt-worktree-{suffix}"), &attempt_route, baseline, &candidate,
+        ]);
+        let now = "2026-08-05T00:00:00Z";
+        connection.execute_batch("PRAGMA foreign_keys=OFF").unwrap();
+        connection.execute(
+            "INSERT INTO work_unit_handler_activations
+               (work_unit_id,materialization_id,sprint_id,attempt_id,handler_session_id,
+                handler_invocation_id,handler_harness_key,handler_harness_version,
+                eligibility_state,requested_at)
+             VALUES(?1,?2,?3,?4,?5,?6,'terminal-handler',1,'eligible',?7)",
+            params![work_unit_id, materialization_id, sprint_id, attempt_id, format!("terminal-handler-session-{suffix}"), format!("terminal-handler-invocation-{suffix}"), now],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO work_unit_handler_action_continuations
+               (work_unit_id,attempt_id,handler_session_id,original_handler_invocation_id,
+                action_invocation_id,action_harness_revision_id,action_harness_configuration_digest,
+                action_harness_repository_commit_ref,requested_at)
+             VALUES(?1,?2,?3,?4,?5,'terminal-action-revision','terminal-action-digest',
+                    'terminal-action-commit',?6)",
+            params![work_unit_id, attempt_id, format!("terminal-handler-session-{suffix}"), format!("terminal-handler-invocation-{suffix}"), format!("terminal-handler-action-{suffix}"), now],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO work_unit_implementer_activations
+               (work_unit_id,handler_attempt_id,handler_invocation_id,attempt_id,
+                implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,
+                implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,
+                requested_at,authorized_at,execution_support_granted_at,isolated_worktree_ready_at,
+                implementer_session_created_at,implementer_invocation_prepared_at,
+                implementer_harness_bound_at,launch_requested_at,launch_accepted_at,implementer_ready_at)
+             VALUES(?1,?2,?3,?2,?4,?5,'terminal-implementer-revision',
+                    'terminal-implementer-digest','terminal-implementer-commit',?6,?6,?6,?6,?6,?6,?6,?6,?6,?6)",
+            params![work_unit_id, attempt_id, format!("terminal-handler-action-{suffix}"), format!("terminal-implementer-session-{suffix}"), format!("terminal-implementer-invocation-{suffix}"), now],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO work_unit_handler_reviews
+               (work_unit_id,attempt_id,reporting_invocation_id,handler_session_id,
+                original_handler_invocation_id,action_handler_invocation_id,
+                review_invocation_id,review_harness_revision_id,
+                review_harness_configuration_digest,review_harness_repository_commit_ref,
+                delivery_requested_at,delivery_persisted_at,harness_bound_at,launch_requested_at,
+                launch_accepted_at,review_ready_at,delivered_payload_json,delivered_payload_fingerprint,
+                semantic_judgment_variant,semantic_judgment_fingerprint,semantic_judgment_at,
+                lifecycle_observed_at,lifecycle_status)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,'terminal-review-revision',
+                    'terminal-review-digest','terminal-review-commit',?8,?8,?8,?8,?8,?8,?9,?10,'accept',?11,?8,?8,'completed')",
+            params![work_unit_id, attempt_id, reporting, format!("terminal-handler-session-{suffix}"), format!("terminal-handler-invocation-{suffix}"), format!("terminal-handler-action-{suffix}"), review, now, review_payload, delivery_fingerprint, format!("terminal-review-judgment-{suffix}")],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO work_unit_handler_decisions
+               (work_unit_id,attempt_id,review_invocation_id,decision_variant,decision_fingerprint,
+                decision_recorded_at,implementation_accepted_at)
+             VALUES(?1,?2,?3,'accepted',?4,?5,?5)",
+            params![work_unit_id, attempt_id, review, format!("terminal-decision-{suffix}"), now],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO execution_support_grants
+               (attempt_id,capability_ref,epic_id,sprint_id,work_unit_id,repository_id,role_id,
+                workspace_id,workspace_fingerprint,correlation_fingerprint,recorded_at)
+             VALUES(?1,?2,?3,?4,?5,'terminal-repository','work_unit_implementer',
+                    ?6,'terminal-workspace-fingerprint','terminal-correlation-fingerprint',?7)",
+            params![attempt_id, format!("terminal-capability-{suffix}"), epic_id, sprint_id, work_unit_id, format!("terminal-attempt-worktree-{suffix}"), now],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO execution_support_attempt_authorizations
+               (attempt_id,work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id,
+                authorization_fingerprint,recorded_at)
+             VALUES(?1,?2,'work_unit_implementer',?3,?4,?5,?6)",
+            params![attempt_id, work_unit_id, authority_id, baseline, format!("terminal-authorization-{suffix}"), now],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO file_review_documents
+               (document_ref_id,epic_id,sprint_id,provenance_id,opaque_reference,title,
+                idempotency_key,payload_fingerprint,recorded_at)
+             VALUES(?1,?2,?3,?4,?5,'Terminal evidence',?6,?7,?8)",
+            params![document, epic_id, sprint_id, provenance_id, format!("terminal-opaque-{suffix}"), format!("terminal-document-key-{suffix}"), format!("terminal-document-fingerprint-{suffix}"), now],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO file_review_changed_files
+               (document_ref_id,changed_file_reference_id,display_name,change_kind,ordinal)
+             VALUES(?1,?2,?3,'added',0)",
+            params![document, evidence_ref, filename],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO file_review_git_capture_authorizations
+               (capture_authorization_id,idempotency_key,payload_fingerprint,epic_id,sprint_id,
+                provenance_id,repository_id,repository_root,worktree_id,worktree_root,
+                baseline_object_id,current_object_id,recorded_at)
+             VALUES(?1,?2,?3,?4,?5,?6,'terminal-repository',?7,?8,?9,?10,?11,?12)",
+            params![capture, format!("terminal-capture-key-{suffix}"), capture_fingerprint, epic_id, sprint_id, provenance_id, repository_route, format!("terminal-attempt-worktree-{suffix}"), attempt_route, baseline, candidate, now],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO stored_file_review_artifacts
+               (artifact_id,document_ref_id,contract_version,payload,payload_bytes,provenance_id)
+             VALUES(?1,?2,'stored-file-review-artifact/v1',?3,?4,?5)",
+            params![artifact, document, payload, payload.len() as i64, provenance_id],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO file_review_git_capture_documents
+               (capture_authorization_id,document_ref_id,artifact_id,linkage_fingerprint,recorded_at)
+             VALUES(?1,?2,?3,?4,?5)",
+            params![capture, document, artifact, format!("terminal-linkage-{suffix}"), now],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO work_unit_implementer_outcomes
+               (work_unit_id,attempt_id,attempt_ordinal,implementer_session_id,implementer_invocation_id,
+                reporting_invocation_id,reporting_harness_revision_id,
+                reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,
+                reporting_requested_at,reporting_prepared_at,reporting_harness_bound_at,
+                reporting_launch_requested_at,reporting_launch_accepted_at,reporting_ready_at,
+                submitted_summary,outcome_variant,submitted_validation_statement,semantic_payload_json,
+                submission_fingerprint,submitted_at,validation_at,validation_result,
+                evidence_manifest_json,comparison_fingerprint,
+                evidence_content_fingerprints_json,file_review_capture_authorization_id,
+                evidence_ready_at,semantic_completed_at,semantic_completion_invocation_id,
+                lifecycle_observed_at,lifecycle_status,application_accepted_at,handler_review_ready_at)
+             VALUES(?1,?2,0,?3,?4,?5,'terminal-reporting-revision','terminal-reporting-digest',
+                    'terminal-reporting-commit',?6,?6,?6,?6,?6,?6,?7,'review_pending',?8,?9,?10,?6,?6,'valid',?11,?12,?13,?14,?6,?6,?5,?6,'completed',?6,?6)",
+            params![work_unit_id, attempt_id, format!("terminal-implementer-session-{suffix}"), format!("terminal-implementer-invocation-{suffix}"), reporting, now, format!("Accepted terminal candidate {ordinal}."), "Local Git candidate captured.", outcome_payload, outcome_fingerprint, manifest, comparison, contents, capture],
+        ).unwrap();
+        connection.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+        attempt_root
+    }
+
+    #[test]
+    fn terminal_authority_fixture_converges_product_materialization_and_real_git_gateway() {
+        let fixture = Fixture::new();
+        let (service, planner, sprint_id) = fixture.prepare_work_slice_planner();
+        service.submit_work_slice_proposal(&planner, crate::orchestration::sprint_runner_transition::WorkSliceProposal {
+            objective: "Converge the terminal authority fixture.".into(),
+            lanes: vec![
+                crate::orchestration::sprint_runner_transition::WorkSliceLane { title: "Root A".into(), specification: "Settle root A.".into(), depends_on: vec![] },
+                crate::orchestration::sprint_runner_transition::WorkSliceLane { title: "Root B".into(), specification: "Settle root B.".into(), depends_on: vec![] },
+                crate::orchestration::sprint_runner_transition::WorkSliceLane { title: "Middle".into(), specification: "Settle middle.".into(), depends_on: vec!["Root A".into()] },
+                crate::orchestration::sprint_runner_transition::WorkSliceLane { title: "Leaf".into(), specification: "Settle leaf.".into(), depends_on: vec!["Middle".into()] },
+            ],
+        }).unwrap();
+        service.complete_work_slice_planning(&planner, crate::orchestration::sprint_runner_transition::WorkSliceCompletion {}).unwrap();
+        fixture.runtime.finish(planner.as_str(), AgentInvocationTerminalStatus::Completed);
+
+        let repository_root = fixture._directory.path().join("terminal-authority-repository");
+        fs::create_dir_all(&repository_root).unwrap();
+        terminal_authority_git(&repository_root, &["init", "-b", "main"]);
+        terminal_authority_git(&repository_root, &["config", "user.email", "terminal@example.test"]);
+        terminal_authority_git(&repository_root, &["config", "user.name", "Terminal Test"]);
+        fs::write(repository_root.join("README.md"), "terminal base\n").unwrap();
+        terminal_authority_git(&repository_root, &["add", "README.md"]);
+        terminal_authority_git(&repository_root, &["commit", "-m", "terminal base"]);
+        let baseline = terminal_authority_git(&repository_root, &["rev-parse", "HEAD"]);
+        let sprint_root = fixture._directory.path().join("terminal-authority-sprint");
+        terminal_authority_git(&repository_root, &["worktree", "add", "-b", "terminal-sprint", sprint_root.to_string_lossy().as_ref(), &baseline]);
+        fs::write(sprint_root.join("SPRINT.md"), "terminal sprint\n").unwrap();
+        terminal_authority_git(&sprint_root, &["add", "SPRINT.md"]);
+        terminal_authority_git(&sprint_root, &["commit", "-m", "terminal sprint"]);
+        let current = terminal_authority_git(&sprint_root, &["rev-parse", "HEAD"]);
+        let repository_root = repository_root.canonicalize().unwrap();
+        let sprint_root = sprint_root.canonicalize().unwrap();
+        Connection::open(&fixture.database_path).unwrap().execute("DELETE FROM initiated_sprint_git_authorities WHERE sprint_id=?1", [&sprint_id]).unwrap();
+        let authority_id = match SqliteOrchestrationRepository::open(&fixture.database_path).unwrap().store_initiated_sprint_git_authority(InitiatedSprintGitAuthorityWrite {
+            sprint_id: sprint_id.clone(), idempotency_key: "terminal-authority".into(), repository_id: "terminal-repository".into(),
+            repository_root: repository_root.to_string_lossy().into_owned(), repository_common_dir: repository_root.join(".git").canonicalize().unwrap().to_string_lossy().into_owned(),
+            worktree_id: "terminal-sprint-worktree".into(), worktree_root: sprint_root.to_string_lossy().into_owned(),
+            baseline_object_id: baseline.clone(), current_object_id: current, runtime_instance_ref: "terminal-runtime".into(), runtime_source_ref: "terminal-source".into(), source_fingerprint: "f".repeat(64),
+        }).unwrap() {
+            crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::Stored { authority_id }
+            | crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::IdempotentReplay { authority_id } => authority_id,
+        };
+        let units = Connection::open(&fixture.database_path).unwrap().prepare("SELECT work_unit_id FROM work_units ORDER BY lane_ordinal").unwrap().query_map([], |row| row.get::<_, String>(0)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_eq!(units.len(), 4);
+        let attempts = units.iter().enumerate().map(|(ordinal, unit)| record_terminal_authority_candidate(&fixture, &repository_root, &baseline, &authority_id, unit, ordinal)).collect::<Vec<_>>();
+        let mut connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_decisions d JOIN work_unit_handler_reviews r ON r.review_invocation_id=d.review_invocation_id JOIN work_unit_implementer_outcomes o ON o.work_unit_id=d.work_unit_id AND o.reporting_invocation_id=r.reporting_invocation_id JOIN work_unit_handler_activations h ON h.work_unit_id=d.work_unit_id AND h.attempt_id=o.attempt_id JOIN work_unit_materializations m ON m.materialization_id=h.materialization_id JOIN initiated_sprint_git_authorities a ON a.sprint_id=m.sprint_id JOIN execution_support_attempt_authorizations x ON x.attempt_id=o.attempt_id AND x.work_unit_id=d.work_unit_id AND x.role_kind='work_unit_implementer' AND x.sprint_git_authority_id=a.authority_id JOIN execution_support_grants g ON g.attempt_id=o.attempt_id AND g.role_id='work_unit_implementer' JOIN file_review_git_capture_authorizations c ON c.capture_authorization_id=o.file_review_capture_authorization_id AND c.worktree_id=g.workspace_id AND c.repository_id=a.repository_id AND c.baseline_object_id=x.baseline_object_id JOIN file_review_git_capture_documents l ON l.capture_authorization_id=c.capture_authorization_id WHERE d.decision_variant='accepted' AND d.implementation_accepted_at IS NOT NULL AND r.lifecycle_status='completed' AND r.semantic_judgment_variant='accept' AND o.evidence_ready_at IS NOT NULL AND o.application_accepted_at IS NOT NULL", [], |row| row.get(0)).unwrap(), 4);
+        reconcile_accepted_candidate_authorities(&mut connection).unwrap();
+        for attempt in attempts {
+            terminal_authority_git(&repository_root, &["worktree", "remove", "--force", attempt.to_string_lossy().as_ref()]);
+        }
+        reconcile_accepted_integrations(&mut connection).unwrap();
+        reconcile_accepted_integrations(&mut connection).unwrap();
+        reconcile_work_unit_dependency_wave(&mut connection).unwrap();
+        reconcile_work_slice_execution_settlement(&mut connection).unwrap();
+        reconcile_work_slice_execution_settlement(&mut connection).unwrap();
+
+        let candidate_status = connection.prepare("SELECT candidate_id,pinned_at,attention_reason FROM accepted_handler_candidates ORDER BY candidate_id").unwrap().query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        let candidate_attentions = connection.prepare("SELECT candidate_id,attention_reason FROM accepted_candidate_authority_attentions ORDER BY candidate_id").unwrap().query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_eq!(candidate_status.iter().filter(|(_, pinned, attention)| pinned.is_some() && attention.is_none()).count(), 4, "{candidate_status:?}; {candidate_attentions:?}");
+        for table in ["accepted_work_unit_integrations", "accepted_work_unit_integration_evidence", "work_unit_settlements"] {
+            assert_eq!(connection.query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table} WHERE 1"), [], |row| row.get(0)).unwrap(), 4, "{table}");
+        }
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_prerequisite_contributions", [], |row| row.get(0)).unwrap(), 2);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_prerequisite_contributions p JOIN work_unit_relationships e ON e.relationship_id=p.relationship_id WHERE e.relationship_kind='depends_on' AND e.to_id=p.prerequisite_work_unit_id AND e.from_id=p.dependent_work_unit_id", [], |row| row.get(0)).unwrap(), 2);
+        for table in ["work_slice_execution_graph_completions", "work_slice_execution_settlements", "work_slice_planning_point_execution_settlements"] {
+            assert_eq!(connection.query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0)).unwrap(), 1, "{table}");
+        }
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_attentions", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sprint_settlements','epic_settlements')", [], |row| row.get(0)).unwrap(), 0);
+        drop(connection);
+
+        let native = serde_json::to_value(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap().native_query().unwrap()).unwrap();
+        let canonical: serde_json::Value = serde_json::from_str(include_str!("fixtures/orchestration-native-query-v2/valid-execution-graph.json")).unwrap();
+        for field in ["workUnits", "workUnitExecutionStates", "workSliceExecutionGraphCompletions", "workSliceExecutionSettlements", "workSlicePlanningPointExecutionSettlements"] {
+            assert_eq!(native[field].as_array().unwrap().len(), canonical[field].as_array().unwrap().len(), "{field}");
+        }
+        assert_eq!(native["workUnitRelationships"].as_array().unwrap().iter().filter(|edge| edge["relationshipKind"] == "depends_on").count(), canonical["workUnitRelationships"].as_array().unwrap().iter().filter(|edge| edge["relationshipKind"] == "depends_on").count());
+        assert!(native["workUnitExecutionStates"].as_array().unwrap().iter().all(|state| state["state"] == "settled"));
+        let serialized = serde_json::to_string(&native).unwrap();
+        assert!(!serialized.contains("terminal-attempt-worktree"));
+        assert!(!serialized.contains("refs/codex/orchestrator/accepted"));
+        assert!(!serialized.contains(repository_root.to_string_lossy().as_ref()));
     }
 
     #[derive(Clone, Debug, Eq, PartialEq)]
