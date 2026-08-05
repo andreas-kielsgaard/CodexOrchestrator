@@ -18,6 +18,8 @@ import type {
   ProductSprintRunnerHandbackUnknownMovementKindV1,
   ProductSprintRunnerHandbackDependencyOwnerClassificationV1,
   ProductSprintRunnerHandbackMovementV1,
+  ProductEpicEscalationReceiverV1,
+  ProductEpicEscalationDispositionV1,
 } from './productReadModels';
 
 export const ORCHESTRATION_NATIVE_QUERY_V2 = 'orchestration-native-query/v2' as const;
@@ -150,6 +152,7 @@ export type NativeWorkUnitHandlerDecisionV1 = ProductWorkUnitHandlerDecisionV1;
 export type NativeWorkUnitIncompleteDispositionV1 = ProductWorkUnitIncompleteDispositionV1;
 export type NativeWorkUnitRetryAttemptV1 = ProductWorkUnitRetryAttemptV1;
 export type NativeWorkUnitIntegrationV1 = ProductWorkUnitIntegrationV1;
+export type NativeEpicEscalationReceiverV1 = ProductEpicEscalationReceiverV1;
 export interface NativeWorkUnitRelationshipV1 {
   readonly relationshipId: string;
   readonly materializationId: string;
@@ -2289,7 +2292,7 @@ const workUnitIncompleteDisposition = (value: unknown): NativeWorkUnitIncomplete
   const nextAttemptAuthorizedAt = x.nextAttemptAuthorizedAt === undefined ? undefined : timestamp(x.nextAttemptAuthorizedAt, 'nextAttemptAuthorizedAt');
   const noProgressHandback = x.noProgressHandback === undefined ? undefined : (() => {
     const handback = object(x.noProgressHandback, 'no-progress Work Unit handback');
-    keys(handback, ['handbackId', 'sourceAttemptId', 'sourceReviewInvocationId', 'contextFingerprint', 'persistedAt', 'deliveryIntendedAt', 'sprintRunnerReceiverActivatedAt', 'sprintRunnerReceiverDecisionAt', 'sprintRunnerDelivery'], 'no-progress Work Unit handback');
+    keys(handback, ['handbackId', 'sourceAttemptId', 'sourceReviewInvocationId', 'contextFingerprint', 'persistedAt', 'deliveryIntendedAt', 'sprintRunnerReceiverActivatedAt', 'sprintRunnerReceiverDecisionAt', 'sprintRunnerDelivery', 'epicRunnerReceiver'], 'no-progress Work Unit handback');
     if (handback.sprintRunnerReceiverActivatedAt !== undefined || handback.sprintRunnerReceiverDecisionAt !== undefined) fail('no-progress Work Unit handback has forbidden receiver effects');
     const persistedAt = timestamp(handback.persistedAt, 'persistedAt');
     const deliveryIntendedAt = timestamp(handback.deliveryIntendedAt, 'deliveryIntendedAt');
@@ -2299,6 +2302,7 @@ const workUnitIncompleteDisposition = (value: unknown): NativeWorkUnitIncomplete
       handback.sprintRunnerDelivery === undefined
         ? undefined
         : sprintRunnerHandbackDelivery(handback.sprintRunnerDelivery);
+    const epicRunnerReceiver = handback.epicRunnerReceiver === undefined ? undefined : epicEscalationReceiver(handback.epicRunnerReceiver);
     if (sprintRunnerDelivery && Date.parse(sprintRunnerDelivery.deliveryRequestedAt) < Date.parse(deliveryIntendedAt))
       fail('Sprint Runner delivery request precedes delivery intent');
     return {
@@ -2309,10 +2313,53 @@ const workUnitIncompleteDisposition = (value: unknown): NativeWorkUnitIncomplete
       persistedAt,
       deliveryIntendedAt,
       ...(sprintRunnerDelivery ? { sprintRunnerDelivery } : {}),
+      ...(epicRunnerReceiver ? { epicRunnerReceiver } : {}),
     };
   })();
   if (x.meaningfulProgress ? !nextAttemptAuthorizedAt || noProgressHandback : nextAttemptAuthorizedAt !== undefined || !noProgressHandback) fail('incomplete disposition has incoherent later effects');
   return { attemptId: boundedString(x.attemptId, 240, 'incomplete disposition attemptId'), reviewInvocationId: boundedString(x.reviewInvocationId, 240, 'incomplete disposition reviewInvocationId'), decisionFingerprint: boundedString(x.decisionFingerprint, 240, 'incomplete disposition decisionFingerprint'), classification: x.classification as NativeWorkUnitIncompleteDispositionV1['classification'], meaningfulProgress: x.meaningfulProgress as boolean, recordedAt: timestamp(x.recordedAt, 'incomplete disposition recordedAt'), ...(nextAttemptAuthorizedAt ? { nextAttemptAuthorizedAt } : {}), ...(noProgressHandback ? { noProgressHandback } : {}) };
+};
+
+const epicEscalationReceiver = (value: unknown): NativeEpicEscalationReceiverV1 => {
+  const x = object(value, 'Epic escalation receiver');
+  keys(x, ['sprintId', 'epicId', 'deliveryRequestedAt', 'deliveryPersistedAt', 'harnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt', 'providerActivationObservedAt', 'reassessmentLifecycleStatus', 'reassessmentLifecycleObservedAt', 'semanticReassessmentRecordedAt', 'disposition'], 'Epic escalation receiver');
+  const time = (key: string) => x[key] === undefined ? undefined : timestamp(x[key], `Epic receiver ${key}`);
+  const deliveryRequestedAt = timestamp(x.deliveryRequestedAt, 'Epic receiver deliveryRequestedAt');
+  const deliveryPersistedAt = time('deliveryPersistedAt');
+  const harnessBoundAt = time('harnessBoundAt');
+  const launchRequestedAt = time('launchRequestedAt');
+  const launchAcceptedAt = time('launchAcceptedAt');
+  const providerActivationObservedAt = time('providerActivationObservedAt');
+  const semanticReassessmentRecordedAt = time('semanticReassessmentRecordedAt');
+  phaseCoherence({ deliveryRequestedAt, deliveryPersistedAt, harnessBoundAt, launchRequestedAt, launchAcceptedAt }, ['deliveryRequestedAt', 'deliveryPersistedAt', 'harnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt'], 'Epic escalation receiver');
+  if ((providerActivationObservedAt || semanticReassessmentRecordedAt) && !launchAcceptedAt) fail('Epic receiver later observation lacks launch acceptance');
+  if (semanticReassessmentRecordedAt && x.disposition === undefined) { /* reassessment may end without a semantic disposition */ }
+  const disposition = x.disposition === undefined ? undefined : epicEscalationDisposition(x.disposition);
+  if (disposition && !semanticReassessmentRecordedAt) fail('Epic disposition lacks semantic reassessment');
+  return { sprintId: boundedString(x.sprintId, 240, 'Epic receiver sprintId'), epicId: boundedString(x.epicId, 240, 'Epic receiver epicId'), deliveryRequestedAt, ...(deliveryPersistedAt ? { deliveryPersistedAt } : {}), ...(harnessBoundAt ? { harnessBoundAt } : {}), ...(launchRequestedAt ? { launchRequestedAt } : {}), ...(launchAcceptedAt ? { launchAcceptedAt } : {}), ...(providerActivationObservedAt ? { providerActivationObservedAt } : {}), ...(x.reassessmentLifecycleStatus === undefined ? {} : { reassessmentLifecycleStatus: boundedString(x.reassessmentLifecycleStatus, 96, 'Epic receiver lifecycle status') }), ...(x.reassessmentLifecycleObservedAt === undefined ? {} : { reassessmentLifecycleObservedAt: timestamp(x.reassessmentLifecycleObservedAt, 'Epic receiver lifecycle observedAt') }), ...(semanticReassessmentRecordedAt ? { semanticReassessmentRecordedAt } : {}), ...(disposition ? { disposition } : {}) };
+};
+
+const epicEscalationDisposition = (value: unknown): ProductEpicEscalationDispositionV1 => {
+  const x = object(value, 'Epic escalation disposition');
+  keys(x, ['movementKind', 'rationale', 'consideredIntent', 'downstreamRequest', 'humanExternalAttention'], 'Epic escalation disposition');
+  const movementKind = boundedString(x.movementKind, 96, 'Epic disposition movementKind');
+  if (!/^[A-Za-z0-9_.-]+$/.test(movementKind)) fail('invalid Epic disposition movementKind');
+  const rationale = boundedString(x.rationale, 20_000, 'Epic disposition rationale');
+  const downstreamRequest = x.downstreamRequest === undefined ? undefined : (() => {
+    const request = object(x.downstreamRequest, 'Epic downstream request');
+    keys(request, ['target', 'dependency', 'request', 'resumptionPath'], 'Epic downstream request');
+    if (!['sprint_runner', 'existing_agent_achievable_dependency'].includes(request.target as string)) fail('invalid Epic downstream target');
+    if (request.target === 'existing_agent_achievable_dependency' && request.dependency !== 'work_unit_handler') fail('invalid Epic known dependency');
+    if (request.target === 'sprint_runner' && request.dependency !== undefined) fail('Sprint Runner request has dependency detail');
+    return { target: request.target as 'sprint_runner' | 'existing_agent_achievable_dependency', ...(request.dependency === undefined ? {} : { dependency: 'work_unit_handler' as const }), request: boundedString(request.request, 20_000, 'Epic downstream request text'), resumptionPath: boundedString(request.resumptionPath, 20_000, 'Epic downstream resumption path') };
+  })();
+  const humanExternalAttention = x.humanExternalAttention === undefined ? undefined : (() => {
+    const attention = object(x.humanExternalAttention, 'Epic human/external attention');
+    keys(attention, ['reason', 'authorityNeeded', 'evidenceContext', 'resumptionPath'], 'Epic human/external attention');
+    return { reason: boundedString(attention.reason, 20_000, 'Epic attention reason'), authorityNeeded: boundedString(attention.authorityNeeded, 20_000, 'Epic attention authority'), evidenceContext: boundedString(attention.evidenceContext, 20_000, 'Epic attention evidence'), resumptionPath: boundedString(attention.resumptionPath, 20_000, 'Epic attention resumption path') };
+  })();
+  if (downstreamRequest && humanExternalAttention) fail('Epic disposition mixes downstream request and attention');
+  return { movementKind, rationale, ...(x.consideredIntent === undefined ? {} : { consideredIntent: boundedString(x.consideredIntent, 20_000, 'Epic considered intent') }), ...(downstreamRequest ? { downstreamRequest } : {}), ...(humanExternalAttention ? { humanExternalAttention } : {}) };
 };
 
 const sprintRunnerHandbackMovement = (value: unknown): ProductSprintRunnerHandbackMovementV1 => {

@@ -72,6 +72,7 @@ export function composeProductOrchestrationReadModels(
         state: overview.state,
       },
       sprints,
+      epicEscalationReceivers: sprints.flatMap((sprint) => sprint.epicEscalationReceivers ?? []),
       agentSessionReferences: sessions.filter((reference) =>
         belongsToEpic(events, reference, epic.epicId),
       ),
@@ -195,6 +196,15 @@ function composeSprint(
     current.sprintPlanRevisionId,
     'current revision view',
   );
+  const epicEscalationReceivers = currentWorkUnits.flatMap((unit) =>
+    unit.attemptHistory.flatMap((attempt) =>
+      attempt.incompleteDisposition?.noProgressHandback?.epicRunnerReceiver ?? [],
+    ),
+  );
+  for (const receiver of epicEscalationReceivers) {
+    if (receiver.sprintId !== sprintId || receiver.epicId !== (events.sprints.find((item) => item.sprintId === sprintId)?.epicId ?? ''))
+      fail('Epic escalation receiver does not match its Sprint and Epic owner');
+  }
   return {
     sprintId,
     epicId:
@@ -251,6 +261,7 @@ function composeSprint(
     },
     workSlicePlanningPoints,
     revisionViews,
+    ...(epicEscalationReceivers.length > 0 ? { epicEscalationReceivers } : {}),
     concerns: index.concerns
       .filter((concern) => concern.sprintId === sprintId)
       .map((concern) => ({

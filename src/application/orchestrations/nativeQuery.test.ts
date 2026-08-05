@@ -882,6 +882,25 @@ describe('orchestration native query v1', () => {
         resumptionPath: 'Reconcile this exact Handback after that result.',
       },
     };
+    reopenedHandback.epicRunnerReceiver = {
+      sprintId: 'sprint-fixture',
+      epicId: 'epic-fixture',
+      deliveryRequestedAt: '2026-08-04T00:00:28Z',
+      deliveryPersistedAt: '2026-08-04T00:00:29Z',
+      harnessBoundAt: '2026-08-04T00:00:30Z',
+      launchRequestedAt: '2026-08-04T00:00:31Z',
+      launchAcceptedAt: '2026-08-04T00:00:32Z',
+      semanticReassessmentRecordedAt: '2026-08-04T00:00:33Z',
+      disposition: {
+        movementKind: 'return_context_to_sprint_runner',
+        rationale: 'The concern remains unresolved after Epic reassessment.',
+        downstreamRequest: {
+          target: 'sprint_runner',
+          request: 'Reconsider the same Sprint-local concern.',
+          resumptionPath: 'Resume from the unchanged concern.',
+        },
+      },
+    };
     const reopenedModel = composeProductOrchestrationReadModels(
       nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(reopened)),
     ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
@@ -892,6 +911,11 @@ describe('orchestration native query v1', () => {
         enablingResult: 'A persisted Handler result.',
         resumptionPath: 'Reconcile this exact Handback after that result.',
       },
+    });
+    expect(reopenedModel.attemptHistory[0]!.incompleteDisposition?.noProgressHandback?.epicRunnerReceiver).toMatchObject({
+      sprintId: 'sprint-fixture',
+      epicId: 'epic-fixture',
+      disposition: { movementKind: 'return_context_to_sprint_runner' },
     });
 
     for (const movement of [

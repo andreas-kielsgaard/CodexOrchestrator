@@ -415,6 +415,20 @@ export function SprintWorkspace({
       }
       primary={
         <>
+          {(workspace.epicEscalationReceivers ?? []).length > 0 && (
+            <section aria-label="Unresolved Epic reassessment" className="orchestration-reassessment">
+              <p className="eyebrow">Unresolved Sprint concern</p>
+              <p>Epic reassessment context returned to this Sprint. The concern remains unresolved.</p>
+              {(workspace.epicEscalationReceivers ?? []).map((receiver) => (
+                <div key={`${receiver.epicId}:${receiver.sprintId}:${receiver.deliveryRequestedAt}`}>
+                  {receiver.disposition?.downstreamRequest && <p>Downstream request recorded only: {receiver.disposition.downstreamRequest.request}. It is not delivery or activation.</p>}
+                  {receiver.disposition?.humanExternalAttention && <p>Attention requested: {receiver.disposition.humanExternalAttention.reason}. Authority needed: {receiver.disposition.humanExternalAttention.authorityNeeded}.</p>}
+                  {receiver.disposition?.consideredIntent && <p>Other Epic work remains intent only: {receiver.disposition.consideredIntent}.</p>}
+                  <p>Context return, dependency request, alternate work, or attention has not cleared this Sprint concern.</p>
+                </div>
+              ))}
+            </section>
+          )}
           {hasPreStartForecast ? (
             <section className="sprint-forecast" aria-label="Sprint Runner pre-start forecast">
               <p className="eyebrow">Sprint Runner forecast</p>

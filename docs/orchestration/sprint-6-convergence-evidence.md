@@ -4,6 +4,22 @@ Status: **partial**. Deterministic convergence and isolated installed-Codex Plan
 Bootstrap Generator, and Epic Runner paths pass. The production user-confirmation click and the
 integrated post-click chain remain a manual gate; no confirmation was bypassed.
 
+## ER-3 strict public projection checkpoint (2026-08-05)
+
+- Fresh routed validation: Rust `cargo check -p codex-orchestrator` passed (**0 errors**; existing
+  dead-code warnings remain). The productive native query now projects the identity-free Epic
+  receiver stages, exact Sprint/Epic correlation, semantic reassessment, and one concern-preserving
+  disposition without Session, invocation, Harness, repository, worktree, Git, provider, or route
+  identity.
+- Epic Detail and Sprint Workspace labels preserve the distinctions between receiver delivery,
+  semantic disposition, downstream request, human/external attention, intent-only alternate work,
+  and unresolved Sprint concern. No selection/start, settlement, completion, or user acceptance is
+  projected by this checkpoint.
+- Frontend TypeScript, focused native-query/read-model tests, presentation tests, and component
+  tests are **not claimed** in this checkout: `npm run build` could not start because `tsc` is not
+  installed (`node_modules` is absent). No live provider, production receiver activation, merge,
+  publication, or user acceptance is claimed.
+
 ## CPS-1: dependent execution and generalized attempts convergence
 
 This local checkpoint combines the accepted dependent-cycle and generalized-attempt lines without

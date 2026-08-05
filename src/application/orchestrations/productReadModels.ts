@@ -407,6 +407,7 @@ export type ProductWorkUnitIncompleteDispositionV1 = Readonly<{
     readonly sprintRunnerReceiverActivatedAt?: string;
     readonly sprintRunnerReceiverDecisionAt?: string;
     readonly sprintRunnerDelivery?: ProductSprintRunnerHandbackDeliveryV1;
+    readonly epicRunnerReceiver?: ProductEpicEscalationReceiverV1;
   }>;
 }>;
 
@@ -468,6 +469,39 @@ export type ProductSprintRunnerHandbackDeliveryV1 = Readonly<{
   readonly selectedMovement?: ProductSprintRunnerHandbackMovementV1;
   readonly escalationIntentRecordedAt?: string;
   readonly escalationDeliveryRequestedAt?: string;
+}>;
+
+export type ProductEpicEscalationDispositionV1 = Readonly<{
+  readonly movementKind: string;
+  readonly rationale: string;
+  readonly consideredIntent?: string;
+  readonly downstreamRequest?: Readonly<{
+    readonly target: 'sprint_runner' | 'existing_agent_achievable_dependency';
+    readonly dependency?: 'work_unit_handler';
+    readonly request: string;
+    readonly resumptionPath: string;
+  }>;
+  readonly humanExternalAttention?: Readonly<{
+    readonly reason: string;
+    readonly authorityNeeded: string;
+    readonly evidenceContext: string;
+    readonly resumptionPath: string;
+  }>;
+}>;
+
+export type ProductEpicEscalationReceiverV1 = Readonly<{
+  readonly sprintId: string;
+  readonly epicId: string;
+  readonly deliveryRequestedAt: string;
+  readonly deliveryPersistedAt?: string;
+  readonly harnessBoundAt?: string;
+  readonly launchRequestedAt?: string;
+  readonly launchAcceptedAt?: string;
+  readonly providerActivationObservedAt?: string;
+  readonly reassessmentLifecycleStatus?: string;
+  readonly reassessmentLifecycleObservedAt?: string;
+  readonly semanticReassessmentRecordedAt?: string;
+  readonly disposition?: ProductEpicEscalationDispositionV1;
 }>;
 
 export type ProductWorkUnitRetryAttemptV1 = Readonly<{
@@ -722,6 +756,7 @@ export interface ProductSprintReadModelV1 {
     readonly assessedSprintPlanRevisionIds: readonly string[];
   }[];
   readonly revisionViews: readonly ProductSprintRevisionViewV1[];
+  readonly epicEscalationReceivers?: readonly ProductEpicEscalationReceiverV1[];
   readonly concerns: readonly {
     readonly concernId: string;
     readonly title: string;
@@ -787,6 +822,7 @@ export interface ProductEpicReadModelV1 {
     readonly state: ProductSourcedReadValueV1<ProductEpicStateV1>;
   };
   readonly sprints: readonly ProductSprintReadModelV1[];
+  readonly epicEscalationReceivers: readonly ProductEpicEscalationReceiverV1[];
   readonly agentSessionReferences: readonly ProductAgentSessionReferenceReadModelV1[];
   readonly continuation: ProductContinuationReadModelV1;
   readonly bootstrapTransition?: import('./epicBootstrapTransition').ProductBootstrapTransitionStatusV2;
