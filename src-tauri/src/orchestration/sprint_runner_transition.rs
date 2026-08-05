@@ -3450,15 +3450,17 @@ impl SprintRunnerTransitionService {
 
     fn request_work_unit_implementer_inner(self:&Arc<Self>,handler_invocation:&AgentInvocationId,require_active_action:bool)->Result<(),SprintRunnerTransitionError>{
         let handler=self.work_unit_handler.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("Work Unit Handler registry is poisoned".into()))?.clone().ok_or_else(||SprintRunnerTransitionError::Unavailable("Work Unit Handler activation is unavailable".into()))?;
-        let row:Option<(String,String,String,String,String,String,String,String)>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
+        let row:Option<(String,String,String,String,String,String,String,String,String)>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row(
             "SELECT c.work_unit_id,c.attempt_id,h.sprint_id,c.handler_session_id,h.handler_invocation_id,
-                    c.action_harness_revision_id,c.action_harness_configuration_digest,c.action_harness_repository_commit_ref
+                    c.action_harness_revision_id,c.action_harness_configuration_digest,c.action_harness_repository_commit_ref,
+                    u.specification
              FROM work_unit_handler_action_continuations c
              JOIN work_unit_handler_activations h
                ON h.work_unit_id=c.work_unit_id
               AND h.attempt_id=c.attempt_id
               AND h.handler_session_id=c.handler_session_id
               AND h.handler_invocation_id=c.original_handler_invocation_id
+             JOIN work_units u ON u.work_unit_id=c.work_unit_id
              WHERE c.action_invocation_id=?1
                AND c.blocked_reason IS NULL
                AND c.failure_reason IS NULL
@@ -3497,9 +3499,10 @@ impl SprintRunnerTransitionService {
                      AND persisted.attempt_id=c.attempt_id
                ))",
             params![handler_invocation.as_str(), if require_active_action { 1 } else { 0 }],
-            |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?)),
+            |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?)),
         ).optional().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        let Some((work_unit,handler_attempt,sprint,handler_session,original_handler_invocation,handler_revision,handler_digest,handler_commit))=row else{return Err(SprintRunnerTransitionError::Forbidden)};
+        let Some((work_unit,handler_attempt,sprint,handler_session,original_handler_invocation,handler_revision,handler_digest,handler_commit,specification))=row else{return Err(SprintRunnerTransitionError::Forbidden)};
+        if specification.trim().is_empty() || specification.len() > 16_000 { return Err(SprintRunnerTransitionError::Forbidden) }
         if handler_attempt != stable_id("work-unit-handler-attempt", &work_unit)
             || handler_session != stable_id("work-unit-handler-session", &work_unit)
             || original_handler_invocation != stable_id("work-unit-handler-invocation", &work_unit)
@@ -3545,7 +3548,7 @@ impl SprintRunnerTransitionService {
             return self.fail_implementer(&work_unit, "implementer_session_creation_failed", SprintRunnerTransitionError::Unavailable(error.to_string()));
         }
         self.mark_implementer(&work_unit, "implementer_session_created_at")?;
-        let prompt = "Work Unit Implementer activation. Work only in the application-provided isolated execution workspace. Do not submit outcomes, accept, review, settle, retry, activate dependents, or continue any Sprint or Epic.".to_string();
+        let prompt = format!("Work Unit Implementer activation. Perform the one bounded candidate change described below, only in the application-provided isolated execution workspace. Do not submit outcomes, accept, review, settle, retry, activate dependents, or continue any Sprint or Epic.\n\nApplication-derived Work Unit specification:\n{specification}");
         if let Err(error) = self.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: prompt.clone(), title: None, working_directory: None, requested_options: Some(runtime.requested_options.clone()) }}) {
             return self.fail_implementer(&work_unit, "implementer_invocation_preparation_failed", SprintRunnerTransitionError::Unavailable(error.to_string()));
         }

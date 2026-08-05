@@ -1806,6 +1806,7 @@ mod tests {
         sinks: Mutex<HashMap<AgentInvocationId, Arc<dyn AgentRuntimeUpdateSink>>>,
         fail_next_launch: AtomicUsize,
         terminal_on_next_start: AtomicUsize,
+        candidate_change_invocation: Mutex<Option<String>>,
     }
 
     struct PlannerAuthorityRuntime(Mutex<VerifiedRuntimeGitComparison>);
@@ -1828,6 +1829,10 @@ mod tests {
 
         fn fail_next_launch(&self) {
             self.fail_next_launch.store(1, Ordering::SeqCst);
+        }
+
+        fn stage_candidate_change(&self, invocation_id: &str) {
+            *self.candidate_change_invocation.lock().unwrap() = Some(invocation_id.into());
         }
 
         /// Deliberately emits through the production AgentSession notifier before `start_invocation`
@@ -1885,6 +1890,40 @@ mod tests {
                     RuntimePortErrorKind::LaunchFailed,
                     "induced transition launch failure",
                 ));
+            }
+            let stage_candidate_change = {
+                let mut staged = self.candidate_change_invocation.lock().unwrap();
+                if staged.as_deref() == Some(request.invocation_id.as_str()) {
+                    staged.take();
+                    true
+                } else {
+                    false
+                }
+            };
+            if stage_candidate_change {
+                let working_directory = request.working_directory.as_deref().ok_or_else(|| {
+                    RuntimePortError::new(
+                        RuntimePortErrorKind::LaunchFailed,
+                        "productive Implementer request has no workspace",
+                    )
+                })?;
+                let workspace = Path::new(working_directory);
+                fs::write(workspace.join("README.md"), "implementer candidate evidence\n").map_err(|error| {
+                    RuntimePortError::new(RuntimePortErrorKind::LaunchFailed, error.to_string())
+                })?;
+                for arguments in [["add", "README.md"].as_slice(), ["commit", "-m", "implementer candidate evidence"].as_slice()] {
+                    let output = std::process::Command::new("git")
+                        .args(arguments)
+                        .current_dir(workspace)
+                        .output()
+                        .map_err(|error| RuntimePortError::new(RuntimePortErrorKind::LaunchFailed, error.to_string()))?;
+                    if !output.status.success() {
+                        return Err(RuntimePortError::new(
+                            RuntimePortErrorKind::LaunchFailed,
+                            String::from_utf8_lossy(&output.stderr).into_owned(),
+                        ));
+                    }
+                }
             }
             self.sinks
                 .lock()
@@ -5215,6 +5254,8 @@ mod tests {
             assert_eq!(result["result"]["isError"], false);
             assert_eq!(serde_json::from_str::<serde_json::Value>(result["result"]["content"][0]["text"].as_str().unwrap()).unwrap()["status"], "implementer_request_recorded");
         });
+        let expected_implementer_invocation = stable_id("work-unit-implementer-invocation", &root.1);
+        fixture.runtime.stage_candidate_change(&expected_implementer_invocation);
         handler_runner.request_work_unit_implementer_from_authenticated_continuation(&continuation.3).unwrap();
         let implementer: (String,String,String,String,String,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
             "SELECT attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,
@@ -5226,6 +5267,7 @@ mod tests {
         assert_eq!(implementer.0, root.1);
         assert!(implementer.1.starts_with("work-unit-implementer-session-"));
         assert!(implementer.2.starts_with("work-unit-implementer-invocation-"));
+        assert_eq!(implementer.2, expected_implementer_invocation);
         assert!(implementer.3.starts_with("harness-revision-"));
         assert_eq!(implementer.4.len(), 64);
         for timestamp in [&implementer.5,&implementer.6,&implementer.7,&implementer.8,&implementer.9,&implementer.10] { assert!(timestamp.is_some()); }
@@ -5277,6 +5319,16 @@ mod tests {
             implementer_launch.options.sandbox,
             Some(crate::agent_sessions::domain::RuntimeSandboxMode::WorkspaceWrite)
         );
+        let specification: String = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT specification FROM work_units WHERE work_unit_id=?1",
+                [&root.0],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(implementer_launch.submitted_text.contains("Application-derived Work Unit specification:"));
+        assert!(implementer_launch.submitted_text.contains(&specification));
         for handler_launch in [original_handler_launch, action_handler_launch] {
             let extension = handler_launch.launch_extension.as_ref().unwrap();
             assert_eq!(
@@ -5298,6 +5350,43 @@ mod tests {
             implementer_extension.initial_prompt_prefix.as_ref().unwrap().source,
             "work_unit_implementer"
         );
+        let (implementer_revision, implementer_digest, implementer_commit): (String, String, String) =
+            Connection::open(&fixture.database_path)
+                .unwrap()
+                .query_row(
+                    "SELECT implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref FROM work_unit_implementer_activations WHERE work_unit_id=?1",
+                    [&root.0],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
+        let pinned_implementer = handler
+            .load_pinned_implementer_revision(
+                &implementer_revision,
+                &implementer_digest,
+                &implementer_commit,
+            )
+            .unwrap();
+        let evidence_package = handler
+            .construct_for_pinned_profile(
+                &implementer.0,
+                WorkUnitHarnessRole::Implementer,
+                pinned_implementer.profile,
+            )
+            .unwrap();
+        evidence_package
+            .bind_correlated_invocation(
+                AgentSessionId::new(implementer.1.clone()).unwrap(),
+                AgentInvocationId::new(implementer.2.clone()).unwrap(),
+            )
+            .unwrap();
+        let changed = evidence_package.changed_file_manifest().unwrap();
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0].display_name, "README.md");
+        let comparison = evidence_package.comparison().unwrap();
+        assert!(!comparison.is_empty());
+        let content = evidence_package.evidence_content(&changed[0].evidence_ref).unwrap();
+        assert_eq!(content, b"implementer candidate evidence\n");
+        assert!(!evidence_package.capture_authorization_id().unwrap().is_empty());
         let persisted_directories = Connection::open(&fixture.database_path)
             .unwrap()
             .prepare("SELECT id,working_directory FROM agent_sessions WHERE id IN (?1,?2)")

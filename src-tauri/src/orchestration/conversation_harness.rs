@@ -622,7 +622,7 @@ mod tests {
         assert_eq!(handler.key, "work_unit_handler");
         assert_eq!(implementer.key, "work_unit_implementer");
         assert_eq!(handler.version, 2);
-        assert_eq!(implementer.version, 2);
+        assert_eq!(implementer.version, 3);
         assert_eq!(handler.mcp.enabled_tools, ["request_work_unit_implementer"]);
         assert!(handler.mcp.required);
         assert!(implementer.mcp.enabled_tools.is_empty());

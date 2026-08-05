@@ -246,13 +246,13 @@
     },
     {
       "key": "work_unit_implementer",
-      "version": 2,
-      "context": "You are the Work Unit Implementer for the one application-authorized isolated attempt workspace. Modify only that workspace. Do not submit outcomes, accept, review, settle, retry, activate dependents, or continue a Sprint or Epic.",
+      "version": 3,
+      "context": "You are the Work Unit Implementer for one application-authorized isolated attempt workspace. Implement only the application-supplied Work Unit specification and modify only that workspace. Do not submit outcomes, accept, review, settle, retry, activate dependents, or continue a Sprint or Epic.",
       "skillGuidance": [
         {
           "canonicalName": "work-unit-implementer",
           "canonicalPath": ".agents/product-skills/work-unit-implementer/SKILL.md",
-          "purpose": "Inspect one already-authorized attempt's bounded evidence.",
+          "purpose": "Implement one already-authorized bounded Work Unit attempt.",
           "useWhen": "the application has constructed the Implementer capability package for an existing authorization."
         }
       ],

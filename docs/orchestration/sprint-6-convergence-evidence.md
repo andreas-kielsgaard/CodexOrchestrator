@@ -457,7 +457,8 @@ independently corrected candidate `0d686299e6ed793d224ffdc8fbd44f6a904f3376`. Th
 only the final candidate record returned for Plan Slice evaluation; it does not imply merge, push,
 publication, release, Handler review, overall-plan acceptance, or user acceptance.
 
-- The original immutable Implementer activation remains actionless. Only a later immutable
+- The original immutable Implementer activation exposes no application action, but it performs the
+  application-supplied bounded Work Unit change in its exact WorkspaceWrite attempt worktree. Only a later immutable
   reporting continuation in the same Session may expose the identity-free
   `submit_implementation_outcome { outcome: review_pending, summary, validationStatement }` and
   zero-input `complete_implementation_outcome`. The application requires whitelist discovery and
@@ -512,6 +513,30 @@ activation, planning settlement, Sprint or Epic continuation, Pause/Restart, aut
 or process reattachment was created. No live provider, Codex, or MCP process turn, paid smoke, real
 OS/process reattachment, packaged Tauri release/build, or production migration was exercised.
 Live-provider compliance, production behavior, and user acceptance remain unproven.
+
+## PIP-01: Productive original Implementer route
+
+The original Implementer launch now carries the exact durable Work Unit specification from the
+application-owned materialization. Its immutable Harness exposes no MCP action; this does not make
+the WorkspaceWrite implementation turn actionless. Catalog v3 and the product skill require one
+bounded candidate change only in the application-provided isolated workspace.
+
+- The authenticated Handler continuation derives the Work Unit, attempt, pinned Harness revision,
+  Session, invocation, execution-support grant, and workspace before it reads the stored
+  specification. Blank or oversized specifications fail closed.
+- The controlled local `RecordingRuntime` proof commits a deterministic `README.md` candidate only
+  when the exact original Implementer invocation starts. The application then consumes a nonempty
+  changed-file manifest, comparison, evidence content, and capture authorization through that
+  exact correlated capability package.
+- `cargo test -p codex-orchestrator
+  terminal_authority_fixture_converges_product_materialization_and_real_git_gateway -- --nocapture`
+  passed **1/1** (397 filtered). The existing route assertions retain foreign continuation,
+  stale/terminal action, pinned-revision drift, Session-directory conflict, launch failure, reopen,
+  and idempotency denials.
+
+This is controlled local/fake runtime evidence, not live-provider behavior or a user-accepted
+candidate. It creates no reporting claim, Handler judgment, retry, integration, settlement,
+dependent activation, Sprint/Epic continuation, Pause/Restart change, publication, or push.
 
 ## HR-04: Independent Handler review, acceptance, and return
 
