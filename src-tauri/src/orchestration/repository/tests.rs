@@ -1461,6 +1461,21 @@ fn native_query_projects_durable_epic_escalations_and_rejects_foreign_or_out_of_
     drop(connection);
 
     let projected = repository.native_query().expect("durable projection");
+    let inspection = projected
+        .work_unit_inspections
+        .iter()
+        .find(|item| item.work_unit_id == "unit-1")
+        .expect("unit inspection");
+    assert!(inspection.activities.iter().any(|activity| {
+        activity.agent_session_id == "implementer-session-1"
+            && activity.invocation_id
+                == projection_stable_id("work-unit-implementer-reporting-invocation", "attempt-1")
+    }));
+    assert!(matches!(
+        inspection.file_evidence,
+        super::WorkUnitInspectionFileEvidenceDto::Available { .. }
+    ));
+    assert!(inspection.test_evidence.reason.contains("test-detail"));
     let first = &projected.work_units[0].attempt_history[0].incomplete_disposition.as_ref().unwrap().no_progress_handback.as_ref().unwrap().epic_runner_receiver.as_ref().unwrap();
     assert_eq!(first.sprint_id, sprint);
     assert_eq!(first.epic_id, epic);
@@ -1832,6 +1847,7 @@ fn canonical_populated_query() -> NativeQueryV2 {
         work_unit_relationships: vec![],
         dependency_activation_intents: vec![],
         work_unit_execution_states: vec![], work_slice_execution_graph_completions: vec![], work_slice_execution_settlements: vec![], work_slice_planning_point_execution_settlements: vec![], work_slice_execution_attentions: vec![],
+        work_unit_inspections: vec![],
     }
 }
 
@@ -1853,6 +1869,10 @@ fn current_native_fixture(value: &str) -> Result<serde_json::Value, serde_json::
         .as_object_mut()
         .unwrap()
         .insert("workUnitRelationships".into(), serde_json::json!([]));
+    fixture
+        .as_object_mut()
+        .unwrap()
+        .insert("workUnitInspections".into(), serde_json::json!([]));
     for field in ["workUnitExecutionStates", "workSliceExecutionGraphCompletions", "workSliceExecutionSettlements", "workSlicePlanningPointExecutionSettlements", "workSliceExecutionAttentions"] { fixture.as_object_mut().unwrap().entry(field).or_insert(serde_json::json!([])); }
     Ok(fixture)
 }

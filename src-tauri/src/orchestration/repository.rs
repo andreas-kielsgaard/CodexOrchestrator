@@ -1222,6 +1222,10 @@ impl SqliteOrchestrationRepository {
         if !productive_integrations.is_empty() {
             return Err("Productive integration references an unknown Work Unit".into());
         }
+        let work_unit_inspections = work_units
+            .iter()
+            .map(work_unit_inspection_projection)
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(NativeQueryV2 {
             contract_version: NATIVE_QUERY_VERSION,
             generated_at: timestamp(generated_at),
@@ -1243,6 +1247,7 @@ impl SqliteOrchestrationRepository {
             work_unit_relationships,
             dependency_activation_intents,
             work_unit_execution_states, work_slice_execution_graph_completions, work_slice_execution_settlements, work_slice_planning_point_execution_settlements, work_slice_execution_attentions,
+            work_unit_inspections,
         })
     }
 
@@ -2808,6 +2813,7 @@ pub(crate) struct NativeQueryV2 {
     work_unit_relationships: Vec<WorkUnitRelationshipDto>,
     dependency_activation_intents: Vec<WorkUnitDependencyActivationIntentDto>,
     work_unit_execution_states: Vec<WorkUnitExecutionStateDto>, work_slice_execution_graph_completions: Vec<WorkSliceExecutionGraphCompletionDto>, work_slice_execution_settlements: Vec<WorkSliceExecutionSettlementDto>, work_slice_planning_point_execution_settlements: Vec<WorkSlicePlanningPointExecutionSettlementDto>, work_slice_execution_attentions: Vec<WorkSliceExecutionAttentionDto>,
+    work_unit_inspections: Vec<WorkUnitInspectionDto>,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -3037,6 +3043,284 @@ struct WorkUnitDto {
     retry_attempts: Vec<WorkUnitRetryAttemptDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     integration: Option<WorkUnitIntegrationDto>,
+}
+
+/// Read-only inspection links. Each activity is derived from an already validated Work Unit
+/// execution record; no runtime transcript, private Harness detail, or claim prose creates one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitInspectionDto {
+    work_unit_id: String,
+    materialization_id: String,
+    activities: Vec<WorkUnitInspectionActivityDto>,
+    file_evidence: WorkUnitInspectionFileEvidenceDto,
+    test_evidence: WorkUnitInspectionUnavailableDetailDto,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkUnitInspectionRoleDto { Handler, Implementer }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkUnitInspectionStageDto {
+    HandlerActivation,
+    HandlerAction,
+    ImplementerActivation,
+    ImplementerReporting,
+    HandlerReview,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitInspectionActivityDto {
+    activity_id: String,
+    attempt_id: String,
+    role: WorkUnitInspectionRoleDto,
+    agent_session_id: String,
+    invocation_id: String,
+    primary_stage: WorkUnitInspectionStageDto,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    application_summary: Option<WorkUnitInspectionApplicationSummaryDto>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkUnitInspectionOwnerDto { Application }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkUnitInspectionApplicationEventKindDto {
+    SubmissionRecorded,
+    FileEvidenceRecorded,
+    SemanticCompletionRecorded,
+    TerminalLifecycleObserved,
+    ApplicationAcceptanceRecorded,
+    HandlerReviewReady,
+    ReviewDeliveryPersisted,
+    ReviewJudgmentRecorded,
+    ReviewLifecycleObserved,
+    ReviewConflictRecorded,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitInspectionApplicationSummaryDto {
+    owner: WorkUnitInspectionOwnerDto,
+    application_events: Vec<WorkUnitInspectionApplicationEventKindDto>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    peer_evidence_activity_ids: Vec<String>,
+    mcp_call_detail: WorkUnitInspectionUnavailableDetailDto,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case", rename_all_fields = "camelCase")]
+enum WorkUnitInspectionFileEvidenceDto {
+    Available {
+        owner: WorkUnitInspectionOwnerDto,
+        source_activity_id: String,
+        changed_files: Vec<WorkUnitImplementerEvidenceFileDto>,
+    },
+    Unavailable {
+        owner: WorkUnitInspectionOwnerDto,
+        reason: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitInspectionUnavailableDetailDto {
+    owner: WorkUnitInspectionOwnerDto,
+    reason: String,
+}
+
+fn inspection_unavailable(reason: &str) -> WorkUnitInspectionUnavailableDetailDto {
+    WorkUnitInspectionUnavailableDetailDto {
+        owner: WorkUnitInspectionOwnerDto::Application,
+        reason: reason.into(),
+    }
+}
+
+fn inspection_activity_id(
+    work_unit_id: &str,
+    attempt_id: &str,
+    stage: &str,
+    invocation_id: &str,
+) -> String {
+    format!("work-unit-inspection:{work_unit_id}:{attempt_id}:{stage}:{invocation_id}")
+}
+
+fn work_unit_inspection_projection(
+    unit: &WorkUnitDto,
+) -> Result<WorkUnitInspectionDto, String> {
+    let mut activities = Vec::new();
+    if let Some(handler) = &unit.handler_activation {
+        if let (Some(session_id), Some(invocation_id), Some(_)) = (
+            &handler.handler_session_id,
+            &handler.handler_invocation_id,
+            &handler.handler_session_created_at,
+        ) {
+            activities.push(WorkUnitInspectionActivityDto {
+                activity_id: inspection_activity_id(
+                    &unit.work_unit_id,
+                    &handler.attempt_id,
+                    "handler-activation",
+                    invocation_id,
+                ),
+                attempt_id: handler.attempt_id.clone(),
+                role: WorkUnitInspectionRoleDto::Handler,
+                agent_session_id: session_id.clone(),
+                invocation_id: invocation_id.clone(),
+                primary_stage: WorkUnitInspectionStageDto::HandlerActivation,
+                application_summary: None,
+            });
+        }
+    }
+    if let Some(action) = &unit.action_continuation {
+        if action.invocation_prepared_at.is_some() {
+            activities.push(WorkUnitInspectionActivityDto {
+                activity_id: inspection_activity_id(
+                    &unit.work_unit_id,
+                    &action.attempt_id,
+                    "handler-action",
+                    &action.action_invocation_id,
+                ),
+                attempt_id: action.attempt_id.clone(),
+                role: WorkUnitInspectionRoleDto::Handler,
+                agent_session_id: action.handler_session_id.clone(),
+                invocation_id: action.action_invocation_id.clone(),
+                primary_stage: WorkUnitInspectionStageDto::HandlerAction,
+                application_summary: None,
+            });
+        }
+    }
+    if let Some(implementer) = &unit.implementer_activation {
+        if implementer.implementer_session_created_at.is_some()
+            && implementer.implementer_invocation_prepared_at.is_some()
+        {
+            activities.push(WorkUnitInspectionActivityDto {
+                activity_id: inspection_activity_id(
+                    &unit.work_unit_id,
+                    &implementer.attempt_id,
+                    "implementer-activation",
+                    &implementer.implementer_invocation_id,
+                ),
+                attempt_id: implementer.attempt_id.clone(),
+                role: WorkUnitInspectionRoleDto::Implementer,
+                agent_session_id: implementer.implementer_session_id.clone(),
+                invocation_id: implementer.implementer_invocation_id.clone(),
+                primary_stage: WorkUnitInspectionStageDto::ImplementerActivation,
+                application_summary: None,
+            });
+        }
+    }
+    let mut file_evidence = WorkUnitInspectionFileEvidenceDto::Unavailable {
+        owner: WorkUnitInspectionOwnerDto::Application,
+        reason: "No application-owned changed-file evidence is available for this Work Unit.".into(),
+    };
+    for attempt in &unit.attempt_history {
+        let Some(outcome) = &attempt.implementer_outcome else { continue };
+        if outcome.reporting_prepared_at.is_none() { continue; }
+        let activity_id = inspection_activity_id(
+            &unit.work_unit_id,
+            &attempt.attempt_id,
+            "implementer-reporting",
+            &outcome.reporting_invocation_id,
+        );
+        let mut events = Vec::new();
+        if outcome.submitted_outcome.is_some() {
+            events.push(WorkUnitInspectionApplicationEventKindDto::SubmissionRecorded);
+        }
+        if outcome.evidence.is_some() {
+            events.push(WorkUnitInspectionApplicationEventKindDto::FileEvidenceRecorded);
+        }
+        if outcome.semantic_completion.is_some() {
+            events.push(WorkUnitInspectionApplicationEventKindDto::SemanticCompletionRecorded);
+        }
+        if outcome.terminal_lifecycle.is_some() {
+            events.push(WorkUnitInspectionApplicationEventKindDto::TerminalLifecycleObserved);
+        }
+        if outcome.application_accepted_at.is_some() {
+            events.push(WorkUnitInspectionApplicationEventKindDto::ApplicationAcceptanceRecorded);
+        }
+        if outcome.handler_review_ready_at.is_some() {
+            events.push(WorkUnitInspectionApplicationEventKindDto::HandlerReviewReady);
+        }
+        activities.push(WorkUnitInspectionActivityDto {
+            activity_id: activity_id.clone(),
+            attempt_id: attempt.attempt_id.clone(),
+            role: WorkUnitInspectionRoleDto::Implementer,
+            agent_session_id: outcome.implementer_session_id.clone(),
+            invocation_id: outcome.reporting_invocation_id.clone(),
+            primary_stage: WorkUnitInspectionStageDto::ImplementerReporting,
+            application_summary: Some(WorkUnitInspectionApplicationSummaryDto {
+                owner: WorkUnitInspectionOwnerDto::Application,
+                application_events: events,
+                peer_evidence_activity_ids: Vec::new(),
+                mcp_call_detail: inspection_unavailable(
+                    "No application-owned MCP-call detail is available for this reporting turn.",
+                ),
+            }),
+        });
+        if let Some(evidence) = &outcome.evidence {
+            file_evidence = WorkUnitInspectionFileEvidenceDto::Available {
+                owner: WorkUnitInspectionOwnerDto::Application,
+                source_activity_id: activity_id.clone(),
+                changed_files: evidence.changed_files.clone(),
+            };
+        }
+        if let Some(review) = &attempt.handler_review {
+            if review.review_ready_at.is_some() {
+                let mut events = Vec::new();
+                if review.delivery_persisted_at.is_some() {
+                    events.push(WorkUnitInspectionApplicationEventKindDto::ReviewDeliveryPersisted);
+                }
+                if review.semantic_judgment.is_some() {
+                    events.push(WorkUnitInspectionApplicationEventKindDto::ReviewJudgmentRecorded);
+                }
+                if review.lifecycle.is_some() {
+                    events.push(WorkUnitInspectionApplicationEventKindDto::ReviewLifecycleObserved);
+                }
+                if review.conflict.is_some() {
+                    events.push(WorkUnitInspectionApplicationEventKindDto::ReviewConflictRecorded);
+                }
+                activities.push(WorkUnitInspectionActivityDto {
+                    activity_id: inspection_activity_id(
+                        &unit.work_unit_id,
+                        &attempt.attempt_id,
+                        "handler-review",
+                        &review.review_invocation_id,
+                    ),
+                    attempt_id: attempt.attempt_id.clone(),
+                    role: WorkUnitInspectionRoleDto::Handler,
+                    agent_session_id: review.handler_session_id.clone(),
+                    invocation_id: review.review_invocation_id.clone(),
+                    primary_stage: WorkUnitInspectionStageDto::HandlerReview,
+                    application_summary: Some(WorkUnitInspectionApplicationSummaryDto {
+                        owner: WorkUnitInspectionOwnerDto::Application,
+                        application_events: events,
+                        peer_evidence_activity_ids: vec![activity_id],
+                        mcp_call_detail: inspection_unavailable(
+                            "No application-owned MCP-call detail is available for this review turn.",
+                        ),
+                    }),
+                });
+            }
+        }
+    }
+    let mut activity_ids = std::collections::HashSet::new();
+    if activities.iter().any(|activity| !activity_ids.insert(&activity.activity_id)) {
+        return Err("Work Unit inspection has duplicated activity identities".into());
+    }
+    Ok(WorkUnitInspectionDto {
+        work_unit_id: unit.work_unit_id.clone(),
+        materialization_id: unit.materialization_id.clone(),
+        activities,
+        file_evidence,
+        test_evidence: inspection_unavailable(
+            "No application-owned test-detail evidence is available for this Work Unit.",
+        ),
+    })
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]

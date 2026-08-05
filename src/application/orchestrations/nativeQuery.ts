@@ -12,6 +12,7 @@ import type {
   ProductWorkUnitHandlerReviewV1,
   ProductWorkUnitImplementerActivationV1,
   ProductWorkUnitImplementerOutcomeV1,
+  ProductWorkUnitInspectionV1,
   ProductWorkUnitRetryAttemptV1,
   ProductSprintRunnerHandbackDeliveryV1,
   ProductSprintRunnerHandbackBoundedDetailV1,
@@ -49,6 +50,7 @@ export interface OrchestrationNativeQueryV2 {
   readonly workSliceExecutionSettlements: readonly NativeWorkSliceExecutionSettlementV1[];
   readonly workSlicePlanningPointExecutionSettlements: readonly NativeWorkSlicePlanningPointExecutionSettlementV1[];
   readonly workSliceExecutionAttentions: readonly NativeWorkSliceExecutionAttentionV1[];
+  readonly workUnitInspections: readonly NativeWorkUnitInspectionV1[];
 }
 export interface NativeWorkUnitExecutionStateV1 {
   readonly workUnitId: string;
@@ -168,6 +170,7 @@ export type NativeWorkUnitHandlerDecisionV1 = ProductWorkUnitHandlerDecisionV1;
 export type NativeWorkUnitIncompleteDispositionV1 = ProductWorkUnitIncompleteDispositionV1;
 export type NativeWorkUnitRetryAttemptV1 = ProductWorkUnitRetryAttemptV1;
 export type NativeWorkUnitIntegrationV1 = ProductWorkUnitIntegrationV1;
+export type NativeWorkUnitInspectionV1 = ProductWorkUnitInspectionV1;
 export type NativeEpicEscalationReceiverV1 = ProductEpicEscalationReceiverV1;
 export interface NativeWorkUnitRelationshipV1 {
   readonly relationshipId: string;
@@ -336,6 +339,7 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
       'workSliceExecutionSettlements',
       'workSlicePlanningPointExecutionSettlements',
       'workSliceExecutionAttentions',
+      'workUnitInspections',
     ],
     'native query',
   );
@@ -392,6 +396,10 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
     workSliceExecutionSettlements: root.workSliceExecutionSettlements === undefined ? [] : array(root.workSliceExecutionSettlements, 'workSliceExecutionSettlements').map(workSliceExecutionSettlement),
     workSlicePlanningPointExecutionSettlements: root.workSlicePlanningPointExecutionSettlements === undefined ? [] : array(root.workSlicePlanningPointExecutionSettlements, 'workSlicePlanningPointExecutionSettlements').map(workSlicePlanningPointExecutionSettlement),
     workSliceExecutionAttentions: root.workSliceExecutionAttentions === undefined ? [] : array(root.workSliceExecutionAttentions, 'workSliceExecutionAttentions').map(workSliceExecutionAttention),
+    workUnitInspections:
+      root.workUnitInspections === undefined
+        ? []
+        : array(root.workUnitInspections, 'workUnitInspections').map(workUnitInspection),
   };
   validate(query);
   return query;
@@ -461,8 +469,38 @@ export function nativeQueryProductCompositionInputV2(
       .filter((unit) => unit.materializationId === materialization.materializationId)
       .sort((left, right) => left.laneOrdinal - right.laneOrdinal),
     );
+  const inspectionsByWorkUnitId = new Map(
+    query.workUnitInspections.map((inspection) => [inspection.workUnitId, inspection]),
+  );
   const scopeId = (unit: NativeMaterializedWorkUnitV1) =>
     `materialized-work-unit-scope:${unit.materializationId}:${unit.workUnitId}`;
+  const executionId = (unit: NativeMaterializedWorkUnitV1, attemptId: string) =>
+    `productive-work-unit-execution:${unit.materializationId}:${unit.workUnitId}:${attemptId}`;
+  const productiveActivities = materializedUnits.flatMap((unit) =>
+    (inspectionsByWorkUnitId.get(unit.workUnitId)?.activities ?? []).map((activity) => ({
+      unit,
+      activity,
+    })),
+  );
+  const productiveExecutions = Array.from(
+    new Map(
+      productiveActivities.map(({ unit, activity }) => [
+        executionId(unit, activity.attemptId),
+        { unit, attemptId: activity.attemptId },
+      ]),
+    ).values(),
+  );
+  const productiveSessions = Array.from(
+    new Map(
+      productiveActivities.map(({ activity }) => [
+        activity.agentSessionId,
+        {
+          agentSessionId: activity.agentSessionId,
+          title: activity.role === 'handler' ? 'Work Unit Handler' : 'Work Unit Implementer',
+        },
+      ]),
+    ).values(),
+  );
   const materializationById = new Map(
     query.workUnitMaterializations.map((materialization) => [
       materialization.materializationId,
@@ -521,14 +559,38 @@ export function nativeQueryProductCompositionInputV2(
           .sprintPlanRevisionId,
       ],
     })),
-    workUnitExecutions: [],
-    attempts: [],
-    agentSessions: uniquePlanBuilderSessions.map(({ association }) => ({
-      agentSessionId: association.agentSessionId,
+    workUnitExecutions: productiveExecutions.map(({ unit, attemptId }) => ({
+      workUnitExecutionId: executionId(unit, attemptId),
+      workUnitId: unit.workUnitId,
+      fixedWorkUnitScopeId: scopeId(unit),
     })),
+    attempts: productiveExecutions.map(({ unit, attemptId }) => ({
+      attemptId,
+      workUnitExecutionId: executionId(unit, attemptId),
+      fixedWorkUnitScopeId: scopeId(unit),
+    })),
+    agentSessions: [
+      ...uniquePlanBuilderSessions.map(({ association }) => ({
+        agentSessionId: association.agentSessionId,
+      })),
+      ...productiveSessions.map(({ agentSessionId }) => ({ agentSessionId })),
+    ].filter(
+      (session, index, sessions) =>
+        sessions.findIndex((candidate) => candidate.agentSessionId === session.agentSessionId) === index,
+    ),
     // Plan Builder Sessions remain associated with their durable planning drafts. Initiation does
     // not relabel them as one of the five orchestration runtime roles.
-    agentSessionReferences: [],
+    agentSessionReferences: productiveActivities.map(({ unit, activity }) => ({
+      agentSessionRefId: activity.activityId,
+      agentSessionId: activity.agentSessionId,
+      agentInvocationId: activity.invocationId,
+      targetKind: 'work_unit_execution' as const,
+      targetId: executionId(unit, activity.attemptId),
+      semanticRole:
+        activity.role === 'handler'
+          ? ('work_unit_handler' as const)
+          : ('work_unit_implementer' as const),
+    })),
     gates: [],
     gateCriteriaRevisions: [],
     feedbackRecords: [],
@@ -658,6 +720,9 @@ export function nativeQueryProductCompositionInputV2(
         ...(executionStateByWorkUnitId.has(unit.workUnitId)
           ? { executionState: executionStateByWorkUnitId.get(unit.workUnitId) }
           : {}),
+        ...(inspectionsByWorkUnitId.has(unit.workUnitId)
+          ? { inspection: inspectionsByWorkUnitId.get(unit.workUnitId) }
+          : {}),
         ...(unit.handlerActivation
           ? { handlerActivation: handlerActivationPresentation(unit.handlerActivation) }
           : {}),
@@ -684,11 +749,26 @@ export function nativeQueryProductCompositionInputV2(
       })),
       gates: [],
       concerns: [],
-      agentSessions: uniquePlanBuilderSessions.map(({ epic, association, draft }) => ({
-        agentSessionId: association.agentSessionId,
-        title: draft.title ?? 'Epic Plan Builder',
-        source: source(epic.provenanceId),
-      })),
+      agentSessions: [
+        ...uniquePlanBuilderSessions.map(({ epic, association, draft }) => ({
+          agentSessionId: association.agentSessionId,
+          title: draft.title ?? 'Epic Plan Builder',
+          source: source(epic.provenanceId),
+        })),
+        ...productiveSessions.map((session) => ({
+          ...session,
+          source: source(
+            materializedUnits.find((unit) =>
+              inspectionsByWorkUnitId.get(unit.workUnitId)?.activities.some(
+                (activity) => activity.agentSessionId === session.agentSessionId,
+              ),
+            )!.materializationId,
+          ),
+        })),
+      ].filter(
+        (session, index, sessions) =>
+          sessions.findIndex((candidate) => candidate.agentSessionId === session.agentSessionId) === index,
+      ),
       artifactOwnership: query.fileReviewDocuments.map((x) => ({
         artifactId: x.artifactId,
         sprintId: x.sprintId,
@@ -1279,6 +1359,71 @@ const workSliceExecutionAttention = (value: unknown): NativeWorkSliceExecutionAt
   const x = object(value, 'Work Slice execution attention');
   keys(x, ['materializationId', 'recordedAt'], 'Work Slice execution attention');
   return { materializationId: string(x.materializationId, 'materializationId'), recordedAt: timestamp(x.recordedAt, 'Work Slice execution attention recordedAt') };
+};
+const inspectionUnavailable = (value: unknown, label: string) => {
+  const x = object(value, label);
+  keys(x, ['owner', 'reason'], label);
+  if (x.owner !== 'application') fail(`${label} owner must be application`);
+  return { owner: 'application' as const, reason: boundedString(x.reason, 4_000, `${label} reason`) };
+};
+const workUnitInspection = (value: unknown): NativeWorkUnitInspectionV1 => {
+  const x = object(value, 'Work Unit inspection');
+  keys(x, ['workUnitId', 'materializationId', 'activities', 'fileEvidence', 'testEvidence'], 'Work Unit inspection');
+  const activities = array(x.activities, 'Work Unit inspection activities').map((value) => {
+    const activity = object(value, 'Work Unit inspection activity');
+    keys(activity, ['activityId', 'attemptId', 'role', 'agentSessionId', 'invocationId', 'primaryStage', 'applicationSummary'], 'Work Unit inspection activity');
+    if (!['handler', 'implementer'].includes(activity.role as string)) fail('invalid Work Unit inspection role');
+    if (!['handler_activation', 'handler_action', 'implementer_activation', 'implementer_reporting', 'handler_review'].includes(activity.primaryStage as string)) fail('invalid Work Unit inspection primary stage');
+    const applicationSummary = activity.applicationSummary === undefined ? undefined : (() => {
+      const summary = object(activity.applicationSummary, 'Work Unit inspection application summary');
+      keys(summary, ['owner', 'applicationEvents', 'peerEvidenceActivityIds', 'mcpCallDetail'], 'Work Unit inspection application summary');
+      if (summary.owner !== 'application') fail('Work Unit inspection application summary owner must be application');
+      const applicationEvents = array(summary.applicationEvents, 'Work Unit inspection application events').map((event) => {
+        const value = string(event, 'Work Unit inspection application event');
+        if (!['submission_recorded', 'file_evidence_recorded', 'semantic_completion_recorded', 'terminal_lifecycle_observed', 'application_acceptance_recorded', 'handler_review_ready', 'review_delivery_persisted', 'review_judgment_recorded', 'review_lifecycle_observed', 'review_conflict_recorded'].includes(value)) fail('invalid Work Unit inspection application event');
+        return value as NonNullable<NativeWorkUnitInspectionV1['activities'][number]['applicationSummary']>['applicationEvents'][number];
+      });
+      unique(applicationEvents, (event) => event, 'Work Unit inspection application event');
+      const peerEvidenceActivityIds = array(summary.peerEvidenceActivityIds, 'Work Unit inspection peer evidence activities').map((id) => boundedString(id, 240, 'Work Unit inspection peer evidence activity ID'));
+      unique(peerEvidenceActivityIds, (id) => id, 'Work Unit inspection peer evidence activity ID');
+      return { owner: 'application' as const, applicationEvents, peerEvidenceActivityIds, mcpCallDetail: inspectionUnavailable(summary.mcpCallDetail, 'Work Unit inspection MCP-call detail') };
+    })();
+    return {
+      activityId: boundedString(activity.activityId, 240, 'Work Unit inspection activityId'),
+      attemptId: boundedString(activity.attemptId, 240, 'Work Unit inspection attemptId'),
+      role: activity.role as 'handler' | 'implementer',
+      agentSessionId: boundedString(activity.agentSessionId, 240, 'Work Unit inspection agentSessionId'),
+      invocationId: boundedString(activity.invocationId, 240, 'Work Unit inspection invocationId'),
+      primaryStage: activity.primaryStage as NativeWorkUnitInspectionV1['activities'][number]['primaryStage'],
+      ...(applicationSummary ? { applicationSummary } : {}),
+    };
+  });
+  unique(activities, (activity) => activity.activityId, 'Work Unit inspection activity ID');
+  const fileEvidenceValue = object(x.fileEvidence, 'Work Unit inspection file evidence');
+  const fileEvidence = fileEvidenceValue.status === 'available' ? (() => {
+    keys(fileEvidenceValue, ['status', 'owner', 'sourceActivityId', 'changedFiles'], 'Work Unit inspection available file evidence');
+    if (fileEvidenceValue.owner !== 'application') fail('Work Unit inspection file evidence owner must be application');
+    const changedFiles = array(fileEvidenceValue.changedFiles, 'Work Unit inspection changed files').map((value) => {
+      const file = object(value, 'Work Unit inspection changed file');
+      keys(file, ['evidenceRef', 'displayName', 'changeKind', 'contentFingerprint'], 'Work Unit inspection changed file');
+      if (!['added', 'modified', 'deleted', 'renamed'].includes(file.changeKind as string)) fail('invalid Work Unit inspection changed file kind');
+      return { evidenceRef: boundedString(file.evidenceRef, 240, 'Work Unit inspection evidenceRef'), displayName: boundedString(file.displayName, 1_000, 'Work Unit inspection displayName'), changeKind: file.changeKind as 'added' | 'modified' | 'deleted' | 'renamed', contentFingerprint: boundedString(file.contentFingerprint, 240, 'Work Unit inspection contentFingerprint') };
+    });
+    if (!changedFiles.length || changedFiles.length > 500) fail('Work Unit inspection file evidence must be bounded and nonempty');
+    unique(changedFiles, (file) => file.evidenceRef, 'Work Unit inspection evidence reference');
+    return { status: 'available' as const, owner: 'application' as const, sourceActivityId: boundedString(fileEvidenceValue.sourceActivityId, 240, 'Work Unit inspection sourceActivityId'), changedFiles };
+  })() : (() => {
+    keys(fileEvidenceValue, ['status', 'owner', 'reason'], 'Work Unit inspection unavailable file evidence');
+    if (fileEvidenceValue.status !== 'unavailable') fail('invalid Work Unit inspection file evidence status');
+    return { status: 'unavailable' as const, ...inspectionUnavailable(fileEvidenceValue, 'Work Unit inspection unavailable file evidence') };
+  })();
+  return {
+    workUnitId: boundedString(x.workUnitId, 240, 'Work Unit inspection workUnitId'),
+    materializationId: boundedString(x.materializationId, 240, 'Work Unit inspection materializationId'),
+    activities,
+    fileEvidence,
+    testEvidence: inspectionUnavailable(x.testEvidence, 'Work Unit inspection test evidence'),
+  };
 };
 const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
   const x = object(value, 'materialized Work Unit');
@@ -2916,6 +3061,88 @@ function validate(query: OrchestrationNativeQueryV2) {
     fail('materialized Work Unit references unknown materialization');
   if (query.workUnitRelationships.some((item) => !materializations.has(item.materializationId)))
     fail('Work Unit relationship references unknown materialization');
+  validateWorkUnitInspections(query);
+}
+function validateWorkUnitInspections(query: OrchestrationNativeQueryV2) {
+  if (!query.workUnitInspections.length) return;
+  unique(query.workUnitInspections, (entry) => entry.workUnitId, 'Work Unit inspection Work Unit ID');
+  if (query.workUnitInspections.length !== query.workUnits.length)
+    fail('Work Unit inspection projection is incomplete');
+  for (const inspection of query.workUnitInspections) {
+    const unit = query.workUnits.find((candidate) => candidate.workUnitId === inspection.workUnitId);
+    if (!unit || unit.materializationId !== inspection.materializationId)
+      fail('Work Unit inspection has foreign Work Unit correlation');
+    const expected = new Set<string>();
+    const key = (stage: string, attemptId: string, sessionId: string, invocationId: string) =>
+      `${stage}:${attemptId}:${sessionId}:${invocationId}`;
+    const handler = unit.handlerActivation;
+    if (handler?.handlerSessionId && handler.handlerInvocationId && handler.handlerSessionCreatedAt)
+      expected.add(key('handler_activation', handler.attemptId, handler.handlerSessionId, handler.handlerInvocationId));
+    const action = unit.actionContinuation;
+    if (action?.invocationPreparedAt)
+      expected.add(key('handler_action', action.attemptId, action.handlerSessionId, action.actionInvocationId));
+    const implementer = unit.implementerActivation;
+    if (implementer?.implementerSessionCreatedAt && implementer.implementerInvocationPreparedAt)
+      expected.add(key('implementer_activation', implementer.attemptId, implementer.implementerSessionId, implementer.implementerInvocationId));
+    unit.attemptHistory.forEach((attempt) => {
+      const outcome = attempt.implementerOutcome;
+      if (outcome?.reportingPreparedAt)
+        expected.add(key('implementer_reporting', attempt.attemptId, outcome.implementerSessionId, outcome.reportingInvocationId));
+      const review = attempt.handlerReview;
+      if (review?.reviewReadyAt)
+        expected.add(key('handler_review', attempt.attemptId, review.handlerSessionId, review.reviewInvocationId));
+    });
+    const actual = new Set<string>();
+    const byId = new Map(inspection.activities.map((activity) => [activity.activityId, activity]));
+    for (const activity of inspection.activities) {
+      const activityKey = key(activity.primaryStage, activity.attemptId, activity.agentSessionId, activity.invocationId);
+      if (!expected.has(activityKey) || actual.has(activityKey))
+        fail('Work Unit inspection activity is foreign, stale, or duplicated');
+      actual.add(activityKey);
+      const needsSummary = activity.primaryStage === 'implementer_reporting' || activity.primaryStage === 'handler_review';
+      if (needsSummary !== (activity.applicationSummary !== undefined))
+        fail('Work Unit inspection application summary is not owned by its exact activity');
+      const summary = activity.applicationSummary;
+      if (!summary) continue;
+      const attempt = unit.attemptHistory.find((candidate) => candidate.attemptId === activity.attemptId);
+      if (!attempt) fail('Work Unit inspection summary references an unknown attempt');
+      const expectedEvents = activity.primaryStage === 'implementer_reporting'
+        ? [
+            ...(attempt.implementerOutcome?.submittedOutcome ? ['submission_recorded'] : []),
+            ...(attempt.implementerOutcome?.evidence ? ['file_evidence_recorded'] : []),
+            ...(attempt.implementerOutcome?.semanticCompletion ? ['semantic_completion_recorded'] : []),
+            ...(attempt.implementerOutcome?.terminalLifecycle ? ['terminal_lifecycle_observed'] : []),
+            ...(attempt.implementerOutcome?.applicationAcceptedAt ? ['application_acceptance_recorded'] : []),
+            ...(attempt.implementerOutcome?.handlerReviewReadyAt ? ['handler_review_ready'] : []),
+          ]
+        : [
+            ...(attempt.handlerReview?.deliveryPersistedAt ? ['review_delivery_persisted'] : []),
+            ...(attempt.handlerReview?.semanticJudgment ? ['review_judgment_recorded'] : []),
+            ...(attempt.handlerReview?.lifecycle ? ['review_lifecycle_observed'] : []),
+            ...(attempt.handlerReview?.conflict ? ['review_conflict_recorded'] : []),
+          ];
+      if (JSON.stringify(summary.applicationEvents) !== JSON.stringify(expectedEvents))
+        fail('Work Unit inspection application events are not the exact owned summary');
+      if (activity.primaryStage === 'implementer_reporting') {
+        if (summary.peerEvidenceActivityIds.length) fail('Implementer reporting summary has foreign peer evidence');
+      } else {
+        if (summary.peerEvidenceActivityIds.length !== 1) fail('Handler review summary lacks exact peer evidence');
+        const peer = byId.get(summary.peerEvidenceActivityIds[0]!);
+        if (!peer || peer.primaryStage !== 'implementer_reporting' || peer.attemptId !== activity.attemptId || !attempt.implementerOutcome?.evidence)
+          fail('Handler review summary has foreign peer evidence');
+      }
+    }
+    if (actual.size !== expected.size) fail('Work Unit inspection projection omits a supported activity');
+    const evidenceOutcome = [...unit.attemptHistory].reverse().find((attempt) => attempt.implementerOutcome?.evidence)?.implementerOutcome;
+    if (evidenceOutcome?.evidence) {
+      if (inspection.fileEvidence.status !== 'available') fail('Work Unit inspection hides available file evidence');
+      const source = byId.get(inspection.fileEvidence.sourceActivityId);
+      if (!source || source.primaryStage !== 'implementer_reporting' || source.attemptId !== evidenceOutcome.attemptId || source.invocationId !== evidenceOutcome.reportingInvocationId || JSON.stringify(inspection.fileEvidence.changedFiles) !== JSON.stringify(evidenceOutcome.evidence.changedFiles))
+        fail('Work Unit inspection file evidence has foreign correlation');
+    } else if (inspection.fileEvidence.status !== 'unavailable') {
+      fail('Work Unit inspection file evidence is available without application authority');
+    }
+  }
 }
 function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
   const handler = unit.handlerActivation;

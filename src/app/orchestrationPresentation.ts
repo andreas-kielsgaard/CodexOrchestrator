@@ -7,6 +7,7 @@ import type {
   EpicMovementPresentation,
   OrchestrationSectionView,
   EpicStatePresentation,
+  SprintWorkspacePresentationAdjunct,
 } from '../features/orchestrations';
 
 /**
@@ -46,17 +47,24 @@ export function presentProductOrchestrations(
       state: presentationState(epic.overview.state),
       epicEscalationReceivers: [...(epic.epicEscalationReceivers ?? [])],
       plan: {
-        items: epic.sprints.map((sprint) => ({
-          id: sprint.sprintId,
-          name: sprint.title,
-          purpose: sprint.summary,
-          status: sprint.lifecycle
-            ? presentationSprintStatus(sprint.lifecycle)
-            : unavailableSprintStatus(),
-          detail: { summary: sprint.summary, outcome: sprint.details },
-          workspace: projectSprintWorkspacePresentation(sprint),
-          ...adjunct.sprints?.[sprint.sprintId],
-        })),
+        items: epic.sprints.map((sprint) => {
+          const workspaceAdjunct = mergeWorkspaceAdjunct(
+            productiveWorkUnitSessionAdjunct(sprint),
+            adjunct.sprints?.[sprint.sprintId]?.workspaceAdjunct,
+          );
+          return {
+            id: sprint.sprintId,
+            name: sprint.title,
+            purpose: sprint.summary,
+            status: sprint.lifecycle
+              ? presentationSprintStatus(sprint.lifecycle)
+              : unavailableSprintStatus(),
+            detail: { summary: sprint.summary, outcome: sprint.details },
+            workspace: projectSprintWorkspacePresentation(sprint),
+            ...adjunct.sprints?.[sprint.sprintId],
+            ...(workspaceAdjunct ? { workspaceAdjunct } : {}),
+          };
+        }),
       },
       ...(adjunct.epic?.epicRunnerSession
         ? { epicRunnerSession: adjunct.epic.epicRunnerSession }
@@ -64,6 +72,61 @@ export function presentProductOrchestrations(
       ...presentationContinuation(epic.continuation, epic.epicId),
       ...(epic.bootstrapTransition ? { bootstrapTransition: epic.bootstrapTransition } : {}),
     })),
+  };
+}
+
+function productiveWorkUnitSessionAdjunct(
+  sprint: ProductReadModelsV1['epics'][number]['sprints'][number],
+): SprintWorkspacePresentationAdjunct | undefined {
+  const workUnitIdByExecutionId = new Map(
+    sprint.revisionViews.flatMap((view) =>
+      view.workUnits.flatMap((unit) =>
+        unit.attempts.map((attempt) => [attempt.workUnitExecutionId, unit.workUnitId] as const),
+      ),
+    ),
+  );
+  const workUnitSessions = sprint.agentSessionReferences.flatMap((reference) => {
+    if (
+      reference.targetKind !== 'work_unit_execution' ||
+      (reference.semanticRole !== 'work_unit_handler' &&
+        reference.semanticRole !== 'work_unit_implementer')
+    )
+      return [];
+    const workUnitId = workUnitIdByExecutionId.get(reference.targetId);
+    if (!workUnitId) return [];
+    return [{
+      sessionId: reference.agentSessionId,
+      title: reference.title,
+      workUnitId,
+      role: reference.semanticRole === 'work_unit_handler' ? ('handler' as const) : ('implementer' as const),
+      ...(reference.agentInvocationId ? { invocationId: reference.agentInvocationId } : {}),
+    }];
+  });
+  if (!workUnitSessions.length) return undefined;
+  return {
+    workUnitSessions,
+    workSlicePlanningPointSessions: [],
+    workSlicePlanningPointWorkflows: [],
+  };
+}
+
+function mergeWorkspaceAdjunct(
+  productive: SprintWorkspacePresentationAdjunct | undefined,
+  recorded: SprintWorkspacePresentationAdjunct | undefined,
+): SprintWorkspacePresentationAdjunct | undefined {
+  if (!productive) return recorded;
+  if (!recorded) return productive;
+  return {
+    ...(recorded.agentSession ? { agentSession: recorded.agentSession } : {}),
+    workUnitSessions: [...productive.workUnitSessions, ...recorded.workUnitSessions],
+    workSlicePlanningPointSessions: [
+      ...productive.workSlicePlanningPointSessions,
+      ...recorded.workSlicePlanningPointSessions,
+    ],
+    workSlicePlanningPointWorkflows: [
+      ...productive.workSlicePlanningPointWorkflows,
+      ...recorded.workSlicePlanningPointWorkflows,
+    ],
   };
 }
 
