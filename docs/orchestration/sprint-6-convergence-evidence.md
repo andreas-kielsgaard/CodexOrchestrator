@@ -683,16 +683,17 @@ Audit baseline: clean detached `8e4faddf6fbe21bb8bb7289fa3dbba7faeb3d78a`, with 
 backend chain ending at `6ced5e4bc4cb6f8d6d9c5325c0a7b7e7072721aa` and the SRH-02 projection
 chain ending at the audit baseline. This audit made no product-code correction: the inspected
 cross-stack route is internally coherent at the source and strict-decoder boundaries below. This
-record remains **partial** because frontend runtime and TypeScript compilation results are not
-observed in this routed checkout.
+record now includes independent frontend runtime and TypeScript evidence at correction checkpoint
+`09a285148f108a3531f1e81f568e262660c1e18d`. It remains deterministic local evidence, not a
+live-provider or human-observation claim.
 
 | Required boundary | Independent audit result | Evidence level |
 | --- | --- | --- |
 | Exact, once-only Handback route to the owning Sprint Runner | The delivery identity, reassessment invocation, and delivery fact are deterministically derived from the Handback; conflicting route rows fail. Persisted-not-accepted recovery rebinds the same Harness/invocation before launching, and an active different invocation leaves the route pending. | Source inspection of `reconcile_no_progress_handback`; available implementation report: Rust Handback suite **8/8**. |
 | Fact separation and reopen convergence | Delivery request/persistence, Harness binding, launch request/acceptance, provider observation, semantic reassessment, selected movement, escalation intent, and escalation delivery request are separate nullable facts. Reassessment requires persisted, bound, launch-accepted delivery; movement is idempotent by its Handback fingerprint. | Source inspection of transition storage/reconciliation and repository projection. |
 | Concern-preserving movement | Known alternate-work, agent-achievable dependency, and local-exhaustion paths require their bounded details. Unknown safe movement kinds remain projection-extensible without granting authority. Local exhaustion records only one upward intent and one delivery request. | Rust/TypeScript validator and projection inspection. |
-| Strict privacy and correlation projection | The Rust projection rejects partial/corrupt Handback bundles, forbidden receiver effects, incoherent phases, unmatched movement detail, invalid escalation order, and private fields. The TypeScript decoder independently rejects the same higher-effect, foreign, private, and contradictory shapes. | Source inspection; focused native-query Vitest was not runnable. |
-| Sprint Workspace checkpoint | The UI retains the concern as unresolved, labels delivery/request stages precisely, and says local exhaustion is an upward request rather than final Sprint/Epic blockage. It contains no Epic response, settlement, or completion claim. | Source inspection of presentation and component tests; runtime UI test was not runnable. |
+| Strict privacy and correlation projection | The Rust projection rejects partial/corrupt Handback bundles, forbidden receiver effects, incoherent phases, unmatched movement detail, invalid escalation order, and private fields. The TypeScript decoder independently rejects the same higher-effect, foreign, private, and contradictory shapes. | Fresh isolated Vitest: native-query **22/22** passed. |
+| Sprint Workspace checkpoint | The UI retains the concern as unresolved, labels delivery/request stages precisely, and says local exhaustion is an upward request rather than final Sprint/Epic blockage. It contains no Epic response, settlement, or completion claim. | Fresh isolated presentation/UI Vitest: **3/3** and **9/9** passed. |
 | Higher-effect absence | No inspected Handback path activates an Epic Runner, records Epic reassessment/decision, declares final Sprint/Epic blockage, settles, starts a new Sprint, grants raw route/Git authority, or creates later continuation. | Source inspection only; not a live-provider or human-observation claim. |
 
 Current audit checks:
@@ -709,12 +710,22 @@ Current audit checks:
   preparation: **0.79s**). It emitted one existing dead-code warning for
   `ProcessSupervisor::system`; this is separate from the implementation worker's `cargo check`
   report.
-- `node_modules`, local `tsc`, and local `vitest` are absent. No dependency was installed, linked,
-  or borrowed. Vitest and `tsc --noEmit` therefore remain unproven; esbuild/syntax transformation
-  is not substituted for either gate.
+- Fresh disposable clone validation at `09a2851` verified matching SHA-256 fingerprints before
+  dependency establishment: `package.json`
+  `3A2EFC5D380037B4C1E6C369CF3BDE7E900F0C4C840BC0B6BADE2BC536EE35BC` and
+  `package-lock.json`
+  `CDCA06E1FD05047C28919FE2A364419699F0AC8EB1DC785A11AB5517E9307F72`.
+  `npm ci --cache <disposable>/npm-cache --no-audit --no-fund` installed **368** exact-lockfile
+  packages in **14s**. It emitted only the existing `whatwg-encoding@3.1.1` deprecation and npm
+  update notice.
+- In that clone, `npx tsc --noEmit` passed (host-observed **14.8s**). `npx vitest run
+  src/application/orchestrations/nativeQuery.test.ts
+  src/application/orchestrations/sprintWorkspacePresentation.test.ts
+  src/features/orchestrations/components/SprintWorkspace.plannerBoundary.test.tsx` passed
+  **3 files / 34 tests** in **9.18s**: native-query **22/22**, presentation **3/3**, and Sprint
+  Workspace **9/9**. The disposable clone, `node_modules`, cache, and logs were removed after
+  evidence capture; no product-worktree dependency state was created.
 
-Residual gates: a frontend dependency environment authorized for the routed checkout, followed by
-focused Handback Vitest and `tsc --noEmit`; and any separately authorized live-provider/human
-observation. This record neither requests nor
-claims Epic receiver activation, Epic response, final blockage, settlement, new Sprint start,
+Residual gates: any separately authorized live-provider/human observation. This record neither
+requests nor claims Epic receiver activation, Epic response, final blockage, settlement, new Sprint start,
 higher continuation, raw route/Git authority, publication, or user acceptance.
