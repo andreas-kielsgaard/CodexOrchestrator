@@ -72,6 +72,26 @@ CREATE TABLE IF NOT EXISTS epic_runner_sprint_result_attentions (
   attention_id TEXT NOT NULL UNIQUE, attention_json TEXT NOT NULL CHECK (json_valid(attention_json)),
   attention_fingerprint TEXT NOT NULL UNIQUE, requested_at TEXT NOT NULL
 );
+-- A result disposition is not movement by itself.  This application-owned realization records
+-- either the one exact approved successor request, terminal readiness, or retained attention.
+CREATE TABLE IF NOT EXISTS epic_runner_sprint_result_realizations (
+  result_id TEXT PRIMARY KEY REFERENCES epic_runner_sprint_result_dispositions(result_id) ON DELETE RESTRICT,
+  realization_id TEXT NOT NULL UNIQUE, decision_id TEXT NOT NULL UNIQUE,
+  source_sprint_id TEXT NOT NULL, epic_id TEXT NOT NULL,
+  outcome_kind TEXT NOT NULL CHECK (outcome_kind IN ('successor_request','terminal_readiness','retained_attention')),
+  successor_sprint_id TEXT UNIQUE, successor_request_id TEXT UNIQUE,
+  realization_fingerprint TEXT NOT NULL UNIQUE, considered_at TEXT NOT NULL,
+  successor_request_recorded_at TEXT
+);
+CREATE TABLE IF NOT EXISTS epic_runner_sprint_result_terminal_readiness (
+  result_id TEXT PRIMARY KEY REFERENCES epic_runner_sprint_result_realizations(result_id) ON DELETE RESTRICT,
+  readiness_id TEXT NOT NULL UNIQUE, readiness_fingerprint TEXT NOT NULL UNIQUE, recorded_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS epic_runner_sprint_result_retained_attentions (
+  result_id TEXT PRIMARY KEY REFERENCES epic_runner_sprint_result_realizations(result_id) ON DELETE RESTRICT,
+  attention_id TEXT NOT NULL UNIQUE, attention_code TEXT NOT NULL,
+  attention_fingerprint TEXT NOT NULL UNIQUE, recorded_at TEXT NOT NULL
+);
 -- New Epic delivery is allowed only for the current exact decision.  A receiver that was
 -- already durably created remains recoverable after a later decision supersedes it.
 CREATE TRIGGER IF NOT EXISTS reject_noncurrent_sprint_result_epic_receiver
