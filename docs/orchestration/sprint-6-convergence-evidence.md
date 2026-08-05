@@ -1,6 +1,6 @@
 # Sprint 6 convergence evidence
 
-Status: **documentation checkpoint for the accepted Operational Orchestration Spine Work Slice**.
+Status: **documentation checkpoint/candidate evidence for the Operational Orchestration Spine Work Slice**.
 This record covers the accepted implementation and executed evidence through
 `076898b3d30e430be866ae89a00fbd77775877b1`. It is local/test-owned evidence, not user acceptance.
 
@@ -10,14 +10,17 @@ The application-owned bounded graph drain now reconciles durable Handler state t
 It processes every eligible generation, including multiple roots and later generations activated
 by newly accepted prerequisite contributions. Reopen and missed-notification cases converge from
 durable state; the drain does not depend on a live notification arriving at the right time.
-Per-Work-Unit states remain factual and independent: blocked, ready, active, waiting, failed,
-review-conflict, retry-required, and settled are not collapsed into a graph-wide outcome.
+Per-Work-Unit states remain factual and independent: `waiting_on_prerequisites`, `ready`, `active`,
+`retry_authorized`, `handed_back`, `settled`, and `attention` are not collapsed into a graph-wide
+outcome.
 Malformed graphs, cycles, stalls, missing authority, invalid handback, and attention conditions
 fail closed. A failed or attention-required unit does not manufacture downstream progress, and
 replay preserves terminal facts and identities.
 
-The graph is **graph-complete** only when all required Work Units have factual terminal outcomes
-and no structural, authority, or attention condition remains. That boundary is distinct from
+The graph is **graph-complete** only when every canonical Work Unit is settled through accepted
+integration, required dependency contributions are coherent, and no retry, handback, attention,
+or unresolved prerequisite remains. A handback or other terminal-looking outcome is not graph
+completion. That boundary is distinct from
 **Work Slice execution-settled**, which requires the graph-complete execution result and its
 durable settlement facts, and from **planning-point-settled**, which is the separate planning
 boundary. None of these boundaries implies Sprint or Epic settlement, continuation, provider
@@ -29,8 +32,9 @@ The Handler-drain fixture proves multi-root and later-generation activation, reo
 missed-notification convergence. Focused graph tests prove malformed, cycle, stall, handback,
 attention, and replay behavior. The terminal-authority fixture uses real initiated Epic and Sprint
 materialization product services together with local Git and the real accepted-candidate,
-integration, settlement, and contribution reconcilers. The strict Rust-authored frontend fixture
-and executed TypeScript/UI tests prove the public projection. These are complementary proofs; no
+integration, settlement, and contribution reconcilers. The Rust-authorized canonical frontend
+fixture through exact normalized comparison with real `native_query` output, plus executed
+TypeScript/UI tests, proves the public projection. These are complementary proofs; no
 single fixture proves every boundary.
 
 The accepted chain is: baseline `bf69fb391e4c552bbc442c8fd754bcc17e460ff9`; durable drain and
@@ -45,13 +49,14 @@ and terminal authority plus exact normalized consumer comparison
 
 ## Executed validation
 
-- The focused Handler drain test `handler_drain_advances_independent_generations_from_durable_accepted_contributions` passed, including durable accepted contribution, blocked-middle activation, partial-effect reopen, and missed-notification later-generation coverage.
-- `cargo test --lib work_unit_dependency_wave -- --nocapture` passed **15 tests**. This focused suite includes current-attempt failure/review-conflict attention, blocked-activation stall, recoverable partial activation, retry progression, state and contribution correlation, replay, and exact terminal facts.
-- The accepted terminal-authority and normalized-consumer fixture executions passed with the real product-service/reconciler composition described above; the strict Rust-authored frontend fixture and executed TypeScript/UI suites passed their recorded assertions.
+- The focused Handler-drain test `handler_drain_advances_independent_generations_from_durable_accepted_contributions` passed **1/1**, including durable accepted contribution, blocked-middle activation, partial-effect reopen, and missed-notification later-generation coverage.
+- `cargo test --lib work_unit_dependency_wave -- --nocapture` passed **15/15**. This focused suite includes current-attempt failure/review-conflict attention, blocked-activation stall, recoverable partial activation, retry progression, state and contribution correlation, replay, and exact terminal facts.
+- The final terminal-authority Rust test at `076898b` passed **1/1**. The frontend `nativeQuery` plus `WorkUnitDetail` fixture consumers passed **28/28**.
+- The retained `db9f3d7` Handler-drain and retained-lineage gateway checks passed **1/1 each** where cited, with the real product-service/reconciler composition described above.
 
 These are focused and cross-layer validations, not broad or full-suite validation. No claim is
-made here that the repository-wide suite passed; no later authoritative broad-suite result is
-available in this checkpoint.
+made here that the repository-wide suite passed. Live-provider behavior and user acceptance are
+also unproven.
 
 ## Exclusions and residual limits
 
