@@ -15,14 +15,19 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
   unresolved retry, Handback, attention, dependency wait, or continuation. Foreign, stale, or
   malformed chronology fails closed into attention rather than settling.
 - Focused local Rust evidence: `cargo test --manifest-path src-tauri/Cargo.toml
-  sprint_continuation_settlement --lib -- --test-threads=1` passed **10/10**. The tests cover eligible-work, retry, and
+  sprint_continuation_settlement --lib -- --test-threads=1` passed **14/14**. The tests cover eligible-work, retry, and
   agent-dependency continuing paths; structured attention and Handback preservation; exact
   settlement/result separation; conflicting persisted-result failure without overwrite;
   incomplete, foreign, stale, or malformed facts; and reopened replay after partial
-  result/current-state recovery. File-backed fresh-open recovery proves legacy Handback and
+  result/current-state recovery. Valid exact Handback and Epic dependency routes remain active
+  only while their bound Handler is eligible, ready, and unsettled; only settlement of that exact
+  Handler resolves the wait. Missing, foreign, fingerprint-invalid, ineligible, or unready
+  unsettled routes produce `dependency_route_unavailable` attention. Both dependency origins are
+  covered, no settled upward result appears before both exact enabling routes settle, and replay
+  preserves decision/result counts. File-backed fresh-open recovery proves legacy Handback and
   Epic agent-dependency waits either bind one exact private unresolved Handler route or remain
-  attention when the route is ambiguous; a later settlement of that exact bound Handler releases
-  only that wait. A conflicting persisted route remains untouched and fails closed into attention.
+  attention when the route is ambiguous. A conflicting persisted route remains untouched and
+  fails closed into attention.
 - The real completed Handler-review terminal regression passed **1/1** (400 filtered). In one
   service activation, after accepted integrations are durable, it records graph completion, Work
   Slice settlement, planning-point settlement, one settled Sprint decision/current pointer, and
@@ -49,7 +54,7 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
   remain readable without context, while foreign, private, missing, or conflicting correlations fail
   closed rather than receiving arbitrary context.
 - Focused producer evidence: the new native-query SCS projection test passed **1/1**; the existing
-  SCS-01 durable reconciliation group remains **13/13**; the repository projection suite passed
+  SCS-01 durable reconciliation group remains **14/14**; the repository projection suite passed
   **42/42**. Consumer evidence in an isolated exact-checkpoint dependency-ready copy passed
   **31/31** native-query tests, **3/3** workspace-presentation tests, and **11/11** bounded
   Sprint Workspace tests. `npm run build` passed with TypeScript and Vite.
