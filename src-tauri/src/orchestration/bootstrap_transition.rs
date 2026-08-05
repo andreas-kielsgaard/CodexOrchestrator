@@ -6001,6 +6001,126 @@ mod tests {
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
     }
 
+    /// The frontend fixture is deliberately an execution-graph fixture, not a transcript of the
+    /// private Handler/Implementer histories required to reach it. This projection preserves every
+    /// public graph field it consumes and maps only generated identities and timestamps to its
+    /// stable fixture vocabulary.
+    fn normalized_terminal_execution_projection(query: &serde_json::Value) -> serde_json::Value {
+        let materializations = query["workUnitMaterializations"].as_array().unwrap();
+        assert_eq!(materializations.len(), 1);
+        let materialization = &materializations[0];
+        let materialization_id = materialization["materializationId"].as_str().unwrap();
+        let planning_point_id = materialization["planningPointId"].as_str().unwrap();
+        let accepted_revision_id = materialization["acceptedRevisionId"].as_str().unwrap();
+        let sprint_id = materialization["sprintId"].as_str().unwrap();
+        let work_slice_id = materialization["workSliceId"].as_str().unwrap();
+        let mut unit_ids = HashMap::new();
+        for unit in query["workUnits"].as_array().unwrap() {
+            let fixture_id = match unit["laneTitle"].as_str().unwrap() {
+                "Root A" => "execution-root-a",
+                "Root B" => "execution-root-b",
+                "Middle" => "execution-middle",
+                "Leaf" => "execution-leaf",
+                title => panic!("unexpected terminal fixture lane {title}"),
+            };
+            assert!(unit_ids.insert(unit["workUnitId"].as_str().unwrap(), fixture_id).is_none());
+        }
+        assert_eq!(unit_ids.len(), 4);
+        let normalize = |value: &str| -> String {
+            if value == materialization_id { "execution-materialization-fixture".into() }
+            else if value == planning_point_id { "execution-planning-point-fixture".into() }
+            else if value == accepted_revision_id { "execution-accepted-revision-fixture".into() }
+            else if value == sprint_id { "sprint-fixture".into() }
+            else if value == work_slice_id { "execution-work-slice-fixture".into() }
+            else { unit_ids.get(value).unwrap_or_else(|| panic!("foreign execution identity {value}")).to_string() }
+        };
+        let sort = |values: Vec<serde_json::Value>| {
+            let mut values = values;
+            values.sort_by_key(|value| serde_json::to_string(value).unwrap());
+            values
+        };
+        let work_units = sort(query["workUnits"].as_array().unwrap().iter().map(|unit| serde_json::json!({
+            "workUnitId": normalize(unit["workUnitId"].as_str().unwrap()),
+            "materializationId": normalize(unit["materializationId"].as_str().unwrap()),
+            "workSliceId": normalize(unit["workSliceId"].as_str().unwrap()),
+            "acceptedRevisionId": normalize(unit["acceptedRevisionId"].as_str().unwrap()),
+            "laneOrdinal": unit["laneOrdinal"],
+            "laneTitle": unit["laneTitle"],
+            "specification": unit["specification"],
+        })).collect());
+        let relationships = sort(query["workUnitRelationships"].as_array().unwrap().iter().map(|relationship| {
+            let kind = relationship["relationshipKind"].as_str().unwrap();
+            let from = normalize(relationship["fromId"].as_str().unwrap());
+            let to = normalize(relationship["toId"].as_str().unwrap());
+            let relationship_id = match kind {
+                "planning_point" => "execution-point".into(),
+                "sprint" => "execution-sprint".into(),
+                "lane" | "order" => format!("execution-{kind}-{}", to.strip_prefix("execution-").unwrap()),
+                "depends_on" => format!("execution-dep-{}", from.strip_prefix("execution-").unwrap()),
+                _ => panic!("unexpected execution relationship {kind}"),
+            };
+            serde_json::json!({
+                "relationshipId": relationship_id,
+                "materializationId": normalize(relationship["materializationId"].as_str().unwrap()),
+                "relationshipKind": kind,
+                "fromId": from,
+                "toId": to,
+                "ordinal": relationship.get("ordinal").cloned().unwrap_or(serde_json::Value::Null),
+            })
+        }).collect());
+        let activation_intents = sort(query["dependencyActivationIntents"].as_array().unwrap().iter().map(|intent| serde_json::json!({
+            "workUnitId": normalize(intent["workUnitId"].as_str().unwrap()),
+            "materializationId": normalize(intent["materializationId"].as_str().unwrap()),
+            "acceptedRevisionId": normalize(intent["acceptedRevisionId"].as_str().unwrap()),
+            "eligibilityState": intent["eligibilityState"],
+            "eligibilityRecordedAt": "<timestamp>",
+            "activationIntendedAt": "<timestamp>",
+        })).collect());
+        let states = sort(query["workUnitExecutionStates"].as_array().unwrap().iter().map(|state| serde_json::json!({
+            "workUnitId": normalize(state["workUnitId"].as_str().unwrap()),
+            "materializationId": normalize(state["materializationId"].as_str().unwrap()),
+            "acceptedRevisionId": normalize(state["acceptedRevisionId"].as_str().unwrap()),
+            "state": state["state"],
+            "recordedAt": "<timestamp>",
+        })).collect());
+        serde_json::json!({
+            "workUnitMaterializations": [{
+                "materializationId": "execution-materialization-fixture",
+                "planningPointId": "execution-planning-point-fixture",
+                "acceptedRevisionId": "execution-accepted-revision-fixture",
+                "epicId": "<epic-id>",
+                "sprintId": "sprint-fixture",
+                "workSliceId": "execution-work-slice-fixture",
+                "authorizationRecordedAt": "<timestamp>",
+                "attemptRecordedAt": "<timestamp>",
+                "workUnitsCreatedAt": "<timestamp>",
+                "relationshipsCompletedAt": "<timestamp>",
+                "settledAt": "<timestamp>",
+            }],
+            "workUnits": work_units,
+            "workUnitRelationships": relationships,
+            "dependencyActivationIntents": activation_intents,
+            "workUnitExecutionStates": states,
+            "workSliceExecutionGraphCompletions": [{
+                "materializationId": "execution-materialization-fixture",
+                "acceptedRevisionId": "execution-accepted-revision-fixture",
+                "completedAt": "<timestamp>",
+            }],
+            "workSliceExecutionSettlements": [{
+                "materializationId": "execution-materialization-fixture",
+                "graphCompletionMaterializationId": "execution-materialization-fixture",
+                "settledAt": "<timestamp>",
+            }],
+            "workSlicePlanningPointExecutionSettlements": [{
+                "planningPointId": "execution-planning-point-fixture",
+                "materializationId": "execution-materialization-fixture",
+                "workSliceExecutionMaterializationId": "execution-materialization-fixture",
+                "settledAt": "<timestamp>",
+            }],
+            "workSliceExecutionAttentions": [],
+        })
+    }
+
     /// Creates the private accepted-Handler lineage that the real retained-candidate and
     /// accepted-integration reconcilers consume. Product code, rather than this helper, owns
     /// candidate pinning, target advancement, settlement, and prerequisite contribution rows.
@@ -6227,10 +6347,10 @@ mod tests {
         service.submit_work_slice_proposal(&planner, crate::orchestration::sprint_runner_transition::WorkSliceProposal {
             objective: "Converge the terminal authority fixture.".into(),
             lanes: vec![
-                crate::orchestration::sprint_runner_transition::WorkSliceLane { title: "Root A".into(), specification: "Settle root A.".into(), depends_on: vec![] },
-                crate::orchestration::sprint_runner_transition::WorkSliceLane { title: "Root B".into(), specification: "Settle root B.".into(), depends_on: vec![] },
-                crate::orchestration::sprint_runner_transition::WorkSliceLane { title: "Middle".into(), specification: "Settle middle.".into(), depends_on: vec!["Root A".into()] },
-                crate::orchestration::sprint_runner_transition::WorkSliceLane { title: "Leaf".into(), specification: "Settle leaf.".into(), depends_on: vec!["Middle".into()] },
+                crate::orchestration::sprint_runner_transition::WorkSliceLane { title: "Root A".into(), specification: "Canonical execution fixture responsibility: Root A.".into(), depends_on: vec![] },
+                crate::orchestration::sprint_runner_transition::WorkSliceLane { title: "Root B".into(), specification: "Canonical execution fixture responsibility: Root B.".into(), depends_on: vec![] },
+                crate::orchestration::sprint_runner_transition::WorkSliceLane { title: "Middle".into(), specification: "Canonical execution fixture responsibility: Middle.".into(), depends_on: vec!["Root A".into()] },
+                crate::orchestration::sprint_runner_transition::WorkSliceLane { title: "Leaf".into(), specification: "Canonical execution fixture responsibility: Leaf.".into(), depends_on: vec!["Middle".into()] },
             ],
         }).unwrap();
         service.complete_work_slice_planning(&planner, crate::orchestration::sprint_runner_transition::WorkSliceCompletion {}).unwrap();
@@ -6295,11 +6415,11 @@ mod tests {
 
         let native = serde_json::to_value(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap().native_query().unwrap()).unwrap();
         let canonical: serde_json::Value = serde_json::from_str(include_str!("fixtures/orchestration-native-query-v2/valid-execution-graph.json")).unwrap();
-        for field in ["workUnits", "workUnitExecutionStates", "workSliceExecutionGraphCompletions", "workSliceExecutionSettlements", "workSlicePlanningPointExecutionSettlements"] {
-            assert_eq!(native[field].as_array().unwrap().len(), canonical[field].as_array().unwrap().len(), "{field}");
-        }
-        assert_eq!(native["workUnitRelationships"].as_array().unwrap().iter().filter(|edge| edge["relationshipKind"] == "depends_on").count(), canonical["workUnitRelationships"].as_array().unwrap().iter().filter(|edge| edge["relationshipKind"] == "depends_on").count());
-        assert!(native["workUnitExecutionStates"].as_array().unwrap().iter().all(|state| state["state"] == "settled"));
+        assert_eq!(
+            normalized_terminal_execution_projection(&native),
+            normalized_terminal_execution_projection(&canonical),
+            "the Rust-owned frontend execution fixture must exactly match the public terminal projection",
+        );
         let serialized = serde_json::to_string(&native).unwrap();
         assert!(!serialized.contains("terminal-attempt-worktree"));
         assert!(!serialized.contains("refs/codex/orchestrator/accepted"));
