@@ -403,6 +403,21 @@ describe('Work Slice Planner boundary disclosure', () => {
 });
 
 describe('Sprint Runner Handback disclosure', () => {
+  it('treats omitted history in an established recorded presentation input as no Handback activity', () => {
+    render(
+      <SprintRunnerHandbackActivity
+        workUnits={[
+          {
+            workUnitId: 'recorded-unit-without-history',
+            title: 'Established recorded responsibility',
+          },
+        ] as never}
+      />,
+    );
+
+    expect(screen.queryByRole('region', { name: 'Sprint Runner Handback reassessment' })).toBeNull();
+  });
+
   it('keeps a Handback and delivery partial state factual without inventing movement or progress', () => {
     render(
       <SprintRunnerHandbackActivity

@@ -568,7 +568,7 @@ export function SprintRunnerHandbackActivity({
   readonly workUnits: SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'];
 }) {
   const entries = workUnits.flatMap((workUnit) =>
-    workUnit.attemptHistory.flatMap((attempt) =>
+    (workUnit.attemptHistory ?? []).flatMap((attempt) =>
       attempt.incompleteDisposition?.noProgressHandback
         ? [{ workUnit, handback: attempt.incompleteDisposition.noProgressHandback }]
         : [],

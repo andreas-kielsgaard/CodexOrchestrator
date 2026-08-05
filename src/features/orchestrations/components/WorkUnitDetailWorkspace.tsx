@@ -61,9 +61,11 @@ export function WorkUnitDetailWorkspace({
   const [focusTarget, setFocusTarget] = useState<SessionFocusTarget | null>(null);
   const primarySession =
     sessions.find(({ sessionId }) => sessionId === primarySessionId) ?? handler ?? workSlicePlanner;
+  const attemptHistory = unit.attemptHistory ?? [];
+  const retryAttempts = unit.retryAttempts ?? [];
   const activityOrdinals = [...new Set([
-    ...unit.attemptHistory.map((attempt) => attempt.ordinal),
-    ...unit.retryAttempts.map((retry) => retry.ordinal),
+    ...attemptHistory.map((attempt) => attempt.ordinal),
+    ...retryAttempts.map((retry) => retry.ordinal),
   ])].sort((left, right) => left - right);
 
   const navigateToLifecycleTurn = (
@@ -112,8 +114,8 @@ export function WorkUnitDetailWorkspace({
           {(unit.handlerActivation ||
             unit.actionContinuation ||
             unit.implementerActivation ||
-            unit.attemptHistory.length > 0 ||
-            unit.retryAttempts.length > 0 ||
+            attemptHistory.length > 0 ||
+            retryAttempts.length > 0 ||
             unit.integration ||
             unit.dependencyActivationIntent) && (
             <section className="work-unit-activation" aria-label="Work Unit activation activity">
@@ -126,7 +128,7 @@ export function WorkUnitDetailWorkspace({
                 <p>{implementerActivity(unit.implementerActivation)}</p>
               )}
               {activityOrdinals.map((ordinal) => {
-                const attempt = unit.attemptHistory.find((member) => member.ordinal === ordinal);
+                const attempt = attemptHistory.find((member) => member.ordinal === ordinal);
                 return (
                   <section className="work-unit-attempt" key={`attempt-${ordinal}`}>
                     <h3>Attempt ordinal {ordinal}</h3>
@@ -142,7 +144,7 @@ export function WorkUnitDetailWorkspace({
                     {attempt?.incompleteDisposition && (
                       <IncompleteDispositionActivity disposition={attempt.incompleteDisposition} />
                     )}
-                    {unit.retryAttempts
+                    {retryAttempts
                       .filter((retry) => retry.ordinal === ordinal)
                       .map((retry) => (
                         <RetryAttemptActivity key={retry.retryAttemptId} retryAttempt={retry} />

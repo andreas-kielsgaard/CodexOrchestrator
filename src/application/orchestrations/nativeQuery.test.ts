@@ -100,6 +100,14 @@ describe('orchestration native query v1', () => {
     });
   });
 
+  it('still requires attemptHistory in the productive native Work Unit contract', () => {
+    const value = fixture('valid-execution-graph.json') as Record<string, unknown>;
+    const unit = (value.workUnits as Array<Record<string, unknown>>)[0]!;
+    delete unit.attemptHistory;
+
+    expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow('Work Unit attemptHistory');
+  });
+
   it('projects selected unresolved execution states and blocks terminal facts for targeted attention', () => {
     const value = fixture('valid-execution-graph.json') as Record<string, unknown>;
     value.workSliceExecutionGraphCompletions = [];

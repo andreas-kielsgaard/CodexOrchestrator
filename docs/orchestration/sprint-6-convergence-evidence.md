@@ -898,3 +898,33 @@ Observed correction evidence:
 combined-tree frontend evidence above remains the applicable consumer proof. Live-provider behavior,
 publication, push, user acceptance, later-Sprint selection/start, Product Decisions navigation,
 Pause/Restart changes, and Sprint/Epic settlement remain unproven and outside this correction.
+
+### Recorded-presentation compatibility correction
+
+The descendant correction retains `3c8ac545` and keeps the productive native-query and read-model
+contract strict. Independent reproduction of `OrchestrationSection.test.tsx` first observed the
+candidate-owned crash at `SprintRunnerHandbackActivity`: **17 failed / 9 passed**, all from established
+recorded presentation inputs omitting `attemptHistory`. Treating that missing recorded-only field as
+an empty activity list exposed the same assumption in Work Unit detail; applying the presentation-only
+fallback at both consumers restored the established Epic/Sprint/Work Unit rendering path. No decoder,
+native type, read-model, or recorded fixture became production authority.
+
+Observed correction evidence:
+
+- `OrchestrationSection.test.tsx` passed **1 file / 26 tests** after reproducing the exact failure.
+- The existing CGS frontend scope plus the affected OrchestrationSection file passed **7 files / 70
+  tests**: native query **28/28**, Sprint workspace presentation **3/3**, orchestration presentation
+  **1/1**, Epic reassessment **1/1**, Sprint reassessment **1/1**, Sprint boundary/activity **10/10**,
+  and recorded OrchestrationSection rendering **26/26**.
+- The Sprint Handback activity scope now explicitly proves that missing history in an established
+  recorded presentation input renders no Handback activity. The native-query scope separately proves
+  that a productive Work Unit missing `attemptHistory` is still rejected.
+- `npx tsc --noEmit` passed. The affected OrchestrationSection test retained its existing React
+  `act(...)` warnings; they did not fail the run.
+- `git diff --check` passed. A touched-file Prettier check still reports the broader formatting drift
+  already recorded above, so this correction did not apply an unrelated whole-file reflow.
+
+The pre-existing recorded Harness Management availability source/catalog mismatch is unchanged and
+outside this correction. Live-provider behavior, publication, push, user acceptance, later-Sprint
+selection/start, Product Decisions navigation, Pause/Restart changes, and Sprint/Epic settlement
+remain unproven and outside scope.
