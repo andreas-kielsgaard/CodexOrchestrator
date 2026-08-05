@@ -74,10 +74,6 @@ impl CodexMcpInjection {
             format!("mcp_servers.{name}.default_tools_approval_mode=\"approve\""),
             format!("mcp_servers.{name}.startup_timeout_sec=10"),
             format!("mcp_servers.{name}.tool_timeout_sec=300"),
-            // The managed server is a one-invocation loopback transport. Workspace-write
-            // otherwise disables networking and leaves the configured actions undiscoverable.
-            "sandbox_workspace_write.network_access=true".to_string(),
-            "features.network_proxy=true".to_string(),
         ];
         Self {
             configuration_args: values
@@ -86,6 +82,70 @@ impl CodexMcpInjection {
                 .collect(),
             environment: (variable, bearer),
         }
+    }
+
+    /// The sole WorkspaceWrite exception: the exact same-Session Implementer reporting
+    /// continuation needs its token-protected loopback MCP transport on codex-cli 0.144.
+    pub(crate) fn work_unit_implementer_reporting(server_url: &str, bearer: String) -> Self {
+        let tools = [
+            "submit_implementation_outcome".to_string(),
+            "complete_implementation_outcome".to_string(),
+        ];
+        let mut injection = Self::new_named(
+            "work_unit_implementer_reporting",
+            server_url,
+            bearer,
+            &tools,
+            true,
+        );
+        injection.configuration_args.extend([
+            "-c".to_string(),
+            "sandbox_workspace_write.network_access=true".to_string(),
+            "-c".to_string(),
+            "features.network_proxy=true".to_string(),
+        ]);
+        injection
+    }
+
+    pub(crate) fn is_exact_work_unit_implementer_reporting_transport(&self) -> bool {
+        if self.configuration_args.len() != 18
+            || self.configuration_args.chunks_exact(2).any(|pair| pair[0] != "-c")
+        {
+            return false;
+        }
+        let values = self
+            .configuration_args
+            .chunks_exact(2)
+            .map(|pair| pair[1].as_str())
+            .collect::<Vec<_>>();
+        let Some(name) = values.iter().find_map(|value| {
+            value
+                .strip_prefix("mcp_servers.")
+                .and_then(|value| value.split_once(".url="))
+                .and_then(|(name, url)| (!url.is_empty()).then_some(name))
+        }) else {
+            return false;
+        };
+        if !name.starts_with("work_unit_implementer_reporting_") {
+            return false;
+        }
+        let expected = [
+            format!("mcp_servers.{name}.bearer_token_env_var="),
+            format!(
+                "mcp_servers.{name}.enabled_tools=[\"submit_implementation_outcome\",\"complete_implementation_outcome\"]"
+            ),
+            format!("mcp_servers.{name}.required=true"),
+            format!("mcp_servers.{name}.default_tools_approval_mode=\"approve\""),
+            format!("mcp_servers.{name}.startup_timeout_sec=10"),
+            format!("mcp_servers.{name}.tool_timeout_sec=300"),
+            "sandbox_workspace_write.network_access=true".into(),
+            "features.network_proxy=true".into(),
+        ];
+        values.iter().any(|value| {
+            value
+                .strip_prefix(&expected[0])
+                .is_some_and(|variable| !variable.is_empty())
+        }) && expected[1..].iter().all(|expected| values.contains(&expected.as_str()))
     }
 }
 
@@ -651,7 +711,7 @@ mod tests {
                 .iter()
                 .filter(|value| value.as_str() == "-c")
                 .count(),
-            9
+            7
         );
         assert!(injection
             .configuration_args
@@ -662,10 +722,49 @@ mod tests {
             .iter()
             .any(|value| value == "secret"));
         assert_eq!(injection.environment.1, "secret");
+        assert!(!injection.configuration_args.iter().any(|value| {
+            value == "features.network_proxy=true"
+                || value == "sandbox_workspace_write.network_access=true"
+        }));
+        assert!(!injection.is_exact_work_unit_implementer_reporting_transport());
+    }
+
+    #[test]
+    fn only_implementer_reporting_gets_the_workspace_write_loopback_exception() {
+        let injection = CodexMcpInjection::work_unit_implementer_reporting(
+            "http://127.0.0.1:5555/mcp",
+            "secret".into(),
+        );
+        assert_eq!(
+            injection
+                .configuration_args
+                .iter()
+                .filter(|value| value.as_str() == "-c")
+                .count(),
+            9
+        );
+        assert!(injection.configuration_args.iter().any(|value| {
+            value == "sandbox_workspace_write.network_access=true"
+        }));
         assert!(injection
             .configuration_args
             .iter()
             .any(|value| value == "features.network_proxy=true"));
+        let tools = injection
+            .configuration_args
+            .iter()
+            .find(|value| value.contains(".enabled_tools="))
+            .expect("managed tool allow list");
+        assert!(tools.ends_with("[\"submit_implementation_outcome\",\"complete_implementation_outcome\"]"));
+        assert!(injection
+            .configuration_args
+            .iter()
+            .any(|value| value.contains("work_unit_implementer_reporting_")));
+        assert!(injection.is_exact_work_unit_implementer_reporting_transport());
+
+        let mut malformed = injection;
+        malformed.configuration_args.pop();
+        assert!(!malformed.is_exact_work_unit_implementer_reporting_transport());
     }
 
     #[test]
