@@ -32,7 +32,6 @@ const inspection: ProductWorkUnitInspectionV1 = {
           'file_evidence_recorded',
           'semantic_completion_recorded',
           'terminal_lifecycle_observed',
-          'application_acceptance_recorded',
           'handler_review_ready',
         ],
         peerEvidenceActivityIds: [],
@@ -52,7 +51,7 @@ const inspection: ProductWorkUnitInspectionV1 = {
       primaryStage: 'handler_review',
       applicationSummary: {
         owner: 'application',
-        applicationEvents: ['review_delivery_persisted', 'application_acceptance_recorded'],
+        applicationEvents: ['review_delivery_persisted', 'review_judgment_recorded'],
         peerEvidenceActivityIds: [
           'work-unit-inspection:WU-ECS2E:WU-ECS2E-attempt-2:implementer-reporting:recorded-implementer-WU-ECS2E-second-return',
         ],

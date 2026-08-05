@@ -136,6 +136,37 @@ describe('recorded orchestration composition', () => {
     )).toBe(true);
     const reporting = activities.filter(({ primaryStage }) => primaryStage === 'implementer_reporting');
     expect(reporting.every(({ applicationSummary }) => applicationSummary !== undefined)).toBe(true);
+    expect(
+      activities.find(
+        ({ primaryStage, attemptId }) =>
+          primaryStage === 'implementer_reporting' && attemptId === 'WU-ECS2E-attempt-1',
+      )!.applicationSummary!.applicationEvents,
+    ).toEqual([
+      'submission_recorded',
+      'file_evidence_recorded',
+      'semantic_completion_recorded',
+      'terminal_lifecycle_observed',
+      'handler_review_ready',
+    ]);
+    expect(
+      activities.find(
+        ({ primaryStage, attemptId }) =>
+          primaryStage === 'handler_review' && attemptId === 'WU-ECS2E-attempt-2',
+      )!.applicationSummary!.applicationEvents,
+    ).toEqual(['review_delivery_persisted', 'review_judgment_recorded']);
+    expect(
+      activities.find(
+        ({ primaryStage, attemptId }) =>
+          primaryStage === 'implementer_reporting' && attemptId === 'WU-ECS2E-attempt-2',
+      )!.applicationSummary!.applicationEvents,
+    ).toEqual([
+      'submission_recorded',
+      'file_evidence_recorded',
+      'semantic_completion_recorded',
+      'terminal_lifecycle_observed',
+      'application_acceptance_recorded',
+      'handler_review_ready',
+    ]);
     const handlerReview = activities.find(({ primaryStage }) => primaryStage === 'handler_review')!;
     const peer = activities.find(
       ({ activityId }) => activityId === handlerReview.applicationSummary!.peerEvidenceActivityIds[0],
