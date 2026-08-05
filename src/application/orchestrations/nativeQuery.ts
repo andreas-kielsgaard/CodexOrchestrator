@@ -1373,7 +1373,7 @@ const workUnitInspection = (value: unknown): NativeWorkUnitInspectionV1 => {
     const activity = object(value, 'Work Unit inspection activity');
     keys(activity, ['activityId', 'attemptId', 'role', 'agentSessionId', 'invocationId', 'primaryStage', 'applicationSummary'], 'Work Unit inspection activity');
     if (!['handler', 'implementer'].includes(activity.role as string)) fail('invalid Work Unit inspection role');
-    if (!['handler_activation', 'handler_action', 'implementer_activation', 'implementer_reporting', 'handler_review'].includes(activity.primaryStage as string)) fail('invalid Work Unit inspection primary stage');
+    if (!['handler_activation', 'handler_action', 'implementer_activation', 'implementer_retry', 'implementer_reporting', 'handler_review'].includes(activity.primaryStage as string)) fail('invalid Work Unit inspection primary stage');
     const applicationSummary = activity.applicationSummary === undefined ? undefined : (() => {
       const summary = object(activity.applicationSummary, 'Work Unit inspection application summary');
       keys(summary, ['owner', 'applicationEvents', 'peerEvidenceActivityIds', 'mcpCallDetail'], 'Work Unit inspection application summary');
@@ -1415,7 +1415,8 @@ const workUnitInspection = (value: unknown): NativeWorkUnitInspectionV1 => {
   })() : (() => {
     keys(fileEvidenceValue, ['status', 'owner', 'reason'], 'Work Unit inspection unavailable file evidence');
     if (fileEvidenceValue.status !== 'unavailable') fail('invalid Work Unit inspection file evidence status');
-    return { status: 'unavailable' as const, ...inspectionUnavailable(fileEvidenceValue, 'Work Unit inspection unavailable file evidence') };
+    if (fileEvidenceValue.owner !== 'application') fail('Work Unit inspection file evidence owner must be application');
+    return { status: 'unavailable' as const, owner: 'application' as const, reason: boundedString(fileEvidenceValue.reason, 4_000, 'Work Unit inspection unavailable file evidence reason') };
   })();
   return {
     workUnitId: boundedString(x.workUnitId, 240, 'Work Unit inspection workUnitId'),
@@ -3072,33 +3073,41 @@ function validateWorkUnitInspections(query: OrchestrationNativeQueryV2) {
     const unit = query.workUnits.find((candidate) => candidate.workUnitId === inspection.workUnitId);
     if (!unit || unit.materializationId !== inspection.materializationId)
       fail('Work Unit inspection has foreign Work Unit correlation');
-    const expected = new Set<string>();
-    const key = (stage: string, attemptId: string, sessionId: string, invocationId: string) =>
-      `${stage}:${attemptId}:${sessionId}:${invocationId}`;
+    const expected = new Map<string, Readonly<{ role: 'handler' | 'implementer'; primaryStage: NativeWorkUnitInspectionV1['activities'][number]['primaryStage']; attemptId: string; agentSessionId: string; invocationId: string }>>();
+    const activityId = (attemptId: string, primaryStage: NativeWorkUnitInspectionV1['activities'][number]['primaryStage'], invocationId: string) =>
+      `work-unit-inspection:${unit.workUnitId}:${attemptId}:${primaryStage.replace(/_/g, '-')}:${invocationId}`;
+    const addExpected = (role: 'handler' | 'implementer', primaryStage: NativeWorkUnitInspectionV1['activities'][number]['primaryStage'], attemptId: string, agentSessionId: string, invocationId: string) => {
+      const canonicalId = activityId(attemptId, primaryStage, invocationId);
+      expected.set(canonicalId, { role, primaryStage, attemptId, agentSessionId, invocationId });
+    };
     const handler = unit.handlerActivation;
-    if (handler?.handlerSessionId && handler.handlerInvocationId && handler.handlerSessionCreatedAt)
-      expected.add(key('handler_activation', handler.attemptId, handler.handlerSessionId, handler.handlerInvocationId));
+    if (handler?.handlerSessionId && handler.handlerInvocationId && handler.handlerInvocationPreparedAt)
+      addExpected('handler', 'handler_activation', handler.attemptId, handler.handlerSessionId, handler.handlerInvocationId);
     const action = unit.actionContinuation;
     if (action?.invocationPreparedAt)
-      expected.add(key('handler_action', action.attemptId, action.handlerSessionId, action.actionInvocationId));
+      addExpected('handler', 'handler_action', action.attemptId, action.handlerSessionId, action.actionInvocationId);
     const implementer = unit.implementerActivation;
     if (implementer?.implementerSessionCreatedAt && implementer.implementerInvocationPreparedAt)
-      expected.add(key('implementer_activation', implementer.attemptId, implementer.implementerSessionId, implementer.implementerInvocationId));
+      addExpected('implementer', 'implementer_activation', implementer.attemptId, implementer.implementerSessionId, implementer.implementerInvocationId);
+    unit.retryAttempts.forEach((retry) => {
+      if (retry.implementerInvocationPreparedAt)
+        addExpected('implementer', 'implementer_retry', retry.retryAttemptId, retry.implementerSessionId, retry.implementerInvocationId);
+    });
     unit.attemptHistory.forEach((attempt) => {
       const outcome = attempt.implementerOutcome;
       if (outcome?.reportingPreparedAt)
-        expected.add(key('implementer_reporting', attempt.attemptId, outcome.implementerSessionId, outcome.reportingInvocationId));
+        addExpected('implementer', 'implementer_reporting', attempt.attemptId, outcome.implementerSessionId, outcome.reportingInvocationId);
       const review = attempt.handlerReview;
       if (review?.reviewReadyAt)
-        expected.add(key('handler_review', attempt.attemptId, review.handlerSessionId, review.reviewInvocationId));
+        addExpected('handler', 'handler_review', attempt.attemptId, review.handlerSessionId, review.reviewInvocationId);
     });
     const actual = new Set<string>();
     const byId = new Map(inspection.activities.map((activity) => [activity.activityId, activity]));
     for (const activity of inspection.activities) {
-      const activityKey = key(activity.primaryStage, activity.attemptId, activity.agentSessionId, activity.invocationId);
-      if (!expected.has(activityKey) || actual.has(activityKey))
-        fail('Work Unit inspection activity is foreign, stale, or duplicated');
-      actual.add(activityKey);
+      const expectedActivity = expected.get(activity.activityId);
+      if (!expectedActivity || actual.has(activity.activityId) || expectedActivity.role !== activity.role || expectedActivity.primaryStage !== activity.primaryStage || expectedActivity.attemptId !== activity.attemptId || expectedActivity.agentSessionId !== activity.agentSessionId || expectedActivity.invocationId !== activity.invocationId)
+        fail('Work Unit inspection activity is foreign, stale, mismatched, or duplicated');
+      actual.add(activity.activityId);
       const needsSummary = activity.primaryStage === 'implementer_reporting' || activity.primaryStage === 'handler_review';
       if (needsSummary !== (activity.applicationSummary !== undefined))
         fail('Work Unit inspection application summary is not owned by its exact activity');

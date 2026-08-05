@@ -2452,6 +2452,28 @@ fn valid_work_unit_activation_projection() -> WorkUnitDto {
     }
 }
 
+#[test]
+fn work_unit_inspection_requires_prepared_turns_and_projects_prepared_retry() {
+    let mut work_unit = valid_work_unit_activation_projection();
+    work_unit.handler_activation.as_mut().expect("handler activation").handler_invocation_prepared_at = None;
+    work_unit.retry_attempts = vec![WorkUnitRetryAttemptDto {
+        ordinal: 1, origin_attempt_id: "attempt".into(), retry_attempt_id: "retry-attempt".into(),
+        implementer_session_id: "retry-session".into(), implementer_invocation_id: "retry-invocation".into(),
+        capture_requested_at: "2026-08-04T00:00:01Z".into(), candidate_pinned_at: None, authorized_at: None,
+        execution_support_granted_at: None, isolated_worktree_ready_at: None, implementer_session_created_at: Some("2026-08-04T00:00:06Z".into()),
+        implementer_invocation_prepared_at: None, implementer_harness_bound_at: None, launch_requested_at: None,
+        launch_accepted_at: None, provider_activation_observed_at: None, retry_ready_at: None, failure_reason: None,
+    }];
+    let inspection = work_unit_inspection_projection(&work_unit).expect("inspection projection");
+    assert!(!inspection.activities.iter().any(|activity| matches!(activity.primary_stage, WorkUnitInspectionStageDto::HandlerActivation | WorkUnitInspectionStageDto::ImplementerRetry)));
+
+    work_unit.handler_activation.as_mut().expect("handler activation").handler_invocation_prepared_at = Some("2026-08-04T00:00:07Z".into());
+    primary_retry_mut(&mut work_unit).implementer_invocation_prepared_at = Some("2026-08-04T00:00:08Z".into());
+    let inspection = work_unit_inspection_projection(&work_unit).expect("inspection projection");
+    assert!(inspection.activities.iter().any(|activity| activity.activity_id == "work-unit-inspection:unit:attempt:handler-activation:handler-original" && matches!(activity.primary_stage, WorkUnitInspectionStageDto::HandlerActivation)));
+    assert!(inspection.activities.iter().any(|activity| activity.activity_id == "work-unit-inspection:unit:retry-attempt:implementer-retry:retry-invocation" && activity.attempt_id == "retry-attempt" && activity.agent_session_id == "retry-session" && matches!(activity.primary_stage, WorkUnitInspectionStageDto::ImplementerRetry)));
+}
+
 fn primary_outcome_mut(work_unit: &mut WorkUnitDto) -> &mut WorkUnitImplementerOutcomeDto {
     work_unit.attempt_history[0].implementer_outcome.as_mut().expect("primary outcome")
 }

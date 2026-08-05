@@ -418,6 +418,7 @@ export type ProductWorkUnitInspectionActivityV1 = Readonly<{
     | 'handler_activation'
     | 'handler_action'
     | 'implementer_activation'
+    | 'implementer_retry'
     | 'implementer_reporting'
     | 'handler_review';
   readonly applicationSummary?: Readonly<{

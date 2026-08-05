@@ -3067,6 +3067,7 @@ enum WorkUnitInspectionStageDto {
     HandlerActivation,
     HandlerAction,
     ImplementerActivation,
+    ImplementerRetry,
     ImplementerReporting,
     HandlerReview,
 }
@@ -3158,7 +3159,7 @@ fn work_unit_inspection_projection(
         if let (Some(session_id), Some(invocation_id), Some(_)) = (
             &handler.handler_session_id,
             &handler.handler_invocation_id,
-            &handler.handler_session_created_at,
+            &handler.handler_invocation_prepared_at,
         ) {
             activities.push(WorkUnitInspectionActivityDto {
                 activity_id: inspection_activity_id(
@@ -3210,6 +3211,19 @@ fn work_unit_inspection_projection(
                 agent_session_id: implementer.implementer_session_id.clone(),
                 invocation_id: implementer.implementer_invocation_id.clone(),
                 primary_stage: WorkUnitInspectionStageDto::ImplementerActivation,
+                application_summary: None,
+            });
+        }
+    }
+    for retry in &unit.retry_attempts {
+        if retry.implementer_invocation_prepared_at.is_some() {
+            activities.push(WorkUnitInspectionActivityDto {
+                activity_id: inspection_activity_id(&unit.work_unit_id, &retry.retry_attempt_id, "implementer-retry", &retry.implementer_invocation_id),
+                attempt_id: retry.retry_attempt_id.clone(),
+                role: WorkUnitInspectionRoleDto::Implementer,
+                agent_session_id: retry.implementer_session_id.clone(),
+                invocation_id: retry.implementer_invocation_id.clone(),
+                primary_stage: WorkUnitInspectionStageDto::ImplementerRetry,
                 application_summary: None,
             });
         }
