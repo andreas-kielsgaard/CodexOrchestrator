@@ -5008,7 +5008,9 @@ mod tests {
         let handler_orchestration = Arc::new(OrchestrationApplication::new(handler_repository.clone()));
         let handler_support = ProductExecutionSupportState::new(
             &fixture.database_path,
-            fixture._directory.path().join("handler-workspaces"),
+            handler_sprint_root
+                .join(".isolated-product-data")
+                .join("execution-workspaces"),
             handler_repository,
         ).unwrap();
         let handler = Arc::new(WorkUnitExecutionHarnessService::new(
@@ -5482,8 +5484,22 @@ mod tests {
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE work_unit_handler_activations SET handler_harness_bound_at=NULL,launch_accepted_at=NULL,handler_ready_at=NULL WHERE work_unit_id=?1", [&root.0],
         ).unwrap();
+        let partial_repository = Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap());
+        let partial_handler = Arc::new(WorkUnitExecutionHarnessService::new(
+            ProductExecutionSupportState::new(
+                &fixture.database_path,
+                handler_sprint_root
+                    .join(".isolated-product-data")
+                    .join("execution-workspaces"),
+                partial_repository.clone(),
+            )
+            .unwrap()
+            .service(),
+            fixture.sessions.clone(),
+            Arc::new(OrchestrationApplication::new(partial_repository)),
+        ));
         let partial_recovery = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
-        partial_recovery.attach_work_unit_handler_activation(handler.clone()).unwrap();
+        partial_recovery.attach_work_unit_handler_activation(partial_handler).unwrap();
         let recovered: (String,String,String,Option<String>,Option<String>,Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
             "SELECT attempt_id,handler_session_id,handler_invocation_id,handler_harness_bound_at,launch_accepted_at,handler_ready_at FROM work_unit_handler_activations WHERE work_unit_id=?1", [&root.0],
             |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)),

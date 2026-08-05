@@ -249,19 +249,52 @@ impl ProductExecutionWorkspaceResolver {
         attempt: &AuthorizedExecutionAttempt,
         create_parent: bool,
     ) -> Result<PathBuf, ExecutionSupportError> {
+        let configured_parent = &self.workspace_parent;
         if create_parent {
-            fs::create_dir_all(&self.workspace_parent)
+            fs::create_dir_all(configured_parent)
                 .map_err(|_| ExecutionSupportError::Unavailable)?;
         }
-        let metadata = fs::symlink_metadata(&self.workspace_parent)
+        let metadata = fs::symlink_metadata(configured_parent)
             .map_err(|_| ExecutionSupportError::Unavailable)?;
         if !metadata.is_dir() || metadata.file_type().is_symlink() {
             return Err(ExecutionSupportError::CorrelationMismatch);
         }
-        let parent = self
-            .workspace_parent
+        let configured_parent = configured_parent
             .canonicalize()
             .map_err(|_| ExecutionSupportError::Unavailable)?;
+        let authority_root = canonical_authorized_root(&attempt.authority.worktree_root)?;
+        let parent = if configured_parent.starts_with(&authority_root) {
+            let container = authority_root
+                .parent()
+                .ok_or(ExecutionSupportError::Unavailable)?;
+            let parent = container
+                .join(".codex-orchestrator-execution-workspaces")
+                .join(stable_id(
+                    "execution-workspace-parent",
+                    &format!(
+                        "{}:{}",
+                        attempt.authority.authority_id,
+                        configured_parent.to_string_lossy()
+                    ),
+                ));
+            if create_parent {
+                fs::create_dir_all(&parent).map_err(|_| ExecutionSupportError::Unavailable)?;
+            }
+            let metadata = fs::symlink_metadata(&parent)
+                .map_err(|_| ExecutionSupportError::Unavailable)?;
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(ExecutionSupportError::CorrelationMismatch);
+            }
+            let parent = parent
+                .canonicalize()
+                .map_err(|_| ExecutionSupportError::Unavailable)?;
+            if parent.starts_with(&authority_root) {
+                return Err(ExecutionSupportError::CorrelationMismatch);
+            }
+            parent
+        } else {
+            configured_parent
+        };
         let root = parent.join(self.workspace_id(attempt));
         if root.parent() != Some(parent.as_path()) {
             return Err(ExecutionSupportError::CorrelationMismatch);
@@ -1280,6 +1313,63 @@ mod tests {
         assert_eq!(reopened.grant("attempt-1").unwrap(), reference);
         assert!(
             matches!(reopened.consume(&reference.capability_ref, ExecutionSupportIntent::ChangedFileManifest), Ok(ExecutionSupportResponse::ChangedFileManifest(files)) if files.is_empty())
+        );
+    }
+
+    #[test]
+    fn handler_grant_reopens_from_a_configured_parent_nested_in_the_authorized_worktree() {
+        let mut fixture = fixture();
+        fixture.workspace_parent = fixture
+            .sprint_root
+            .join(".isolated-product-data")
+            .join("execution-workspaces");
+        let service = fixture.service();
+        assert!(matches!(
+            service.authorize_existing_attempt(AuthorizeExistingWorkUnitExecutionAttempt {
+                attempt_id: "handler-attempt-1".into(),
+                work_unit_id: "work-unit-1".into(),
+                role: WorkUnitExecutionRole::Handler,
+                sprint_git_authority_id: fixture.authority_id.clone(),
+                execution_seed_object_id: None,
+            }),
+            Ok(AuthorizeExistingWorkUnitExecutionAttemptResult::Authorized { .. })
+        ));
+        let reference = service
+            .grant_for_role("handler-attempt-1", WorkUnitExecutionRole::Handler)
+            .unwrap();
+        let root = PathBuf::from(&reference.working_directory);
+        assert!(root.is_dir());
+        assert!(!root.starts_with(&fixture.sprint_root));
+        assert_eq!(fixture.git(&root, &["rev-parse", "HEAD"]), fixture.baseline);
+        assert_eq!(
+            Connection::open(&fixture.database)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM execution_support_attempt_authorizations WHERE attempt_id='handler-attempt-1' AND role_kind='work_unit_handler'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            1
+        );
+        drop(service);
+        let reopened = fixture.service();
+        assert_eq!(
+            reopened
+                .grant_for_role("handler-attempt-1", WorkUnitExecutionRole::Handler)
+                .unwrap(),
+            reference
+        );
+        assert_eq!(
+            Connection::open(&fixture.database)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM execution_support_grants WHERE attempt_id='handler-attempt-1' AND role_id='work_unit_handler'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            1
         );
     }
 
