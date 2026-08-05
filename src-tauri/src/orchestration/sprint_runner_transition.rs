@@ -986,12 +986,16 @@ pub(crate) struct EpicEscalationReassessmentDisposition {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct EpicEscalationDownstreamRequest {
     pub(crate) target: EpicEscalationDownstreamTarget,
+    pub(crate) dependency: Option<EpicKnownAgentDependency>,
     pub(crate) request: String,
     pub(crate) resumption_path: String,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum EpicEscalationDownstreamTarget { SprintRunner, ExistingAgentAchievableDependency }
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EpicKnownAgentDependency { WorkUnitHandler }
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct EpicEscalationAttention {
@@ -2740,7 +2744,9 @@ impl SprintRunnerTransitionService {
         let (eligible,blocked):(i64,i64)=connection.query_row("SELECT COALESCE(SUM(CASE WHEN a.eligibility_state='eligible' THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN a.eligibility_state='blocked' THEN 1 ELSE 0 END),0) FROM work_unit_handler_activations a WHERE a.sprint_id=?1",[&sprint],|r|Ok((r.get(0)?,r.get(1)?))).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         let mut statement=connection.prepare("SELECT title,intended_movement,concern_summaries_json FROM initiated_sprints WHERE epic_id=?1 AND id<>?2 ORDER BY ordinal").map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         let other=statement.query_map(params![epic,sprint],|r|Ok(serde_json::json!({"title":r.get::<_,String>(0)?,"intendedMovement":r.get::<_,String>(1)?,"concernSummaries":serde_json::from_str::<serde_json::Value>(&r.get::<_,String>(2)?).unwrap_or(serde_json::Value::Null)}))).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?.collect::<Result<Vec<_>,_>>().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        Ok(serde_json::json!({"acceptedEpicPlan":{"available":plan.is_some(),"suggestedEpicName":plan.as_ref().and_then(|value|value.get("suggestedEpicName")),"otherAvailableEpicWork":other},"currentSprintState":{"title":title,"intendedMovement":movement,"eligibleWorkUnitCount":eligible,"blockedWorkUnitCount":blocked},"handedBackConcern":{"classification":concern.get("classification"),"reason":concern.get("reason"),"evidence":concern.get("evidence")},"localExhaustion":{"rationale":disposition.get("rationale"),"summary":disposition.get("localExhaustionSummary")}}))
+        let handler_known:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_handler_activations WHERE sprint_id=?1 AND eligibility_state='eligible' AND handler_ready_at IS NOT NULL)",[&sprint],|r|r.get(0)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let dependencies=if handler_known{serde_json::json!([{ "owner":"work_unit_handler", "enablingResult":"application-observed Handler result", "resumptionPath":"reassess this exact escalation after that result" }])}else{serde_json::json!([])};
+        Ok(serde_json::json!({"acceptedEpicPlan":{"available":plan.is_some(),"suggestedEpicName":plan.as_ref().and_then(|value|value.get("suggestedEpicName")),"otherAvailableEpicWork":other},"currentSprintState":{"title":title,"intendedMovement":movement,"eligibleWorkUnitCount":eligible,"blockedWorkUnitCount":blocked},"knownAgentAchievableDependencies":dependencies,"handedBackConcern":{"classification":concern.get("classification"),"reason":concern.get("reason"),"evidence":concern.get("evidence")},"localExhaustion":{"rationale":disposition.get("rationale"),"summary":disposition.get("localExhaustionSummary")}}))
     }
 
     fn record_epic_escalation_disposition(self:&Arc<Self>,invocation:&AgentInvocationId,input:EpicEscalationReassessmentDisposition)->Result<(),SprintRunnerTransitionError>{
@@ -2750,6 +2756,7 @@ impl SprintRunnerTransitionService {
         let mut conn=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;
         let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         let handback:String=tx.query_row("SELECT handback_id FROM epic_runner_escalation_receivers WHERE reassessment_invocation_id=?1 AND delivery_persisted_at IS NOT NULL AND harness_bound_at IS NOT NULL AND launch_accepted_at IS NOT NULL",[invocation.as_str()],|r|r.get(0)).optional().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?.ok_or(SprintRunnerTransitionError::Forbidden)?;
+        if matches!(input.downstream_request.as_ref().map(|r|&r.target),Some(EpicEscalationDownstreamTarget::ExistingAgentAchievableDependency)){let known:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_handler_activations a JOIN epic_runner_escalation_receivers r ON r.sprint_id=a.sprint_id WHERE r.handback_id=?1 AND a.eligibility_state='eligible' AND a.handler_ready_at IS NOT NULL)",[&handback],|r|r.get(0)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if !known{return Err(SprintRunnerTransitionError::Forbidden)}}
         let fingerprint=stable_id("epic-runner-escalation-disposition",&format!("{handback}:{serialized}"));let disposition_id=stable_id("epic-runner-escalation-disposition-id",&handback);let semantic=stable_id("epic-runner-escalation-semantic-reassessment",&handback);let now=chrono::Utc::now().to_rfc3339();
         let changed=tx.execute("INSERT OR IGNORE INTO epic_runner_escalation_dispositions (handback_id,disposition_id,movement_kind,details_json,disposition_fingerprint,selected_at,preserves_handback) VALUES (?1,?2,?3,?4,?5,?6,1)",params![handback,disposition_id,input.movement_kind,serialized,fingerprint,now]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         if changed==0{let exact:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM epic_runner_escalation_dispositions WHERE handback_id=?1 AND disposition_id=?2 AND disposition_fingerprint=?3 AND preserves_handback=1)",params![handback,disposition_id,fingerprint],|r|r.get(0)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if !exact{return Err(SprintRunnerTransitionError::Conflict)}}
@@ -3703,8 +3710,8 @@ fn validate_epic_escalation_disposition(value:&EpicEscalationReassessmentDisposi
     if let Some(request)=&value.downstream_request{validate_outcome(&request.request)?;validate_outcome(&request.resumption_path)?}
     if let Some(attention)=&value.human_external_attention{for text in [&attention.reason,&attention.authority_needed,&attention.evidence_context,&attention.resumption_path]{validate_outcome(text)?}}
     match value.movement_kind.as_str(){
-        "return_context_to_sprint_runner"=>if !matches!(value.downstream_request.as_ref().map(|r|&r.target),Some(EpicEscalationDownstreamTarget::SprintRunner))||value.human_external_attention.is_some()||value.considered_intent.is_some(){return Err(SprintRunnerTransitionError::Invalid)},
-        "await_existing_agent_dependency"=>if !matches!(value.downstream_request.as_ref().map(|r|&r.target),Some(EpicEscalationDownstreamTarget::ExistingAgentAchievableDependency))||value.human_external_attention.is_some()||value.considered_intent.is_some(){return Err(SprintRunnerTransitionError::Invalid)},
+        "return_context_to_sprint_runner"=>if !matches!(value.downstream_request.as_ref().map(|r|&r.target),Some(EpicEscalationDownstreamTarget::SprintRunner))||value.downstream_request.as_ref().and_then(|r|r.dependency.as_ref()).is_some()||value.human_external_attention.is_some()||value.considered_intent.is_some(){return Err(SprintRunnerTransitionError::Invalid)},
+        "await_existing_agent_dependency"=>if !matches!(value.downstream_request.as_ref().map(|r|&r.target),Some(EpicEscalationDownstreamTarget::ExistingAgentAchievableDependency))||value.downstream_request.as_ref().and_then(|r|r.dependency.as_ref()).is_none()||value.human_external_attention.is_some()||value.considered_intent.is_some(){return Err(SprintRunnerTransitionError::Invalid)},
         "human_or_external_attention"=>if value.downstream_request.is_some()||value.human_external_attention.is_none()||value.considered_intent.is_some(){return Err(SprintRunnerTransitionError::Invalid)},
         "consider_other_epic_work"=>if value.downstream_request.is_some()||value.human_external_attention.is_some()||value.considered_intent.is_none(){return Err(SprintRunnerTransitionError::Invalid)},
         _=>if value.downstream_request.is_some()||value.human_external_attention.is_some()||value.considered_intent.is_none(){return Err(SprintRunnerTransitionError::Invalid)},
@@ -4174,7 +4181,7 @@ mod handback_disposition_tests {
 
     #[test]
     fn epic_reassessment_keeps_requests_and_attention_on_separate_safe_routes() {
-        let request = EpicEscalationReassessmentDisposition { movement_kind: "return_context_to_sprint_runner".into(), rationale: "the unresolved concern needs a bounded Sprint decision".into(), considered_intent: None, downstream_request: Some(EpicEscalationDownstreamRequest { target: EpicEscalationDownstreamTarget::SprintRunner, request: "return missing context only".into(), resumption_path: "reassess this concern".into() }), human_external_attention: None };
+        let request = EpicEscalationReassessmentDisposition { movement_kind: "return_context_to_sprint_runner".into(), rationale: "the unresolved concern needs a bounded Sprint decision".into(), considered_intent: None, downstream_request: Some(EpicEscalationDownstreamRequest { target: EpicEscalationDownstreamTarget::SprintRunner, dependency: None, request: "return missing context only".into(), resumption_path: "reassess this concern".into() }), human_external_attention: None };
         assert!(validate_epic_escalation_disposition(&request).is_ok());
         let attention = EpicEscalationReassessmentDisposition { movement_kind: "human_or_external_attention".into(), rationale: "the unresolved concern needs outside authority".into(), considered_intent: None, downstream_request: None, human_external_attention: Some(EpicEscalationAttention { reason: "a policy decision is absent".into(), authority_needed: "designated product authority".into(), evidence_context: "the exact bounded concern and local exhaustion rationale".into(), resumption_path: "resume this exact reassessment after that decision".into() }) };
         assert!(validate_epic_escalation_disposition(&attention).is_ok());
