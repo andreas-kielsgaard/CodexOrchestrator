@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import type { SprintWorkspacePresentationV1 } from '../../../application/orchestrations';
-import type { EmbeddedAgentSessionComposition } from '../../agentSessions';
+import {
+  AgentSessionTurnInspector,
+  type EmbeddedAgentSessionComposition,
+} from '../../agentSessions';
 import type { WorkUnitAgentSessionPresentation } from '../orchestrationModel';
 import { DetailWorkspace } from './DetailWorkspace';
 import { ResizableSplitSurface } from './ResizableSplitSurface';
@@ -11,6 +14,8 @@ import type {
   ProductWorkUnitIntegrationV1,
   ProductWorkUnitIncompleteDispositionV1,
   ProductWorkUnitImplementerOutcomeV1,
+  ProductWorkUnitInspectionActivityV1,
+  ProductWorkUnitInspectionV1,
   ProductWorkUnitRetryAttemptV1,
 } from '../../../application/orchestrations/productReadModels';
 import '../styles/orchestrationSubdetail.css';
@@ -33,6 +38,8 @@ interface SessionFocusTarget {
   readonly invocationId: string;
   readonly request: number;
 }
+
+type WorkUnitInspectionTab = 'activity' | 'evidence';
 
 export function WorkUnitDetailWorkspace({
   unit,
@@ -59,6 +66,8 @@ export function WorkUnitDetailWorkspace({
     handler?.sessionId ?? workSlicePlanner?.sessionId ?? '',
   );
   const [focusTarget, setFocusTarget] = useState<SessionFocusTarget | null>(null);
+  const [inspectionTab, setInspectionTab] = useState<WorkUnitInspectionTab>('activity');
+  const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const primarySession =
     sessions.find(({ sessionId }) => sessionId === primarySessionId) ?? handler ?? workSlicePlanner;
   const attemptHistory = unit.attemptHistory ?? [];
@@ -78,6 +87,15 @@ export function WorkUnitDetailWorkspace({
       invocationId: entry.invocationId,
       request: (current?.request ?? 0) + 1,
     }));
+    const activity = unit.inspection?.activities.find(
+      (candidate) =>
+        candidate.agentSessionId === entry.agentSessionId &&
+        candidate.invocationId === entry.invocationId,
+    );
+    if (activity) {
+      setInspectionTab('activity');
+      setSelectedActivityId(activity.activityId);
+    }
   };
 
   return (
@@ -208,61 +226,353 @@ export function WorkUnitDetailWorkspace({
         </div>
       }
       primary={
-        <section className="work-unit-sessions" aria-label="Work Unit Agent Sessions">
-          <ResizableSplitSurface
-            axis="horizontal"
-            primary={
-              <div className="work-unit-primary-session">
-                {workSlicePlanner && handler ? (
-                  <nav aria-label="Planning and handling Agent Session">
-                    {[workSlicePlanner, handler].map((session) => (
-                      <button
-                        key={session.sessionId}
-                        type="button"
-                        aria-pressed={primarySession?.sessionId === session.sessionId}
-                        onClick={() => setPrimarySessionId(session.sessionId)}
-                      >
-                        {session.role === 'work_slice_planner'
-                          ? 'Work Slice Planner'
-                          : 'Work Unit Handler'}
-                      </button>
-                    ))}
-                  </nav>
-                ) : null}
-                <SessionSlot
-                  label={
-                    primarySession?.role === 'work_slice_planner'
-                      ? 'Work Slice Planner'
-                      : 'Work Unit Handler'
+        <section className="work-unit-inspection" aria-label="Work Unit Activity and Evidence">
+          <nav
+            className="work-unit-inspection__tabs"
+            aria-label="Work Unit detail views"
+            role="tablist"
+          >
+            {(['activity', 'evidence'] as const).map((tab) => (
+              <button
+                key={tab}
+                id={`work-unit-${tab}-tab`}
+                type="button"
+                role="tab"
+                aria-selected={inspectionTab === tab}
+                aria-controls={`work-unit-${tab}-view`}
+                tabIndex={inspectionTab === tab ? 0 : -1}
+                onClick={() => setInspectionTab(tab)}
+                onKeyDown={(event) => {
+                  if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+                    event.preventDefault();
+                    const nextTab = tab === 'activity' ? 'evidence' : 'activity';
+                    setInspectionTab(nextTab);
+                    document.getElementById(`work-unit-${nextTab}-tab`)?.focus();
                   }
-                  session={primarySession}
-                  agentSessionComposition={agentSessionComposition}
-                  focusTarget={focusTarget}
-                  onOpenAgentSession={onOpenAgentSession}
+                }}
+              >
+                {tab === 'activity' ? 'Activity' : 'Evidence'}
+              </button>
+            ))}
+          </nav>
+          {inspectionTab === 'activity' ? (
+            <div
+              id="work-unit-activity-view"
+              role="tabpanel"
+              aria-labelledby="work-unit-activity-tab"
+            >
+              <WorkUnitActivityView
+                inspection={unit.inspection}
+                selectedActivityId={selectedActivityId}
+                onSelectActivity={(activityId) => setSelectedActivityId(activityId)}
+                sessions={sessions}
+                onOpenAgentSession={onOpenAgentSession}
+              />
+              <section className="work-unit-sessions" aria-label="Work Unit Agent Sessions">
+                <ResizableSplitSurface
+                  axis="horizontal"
+                  primary={
+                    <div className="work-unit-primary-session">
+                      {workSlicePlanner && handler ? (
+                        <nav aria-label="Planning and handling Agent Session">
+                          {[workSlicePlanner, handler].map((session) => (
+                            <button
+                              key={session.sessionId}
+                              type="button"
+                              aria-pressed={primarySession?.sessionId === session.sessionId}
+                              onClick={() => setPrimarySessionId(session.sessionId)}
+                            >
+                              {session.role === 'work_slice_planner'
+                                ? 'Work Slice Planner'
+                                : 'Work Unit Handler'}
+                            </button>
+                          ))}
+                        </nav>
+                      ) : null}
+                      <SessionSlot
+                        label={
+                          primarySession?.role === 'work_slice_planner'
+                            ? 'Work Slice Planner'
+                            : 'Work Unit Handler'
+                        }
+                        session={primarySession}
+                        agentSessionComposition={agentSessionComposition}
+                        focusTarget={focusTarget}
+                        onOpenAgentSession={onOpenAgentSession}
+                      />
+                    </div>
+                  }
+                  secondary={
+                    <div className="work-unit-execution-session">
+                      <SessionSlot
+                        label="Work Unit Implementer"
+                        session={implementer}
+                        agentSessionComposition={agentSessionComposition}
+                        focusTarget={focusTarget}
+                        onOpenAgentSession={onOpenAgentSession}
+                      />
+                    </div>
+                  }
+                  primaryLabel="Planning and handling conversation"
+                  secondaryLabel="Work Unit Implementer conversation"
+                  initialPrimaryPercent={50}
+                  minimumPrimaryPixels={220}
+                  minimumSecondaryPixels={220}
                 />
-              </div>
-            }
-            secondary={
-              <div className="work-unit-execution-session">
-                <SessionSlot
-                  label="Work Unit Implementer"
-                  session={implementer}
-                  agentSessionComposition={agentSessionComposition}
-                  focusTarget={focusTarget}
-                  onOpenAgentSession={onOpenAgentSession}
-                />
-              </div>
-            }
-            primaryLabel="Planning and handling conversation"
-            secondaryLabel="Work Unit Implementer conversation"
-            initialPrimaryPercent={50}
-            minimumPrimaryPixels={220}
-            minimumSecondaryPixels={220}
-          />
+              </section>
+            </div>
+          ) : (
+            <div
+              id="work-unit-evidence-view"
+              role="tabpanel"
+              aria-labelledby="work-unit-evidence-tab"
+            >
+              <WorkUnitEvidenceView
+                inspection={unit.inspection}
+                onSelectActivity={(activityId) => {
+                  setSelectedActivityId(activityId);
+                  setInspectionTab('activity');
+                }}
+              />
+            </div>
+          )}
         </section>
       }
     />
   );
+}
+
+function WorkUnitActivityView({
+  inspection,
+  selectedActivityId,
+  onSelectActivity,
+  sessions,
+  onOpenAgentSession,
+}: {
+  readonly inspection?: ProductWorkUnitInspectionV1;
+  readonly selectedActivityId: string | null;
+  readonly onSelectActivity: (activityId: string) => void;
+  readonly sessions: readonly WorkUnitAgentSessionPresentation[];
+  readonly onOpenAgentSession?: (sessionId: string) => void;
+}) {
+  const selectedActivity = inspection?.activities.find(
+    (activity) => activity.activityId === selectedActivityId,
+  );
+  const selectedSession = selectedActivity
+    ? sessions.find((session) => session.sessionId === selectedActivity.agentSessionId)
+    : undefined;
+
+  return (
+    <section className="work-unit-activity" aria-label="Work Unit Activity">
+      <header className="work-unit-inspection__heading">
+        <div>
+          <span>Agent-only record</span>
+          <h2>Activity</h2>
+        </div>
+        <p>Application summaries are nested beneath their owning Handler or Implementer turn.</p>
+      </header>
+      {inspection?.activities.length ? (
+        <ol className="work-unit-activity__list">
+          {inspection.activities.map((activity) => (
+            <li
+              key={activity.activityId}
+              className={selectedActivityId === activity.activityId ? 'is-selected' : undefined}
+              data-activity-id={activity.activityId}
+            >
+              <button
+                type="button"
+                aria-pressed={selectedActivityId === activity.activityId}
+                onClick={() => onSelectActivity(activity.activityId)}
+              >
+                <span className="work-unit-activity__role">{roleLabel(activity.role)}</span>
+                <strong>{stageLabel(activity.primaryStage)}</strong>
+                <small>{activity.invocationId}</small>
+              </button>
+              {activity.applicationSummary && (
+                <ApplicationActivitySummary
+                  activity={activity}
+                  activities={inspection.activities}
+                  onSelectActivity={onSelectActivity}
+                />
+              )}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="work-unit-inspection__unavailable">
+          No application-owned agent activity is available for this Work Unit.
+        </p>
+      )}
+      {selectedActivity ? (
+        <section
+          className="work-unit-activity__inspection"
+          aria-label="Selected Agent Session turn"
+        >
+          <header>
+            <div>
+              <span>Exact recorded pointer</span>
+              <h3>{stageLabel(selectedActivity.primaryStage)}</h3>
+            </div>
+            {onOpenAgentSession && selectedSession ? (
+              <button type="button" onClick={() => onOpenAgentSession(selectedSession.sessionId)}>
+                Open in Agent Sessions
+              </button>
+            ) : null}
+          </header>
+          <AgentSessionTurnInspector
+            sessionId={selectedActivity.agentSessionId}
+            invocationId={selectedActivity.invocationId}
+            transcript={selectedSession?.transcript ?? null}
+            ariaLabel={`Agent Session turn: ${selectedActivity.invocationId}`}
+          />
+        </section>
+      ) : (
+        <p className="work-unit-inspection__selection-hint">
+          Select an activity to inspect its complete recorded turn.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function ApplicationActivitySummary({
+  activity,
+  activities,
+  onSelectActivity,
+}: {
+  readonly activity: ProductWorkUnitInspectionActivityV1;
+  readonly activities: readonly ProductWorkUnitInspectionActivityV1[];
+  readonly onSelectActivity: (activityId: string) => void;
+}) {
+  const summary = activity.applicationSummary!;
+  return (
+    <section className="work-unit-activity__application" aria-label="Application summary">
+      <h4>Application summary</h4>
+      <ul>
+        {summary.applicationEvents.map((event) => (
+          <li key={event}>{applicationEventLabel(event)}</li>
+        ))}
+      </ul>
+      {summary.peerEvidenceActivityIds.length ? (
+        <div>
+          <strong>Related activity</strong>
+          {summary.peerEvidenceActivityIds.map((activityId) => {
+            const target = activities.find((candidate) => candidate.activityId === activityId);
+            return target ? (
+              <button key={activityId} type="button" onClick={() => onSelectActivity(activityId)}>
+                {stageLabel(target.primaryStage)}
+              </button>
+            ) : (
+              <span key={activityId}>Related activity unavailable ({activityId})</span>
+            );
+          })}
+        </div>
+      ) : null}
+      <p>
+        <strong>MCP calls:</strong> {summary.mcpCallDetail.reason}
+      </p>
+    </section>
+  );
+}
+
+function WorkUnitEvidenceView({
+  inspection,
+  onSelectActivity,
+}: {
+  readonly inspection?: ProductWorkUnitInspectionV1;
+  readonly onSelectActivity: (activityId: string) => void;
+}) {
+  const fileEvidence = inspection?.fileEvidence;
+  const sourceActivity =
+    fileEvidence?.status === 'available'
+      ? inspection?.activities.find(
+          (activity) => activity.activityId === fileEvidence.sourceActivityId,
+        )
+      : undefined;
+  return (
+    <section className="work-unit-evidence" aria-label="Work Unit Evidence">
+      <header className="work-unit-inspection__heading">
+        <div>
+          <span>Application-owned detail</span>
+          <h2>Evidence</h2>
+        </div>
+        <p>Evidence is shown only where an explicit application owner and source are recorded.</p>
+      </header>
+      <section className="work-unit-evidence__group" aria-label="File evidence">
+        <h3>Files</h3>
+        {!fileEvidence ? (
+          <p>No application-owned file evidence is available for this Work Unit.</p>
+        ) : fileEvidence.status === 'unavailable' ? (
+          <p>Unavailable: {fileEvidence.reason}</p>
+        ) : (
+          <>
+            <p>
+              Owned by the application. Content fingerprints are recorded; file contents are not
+              exposed here.
+            </p>
+            <ul>
+              {fileEvidence.changedFiles.map((file) => (
+                <li key={file.evidenceRef}>
+                  <strong>{file.displayName}</strong>
+                  <span>{file.changeKind}</span>
+                  <small>Evidence reference: {file.evidenceRef}</small>
+                </li>
+              ))}
+            </ul>
+            {sourceActivity ? (
+              <button type="button" onClick={() => onSelectActivity(sourceActivity.activityId)}>
+                View owning activity
+              </button>
+            ) : (
+              <p>Owning activity unavailable; navigation is not supported.</p>
+            )}
+          </>
+        )}
+      </section>
+      <section className="work-unit-evidence__group" aria-label="Test evidence">
+        <h3>Tests</h3>
+        <p>
+          Unavailable:{' '}
+          {inspection?.testEvidence.reason ??
+            'No application-owned test detail is available for this Work Unit.'}
+        </p>
+      </section>
+    </section>
+  );
+}
+
+function roleLabel(role: ProductWorkUnitInspectionActivityV1['role']) {
+  return role === 'handler' ? 'Handler' : 'Implementer';
+}
+
+function stageLabel(stage: ProductWorkUnitInspectionActivityV1['primaryStage']) {
+  return {
+    handler_activation: 'Handler activation',
+    handler_action: 'Handler action',
+    implementer_activation: 'Implementer activation',
+    implementer_retry: 'Implementer retry',
+    implementer_reporting: 'Implementer reporting',
+    handler_review: 'Handler review',
+  }[stage];
+}
+
+function applicationEventLabel(
+  event: NonNullable<
+    ProductWorkUnitInspectionActivityV1['applicationSummary']
+  >['applicationEvents'][number],
+) {
+  return {
+    submission_recorded: 'Submission recorded',
+    file_evidence_recorded: 'File evidence recorded',
+    semantic_completion_recorded: 'Semantic completion recorded',
+    terminal_lifecycle_observed: 'Terminal lifecycle observed',
+    application_acceptance_recorded: 'Application acceptance recorded',
+    handler_review_ready: 'Handler review ready',
+    review_delivery_persisted: 'Review delivery persisted',
+    review_judgment_recorded: 'Review judgment recorded',
+    review_lifecycle_observed: 'Review lifecycle observed',
+    review_conflict_recorded: 'Review conflict recorded',
+  }[event];
 }
 
 function SessionSlot({
@@ -354,7 +664,9 @@ function handlerActivity(
 }
 
 function executionStateDetail(
-  state: NonNullable<SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['executionState']>['state'],
+  state: NonNullable<
+    SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['executionState']
+  >['state'],
 ) {
   return {
     waiting_on_prerequisites: 'Waiting on recorded prerequisite work.',

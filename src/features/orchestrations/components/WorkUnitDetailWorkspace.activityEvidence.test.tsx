@@ -1,0 +1,192 @@
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import type { SprintWorkspacePresentationV1 } from '../../../application/orchestrations';
+import { projectAgentSessionTranscript } from '../../agentSessions/transcriptProjector';
+import { runtimeEvent, sessionDetails } from '../../agentSessions/testFixtures';
+import type { WorkUnitAgentSessionPresentation } from '../orchestrationModel';
+import { WorkUnitDetailWorkspace } from './WorkUnitDetailWorkspace';
+
+type PresentedWorkUnit =
+  SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number];
+
+describe('WorkUnitDetailWorkspace Activity and Evidence', () => {
+  it('selects exact agent turns, nests application detail, and navigates from Evidence', async () => {
+    const user = userEvent.setup();
+    render(<Workspace />);
+
+    expect(screen.getByRole('tab', { name: 'Activity' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('Application summary')).toBeInTheDocument();
+    expect(screen.getByLabelText('Application summary')).toHaveTextContent(
+      'No application-owned MCP-call detail is available.',
+    );
+    expect(screen.queryByLabelText('Selected Agent Session turn')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: /Handler action invocation-1/ }));
+    expect(screen.getByRole('button', { name: /Handler action invocation-1/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByLabelText('Agent Session turn: invocation-1')).toHaveTextContent(
+      'Do the work',
+    );
+    expect(screen.getByLabelText('Agent Session turn: invocation-1')).toHaveTextContent(
+      'Safe final response',
+    );
+
+    await user.click(screen.getByRole('tab', { name: 'Evidence' }));
+    expect(screen.getByRole('tab', { name: 'Evidence' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('src/feature.ts')).toBeInTheDocument();
+    expect(
+      screen.getByText('Unavailable: No application-owned test detail is available.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText('Selected Agent Session turn')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'View owning activity' }));
+    expect(screen.getByRole('tab', { name: 'Activity' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByLabelText('Agent Session turn: invocation-2')).toBeInTheDocument();
+  });
+
+  it('fails closed when an activity points at a missing Session', async () => {
+    const user = userEvent.setup();
+    render(<Workspace missingSession />);
+
+    await user.click(screen.getByRole('button', { name: /Implementer reporting invocation-2/ }));
+    expect(screen.getByLabelText('Agent Session turn: invocation-2')).toHaveTextContent(
+      'Agent Session turn unavailable',
+    );
+  });
+
+  it('moves between peer views with the tab keyboard contract', async () => {
+    const user = userEvent.setup();
+    render(<Workspace />);
+
+    const activityTab = screen.getByRole('tab', { name: 'Activity' });
+    activityTab.focus();
+    await user.keyboard('{ArrowRight}');
+
+    expect(screen.getByRole('tab', { name: 'Evidence' })).toHaveAttribute('aria-selected', 'true');
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Evidence' }));
+  });
+});
+
+function Workspace({ missingSession = false }: { readonly missingSession?: boolean }) {
+  const inspection = {
+    workUnitId: 'unit-1',
+    materializationId: 'materialization-1',
+    activities: [
+      {
+        activityId: 'activity-handler',
+        attemptId: 'attempt-1',
+        role: 'handler' as const,
+        agentSessionId: 'session-1',
+        invocationId: 'invocation-1',
+        primaryStage: 'handler_action' as const,
+        applicationSummary: {
+          owner: 'application' as const,
+          applicationEvents: ['review_delivery_persisted' as const],
+          peerEvidenceActivityIds: [],
+          mcpCallDetail: {
+            owner: 'application' as const,
+            reason: 'No application-owned MCP-call detail is available.',
+          },
+        },
+      },
+      {
+        activityId: 'activity-implementer',
+        attemptId: 'attempt-1',
+        role: 'implementer' as const,
+        agentSessionId: missingSession ? 'missing-session' : 'session-2',
+        invocationId: 'invocation-2',
+        primaryStage: 'implementer_reporting' as const,
+      },
+    ],
+    fileEvidence: {
+      status: 'available' as const,
+      owner: 'application' as const,
+      sourceActivityId: 'activity-implementer',
+      changedFiles: [
+        {
+          evidenceRef: 'evidence-1',
+          displayName: 'src/feature.ts',
+          changeKind: 'modified' as const,
+          contentFingerprint: 'content-1',
+        },
+      ],
+    },
+    testEvidence: {
+      owner: 'application' as const,
+      reason: 'No application-owned test detail is available.',
+    },
+  };
+  return (
+    <WorkUnitDetailWorkspace
+      unit={{ ...unit(), inspection }}
+      lifecycleEntries={[]}
+      workSlicePlanningPointGroupTitle="Planning point"
+      sessions={missingSession ? [handlerSession()] : [handlerSession(), implementerSession()]}
+      onBack={vi.fn()}
+    />
+  );
+}
+
+function unit(): PresentedWorkUnit {
+  return {
+    workUnitId: 'unit-1',
+    title: 'Bounded responsibility',
+    summary: 'Implement one bounded change.',
+    details: 'Accepted Work Slice responsibility.',
+    source: {
+      status: 'available',
+      sourceKind: 'repository',
+      sourceReferences: ['materialization-1'],
+    },
+    attemptHistory: [],
+    retryAttempts: [],
+    workUnitScopeId: 'scope-1',
+    sprintPlanRevisionId: 'revision-1',
+    fixedExecutionScopeIds: [],
+    dependencies: [],
+    gateIds: [],
+    attempts: [],
+    reviews: [],
+    observed: {
+      executionRequested: false,
+      launched: false,
+      returned: false,
+      integrated: false,
+      responsibilityAccepted: false,
+    },
+    presentationState: 'not_started',
+  };
+}
+
+function handlerSession(): WorkUnitAgentSessionPresentation {
+  return {
+    sessionId: 'session-1',
+    title: 'Work Unit Handler',
+    workUnitId: 'unit-1',
+    role: 'handler',
+    transcript: projectAgentSessionTranscript(
+      sessionDetails('completed', [
+        runtimeEvent(1, 'agent_message', 'Safe final response', { role: 'final' }),
+      ]),
+    ),
+  };
+}
+
+function implementerSession(): WorkUnitAgentSessionPresentation {
+  const details = sessionDetails('completed', [
+    runtimeEvent(1, 'agent_message', 'Implementer final response', { role: 'final' }),
+  ]);
+  details.session.id = 'session-2';
+  details.invocations[0]!.invocation.id = 'invocation-2';
+  details.invocations[0]!.invocation.sessionId = 'session-2';
+  details.invocations[0]!.events[0]!.invocationId = 'invocation-2';
+  return {
+    sessionId: 'session-2',
+    title: 'Work Unit Implementer',
+    workUnitId: 'unit-1',
+    role: 'implementer',
+    transcript: projectAgentSessionTranscript(details),
+  };
+}
