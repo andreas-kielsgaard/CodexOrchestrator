@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { recordedPresentationAdjunct } from './recordedPresentationAdjunct';
 import {
+  createRecordedDevelopmentOrchestrationPresentation,
   recordedDevelopmentOrchestrationClient,
   recordedDevelopmentOrchestrationPresentation,
 } from './recordedOrchestrationClient';
@@ -79,6 +80,45 @@ describe('recorded orchestration composition', () => {
         expect.objectContaining({
           sessionId: 'recorded-implementer-WU-ECS2E',
           role: 'implementer',
+        }),
+      ]),
+    );
+  });
+
+  it('keeps the representative Work Unit inspection explicitly presentation-only', () => {
+    const reads = composeProductOrchestrationReadModels(recordedProductReadCompositionInput);
+    const canonicalUnit = reads.epics[0]!.sprints
+      .find(({ sprintId }) => sprintId === 'sprint-control-surface')!
+      .revisionViews.find(({ sprintPlanRevisionId }) => sprintPlanRevisionId === 'ECS-R4')!
+      .workUnits.find(({ workUnitId }) => workUnitId === 'WU-ECS2E')!;
+    expect(canonicalUnit.inspection).toBeUndefined();
+
+    const view = createRecordedDevelopmentOrchestrationPresentation({
+      includeWorkUnitReview: true,
+    }).present(reads);
+    const workspace = view.epics[0]!.plan.items.find(
+      ({ id }) => id === 'sprint-control-surface',
+    )!.workspace!;
+    const inspectedUnit = workspace.revisionViews
+      .find(({ sprintPlanRevisionId }) => sprintPlanRevisionId === 'ECS-R4')!
+      .workUnits.find(({ workUnitId }) => workUnitId === 'WU-ECS2E')!;
+
+    expect(inspectedUnit.inspection).toMatchObject({
+      workUnitId: 'WU-ECS2E',
+      fileEvidence: { status: 'available', owner: 'application' },
+      testEvidence: { owner: 'application' },
+    });
+    expect(inspectedUnit.inspection!.activities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'handler',
+          agentSessionId: 'recorded-session-WU-ECS2E',
+          invocationId: 'recorded-handler-WU-ECS2E-first-review',
+        }),
+        expect.objectContaining({
+          role: 'implementer',
+          agentSessionId: 'recorded-implementer-WU-ECS2E',
+          invocationId: 'recorded-implementer-WU-ECS2E-first-return',
         }),
       ]),
     );
