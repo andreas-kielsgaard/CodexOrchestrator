@@ -34,6 +34,19 @@ describe('App application surfaces', () => {
       }),
     ).toBeEnabled();
     expect(screen.queryByRole('button', { name: /Return to/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Sessions' }));
+    fireEvent.click(
+      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
+        name: 'Back',
+      }),
+    );
+    expect(screen.getByRole('main', { name: 'Orchestration' })).toBeVisible();
+    expect(
+      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
+        name: 'Back',
+      }),
+    ).toBeDisabled();
   });
 
   it('switches between peer Orchestration and Agent Sessions capability surfaces', async () => {
@@ -87,6 +100,47 @@ describe('App application surfaces', () => {
     expect(screen.getByRole('main', { name: 'Retained worktree builds' })).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Orchestration' }));
+    expect(screen.getByRole('main', { name: 'Orchestration' })).toBeVisible();
+  });
+
+  it('restores immediate typed destinations across injected shell surfaces', async () => {
+    render(
+      <App
+        agentSessionClient={emptyAgentClient()}
+        orchestrationClient={emptyOrchestrationClient()}
+        harnessManagementPreviewSurface={
+          <main aria-label="Harness Management preview">Harness</main>
+        }
+        humanReviewLauncherView={<main aria-label="Retained worktree builds">Launcher</main>}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Sessions' }));
+    expect(await screen.findByText('Start with a message')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Harness Management' }));
+    expect(screen.getByRole('main', { name: 'Harness Management preview' })).toBeVisible();
+    fireEvent.click(
+      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
+        name: 'Back',
+      }),
+    );
+    expect(await screen.findByText('Start with a message')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Worktree Review Dev' }));
+    expect(screen.getByRole('main', { name: 'Retained worktree builds' })).toBeVisible();
+    fireEvent.click(
+      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
+        name: 'Back',
+      }),
+    );
+    expect(await screen.findByText('Start with a message')).toBeVisible();
+
+    fireEvent.click(
+      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
+        name: 'Back',
+      }),
+    );
     expect(screen.getByRole('main', { name: 'Orchestration' })).toBeVisible();
   });
 
@@ -149,6 +203,13 @@ describe('App application surfaces', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Agent Sessions' }));
     expect(screen.queryByRole('region', { name: /return context/i })).toBeNull();
+
+    fireEvent.click(
+      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
+        name: 'Back',
+      }),
+    );
+    expect(await screen.findByRole('main', { name: 'Epic detail' })).toBeVisible();
   });
 
   it('round-trips the WU-ECS2E handler without manufacturing a Reviewer Session', async () => {

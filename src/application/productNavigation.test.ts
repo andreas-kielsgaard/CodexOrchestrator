@@ -51,6 +51,14 @@ describe('Product navigation history', () => {
     expect(canNavigateBack(state)).toBe(false);
   });
 
+  it('does not manufacture a self-history entry for a same-destination push', () => {
+    const state = productNavigationReducer(
+      createProductNavigation(overview),
+      { type: 'navigate', intent: 'push', destination: overview },
+    );
+    expect(state).toEqual(createProductNavigation(overview));
+  });
+
   it('keeps contextual Return separate from generic Back and preserves exact Work Unit state', () => {
     let state = createProductNavigation(overview);
     state = productNavigationReducer(state, {
@@ -102,6 +110,24 @@ describe('Product navigation history', () => {
       selectedSessionId: 'session-implementer',
       focusedInvocationId: null,
     });
+  });
+
+  it('clears direct Agent Sessions context without adding a self-history entry', () => {
+    let state = productNavigationReducer(createProductNavigation(overview), {
+      type: 'open_contextual_agent_session',
+      origin: workUnitOrigin,
+      focusedInvocationId: 'invocation-handler',
+    });
+    state = productNavigationReducer(state, { type: 'enter_agent_sessions_directly' });
+    expect(state.contextualOrigin).toBeNull();
+    expect(state.current.destination).toEqual({
+      kind: 'agent_sessions',
+      selectedSessionId: 'session-handler',
+      focusedInvocationId: null,
+    });
+    expect(state.history).toEqual([{ destination: overview, intent: 'direct' }]);
+    state = productNavigationReducer(state, { type: 'back' });
+    expect(state.current.destination).toEqual(overview);
   });
 
   it('does not restore Back or contextual return state for direct, deep, or reload initialization', () => {

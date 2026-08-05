@@ -97,6 +97,11 @@ export function productNavigationReducer(
   switch (action.type) {
     case 'navigate':
       if (!supports(action.destination)) return clearForeignOrigin(state);
+      if (
+        action.intent === 'push' &&
+        sameProductNavigationDestination(state.current.destination, action.destination)
+      )
+        return state;
       return {
         current: { destination: action.destination, intent: action.intent },
         history: action.intent === 'push' ? [...state.history, state.current] : state.history,
@@ -126,9 +131,15 @@ export function productNavigationReducer(
         selectedSessionId:
           state.current.destination.kind === 'agent_sessions'
             ? state.current.destination.selectedSessionId
-            : null,
+          : null,
         focusedInvocationId: null,
       };
+      if (state.current.destination.kind === 'agent_sessions')
+        return {
+          current: { destination, intent: 'replace' },
+          history: state.history,
+          contextualOrigin: null,
+        };
       return {
         current: { destination, intent: 'push' },
         history: [...state.history, state.current],
@@ -222,6 +233,13 @@ function orchestrationDestination(origin: AgentSessionProductOrigin): ProductNav
 
 function keepsContextualOrigin(destination: ProductNavigationDestination): boolean {
   return destination.kind === 'agent_sessions';
+}
+
+function sameProductNavigationDestination(
+  left: ProductNavigationDestination,
+  right: ProductNavigationDestination,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function clearForeignOrigin(state: ProductNavigationState): ProductNavigationState {

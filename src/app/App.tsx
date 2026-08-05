@@ -161,7 +161,11 @@ export function App({
   const initialNavigationDestination: ProductNavigationDestination =
     initialApplicationSurface === 'agent-sessions'
       ? { kind: 'agent_sessions', selectedSessionId: null, focusedInvocationId: null }
-      : { kind: 'orchestration', location: null };
+      : initialApplicationSurface === 'harness-inspector'
+        ? { kind: 'harness_inspector' }
+        : initialApplicationSurface === 'worktree-review'
+          ? { kind: 'worktree_review' }
+          : { kind: 'orchestration', location: null };
   const [productNavigation, dispatchProductNavigation] = useReducer(
     (
       state: ReturnType<typeof createProductNavigation>,
@@ -214,6 +218,10 @@ export function App({
       setOrchestrationRoute('plan-builder');
     } else if (destination.kind === 'agent_sessions') {
       setSurface('agent-sessions');
+    } else if (destination.kind === 'harness_inspector') {
+      setSurface('harness-inspector');
+    } else if (destination.kind === 'worktree_review') {
+      setSurface('worktree-review');
     }
   }, [currentProductDestination]);
 
@@ -223,7 +231,14 @@ export function App({
     const read = () =>
       void humanReviewLauncherNavigation().then(
         (route) => {
-          if (active && route === 'worktree-review') setSurface(route);
+          if (active && route === 'worktree-review') {
+            dispatchProductNavigation({
+              type: 'navigate',
+              intent: 'push',
+              destination: { kind: 'worktree_review' },
+            });
+            setSurface(route);
+          }
         },
         () => undefined,
       );
@@ -603,7 +618,11 @@ export function App({
             aria-current={surface === 'harness-inspector' ? 'page' : undefined}
             onClick={() => {
               productNavigationEpoch.current += 1;
-              dispatchProductNavigation({ type: 'clear_contextual_origin' });
+              dispatchProductNavigation({
+                type: 'navigate',
+                intent: 'push',
+                destination: { kind: 'harness_inspector' },
+              });
               setSurface('harness-inspector');
             }}
           >
@@ -617,7 +636,11 @@ export function App({
             aria-current={surface === 'worktree-review' ? 'page' : undefined}
             onClick={() => {
               productNavigationEpoch.current += 1;
-              dispatchProductNavigation({ type: 'clear_contextual_origin' });
+              dispatchProductNavigation({
+                type: 'navigate',
+                intent: 'push',
+                destination: { kind: 'worktree_review' },
+              });
               setSurface('worktree-review');
             }}
           >
