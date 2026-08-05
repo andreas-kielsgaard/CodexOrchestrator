@@ -1588,11 +1588,16 @@ impl SprintRunnerTransitionService {
                     "Sprint Runner transition database lock is poisoned".into(),
                 )
             })?;
-            let tx = conn.transaction().map_err(|e| {
-                SprintRunnerTransitionError::Unavailable(format!(
-                    "authorize Sprint Runner request: {e}"
-                ))
-            })?;
+            // This request reads its idempotency row before authorizing a new route. Reserve the
+            // writer slot up front so another lifecycle write cannot invalidate that snapshot
+            // before the insert below.
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(|e| {
+                    SprintRunnerTransitionError::Unavailable(format!(
+                        "authorize Sprint Runner request: {e}"
+                    ))
+                })?;
             let existing: Option<(String, String, String, String, String)> = tx.query_row(
                 "SELECT epic_id,epic_runner_invocation_id,sprint_runner_session_id,sprint_runner_invocation_id,request_id FROM sprint_runner_transitions WHERE sprint_id=?1",
                 [&selection.sprint_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
