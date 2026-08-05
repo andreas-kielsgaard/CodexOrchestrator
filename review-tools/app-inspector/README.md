@@ -21,13 +21,16 @@ This tool is for explicitly authorized development/review interaction only; it d
 application transport or infer that any requested workflow stage occurred.
 
 For an isolated development instance deliberately launched with a loopback WebView2 debugging
-port, `webview-control.mjs` can instead type into or click a CSS selector without foregrounding the
-window. It requires the exact owner executable and PID; exactly one listener endpoint must be on a
-loopback address, belong to a descendant process, and declare the requested port. The returned
-WebSocket URL must also be `ws`, loopback, and use the same port. These are point-in-time checks
-before dispatch, not race-free identity proof. The tool then requires one exact page target URL and
-writes a redacted dispatch receipt. The debugger port is a development-only launch choice, never a
-production application transport.
+port, `webview-control.mjs` can instead type into or click one bounded CSS selector without
+foregrounding the window. It requires the exact owner executable and PID; exactly one listener
+endpoint must be on a loopback address, belong to a descendant process, and declare the requested
+port. The returned WebSocket URL must also be `ws`, loopback, and use the same port. These are
+point-in-time checks before dispatch, not race-free identity proof. The tool resolves one supported
+DOM control, derives a point with a fixed internal geometry query, and sends Chrome DevTools
+Protocol `Input` events. It accepts neither coordinates nor caller-supplied script, and exposes no
+generic browser control. The receipt redacts text and distinguishes pre-dispatch ownership, sent
+input commands, and unobserved product semantics. The debugger port is a development-only launch
+choice, never a production application transport.
 
 ## First snapshot
 

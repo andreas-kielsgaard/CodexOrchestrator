@@ -3,11 +3,11 @@ import { Buffer } from 'node:buffer';
 import test from 'node:test';
 
 import {
-  clickExpression,
+  boundedSelector,
   debuggerPort,
   loopbackUrl,
   parseOwnershipOutput,
-  typeExpression,
+  resolveSelector,
   validateWebSocketDebuggerUrl,
 } from '../webview-control.mjs';
 
@@ -15,11 +15,23 @@ const ownershipPrefix = 'REVIEW_APP_WEBVIEW_OWNER_V1:';
 const ownershipFrame = (value) =>
   `${ownershipPrefix}${Buffer.from(JSON.stringify(value), 'utf8').toString('base64')}`;
 
-test('keeps selector and text literal in CDP expressions', () => {
-  const expression = typeExpression('textarea[data-id="draft"]', 'line one\nline two');
-  assert.match(expression, /textarea\[data-id=\\"draft\\"\]/u);
-  assert.match(expression, /line one\\nline two/u);
-  assert.match(clickExpression('button[type="submit"]'), /button\[type=\\"submit\\"\]/u);
+test('bounds selector input before CDP selector lookup', () => {
+  assert.equal(boundedSelector('textarea[data-id="draft"]'), 'textarea[data-id="draft"]');
+  assert.throws(() => boundedSelector('   '), /must not be blank/u);
+  assert.throws(() => boundedSelector('x'.repeat(513)), /must not exceed 512/u);
+});
+
+test('fails closed when selector lookup is missing, ambiguous, or stale', async () => {
+  for (const nodeIds of [[], [7, 8]]) {
+    await assert.rejects(
+      resolveSelector(selectorProtocol(nodeIds), '#target'),
+      /Expected exactly one selector match/u,
+    );
+  }
+  await assert.rejects(
+    resolveSelector({ request: async () => Promise.reject(new Error('stale target')) }, '#target'),
+    /stale target/u,
+  );
 });
 
 test('accepts only explicit HTTP loopback debugger URLs', () => {
@@ -59,3 +71,13 @@ test('parses one owned-debugger receipt and rejects malformed framing', () => {
     /observed 2/u,
   );
 });
+
+function selectorProtocol(nodeIds) {
+  return {
+    async request(method) {
+      if (method === 'DOM.getDocument') return { root: { nodeId: 1 } };
+      if (method === 'DOM.querySelectorAll') return { nodeIds };
+      throw new Error(`unexpected method ${method}`);
+    },
+  };
+}
