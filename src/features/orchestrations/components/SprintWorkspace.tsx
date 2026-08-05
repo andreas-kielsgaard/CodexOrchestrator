@@ -8,6 +8,8 @@ import type {
   ArtifactAccessController,
   SprintAutomaticContinuationPolicyController,
   SprintWorkspacePresentationV1,
+  ProductSprintRunnerHandbackKnownMovementKindV1,
+  ProductSprintRunnerHandbackMovementV1,
 } from '../../../application/orchestrations';
 import { useEffect, useRef, useState } from 'react';
 import { DetailWorkspace } from './DetailWorkspace';
@@ -338,6 +340,7 @@ export function SprintWorkspace({
             </section>
           ) : null}
           <WorkSlicePlannerBoundary sprint={workspace.sprint} workUnits={activeView.workUnits} />
+          <SprintRunnerHandbackActivity workUnits={activeView.workUnits} />
           <section className="sprint-context__objectives" aria-label="Epic Runner objectives">
             <h2>Epic Runner objectives</h2>
             {workspace.epicRunnerObjectives.length > 0 ? (
@@ -412,6 +415,20 @@ export function SprintWorkspace({
       }
       primary={
         <>
+          {(workspace.epicEscalationReceivers ?? []).length > 0 && (
+            <section aria-label="Unresolved Epic reassessment" className="orchestration-reassessment">
+              <p className="eyebrow">Unresolved Sprint concern</p>
+              <p>Epic reassessment context returned to this Sprint. The concern remains unresolved.</p>
+              {(workspace.epicEscalationReceivers ?? []).map((receiver) => (
+                <div key={`${receiver.epicId}:${receiver.sprintId}:${receiver.deliveryRequestedAt}`}>
+                  {receiver.disposition?.downstreamRequest && <p>Downstream request recorded only: {receiver.disposition.downstreamRequest.request}. It is not delivery or activation.</p>}
+                  {receiver.disposition?.humanExternalAttention && <p>Attention requested: {receiver.disposition.humanExternalAttention.reason}. Authority needed: {receiver.disposition.humanExternalAttention.authorityNeeded}.</p>}
+                  {receiver.disposition?.consideredIntent && <p>Other Epic work remains intent only: {receiver.disposition.consideredIntent}.</p>}
+                  <p>Context return, dependency request, alternate work, or attention has not cleared this Sprint concern.</p>
+                </div>
+              ))}
+            </section>
+          )}
           {hasPreStartForecast ? (
             <section className="sprint-forecast" aria-label="Sprint Runner pre-start forecast">
               <p className="eyebrow">Sprint Runner forecast</p>
@@ -543,6 +560,99 @@ export function SprintWorkspace({
       }
     />
   );
+}
+
+export function SprintRunnerHandbackActivity({
+  workUnits,
+}: {
+  readonly workUnits: SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'];
+}) {
+  const entries = workUnits.flatMap((workUnit) =>
+    workUnit.attemptHistory.flatMap((attempt) =>
+      attempt.incompleteDisposition?.noProgressHandback
+        ? [{ workUnit, handback: attempt.incompleteDisposition.noProgressHandback }]
+        : [],
+    ),
+  );
+  if (entries.length === 0) return null;
+  return (
+    <section className="sprint-context__runner-transition" aria-label="Sprint Runner Handback reassessment">
+      <h2>Sprint Runner Handback</h2>
+      <p>
+        The handed-back concern remains unresolved. Only recorded Handback and Sprint Runner stages
+        are shown. Any local exhaustion record is an upward request, not final Sprint or Epic
+        blockage; no Epic response is recorded here.
+      </p>
+      <ul>
+        {entries.map(({ workUnit, handback }) => (
+          <li key={`${workUnit.workUnitId}-${handback.handbackId}`}>
+            <strong>{workUnit.title}</strong>: {handbackActivityDetail(handback)}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function handbackActivityDetail(
+  handback: NonNullable<
+    NonNullable<
+      SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['attemptHistory'][number]['incompleteDisposition']
+    >['noProgressHandback']
+  >,
+) {
+  const stages = [`Handback persisted at ${handback.persistedAt}`, `Delivery intent recorded at ${handback.deliveryIntendedAt}`];
+  const delivery = handback.sprintRunnerDelivery;
+  if (!delivery) return `${stages.join('; ')}. Sprint Runner delivery is not recorded.`;
+  stages.push(`Delivery requested at ${delivery.deliveryRequestedAt}`);
+  if (delivery.deliveryPersistedAt) stages.push('Delivery persisted');
+  if (delivery.harnessBoundAt) stages.push('Reassessment Harness binding recorded');
+  if (delivery.launchRequestedAt) stages.push('Sprint Runner launch requested');
+  if (delivery.launchAcceptedAt) stages.push('Sprint Runner launch accepted');
+  if (delivery.providerActivationObservedAt) stages.push('Provider activity observed separately');
+  if (delivery.semanticReassessmentRecordedAt) stages.push('Semantic reassessment recorded');
+  if (delivery.selectedMovement) stages.push(handbackMovementDetail(delivery.selectedMovement));
+  if (delivery.escalationIntentRecordedAt) stages.push('Escalation intent recorded upward');
+  if (delivery.escalationDeliveryRequestedAt) stages.push('Escalation delivery request recorded upward');
+  return `${stages.join('; ')}.`;
+}
+
+function handbackMovementDetail(
+  movement: NonNullable<
+    NonNullable<
+      NonNullable<
+        NonNullable<
+          SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['attemptHistory'][number]['incompleteDisposition']
+        >['noProgressHandback']
+      >['sprintRunnerDelivery']
+    >['selectedMovement']
+  >,
+) {
+  if (isKnownMovementKind(movement, 'continue_eligible_work'))
+    return `Alternate eligible work recorded: ${movement.eligibleWorkSummary}`;
+  if (isKnownMovementKind(movement, 'wait_for_agent_dependency'))
+    return `Agent-achievable dependency wait (${dependencyOwnerLabel(movement.dependencyOwnerClassification)}; owner: ${movement.dependencyOwner}; enabling result: ${movement.enablingResult}; resumption path: ${movement.resumptionPath})`;
+  if (isKnownMovementKind(movement, 'local_exhaustion_escalate'))
+    return `Local exhaustion recorded: ${movement.localExhaustionSummary}`;
+  return `Bounded movement recorded: ${movement.rationale}${movement.boundedDetails?.length ? ` (${movement.boundedDetails.map(({ value }) => `Additional bounded detail recorded: ${value}`).join('; ')})` : ''}; no settlement or blockage is implied`;
+}
+
+function isKnownMovementKind<K extends ProductSprintRunnerHandbackKnownMovementKindV1>(
+  movement: ProductSprintRunnerHandbackMovementV1,
+  kind: K,
+): movement is Extract<ProductSprintRunnerHandbackMovementV1, { readonly movementKind: K }> {
+  return movement.movementKind === kind;
+}
+
+function dependencyOwnerLabel(
+  classification: 'work_unit_handler' | 'work_unit_implementer' | 'work_slice_planner' | 'sprint_runner',
+) {
+  return {
+    work_unit_handler: 'Work Unit Handler',
+    work_unit_implementer: 'Work Unit Implementer',
+    work_slice_planner: 'Work Slice Planner',
+    sprint_runner: 'Sprint Runner',
+  }[classification];
 }
 
 export function WorkSlicePlannerBoundary({
@@ -718,9 +828,13 @@ function materializationLabel(
 }
 
 function executionSummary(
-  execution: SprintWorkspacePresentationV1['sprint']['workUnitMaterializations'] extends readonly (infer T)[]
-    ? T extends { readonly execution?: infer E } ? E : never
-    : never,
+  execution:
+    | NonNullable<
+        NonNullable<
+          SprintWorkspacePresentationV1['sprint']['workUnitMaterializations']
+        >[number]['execution']
+      >
+    | undefined,
 ) {
   if (!execution) return 'Execution progress is not recorded.';
   if (execution.attention) return 'Execution needs attention; no Work Slice settlement is recorded.';

@@ -5,7 +5,7 @@ description: Maintain one application-authorized product Sprint in its pre-start
 
 # Product Sprint Runner
 
-Own the Sprint pre-start forecast, started reevaluation, and any later application-delivered planning-control continuation.
+Own the Sprint pre-start forecast, started reevaluation, and application-delivered planning-control or handback-reassessment continuation.
 
 ## Before Sprint Start
 
@@ -29,3 +29,7 @@ Only when the application supplies the planning-control continuation may you use
 ## Return
 
 Report only the stage the application asked you to perform, then stop.
+
+## Handback Reassessment
+
+Read only the supplied bounded handback context. Record one next movement through the supplied action. Alternate eligible work preserves the concern. Wait only for an agent-achievable dependency owner, enabling result, and resumption path. Local exhaustion requests one upward report; it does not activate an Epic Runner or declare Sprint or Epic blockage.

@@ -13,6 +13,7 @@ type Artifact = ProductSprintReadModelV1['internalArtifacts'][number];
 type AgentSessionReference = ProductSprintReadModelV1['agentSessionReferences'][number];
 
 export interface SprintWorkspacePresentationV1 {
+  readonly epicEscalationReceivers: ProductSprintReadModelV1['epicEscalationReceivers'];
   readonly sprint: Readonly<{
     readonly sprintId: string;
     readonly epicId: string;
@@ -75,6 +76,7 @@ export function projectSprintWorkspacePresentation(
     ]),
   );
   return {
+    epicEscalationReceivers: sprint.epicEscalationReceivers,
     sprint: {
       sprintId: sprint.sprintId,
       epicId: sprint.epicId,

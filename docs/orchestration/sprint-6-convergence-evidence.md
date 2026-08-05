@@ -4,6 +4,32 @@ Status: **partial**. Deterministic convergence and isolated installed-Codex Plan
 Bootstrap Generator, and Epic Runner paths pass. The production user-confirmation click and the
 integrated post-click chain remain a manual gate; no confirmation was bypassed.
 
+## ER-3 strict public projection checkpoint (2026-08-05)
+
+- Fresh routed validation: Rust `cargo check -p codex-orchestrator` passed (**0 errors**; existing
+  dead-code warnings remain). The productive native query now projects the identity-free Epic
+  receiver stages, exact Sprint/Epic correlation, semantic reassessment, and one concern-preserving
+  disposition without Session, invocation, Harness, repository, worktree, Git, provider, or route
+  identity.
+- Epic Detail and Sprint Workspace labels preserve the distinctions between receiver delivery,
+  semantic disposition, downstream request, human/external attention, intent-only alternate work,
+  and unresolved Sprint concern. No selection/start, settlement, completion, or user acceptance is
+  projected by this checkpoint.
+- Fresh consumer validation after `npm ci --ignore-scripts --no-audit --no-fund` (368 packages):
+  `npm run build` passed (TypeScript plus Vite); focused native/read-model tests passed **22/22**;
+  Epic/Sprint presentation passed **1/1**; Epic Detail passed **1/1**; Sprint Workspace passed
+  **1/1**; and touched-file ESLint passed. These checks cover agent-achievable request and
+  human/external attention variants, malformed/private/foreign/chronologically incoherent input,
+  and truthful unresolved Epic/Sprint labels. No live provider, production receiver activation,
+  merge, publication, or user acceptance is claimed.
+- Fresh producer-integration correction: the productive `SqliteOrchestrationRepository::native_query()`
+  join against persisted Epic receiver, disposition, downstream-request, and attention rows passed
+  **1/1** focused test; the repository suite passed **34/34**. The test proved exact Sprint/Epic
+  correlation, separate agent-achievable and human/external projections, unresolved Handback
+  retention, private-field omission, and fail-closed foreign-correlation and out-of-order facts.
+  This remains deterministic local serialization evidence only; it does not claim receiver
+  activation, downstream delivery, Sprint selection/start, settlement, completion, or acceptance.
+
 ## CPS-1: dependent execution and generalized attempts convergence
 
 This local checkpoint combines the accepted dependent-cycle and generalized-attempt lines without
@@ -748,3 +774,95 @@ This scoped evidence adds no Sprint/Epic settlement or continuation, handback co
 reassessment/new Sprint, provider reattachment, broadened authority, push, publication, or user
 acceptance. Local/test-owned Handler/evidence lineage and local Git prove application boundaries,
 not live-provider behavior; broad full-suite validation and user acceptance remain unproven.
+
+## SRH-03: independent Handback/reassessment convergence audit
+
+Audit baseline: clean detached `8e4faddf6fbe21bb8bb7289fa3dbba7faeb3d78a`, with the SRH-01
+backend chain ending at `6ced5e4bc4cb6f8d6d9c5325c0a7b7e7072721aa` and the SRH-02 projection
+chain ending at the audit baseline. This audit made no product-code correction: the inspected
+cross-stack route is internally coherent at the source and strict-decoder boundaries below. This
+record now includes independent frontend runtime and TypeScript evidence at correction checkpoint
+`09a285148f108a3531f1e81f568e262660c1e18d`. It remains deterministic local evidence, not a
+live-provider or human-observation claim.
+
+| Required boundary | Independent audit result | Evidence level |
+| --- | --- | --- |
+| Exact, once-only Handback route to the owning Sprint Runner | The delivery identity, reassessment invocation, and delivery fact are deterministically derived from the Handback; conflicting route rows fail. Persisted-not-accepted recovery rebinds the same Harness/invocation before launching, and an active different invocation leaves the route pending. | Source inspection of `reconcile_no_progress_handback`; available implementation report: Rust Handback suite **8/8**. |
+| Fact separation and reopen convergence | Delivery request/persistence, Harness binding, launch request/acceptance, provider observation, semantic reassessment, selected movement, escalation intent, and escalation delivery request are separate nullable facts. Reassessment requires persisted, bound, launch-accepted delivery; movement is idempotent by its Handback fingerprint. | Source inspection of transition storage/reconciliation and repository projection. |
+| Concern-preserving movement | Known alternate-work, agent-achievable dependency, and local-exhaustion paths require their bounded details. Unknown safe movement kinds remain projection-extensible without granting authority. Local exhaustion records only one upward intent and one delivery request. | Rust/TypeScript validator and projection inspection. |
+| Strict privacy and correlation projection | The Rust projection rejects partial/corrupt Handback bundles, forbidden receiver effects, incoherent phases, unmatched movement detail, invalid escalation order, and private fields. The TypeScript decoder independently rejects the same higher-effect, foreign, private, and contradictory shapes. | Fresh isolated Vitest: native-query **22/22** passed. |
+| Sprint Workspace checkpoint | The UI retains the concern as unresolved, labels delivery/request stages precisely, and says local exhaustion is an upward request rather than final Sprint/Epic blockage. It contains no Epic response, settlement, or completion claim. | Fresh isolated presentation/UI Vitest: **3/3** and **9/9** passed. |
+| Higher-effect absence | No inspected Handback path activates an Epic Runner, records Epic reassessment/decision, declares final Sprint/Epic blockage, settles, starts a new Sprint, grants raw route/Git authority, or creates later continuation. | Source inspection only; not a live-provider or human-observation claim. |
+
+Current audit checks:
+
+- `git status --short` and detached `HEAD` confirmed the clean baseline before this evidence edit;
+  `git diff --check` passed before the edit.
+- The routed availability report records the focused Rust Handback suite as **8/8** and `cargo
+  check` as passed with **seven pre-existing dead-code warnings**. Those reports are retained as
+  implementation evidence, not relabelled as a successful SRH-03 rerun.
+- Earlier serial attempts to run `cargo test --manifest-path src-tauri/Cargo.toml --lib handback
+  -- --test-threads=1` reached the test executable but did not return within host command windows;
+  neither is counted as a pass or failure. The independent SRH-03 rerun subsequently completed
+  naturally: **9 passed, 0 failed, 0 ignored, 369 filtered, 163.38s** (Cargo test-profile
+  preparation: **0.79s**). It emitted one existing dead-code warning for
+  `ProcessSupervisor::system`; this is separate from the implementation worker's `cargo check`
+  report.
+- Fresh disposable clone validation at `09a2851` verified matching SHA-256 fingerprints before
+  dependency establishment: `package.json`
+  `3A2EFC5D380037B4C1E6C369CF3BDE7E900F0C4C840BC0B6BADE2BC536EE35BC` and
+  `package-lock.json`
+  `CDCA06E1FD05047C28919FE2A364419699F0AC8EB1DC785A11AB5517E9307F72`.
+  `npm ci --cache <disposable>/npm-cache --no-audit --no-fund` installed **368** exact-lockfile
+  packages in **14s**. It emitted only the existing `whatwg-encoding@3.1.1` deprecation and npm
+  update notice.
+- In that clone, `npx tsc --noEmit` passed (host-observed **14.8s**). `npx vitest run
+  src/application/orchestrations/nativeQuery.test.ts
+  src/application/orchestrations/sprintWorkspacePresentation.test.ts
+  src/features/orchestrations/components/SprintWorkspace.plannerBoundary.test.tsx` passed
+  **3 files / 34 tests** in **9.18s**: native-query **22/22**, presentation **3/3**, and Sprint
+  Workspace **9/9**. The disposable clone, `node_modules`, cache, and logs were removed after
+  evidence capture; no product-worktree dependency state was created.
+
+Residual gates: any separately authorized live-provider/human observation. This record neither
+requests nor claims Epic receiver activation, Epic response, final blockage, settlement, new Sprint start,
+higher continuation, raw route/Git authority, publication, or user acceptance.
+
+## CGS-01 graph and Epic reassessment convergence
+
+The convergence checkpoint merges the accepted graph-drain line at `7704b4b1` with the accepted
+Epic escalation reassessment line at `3b1020c5`. The only code overlap was Handler-review terminal
+reconciliation. A no-progress review durably routes its still-unsettled Handback; accepted-integration
+graph draining remains on the regular and reopen reconciliation passes. Handback delivery therefore
+does not synthesize graph completion, Work Slice settlement, planning-point settlement, Sprint
+settlement, Epic settlement, or continuation.
+
+Observed focused Rust evidence on the combined tree:
+
+- `work_unit_dependency_wave` passed **15/15**, covering multi-root and multi-level settlement,
+  malformed and cyclic graphs, stalls, handbacks, targeted attention, reopen, replay, correlation,
+  and exact terminal-fact separation.
+- `handler_drain_advances_independent_generations_from_durable_accepted_contributions` passed
+  **1/1** through the productive Handler drain.
+- `no_progress_handback_delivers_one_epic_receiver_without_higher_effects` passed **1/1**, including
+  pending delivery, reopen/concurrency, exact local-exhaustion escalation, fresh Epic reassessment,
+  concern-preserving disposition, bounded downstream request, attention, and higher-effect absence.
+- `native_query_projects_durable_epic_escalations_and_rejects_foreign_or_out_of_order_facts`
+  passed **1/1**, including strict correlation, ordering, and private-field rejection. Rust emitted
+  one existing dead-code warning for `ProcessSupervisor::system`.
+
+In a disposable exact-lockfile frontend copy, `npx tsc --noEmit` passed and the native-query,
+presentation, Sprint Workspace, and Epic Detail scopes passed **6 files / 42 tests**. The combined
+strict consumer required two narrow type corrections: the settled-graph fixture now explicitly
+asserts its expected materialization, and the execution-summary helper derives its optional type
+from the optional materialization collection without collapsing to `never`.
+
+`git diff --check` passed. A touched-file Prettier check did not pass because the two converged
+accepted lines already carry broader formatting drift in the native-query test, Sprint Workspace,
+and this evidence file; the formatter proposed hundreds of unrelated reflow lines, so no broad
+formatter rewrite was applied.
+
+These local/fake checks do not prove live-provider behavior, publication, push, user acceptance,
+Product Decisions navigation, Pause/Restart behavior, later-Sprint selection or start, or Sprint/Epic
+settlement. Request, delivery, receiver activation, reassessment, disposition, downstream request,
+attention, graph completion, Work Slice settlement, and planning-point settlement remain distinct.

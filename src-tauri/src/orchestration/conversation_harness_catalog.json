@@ -83,6 +83,33 @@
       }
     },
     {
+      "key": "epic_runner_escalation_reassessment",
+      "version": 2,
+      "context": "You are the Epic Runner reassessing one exact locally exhausted Sprint concern. Read only the application-correlated accepted Epic plan horizon, current Sprint state, unresolved concern, known agent-achievable dependency ownership, and other available Epic work. Record one identity-free concern-preserving disposition through the supplied action. A bounded downstream request is not delivery, receiver activation, successful continuation, or clearance. Human/external attention is not Sprint/Epic blockage, settlement, completion, or user acceptance. Do not select or start a Sprint.",
+      "skillGuidance": [
+        {
+          "canonicalName": "epic-runner",
+          "canonicalPath": ".agents/product-skills/epic-runner/SKILL.md",
+          "purpose": "Reassess one application-delivered local-exhaustion escalation.",
+          "useWhen": "the application has supplied the dedicated Epic reassessment receiver."
+        }
+      ],
+      "runtime": {
+        "model": null,
+        "reasoningEffort": null,
+        "sandbox": "read_only",
+        "approvalPolicy": "never"
+      },
+      "mcp": {
+        "required": true,
+        "enabledTools": ["read_epic_escalation_reassessment_context", "record_epic_escalation_disposition"]
+      },
+      "lifecycle": {
+        "contextDelivery": "first_query",
+        "completionCriteria": ["one_epic_escalation_disposition_or_application_observed_state"]
+      }
+    },
+    {
       "key": "sprint_runner",
       "version": 2,
       "context": "You are the Sprint Runner for one application-authorized Sprint. In pre-start, record the one low-resolution outcome through the supplied action. After an application-delivered start, record repository/branch reevaluation through the supplied action. Do not create planning, Work Units, child sessions, or continuations.",
@@ -134,6 +161,33 @@
       "lifecycle": {
         "contextDelivery": "first_query",
         "completionCriteria": ["one_work_slice_planner_request_or_application_observed_planning_state"]
+      }
+    },
+    {
+      "key": "sprint_runner_handback_reassessment",
+      "version": 1,
+      "context": "You are the Sprint Runner reassessing one application-delivered no-progress concern. Read only the bounded concern and current Sprint semantic state. Record one truthful next-movement disposition through the supplied action. Continuing eligible work does not settle the concern. Dependency waiting requires an agent-achievable owner and resumption path. Local exhaustion requests one upward report only; it does not activate an Epic Runner or declare Sprint or Epic blockage.",
+      "skillGuidance": [
+        {
+          "canonicalName": "sprint-runner",
+          "canonicalPath": ".agents/product-skills/sprint-runner/SKILL.md",
+          "purpose": "Reassess one delivered no-progress concern.",
+          "useWhen": "the application has supplied the handback reassessment continuation."
+        }
+      ],
+      "runtime": {
+        "model": null,
+        "reasoningEffort": null,
+        "sandbox": "read_only",
+        "approvalPolicy": "never"
+      },
+      "mcp": {
+        "required": true,
+        "enabledTools": ["read_sprint_handback_reassessment_context", "record_sprint_handback_disposition"]
+      },
+      "lifecycle": {
+        "contextDelivery": "first_query",
+        "completionCriteria": ["one_semantic_handback_disposition_or_application_observed_state"]
       }
     },
     {

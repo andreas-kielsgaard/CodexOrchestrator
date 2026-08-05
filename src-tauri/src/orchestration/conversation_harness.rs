@@ -23,8 +23,10 @@ pub(crate) enum ConversationHarnessRole {
     EpicPlanBuilder,
     EpicBootstrapGenerator,
     EpicRunner,
+    EpicRunnerEscalationReassessment,
     SprintRunner,
     SprintRunnerPlanningControl,
+    SprintRunnerHandbackReassessment,
     WorkSlicePlanner,
     WorkUnitHandler,
     WorkUnitImplementer,
@@ -36,8 +38,10 @@ impl ConversationHarnessRole {
             Self::EpicPlanBuilder => "epic_plan_builder",
             Self::EpicBootstrapGenerator => "epic_bootstrap_generator",
             Self::EpicRunner => "epic_runner",
+            Self::EpicRunnerEscalationReassessment => "epic_runner_escalation_reassessment",
             Self::SprintRunner => "sprint_runner",
             Self::SprintRunnerPlanningControl => "sprint_runner_planning_control",
+            Self::SprintRunnerHandbackReassessment => "sprint_runner_handback_reassessment",
             Self::WorkSlicePlanner => "work_slice_planner",
             Self::WorkUnitHandler => "work_unit_handler",
             Self::WorkUnitImplementer => "work_unit_implementer",
@@ -527,8 +531,10 @@ pub(crate) fn role_discovery_root(role: ConversationHarnessRole) -> Result<Strin
         ConversationHarnessRole::EpicPlanBuilder => "epic-plan-builder",
         ConversationHarnessRole::EpicBootstrapGenerator => "epic-bootstrap-generator",
         ConversationHarnessRole::EpicRunner => "epic-runner",
+        ConversationHarnessRole::EpicRunnerEscalationReassessment => "epic-runner",
         ConversationHarnessRole::SprintRunner => "sprint-runner",
         ConversationHarnessRole::SprintRunnerPlanningControl => "sprint-runner",
+        ConversationHarnessRole::SprintRunnerHandbackReassessment => "sprint-runner",
         ConversationHarnessRole::WorkSlicePlanner => "work-slice-planner",
         ConversationHarnessRole::WorkUnitHandler => "work-unit-handler",
         ConversationHarnessRole::WorkUnitImplementer => "work-unit-implementer",
@@ -583,9 +589,12 @@ mod tests {
         let plan_builder = profile(ConversationHarnessRole::EpicPlanBuilder).unwrap();
         let bootstrap = profile(ConversationHarnessRole::EpicBootstrapGenerator).unwrap();
         let runner = profile(ConversationHarnessRole::EpicRunner).unwrap();
+        let epic_reassessment = profile(ConversationHarnessRole::EpicRunnerEscalationReassessment).unwrap();
         let sprint_runner = profile(ConversationHarnessRole::SprintRunner).unwrap();
         let planning_control =
             profile(ConversationHarnessRole::SprintRunnerPlanningControl).unwrap();
+        let handback_reassessment =
+            profile(ConversationHarnessRole::SprintRunnerHandbackReassessment).unwrap();
         let planner = profile(ConversationHarnessRole::WorkSlicePlanner).unwrap();
         let handler = profile(ConversationHarnessRole::WorkUnitHandler).unwrap();
         let implementer = profile(ConversationHarnessRole::WorkUnitImplementer).unwrap();
@@ -593,6 +602,10 @@ mod tests {
         assert_eq!(plan_builder.version, 4);
         assert_eq!(runner.key, "epic_runner");
         assert_eq!(runner.version, 3);
+        assert_eq!(epic_reassessment.key, "epic_runner_escalation_reassessment");
+        assert_eq!(epic_reassessment.version, 2);
+        assert_eq!(epic_reassessment.mcp.enabled_tools, ["read_epic_escalation_reassessment_context", "record_epic_escalation_disposition"]);
+        assert!(epic_reassessment.mcp.required);
         assert_eq!(sprint_runner.key, "sprint_runner");
         assert_eq!(sprint_runner.version, 2);
         assert_eq!(
@@ -600,6 +613,11 @@ mod tests {
             ["request_work_slice_planner"]
         );
         assert!(planning_control.mcp.required);
+        assert_eq!(
+            handback_reassessment.mcp.enabled_tools,
+            ["read_sprint_handback_reassessment_context", "record_sprint_handback_disposition"]
+        );
+        assert!(handback_reassessment.mcp.required);
         assert_eq!(planner.key, "work_slice_planner");
         assert_eq!(handler.key, "work_unit_handler");
         assert_eq!(implementer.key, "work_unit_implementer");

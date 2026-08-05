@@ -8,7 +8,11 @@ import {
 } from '../../../application/orchestrations';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { SprintRunnerActivationObservation, WorkSlicePlannerBoundary } from './SprintWorkspace';
+import {
+  SprintRunnerActivationObservation,
+  SprintRunnerHandbackActivity,
+  WorkSlicePlannerBoundary,
+} from './SprintWorkspace';
 
 const transition: ProductSprintRunnerTransitionStatusV1 = {
   label: 'Work Slice Planner request authorized; planning point pending',
@@ -395,5 +399,228 @@ describe('Work Slice Planner boundary disclosure', () => {
     expect(activity).not.toHaveTextContent(
       /Implementer|Handler review|implementation output|retry attempt|application acceptance|Sprint continuation/,
     );
+  });
+});
+
+describe('Sprint Runner Handback disclosure', () => {
+  it('keeps a Handback and delivery partial state factual without inventing movement or progress', () => {
+    render(
+      <SprintRunnerHandbackActivity
+        workUnits={[
+          {
+            workUnitId: 'unit-partial-handback',
+            title: 'Partial Handback concern',
+            attemptHistory: [
+              {
+                ordinal: 0,
+                attemptId: 'attempt-partial-handback',
+                incompleteDisposition: {
+                  attemptId: 'attempt-partial-handback',
+                  reviewInvocationId: 'review-partial-handback',
+                  decisionFingerprint: 'decision-partial-handback',
+                  classification: 'blocked',
+                  meaningfulProgress: false,
+                  recordedAt: '2026-08-04T00:00:00Z',
+                  noProgressHandback: {
+                    handbackId: 'handback-partial-handback',
+                    sourceAttemptId: 'attempt-partial-handback',
+                    sourceReviewInvocationId: 'review-partial-handback',
+                    contextFingerprint: 'context-partial-handback',
+                    persistedAt: '2026-08-04T00:00:01Z',
+                    deliveryIntendedAt: '2026-08-04T00:00:02Z',
+                    sprintRunnerDelivery: {
+                      deliveryRequestedAt: '2026-08-04T00:00:03Z',
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ] as never}
+      />,
+    );
+    const region = screen.getByRole('region', { name: 'Sprint Runner Handback reassessment' });
+    expect(region).toHaveTextContent('The handed-back concern remains unresolved.');
+    expect(region).toHaveTextContent('Only recorded Handback and Sprint Runner stages are shown.');
+    expect(region).toHaveTextContent('Delivery requested at');
+    expect(region).not.toHaveTextContent('recorded next movement proceeds');
+    expect(region).not.toHaveTextContent('Selected movement recorded');
+    expect(region).not.toHaveTextContent('meaningful progress');
+    expect(region).not.toHaveTextContent('Local exhaustion recorded');
+    expect(region).toHaveTextContent('no Epic response is recorded here');
+  });
+
+  it('shows factual stages and qualified movement without final blockage or Epic response', () => {
+    render(
+      <SprintRunnerHandbackActivity
+        workUnits={
+          [
+            {
+              workUnitId: 'unit-handback',
+              title: 'Handed-back concern',
+              attemptHistory: [
+                {
+                  ordinal: 0,
+                  attemptId: 'attempt-1',
+                  incompleteDisposition: {
+                    attemptId: 'attempt-1',
+                    reviewInvocationId: 'review-1',
+                    decisionFingerprint: 'decision-1',
+                    classification: 'blocked',
+                    meaningfulProgress: false,
+                    recordedAt: '2026-08-04T00:00:00Z',
+                    noProgressHandback: {
+                      handbackId: 'handback-1',
+                      sourceAttemptId: 'attempt-1',
+                      sourceReviewInvocationId: 'review-1',
+                      contextFingerprint: 'context-1',
+                      persistedAt: '2026-08-04T00:00:01Z',
+                      deliveryIntendedAt: '2026-08-04T00:00:02Z',
+                      sprintRunnerDelivery: {
+                        deliveryRequestedAt: '2026-08-04T00:00:03Z',
+                        deliveryPersistedAt: '2026-08-04T00:00:04Z',
+                        harnessBoundAt: '2026-08-04T00:00:05Z',
+                        launchRequestedAt: '2026-08-04T00:00:06Z',
+                        launchAcceptedAt: '2026-08-04T00:00:07Z',
+                        semanticReassessmentRecordedAt: '2026-08-04T00:00:08Z',
+                        selectedMovementKind: 'wait_for_agent_dependency',
+                        selectedMovement: {
+                          movementKind: 'wait_for_agent_dependency',
+                          rationale: 'The concern remains open.',
+                          dependencyOwner: 'bounded Work Unit Handler',
+                          dependencyOwnerClassification: 'work_unit_handler',
+                          enablingResult: 'A persisted Handler result.',
+                          resumptionPath: 'Reconcile this exact Handback.',
+                        },
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          ] as never
+        }
+      />,
+    );
+    const region = screen.getByRole('region', { name: 'Sprint Runner Handback reassessment' });
+    expect(region).toHaveTextContent('The handed-back concern remains unresolved');
+    expect(region).toHaveTextContent('Delivery persisted');
+    expect(region).toHaveTextContent('Semantic reassessment recorded');
+    expect(region).toHaveTextContent('Agent-achievable dependency wait');
+    expect(region).toHaveTextContent('enabling result: A persisted Handler result.');
+    expect(region).toHaveTextContent('resumption path: Reconcile this exact Handback.');
+    expect(region).toHaveTextContent('not final Sprint or Epic blockage');
+    expect(region).toHaveTextContent('no Epic response is recorded here');
+  });
+
+  it('separates local exhaustion intent from the later delivery request and keeps bounded movement neutral', () => {
+    render(
+      <SprintRunnerHandbackActivity
+        workUnits={[
+          {
+            workUnitId: 'unit-local-exhaustion',
+            title: 'Concern remains open',
+            attemptHistory: [
+              {
+                ordinal: 0,
+                attemptId: 'attempt-local-exhaustion',
+                incompleteDisposition: {
+                  attemptId: 'attempt-local-exhaustion',
+                  reviewInvocationId: 'review-local-exhaustion',
+                  decisionFingerprint: 'decision-local-exhaustion',
+                  classification: 'blocked',
+                  meaningfulProgress: false,
+                  recordedAt: '2026-08-04T00:00:00Z',
+                  noProgressHandback: {
+                    handbackId: 'handback-local-exhaustion',
+                    sourceAttemptId: 'attempt-local-exhaustion',
+                    sourceReviewInvocationId: 'review-local-exhaustion',
+                    contextFingerprint: 'context-local-exhaustion',
+                    persistedAt: '2026-08-04T00:00:01Z',
+                    deliveryIntendedAt: '2026-08-04T00:00:02Z',
+                    sprintRunnerDelivery: {
+                      deliveryRequestedAt: '2026-08-04T00:00:03Z',
+                      semanticReassessmentRecordedAt: '2026-08-04T00:00:04Z',
+                      selectedMovementKind: 'local_exhaustion_escalate',
+                      selectedMovement: {
+                        movementKind: 'local_exhaustion_escalate',
+                        rationale: 'No further local movement is recorded.',
+                        localExhaustionSummary: 'The concern remains unresolved locally.',
+                      },
+                      escalationIntentRecordedAt: '2026-08-04T00:00:05Z',
+                      escalationDeliveryRequestedAt: '2026-08-04T00:00:06Z',
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ] as never}
+      />,
+    );
+    const region = screen.getByRole('region', { name: 'Sprint Runner Handback reassessment' });
+    expect(region).toHaveTextContent('Local exhaustion recorded');
+    expect(region).toHaveTextContent('Escalation intent recorded upward');
+    expect(region).toHaveTextContent('Escalation delivery request recorded upward');
+    expect(region).not.toHaveTextContent('Escalation delivered');
+    expect(region).toHaveTextContent('not final Sprint or Epic blockage');
+    expect(region).not.toHaveTextContent('is final Sprint or Epic blockage');
+    expect(region).not.toHaveTextContent('Epic response recorded');
+  });
+
+  it('labels an extensible bounded movement without implying progress or settlement', () => {
+    render(
+      <SprintRunnerHandbackActivity
+        workUnits={[
+          {
+            workUnitId: 'unit-bounded-movement',
+            title: 'Bounded movement concern',
+            attemptHistory: [
+              {
+                ordinal: 0,
+                attemptId: 'attempt-bounded-movement',
+                incompleteDisposition: {
+                  attemptId: 'attempt-bounded-movement',
+                  reviewInvocationId: 'review-bounded-movement',
+                  decisionFingerprint: 'decision-bounded-movement',
+                  classification: 'blocked',
+                  meaningfulProgress: false,
+                  recordedAt: '2026-08-04T00:00:00Z',
+                  noProgressHandback: {
+                    handbackId: 'handback-bounded-movement',
+                    sourceAttemptId: 'attempt-bounded-movement',
+                    sourceReviewInvocationId: 'review-bounded-movement',
+                    contextFingerprint: 'context-bounded-movement',
+                    persistedAt: '2026-08-04T00:00:01Z',
+                    deliveryIntendedAt: '2026-08-04T00:00:02Z',
+                    sprintRunnerDelivery: {
+                      deliveryRequestedAt: '2026-08-04T00:00:03Z',
+                      semanticReassessmentRecordedAt: '2026-08-04T00:00:04Z',
+                      selectedMovementKind: 'future_bounded_move',
+                      selectedMovement: {
+                        movementKind: 'future_bounded_move',
+                        rationale: 'The concern remains open.',
+                        boundedDetails: [
+                          { label: 'dependencyOwner', value: 'owner-shaped detail only' },
+                          { label: 'dependencyOwnerClassification', value: 'work_unit_handler' },
+                          { label: 'eligibleWorkSummary', value: 'alternate-shaped detail only' },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ] as never}
+      />,
+    );
+    const region = screen.getByRole('region', { name: 'Sprint Runner Handback reassessment' });
+    expect(region).toHaveTextContent('Bounded movement recorded: The concern remains open.');
+    expect(region).toHaveTextContent('owner-shaped detail only');
+    expect(region).toHaveTextContent('work_unit_handler');
+    expect(region).toHaveTextContent('alternate-shaped detail only');
+    expect(region).not.toHaveTextContent('Agent-achievable dependency wait');
+    expect(region).toHaveTextContent('no settlement or blockage is implied');
   });
 });

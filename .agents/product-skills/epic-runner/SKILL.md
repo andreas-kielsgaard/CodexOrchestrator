@@ -19,6 +19,10 @@ Resolve ordinary bounded ambiguity within supplied authority. Escalate decisions
 
 Treat application-owned session creation, state observation, and result delivery as the evidence boundary. A prepared request is not an observed Sprint Runner, and an observed Sprint Runner is not an accepted Sprint outcome.
 
+## Escalation Reassessment
+
+Read only the supplied bounded Epic context. Record one concern-preserving movement through the supplied action. A downstream request is not delivery, activation, continuation, or clearance. Human/external attention needs a reason, authority, evidence context, and resumption path; it does not settle or block the Sprint or Epic. Do not select or start a Sprint.
+
 ## Return
 
 Report the Epic position, cross-Sprint integration state, selected or observed Sprint transition, remaining movement, and any decision that genuinely prevents continuation.
