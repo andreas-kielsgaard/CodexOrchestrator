@@ -25,6 +25,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   useSyncExternalStore,
@@ -49,6 +50,13 @@ import type {
 } from '../application/contextualFileReview';
 import { FileReviewScreen } from '../features/fileReview';
 import type { WorkUnitActivitySessionTarget } from '../features/orchestrations/components/WorkUnitDetailWorkspace';
+import { ProductCommandBar } from './ProductCommandBar';
+import {
+  canNavigateBack,
+  createProductNavigation,
+  productNavigationReducer,
+  type ProductNavigationDestination,
+} from '../application/productNavigation';
 
 export type ApplicationSurface =
   'epics' | 'agent-sessions' | 'harness-inspector' | 'file-review' | 'worktree-review';
@@ -122,21 +130,63 @@ export function App({
   humanReviewLauncherNavigation,
   initialSurface = 'epics',
 }: AppProps) {
-  const [surface, setSurface] = useState<ApplicationSurface>(() =>
+  const initialApplicationSurface: ApplicationSurface =
     (initialSurface === 'harness-inspector' && !harnessManagementPreviewSurface) ||
     (initialSurface === 'file-review' && !fileReviewSource) ||
     (initialSurface === 'worktree-review' && !humanReviewLauncherView)
       ? 'epics'
-      : initialSurface,
-  );
+      : initialSurface;
+  const [surface, setSurface] = useState<ApplicationSurface>(initialApplicationSurface);
+  const productNavigationEpoch = useRef(0);
   const [contextualFileReviewSource, setContextualFileReviewSource] = useState<FileReviewSource>();
   const [fileReviewInitialFileId, setFileReviewInitialFileId] = useState<string>();
   const activeFileReviewSource = fileReviewSource ?? contextualFileReviewSource;
-  const [selectedAgentSessionId, setSelectedAgentSessionId] = useState<string | null>(null);
-  const [focusedAgentSessionInvocationId, setFocusedAgentSessionInvocationId] = useState<string>();
-  const [productReturnOrigin, setProductReturnOrigin] = useState<AgentSessionProductOrigin | null>(
-    null,
+  const supportsProductDestination = useCallback(
+    (destination: ProductNavigationDestination) => {
+      switch (destination.kind) {
+        case 'orchestration':
+        case 'plan_builder':
+        case 'agent_sessions':
+          return true;
+        case 'file_review':
+          return Boolean(activeFileReviewSource);
+        case 'harness_inspector':
+          return Boolean(harnessManagementPreviewSurface);
+        case 'worktree_review':
+          return Boolean(humanReviewLauncherView);
+      }
+    },
+    [activeFileReviewSource, harnessManagementPreviewSurface, humanReviewLauncherView],
   );
+  const initialNavigationDestination: ProductNavigationDestination =
+    initialApplicationSurface === 'agent-sessions'
+      ? { kind: 'agent_sessions', selectedSessionId: null, focusedInvocationId: null }
+      : { kind: 'orchestration', location: null };
+  const [productNavigation, dispatchProductNavigation] = useReducer(
+    (
+      state: ReturnType<typeof createProductNavigation>,
+      action: Parameters<typeof productNavigationReducer>[1],
+    ) => productNavigationReducer(state, action, supportsProductDestination),
+    createProductNavigation(initialNavigationDestination),
+  );
+  const selectedAgentSessionId =
+    productNavigation.current.destination.kind === 'agent_sessions'
+      ? productNavigation.current.destination.selectedSessionId
+      : null;
+  const focusedAgentSessionInvocationId =
+    productNavigation.current.destination.kind === 'agent_sessions'
+      ? (productNavigation.current.destination.focusedInvocationId ?? undefined)
+      : undefined;
+  const currentProductDestination = productNavigation.current.destination;
+  const productReturnOrigin =
+    productNavigation.current.destination.kind === 'agent_sessions' &&
+    productNavigation.contextualOrigin &&
+    supportsProductDestination({
+      kind: 'orchestration',
+      location: productNavigation.contextualOrigin.location,
+    })
+      ? productNavigation.contextualOrigin
+      : null;
   const [expandedAgentSessionNodes, setExpandedAgentSessionNodes] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -146,6 +196,26 @@ export function App({
     'overview',
   );
   const orchestrationLoad = useOrchestrationLoad(orchestrationClient);
+  const hasSynchronizedProductDestination = useRef(false);
+
+  useEffect(() => {
+    if (!hasSynchronizedProductDestination.current) {
+      hasSynchronizedProductDestination.current = true;
+      return;
+    }
+    const destination = currentProductDestination;
+    if (destination.kind === 'orchestration') {
+      setSurface('epics');
+      setRequestedProductLocation(destination.location);
+      setSelectedDraft(null);
+      setOrchestrationRoute('overview');
+    } else if (destination.kind === 'plan_builder') {
+      setSurface('epics');
+      setOrchestrationRoute('plan-builder');
+    } else if (destination.kind === 'agent_sessions') {
+      setSurface('agent-sessions');
+    }
+  }, [currentProductDestination]);
 
   useEffect(() => {
     if (!humanReviewLauncherView || !humanReviewLauncherNavigation) return;
@@ -373,9 +443,17 @@ export function App({
     [epicPlanningDraftLifecycleClient, refreshDrafts],
   );
   const openProductAgentSession = useCallback((origin: AgentSessionProductOrigin) => {
-    setSelectedAgentSessionId(origin.sessionId);
-    setFocusedAgentSessionInvocationId(undefined);
-    setProductReturnOrigin(origin);
+    productNavigationEpoch.current += 1;
+    dispatchProductNavigation({
+      type: 'navigate',
+      intent: 'replace',
+      destination: { kind: 'orchestration', location: origin.location },
+    });
+    dispatchProductNavigation({
+      type: 'open_contextual_agent_session',
+      origin,
+      focusedInvocationId: null,
+    });
     setSurface('agent-sessions');
   }, []);
   const openWorkUnitActivitySession = useCallback(
@@ -390,15 +468,24 @@ export function App({
         origin.location.inspectionState.activityId !== target.activityId
       )
         return;
-      setSelectedAgentSessionId(target.sessionId);
-      setFocusedAgentSessionInvocationId(target.invocationId);
-      setProductReturnOrigin(origin);
+      productNavigationEpoch.current += 1;
+      dispatchProductNavigation({
+        type: 'navigate',
+        intent: 'replace',
+        destination: { kind: 'orchestration', location: origin.location },
+      });
+      dispatchProductNavigation({
+        type: 'open_contextual_agent_session',
+        origin,
+        focusedInvocationId: target.invocationId,
+      });
       setSurface('agent-sessions');
     },
     [],
   );
   const navigateToProductLocation = useCallback(
     (location: AgentSessionProductLocation) => {
+      productNavigationEpoch.current += 1;
       if (location.kind === 'epic_planning_draft') {
         const draft = planningDrafts.find(
           ({ epicPlanningDraftId }) => epicPlanningDraftId === location.epicPlanningDraftId,
@@ -409,9 +496,21 @@ export function App({
           sessionId: draft.agentSessionId,
           ...(draft.title ? { title: draft.title } : {}),
         });
+        dispatchProductNavigation({
+          type: 'navigate',
+          intent: 'push',
+          destination: {
+            kind: 'plan_builder',
+            epicPlanningDraftId: draft.epicPlanningDraftId,
+          },
+        });
         setOrchestrationRoute('plan-builder');
       } else {
-        setRequestedProductLocation(location);
+        dispatchProductNavigation({
+          type: 'navigate',
+          intent: 'push',
+          destination: { kind: 'orchestration', location },
+        });
         setOrchestrationRoute('overview');
       }
       setSurface('epics');
@@ -450,6 +549,11 @@ export function App({
       if (!source) return;
       setContextualFileReviewSource(source);
       setFileReviewInitialFileId(target.changedFileId);
+      dispatchProductNavigation({
+        type: 'navigate',
+        intent: 'push',
+        destination: { kind: 'file_review', target: { kind: 'file_evidence', ...target } },
+      });
       setSurface('file-review');
     },
     [fileReviewSourceForEvidence],
@@ -468,7 +572,15 @@ export function App({
           className={surface === 'epics' ? 'active' : undefined}
           type="button"
           aria-current={surface === 'epics' ? 'page' : undefined}
-          onClick={() => setSurface('epics')}
+          onClick={() => {
+            productNavigationEpoch.current += 1;
+            dispatchProductNavigation({
+              type: 'navigate',
+              intent: 'push',
+              destination: { kind: 'orchestration', location: null },
+            });
+            setSurface('epics');
+          }}
         >
           Orchestration
         </button>
@@ -477,8 +589,8 @@ export function App({
           type="button"
           aria-current={surface === 'agent-sessions' ? 'page' : undefined}
           onClick={() => {
-            setProductReturnOrigin(null);
-            setFocusedAgentSessionInvocationId(undefined);
+            productNavigationEpoch.current += 1;
+            dispatchProductNavigation({ type: 'enter_agent_sessions_directly' });
             setSurface('agent-sessions');
           }}
         >
@@ -489,7 +601,11 @@ export function App({
             className={surface === 'harness-inspector' ? 'active' : undefined}
             type="button"
             aria-current={surface === 'harness-inspector' ? 'page' : undefined}
-            onClick={() => setSurface('harness-inspector')}
+            onClick={() => {
+              productNavigationEpoch.current += 1;
+              dispatchProductNavigation({ type: 'clear_contextual_origin' });
+              setSurface('harness-inspector');
+            }}
           >
             Harness Management
           </button>
@@ -499,7 +615,11 @@ export function App({
             className={surface === 'worktree-review' ? 'active' : undefined}
             type="button"
             aria-current={surface === 'worktree-review' ? 'page' : undefined}
-            onClick={() => setSurface('worktree-review')}
+            onClick={() => {
+              productNavigationEpoch.current += 1;
+              dispatchProductNavigation({ type: 'clear_contextual_origin' });
+              setSurface('worktree-review');
+            }}
           >
             Worktree Review <small>Dev</small>
           </button>
@@ -509,12 +629,29 @@ export function App({
             className={surface === 'file-review' ? 'active' : undefined}
             type="button"
             aria-current={surface === 'file-review' ? 'page' : undefined}
-            onClick={() => setSurface('file-review')}
+            onClick={() => {
+              productNavigationEpoch.current += 1;
+              dispatchProductNavigation({ type: 'clear_contextual_origin' });
+              setSurface('file-review');
+            }}
           >
             Files &amp; diffs
           </button>
         ) : null}
       </nav>
+      <ProductCommandBar
+        canGoBack={canNavigateBack(productNavigation, supportsProductDestination)}
+        onBack={() => {
+          productNavigationEpoch.current += 1;
+          dispatchProductNavigation({ type: 'back' });
+        }}
+        returnOrigin={productReturnOrigin}
+        onReturn={(origin) => {
+          if (origin !== productReturnOrigin) return;
+          productNavigationEpoch.current += 1;
+          dispatchProductNavigation({ type: 'return_to_contextual_origin', origin });
+        }}
+      />
       {surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
         <EpicPlanBuilder
           agentSessionClient={managedPlanBuilderSessionClient}
@@ -528,8 +665,7 @@ export function App({
           harnessManagementSource={agentSessionHarnessManagementSource}
           onSessionCreated={bindCreatedPlanBuilderSession}
           onBack={() => {
-            setSelectedDraft(null);
-            setOrchestrationRoute('overview');
+            dispatchProductNavigation({ type: 'back' });
             void refreshDrafts();
           }}
         />
@@ -548,10 +684,23 @@ export function App({
               sessionId: draft.agentSessionId,
               ...(draft.title ? { title: draft.title } : {}),
             });
+            dispatchProductNavigation({
+              type: 'navigate',
+              intent: 'push',
+              destination: {
+                kind: 'plan_builder',
+                epicPlanningDraftId: draft.epicPlanningDraftId,
+              },
+            });
             setOrchestrationRoute('plan-builder');
           }}
           onPlanEpic={() => {
             setSelectedDraft(null);
+            dispatchProductNavigation({
+              type: 'navigate',
+              intent: 'push',
+              destination: { kind: 'plan_builder', epicPlanningDraftId: null },
+            });
             setOrchestrationRoute('plan-builder');
           }}
           requestedLocation={requestedProductLocation}
@@ -576,16 +725,24 @@ export function App({
           selectedSessionId={selectedAgentSessionId}
           focusInvocationId={focusedAgentSessionInvocationId}
           returnOrigin={productReturnOrigin}
-          onSelectedSessionChange={setSelectedAgentSessionId}
+          onSelectedSessionChange={(() => {
+            const renderEpoch = productNavigationEpoch.current;
+            return (sessionId: string | null) => {
+              if (renderEpoch !== productNavigationEpoch.current) return;
+              dispatchProductNavigation({
+                type: 'navigate',
+                intent: 'replace',
+                destination: {
+                  kind: 'agent_sessions',
+                  selectedSessionId: sessionId,
+                  focusedInvocationId: null,
+                },
+              });
+            };
+          })()}
           expandedNodeIds={expandedAgentSessionNodes}
           onExpandedNodeIdsChange={setExpandedAgentSessionNodes}
           onNavigateToProduct={navigateToProductLocation}
-          onReturnToProduct={(origin) => {
-            if (origin !== productReturnOrigin) return;
-            setProductReturnOrigin(null);
-            setFocusedAgentSessionInvocationId(undefined);
-            navigateToProductLocation(origin.location);
-          }}
         />
       ) : (
         harnessManagementPreviewSurface

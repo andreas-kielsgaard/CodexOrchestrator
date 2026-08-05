@@ -14,6 +14,28 @@ import { App } from './App';
 import { createRecordedDevelopmentApplicationComposition } from '../dev/orchestrationSection/recordedOrchestrationClient';
 
 describe('App application surfaces', () => {
+  it('keeps generic Back truthful while direct Agent Sessions entry has no contextual Return', async () => {
+    render(
+      <App
+        agentSessionClient={emptyAgentClient()}
+        orchestrationClient={emptyOrchestrationClient()}
+      />,
+    );
+
+    const commands = screen.getByRole('navigation', { name: 'Product commands' });
+    expect(within(commands).getByRole('button', { name: 'Back' })).toBeDisabled();
+    expect(within(commands).queryByRole('button', { name: /Return to/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Sessions' }));
+    await screen.findByText('Start with a message');
+    expect(
+      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
+        name: 'Back',
+      }),
+    ).toBeEnabled();
+    expect(screen.queryByRole('button', { name: /Return to/ })).toBeNull();
+  });
+
   it('switches between peer Orchestration and Agent Sessions capability surfaces', async () => {
     render(
       <App
@@ -186,6 +208,16 @@ describe('App application surfaces', () => {
       screen.getByRole('treeitem', { name: /Recorded WU-ECS2E Work Unit Handler/ }),
     ).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('region', { name: 'Work Unit return context' })).toBeVisible();
+    expect(
+      within(screen.getByRole('region', { name: 'Work Unit return context' })).queryByRole(
+        'button',
+      ),
+    ).toBeNull();
+    expect(
+      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
+        name: 'Return to Work Unit Activity',
+      }),
+    ).toBeVisible();
 
     fireEvent.click(
       screen.getByRole('treeitem', { name: /Recorded WU-ECS2E Work Unit Implementer/ }),

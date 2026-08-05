@@ -90,7 +90,6 @@ describe('standalone Agent Session product navigation', () => {
         selectedSessionId="recorded-implementer-WU-ECS2E"
         focusInvocationId={origin.invocationId}
         returnOrigin={origin}
-        onReturnToProduct={vi.fn()}
       />,
     );
 
