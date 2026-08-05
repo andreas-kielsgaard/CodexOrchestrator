@@ -17,6 +17,9 @@ interface AgentSessionTranscriptProps {
   onToggleProcessing(invocationId: string): void;
   emptyState?: Readonly<{ heading: string; guidance: string }>;
   agentIdentity?: AgentIdentity;
+  safeActivityDetails?: boolean;
+  showTechnicalDetails?: boolean;
+  processingHeading?: string;
 }
 
 export function AgentSessionTranscript({
@@ -27,6 +30,9 @@ export function AgentSessionTranscript({
   onToggleProcessing,
   emptyState,
   agentIdentity,
+  safeActivityDetails = false,
+  showTechnicalDetails = true,
+  processingHeading,
 }: AgentSessionTranscriptProps) {
   if (loading && !transcript) {
     return (
@@ -66,7 +72,6 @@ export function AgentSessionTranscript({
                     ? 'Plan Builder / Application'
                     : 'You'}
                 </span>
-                <time dateTime={invocation.createdAt}>{formatTime(invocation.createdAt)}</time>
               </header>
               <p>{invocation.submittedText}</p>
             </article>
@@ -81,6 +86,8 @@ export function AgentSessionTranscript({
               running={invocation.isActive}
               expanded={expandedProcessing.has(invocation.id)}
               onToggle={() => onToggleProcessing(invocation.id)}
+              safeOnly={safeActivityDetails}
+              heading={processingHeading}
             />
             {invocation.finalResponse && (
               <article className="transcript-message agent-final-message">
@@ -106,11 +113,14 @@ export function AgentSessionTranscript({
                   <strong>Completed without a final response.</strong>
                 </p>
               )}
-            <TechnicalDiagnosticDisclosure
-              activity={invocation.technical}
-              diagnostics={invocation.diagnostics}
-              running={invocation.isActive}
-            />
+            {showTechnicalDetails && (
+              <TechnicalDiagnosticDisclosure
+                activity={invocation.technical}
+                diagnostics={invocation.diagnostics}
+                running={invocation.isActive}
+                safeOnly={safeActivityDetails}
+              />
+            )}
           </section>
         </li>
       ))}
@@ -152,10 +162,4 @@ function projectVisibleInvocations(
       },
     ];
   });
-}
-
-function formatTime(value: string): string {
-  return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(
-    new Date(value),
-  );
 }

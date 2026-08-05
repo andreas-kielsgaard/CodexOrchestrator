@@ -7,6 +7,7 @@ import {
   projectAgentSessionTranscript,
   projectedTranscriptContent,
   selectLatestFinalAgentResponseRange,
+  selectTranscriptInvocation,
   selectTranscriptRange,
 } from './transcriptProjector';
 
@@ -203,6 +204,16 @@ describe('projectAgentSessionTranscript', () => {
     expect(
       selectLatestFinalAgentResponseRange(projectAgentSessionTranscript(details())),
     ).toBeNull();
+  });
+
+  it('selects an invocation only with matching Session and invocation identities', () => {
+    const projected = projectAgentSessionTranscript(details('completed'));
+
+    expect(selectTranscriptInvocation(projected, 'session-1', 'invocation-1')?.id).toBe(
+      'invocation-1',
+    );
+    expect(selectTranscriptInvocation(projected, 'other-session', 'invocation-1')).toBeNull();
+    expect(selectTranscriptInvocation(projected, 'session-1', 'other-invocation')).toBeNull();
   });
 });
 

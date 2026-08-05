@@ -5,6 +5,7 @@ import type {
   AgentRuntimeUsageDto,
   AgentSessionDetailsDto,
   IsoDateTimeDto,
+  NormalizedToolActivityDto,
 } from '../../application/agentSessions';
 
 export type TranscriptActivityKind =
@@ -18,7 +19,25 @@ export interface TranscriptActivity {
   source: AgentRuntimeEventDto['source'];
   recordedAt: IsoDateTimeDto;
   rawPayload: unknown;
+  safeDetail: TranscriptActivitySafeDetail | null;
 }
+
+export type TranscriptActivitySafeDetail =
+  | {
+      kind: 'tool';
+      phase: NormalizedToolActivityDto['phase'];
+      itemId: string | null;
+      server: string | null;
+      tool: string | null;
+      status: string | null;
+      resultClassification: NormalizedToolActivityDto['resultClassification'];
+    }
+  | {
+      kind: 'usage';
+      inputTokens: number | null;
+      cachedInputTokens: number | null;
+      outputTokens: number | null;
+    };
 
 export interface TranscriptOutcome {
   status: AgentInvocationStatusDto;
@@ -60,6 +79,8 @@ export interface ProjectedInvocation {
   status: AgentInvocationStatusDto;
   isActive: boolean;
   createdAt: IsoDateTimeDto;
+  startedAt: IsoDateTimeDto | null;
+  completedAt: IsoDateTimeDto | null;
   processing: TranscriptActivity[];
   technical: TranscriptActivity[];
   diagnostics: AgentDiagnosticDto[];
@@ -120,6 +141,8 @@ export function projectAgentSessionTranscript(
         status: invocation.status,
         isActive: activeStatuses.has(invocation.status),
         createdAt: invocation.createdAt,
+        startedAt: invocation.startedAt,
+        completedAt: invocation.completedAt,
         processing: coalesceLifecycleActivities(processing),
         technical,
         diagnostics: [...invocation.diagnostics].sort((left, right) =>
@@ -294,6 +317,16 @@ export function anchorsEqual(left: TranscriptAnchor, right: TranscriptAnchor): b
   );
 }
 
+/** Selects one invocation only when both durable identity parts match. */
+export function selectTranscriptInvocation(
+  transcript: ProjectedTranscript | null,
+  sessionId: string,
+  invocationId: string,
+): ProjectedInvocation | null {
+  if (!transcript || transcript.sessionId !== sessionId) return null;
+  return transcript.invocations.find((invocation) => invocation.id === invocationId) ?? null;
+}
+
 function eventAnchor(
   sessionId: string,
   invocationId: string,
@@ -328,6 +361,7 @@ function projectActivity(event: AgentRuntimeEventDto): TranscriptActivity | null
     source: event.source,
     recordedAt: event.recordedAt,
     rawPayload: event.rawPayload,
+    safeDetail: null,
   };
 
   if (event.source === 'stderr' || !normalized || kind === 'unknown' || kind === 'runtime_error') {
@@ -349,6 +383,7 @@ function projectActivity(event: AgentRuntimeEventDto): TranscriptActivity | null
       ...base,
       kind: 'tool',
       text: normalized.text?.trim() || toolLabel(normalized.details),
+      safeDetail: normalized.toolActivity ? { kind: 'tool', ...normalized.toolActivity } : null,
     };
   }
   if (kind === 'agent_message') {
@@ -359,7 +394,12 @@ function projectActivity(event: AgentRuntimeEventDto): TranscriptActivity | null
     };
   }
   if (kind === 'usage') {
-    return { ...base, kind: 'usage', text: usageLabel(normalized.usage) };
+    return {
+      ...base,
+      kind: 'usage',
+      text: usageLabel(normalized.usage),
+      safeDetail: normalized.usage ? { kind: 'usage', ...normalized.usage } : null,
+    };
   }
   if (kind === 'runtime_context_established' || kind === 'invocation_completed') {
     return null;

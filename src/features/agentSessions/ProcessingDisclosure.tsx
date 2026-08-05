@@ -7,6 +7,8 @@ interface ProcessingDisclosureProps {
   running: boolean;
   expanded: boolean;
   onToggle(): void;
+  safeOnly?: boolean;
+  heading?: string;
 }
 
 export function ProcessingDisclosure({
@@ -15,6 +17,8 @@ export function ProcessingDisclosure({
   running,
   expanded,
   onToggle,
+  safeOnly = false,
+  heading = 'Processing',
 }: ProcessingDisclosureProps) {
   if (activity.length === 0 && !running) return null;
   const isOpen = running || expanded;
@@ -27,7 +31,7 @@ export function ProcessingDisclosure({
           if (!running) onToggle();
         }}
       >
-        <span>{running ? 'Working' : 'Processing'}</span>
+        <span>{running ? 'Working' : heading}</span>
         <small>{activity.length ? `${activity.length} updates` : 'Waiting for activity'}</small>
       </summary>
       <ol aria-label={`Processing for invocation ${invocationId}`}>
@@ -39,10 +43,16 @@ export function ProcessingDisclosure({
             ) : (
               <p>{item.text}</p>
             )}
-            <details className="raw-event-disclosure">
-              <summary>Raw event</summary>
-              <pre>{formatRaw(item.rawPayload)}</pre>
-            </details>
+            {safeOnly ? (
+              item.safeDetail && (
+                <p className="recorded-step-detail">{formatSafeDetail(item.safeDetail)}</p>
+              )
+            ) : (
+              <details className="raw-event-disclosure">
+                <summary>Raw event</summary>
+                <pre>{formatRaw(item.rawPayload)}</pre>
+              </details>
+            )}
           </li>
         ))}
       </ol>
@@ -72,4 +82,19 @@ function activityLabel(kind: TranscriptActivity['kind']): string {
     case 'technical':
       return 'Technical';
   }
+}
+
+function formatSafeDetail(detail: NonNullable<TranscriptActivity['safeDetail']>): string {
+  if (detail.kind === 'usage') {
+    const parts = [
+      detail.inputTokens === null ? null : `${detail.inputTokens} input`,
+      detail.cachedInputTokens === null ? null : `${detail.cachedInputTokens} cached`,
+      detail.outputTokens === null ? null : `${detail.outputTokens} output`,
+    ].filter((part): part is string => part !== null);
+    return parts.length ? `Usage detail: ${parts.join(', ')}` : 'Usage detail unavailable';
+  }
+
+  const label = [detail.server, detail.tool].filter(Boolean).join(' / ');
+  const status = detail.status ?? detail.resultClassification;
+  return [label || 'Tool activity', detail.phase, status].join(' · ');
 }
