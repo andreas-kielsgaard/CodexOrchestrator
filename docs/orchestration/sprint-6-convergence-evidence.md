@@ -22,6 +22,13 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
   human/external attention variants, malformed/private/foreign/chronologically incoherent input,
   and truthful unresolved Epic/Sprint labels. No live provider, production receiver activation,
   merge, publication, or user acceptance is claimed.
+- Fresh producer-integration correction: the productive `SqliteOrchestrationRepository::native_query()`
+  join against persisted Epic receiver, disposition, downstream-request, and attention rows passed
+  **1/1** focused test; the repository suite passed **34/34**. The test proved exact Sprint/Epic
+  correlation, separate agent-achievable and human/external projections, unresolved Handback
+  retention, private-field omission, and fail-closed foreign-correlation and out-of-order facts.
+  This remains deterministic local serialization evidence only; it does not claim receiver
+  activation, downstream delivery, Sprint selection/start, settlement, completion, or acceptance.
 
 ## CPS-1: dependent execution and generalized attempts convergence
 

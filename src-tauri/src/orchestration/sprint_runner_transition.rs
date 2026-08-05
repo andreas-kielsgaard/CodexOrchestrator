@@ -46,7 +46,7 @@ mod accepted_integration_gateway_tests;
 
 pub(crate) const SPRINT_RUNNER_QUERY_CONTRACT: &str = "sprint-runner-transition-query/v1";
 
-const SCHEMA: &str = r#"
+pub(crate) const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS sprint_runner_transitions (
   sprint_id TEXT PRIMARY KEY,
   epic_id TEXT NOT NULL,
