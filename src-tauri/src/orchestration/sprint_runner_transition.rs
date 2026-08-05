@@ -6,7 +6,14 @@ use super::accepted_integration::reconcile_accepted_integrations;
 use super::work_unit_execution_harness::{WorkUnitExecutionHarnessService, WorkUnitHarnessRole};
 use super::work_unit_dependency_wave::{reconcile_work_slice_execution_settlement, reconcile_work_unit_dependency_wave};
 use super::mcp::CodexMcpInjection;
-use super::repository::{InitiatedSprintGitAuthority, InitiatedSprintGitAuthorityError, SqliteOrchestrationRepository};
+use super::{
+    initiated_sprint_git_authority::{
+        BindInitiatedSprintGitAuthorityError, BindInitiatedSprintGitAuthorityRequest,
+        InitiatedSprintGitAuthorityService, VerifiedRuntimeGitComparison,
+        WorktreeRuntimeGitComparison,
+    },
+    repository::{InitiatedSprintGitAuthority, InitiatedSprintGitAuthorityError, SqliteOrchestrationRepository},
+};
 use crate::agent_sessions::{
     application::{
         AgentSessionApplication, ApplicationInvocationLaunchEvidence, CreateAgentSessionCommand,
@@ -1157,7 +1164,9 @@ struct CurrentPlanningRequest {
 pub(crate) struct SprintRunnerTransitionService {
     connection: Mutex<Connection>,
     database_lock_key: String,
-    authority_repository: SqliteOrchestrationRepository,
+    authority_repository: Arc<SqliteOrchestrationRepository>,
+    authority_binder: InitiatedSprintGitAuthorityService,
+    application_git_authority_required: bool,
     sessions: Arc<AgentSessionApplication>,
     work_unit_handler: Mutex<Option<Arc<WorkUnitExecutionHarnessService>>>,
     mcp: Mutex<HashMap<AgentInvocationId, ManagedEpicRunnerAction>>,
@@ -1175,6 +1184,43 @@ impl SprintRunnerTransitionService {
     pub(crate) fn open(
         path: impl AsRef<Path>,
         sessions: Arc<AgentSessionApplication>,
+    ) -> Result<Arc<Self>, SprintRunnerTransitionError> {
+        Self::open_with_git_authority_runtime(
+            path,
+            sessions,
+            Arc::new(UnavailableSprintGitAuthorityRuntime),
+            false,
+        )
+    }
+
+    /// The productive composition supplies this private verifier. It derives every route fact
+    /// from the application's checked-out source and Git itself; no agent or UI payload is read.
+    pub(crate) fn open_with_application_git_authority(
+        path: impl AsRef<Path>,
+        sessions: Arc<AgentSessionApplication>,
+    ) -> Result<Arc<Self>, SprintRunnerTransitionError> {
+        Self::open_with_git_authority_runtime(
+            path,
+            sessions,
+            Arc::new(ApplicationSprintGitAuthorityRuntime::new()?),
+            true,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_with_git_authority_runtime_for_test(
+        path: impl AsRef<Path>,
+        sessions: Arc<AgentSessionApplication>,
+        runtime: Arc<dyn WorktreeRuntimeGitComparison>,
+    ) -> Result<Arc<Self>, SprintRunnerTransitionError> {
+        Self::open_with_git_authority_runtime(path, sessions, runtime, true)
+    }
+
+    fn open_with_git_authority_runtime(
+        path: impl AsRef<Path>,
+        sessions: Arc<AgentSessionApplication>,
+        runtime: Arc<dyn WorktreeRuntimeGitComparison>,
+        application_git_authority_required: bool,
     ) -> Result<Arc<Self>, SprintRunnerTransitionError> {
         let path = path.as_ref();
         let database_lock_key = path
@@ -1275,12 +1321,18 @@ impl SprintRunnerTransitionService {
             .map_err(SprintRunnerTransitionError::Unavailable)?;
         migrate_handler_decision_retry_contract(&connection)
             .map_err(SprintRunnerTransitionError::Unavailable)?;
-        let authority_repository = SqliteOrchestrationRepository::open(path)
-            .map_err(|error| SprintRunnerTransitionError::Unavailable(format!("open Sprint Git authority repository: {error}")))?;
+        let authority_repository = Arc::new(SqliteOrchestrationRepository::open(path)
+            .map_err(|error| SprintRunnerTransitionError::Unavailable(format!("open Sprint Git authority repository: {error}")))?);
+        let authority_binder = InitiatedSprintGitAuthorityService::new(
+            authority_repository.clone(),
+            runtime,
+        );
         let service = Arc::new(Self {
             connection: Mutex::new(connection),
             database_lock_key,
             authority_repository,
+            authority_binder,
+            application_git_authority_required,
             sessions,
             work_unit_handler: Mutex::new(None),
             mcp: Mutex::new(HashMap::new()),
@@ -1938,6 +1990,46 @@ impl SprintRunnerTransitionService {
         }
     }
 
+    /// Establishes the one private authority before the Planner route consumes it. Existing
+    /// authority is reauthorized against fresh runtime/Git facts on every replay and reopen.
+    fn establish_planning_route_authority(
+        &self,
+        sprint_id: &str,
+    ) -> Result<InitiatedSprintGitAuthority, SprintRunnerTransitionError> {
+        if !self.application_git_authority_required {
+            return self.planning_route_authority(sprint_id);
+        }
+        let runtime_instance_ref = stable_id("application-sprint-runtime", sprint_id);
+        let authority = match self.planning_route_authority(sprint_id) {
+            Ok(existing) => {
+                self.authority_binder
+                    .reauthorize(&existing.authority_id)
+                    .map_err(map_authority_bind_error)?
+            }
+            Err(SprintRunnerTransitionError::Forbidden) => self
+                .authority_binder
+                .bind(BindInitiatedSprintGitAuthorityRequest {
+                    sprint_id: sprint_id.to_owned(),
+                    runtime_instance_ref: runtime_instance_ref.clone(),
+                    idempotency_key: stable_id("application-sprint-git-authority", sprint_id),
+                })
+                .map_err(map_authority_bind_error)
+                .and_then(|bound| {
+                    self.authority_repository
+                        .load_initiated_sprint_git_authority(&bound.authority_ref)
+                        .map_err(|_| SprintRunnerTransitionError::Unavailable("load bound Sprint Git authority".into()))?
+                        .ok_or(SprintRunnerTransitionError::Forbidden)
+                })?,
+            Err(error) => return Err(error),
+        };
+        if authority.sprint_id != sprint_id
+            || authority.runtime_instance_ref != runtime_instance_ref
+        {
+            return Err(SprintRunnerTransitionError::Conflict);
+        }
+        Ok(authority)
+    }
+
     /// Lossless nonblocking drain. Every caller advances the generation before deciding whether
     /// it owns the pass. A notifier re-entry therefore returns immediately, while the current
     /// owner observes the newer generation and drains a further durable snapshot before release.
@@ -2119,7 +2211,7 @@ impl SprintRunnerTransitionService {
         let Some(sprint_id) = sprint_id else { return Err(SprintRunnerTransitionError::Forbidden) };
         let planning_control = conversation_harness::profile(ConversationHarnessRole::SprintRunnerPlanningControl).map_err(SprintRunnerTransitionError::Unavailable)?;
         let planner_harness = conversation_harness::profile(ConversationHarnessRole::WorkSlicePlanner).map_err(SprintRunnerTransitionError::Unavailable)?;
-        let authority = self.planning_route_authority(&sprint_id)?;
+        let authority = self.establish_planning_route_authority(&sprint_id)?;
         let point = stable_id("work-slice-planning-point", &sprint_id);
         let request = stable_id("work-slice-planner-request", &sprint_id);
         let planner_session = stable_id("work-slice-planner-session", &point);
@@ -3853,6 +3945,150 @@ fn stable_id(prefix: &str, value: &str) -> String {
     h.update(value.as_bytes());
     format!("{prefix}-{:x}", h.finalize())
 }
+
+fn map_authority_bind_error(error: BindInitiatedSprintGitAuthorityError) -> SprintRunnerTransitionError {
+    match error {
+        BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable
+        | BindInitiatedSprintGitAuthorityError::ComparisonUnavailable
+        | BindInitiatedSprintGitAuthorityError::Unavailable => {
+            SprintRunnerTransitionError::Unavailable("application Sprint Git authority runtime unavailable".into())
+        }
+        BindInitiatedSprintGitAuthorityError::Conflict => SprintRunnerTransitionError::Conflict,
+        BindInitiatedSprintGitAuthorityError::InvalidRequest
+        | BindInitiatedSprintGitAuthorityError::SprintUnauthorized => SprintRunnerTransitionError::Forbidden,
+        BindInitiatedSprintGitAuthorityError::RuntimeSourceStale
+        | BindInitiatedSprintGitAuthorityError::RuntimeSourceDirty
+        | BindInitiatedSprintGitAuthorityError::RuntimeSourceIncompatible
+        | BindInitiatedSprintGitAuthorityError::RuntimeEvidenceMismatch => {
+            SprintRunnerTransitionError::Conflict
+        }
+    }
+}
+
+struct UnavailableSprintGitAuthorityRuntime;
+
+impl WorktreeRuntimeGitComparison for UnavailableSprintGitAuthorityRuntime {
+    fn resolve_verified_comparison(
+        &self,
+        _runtime_instance_ref: &str,
+    ) -> Result<VerifiedRuntimeGitComparison, BindInitiatedSprintGitAuthorityError> {
+        Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable)
+    }
+}
+
+/// Private runtime evidence for the productive application route. The source is fixed at build
+/// time, and every Git fact is freshly verified before an authority can be written or replayed.
+struct ApplicationSprintGitAuthorityRuntime {
+    source_root: PathBuf,
+}
+
+impl ApplicationSprintGitAuthorityRuntime {
+    fn new() -> Result<Self, SprintRunnerTransitionError> {
+        let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .ok_or_else(|| SprintRunnerTransitionError::Unavailable("resolve application source root".into()))?
+            .canonicalize()
+            .map_err(|_| SprintRunnerTransitionError::Unavailable("canonicalize application source root".into()))?;
+        Ok(Self { source_root })
+    }
+
+    fn git(&self, arguments: &[&str]) -> Result<String, BindInitiatedSprintGitAuthorityError> {
+        let output = Command::new("git")
+            .args(arguments)
+            .current_dir(&self.source_root)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .map_err(|_| BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable)?;
+        if !output.status.success() || output.stdout.len() > 256_000 || output.stderr.len() > 256_000 {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable);
+        }
+        String::from_utf8(output.stdout)
+            .map(|value| value.trim().to_owned())
+            .map_err(|_| BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable)
+    }
+}
+
+impl WorktreeRuntimeGitComparison for ApplicationSprintGitAuthorityRuntime {
+    fn resolve_verified_comparison(
+        &self,
+        runtime_instance_ref: &str,
+    ) -> Result<VerifiedRuntimeGitComparison, BindInitiatedSprintGitAuthorityError> {
+        if runtime_instance_ref.is_empty() || runtime_instance_ref.len() > 128 {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeEvidenceMismatch);
+        }
+        if self.git(&["rev-parse", "--is-inside-work-tree"])? != "true" {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceIncompatible);
+        }
+        if !self
+            .git(&["status", "--porcelain=v1", "--untracked-files=all"])?
+            .is_empty()
+        {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceDirty);
+        }
+        let repository_root = PathBuf::from(self.git(&["rev-parse", "--show-toplevel"])? )
+            .canonicalize()
+            .map_err(|_| BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable)?;
+        if repository_root != self.source_root {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeEvidenceMismatch);
+        }
+        let repository_common_dir = PathBuf::from(self.git(&[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ])?)
+        .canonicalize()
+        .map_err(|_| BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable)?;
+        let current_object_id = self.git(&["rev-parse", "--verify", "HEAD^{commit}"])?
+            .to_ascii_lowercase();
+        let baseline_object_id = self.git(&["rev-parse", "--verify", "HEAD^1^{commit}"])?
+            .to_ascii_lowercase();
+        if !valid_git_object_id(&current_object_id)
+            || !valid_git_object_id(&baseline_object_id)
+            || current_object_id == baseline_object_id
+        {
+            return Err(BindInitiatedSprintGitAuthorityError::ComparisonUnavailable);
+        }
+        let root = repository_root.to_string_lossy().replace('\\', "/");
+        let common = repository_common_dir.to_string_lossy().replace('\\', "/");
+        let worktree_id = stable_id("application-sprint-worktree", &root);
+        let repository_id = stable_id("application-sprint-repository", &common);
+        let source_fingerprint = sha256_hex(&[
+            "application-sprint-git-authority/v1",
+            &root,
+            &common,
+            &baseline_object_id,
+            &current_object_id,
+        ]);
+        Ok(VerifiedRuntimeGitComparison {
+            repository_id,
+            repository_root: repository_root.to_string_lossy().into_owned(),
+            repository_common_dir: repository_common_dir.to_string_lossy().into_owned(),
+            worktree_id,
+            worktree_root: repository_root.to_string_lossy().into_owned(),
+            baseline_object_id,
+            current_object_id,
+            runtime_instance_ref: runtime_instance_ref.to_owned(),
+            runtime_source_ref: "application-sprint-source-v1".into(),
+            source_fingerprint,
+        })
+    }
+}
+
+fn valid_git_object_id(value: &str) -> bool {
+    (value.len() == 40 || value.len() == 64)
+        && value.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn sha256_hex(parts: &[&str]) -> String {
+    use sha2::Digest;
+    let mut hash = sha2::Sha256::new();
+    for part in parts {
+        hash.update((part.len() as u64).to_be_bytes());
+        hash.update(part.as_bytes());
+    }
+    format!("{:x}", hash.finalize())
+}
+
 fn fingerprint_bytes(prefix: &str,value:&[u8])->String{stable_id(prefix,&value.iter().map(|byte|format!("{byte:02x}")).collect::<String>())}
 
 fn retry_git_text(root: &Path, arguments: &[&str]) -> Result<String, SprintRunnerTransitionError> {

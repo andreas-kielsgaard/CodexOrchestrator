@@ -1781,6 +1781,10 @@ mod tests {
             conversation_harness::{self, ConversationHarnessRole},
             domain::{InitiateEpicCommand, ProposedSprint, SaveEpicPlanProposalCommand},
             execution_support::ProductExecutionSupportState,
+            initiated_sprint_git_authority::{
+                BindInitiatedSprintGitAuthorityError, VerifiedRuntimeGitComparison,
+                WorktreeRuntimeGitComparison,
+            },
             repository::{InitiatedSprintGitAuthorityWrite, SqliteOrchestrationRepository},
             work_unit_execution_harness::{
                 WorkUnitExecutionHarnessService, WorkUnitHarnessRole,
@@ -1802,6 +1806,19 @@ mod tests {
         sinks: Mutex<HashMap<AgentInvocationId, Arc<dyn AgentRuntimeUpdateSink>>>,
         fail_next_launch: AtomicUsize,
         terminal_on_next_start: AtomicUsize,
+    }
+
+    struct PlannerAuthorityRuntime(Mutex<VerifiedRuntimeGitComparison>);
+
+    impl WorktreeRuntimeGitComparison for PlannerAuthorityRuntime {
+        fn resolve_verified_comparison(
+            &self,
+            runtime_instance_ref: &str,
+        ) -> Result<VerifiedRuntimeGitComparison, BindInitiatedSprintGitAuthorityError> {
+            let mut comparison = self.0.lock().unwrap().clone();
+            comparison.runtime_instance_ref = runtime_instance_ref.to_owned();
+            Ok(comparison)
+        }
     }
 
     impl RecordedRuntime {
@@ -4427,6 +4444,116 @@ mod tests {
             .unwrap_or(&text);
         serde_json::from_str(json)
             .unwrap_or_else(|error| panic!("invalid MCP response {text:?}: {error}"))
+    }
+
+    #[test]
+    fn application_owned_git_authority_precedes_planner_and_revalidates_reopen() {
+        let fixture = Fixture::new();
+        let bootstrap = fixture.status();
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        fixture.runtime.finish(
+            &bootstrap.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let runner = fixture.status();
+        let sprint_id: String = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let root = fixture._directory.path().canonicalize().unwrap();
+        let runtime = Arc::new(PlannerAuthorityRuntime(Mutex::new(
+            VerifiedRuntimeGitComparison {
+                repository_id: "application-repository".into(),
+                repository_root: root.to_string_lossy().into_owned(),
+                repository_common_dir: root.to_string_lossy().into_owned(),
+                worktree_id: "application-worktree".into(),
+                worktree_root: root.to_string_lossy().into_owned(),
+                baseline_object_id: "a".repeat(40),
+                current_object_id: "b".repeat(40),
+                runtime_instance_ref: String::new(),
+                runtime_source_ref: "application-source".into(),
+                source_fingerprint: "c".repeat(64),
+            },
+        )));
+        let service = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open_with_git_authority_runtime_for_test(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+            runtime.clone(),
+        )
+        .unwrap();
+        service
+            .request_next_sprint_runner(
+                &AgentInvocationId::new(runner.runner_invocation_id).unwrap(),
+                crate::orchestration::sprint_runner_transition::SprintRunnerSelection {
+                    sprint_id: sprint_id.clone(),
+                },
+            )
+            .unwrap();
+        let control = AgentInvocationId::new("application-planning-control").unwrap();
+        let harness = conversation_harness::profile(ConversationHarnessRole::SprintRunnerPlanningControl).unwrap();
+        Connection::open(&fixture.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE sprint_runner_transitions SET planning_control_invocation_id=?2,planning_control_harness_key=?3,planning_control_harness_version=?4,planning_control_harness_applied_at=?5,planning_control_launch_accepted_at=?5,planning_ready_at=?5 WHERE sprint_id=?1",
+                params![sprint_id, control.as_str(), harness.key, harness.version, "2026-08-05T00:00:00Z"],
+            )
+            .unwrap();
+
+        let first = service
+            .request_work_slice_planner(
+                &control,
+                crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {},
+            )
+            .unwrap();
+        assert!(first.work_slice_planner_ready_at.is_some());
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM initiated_sprint_git_authorities WHERE sprint_id=?1",
+                    [&sprint_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+        drop(connection);
+
+        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open_with_git_authority_runtime_for_test(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+            runtime.clone(),
+        )
+        .unwrap();
+        reopened.reconcile_startup().unwrap();
+        let replay = reopened
+            .request_work_slice_planner(
+                &control,
+                crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {},
+            )
+            .unwrap();
+        assert_eq!(
+            replay.work_slice_planning_point_id,
+            first.work_slice_planning_point_id
+        );
+        runtime.0.lock().unwrap().current_object_id = "d".repeat(40);
+        assert!(matches!(
+            reopened.request_work_slice_planner(
+                &control,
+                crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {},
+            ),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)
+        ));
     }
 
     #[test]

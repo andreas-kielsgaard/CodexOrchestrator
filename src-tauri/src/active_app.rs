@@ -182,7 +182,7 @@ pub(crate) fn run() {
                     application.clone(),
                     app_data_dir.join("orchestration-materials"),
                 );
-            let sprint_runners = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            let sprint_runners = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open_with_application_git_authority(
                 &database_path,
                 application.clone(),
             )
