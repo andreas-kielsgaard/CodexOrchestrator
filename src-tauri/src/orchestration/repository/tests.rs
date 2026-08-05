@@ -1500,7 +1500,7 @@ fn native_query_projects_ordered_sprint_decisions_current_result_and_privacy_bou
     let connection = repository.connection.lock().unwrap();
     crate::orchestration::sprint_continuation_settlement::initialize(&connection).unwrap();
     connection.execute_batch(&format!(
-        "INSERT INTO sprint_continuation_decisions VALUES ('decision-1','{sprint}',1,'continuing','continue_eligible_work',0,'private-input-1','2030-01-01T00:00:01Z'),('decision-2','{sprint}',2,'attention','dependency_route_unavailable',0,'private-input-2','2030-01-01T00:00:02Z');INSERT INTO sprint_continuation_attentions VALUES ('decision-2','attention-2','dependency_route_unavailable','private-attention','2030-01-01T00:00:02Z');INSERT INTO sprint_continuation_current_decisions VALUES ('{sprint}','decision-2','attention','2030-01-01T00:00:02Z');INSERT INTO sprint_upward_results VALUES ('result-1','decision-1','{sprint}','continuing','private-chronology-1','2030-01-01T00:00:01Z'),('result-2','decision-2','{sprint}','attention','private-chronology-2','2030-01-01T00:00:02Z');"
+        "INSERT INTO sprint_continuation_decisions VALUES ('decision-1','{sprint}',1,'continuing','continue_eligible_work',0,'private-input-1','2030-01-01T00:00:01Z'),('decision-2','{sprint}',2,'attention','dependency_route_unavailable',0,'private-input-2','2030-01-01T00:00:02Z');INSERT INTO sprint_continuation_attentions VALUES ('decision-2','attention-2','dependency_route_unavailable','private-attention',NULL,'2030-01-01T00:00:02Z');INSERT INTO sprint_continuation_current_decisions VALUES ('{sprint}','decision-2','attention','2030-01-01T00:00:02Z');INSERT INTO sprint_upward_results VALUES ('result-1','decision-1','{sprint}','continuing','private-chronology-1','2030-01-01T00:00:01Z'),('result-2','decision-2','{sprint}','attention','private-chronology-2','2030-01-01T00:00:02Z');"
     )).unwrap();
     drop(connection);
 
@@ -1549,7 +1549,7 @@ fn native_query_projects_repeated_structured_sprint_attention_and_rejects_ambigu
     connection
         .execute_batch(
             &format!(
-                "PRAGMA foreign_keys=OFF;DROP TABLE epic_runner_escalation_attentions;INSERT INTO epic_runner_escalation_receivers (handback_id,escalation_intent_id,delivery_request_id,sprint_id,epic_id,governing_runner_session_id,governing_runner_invocation_id,reassessment_invocation_id,delivery_fact_id,delivery_requested_at,harness_key,harness_version,correlation_fingerprint) VALUES ('handback-1','epic-intent-1','epic-request-1','{sprint}','{epic}','private-session-1','private-invocation-1','private-reassessment-1','private-delivery-1','2030-01-01T00:00:00Z','epic-harness',1,'correlation-1'),('handback-2','epic-intent-2','epic-request-2','{sprint}','{epic}','private-session-2','private-invocation-2','private-reassessment-2','private-delivery-2','2030-01-01T00:00:01Z','epic-harness',1,'correlation-2');PRAGMA foreign_keys=ON;CREATE TABLE epic_runner_escalation_attentions (handback_id TEXT PRIMARY KEY, attention_id TEXT NOT NULL, attention_json TEXT NOT NULL, requested_at TEXT NOT NULL);INSERT INTO epic_runner_escalation_attentions VALUES ('handback-1','public-attention-1','{{\"reason\":\"First decision.\",\"authorityNeeded\":\"authority\",\"evidenceContext\":\"evidence-1\",\"resumptionPath\":\"resume-1\"}}','2030-01-01T00:00:00Z'),('handback-2','public-attention-2','{{\"reason\":\"Second decision.\",\"authorityNeeded\":\"authority\",\"evidenceContext\":\"evidence-2\",\"resumptionPath\":\"resume-2\"}}','2030-01-01T00:00:01Z');INSERT INTO sprint_continuation_decisions VALUES ('decision-1','{sprint}',1,'attention','structured_human_or_external_attention',0,'private-input-1','2030-01-01T00:00:00Z'),('decision-2','{sprint}',2,'attention','structured_human_or_external_attention',0,'private-input-2','2030-01-01T00:00:02Z');INSERT INTO sprint_continuation_attentions VALUES ('decision-1','attention-1','structured_human_or_external_attention','private-attention-1','2030-01-01T00:00:00Z'),('decision-2','attention-2','structured_human_or_external_attention','private-attention-2','2030-01-01T00:00:02Z');INSERT INTO sprint_continuation_current_decisions VALUES ('{sprint}','decision-2','attention','2030-01-01T00:00:02Z');INSERT INTO sprint_upward_results VALUES ('result-1','decision-1','{sprint}','attention','private-result-1','2030-01-01T00:00:00Z'),('result-2','decision-2','{sprint}','attention','private-result-2','2030-01-01T00:00:02Z');"
+                "PRAGMA foreign_keys=OFF;DROP TABLE epic_runner_escalation_attentions;INSERT INTO epic_runner_escalation_receivers (handback_id,escalation_intent_id,delivery_request_id,sprint_id,epic_id,governing_runner_session_id,governing_runner_invocation_id,reassessment_invocation_id,delivery_fact_id,delivery_requested_at,harness_key,harness_version,correlation_fingerprint) VALUES ('handback-1','epic-intent-1','epic-request-1','{sprint}','{epic}','private-session-1','private-invocation-1','private-reassessment-1','private-delivery-1','2030-01-01T00:00:00Z','epic-harness',1,'correlation-1'),('handback-2','epic-intent-2','epic-request-2','{sprint}','{epic}','private-session-2','private-invocation-2','private-reassessment-2','private-delivery-2','2030-01-01T00:00:01Z','epic-harness',1,'correlation-2');PRAGMA foreign_keys=ON;CREATE TABLE epic_runner_escalation_attentions (handback_id TEXT PRIMARY KEY, attention_id TEXT NOT NULL, attention_json TEXT NOT NULL, requested_at TEXT NOT NULL);INSERT INTO epic_runner_escalation_attentions VALUES ('handback-1','public-attention-1','{{\"reason\":\"First decision.\",\"authorityNeeded\":\"authority\",\"evidenceContext\":\"evidence-1\",\"resumptionPath\":\"resume-1\"}}','2030-01-01T00:00:00Z'),('handback-2','public-attention-2','{{\"reason\":\"Second decision.\",\"authorityNeeded\":\"authority\",\"evidenceContext\":\"evidence-2\",\"resumptionPath\":\"resume-2\"}}','2030-01-01T00:00:01Z');INSERT INTO sprint_continuation_decisions VALUES ('decision-1','{sprint}',1,'attention','structured_human_or_external_attention',0,'private-input-1','2030-01-01T00:00:00Z'),('decision-2','{sprint}',2,'attention','structured_human_or_external_attention',0,'private-input-2','2030-01-01T00:00:02Z');INSERT INTO sprint_continuation_attentions VALUES ('decision-1','attention-1','structured_human_or_external_attention','private-attention-1','public-attention-1','2030-01-01T00:00:00Z'),('decision-2','attention-2','structured_human_or_external_attention','private-attention-2','public-attention-2','2030-01-01T00:00:02Z');INSERT INTO sprint_continuation_current_decisions VALUES ('{sprint}','decision-2','attention','2030-01-01T00:00:02Z');INSERT INTO sprint_upward_results VALUES ('result-1','decision-1','{sprint}','attention','private-result-1','2030-01-01T00:00:00Z'),('result-2','decision-2','{sprint}','attention','private-result-2','2030-01-01T00:00:02Z');"
             ),
         )
         .unwrap();
@@ -1584,6 +1584,22 @@ fn native_query_projects_repeated_structured_sprint_attention_and_rejects_ambigu
     assert!(!json.contains("private-result"));
 
     let connection = repository.connection.lock().unwrap();
+    connection
+        .execute(
+            "UPDATE sprint_continuation_attentions SET source_attention_id='foreign-attention' WHERE decision_id='decision-2'",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+    assert!(repository.native_query().is_err());
+
+    let connection = repository.connection.lock().unwrap();
+    connection
+        .execute(
+            "UPDATE sprint_continuation_attentions SET source_attention_id='public-attention-2' WHERE decision_id='decision-2'",
+            [],
+        )
+        .unwrap();
     connection
         .execute("DELETE FROM epic_runner_escalation_attentions WHERE handback_id='handback-2'", [])
         .unwrap();

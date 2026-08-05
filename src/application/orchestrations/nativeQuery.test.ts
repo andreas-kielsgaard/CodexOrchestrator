@@ -238,6 +238,17 @@ describe('orchestration native query v1', () => {
     expect(sprint.sprintContinuation?.history.map((item) => item.attention?.structuredAttention?.reason)).toEqual([
       'Reason 1.', 'Reason 2.',
     ]);
+
+    const withoutAttributableContext = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    for (const decision of withoutAttributableContext.sprintContinuationDecisions as Array<Record<string, unknown>>) {
+      delete (decision.attention as Record<string, unknown>).structuredAttention;
+    }
+    const boundedSprint = composeProductOrchestrationReadModels(
+      nativeQueryProductCompositionInputV2(
+        decodeOrchestrationNativeQueryV2(withoutAttributableContext),
+      ),
+    ).epics[0]!.sprints[0]!;
+    expect(boundedSprint.sprintContinuation?.history.every((item) => !item.attention?.structuredAttention)).toBe(true);
   });
 
   it('decodes the Rust-authored settled multi-root execution graph into product read models', () => {

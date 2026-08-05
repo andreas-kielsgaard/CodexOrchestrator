@@ -2423,6 +2423,20 @@ fn collect<T>(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())
 }
+fn table_has_columns(
+    connection: &Connection,
+    table: &str,
+    required: &[&str],
+) -> Result<bool, String> {
+    let columns = connection
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|error| error.to_string())?
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<std::collections::HashSet<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok(required.iter().all(|column| columns.contains(*column)))
+}
 fn fingerprint(command: &SaveEpicPlanProposalCommand) -> Result<String, SaveProposalError> {
     serde_json::to_string(&(
         command.epic_planning_draft_id.as_str(),
@@ -2829,8 +2843,9 @@ fn sprint_continuation_projection(
         .collect::<std::collections::HashSet<_>>();
     let decisions = collect(
         connection,
-        "SELECT d.decision_id,d.sprint_id,d.decision_sequence,d.decision_state,d.continuation_kind,d.accepted_materialization_count,d.recorded_at,a.attention_id,a.attention_code FROM sprint_continuation_decisions d LEFT JOIN sprint_continuation_attentions a ON a.decision_id=d.decision_id ORDER BY d.sprint_id,d.decision_sequence",
+        "SELECT d.decision_id,d.sprint_id,d.decision_sequence,d.decision_state,d.continuation_kind,d.accepted_materialization_count,d.recorded_at,a.attention_id,a.attention_code,a.source_attention_id FROM sprint_continuation_decisions d LEFT JOIN sprint_continuation_attentions a ON a.decision_id=d.decision_id ORDER BY d.sprint_id,d.decision_sequence",
         |row| {
+            let source_attention_id = row.get::<_, Option<String>>(9)?;
             Ok(SprintContinuationDecisionDto {
                     decision_id: row.get(0)?,
                     sprint_id: row.get(1)?,
@@ -2846,6 +2861,7 @@ fn sprint_continuation_projection(
                             attention_id,
                             code,
                             structured_attention: None,
+                            source_attention_id,
                         }),
             })
         },
@@ -2875,9 +2891,9 @@ fn sprint_continuation_projection(
             })
         },
     )?;
-    let mut structured_attention_by_sprint = std::collections::HashMap::<
+    let mut public_attention_by_id = std::collections::HashMap::<
         String,
-        Vec<(String, String, EpicRunnerEscalationAttentionDto)>,
+        (String, EpicRunnerEscalationAttentionDto),
     >::new();
     let escalation_tables = [
         "epic_runner_escalation_receivers",
@@ -2894,25 +2910,32 @@ fn sprint_continuation_projection(
         })
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?;
-    if escalation_present.iter().all(|value| *value) {
-        for (sprint_id, attention_id, requested_at, attention_json) in collect(
+    if escalation_present.iter().all(|value| *value)
+        && table_has_columns(
             connection,
-            "SELECT receiver.sprint_id,attention.attention_id,attention.requested_at,attention.attention_json FROM epic_runner_escalation_receivers receiver JOIN epic_runner_escalation_attentions attention ON attention.handback_id=receiver.handback_id ORDER BY receiver.sprint_id,attention.requested_at,attention.attention_id",
+            "epic_runner_escalation_attentions",
+            &["attention_id", "attention_json"],
+        )?
+    {
+        for (sprint_id, attention_id, attention_json) in collect(
+            connection,
+            "SELECT receiver.sprint_id,attention.attention_id,attention.attention_json FROM epic_runner_escalation_receivers receiver JOIN epic_runner_escalation_attentions attention ON attention.handback_id=receiver.handback_id ORDER BY receiver.sprint_id,attention.attention_id",
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
                 ))
             },
         )? {
             let attention = serde_json::from_str::<EpicRunnerEscalationAttentionDto>(&attention_json)
                 .map_err(|error| format!("invalid public Sprint attention: {error}"))?;
-            structured_attention_by_sprint
-                .entry(sprint_id)
-                .or_default()
-                .push((attention_id, requested_at, attention));
+            if public_attention_by_id
+                .insert(attention_id, (sprint_id, attention))
+                .is_some()
+            {
+                return Err("duplicate public Sprint attention correlation".into());
+            }
         }
     }
     let mut decisions = decisions;
@@ -2962,46 +2985,20 @@ fn sprint_continuation_projection(
         chrono::DateTime::parse_from_rfc3339(&decision.recorded_at)
             .map_err(|_| "Sprint continuation decision chronology is invalid".to_owned())?;
     }
-    let mut structured_decision_indices = std::collections::HashMap::<String, Vec<usize>>::new();
-    for (index, decision) in decisions.iter().enumerate() {
-        if decision.reason == "structured_human_or_external_attention" {
-            structured_decision_indices
-                .entry(decision.sprint_id.clone())
-                .or_default()
-                .push(index);
-        }
-    }
-    let mut structured_sprints = structured_decision_indices
-        .keys()
-        .cloned()
-        .collect::<std::collections::HashSet<_>>();
-    structured_sprints.extend(structured_attention_by_sprint.keys().cloned());
-    for sprint_id in structured_sprints {
-        let decision_indices = structured_decision_indices
-            .remove(&sprint_id)
-            .unwrap_or_default();
-        let sources = structured_attention_by_sprint
-            .remove(&sprint_id)
-            .unwrap_or_default();
-        if decision_indices.len() != sources.len() {
-            return Err("ambiguous public Sprint structured attention".into());
-        }
-        for (decision_index, (_, requested_at, structured)) in decision_indices.iter().zip(sources) {
-            let decision = decisions
-                .get_mut(*decision_index)
-                .ok_or_else(|| "structured Sprint attention decision is missing".to_owned())?;
-            let decision_time = chrono::DateTime::parse_from_rfc3339(&decision.recorded_at)
-                .map_err(|_| "Sprint continuation decision chronology is invalid".to_owned())?;
-            let requested_time = chrono::DateTime::parse_from_rfc3339(&requested_at)
-                .map_err(|_| "structured Sprint attention chronology is invalid".to_owned())?;
-            if requested_time > decision_time {
-                return Err("structured Sprint attention chronology is invalid".into());
+    for decision in &mut decisions {
+        if let Some(attention) = decision.attention.as_mut() {
+            if let Some(source_id) = attention.source_attention_id.as_ref() {
+                if decision.reason != "structured_human_or_external_attention" {
+                    return Err("non-structured Sprint attention has source correlation".into());
+                }
+                let (source_sprint, structured) = public_attention_by_id
+                    .get(source_id)
+                    .ok_or_else(|| "structured Sprint attention source is missing".to_owned())?;
+                if source_sprint != &decision.sprint_id {
+                    return Err("structured Sprint attention source is foreign".into());
+                }
+                attention.structured_attention = Some(structured.clone());
             }
-            decision
-                .attention
-                .as_mut()
-                .ok_or_else(|| "structured Sprint attention row is missing".to_owned())?
-                .structured_attention = Some(structured);
         }
     }
     let mut last_sprint = None;
@@ -3313,6 +3310,8 @@ struct SprintContinuationAttentionDto {
     code: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     structured_attention: Option<EpicRunnerEscalationAttentionDto>,
+    #[serde(skip)]
+    source_attention_id: Option<String>,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]

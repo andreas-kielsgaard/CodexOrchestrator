@@ -44,11 +44,12 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
   neutral; unknown settlement reasons cannot grant settlement authority. Historical materialization
   counts are accepted as nondecreasing snapshots only when the latest/current snapshot matches the
   productive current total; decreases, future counts, and stale latest snapshots are rejected.
-- Repeated structured attention is projected by ordered Sprint history and ordered public attention
-  sources only when their counts and chronology are exact. Foreign, private, missing, or otherwise
-  unrepresentable sources fail closed rather than receiving arbitrary context.
+- Repeated structured attention is projected only through an application-owned durable source
+  correlation. The same source may safely support repeated decisions; multiple uncorrelated sources
+  remain readable without context, while foreign, private, missing, or conflicting correlations fail
+  closed rather than receiving arbitrary context.
 - Focused producer evidence: the new native-query SCS projection test passed **1/1**; the existing
-  SCS-01 durable reconciliation group remains **10/10**; the repository projection suite passed
+  SCS-01 durable reconciliation group remains **13/13**; the repository projection suite passed
   **42/42**. Consumer evidence in an isolated exact-checkpoint dependency-ready copy passed
   **31/31** native-query tests, **3/3** workspace-presentation tests, and **11/11** bounded
   Sprint Workspace tests. `npm run build` passed with TypeScript and Vite.

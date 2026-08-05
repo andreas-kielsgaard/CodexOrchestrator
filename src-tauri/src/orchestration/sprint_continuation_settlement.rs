@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS sprint_continuation_attentions (
   attention_id TEXT NOT NULL UNIQUE,
   attention_code TEXT NOT NULL,
   attention_fingerprint TEXT NOT NULL UNIQUE,
+  source_attention_id TEXT,
   recorded_at TEXT NOT NULL
 );
 -- This is a locally persisted Sprint result only.  It has no delivery, receiver, Epic, or
@@ -52,7 +53,23 @@ pub(crate) struct SprintContinuationStatus {
 pub(crate) fn initialize(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(SPRINT_CONTINUATION_SETTLEMENT_SCHEMA)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    let columns = connection
+        .prepare("PRAGMA table_info(sprint_continuation_attentions)")
+        .map_err(|error| error.to_string())?
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    if !columns.iter().any(|column| column == "source_attention_id") {
+        connection
+            .execute(
+                "ALTER TABLE sprint_continuation_attentions ADD COLUMN source_attention_id TEXT",
+                [],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 pub(crate) fn statuses(
@@ -109,6 +126,14 @@ fn reconcile_one(connection: &mut Connection, sprint_id: &str) -> Result<(), Str
         .map_err(|error| error.to_string())?;
     let snapshot = Snapshot::load(&transaction, sprint_id)?;
     let (state, kind) = snapshot.decision();
+    let source_attention_id = if state == "attention"
+        && kind == "structured_human_or_external_attention"
+        && snapshot.structured_attention_source_ids.len() == 1
+    {
+        Some(snapshot.structured_attention_source_ids[0].clone())
+    } else {
+        None
+    };
     let fingerprint = digest(&format!(
         "{sprint_id}:{}:{}",
         state,
@@ -168,11 +193,11 @@ fn reconcile_one(connection: &mut Connection, sprint_id: &str) -> Result<(), Str
         let attention_id = digest(&format!("sprint-continuation-attention:{decision_id}"));
         let attention_fingerprint = digest(&format!("{decision_id}:{kind}"));
         let changed = transaction.execute(
-            "INSERT OR IGNORE INTO sprint_continuation_attentions (decision_id,attention_id,attention_code,attention_fingerprint,recorded_at) VALUES (?1,?2,?3,?4,?5)",
-            params![decision_id, attention_id, kind, attention_fingerprint, recorded_at],
+            "INSERT OR IGNORE INTO sprint_continuation_attentions (decision_id,attention_id,attention_code,attention_fingerprint,source_attention_id,recorded_at) VALUES (?1,?2,?3,?4,?5,?6)",
+            params![decision_id, attention_id, kind, attention_fingerprint, source_attention_id, recorded_at],
         ).map_err(|error| error.to_string())?;
         if changed == 0 {
-            let exact:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM sprint_continuation_attentions WHERE decision_id=?1 AND attention_id=?2 AND attention_code=?3 AND attention_fingerprint=?4 AND recorded_at=?5)",params![decision_id,attention_id,kind,attention_fingerprint,recorded_at],|row|row.get(0)).map_err(|error|error.to_string())?;
+            let exact:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM sprint_continuation_attentions WHERE decision_id=?1 AND attention_id=?2 AND attention_code=?3 AND attention_fingerprint=?4 AND source_attention_id IS ?5 AND recorded_at=?6)",params![decision_id,attention_id,kind,attention_fingerprint,source_attention_id,recorded_at],|row|row.get(0)).map_err(|error|error.to_string())?;
             if !exact {
                 return Err("Sprint continuation attention conflict".into());
             }
@@ -195,6 +220,7 @@ fn reconcile_one(connection: &mut Connection, sprint_id: &str) -> Result<(), Str
 
 struct Snapshot {
     identity: Vec<String>,
+    structured_attention_source_ids: Vec<String>,
     materialization_count: i64,
     correlated_materialization_count: i64,
     terminal_materialization_count: i64,
@@ -216,6 +242,12 @@ impl Snapshot {
         identity.extend(canonical_rows(tx, "SELECT h.work_unit_id,h.eligibility_state,COALESCE(h.handler_ready_at,'') FROM work_unit_handler_activations h WHERE h.sprint_id=?1 ORDER BY h.work_unit_id", sprint, 3)?);
         identity.extend(canonical_rows(tx, "SELECT h.handback_id,h.work_unit_id,h.context_fingerprint,COALESCE(d.movement_kind,''),COALESCE(d.details_json,'') FROM work_unit_no_progress_handbacks h JOIN work_units u ON u.work_unit_id=h.work_unit_id JOIN work_unit_materializations m ON m.materialization_id=u.materialization_id LEFT JOIN sprint_runner_handback_dispositions d ON d.handback_id=h.handback_id WHERE m.sprint_id=?1 ORDER BY h.handback_id", sprint, 5)?);
         identity.extend(canonical_rows(tx, "SELECT r.handback_id,r.epic_id,COALESCE(r.correlation_fingerprint,''),COALESCE(d.movement_kind,''),COALESCE(d.details_json,''),COALESCE(q.request_json,'') FROM epic_runner_escalation_receivers r LEFT JOIN epic_runner_escalation_dispositions d ON d.handback_id=r.handback_id LEFT JOIN epic_runner_escalation_downstream_requests q ON q.handback_id=r.handback_id WHERE r.sprint_id=?1 ORDER BY r.handback_id", sprint, 6)?);
+        let structured_attention_source_ids = structured_attention_source_ids(tx, sprint)?;
+        identity.extend(
+            structured_attention_source_ids
+                .iter()
+                .map(|source| format!("structured-attention-source\u{1e}{source}")),
+        );
         let materialization_count = count(
             tx,
             "SELECT COUNT(*) FROM work_unit_materializations WHERE sprint_id=?1",
@@ -234,6 +266,7 @@ impl Snapshot {
         let stale_epic_context = exists(tx, "SELECT 1 FROM epic_runner_escalation_receivers r JOIN sprint_runner_transitions t ON t.sprint_id=r.sprint_id WHERE r.sprint_id=?1 AND r.epic_id<>t.epic_id", sprint)?;
         Ok(Self {
             identity,
+            structured_attention_source_ids,
             materialization_count,
             correlated_materialization_count,
             terminal_materialization_count,
@@ -309,6 +342,37 @@ impl Snapshot {
         );
         format!("{aggregate}:{}", self.identity.join("\u{1f}"))
     }
+}
+
+fn structured_attention_source_ids(
+    tx: &rusqlite::Transaction<'_>,
+    sprint: &str,
+) -> Result<Vec<String>, String> {
+    let columns = tx
+        .prepare("PRAGMA table_info(epic_runner_escalation_attentions)")
+        .map_err(|error| error.to_string())?
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    if !columns.iter().any(|column| column == "attention_id") {
+        return Ok(Vec::new());
+    }
+    let sources = tx
+        .prepare(
+            "SELECT attention.attention_id FROM epic_runner_escalation_receivers receiver JOIN epic_runner_escalation_attentions attention ON attention.handback_id=receiver.handback_id WHERE receiver.sprint_id=?1 ORDER BY attention.attention_id",
+        )
+        .map_err(|error| error.to_string())?
+        .query_map([sprint], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    if sources.iter().any(|source| source.trim().is_empty())
+        || sources.windows(2).any(|pair| pair[0] == pair[1])
+    {
+        return Err("malformed structured Sprint attention correlation".into());
+    }
+    Ok(sources)
 }
 
 fn count(tx: &rusqlite::Transaction<'_>, query: &str, sprint: &str) -> Result<i64, String> {
@@ -422,11 +486,19 @@ mod tests {
     fn fixture() -> Connection {
         let connection = Connection::open_in_memory().unwrap();
         connection.execute_batch("CREATE TABLE initiated_sprints(id TEXT PRIMARY KEY,epic_id TEXT);CREATE TABLE sprint_runner_transitions(sprint_id TEXT,epic_id TEXT);CREATE TABLE work_unit_materializations(materialization_id TEXT PRIMARY KEY,planning_point_id TEXT,accepted_revision_id TEXT,epic_id TEXT,sprint_id TEXT);CREATE TABLE work_slice_proposal_revisions(revision_id TEXT PRIMARY KEY,planning_point_id TEXT,accepted_at TEXT);CREATE TABLE work_slice_planning_episodes(planning_point_id TEXT PRIMARY KEY,sprint_id TEXT);CREATE TABLE work_slice_execution_graph_completions(materialization_id TEXT,accepted_revision_id TEXT);CREATE TABLE work_slice_execution_settlements(materialization_id TEXT,graph_completion_materialization_id TEXT);CREATE TABLE work_slice_planning_point_execution_settlements(planning_point_id TEXT,materialization_id TEXT,work_slice_execution_materialization_id TEXT);CREATE TABLE work_units(work_unit_id TEXT PRIMARY KEY,materialization_id TEXT);CREATE TABLE work_unit_settlements(work_unit_id TEXT);CREATE TABLE work_unit_retry_attempts(work_unit_id TEXT);CREATE TABLE work_unit_no_progress_handbacks(handback_id TEXT,work_unit_id TEXT,context_fingerprint TEXT);CREATE TABLE sprint_runner_handback_deliveries(handback_id TEXT,sprint_id TEXT);CREATE TABLE sprint_runner_handback_dispositions(handback_id TEXT,movement_kind TEXT,details_json TEXT);CREATE TABLE sprint_handback_dependency_routes(handback_id TEXT PRIMARY KEY,work_unit_id TEXT NOT NULL,route_fingerprint TEXT NOT NULL UNIQUE,recorded_at TEXT NOT NULL);CREATE TABLE epic_runner_escalation_downstream_requests(handback_id TEXT,request_kind TEXT,request_json TEXT);CREATE TABLE epic_runner_escalation_receivers(handback_id TEXT,sprint_id TEXT,epic_id TEXT,correlation_fingerprint TEXT);CREATE TABLE epic_runner_escalation_dispositions(handback_id TEXT,movement_kind TEXT,details_json TEXT);CREATE TABLE work_slice_execution_attentions(materialization_id TEXT);CREATE TABLE work_unit_execution_attentions(materialization_id TEXT);CREATE TABLE epic_runner_escalation_attentions(handback_id TEXT);CREATE TABLE work_unit_handler_activations(work_unit_id TEXT,sprint_id TEXT,eligibility_state TEXT,handler_ready_at TEXT);CREATE TABLE work_unit_implementer_activations(work_unit_id TEXT);INSERT INTO initiated_sprints VALUES('sprint','epic');INSERT INTO sprint_runner_transitions VALUES('sprint','epic');").unwrap();
+        connection.execute_batch("ALTER TABLE epic_runner_escalation_attentions ADD COLUMN attention_id TEXT;ALTER TABLE epic_runner_escalation_attentions ADD COLUMN attention_json TEXT;ALTER TABLE epic_runner_escalation_attentions ADD COLUMN requested_at TEXT;").unwrap();
         initialize(&connection).unwrap();
         connection
     }
     fn accepted_materialization(connection: &Connection) {
         connection.execute_batch("INSERT INTO work_slice_proposal_revisions VALUES('revision','point','now');INSERT INTO work_slice_planning_episodes VALUES('point','sprint');INSERT INTO work_unit_materializations VALUES('materialization','point','revision','epic','sprint');INSERT INTO work_units VALUES('unit','materialization');").unwrap();
+    }
+    fn second_accepted_materialization(connection: &Connection) {
+        connection.execute_batch("INSERT INTO work_slice_proposal_revisions VALUES('revision-2','point-2','later');INSERT INTO work_slice_planning_episodes VALUES('point-2','sprint');INSERT INTO work_unit_materializations VALUES('materialization-2','point-2','revision-2','epic','sprint');INSERT INTO work_units VALUES('unit-2','materialization-2');").unwrap();
+    }
+    fn structured_source(connection: &Connection, handback: &str, attention_id: &str) {
+        connection.execute("INSERT INTO epic_runner_escalation_receivers VALUES(?1,'sprint','epic',?2)", params![handback, format!("correlation-{handback}")]).unwrap();
+        connection.execute("INSERT INTO epic_runner_escalation_attentions (handback_id,attention_id,attention_json,requested_at) VALUES(?1,?2,?3,?4)", params![handback, attention_id, "{\"reason\":\"A bounded external decision is required.\",\"authorityNeeded\":\"designated authority\",\"evidenceContext\":\"the exact unresolved Sprint concern\",\"resumptionPath\":\"resume this exact Sprint decision\"}", "2030-01-01T00:00:00Z"]).unwrap();
     }
     fn terminal_facts(connection: &Connection) {
         connection.execute_batch("INSERT INTO work_slice_execution_graph_completions VALUES('materialization','revision');INSERT INTO work_slice_execution_settlements VALUES('materialization','materialization');INSERT INTO work_slice_planning_point_execution_settlements VALUES('point','materialization','materialization');INSERT INTO work_unit_settlements VALUES('unit');").unwrap();
@@ -605,6 +677,60 @@ mod tests {
         .unwrap();
         reconcile(&mut c).unwrap();
         assert_eq!(statuses(&c).unwrap()[0].1.state, "attention");
+    }
+    #[test]
+    fn repeated_same_source_attention_survives_canonical_change_and_reopen() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("repeated-source.sqlite");
+        let mut c = fixture();
+        accepted_materialization(&c);
+        structured_source(&c, "source-handback", "source-attention");
+        reconcile(&mut c).unwrap();
+        second_accepted_materialization(&c);
+        reconcile(&mut c).unwrap();
+        assert_eq!(c.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_decisions", [], |row| row.get(0)).unwrap(), 2);
+        assert_eq!(c.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_attentions WHERE source_attention_id='source-attention'", [], |row| row.get(0)).unwrap(), 2);
+        c.execute("VACUUM INTO ?1", [path.to_str().unwrap()]).unwrap();
+        drop(c);
+
+        let mut reopened = Connection::open(&path).unwrap();
+        reconcile(&mut reopened).unwrap();
+        assert_eq!(reopened.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_decisions", [], |row| row.get(0)).unwrap(), 2);
+        assert_eq!(reopened.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_attentions WHERE source_attention_id='source-attention'", [], |row| row.get(0)).unwrap(), 2);
+    }
+    #[test]
+    fn multiple_sources_before_decisions_never_receive_positional_attention_correlation() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("ambiguous-sources.sqlite");
+        let mut c = fixture();
+        accepted_materialization(&c);
+        structured_source(&c, "source-handback-a", "source-attention-a");
+        structured_source(&c, "source-handback-b", "source-attention-b");
+        reconcile(&mut c).unwrap();
+        second_accepted_materialization(&c);
+        reconcile(&mut c).unwrap();
+        assert_eq!(c.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_decisions", [], |row| row.get(0)).unwrap(), 2);
+        assert_eq!(c.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_attentions WHERE source_attention_id IS NULL", [], |row| row.get(0)).unwrap(), 2);
+        c.execute("VACUUM INTO ?1", [path.to_str().unwrap()]).unwrap();
+        drop(c);
+
+        let mut reopened = Connection::open(&path).unwrap();
+        reconcile(&mut reopened).unwrap();
+        assert_eq!(reopened.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_attentions WHERE source_attention_id IS NULL", [], |row| row.get(0)).unwrap(), 2);
+    }
+    #[test]
+    fn conflicting_source_attention_correlation_fails_closed() {
+        let mut c = fixture();
+        accepted_materialization(&c);
+        structured_source(&c, "source-handback", "source-attention");
+        reconcile(&mut c).unwrap();
+        c.execute(
+            "UPDATE sprint_continuation_attentions SET source_attention_id='conflicting-source'",
+            [],
+        )
+        .unwrap();
+        assert!(reconcile(&mut c).is_err());
+        assert_eq!(c.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_upward_results WHERE result_kind='settled'", [], |row| row.get(0)).unwrap(), 0);
     }
     #[test]
     fn exact_terminal_facts_settle_and_emit_only_sprint_result() {
