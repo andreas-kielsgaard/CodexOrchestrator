@@ -23,6 +23,7 @@ pub(crate) enum ConversationHarnessRole {
     EpicPlanBuilder,
     EpicBootstrapGenerator,
     EpicRunner,
+    EpicRunnerEscalationReassessment,
     SprintRunner,
     SprintRunnerPlanningControl,
     SprintRunnerHandbackReassessment,
@@ -37,6 +38,7 @@ impl ConversationHarnessRole {
             Self::EpicPlanBuilder => "epic_plan_builder",
             Self::EpicBootstrapGenerator => "epic_bootstrap_generator",
             Self::EpicRunner => "epic_runner",
+            Self::EpicRunnerEscalationReassessment => "epic_runner_escalation_reassessment",
             Self::SprintRunner => "sprint_runner",
             Self::SprintRunnerPlanningControl => "sprint_runner_planning_control",
             Self::SprintRunnerHandbackReassessment => "sprint_runner_handback_reassessment",
@@ -529,6 +531,7 @@ pub(crate) fn role_discovery_root(role: ConversationHarnessRole) -> Result<Strin
         ConversationHarnessRole::EpicPlanBuilder => "epic-plan-builder",
         ConversationHarnessRole::EpicBootstrapGenerator => "epic-bootstrap-generator",
         ConversationHarnessRole::EpicRunner => "epic-runner",
+        ConversationHarnessRole::EpicRunnerEscalationReassessment => "epic-runner",
         ConversationHarnessRole::SprintRunner => "sprint-runner",
         ConversationHarnessRole::SprintRunnerPlanningControl => "sprint-runner",
         ConversationHarnessRole::SprintRunnerHandbackReassessment => "sprint-runner",
@@ -586,6 +589,7 @@ mod tests {
         let plan_builder = profile(ConversationHarnessRole::EpicPlanBuilder).unwrap();
         let bootstrap = profile(ConversationHarnessRole::EpicBootstrapGenerator).unwrap();
         let runner = profile(ConversationHarnessRole::EpicRunner).unwrap();
+        let epic_reassessment = profile(ConversationHarnessRole::EpicRunnerEscalationReassessment).unwrap();
         let sprint_runner = profile(ConversationHarnessRole::SprintRunner).unwrap();
         let planning_control =
             profile(ConversationHarnessRole::SprintRunnerPlanningControl).unwrap();
@@ -598,6 +602,10 @@ mod tests {
         assert_eq!(plan_builder.version, 4);
         assert_eq!(runner.key, "epic_runner");
         assert_eq!(runner.version, 3);
+        assert_eq!(epic_reassessment.key, "epic_runner_escalation_reassessment");
+        assert_eq!(epic_reassessment.version, 1);
+        assert_eq!(epic_reassessment.mcp.enabled_tools, ["read_epic_escalation_reassessment_context"]);
+        assert!(epic_reassessment.mcp.required);
         assert_eq!(sprint_runner.key, "sprint_runner");
         assert_eq!(sprint_runner.version, 2);
         assert_eq!(

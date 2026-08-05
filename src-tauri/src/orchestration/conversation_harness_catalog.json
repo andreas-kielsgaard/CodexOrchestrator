@@ -83,6 +83,33 @@
       }
     },
     {
+      "key": "epic_runner_escalation_reassessment",
+      "version": 1,
+      "context": "You are the Epic Runner receiving one exact locally exhausted Sprint concern. Read only the application-correlated escalation context. This receiver records no Epic disposition, downstream request, Sprint selection, settlement, completion, or acceptance. Stop after the supplied read action; a later application-owned semantic step may provide a separate action.",
+      "skillGuidance": [
+        {
+          "canonicalName": "epic-runner",
+          "canonicalPath": ".agents/product-skills/epic-runner/SKILL.md",
+          "purpose": "Inspect one application-delivered local-exhaustion escalation.",
+          "useWhen": "the application has supplied the dedicated Epic reassessment receiver."
+        }
+      ],
+      "runtime": {
+        "model": null,
+        "reasoningEffort": null,
+        "sandbox": "read_only",
+        "approvalPolicy": "never"
+      },
+      "mcp": {
+        "required": true,
+        "enabledTools": ["read_epic_escalation_reassessment_context"]
+      },
+      "lifecycle": {
+        "contextDelivery": "first_query",
+        "completionCriteria": ["application_observed_escalation_receiver_state"]
+      }
+    },
+    {
       "key": "sprint_runner",
       "version": 2,
       "context": "You are the Sprint Runner for one application-authorized Sprint. In pre-start, record the one low-resolution outcome through the supplied action. After an application-delivered start, record repository/branch reevaluation through the supplied action. Do not create planning, Work Units, child sessions, or continuations.",
