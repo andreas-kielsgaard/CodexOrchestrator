@@ -1207,6 +1207,7 @@ impl SprintRunnerTransitionService {
         connection.execute_batch(ACCEPTED_CANDIDATE_AUTHORITY_SCHEMA).map_err(|e| SprintRunnerTransitionError::Unavailable(format!("initialize accepted candidate authority schema: {e}")))?;
         connection.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA).map_err(|e| SprintRunnerTransitionError::Unavailable(format!("initialize dependency-wave schema: {e}")))?;
         sprint_continuation_settlement::initialize(&connection).map_err(SprintRunnerTransitionError::Unavailable)?;
+        crate::orchestration::epic_settlement::initialize(&connection).map_err(SprintRunnerTransitionError::Unavailable)?;
         // The first pre-start route was shipped before these evidence boundaries.  Keep an
         // existing local database readable without treating an absent fact as a positive fact.
         for column in [
@@ -1309,6 +1310,7 @@ impl SprintRunnerTransitionService {
         service.reconcile_sprint_continuation_boundary()?;
         service.reconcile_sprint_result_receivers()?;
         service.reconcile_sprint_result_realizations()?;
+        service.reconcile_epic_settlement_boundary()?;
         Ok(service)
     }
 
@@ -1671,6 +1673,11 @@ impl SprintRunnerTransitionService {
     fn reconcile_sprint_continuation_boundary(&self) -> Result<(), SprintRunnerTransitionError> {
         let mut connection = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;
         sprint_continuation_settlement::reconcile(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)
+    }
+
+    fn reconcile_epic_settlement_boundary(&self) -> Result<(), SprintRunnerTransitionError> {
+        let mut connection = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;
+        crate::orchestration::epic_settlement::reconcile(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)
     }
 
     pub(crate) fn query(
@@ -2952,7 +2959,7 @@ impl SprintRunnerTransitionService {
     fn reconcile_sprint_result_realizations(self:&Arc<Self>)->Result<(),SprintRunnerTransitionError>{
         let results:Vec<String>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare("SELECT d.result_id FROM epic_runner_sprint_result_dispositions d JOIN epic_runner_sprint_result_receivers x ON x.result_id=d.result_id LEFT JOIN epic_runner_sprint_result_realizations r ON r.result_id=d.result_id WHERE x.semantic_reassessment_recorded_at IS NOT NULL AND (r.result_id IS NULL OR (r.outcome_kind='successor_request' AND r.successor_request_id IS NULL)) ORDER BY d.selected_at,d.result_id").and_then(|mut statement|statement.query_map([],|row|row.get(0))?.collect::<Result<Vec<_>,_>>()).map_err(|error|SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         for result in results { self.reconcile_sprint_result_realization(&result)?; }
-        Ok(())
+        self.reconcile_epic_settlement_boundary()
     }
     fn reconcile_sprint_result_realization(self:&Arc<Self>,result:&str)->Result<(),SprintRunnerTransitionError>{
         let source:Option<(String,String,String,String,String,String,String,String,String,Option<String>,String)>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT x.decision_id,x.sprint_id,x.epic_id,x.governing_runner_session_id,x.governing_runner_invocation_id,x.reassessment_invocation_id,r.result_kind,d.decision_state,disposition.disposition_id,current.decision_id,disposition.movement_kind FROM epic_runner_sprint_result_receivers x JOIN sprint_upward_results r ON r.result_id=x.result_id AND r.decision_id=x.decision_id AND r.sprint_id=x.sprint_id JOIN sprint_continuation_decisions d ON d.decision_id=x.decision_id AND d.sprint_id=x.sprint_id JOIN epic_runner_sprint_result_dispositions disposition ON disposition.result_id=x.result_id LEFT JOIN sprint_continuation_current_decisions current ON current.sprint_id=x.sprint_id WHERE x.result_id=?1 AND x.semantic_reassessment_fact_id IS NOT NULL AND x.semantic_reassessment_recorded_at IS NOT NULL",[result],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?,row.get(9)?,row.get(10)?))).optional().map_err(|error|SprintRunnerTransitionError::Unavailable(error.to_string()))?;
