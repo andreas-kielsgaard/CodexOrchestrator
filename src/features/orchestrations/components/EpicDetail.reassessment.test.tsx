@@ -51,4 +51,36 @@ describe('Epic reassessment presentation', () => {
       'not Sprint selection, start, settlement, completion, or acceptance',
     );
   });
+
+  it('labels direct Sprint-result stages without claiming Epic settlement or acceptance', () => {
+    render(
+      <EpicDetail
+        epic={{
+          id: 'epic-1', name: 'Result Epic', goal: 'Preserve stage ownership.',
+          movement: { kind: 'reevaluating_direction' }, state: 'running', plan: { items: [] },
+          sprintResultProjections: [{
+            resultId: 'result-1', decisionId: 'decision-1', sprintId: 'sprint-1', epicId: 'epic-1',
+            resultKind: 'settled', recordedAt: '2026-08-05T00:00:00Z',
+            receiver: {
+              deliveryRequestedAt: '2026-08-05T00:00:01Z', deliveryPersistedAt: '2026-08-05T00:00:02Z',
+              semanticReassessmentRecordedAt: '2026-08-05T00:00:03Z',
+            },
+            realization: {
+              outcomeKind: 'retained_attention', consideredAt: '2026-08-05T00:00:04Z',
+              retainedAttentionCode: 'concern_preserved', retainedAttentionRecordedAt: '2026-08-05T00:00:05Z',
+            },
+          }],
+        }}
+        artifactAccessController={undefined as never}
+        selectedSprintId={null} selectedRevisionId={null} detailLocation={{ kind: 'sprint' }}
+        onOpenSprint={vi.fn()} onCloseSprint={vi.fn()} onSelectedRevisionChange={vi.fn()}
+        onDetailLocationChange={vi.fn()} onBack={vi.fn()}
+      />,
+    );
+    const region = screen.getByRole('region', { name: 'Sprint result receipt' });
+    expect(region).toHaveTextContent('Local Sprint result: settled');
+    expect(region).toHaveTextContent('Epic receipt requested');
+    expect(region).toHaveTextContent('Retained concern/attention recorded');
+    expect(region).toHaveTextContent('do not settle the Epic');
+  });
 });

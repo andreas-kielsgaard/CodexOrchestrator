@@ -36,6 +36,7 @@ export function composeProductOrchestrationReadModels(
     events.epics.map((epic) => epic.epicId),
   );
   validateSprintRunnerTransitions(input, events);
+  validateSprintResultProjections(input, events);
 
   const index = indexReferenceData(input.referenceIndex);
   const sessions = events.agentSessionReferences.map((reference) => ({
@@ -58,6 +59,7 @@ export function composeProductOrchestrationReadModels(
           input.selection,
           input.workUnitMaterializations,
           input.sprintContinuation,
+          input.sprintResultProjections,
           input.sprintRunnerTransition?.query.transitions.find(
             (transition) => transition.sprintId === sprint.sprintId,
           ),
@@ -78,6 +80,13 @@ export function composeProductOrchestrationReadModels(
         belongsToEpic(events, reference, epic.epicId),
       ),
       continuation: composeContinuation(events, agentControl, 'epic', epic.epicId),
+      ...(input.sprintResultProjections
+        ? {
+            sprintResultProjections: input.sprintResultProjections.filter(
+              (projection) => projection.epicId === epic.epicId,
+            ),
+          }
+        : {}),
       ...(input.bootstrapTransition
         ? {
             bootstrapTransition: projectBootstrapTransitionStatus(
@@ -114,6 +123,55 @@ function validateSprintRunnerTransitions(
   }
 }
 
+function validateSprintResultProjections(
+  input: ProductReadCompositionInputV1,
+  events: ReturnType<typeof decodeOrchestrationEventsV1>,
+) {
+  const projections = input.sprintResultProjections;
+  if (!projections) return;
+  const resultById = new Set<string>();
+  const decisionById = new Set<string>();
+  const localResults = new Map(
+    (input.sprintContinuation?.upwardResults ?? []).map((result) => [result.resultId, result]),
+  );
+  const localDecisions = new Map(
+    (input.sprintContinuation?.decisions ?? []).map((decision) => [decision.decisionId, decision]),
+  );
+  if (projections.length !== localResults.size)
+    fail('Sprint-result projection bundle is incomplete');
+  const sprintById = new Map(events.sprints.map((sprint) => [sprint.sprintId, sprint]));
+  projections.forEach((projection) => {
+    if (resultById.has(projection.resultId) || decisionById.has(projection.decisionId))
+      fail('Sprint-result projections cannot repeat result or decision identities');
+    resultById.add(projection.resultId);
+    decisionById.add(projection.decisionId);
+    const localResult = localResults.get(projection.resultId);
+    const localDecision = localDecisions.get(projection.decisionId);
+    if (
+      !localResult ||
+      !localDecision ||
+      localResult.decisionId !== projection.decisionId ||
+      localResult.sprintId !== projection.sprintId ||
+      localResult.resultKind !== projection.resultKind ||
+      localResult.recordedAt !== projection.recordedAt ||
+      localDecision.sprintId !== projection.sprintId
+    )
+      fail('Sprint-result projection does not match its local Sprint result and decision');
+    const sprint = sprintById.get(projection.sprintId);
+    if (!sprint || sprint.epicId !== projection.epicId)
+      fail('Sprint-result projection has a foreign Sprint or Epic link');
+    if (projection.realization?.outcomeKind === 'successor_request') {
+      const successor = [...sprintById.values()].find(
+        (candidate) => candidate.sprintId === projection.realization?.successorSprintId,
+      );
+      const sourceOrdinal = events.sprints.findIndex((candidate) => candidate.sprintId === sprint.sprintId);
+      const successorOrdinal = events.sprints.findIndex((candidate) => candidate.sprintId === successor?.sprintId);
+      if (!successor || successor.epicId !== projection.epicId || successorOrdinal !== sourceOrdinal + 1)
+        fail('Sprint-result successor is foreign or non-consecutive');
+    }
+  });
+}
+
 function validateBootstrapTransitions(
   input: ProductReadCompositionInputV1,
   epicIds: readonly string[],
@@ -141,6 +199,7 @@ function composeSprint(
   selection: ProductReadCompositionInputV1['selection'],
   workUnitMaterializations: ProductReadCompositionInputV1['workUnitMaterializations'],
   sprintContinuation: ProductReadCompositionInputV1['sprintContinuation'],
+  sprintResultProjections: ProductReadCompositionInputV1['sprintResultProjections'],
   sprintRunnerTransition?: import('./sprintRunnerTransition').SprintRunnerTransitionV1,
 ): ProductSprintReadModelV1 {
   const sprint = required(index.sprints, sprintId, 'Sprint reference index');
@@ -235,6 +294,13 @@ function composeSprint(
     ...(sprintContinuation
       ? {
           sprintContinuation: projectSprintContinuation(sprintContinuation, sprintId),
+        }
+      : {}),
+    ...(sprintResultProjections
+      ? {
+          sprintResultProjections: sprintResultProjections.filter(
+            (projection) => projection.sprintId === sprintId,
+          ),
         }
       : {}),
     sprintPlan: {

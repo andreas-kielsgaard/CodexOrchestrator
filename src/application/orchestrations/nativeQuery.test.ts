@@ -159,6 +159,57 @@ describe('orchestration native query v1', () => {
     expect(() => decodeOrchestrationNativeQueryV2(contradictory)).toThrow('state and reason contradict');
   });
 
+  it('projects direct Sprint-result receipt and realization stages without private identities', () => {
+    const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
+    value.sprintContinuationDecisions = [{
+      decisionId: 'decision-result', sprintId: 'sprint-fixture', decisionSequence: 1,
+      state: 'settled', reason: 'all_authoritative_sprint_work_settled',
+      acceptedMaterializationCount: 0, recordedAt: '2026-08-05T00:00:00Z',
+    }];
+    value.sprintContinuationCurrentDecisions = [{
+      sprintId: 'sprint-fixture', decisionId: 'decision-result', state: 'settled',
+      updatedAt: '2026-08-05T00:00:00Z',
+    }];
+    value.sprintUpwardResults = [{
+      resultId: 'result-result', decisionId: 'decision-result', sprintId: 'sprint-fixture',
+      resultKind: 'settled', recordedAt: '2026-08-05T00:00:00Z',
+    }];
+    value.sprintResultProjections = [{
+      resultId: 'result-result', decisionId: 'decision-result', sprintId: 'sprint-fixture',
+      epicId: 'epic-fixture', resultKind: 'settled', recordedAt: '2026-08-05T00:00:00Z',
+      receiver: {
+        deliveryRequestedAt: '2026-08-05T00:00:01Z', deliveryPersistedAt: '2026-08-05T00:00:02Z',
+        harnessBoundAt: '2026-08-05T00:00:03Z', launchRequestedAt: '2026-08-05T00:00:04Z',
+        launchAcceptedAt: '2026-08-05T00:00:05Z', reassessmentLifecycleStatus: 'completed',
+        reassessmentLifecycleObservedAt: '2026-08-05T00:00:06Z', semanticReassessmentRecordedAt: '2026-08-05T00:00:07Z',
+      },
+      dispositionRecordedAt: '2026-08-05T00:00:08Z',
+      disposition: { movementKind: 'future_safe_terminal_variant', rationale: 'The local result remains preserved.' },
+      realization: {
+        outcomeKind: 'terminal_readiness', consideredAt: '2026-08-05T00:00:09Z',
+        terminalReadinessRecordedAt: '2026-08-05T00:00:10Z',
+      },
+    }];
+    const query = decodeOrchestrationNativeQueryV2(value);
+    const readModels = composeProductOrchestrationReadModels(
+      nativeQueryProductCompositionInputV2(query),
+    );
+    expect(readModels.epics[0]!.sprintResultProjections).toMatchObject([
+      { resultKind: 'settled', realization: { outcomeKind: 'terminal_readiness' } },
+    ]);
+    expect(readModels.epics[0]!.sprints[0]!.sprintResultProjections).toHaveLength(1);
+
+    const privateShape = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    ((privateShape.sprintResultProjections as Array<Record<string, unknown>>)[0]!).correlationFingerprint = 'private';
+    expect(() => decodeOrchestrationNativeQueryV2(privateShape)).toThrow('unknown field');
+    const foreign = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    ((foreign.sprintResultProjections as Array<Record<string, unknown>>)[0]!).epicId = 'foreign-epic';
+    expect(() => decodeOrchestrationNativeQueryV2(foreign)).toThrow('foreign');
+    const contradictory = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    ((contradictory.sprintResultProjections as Array<Record<string, unknown>>)[0]!).dispositionRecordedAt = '2026-08-05T00:00:06Z';
+    expect(() => decodeOrchestrationNativeQueryV2(contradictory)).toThrow('precedes');
+  });
+
   it('preserves historical materialization snapshots while requiring the latest snapshot to be current', () => {
     const materializations = [
       {

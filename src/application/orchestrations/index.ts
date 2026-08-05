@@ -163,6 +163,7 @@ export type {
   ProductEpicStateV1,
   ProductEpicEscalationReceiverV1,
   ProductEpicEscalationDispositionV1,
+  ProductSprintResultProjectionV1,
   ProductReadCompositionInputV1,
   ProductReadReferenceIndexV1,
   ProductReadModelsV1,

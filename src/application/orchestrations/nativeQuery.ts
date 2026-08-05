@@ -52,6 +52,7 @@ export interface OrchestrationNativeQueryV2 {
   readonly sprintContinuationDecisions: readonly NativeSprintContinuationDecisionV1[];
   readonly sprintContinuationCurrentDecisions: readonly NativeSprintContinuationCurrentDecisionV1[];
   readonly sprintUpwardResults: readonly NativeSprintUpwardResultV1[];
+  readonly sprintResultProjections?: readonly NativeSprintResultProjectionV1[];
 }
 export interface NativeWorkUnitExecutionStateV1 {
   readonly workUnitId: string;
@@ -99,6 +100,40 @@ export interface NativeSprintUpwardResultV1 {
   readonly resultKind: NativeSprintContinuationStateV1;
   readonly recordedAt: string;
 }
+export interface NativeSprintResultProjectionV1 {
+  readonly resultId: string;
+  readonly decisionId: string;
+  readonly sprintId: string;
+  readonly epicId: string;
+  readonly resultKind: NativeSprintContinuationStateV1;
+  readonly recordedAt: string;
+  readonly receiver?: NativeSprintResultReceiverV1;
+  readonly dispositionRecordedAt?: string;
+  readonly disposition?: ProductSprintResultDispositionV1;
+  readonly realization?: NativeSprintResultRealizationV1;
+}
+export interface NativeSprintResultReceiverV1 {
+  readonly deliveryRequestedAt: string;
+  readonly deliveryPersistedAt?: string;
+  readonly harnessBoundAt?: string;
+  readonly launchRequestedAt?: string;
+  readonly launchAcceptedAt?: string;
+  readonly providerActivationObservedAt?: string;
+  readonly reassessmentLifecycleStatus?: string;
+  readonly reassessmentLifecycleObservedAt?: string;
+  readonly semanticReassessmentRecordedAt?: string;
+}
+export interface NativeSprintResultRealizationV1 {
+  readonly outcomeKind: 'successor_request' | 'terminal_readiness' | 'retained_attention';
+  readonly consideredAt: string;
+  readonly successorSprintId?: string;
+  readonly successorRequestedAt?: string;
+  readonly successorRequestRecordedAt?: string;
+  readonly terminalReadinessRecordedAt?: string;
+  readonly retainedAttentionCode?: string;
+  readonly retainedAttentionRecordedAt?: string;
+}
+export type ProductSprintResultDispositionV1 = ProductEpicEscalationDispositionV1;
 export interface NativeWorkUnitDependencyActivationIntentV1 {
   readonly workUnitId: string;
   readonly materializationId: string;
@@ -377,6 +412,7 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
       'sprintContinuationDecisions',
       'sprintContinuationCurrentDecisions',
       'sprintUpwardResults',
+      'sprintResultProjections',
     ],
     'native query',
   );
@@ -446,6 +482,7 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
     sprintContinuationDecisions: root.sprintContinuationDecisions === undefined ? [] : array(root.sprintContinuationDecisions, 'sprintContinuationDecisions').map(sprintContinuationDecision),
     sprintContinuationCurrentDecisions: root.sprintContinuationCurrentDecisions === undefined ? [] : array(root.sprintContinuationCurrentDecisions, 'sprintContinuationCurrentDecisions').map(sprintContinuationCurrentDecision),
     sprintUpwardResults: root.sprintUpwardResults === undefined ? [] : array(root.sprintUpwardResults, 'sprintUpwardResults').map(sprintUpwardResult),
+    ...(root.sprintResultProjections === undefined ? {} : { sprintResultProjections: array(root.sprintResultProjections, 'sprintResultProjections').map(sprintResultProjection) }),
   };
   validate(query);
   return query;
@@ -796,6 +833,9 @@ export function nativeQueryProductCompositionInputV2(
             upwardResults: query.sprintUpwardResults,
           },
         }
+      : {}),
+    ...(query.sprintResultProjections
+      ? { sprintResultProjections: query.sprintResultProjections }
       : {}),
     ...(transitionQuery
       ? {
@@ -1424,6 +1464,149 @@ const sprintUpwardResult = (value: unknown): NativeSprintUpwardResultV1 => {
     sprintId: string(x.sprintId, 'Sprint upward sprintId'),
     resultKind: x.resultKind as NativeSprintContinuationStateV1,
     recordedAt: timestamp(x.recordedAt, 'Sprint upward result recordedAt'),
+  };
+};
+const sprintResultReceiver = (value: unknown): NativeSprintResultReceiverV1 => {
+  const x = object(value, 'Sprint-result receiver');
+  keys(
+    x,
+    [
+      'deliveryRequestedAt',
+      'deliveryPersistedAt',
+      'harnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+      'providerActivationObservedAt',
+      'reassessmentLifecycleStatus',
+      'reassessmentLifecycleObservedAt',
+      'semanticReassessmentRecordedAt',
+    ],
+    'Sprint-result receiver',
+  );
+  const time = (key: string) =>
+    x[key] === undefined ? undefined : timestamp(x[key], `Sprint-result receiver ${key}`);
+  const deliveryRequestedAt = timestamp(
+    x.deliveryRequestedAt,
+    'Sprint-result receiver deliveryRequestedAt',
+  );
+  const deliveryPersistedAt = time('deliveryPersistedAt');
+  const harnessBoundAt = time('harnessBoundAt');
+  const launchRequestedAt = time('launchRequestedAt');
+  const launchAcceptedAt = time('launchAcceptedAt');
+  const providerActivationObservedAt = time('providerActivationObservedAt');
+  const reassessmentLifecycleObservedAt = time('reassessmentLifecycleObservedAt');
+  const semanticReassessmentRecordedAt = time('semanticReassessmentRecordedAt');
+  phaseCoherence(
+    { deliveryRequestedAt, deliveryPersistedAt, harnessBoundAt, launchRequestedAt, launchAcceptedAt },
+    ['deliveryRequestedAt', 'deliveryPersistedAt', 'harnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt'],
+    'Sprint-result receiver',
+  );
+  if ((providerActivationObservedAt || reassessmentLifecycleObservedAt || semanticReassessmentRecordedAt) && !launchAcceptedAt)
+    fail('Sprint-result receiver later observation lacks launch acceptance');
+  if ((x.reassessmentLifecycleStatus === undefined) !== (reassessmentLifecycleObservedAt === undefined))
+    fail('Sprint-result receiver lifecycle bundle is incomplete');
+  if (launchAcceptedAt) {
+    for (const [label, observed] of [
+      ['provider activation', providerActivationObservedAt],
+      ['lifecycle', reassessmentLifecycleObservedAt],
+      ['semantic reassessment', semanticReassessmentRecordedAt],
+    ] as const) {
+      if (observed) timestampAtOrAfter(launchAcceptedAt, observed, `Sprint-result receiver ${label}`);
+    }
+  }
+  return {
+    deliveryRequestedAt,
+    ...(deliveryPersistedAt ? { deliveryPersistedAt } : {}),
+    ...(harnessBoundAt ? { harnessBoundAt } : {}),
+    ...(launchRequestedAt ? { launchRequestedAt } : {}),
+    ...(launchAcceptedAt ? { launchAcceptedAt } : {}),
+    ...(providerActivationObservedAt ? { providerActivationObservedAt } : {}),
+    ...(x.reassessmentLifecycleStatus === undefined
+      ? {}
+      : { reassessmentLifecycleStatus: boundedString(x.reassessmentLifecycleStatus, 96, 'Sprint-result receiver lifecycle status') }),
+    ...(reassessmentLifecycleObservedAt ? { reassessmentLifecycleObservedAt } : {}),
+    ...(semanticReassessmentRecordedAt ? { semanticReassessmentRecordedAt } : {}),
+  };
+};
+const sprintResultRealization = (value: unknown): NativeSprintResultRealizationV1 => {
+  const x = object(value, 'Sprint-result realization');
+  keys(
+    x,
+    [
+      'outcomeKind',
+      'consideredAt',
+      'successorSprintId',
+      'successorRequestedAt',
+      'successorRequestRecordedAt',
+      'terminalReadinessRecordedAt',
+      'retainedAttentionCode',
+      'retainedAttentionRecordedAt',
+    ],
+    'Sprint-result realization',
+  );
+  if (!['successor_request', 'terminal_readiness', 'retained_attention'].includes(x.outcomeKind as string))
+    fail('invalid Sprint-result realization kind');
+  const outcomeKind = x.outcomeKind as NativeSprintResultRealizationV1['outcomeKind'];
+  const consideredAt = timestamp(x.consideredAt, 'Sprint-result realization consideredAt');
+  const successorSprintId = x.successorSprintId === undefined ? undefined : string(x.successorSprintId, 'Sprint-result successor Sprint');
+  const successorRequestedAt = x.successorRequestedAt === undefined ? undefined : timestamp(x.successorRequestedAt, 'Sprint-result successor requestedAt');
+  const successorRequestRecordedAt = x.successorRequestRecordedAt === undefined ? undefined : timestamp(x.successorRequestRecordedAt, 'Sprint-result successor request recordedAt');
+  const terminalReadinessRecordedAt = x.terminalReadinessRecordedAt === undefined ? undefined : timestamp(x.terminalReadinessRecordedAt, 'Sprint-result terminal readiness recordedAt');
+  const retainedAttentionCode = x.retainedAttentionCode === undefined ? undefined : boundedString(x.retainedAttentionCode, 160, 'Sprint-result retained attention code');
+  const retainedAttentionRecordedAt = x.retainedAttentionRecordedAt === undefined ? undefined : timestamp(x.retainedAttentionRecordedAt, 'Sprint-result retained attention recordedAt');
+  if (outcomeKind === 'successor_request') {
+    if (!successorSprintId || (successorRequestedAt === undefined) !== (successorRequestRecordedAt === undefined) || terminalReadinessRecordedAt || retainedAttentionCode || retainedAttentionRecordedAt)
+      fail('Sprint-result successor realization is contradictory');
+  } else if (outcomeKind === 'terminal_readiness') {
+    if (successorSprintId || successorRequestedAt || successorRequestRecordedAt || !terminalReadinessRecordedAt || retainedAttentionCode || retainedAttentionRecordedAt)
+      fail('Sprint-result terminal realization is contradictory');
+  } else if (successorSprintId || successorRequestedAt || successorRequestRecordedAt || terminalReadinessRecordedAt || !retainedAttentionCode || !retainedAttentionRecordedAt) {
+    fail('Sprint-result retained-attention realization is contradictory');
+  }
+  const later = [
+    successorRequestedAt,
+    successorRequestRecordedAt,
+    terminalReadinessRecordedAt,
+    retainedAttentionRecordedAt,
+  ].filter((item): item is string => item !== undefined);
+  later.forEach((item) => timestampAtOrAfter(consideredAt, item, 'Sprint-result realization'));
+  return {
+    outcomeKind,
+    consideredAt,
+    ...(successorSprintId ? { successorSprintId } : {}),
+    ...(successorRequestedAt ? { successorRequestedAt } : {}),
+    ...(successorRequestRecordedAt ? { successorRequestRecordedAt } : {}),
+    ...(terminalReadinessRecordedAt ? { terminalReadinessRecordedAt } : {}),
+    ...(retainedAttentionCode ? { retainedAttentionCode } : {}),
+    ...(retainedAttentionRecordedAt ? { retainedAttentionRecordedAt } : {}),
+  };
+};
+const sprintResultProjection = (value: unknown): NativeSprintResultProjectionV1 => {
+  const x = object(value, 'Sprint-result projection');
+  keys(x, ['resultId', 'decisionId', 'sprintId', 'epicId', 'resultKind', 'recordedAt', 'receiver', 'dispositionRecordedAt', 'disposition', 'realization'], 'Sprint-result projection');
+  if (!['continuing', 'attention', 'settled'].includes(x.resultKind as string)) fail('invalid Sprint-result kind');
+  const recordedAt = timestamp(x.recordedAt, 'Sprint-result recordedAt');
+  const receiver = x.receiver === undefined ? undefined : sprintResultReceiver(x.receiver);
+  const dispositionRecordedAt = x.dispositionRecordedAt === undefined ? undefined : timestamp(x.dispositionRecordedAt, 'Sprint-result disposition recordedAt');
+  const disposition = x.disposition === undefined ? undefined : epicEscalationDisposition(x.disposition);
+  const realization = x.realization === undefined ? undefined : sprintResultRealization(x.realization);
+  if ((dispositionRecordedAt === undefined) !== (disposition === undefined)) fail('Sprint-result disposition bundle is incomplete');
+  if (disposition && !receiver?.semanticReassessmentRecordedAt) fail('Sprint-result disposition lacks semantic reassessment');
+  if (dispositionRecordedAt && receiver?.semanticReassessmentRecordedAt)
+    timestampAtOrAfter(receiver.semanticReassessmentRecordedAt, dispositionRecordedAt, 'Sprint-result disposition');
+  if (dispositionRecordedAt && realization) timestampAtOrAfter(dispositionRecordedAt, realization.consideredAt, 'Sprint-result realization');
+  if (receiver) timestampAtOrAfter(recordedAt, receiver.deliveryRequestedAt, 'Sprint-result receiver delivery');
+  return {
+    resultId: string(x.resultId, 'Sprint-result resultId'),
+    decisionId: string(x.decisionId, 'Sprint-result decisionId'),
+    sprintId: string(x.sprintId, 'Sprint-result sprintId'),
+    epicId: string(x.epicId, 'Sprint-result epicId'),
+    resultKind: x.resultKind as NativeSprintContinuationStateV1,
+    recordedAt,
+    ...(receiver ? { receiver } : {}),
+    ...(dispositionRecordedAt ? { dispositionRecordedAt } : {}),
+    ...(disposition ? { disposition } : {}),
+    ...(realization ? { realization } : {}),
   };
 };
 const materializedWorkUnit = (value: unknown): NativeMaterializedWorkUnitV1 => {
@@ -2799,6 +2982,7 @@ function validate(query: OrchestrationNativeQueryV2) {
   unique(query.initiatedEpics, (x) => x.epicPlanningDraftId, 'initiated Epic planning draft ID');
   unique(query.initiatedSprints, (x) => x.sprintId, 'initiated Sprint ID');
   validateSprintContinuationProjection(query);
+  validateSprintResultProjection(query);
   const drafts = new Set(query.planningDrafts.map((x) => x.epicPlanningDraftId));
   const revisions = new Map(query.proposalRevisions.map((x) => [x.proposalRevisionId, x]));
   const associations = new Map(
@@ -3063,6 +3247,40 @@ function validate(query: OrchestrationNativeQueryV2) {
     fail('materialized Work Unit references unknown materialization');
   if (query.workUnitRelationships.some((item) => !materializations.has(item.materializationId)))
     fail('Work Unit relationship references unknown materialization');
+}
+
+function validateSprintResultProjection(query: OrchestrationNativeQueryV2) {
+  const projections = query.sprintResultProjections;
+  if (projections === undefined) return;
+  unique(projections, (item) => item.resultId, 'Sprint-result projection result ID');
+  unique(projections, (item) => item.decisionId, 'Sprint-result projection decision ID');
+  const sprintById = new Map(query.initiatedSprints.map((sprint) => [sprint.sprintId, sprint]));
+  const resultById = new Map(query.sprintUpwardResults.map((result) => [result.resultId, result]));
+  const decisionById = new Map(query.sprintContinuationDecisions.map((decision) => [decision.decisionId, decision]));
+  const projectionResults = new Set<string>();
+  for (const projection of projections) {
+    const result = resultById.get(projection.resultId);
+    const decision = decisionById.get(projection.decisionId);
+    const sprint = sprintById.get(projection.sprintId);
+    if (!result || !decision || !sprint || projection.epicId !== sprint.epicId)
+      fail('Sprint-result projection has a foreign result, decision, Sprint, or Epic link');
+    if (
+      result.decisionId !== projection.decisionId ||
+      result.sprintId !== projection.sprintId ||
+      result.resultKind !== projection.resultKind ||
+      result.recordedAt !== projection.recordedAt ||
+      decision.sprintId !== projection.sprintId
+    )
+      fail('Sprint-result projection does not match its local result and decision');
+    projectionResults.add(projection.resultId);
+    if (projection.realization?.outcomeKind === 'successor_request') {
+      const successor = sprintById.get(projection.realization.successorSprintId!);
+      if (!successor || successor.epicId !== projection.epicId || successor.ordinal !== sprint.ordinal + 1)
+        fail('Sprint-result successor is foreign or non-consecutive');
+    }
+  }
+  if (projections.length !== query.sprintUpwardResults.length || query.sprintUpwardResults.some((result) => !projectionResults.has(result.resultId)))
+    fail('Sprint-result projection bundle is incomplete');
 }
 
 function validateSprintContinuationProjection(query: OrchestrationNativeQueryV2) {

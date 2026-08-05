@@ -429,6 +429,36 @@ export function SprintWorkspace({
               ))}
             </section>
           )}
+          {(workspace.sprintResultProjections ?? []).length > 0 && (
+            <section aria-label="Sprint result and Epic receipt" className="orchestration-reassessment">
+              <p className="eyebrow">Sprint result and Epic receipt</p>
+              <p>
+                This view keeps the local result, Epic delivery, semantic consideration, and later
+                realization separate. Nothing here proves provider outcome, Epic settlement,
+                completion, later Work Slice execution, or user acceptance.
+              </p>
+              {(workspace.sprintResultProjections ?? []).map((result) => (
+                <div key={result.resultId}>
+                  <strong>Local Sprint result: {result.resultKind}</strong>
+                  <p>Recorded: {result.recordedAt}</p>
+                  {result.receiver ? (
+                    <ul>
+                      <li>Epic receipt requested: {result.receiver.deliveryRequestedAt}</li>
+                      {result.receiver.deliveryPersistedAt && <li>Receipt delivery persisted: {result.receiver.deliveryPersistedAt}</li>}
+                      {result.receiver.harnessBoundAt && <li>Application binding recorded: {result.receiver.harnessBoundAt}</li>}
+                      {result.receiver.launchAcceptedAt && <li>Receiver launch accepted: {result.receiver.launchAcceptedAt}</li>}
+                      {result.receiver.providerActivationObservedAt && <li>Provider activation observed separately: {result.receiver.providerActivationObservedAt}</li>}
+                      {result.receiver.semanticReassessmentRecordedAt && <li>Semantic consideration recorded: {result.receiver.semanticReassessmentRecordedAt}</li>}
+                    </ul>
+                  ) : <p>Epic receipt has not been recorded.</p>}
+                  {result.disposition && <p>Disposition recorded: {result.disposition.movementKind}. It preserves this result and does not select or start a Sprint.</p>}
+                  {result.realization?.outcomeKind === 'retained_attention' && <p>Retained concern/attention: {result.realization.retainedAttentionCode}. The concern remains open.</p>}
+                  {result.realization?.outcomeKind === 'terminal_readiness' && <p>Terminal readiness recorded: {result.realization.terminalReadinessRecordedAt}. This is not settlement, completion, or acceptance.</p>}
+                  {result.realization?.outcomeKind === 'successor_request' && <p>{result.realization.successorRequestRecordedAt ? `Exact successor request recorded: ${result.realization.successorRequestRecordedAt}.` : 'Successor realization recorded; exact successor request is not yet recorded.'}</p>}
+                </div>
+              ))}
+            </section>
+          )}
           {workspace.sprintContinuation ? (
             <SprintContinuationBoundary boundary={workspace.sprintContinuation} />
           ) : null}

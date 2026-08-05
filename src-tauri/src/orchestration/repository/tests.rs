@@ -33,6 +33,44 @@ fn handback_native_dto_exposes_only_factual_stages() {
 }
 
 #[test]
+fn sprint_result_native_projection_redacts_private_receiver_and_realization_identity() {
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    connection.execute_batch(
+        "CREATE TABLE initiated_sprints(id TEXT PRIMARY KEY,epic_id TEXT,ordinal INTEGER,title TEXT,intended_movement TEXT,concern_summaries_json TEXT,sprint_plan_id TEXT,sprint_plan_revision_id TEXT);
+         CREATE TABLE sprint_upward_results(result_id TEXT PRIMARY KEY,decision_id TEXT,sprint_id TEXT,result_kind TEXT,recorded_at TEXT);
+         CREATE TABLE epic_runner_sprint_result_receivers(result_id TEXT,decision_id TEXT,sprint_id TEXT,epic_id TEXT,delivery_requested_at TEXT,delivery_persisted_at TEXT,harness_bound_at TEXT,launch_requested_at TEXT,launch_accepted_at TEXT,provider_activation_observed_at TEXT,reassessment_lifecycle_status TEXT,reassessment_lifecycle_observed_at TEXT,semantic_reassessment_recorded_at TEXT);
+         CREATE TABLE epic_runner_sprint_result_dispositions(result_id TEXT,selected_at TEXT,details_json TEXT);
+         CREATE TABLE epic_runner_sprint_result_downstream_requests(result_id TEXT,requested_at TEXT,request_json TEXT);
+         CREATE TABLE epic_runner_sprint_result_attentions(result_id TEXT,attention_json TEXT);
+         CREATE TABLE epic_runner_sprint_result_realizations(result_id TEXT,outcome_kind TEXT,successor_sprint_id TEXT,considered_at TEXT,successor_request_recorded_at TEXT);
+         CREATE TABLE epic_runner_sprint_result_terminal_readiness(result_id TEXT,recorded_at TEXT);
+         CREATE TABLE epic_runner_sprint_result_retained_attentions(result_id TEXT,attention_code TEXT,recorded_at TEXT);
+         INSERT INTO initiated_sprints VALUES('sprint','epic',0,'Sprint','','[]','plan','revision');
+         INSERT INTO sprint_upward_results VALUES('result','decision','sprint','settled','2026-08-05T00:00:00Z');
+         INSERT INTO epic_runner_sprint_result_receivers VALUES('result','decision','sprint','epic','2026-08-05T00:00:01Z','2026-08-05T00:00:02Z','2026-08-05T00:00:03Z','2026-08-05T00:00:04Z','2026-08-05T00:00:05Z',NULL,'completed','2026-08-05T00:00:06Z','2026-08-05T00:00:07Z');
+         INSERT INTO epic_runner_sprint_result_dispositions VALUES('result','2026-08-05T00:00:08Z','{\"movementKind\":\"terminal_ready\",\"rationale\":\"All local Sprint facts are present.\"}');
+         INSERT INTO epic_runner_sprint_result_realizations VALUES('result','terminal_readiness',NULL,'2026-08-05T00:00:09Z',NULL);
+         INSERT INTO epic_runner_sprint_result_terminal_readiness VALUES('result','2026-08-05T00:00:10Z');",
+    ).unwrap();
+    let sprints = vec![InitiatedSprintDto {
+        sprint_id: "sprint".into(), epic_id: "epic".into(), ordinal: 0,
+        title: "Sprint".into(), intended_movement: "".into(), concern_summaries: vec![],
+        sprint_plan_id: "plan".into(), sprint_plan_revision_id: "revision".into(),
+    }];
+    let results = vec![SprintUpwardResultDto {
+        result_id: "result".into(), decision_id: "decision".into(), sprint_id: "sprint".into(),
+        result_kind: "settled".into(), recorded_at: "2026-08-05T00:00:00Z".into(),
+    }];
+    let projection = sprint_result_projection(&connection, &sprints, &results).unwrap().unwrap();
+    let value = serde_json::to_value(projection).unwrap();
+    assert_eq!(value[0]["realization"]["outcomeKind"], "terminal_readiness");
+    assert!(value[0]["receiver"].get("harnessKey").is_none());
+    assert!(value[0]["receiver"].get("harnessVersion").is_none());
+    assert!(value[0].get("correlationFingerprint").is_none());
+    assert!(value[0].get("realization").unwrap().get("realizationId").is_none());
+}
+
+#[test]
 fn handback_native_dto_exposes_qualified_dependency_movement_without_private_identity() {
     let dto = WorkUnitNoProgressHandbackDto {
         handback_id: "handback".into(), source_attempt_id: "attempt".into(), source_review_invocation_id: "review".into(), context_fingerprint: "context".into(), persisted_at: "persisted".into(), delivery_intended_at: "intended".into(), sprint_runner_receiver_activated_at: None, sprint_runner_receiver_decision_at: None,
@@ -1959,7 +1997,7 @@ fn canonical_populated_query() -> NativeQueryV2 {
         work_unit_relationships: vec![],
         dependency_activation_intents: vec![],
         work_unit_execution_states: vec![], work_slice_execution_graph_completions: vec![], work_slice_execution_settlements: vec![], work_slice_planning_point_execution_settlements: vec![], work_slice_execution_attentions: vec![],
-        sprint_continuation_decisions: vec![], sprint_continuation_current_decisions: vec![], sprint_upward_results: vec![],
+        sprint_continuation_decisions: vec![], sprint_continuation_current_decisions: vec![], sprint_upward_results: vec![], sprint_result_projections: None,
     }
 }
 
