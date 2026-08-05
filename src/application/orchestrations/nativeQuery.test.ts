@@ -933,6 +933,9 @@ describe('orchestration native query v1', () => {
     const boundedDelivery = (((boundedMovement.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>).noProgressHandback as Record<string, unknown>;
     boundedDelivery.sprintRunnerDelivery = {
       deliveryRequestedAt: '2026-08-04T00:00:21Z',
+      deliveryPersistedAt: '2026-08-04T00:00:22Z',
+      harnessBoundAt: '2026-08-04T00:00:23Z',
+      launchRequestedAt: '2026-08-04T00:00:24Z',
       launchAcceptedAt: '2026-08-04T00:00:25Z',
       semanticReassessmentRecordedAt: '2026-08-04T00:00:27Z',
       selectedMovementKind: 'future_bounded_move',

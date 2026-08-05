@@ -421,6 +421,15 @@ export type ProductSprintRunnerHandbackBoundedDetailV1 = Readonly<{
   readonly value: string;
 }>;
 
+export type ProductSprintRunnerHandbackUnknownMovementKindV1 = string & {
+  readonly __boundedUnknownHandbackMovementKind: unique symbol;
+};
+
+export type ProductSprintRunnerHandbackKnownMovementKindV1 =
+  | 'continue_eligible_work'
+  | 'wait_for_agent_dependency'
+  | 'local_exhaustion_escalate';
+
 export type ProductSprintRunnerHandbackMovementV1 = Readonly<
   | {
       readonly movementKind: 'continue_eligible_work';
@@ -441,14 +450,8 @@ export type ProductSprintRunnerHandbackMovementV1 = Readonly<
       readonly localExhaustionSummary: string;
     }
   | {
-      readonly movementKind: string;
+      readonly movementKind: ProductSprintRunnerHandbackUnknownMovementKindV1;
       readonly rationale: string;
-      readonly eligibleWorkSummary?: string;
-      readonly dependencyOwner?: string;
-      readonly dependencyOwnerClassification?: ProductSprintRunnerHandbackDependencyOwnerClassificationV1;
-      readonly enablingResult?: string;
-      readonly resumptionPath?: string;
-      readonly localExhaustionSummary?: string;
       readonly boundedDetails?: readonly ProductSprintRunnerHandbackBoundedDetailV1[];
     }
 >;

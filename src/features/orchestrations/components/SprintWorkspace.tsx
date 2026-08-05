@@ -8,6 +8,8 @@ import type {
   ArtifactAccessController,
   SprintAutomaticContinuationPolicyController,
   SprintWorkspacePresentationV1,
+  ProductSprintRunnerHandbackKnownMovementKindV1,
+  ProductSprintRunnerHandbackMovementV1,
 } from '../../../application/orchestrations';
 import { useEffect, useRef, useState } from 'react';
 import { DetailWorkspace } from './DetailWorkspace';
@@ -605,21 +607,27 @@ function handbackMovementDetail(
   movement: NonNullable<
     NonNullable<
       NonNullable<
-        SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['attemptHistory'][number]['incompleteDisposition']
-      >['noProgressHandback']
-    >['sprintRunnerDelivery']
-  >['selectedMovement'],
+        NonNullable<
+          SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['attemptHistory'][number]['incompleteDisposition']
+        >['noProgressHandback']
+      >['sprintRunnerDelivery']
+    >['selectedMovement']
+  >,
 ) {
-  switch (movement.movementKind) {
-    case 'continue_eligible_work':
-      return `Alternate eligible work recorded: ${movement.eligibleWorkSummary}`;
-    case 'wait_for_agent_dependency':
-      return `Agent-achievable dependency wait (${movement.dependencyOwnerClassification ? dependencyOwnerLabel(movement.dependencyOwnerClassification) : 'qualified agent'}; owner: ${movement.dependencyOwner ?? 'not specified'}; enabling result: ${movement.enablingResult ?? 'not specified'}; resumption path: ${movement.resumptionPath ?? 'not specified'})`;
-    case 'local_exhaustion_escalate':
-      return `Local exhaustion recorded: ${movement.localExhaustionSummary}`;
-    default:
-      return `Bounded movement recorded: ${movement.rationale}${movement.boundedDetails?.length ? ` (${movement.boundedDetails.map(({ value }) => `Additional bounded detail recorded: ${value}`).join('; ')})` : ''}; no settlement or blockage is implied`;
-  }
+  if (isKnownMovementKind(movement, 'continue_eligible_work'))
+    return `Alternate eligible work recorded: ${movement.eligibleWorkSummary}`;
+  if (isKnownMovementKind(movement, 'wait_for_agent_dependency'))
+    return `Agent-achievable dependency wait (${dependencyOwnerLabel(movement.dependencyOwnerClassification)}; owner: ${movement.dependencyOwner}; enabling result: ${movement.enablingResult}; resumption path: ${movement.resumptionPath})`;
+  if (isKnownMovementKind(movement, 'local_exhaustion_escalate'))
+    return `Local exhaustion recorded: ${movement.localExhaustionSummary}`;
+  return `Bounded movement recorded: ${movement.rationale}${movement.boundedDetails?.length ? ` (${movement.boundedDetails.map(({ value }) => `Additional bounded detail recorded: ${value}`).join('; ')})` : ''}; no settlement or blockage is implied`;
+}
+
+function isKnownMovementKind<K extends ProductSprintRunnerHandbackKnownMovementKindV1>(
+  movement: ProductSprintRunnerHandbackMovementV1,
+  kind: K,
+): movement is Extract<ProductSprintRunnerHandbackMovementV1, { readonly movementKind: K }> {
+  return movement.movementKind === kind;
 }
 
 function dependencyOwnerLabel(

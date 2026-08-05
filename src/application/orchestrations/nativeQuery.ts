@@ -15,6 +15,7 @@ import type {
   ProductWorkUnitRetryAttemptV1,
   ProductSprintRunnerHandbackDeliveryV1,
   ProductSprintRunnerHandbackBoundedDetailV1,
+  ProductSprintRunnerHandbackUnknownMovementKindV1,
   ProductSprintRunnerHandbackDependencyOwnerClassificationV1,
   ProductSprintRunnerHandbackMovementV1,
 } from './productReadModels';
@@ -2385,7 +2386,7 @@ const sprintRunnerHandbackMovement = (value: unknown): ProductSprintRunnerHandba
     fail('bounded Handback movement mixes projected and persisted detail shapes');
   const projectedDetails = boundedDetails ?? rawDetailValues.map(([label, value]) => ({ label: label as string, value: boundedString(value, 20_000, label as string) }));
   return {
-    movementKind,
+    movementKind: movementKind as ProductSprintRunnerHandbackUnknownMovementKindV1,
     rationale,
     ...(projectedDetails.length > 0 ? { boundedDetails: projectedDetails } : {}),
   };

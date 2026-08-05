@@ -563,7 +563,9 @@ describe('Sprint Runner Handback disclosure', () => {
     expect(region).toHaveTextContent('Escalation intent recorded upward');
     expect(region).toHaveTextContent('Escalation delivery request recorded upward');
     expect(region).not.toHaveTextContent('Escalation delivered');
-    expect(region).not.toHaveTextContent('final Sprint or Epic blockage');
+    expect(region).toHaveTextContent('not final Sprint or Epic blockage');
+    expect(region).not.toHaveTextContent('is final Sprint or Epic blockage');
+    expect(region).not.toHaveTextContent('Epic response recorded');
   });
 
   it('labels an extensible bounded movement without implying progress or settlement', () => {

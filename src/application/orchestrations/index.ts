@@ -174,6 +174,10 @@ export type {
   ProductWorkUnitImplementerActivationV1,
   ProductWorkUnitImplementerOutcomeV1,
   ProductWorkUnitRetryAttemptV1,
+  ProductSprintRunnerHandbackBoundedDetailV1,
+  ProductSprintRunnerHandbackKnownMovementKindV1,
+  ProductSprintRunnerHandbackMovementV1,
+  ProductSprintRunnerHandbackUnknownMovementKindV1,
   ProductWorkUnitPresentationState,
   ReadSourceAuthorityV1,
 } from './productReadModels';
