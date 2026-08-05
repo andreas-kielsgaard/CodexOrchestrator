@@ -214,6 +214,11 @@ trait ExecutionWorkspaceResolver: Send + Sync {
         binding: &ExecutionWorkspaceBinding,
         capability_ref: &str,
     ) -> Result<CapturedInspection, ExecutionSupportError>;
+    fn commit_candidate(
+        &self,
+        attempt: &AuthorizedExecutionAttempt,
+        binding: &ExecutionWorkspaceBinding,
+    ) -> Result<bool, ExecutionSupportError>;
     fn working_directory(
         &self,
         attempt: &AuthorizedExecutionAttempt,
@@ -504,6 +509,53 @@ impl ExecutionWorkspaceResolver for ProductExecutionWorkspaceResolver {
             comparison: Some(document.payload),
             capture_authorization_id: Some(snapshot),
         })
+    }
+
+    /// Codex CLI's workspace-write sandbox deliberately protects `.git`, so the provider can
+    /// write a bounded candidate but cannot create Git's index lock. Commit only the already
+    /// bound, isolated workspace through this application-owned seam.
+    fn commit_candidate(
+        &self,
+        attempt: &AuthorizedExecutionAttempt,
+        binding: &ExecutionWorkspaceBinding,
+    ) -> Result<bool, ExecutionSupportError> {
+        let (root, head) = self.validate_attempt_workspace(attempt, binding)?;
+        if head != attempt.baseline_object_id {
+            let parent = git_text(&root, &["rev-parse", "--verify", "HEAD^{commit}^"])?;
+            if parent != attempt.baseline_object_id
+                || !git_text(&root, &["status", "--porcelain"])?.is_empty()
+            {
+                return Err(ExecutionSupportError::CorrelationMismatch);
+            }
+            return Ok(false);
+        }
+        if git_text(&root, &["status", "--porcelain"])?.is_empty() {
+            return Ok(false);
+        }
+        git_success(&root, &["add", "--all"])?;
+        if git_text(&root, &["diff", "--cached", "--name-only"])?.is_empty() {
+            return Err(ExecutionSupportError::Unavailable);
+        }
+        git_success(
+            &root,
+            &[
+                "-c",
+                "user.name=Codex Orchestrator",
+                "-c",
+                "user.email=codex-orchestrator@local.invalid",
+                "commit",
+                "--no-verify",
+                "-m",
+                &format!("Work Unit candidate {}", attempt.attempt_id),
+            ],
+        )?;
+        let parent = git_text(&root, &["rev-parse", "--verify", "HEAD^{commit}^"])?;
+        if parent != attempt.baseline_object_id
+            || !git_text(&root, &["status", "--porcelain"])?.is_empty()
+        {
+            return Err(ExecutionSupportError::CorrelationMismatch);
+        }
+        Ok(true)
     }
 
     fn working_directory(
@@ -802,6 +854,34 @@ impl ExecutionSupportService {
     #[cfg(test)]
     fn grant(&self, attempt_id: &str) -> Result<ExecutionSupportReference, ExecutionSupportError> {
         self.grant_role(attempt_id, WorkUnitExecutionRole::Implementer)
+    }
+
+    /// Seal the candidate produced in one already-authorized Implementer workspace. This is not
+    /// a Harness action: the caller has no path, ref, or Git command control.
+    pub(crate) fn commit_implementer_candidate(
+        &self,
+        attempt_id: &str,
+    ) -> Result<bool, ExecutionSupportError> {
+        if !bounded_id(attempt_id) {
+            return Err(ExecutionSupportError::Denied);
+        }
+        let grant = {
+            let connection = self
+                .repository
+                .connection
+                .lock()
+                .map_err(|_| ExecutionSupportError::Unavailable)?;
+            load_grant(&connection, attempt_id, WorkUnitExecutionRole::Implementer.as_str())?
+        }
+        .ok_or(ExecutionSupportError::Denied)?;
+        let attempt = self
+            .repository
+            .load_authorized_attempt_for_role(attempt_id, WorkUnitExecutionRole::Implementer)?;
+        let binding = self.resolver.resolve(&attempt, Some(&grant.binding))?;
+        if grant.correlation != correlation_fingerprint(&attempt, &binding) {
+            return Err(ExecutionSupportError::CorrelationMismatch);
+        }
+        self.resolver.commit_candidate(&attempt, &binding)
     }
 
     pub(crate) fn consume(
@@ -1524,6 +1604,33 @@ mod tests {
             ),
             Err(ExecutionSupportError::Denied)
         );
+    }
+
+    #[test]
+    fn application_seals_only_the_existing_implementer_workspace_candidate_idempotently() {
+        let fixture = fixture();
+        let service = fixture.service();
+        fixture.authorize(&service, "attempt-1", "work-unit-1");
+        let reference = service.grant("attempt-1").unwrap();
+        let root = fixture.attempt_root("attempt-1");
+        fs::write(root.join("candidate.txt"), "candidate\n").unwrap();
+
+        assert_eq!(service.commit_implementer_candidate("attempt-1"), Ok(true));
+        assert!(fixture.git(&root, &["status", "--porcelain"]).is_empty());
+        assert_eq!(
+            fixture.git(&root, &["rev-parse", "HEAD^{commit}^"]),
+            fixture.baseline
+        );
+        assert!(matches!(
+            service.consume(
+                &reference.capability_ref,
+                ExecutionSupportIntent::ChangedFileManifest
+            ),
+            Ok(ExecutionSupportResponse::ChangedFileManifest(files))
+                if files.len() == 1 && files[0].display_name == "candidate.txt"
+        ));
+        assert_eq!(service.commit_implementer_candidate("attempt-1"), Ok(false));
+        assert_eq!(fixture.service().commit_implementer_candidate("attempt-1"), Ok(false));
     }
 
     #[test]

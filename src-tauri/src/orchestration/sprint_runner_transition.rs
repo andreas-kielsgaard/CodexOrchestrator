@@ -2480,6 +2480,13 @@ impl SprintRunnerTransitionService {
             let history = self.sessions.load_session(&session).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
             let completed = history.invocations.iter().any(|entry| entry.invocation.id.as_str() == invocation_id && entry.invocation.status == AgentInvocationStatus::Completed);
             if !completed { continue; }
+            // Codex CLI workspace-write deliberately protects the worktree Git directory. The
+            // original actionless Implementer can produce source changes only; after its
+            // terminal lifecycle, seal that exact already-authorized workspace before either
+            // capture or the reporting continuation can observe it.
+            handler
+                .commit_implementer_candidate(&attempt)
+                .map_err(|_| SprintRunnerTransitionError::Conflict)?;
             let reporting = handler.current_implementer_reporting_revision().map_err(|_| SprintRunnerTransitionError::Unavailable("immutable Implementer reporting Harness revision unavailable".into()))?;
             let reporting_invocation = stable_id("work-unit-implementer-reporting-invocation", &attempt);
             let changed = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute(

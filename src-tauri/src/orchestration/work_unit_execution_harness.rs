@@ -473,6 +473,14 @@ impl WorkUnitExecutionHarnessService {
     /// The retry coordinator provides a commit it derived and pinned from the accepted
     /// ordinal-0 evidence.  No Harness, caller, or runtime route can choose this seed.
     pub(crate) fn authorize_implementer_attempt_at_seed(&self,attempt_id:&str,work_unit_id:&str,authority:&str,seed:Option<String>)->Result<(),WorkUnitHarnessError>{self.execution_support.authorize_existing_attempt(AuthorizeExistingWorkUnitExecutionAttempt{attempt_id:attempt_id.into(),work_unit_id:work_unit_id.into(),role:WorkUnitExecutionRole::Implementer,sprint_git_authority_id:authority.into(),execution_seed_object_id:seed})?;Ok(())}
+
+    /// The provider remains unable to write protected Git metadata in workspace-write mode.
+    /// Seal only its durable, already-authorized isolated candidate after its original turn ends.
+    pub(crate) fn commit_implementer_candidate(&self, attempt_id: &str) -> Result<bool, WorkUnitHarnessError> {
+        self.execution_support
+            .commit_implementer_candidate(attempt_id)
+            .map_err(Into::into)
+    }
 }
 
 fn valid_implementer_mcp_profile(harness: &ConversationHarnessProfile) -> bool {

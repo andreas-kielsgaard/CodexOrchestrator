@@ -74,6 +74,10 @@ impl CodexMcpInjection {
             format!("mcp_servers.{name}.default_tools_approval_mode=\"approve\""),
             format!("mcp_servers.{name}.startup_timeout_sec=10"),
             format!("mcp_servers.{name}.tool_timeout_sec=300"),
+            // The managed server is a one-invocation loopback transport. Workspace-write
+            // otherwise disables networking and leaves the configured actions undiscoverable.
+            "sandbox_workspace_write.network_access=true".to_string(),
+            "features.network_proxy=true".to_string(),
         ];
         Self {
             configuration_args: values
@@ -647,7 +651,7 @@ mod tests {
                 .iter()
                 .filter(|value| value.as_str() == "-c")
                 .count(),
-            7
+            9
         );
         assert!(injection
             .configuration_args
@@ -658,6 +662,10 @@ mod tests {
             .iter()
             .any(|value| value == "secret"));
         assert_eq!(injection.environment.1, "secret");
+        assert!(injection
+            .configuration_args
+            .iter()
+            .any(|value| value == "features.network_proxy=true"));
     }
 
     #[test]
