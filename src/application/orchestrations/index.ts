@@ -161,6 +161,8 @@ export type {
   ProductEpicReadModelV1,
   ProductEpicMovementV1,
   ProductEpicStateV1,
+  ProductEpicEscalationReceiverV1,
+  ProductEpicEscalationDispositionV1,
   ProductReadCompositionInputV1,
   ProductReadReferenceIndexV1,
   ProductReadModelsV1,

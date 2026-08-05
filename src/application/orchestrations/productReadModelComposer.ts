@@ -197,7 +197,7 @@ function composeSprint(
     'current revision view',
   );
   const epicEscalationReceivers = currentWorkUnits.flatMap((unit) =>
-    unit.attemptHistory.flatMap((attempt) =>
+    (unit.attemptHistory ?? []).flatMap((attempt) =>
       attempt.incompleteDisposition?.noProgressHandback?.epicRunnerReceiver ?? [],
     ),
   );

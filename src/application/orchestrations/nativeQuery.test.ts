@@ -918,6 +918,28 @@ describe('orchestration native query v1', () => {
       disposition: { movementKind: 'return_context_to_sprint_runner' },
     });
 
+    const attention = JSON.parse(JSON.stringify(reopened)) as Record<string, unknown>;
+    const attentionHandback = (((attention.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>).noProgressHandback as Record<string, unknown>;
+    const attentionReceiver = attentionHandback.epicRunnerReceiver as Record<string, unknown>;
+    delete attentionReceiver.disposition;
+    attentionReceiver.disposition = {
+      movementKind: 'human_or_external_attention',
+      rationale: 'The concern needs authority outside the Epic Runner.',
+      humanExternalAttention: {
+        reason: 'A bounded authority decision is needed.',
+        authorityNeeded: 'External dependency owner.',
+        evidenceContext: 'The exact Sprint concern remains unresolved.',
+        resumptionPath: 'Resume from the unchanged Sprint concern.',
+      },
+    };
+    const attentionRead = composeProductOrchestrationReadModels(
+      nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(attention)),
+    );
+    expect(attentionRead.epics[0]!.epicEscalationReceivers?.[0]!.disposition).toMatchObject({
+      movementKind: 'human_or_external_attention',
+      humanExternalAttention: { authorityNeeded: 'External dependency owner.' },
+    });
+
     for (const movement of [
       {
         selectedMovementKind: 'continue_eligible_work',
@@ -1013,6 +1035,17 @@ describe('orchestration native query v1', () => {
         handback.receiverSessionId = 'private';
       },
       (value: Record<string, unknown>) => {
+        const handback = (((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>).noProgressHandback as Record<string, unknown>;
+        const receiver = handback.epicRunnerReceiver as Record<string, unknown>;
+        receiver.epicId = 'foreign-epic';
+      },
+      (value: Record<string, unknown>) => {
+        const handback = (((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>).noProgressHandback as Record<string, unknown>;
+        const receiver = handback.epicRunnerReceiver as Record<string, unknown>;
+        receiver.launchAcceptedAt = '2026-08-04T00:00:30Z';
+        receiver.launchRequestedAt = '2026-08-04T00:00:31Z';
+      },
+      (value: Record<string, unknown>) => {
         const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
         (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovementKind: 'future_bounded_move', selectedMovement: { movementKind: 'future_bounded_move', rationale: 'x', dependencyOwner: 'bounded Work Unit Handler' } };
       },
@@ -1034,9 +1067,12 @@ describe('orchestration native query v1', () => {
       },
     ];
     for (const mutate of invalid) {
-      const value = JSON.parse(JSON.stringify(partial)) as Record<string, unknown>;
+      const value = JSON.parse(JSON.stringify(reopened)) as Record<string, unknown>;
       mutate(value);
-      expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow('Invalid orchestration native query');
+      expect(() => {
+        const decoded = decodeOrchestrationNativeQueryV2(value);
+        composeProductOrchestrationReadModels(nativeQueryProductCompositionInputV2(decoded));
+      }).toThrow();
     }
   });
 

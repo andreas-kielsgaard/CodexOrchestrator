@@ -822,7 +822,7 @@ export interface ProductEpicReadModelV1 {
     readonly state: ProductSourcedReadValueV1<ProductEpicStateV1>;
   };
   readonly sprints: readonly ProductSprintReadModelV1[];
-  readonly epicEscalationReceivers: readonly ProductEpicEscalationReceiverV1[];
+  readonly epicEscalationReceivers?: readonly ProductEpicEscalationReceiverV1[];
   readonly agentSessionReferences: readonly ProductAgentSessionReferenceReadModelV1[];
   readonly continuation: ProductContinuationReadModelV1;
   readonly bootstrapTransition?: import('./epicBootstrapTransition').ProductBootstrapTransitionStatusV2;

@@ -15,10 +15,13 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
   semantic disposition, downstream request, human/external attention, intent-only alternate work,
   and unresolved Sprint concern. No selection/start, settlement, completion, or user acceptance is
   projected by this checkpoint.
-- Frontend TypeScript, focused native-query/read-model tests, presentation tests, and component
-  tests are **not claimed** in this checkout: `npm run build` could not start because `tsc` is not
-  installed (`node_modules` is absent). No live provider, production receiver activation, merge,
-  publication, or user acceptance is claimed.
+- Fresh consumer validation after `npm ci --ignore-scripts --no-audit --no-fund` (368 packages):
+  `npm run build` passed (TypeScript plus Vite); focused native/read-model tests passed **22/22**;
+  Epic/Sprint presentation passed **1/1**; Epic Detail passed **1/1**; Sprint Workspace passed
+  **1/1**; and touched-file ESLint passed. These checks cover agent-achievable request and
+  human/external attention variants, malformed/private/foreign/chronologically incoherent input,
+  and truthful unresolved Epic/Sprint labels. No live provider, production receiver activation,
+  merge, publication, or user acceptance is claimed.
 
 ## CPS-1: dependent execution and generalized attempts convergence
 
