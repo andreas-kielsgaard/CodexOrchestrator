@@ -3139,7 +3139,7 @@ fn sprint_result_projection(
                 x.provider_activation_observed_at,x.reassessment_lifecycle_status,
                 x.reassessment_lifecycle_observed_at,x.semantic_reassessment_recorded_at,
                 d.selected_at,d.details_json,dr.requested_at,dr.request_json,
-                a.attention_json,z.outcome_kind,z.successor_sprint_id,z.considered_at,
+                a.attention_json,z.outcome_kind,z.successor_sprint_id,z.successor_request_id,z.considered_at,
                 z.successor_request_recorded_at,tr.recorded_at,ra.attention_code,ra.recorded_at
          FROM sprint_upward_results r
          JOIN initiated_sprints s ON s.id=r.sprint_id
@@ -3247,35 +3247,68 @@ fn sprint_result_projection(
             }
             let outcome_kind: Option<String> = row.get(23)?;
             let successor_sprint_id: Option<String> = row.get(24)?;
-            let considered_at: Option<String> = row.get(25)?;
-            let successor_request_recorded_at: Option<String> = row.get(26)?;
-            let terminal_readiness_recorded_at: Option<String> = row.get(27)?;
-            let retained_attention_code: Option<String> = row.get(28)?;
-            let retained_attention_recorded_at: Option<String> = row.get(29)?;
+            let successor_request_id: Option<String> = row.get(25)?;
+            let considered_at: Option<String> = row.get(26)?;
+            let successor_request_recorded_at: Option<String> = row.get(27)?;
+            let terminal_readiness_recorded_at: Option<String> = row.get(28)?;
+            let retained_attention_code: Option<String> = row.get(29)?;
+            let retained_attention_recorded_at: Option<String> = row.get(30)?;
             let realization = match (outcome_kind, considered_at) {
                 (None, None) => None,
                 (Some(outcome_kind), Some(considered_at)) => {
                     if !matches!(outcome_kind.as_str(), "successor_request" | "terminal_readiness" | "retained_attention")
                         || disposition.is_none()
+                        || receiver.as_ref().and_then(|item| item.semantic_reassessment_recorded_at.as_ref()).is_none()
                     {
                         return Err(to_sql_error("Sprint-result realization is incoherent".into()));
+                    }
+                    if outcome_kind != "retained_attention" {
+                        let exact_settled: bool = connection
+                            .query_row(
+                                "SELECT EXISTS(SELECT 1 FROM sprint_continuation_decisions d JOIN sprint_continuation_current_decisions current ON current.sprint_id=d.sprint_id AND current.decision_id=d.decision_id WHERE d.decision_id=?1 AND d.sprint_id=?2 AND d.decision_state='settled')",
+                                params![decision_id, sprint_id],
+                                |query| query.get(0),
+                            )?;
+                        if result_kind != "settled" || !exact_settled {
+                            return Err(to_sql_error("Sprint-result realization requires the exact settled result and decision".into()));
+                        }
+                        if disposition.as_ref().map(|item| item.movement_kind.as_str()) != Some("advance_to_next_approved_sprint") {
+                            return Err(to_sql_error("Sprint-result successor or readiness requires the advance disposition".into()));
+                        }
                     }
                     let successor = successor_sprint_id.as_deref().map(|id| {
                         sprint_by_id
                             .get(id)
                             .ok_or_else(|| to_sql_error("Sprint-result successor references an unknown Sprint".into()))
                     }).transpose()?;
-                    if outcome_kind == "successor_request" {
+                    let successor_transition = if outcome_kind == "successor_request" {
                         let successor = successor.ok_or_else(|| to_sql_error("Sprint-result successor realization lacks its Sprint".into()))?;
                         if successor.epic_id != epic_id || successor.ordinal != sprint.ordinal + 1 {
                             return Err(to_sql_error("Sprint-result successor is foreign or non-consecutive".into()));
                         }
-                        if downstream_requested_at.is_some() != successor_request_recorded_at.is_some() {
-                            return Err(to_sql_error("Sprint-result successor request realization is partial".into()));
+                        let successor_request_id = successor_request_id
+                            .as_deref()
+                            .ok_or_else(|| to_sql_error("Sprint-result successor realization lacks its exact request".into()))?;
+                        let successor_transition = successor_transition_projection(
+                            connection,
+                            successor_request_id,
+                            successor_sprint_id.as_deref().expect("validated successor"),
+                            epic_id.as_str(),
+                        )?;
+                        if successor_request_recorded_at.is_none() {
+                            return Err(to_sql_error("Sprint-result successor request persistence is incoherent".into()));
                         }
+                        if downstream_requested_at.is_some() != downstream_request_json.is_some() {
+                            return Err(to_sql_error("Sprint-result semantic disposition request bundle is partial".into()));
+                        }
+                        Some(successor_transition)
                     } else if successor.is_some() || successor_request_recorded_at.is_some() || downstream_requested_at.is_some() {
                         return Err(to_sql_error("non-successor Sprint-result realization has successor facts".into()));
-                    }
+                    } else if successor_request_id.is_some() {
+                        return Err(to_sql_error("non-successor Sprint-result realization has a successor request identity".into()));
+                    } else {
+                        None
+                    };
                     match outcome_kind.as_str() {
                         "terminal_readiness" if terminal_readiness_recorded_at.is_none() || retained_attention_code.is_some() || retained_attention_recorded_at.is_some() => {
                             return Err(to_sql_error("Sprint-result terminal readiness is incoherent".into()))
@@ -3292,7 +3325,7 @@ fn sprint_result_projection(
                         outcome_kind,
                         considered_at,
                         successor_sprint_id,
-                        successor_requested_at: downstream_requested_at,
+                        successor_transition,
                         successor_request_recorded_at,
                         terminal_readiness_recorded_at,
                         retained_attention_code,
@@ -3317,7 +3350,62 @@ fn sprint_result_projection(
             chronology.extend([
                 disposition_recorded_at.as_deref(),
                 realization.as_ref().map(|item| item.considered_at.as_str()),
-                realization.as_ref().and_then(|item| item.successor_requested_at.as_deref()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .map(|item| item.requested_at.as_str()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .map(|item| item.authorized_at.as_str()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .and_then(|item| item.session_created_at.as_deref()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .and_then(|item| item.harness_applied_at.as_deref()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .and_then(|item| item.launch_accepted_at.as_deref()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .and_then(|item| item.parent_continuation_delivery_requested_at.as_deref()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .and_then(|item| item.parent_continuation_delivery_persisted_at.as_deref()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .and_then(|item| item.epic_continuation_launch_accepted_at.as_deref()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .and_then(|item| item.provider_receiver_activation_observed_at.as_deref()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .and_then(|item| item.sprint_start_authorized_at.as_deref()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .and_then(|item| item.sprint_start_persisted_at.as_deref()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .and_then(|item| item.sprint_continuation_launch_accepted_at.as_deref()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .and_then(|item| item.repository_branch_reevaluation_recorded_at.as_deref()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .and_then(|item| item.started_reevaluation_lifecycle_observed_at.as_deref()),
                 realization.as_ref().and_then(|item| item.successor_request_recorded_at.as_deref()),
                 realization.as_ref().and_then(|item| item.terminal_readiness_recorded_at.as_deref()),
                 realization.as_ref().and_then(|item| item.retained_attention_recorded_at.as_deref()),
@@ -3341,6 +3429,53 @@ fn sprint_result_projection(
         },
     )?;
     Ok(Some(rows))
+}
+
+fn successor_transition_projection(
+    connection: &Connection,
+    request_id: &str,
+    successor_sprint_id: &str,
+    epic_id: &str,
+) -> Result<SprintResultSuccessorTransitionDto, rusqlite::Error> {
+    connection
+        .query_row(
+            "SELECT requested_at,authorized_at,session_created_at,harness_applied_at,launch_accepted_at,
+                    pre_start_semantic_outcome_recorded_at,pre_start_lifecycle_observed_at,pre_start_outcome_accepted_at,
+                    parent_continuation_delivery_requested_at,parent_continuation_delivery_persisted_at,
+                    epic_continuation_launch_accepted_at,provider_receiver_activation_observed_at,
+                    sprint_start_authorized_at,sprint_start_persisted_at,sprint_continuation_launch_accepted_at,
+                    repository_branch_reevaluation_recorded_at,started_reevaluation_lifecycle_observed_at
+             FROM sprint_runner_transitions
+             WHERE request_id=?1 AND sprint_id=?2 AND epic_id=?3",
+            params![request_id, successor_sprint_id, epic_id],
+            |row| {
+                let launch_accepted_at: Option<String> = row.get(4)?;
+                Ok(SprintResultSuccessorTransitionDto {
+                    requested_at: row.get(0)?,
+                    authorized_at: row.get(1)?,
+                    session_created_at: row.get(2)?,
+                    harness_applied_at: row.get(3)?,
+                    launch_accepted_at: launch_accepted_at.clone(),
+                    pre_start_ready: launch_accepted_at.is_some(),
+                    lifecycle_observed: row.get::<_, Option<String>>(6)?.is_some(),
+                    accepted: row.get::<_, Option<String>>(7)?.is_some(),
+                    pre_start_semantic_outcome_recorded_at: row.get(5)?,
+                    pre_start_lifecycle_observed_at: row.get(6)?,
+                    pre_start_outcome_accepted_at: row.get(7)?,
+                    parent_continuation_delivery_requested_at: row.get(8)?,
+                    parent_continuation_delivery_persisted_at: row.get(9)?,
+                    epic_continuation_launch_accepted_at: row.get(10)?,
+                    provider_receiver_activation_observed_at: row.get(11)?,
+                    sprint_start_authorized_at: row.get(12)?,
+                    sprint_start_persisted_at: row.get(13)?,
+                    sprint_continuation_launch_accepted_at: row.get(14)?,
+                    repository_branch_reevaluation_recorded_at: row.get(15)?,
+                    started_reevaluation_lifecycle_observed_at: row.get(16)?,
+                })
+            },
+        )
+        .optional()?
+        .ok_or_else(|| to_sql_error("Sprint-result successor request lacks its exact Sprint Runner transition".into()))
 }
 
 fn validate_public_chronology(values: &[Option<&str>]) -> Result<(), rusqlite::Error> {
@@ -3432,7 +3567,7 @@ struct SprintResultRealizationDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     successor_sprint_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    successor_requested_at: Option<String>,
+    successor_transition: Option<SprintResultSuccessorTransitionDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     successor_request_recorded_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3441,6 +3576,45 @@ struct SprintResultRealizationDto {
     retained_attention_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     retained_attention_recorded_at: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SprintResultSuccessorTransitionDto {
+    requested_at: String,
+    authorized_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    harness_applied_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    launch_accepted_at: Option<String>,
+    pre_start_ready: bool,
+    lifecycle_observed: bool,
+    accepted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pre_start_semantic_outcome_recorded_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pre_start_lifecycle_observed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pre_start_outcome_accepted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_continuation_delivery_requested_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_continuation_delivery_persisted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    epic_continuation_launch_accepted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider_receiver_activation_observed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sprint_start_authorized_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sprint_start_persisted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sprint_continuation_launch_accepted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repository_branch_reevaluation_recorded_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    started_reevaluation_lifecycle_observed_at: Option<String>,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]

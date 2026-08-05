@@ -58,13 +58,36 @@ export interface NativeWorkUnitExecutionStateV1 {
   readonly workUnitId: string;
   readonly materializationId: string;
   readonly acceptedRevisionId: string;
-  readonly state: 'waiting_on_prerequisites' | 'ready' | 'active' | 'retry_authorized' | 'handed_back' | 'settled' | 'attention';
+  readonly state:
+    | 'waiting_on_prerequisites'
+    | 'ready'
+    | 'active'
+    | 'retry_authorized'
+    | 'handed_back'
+    | 'settled'
+    | 'attention';
   readonly recordedAt: string;
 }
-export interface NativeWorkSliceExecutionGraphCompletionV1 { readonly materializationId: string; readonly acceptedRevisionId: string; readonly completedAt: string; }
-export interface NativeWorkSliceExecutionSettlementV1 { readonly materializationId: string; readonly graphCompletionMaterializationId: string; readonly settledAt: string; }
-export interface NativeWorkSlicePlanningPointExecutionSettlementV1 { readonly planningPointId: string; readonly materializationId: string; readonly workSliceExecutionMaterializationId: string; readonly settledAt: string; }
-export interface NativeWorkSliceExecutionAttentionV1 { readonly materializationId: string; readonly recordedAt: string; }
+export interface NativeWorkSliceExecutionGraphCompletionV1 {
+  readonly materializationId: string;
+  readonly acceptedRevisionId: string;
+  readonly completedAt: string;
+}
+export interface NativeWorkSliceExecutionSettlementV1 {
+  readonly materializationId: string;
+  readonly graphCompletionMaterializationId: string;
+  readonly settledAt: string;
+}
+export interface NativeWorkSlicePlanningPointExecutionSettlementV1 {
+  readonly planningPointId: string;
+  readonly materializationId: string;
+  readonly workSliceExecutionMaterializationId: string;
+  readonly settledAt: string;
+}
+export interface NativeWorkSliceExecutionAttentionV1 {
+  readonly materializationId: string;
+  readonly recordedAt: string;
+}
 export interface NativeSprintContinuationStructuredAttentionV1 {
   readonly reason: string;
   readonly authorityNeeded: string;
@@ -127,11 +150,33 @@ export interface NativeSprintResultRealizationV1 {
   readonly outcomeKind: 'successor_request' | 'terminal_readiness' | 'retained_attention';
   readonly consideredAt: string;
   readonly successorSprintId?: string;
-  readonly successorRequestedAt?: string;
+  readonly successorTransition?: NativeSprintResultSuccessorTransitionV1;
   readonly successorRequestRecordedAt?: string;
   readonly terminalReadinessRecordedAt?: string;
   readonly retainedAttentionCode?: string;
   readonly retainedAttentionRecordedAt?: string;
+}
+export interface NativeSprintResultSuccessorTransitionV1 {
+  readonly requestedAt: string;
+  readonly authorizedAt: string;
+  readonly sessionCreatedAt?: string;
+  readonly harnessAppliedAt?: string;
+  readonly launchAcceptedAt?: string;
+  readonly preStartReady: boolean;
+  readonly lifecycleObserved: boolean;
+  readonly accepted: boolean;
+  readonly preStartSemanticOutcomeRecordedAt?: string;
+  readonly preStartLifecycleObservedAt?: string;
+  readonly preStartOutcomeAcceptedAt?: string;
+  readonly parentContinuationDeliveryRequestedAt?: string;
+  readonly parentContinuationDeliveryPersistedAt?: string;
+  readonly epicContinuationLaunchAcceptedAt?: string;
+  readonly providerReceiverActivationObservedAt?: string;
+  readonly sprintStartAuthorizedAt?: string;
+  readonly sprintStartPersistedAt?: string;
+  readonly sprintContinuationLaunchAcceptedAt?: string;
+  readonly repositoryBranchReevaluationRecordedAt?: string;
+  readonly startedReevaluationLifecycleObservedAt?: string;
 }
 export type ProductSprintResultDispositionV1 = ProductEpicEscalationDispositionV1;
 export interface NativeWorkUnitDependencyActivationIntentV1 {
@@ -417,7 +462,13 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
     'native query',
   );
   if (root.contractVersion !== ORCHESTRATION_NATIVE_QUERY_V2) fail('unsupported contractVersion');
-  const executionFields = ['workUnitExecutionStates', 'workSliceExecutionGraphCompletions', 'workSliceExecutionSettlements', 'workSlicePlanningPointExecutionSettlements', 'workSliceExecutionAttentions'] as const;
+  const executionFields = [
+    'workUnitExecutionStates',
+    'workSliceExecutionGraphCompletions',
+    'workSliceExecutionSettlements',
+    'workSlicePlanningPointExecutionSettlements',
+    'workSliceExecutionAttentions',
+  ] as const;
   const executionFieldCount = executionFields.filter((field) => root[field] !== undefined).length;
   if (executionFieldCount !== 0 && executionFieldCount !== executionFields.length)
     fail('productive execution projection bundle is incomplete');
@@ -429,7 +480,10 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
   const sprintContinuationFieldCount = sprintContinuationFields.filter(
     (field) => root[field] !== undefined,
   ).length;
-  if (sprintContinuationFieldCount !== 0 && sprintContinuationFieldCount !== sprintContinuationFields.length)
+  if (
+    sprintContinuationFieldCount !== 0 &&
+    sprintContinuationFieldCount !== sprintContinuationFields.length
+  )
     fail('productive Sprint continuation projection bundle is incomplete');
   const query: OrchestrationNativeQueryV2 = {
     contractVersion: ORCHESTRATION_NATIVE_QUERY_V2,
@@ -474,15 +528,61 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
         : array(root.dependencyActivationIntents, 'dependencyActivationIntents').map(
             dependencyActivationIntent,
           ),
-    workUnitExecutionStates: root.workUnitExecutionStates === undefined ? [] : array(root.workUnitExecutionStates, 'workUnitExecutionStates').map(workUnitExecutionState),
-    workSliceExecutionGraphCompletions: root.workSliceExecutionGraphCompletions === undefined ? [] : array(root.workSliceExecutionGraphCompletions, 'workSliceExecutionGraphCompletions').map(workSliceExecutionGraphCompletion),
-    workSliceExecutionSettlements: root.workSliceExecutionSettlements === undefined ? [] : array(root.workSliceExecutionSettlements, 'workSliceExecutionSettlements').map(workSliceExecutionSettlement),
-    workSlicePlanningPointExecutionSettlements: root.workSlicePlanningPointExecutionSettlements === undefined ? [] : array(root.workSlicePlanningPointExecutionSettlements, 'workSlicePlanningPointExecutionSettlements').map(workSlicePlanningPointExecutionSettlement),
-    workSliceExecutionAttentions: root.workSliceExecutionAttentions === undefined ? [] : array(root.workSliceExecutionAttentions, 'workSliceExecutionAttentions').map(workSliceExecutionAttention),
-    sprintContinuationDecisions: root.sprintContinuationDecisions === undefined ? [] : array(root.sprintContinuationDecisions, 'sprintContinuationDecisions').map(sprintContinuationDecision),
-    sprintContinuationCurrentDecisions: root.sprintContinuationCurrentDecisions === undefined ? [] : array(root.sprintContinuationCurrentDecisions, 'sprintContinuationCurrentDecisions').map(sprintContinuationCurrentDecision),
-    sprintUpwardResults: root.sprintUpwardResults === undefined ? [] : array(root.sprintUpwardResults, 'sprintUpwardResults').map(sprintUpwardResult),
-    ...(root.sprintResultProjections === undefined ? {} : { sprintResultProjections: array(root.sprintResultProjections, 'sprintResultProjections').map(sprintResultProjection) }),
+    workUnitExecutionStates:
+      root.workUnitExecutionStates === undefined
+        ? []
+        : array(root.workUnitExecutionStates, 'workUnitExecutionStates').map(
+            workUnitExecutionState,
+          ),
+    workSliceExecutionGraphCompletions:
+      root.workSliceExecutionGraphCompletions === undefined
+        ? []
+        : array(root.workSliceExecutionGraphCompletions, 'workSliceExecutionGraphCompletions').map(
+            workSliceExecutionGraphCompletion,
+          ),
+    workSliceExecutionSettlements:
+      root.workSliceExecutionSettlements === undefined
+        ? []
+        : array(root.workSliceExecutionSettlements, 'workSliceExecutionSettlements').map(
+            workSliceExecutionSettlement,
+          ),
+    workSlicePlanningPointExecutionSettlements:
+      root.workSlicePlanningPointExecutionSettlements === undefined
+        ? []
+        : array(
+            root.workSlicePlanningPointExecutionSettlements,
+            'workSlicePlanningPointExecutionSettlements',
+          ).map(workSlicePlanningPointExecutionSettlement),
+    workSliceExecutionAttentions:
+      root.workSliceExecutionAttentions === undefined
+        ? []
+        : array(root.workSliceExecutionAttentions, 'workSliceExecutionAttentions').map(
+            workSliceExecutionAttention,
+          ),
+    sprintContinuationDecisions:
+      root.sprintContinuationDecisions === undefined
+        ? []
+        : array(root.sprintContinuationDecisions, 'sprintContinuationDecisions').map(
+            sprintContinuationDecision,
+          ),
+    sprintContinuationCurrentDecisions:
+      root.sprintContinuationCurrentDecisions === undefined
+        ? []
+        : array(root.sprintContinuationCurrentDecisions, 'sprintContinuationCurrentDecisions').map(
+            sprintContinuationCurrentDecision,
+          ),
+    sprintUpwardResults:
+      root.sprintUpwardResults === undefined
+        ? []
+        : array(root.sprintUpwardResults, 'sprintUpwardResults').map(sprintUpwardResult),
+    ...(root.sprintResultProjections === undefined
+      ? {}
+      : {
+          sprintResultProjections: array(
+            root.sprintResultProjections,
+            'sprintResultProjections',
+          ).map(sprintResultProjection),
+        }),
   };
   validate(query);
   return query;
@@ -548,9 +648,9 @@ export function nativeQueryProductCompositionInputV2(
   const materializedUnits = query.workUnitMaterializations
     .filter((materialization) => materialization.settledAt !== undefined)
     .flatMap((materialization) =>
-    query.workUnits
-      .filter((unit) => unit.materializationId === materialization.materializationId)
-      .sort((left, right) => left.laneOrdinal - right.laneOrdinal),
+      query.workUnits
+        .filter((unit) => unit.materializationId === materialization.materializationId)
+        .sort((left, right) => left.laneOrdinal - right.laneOrdinal),
     );
   const scopeId = (unit: NativeMaterializedWorkUnitV1) =>
     `materialized-work-unit-scope:${unit.materializationId}:${unit.workUnitId}`;
@@ -563,13 +663,28 @@ export function nativeQueryProductCompositionInputV2(
   const dependencyIntentByWorkUnitId = new Map(
     query.dependencyActivationIntents.map((intent) => [intent.workUnitId, intent]),
   );
-  const executionStateByWorkUnitId = new Map(query.workUnitExecutionStates.map((state) => [state.workUnitId, state]));
-  const executionByMaterializationId = new Map(query.workUnitMaterializations.map((materialization) => [materialization.materializationId, {
-    graphCompletion: query.workSliceExecutionGraphCompletions.find((item) => item.materializationId === materialization.materializationId),
-    settlement: query.workSliceExecutionSettlements.find((item) => item.materializationId === materialization.materializationId),
-    planningPointSettlement: query.workSlicePlanningPointExecutionSettlements.find((item) => item.materializationId === materialization.materializationId),
-    attention: query.workSliceExecutionAttentions.find((item) => item.materializationId === materialization.materializationId),
-  }]));
+  const executionStateByWorkUnitId = new Map(
+    query.workUnitExecutionStates.map((state) => [state.workUnitId, state]),
+  );
+  const executionByMaterializationId = new Map(
+    query.workUnitMaterializations.map((materialization) => [
+      materialization.materializationId,
+      {
+        graphCompletion: query.workSliceExecutionGraphCompletions.find(
+          (item) => item.materializationId === materialization.materializationId,
+        ),
+        settlement: query.workSliceExecutionSettlements.find(
+          (item) => item.materializationId === materialization.materializationId,
+        ),
+        planningPointSettlement: query.workSlicePlanningPointExecutionSettlements.find(
+          (item) => item.materializationId === materialization.materializationId,
+        ),
+        attention: query.workSliceExecutionAttentions.find(
+          (item) => item.materializationId === materialization.materializationId,
+        ),
+      },
+    ]),
+  );
   const events = {
     version: ORCHESTRATION_EVENTS_V1,
     epics: initiated.map((x) => ({ epicId: x.epicId })),
@@ -602,16 +717,18 @@ export function nativeQueryProductCompositionInputV2(
         ),
       gateIds: [],
     })),
-    workSlicePlanningPoints: query.workUnitMaterializations.filter((materialization) => materialization.settledAt !== undefined).map((materialization) => ({
-      workSlicePlanningPointId: materialization.planningPointId,
-      sprintPlanId: query.initiatedSprints.find(
-        (sprint) => sprint.sprintId === materialization.sprintId,
-      )!.sprintPlanId,
-      assessedSprintPlanRevisionIds: [
-        query.initiatedSprints.find((sprint) => sprint.sprintId === materialization.sprintId)!
-          .sprintPlanRevisionId,
-      ],
-    })),
+    workSlicePlanningPoints: query.workUnitMaterializations
+      .filter((materialization) => materialization.settledAt !== undefined)
+      .map((materialization) => ({
+        workSlicePlanningPointId: materialization.planningPointId,
+        sprintPlanId: query.initiatedSprints.find(
+          (sprint) => sprint.sprintId === materialization.sprintId,
+        )!.sprintPlanId,
+        assessedSprintPlanRevisionIds: [
+          query.initiatedSprints.find((sprint) => sprint.sprintId === materialization.sprintId)!
+            .sprintPlanRevisionId,
+        ],
+      })),
     workUnitExecutions: [],
     attempts: [],
     agentSessions: uniquePlanBuilderSessions.map(({ association }) => ({
@@ -731,12 +848,14 @@ export function nativeQueryProductCompositionInputV2(
         summary: 'Preparatory initial Sprint Plan revision.',
         source: source(initiated.find((e) => e.epicId === x.epicId)!.provenanceId),
       })),
-      workSlicePlanningPoints: query.workUnitMaterializations.filter((materialization) => materialization.settledAt !== undefined).map((materialization) => ({
-        workSlicePlanningPointId: materialization.planningPointId,
-        title: 'Accepted Work Slice',
-        purpose: `Accepted immutable revision ${materialization.acceptedRevisionId}.`,
-        source: source(materialization.materializationId),
-      })),
+      workSlicePlanningPoints: query.workUnitMaterializations
+        .filter((materialization) => materialization.settledAt !== undefined)
+        .map((materialization) => ({
+          workSlicePlanningPointId: materialization.planningPointId,
+          title: 'Accepted Work Slice',
+          purpose: `Accepted immutable revision ${materialization.acceptedRevisionId}.`,
+          source: source(materialization.materializationId),
+        })),
       workUnits: materializedUnits.map((unit) => ({
         workUnitId: unit.workUnitId,
         title: unit.laneTitle,
@@ -791,17 +910,19 @@ export function nativeQueryProductCompositionInputV2(
         source: source(x.provenanceId),
       })),
       sprintWorkspacePresentation: {
-        workSlicePlanningPointMembership: query.workUnitMaterializations.filter((materialization) => materialization.settledAt !== undefined).map((materialization) => ({
-          workSlicePlanningPointId: materialization.planningPointId,
-          sprintPlanRevisionId: query.initiatedSprints.find(
-            (sprint) => sprint.sprintId === materialization.sprintId,
-          )!.sprintPlanRevisionId,
-          workUnitScopeIds: query.workUnits
-            .filter((unit) => unit.materializationId === materialization.materializationId)
-            .sort((left, right) => left.laneOrdinal - right.laneOrdinal)
-            .map(scopeId),
-          source: source(materialization.materializationId),
-        })),
+        workSlicePlanningPointMembership: query.workUnitMaterializations
+          .filter((materialization) => materialization.settledAt !== undefined)
+          .map((materialization) => ({
+            workSlicePlanningPointId: materialization.planningPointId,
+            sprintPlanRevisionId: query.initiatedSprints.find(
+              (sprint) => sprint.sprintId === materialization.sprintId,
+            )!.sprintPlanRevisionId,
+            workUnitScopeIds: query.workUnits
+              .filter((unit) => unit.materializationId === materialization.materializationId)
+              .sort((left, right) => left.laneOrdinal - right.laneOrdinal)
+              .map(scopeId),
+            source: source(materialization.materializationId),
+          })),
         gates: [],
         documents: query.fileReviewDocuments.map((x) => ({
           documentRefId: x.documentRefId,
@@ -822,7 +943,9 @@ export function nativeQueryProductCompositionInputV2(
       acceptedRevisionId: materialization.acceptedRevisionId,
       sprintId: materialization.sprintId,
       stage: materializationStage(materialization),
-      ...(executionByMaterializationId.get(materialization.materializationId) ? { execution: executionByMaterializationId.get(materialization.materializationId) } : {}),
+      ...(executionByMaterializationId.get(materialization.materializationId)
+        ? { execution: executionByMaterializationId.get(materialization.materializationId) }
+        : {}),
       source: source(materialization.materializationId),
     })),
     ...(query.sprintContinuationDecisions.length > 0
@@ -1359,35 +1482,98 @@ const workUnitMaterialization = (value: unknown): NativeWorkUnitMaterializationV
 };
 const workUnitExecutionState = (value: unknown): NativeWorkUnitExecutionStateV1 => {
   const x = object(value, 'Work Unit execution state');
-  keys(x, ['workUnitId', 'materializationId', 'acceptedRevisionId', 'state', 'recordedAt'], 'Work Unit execution state');
-  if (!['waiting_on_prerequisites', 'ready', 'active', 'retry_authorized', 'handed_back', 'settled', 'attention'].includes(x.state as string)) fail('invalid Work Unit execution state');
-  return { workUnitId: string(x.workUnitId, 'workUnitId'), materializationId: string(x.materializationId, 'materializationId'), acceptedRevisionId: string(x.acceptedRevisionId, 'acceptedRevisionId'), state: x.state as NativeWorkUnitExecutionStateV1['state'], recordedAt: timestamp(x.recordedAt, 'Work Unit execution state recordedAt') };
+  keys(
+    x,
+    ['workUnitId', 'materializationId', 'acceptedRevisionId', 'state', 'recordedAt'],
+    'Work Unit execution state',
+  );
+  if (
+    ![
+      'waiting_on_prerequisites',
+      'ready',
+      'active',
+      'retry_authorized',
+      'handed_back',
+      'settled',
+      'attention',
+    ].includes(x.state as string)
+  )
+    fail('invalid Work Unit execution state');
+  return {
+    workUnitId: string(x.workUnitId, 'workUnitId'),
+    materializationId: string(x.materializationId, 'materializationId'),
+    acceptedRevisionId: string(x.acceptedRevisionId, 'acceptedRevisionId'),
+    state: x.state as NativeWorkUnitExecutionStateV1['state'],
+    recordedAt: timestamp(x.recordedAt, 'Work Unit execution state recordedAt'),
+  };
 };
-const workSliceExecutionGraphCompletion = (value: unknown): NativeWorkSliceExecutionGraphCompletionV1 => {
+const workSliceExecutionGraphCompletion = (
+  value: unknown,
+): NativeWorkSliceExecutionGraphCompletionV1 => {
   const x = object(value, 'Work Slice graph completion');
-  keys(x, ['materializationId', 'acceptedRevisionId', 'completedAt'], 'Work Slice graph completion');
-  return { materializationId: string(x.materializationId, 'materializationId'), acceptedRevisionId: string(x.acceptedRevisionId, 'acceptedRevisionId'), completedAt: timestamp(x.completedAt, 'Work Slice graph completion completedAt') };
+  keys(
+    x,
+    ['materializationId', 'acceptedRevisionId', 'completedAt'],
+    'Work Slice graph completion',
+  );
+  return {
+    materializationId: string(x.materializationId, 'materializationId'),
+    acceptedRevisionId: string(x.acceptedRevisionId, 'acceptedRevisionId'),
+    completedAt: timestamp(x.completedAt, 'Work Slice graph completion completedAt'),
+  };
 };
 const workSliceExecutionSettlement = (value: unknown): NativeWorkSliceExecutionSettlementV1 => {
   const x = object(value, 'Work Slice execution settlement');
-  keys(x, ['materializationId', 'graphCompletionMaterializationId', 'settledAt'], 'Work Slice execution settlement');
-  return { materializationId: string(x.materializationId, 'materializationId'), graphCompletionMaterializationId: string(x.graphCompletionMaterializationId, 'graphCompletionMaterializationId'), settledAt: timestamp(x.settledAt, 'Work Slice execution settlement settledAt') };
+  keys(
+    x,
+    ['materializationId', 'graphCompletionMaterializationId', 'settledAt'],
+    'Work Slice execution settlement',
+  );
+  return {
+    materializationId: string(x.materializationId, 'materializationId'),
+    graphCompletionMaterializationId: string(
+      x.graphCompletionMaterializationId,
+      'graphCompletionMaterializationId',
+    ),
+    settledAt: timestamp(x.settledAt, 'Work Slice execution settlement settledAt'),
+  };
 };
-const workSlicePlanningPointExecutionSettlement = (value: unknown): NativeWorkSlicePlanningPointExecutionSettlementV1 => {
+const workSlicePlanningPointExecutionSettlement = (
+  value: unknown,
+): NativeWorkSlicePlanningPointExecutionSettlementV1 => {
   const x = object(value, 'Work Slice planning-point execution settlement');
-  keys(x, ['planningPointId', 'materializationId', 'workSliceExecutionMaterializationId', 'settledAt'], 'Work Slice planning-point execution settlement');
-  return { planningPointId: string(x.planningPointId, 'planningPointId'), materializationId: string(x.materializationId, 'materializationId'), workSliceExecutionMaterializationId: string(x.workSliceExecutionMaterializationId, 'workSliceExecutionMaterializationId'), settledAt: timestamp(x.settledAt, 'Work Slice planning-point execution settlement settledAt') };
+  keys(
+    x,
+    ['planningPointId', 'materializationId', 'workSliceExecutionMaterializationId', 'settledAt'],
+    'Work Slice planning-point execution settlement',
+  );
+  return {
+    planningPointId: string(x.planningPointId, 'planningPointId'),
+    materializationId: string(x.materializationId, 'materializationId'),
+    workSliceExecutionMaterializationId: string(
+      x.workSliceExecutionMaterializationId,
+      'workSliceExecutionMaterializationId',
+    ),
+    settledAt: timestamp(x.settledAt, 'Work Slice planning-point execution settlement settledAt'),
+  };
 };
 const workSliceExecutionAttention = (value: unknown): NativeWorkSliceExecutionAttentionV1 => {
   const x = object(value, 'Work Slice execution attention');
   keys(x, ['materializationId', 'recordedAt'], 'Work Slice execution attention');
-  return { materializationId: string(x.materializationId, 'materializationId'), recordedAt: timestamp(x.recordedAt, 'Work Slice execution attention recordedAt') };
+  return {
+    materializationId: string(x.materializationId, 'materializationId'),
+    recordedAt: timestamp(x.recordedAt, 'Work Slice execution attention recordedAt'),
+  };
 };
 const sprintContinuationStructuredAttention = (
   value: unknown,
 ): NativeSprintContinuationStructuredAttentionV1 => {
   const x = object(value, 'Sprint structured attention');
-  keys(x, ['reason', 'authorityNeeded', 'evidenceContext', 'resumptionPath'], 'Sprint structured attention');
+  keys(
+    x,
+    ['reason', 'authorityNeeded', 'evidenceContext', 'resumptionPath'],
+    'Sprint structured attention',
+  );
   return {
     reason: boundedString(x.reason, 2000, 'Sprint attention reason'),
     authorityNeeded: boundedString(x.authorityNeeded, 2000, 'Sprint attention authorityNeeded'),
@@ -1426,7 +1612,10 @@ const sprintContinuationDecision = (value: unknown): NativeSprintContinuationDec
     fail('invalid Sprint continuation state');
   if (!Number.isSafeInteger(x.decisionSequence) || (x.decisionSequence as number) < 1)
     fail('invalid Sprint continuation decision sequence');
-  if (!Number.isSafeInteger(x.acceptedMaterializationCount) || (x.acceptedMaterializationCount as number) < 0)
+  if (
+    !Number.isSafeInteger(x.acceptedMaterializationCount) ||
+    (x.acceptedMaterializationCount as number) < 0
+  )
     fail('invalid Sprint continuation materialization count');
   return {
     decisionId: string(x.decisionId, 'Sprint decisionId'),
@@ -1455,7 +1644,11 @@ const sprintContinuationCurrentDecision = (
 };
 const sprintUpwardResult = (value: unknown): NativeSprintUpwardResultV1 => {
   const x = object(value, 'Sprint upward result');
-  keys(x, ['resultId', 'decisionId', 'sprintId', 'resultKind', 'recordedAt'], 'Sprint upward result');
+  keys(
+    x,
+    ['resultId', 'decisionId', 'sprintId', 'resultKind', 'recordedAt'],
+    'Sprint upward result',
+  );
   if (!['continuing', 'attention', 'settled'].includes(x.resultKind as string))
     fail('invalid Sprint upward result kind');
   return {
@@ -1497,13 +1690,33 @@ const sprintResultReceiver = (value: unknown): NativeSprintResultReceiverV1 => {
   const reassessmentLifecycleObservedAt = time('reassessmentLifecycleObservedAt');
   const semanticReassessmentRecordedAt = time('semanticReassessmentRecordedAt');
   phaseCoherence(
-    { deliveryRequestedAt, deliveryPersistedAt, harnessBoundAt, launchRequestedAt, launchAcceptedAt },
-    ['deliveryRequestedAt', 'deliveryPersistedAt', 'harnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt'],
+    {
+      deliveryRequestedAt,
+      deliveryPersistedAt,
+      harnessBoundAt,
+      launchRequestedAt,
+      launchAcceptedAt,
+    },
+    [
+      'deliveryRequestedAt',
+      'deliveryPersistedAt',
+      'harnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+    ],
     'Sprint-result receiver',
   );
-  if ((providerActivationObservedAt || reassessmentLifecycleObservedAt || semanticReassessmentRecordedAt) && !launchAcceptedAt)
+  if (
+    (providerActivationObservedAt ||
+      reassessmentLifecycleObservedAt ||
+      semanticReassessmentRecordedAt) &&
+    !launchAcceptedAt
+  )
     fail('Sprint-result receiver later observation lacks launch acceptance');
-  if ((x.reassessmentLifecycleStatus === undefined) !== (reassessmentLifecycleObservedAt === undefined))
+  if (
+    (x.reassessmentLifecycleStatus === undefined) !==
+    (reassessmentLifecycleObservedAt === undefined)
+  )
     fail('Sprint-result receiver lifecycle bundle is incomplete');
   if (launchAcceptedAt) {
     for (const [label, observed] of [
@@ -1511,7 +1724,8 @@ const sprintResultReceiver = (value: unknown): NativeSprintResultReceiverV1 => {
       ['lifecycle', reassessmentLifecycleObservedAt],
       ['semantic reassessment', semanticReassessmentRecordedAt],
     ] as const) {
-      if (observed) timestampAtOrAfter(launchAcceptedAt, observed, `Sprint-result receiver ${label}`);
+      if (observed)
+        timestampAtOrAfter(launchAcceptedAt, observed, `Sprint-result receiver ${label}`);
     }
   }
   return {
@@ -1523,9 +1737,112 @@ const sprintResultReceiver = (value: unknown): NativeSprintResultReceiverV1 => {
     ...(providerActivationObservedAt ? { providerActivationObservedAt } : {}),
     ...(x.reassessmentLifecycleStatus === undefined
       ? {}
-      : { reassessmentLifecycleStatus: boundedString(x.reassessmentLifecycleStatus, 96, 'Sprint-result receiver lifecycle status') }),
+      : {
+          reassessmentLifecycleStatus: boundedString(
+            x.reassessmentLifecycleStatus,
+            96,
+            'Sprint-result receiver lifecycle status',
+          ),
+        }),
     ...(reassessmentLifecycleObservedAt ? { reassessmentLifecycleObservedAt } : {}),
     ...(semanticReassessmentRecordedAt ? { semanticReassessmentRecordedAt } : {}),
+  };
+};
+const sprintResultSuccessorTransition = (
+  value: unknown,
+): NativeSprintResultSuccessorTransitionV1 => {
+  const x = object(value, 'Sprint-result successor transition');
+  keys(
+    x,
+    [
+      'requestedAt',
+      'authorizedAt',
+      'sessionCreatedAt',
+      'harnessAppliedAt',
+      'launchAcceptedAt',
+      'preStartReady',
+      'lifecycleObserved',
+      'accepted',
+      'preStartSemanticOutcomeRecordedAt',
+      'preStartLifecycleObservedAt',
+      'preStartOutcomeAcceptedAt',
+      'parentContinuationDeliveryRequestedAt',
+      'parentContinuationDeliveryPersistedAt',
+      'epicContinuationLaunchAcceptedAt',
+      'providerReceiverActivationObservedAt',
+      'sprintStartAuthorizedAt',
+      'sprintStartPersistedAt',
+      'sprintContinuationLaunchAcceptedAt',
+      'repositoryBranchReevaluationRecordedAt',
+      'startedReevaluationLifecycleObservedAt',
+    ],
+    'Sprint-result successor transition',
+  );
+  const requestedAt = timestamp(x.requestedAt, 'Sprint-result successor requestedAt');
+  const authorizedAt = timestamp(x.authorizedAt, 'Sprint-result successor authorizedAt');
+  const sessionCreatedAt =
+    x.sessionCreatedAt === undefined
+      ? undefined
+      : timestamp(x.sessionCreatedAt, 'Sprint-result successor sessionCreatedAt');
+  const harnessAppliedAt =
+    x.harnessAppliedAt === undefined
+      ? undefined
+      : timestamp(x.harnessAppliedAt, 'Sprint-result successor harnessAppliedAt');
+  const launchAcceptedAt =
+    x.launchAcceptedAt === undefined
+      ? undefined
+      : timestamp(x.launchAcceptedAt, 'Sprint-result successor launchAcceptedAt');
+  if (
+    typeof x.preStartReady !== 'boolean' ||
+    typeof x.lifecycleObserved !== 'boolean' ||
+    typeof x.accepted !== 'boolean'
+  )
+    fail('Sprint-result successor transition lifecycle flags are invalid');
+  const preStartReady = x.preStartReady;
+  const lifecycleObserved = x.lifecycleObserved;
+  const accepted = x.accepted;
+  const optionalTimes = [
+    'preStartSemanticOutcomeRecordedAt',
+    'preStartLifecycleObservedAt',
+    'preStartOutcomeAcceptedAt',
+    'parentContinuationDeliveryRequestedAt',
+    'parentContinuationDeliveryPersistedAt',
+    'epicContinuationLaunchAcceptedAt',
+    'providerReceiverActivationObservedAt',
+    'sprintStartAuthorizedAt',
+    'sprintStartPersistedAt',
+    'sprintContinuationLaunchAcceptedAt',
+    'repositoryBranchReevaluationRecordedAt',
+    'startedReevaluationLifecycleObservedAt',
+  ] as const;
+  const parsedOptionalTimes = Object.fromEntries(
+    optionalTimes
+      .filter((key) => x[key] !== undefined)
+      .map((key) => [key, timestamp(x[key], `Sprint-result successor ${key}`)]),
+  ) as Partial<NativeSprintResultSuccessorTransitionV1>;
+  const chronology = [
+    requestedAt,
+    authorizedAt,
+    sessionCreatedAt,
+    harnessAppliedAt,
+    launchAcceptedAt,
+    ...optionalTimes.map((key) => parsedOptionalTimes[key]),
+  ].filter((item): item is string => item !== undefined);
+  chronology
+    .slice(1)
+    .forEach((item, index) =>
+      timestampAtOrAfter(chronology[index], item, 'Sprint-result successor transition'),
+    );
+  return {
+    requestedAt,
+    authorizedAt,
+    ...(sessionCreatedAt ? { sessionCreatedAt } : {}),
+    ...(harnessAppliedAt ? { harnessAppliedAt } : {}),
+    ...(launchAcceptedAt ? { launchAcceptedAt } : {}),
+    preStartReady,
+    lifecycleObserved,
+    accepted,
+    ...parsedOptionalTimes,
   };
 };
 const sprintResultRealization = (value: unknown): NativeSprintResultRealizationV1 => {
@@ -1536,7 +1853,7 @@ const sprintResultRealization = (value: unknown): NativeSprintResultRealizationV
       'outcomeKind',
       'consideredAt',
       'successorSprintId',
-      'successorRequestedAt',
+      'successorTransition',
       'successorRequestRecordedAt',
       'terminalReadinessRecordedAt',
       'retainedAttentionCode',
@@ -1544,27 +1861,86 @@ const sprintResultRealization = (value: unknown): NativeSprintResultRealizationV
     ],
     'Sprint-result realization',
   );
-  if (!['successor_request', 'terminal_readiness', 'retained_attention'].includes(x.outcomeKind as string))
+  if (
+    !['successor_request', 'terminal_readiness', 'retained_attention'].includes(
+      x.outcomeKind as string,
+    )
+  )
     fail('invalid Sprint-result realization kind');
   const outcomeKind = x.outcomeKind as NativeSprintResultRealizationV1['outcomeKind'];
   const consideredAt = timestamp(x.consideredAt, 'Sprint-result realization consideredAt');
-  const successorSprintId = x.successorSprintId === undefined ? undefined : string(x.successorSprintId, 'Sprint-result successor Sprint');
-  const successorRequestedAt = x.successorRequestedAt === undefined ? undefined : timestamp(x.successorRequestedAt, 'Sprint-result successor requestedAt');
-  const successorRequestRecordedAt = x.successorRequestRecordedAt === undefined ? undefined : timestamp(x.successorRequestRecordedAt, 'Sprint-result successor request recordedAt');
-  const terminalReadinessRecordedAt = x.terminalReadinessRecordedAt === undefined ? undefined : timestamp(x.terminalReadinessRecordedAt, 'Sprint-result terminal readiness recordedAt');
-  const retainedAttentionCode = x.retainedAttentionCode === undefined ? undefined : boundedString(x.retainedAttentionCode, 160, 'Sprint-result retained attention code');
-  const retainedAttentionRecordedAt = x.retainedAttentionRecordedAt === undefined ? undefined : timestamp(x.retainedAttentionRecordedAt, 'Sprint-result retained attention recordedAt');
+  const successorSprintId =
+    x.successorSprintId === undefined
+      ? undefined
+      : string(x.successorSprintId, 'Sprint-result successor Sprint');
+  const successorTransition =
+    x.successorTransition === undefined
+      ? undefined
+      : sprintResultSuccessorTransition(x.successorTransition);
+  const successorRequestRecordedAt =
+    x.successorRequestRecordedAt === undefined
+      ? undefined
+      : timestamp(x.successorRequestRecordedAt, 'Sprint-result successor request recordedAt');
+  const terminalReadinessRecordedAt =
+    x.terminalReadinessRecordedAt === undefined
+      ? undefined
+      : timestamp(x.terminalReadinessRecordedAt, 'Sprint-result terminal readiness recordedAt');
+  const retainedAttentionCode =
+    x.retainedAttentionCode === undefined
+      ? undefined
+      : boundedString(x.retainedAttentionCode, 160, 'Sprint-result retained attention code');
+  const retainedAttentionRecordedAt =
+    x.retainedAttentionRecordedAt === undefined
+      ? undefined
+      : timestamp(x.retainedAttentionRecordedAt, 'Sprint-result retained attention recordedAt');
   if (outcomeKind === 'successor_request') {
-    if (!successorSprintId || (successorRequestedAt === undefined) !== (successorRequestRecordedAt === undefined) || terminalReadinessRecordedAt || retainedAttentionCode || retainedAttentionRecordedAt)
+    if (
+      !successorSprintId ||
+      !successorTransition ||
+      !successorRequestRecordedAt ||
+      terminalReadinessRecordedAt ||
+      retainedAttentionCode ||
+      retainedAttentionRecordedAt
+    )
       fail('Sprint-result successor realization is contradictory');
   } else if (outcomeKind === 'terminal_readiness') {
-    if (successorSprintId || successorRequestedAt || successorRequestRecordedAt || !terminalReadinessRecordedAt || retainedAttentionCode || retainedAttentionRecordedAt)
+    if (
+      successorSprintId ||
+      successorTransition ||
+      successorRequestRecordedAt ||
+      !terminalReadinessRecordedAt ||
+      retainedAttentionCode ||
+      retainedAttentionRecordedAt
+    )
       fail('Sprint-result terminal realization is contradictory');
-  } else if (successorSprintId || successorRequestedAt || successorRequestRecordedAt || terminalReadinessRecordedAt || !retainedAttentionCode || !retainedAttentionRecordedAt) {
+  } else if (
+    successorSprintId ||
+    successorTransition ||
+    successorRequestRecordedAt ||
+    terminalReadinessRecordedAt ||
+    !retainedAttentionCode ||
+    !retainedAttentionRecordedAt
+  ) {
     fail('Sprint-result retained-attention realization is contradictory');
   }
   const later = [
-    successorRequestedAt,
+    successorTransition?.requestedAt,
+    successorTransition?.authorizedAt,
+    successorTransition?.sessionCreatedAt,
+    successorTransition?.harnessAppliedAt,
+    successorTransition?.launchAcceptedAt,
+    successorTransition?.preStartSemanticOutcomeRecordedAt,
+    successorTransition?.preStartLifecycleObservedAt,
+    successorTransition?.preStartOutcomeAcceptedAt,
+    successorTransition?.parentContinuationDeliveryRequestedAt,
+    successorTransition?.parentContinuationDeliveryPersistedAt,
+    successorTransition?.epicContinuationLaunchAcceptedAt,
+    successorTransition?.providerReceiverActivationObservedAt,
+    successorTransition?.sprintStartAuthorizedAt,
+    successorTransition?.sprintStartPersistedAt,
+    successorTransition?.sprintContinuationLaunchAcceptedAt,
+    successorTransition?.repositoryBranchReevaluationRecordedAt,
+    successorTransition?.startedReevaluationLifecycleObservedAt,
     successorRequestRecordedAt,
     terminalReadinessRecordedAt,
     retainedAttentionRecordedAt,
@@ -1574,7 +1950,7 @@ const sprintResultRealization = (value: unknown): NativeSprintResultRealizationV
     outcomeKind,
     consideredAt,
     ...(successorSprintId ? { successorSprintId } : {}),
-    ...(successorRequestedAt ? { successorRequestedAt } : {}),
+    ...(successorTransition ? { successorTransition } : {}),
     ...(successorRequestRecordedAt ? { successorRequestRecordedAt } : {}),
     ...(terminalReadinessRecordedAt ? { terminalReadinessRecordedAt } : {}),
     ...(retainedAttentionCode ? { retainedAttentionCode } : {}),
@@ -1583,19 +1959,62 @@ const sprintResultRealization = (value: unknown): NativeSprintResultRealizationV
 };
 const sprintResultProjection = (value: unknown): NativeSprintResultProjectionV1 => {
   const x = object(value, 'Sprint-result projection');
-  keys(x, ['resultId', 'decisionId', 'sprintId', 'epicId', 'resultKind', 'recordedAt', 'receiver', 'dispositionRecordedAt', 'disposition', 'realization'], 'Sprint-result projection');
-  if (!['continuing', 'attention', 'settled'].includes(x.resultKind as string)) fail('invalid Sprint-result kind');
+  keys(
+    x,
+    [
+      'resultId',
+      'decisionId',
+      'sprintId',
+      'epicId',
+      'resultKind',
+      'recordedAt',
+      'receiver',
+      'dispositionRecordedAt',
+      'disposition',
+      'realization',
+    ],
+    'Sprint-result projection',
+  );
+  if (!['continuing', 'attention', 'settled'].includes(x.resultKind as string))
+    fail('invalid Sprint-result kind');
   const recordedAt = timestamp(x.recordedAt, 'Sprint-result recordedAt');
   const receiver = x.receiver === undefined ? undefined : sprintResultReceiver(x.receiver);
-  const dispositionRecordedAt = x.dispositionRecordedAt === undefined ? undefined : timestamp(x.dispositionRecordedAt, 'Sprint-result disposition recordedAt');
-  const disposition = x.disposition === undefined ? undefined : epicEscalationDisposition(x.disposition);
-  const realization = x.realization === undefined ? undefined : sprintResultRealization(x.realization);
-  if ((dispositionRecordedAt === undefined) !== (disposition === undefined)) fail('Sprint-result disposition bundle is incomplete');
-  if (disposition && !receiver?.semanticReassessmentRecordedAt) fail('Sprint-result disposition lacks semantic reassessment');
+  const dispositionRecordedAt =
+    x.dispositionRecordedAt === undefined
+      ? undefined
+      : timestamp(x.dispositionRecordedAt, 'Sprint-result disposition recordedAt');
+  const disposition =
+    x.disposition === undefined ? undefined : epicEscalationDisposition(x.disposition);
+  const realization =
+    x.realization === undefined ? undefined : sprintResultRealization(x.realization);
+  if ((dispositionRecordedAt === undefined) !== (disposition === undefined))
+    fail('Sprint-result disposition bundle is incomplete');
+  if (disposition && !receiver?.semanticReassessmentRecordedAt)
+    fail('Sprint-result disposition lacks semantic reassessment');
+  if (realization && (!disposition || !receiver?.semanticReassessmentRecordedAt))
+    fail('Sprint-result realization lacks its exact disposition and semantic receiver');
+  if (
+    realization &&
+    realization.outcomeKind !== 'retained_attention' &&
+    (x.resultKind !== 'settled' || disposition?.movementKind !== 'advance_to_next_approved_sprint')
+  )
+    fail(
+      'Sprint-result successor or readiness is not authorized by the exact settled advance disposition',
+    );
   if (dispositionRecordedAt && receiver?.semanticReassessmentRecordedAt)
-    timestampAtOrAfter(receiver.semanticReassessmentRecordedAt, dispositionRecordedAt, 'Sprint-result disposition');
-  if (dispositionRecordedAt && realization) timestampAtOrAfter(dispositionRecordedAt, realization.consideredAt, 'Sprint-result realization');
-  if (receiver) timestampAtOrAfter(recordedAt, receiver.deliveryRequestedAt, 'Sprint-result receiver delivery');
+    timestampAtOrAfter(
+      receiver.semanticReassessmentRecordedAt,
+      dispositionRecordedAt,
+      'Sprint-result disposition',
+    );
+  if (dispositionRecordedAt && realization)
+    timestampAtOrAfter(
+      dispositionRecordedAt,
+      realization.consideredAt,
+      'Sprint-result realization',
+    );
+  if (receiver)
+    timestampAtOrAfter(recordedAt, receiver.deliveryRequestedAt, 'Sprint-result receiver delivery');
   return {
     resultId: string(x.resultId, 'Sprint-result resultId'),
     decisionId: string(x.decisionId, 'Sprint-result decisionId'),
@@ -1658,7 +2077,14 @@ const workUnitAttemptHistory = (value: unknown): NativeWorkUnitAttemptHistoryV1 
   const x = object(value, 'Work Unit attempt history member');
   keys(
     x,
-    ['ordinal', 'attemptId', 'implementerOutcome', 'handlerReview', 'handlerDecision', 'incompleteDisposition'],
+    [
+      'ordinal',
+      'attemptId',
+      'implementerOutcome',
+      'handlerReview',
+      'handlerDecision',
+      'incompleteDisposition',
+    ],
     'Work Unit attempt history member',
   );
   if (!Number.isSafeInteger(x.ordinal) || (x.ordinal as number) < 0)
@@ -1669,7 +2095,9 @@ const workUnitAttemptHistory = (value: unknown): NativeWorkUnitAttemptHistoryV1 
     ...(x.implementerOutcome === undefined
       ? {}
       : { implementerOutcome: workUnitImplementerOutcome(x.implementerOutcome) }),
-    ...(x.handlerReview === undefined ? {} : { handlerReview: workUnitHandlerReview(x.handlerReview) }),
+    ...(x.handlerReview === undefined
+      ? {}
+      : { handlerReview: workUnitHandlerReview(x.handlerReview) }),
     ...(x.handlerDecision === undefined
       ? {}
       : { handlerDecision: workUnitHandlerDecision(x.handlerDecision) }),
@@ -1716,11 +2144,7 @@ const workUnitRetryAttempt = (value: unknown): NativeWorkUnitRetryAttemptV1 => {
     ordinal: x.ordinal as number,
     originAttemptId: boundedString(x.originAttemptId, 240, 'retry originAttemptId'),
     retryAttemptId: boundedString(x.retryAttemptId, 240, 'retry retryAttemptId'),
-    implementerSessionId: boundedString(
-      x.implementerSessionId,
-      240,
-      'retry implementerSessionId',
-    ),
+    implementerSessionId: boundedString(x.implementerSessionId, 240, 'retry implementerSessionId'),
     implementerInvocationId: boundedString(
       x.implementerInvocationId,
       240,
@@ -1761,26 +2185,148 @@ const workUnitRetryAttempt = (value: unknown): NativeWorkUnitRetryAttemptV1 => {
 };
 const workUnitIntegration = (value: unknown): NativeWorkUnitIntegrationV1 => {
   const x = object(value, 'Work Unit integration');
-  keys(x, ['requestedAt', 'authorizedAt', 'progress', 'attention', 'success', 'settlement', 'prerequisiteContribution'], 'Work Unit integration');
+  keys(
+    x,
+    [
+      'requestedAt',
+      'authorizedAt',
+      'progress',
+      'attention',
+      'success',
+      'settlement',
+      'prerequisiteContribution',
+    ],
+    'Work Unit integration',
+  );
   const requestedAt = timestamp(x.requestedAt, 'Work Unit integration requestedAt');
   const authorizedAt = timestamp(x.authorizedAt, 'Work Unit integration authorizedAt');
   timestampAtOrAfter(requestedAt, authorizedAt, 'Work Unit integration authorization');
-  const progress = x.progress === undefined ? undefined : (() => { const entry = object(x.progress, 'Work Unit integration progress'); keys(entry, ['phase', 'recordedAt'], 'Work Unit integration progress'); if (!['preparing', 'applying', 'recording'].includes(entry.phase as string)) fail('invalid Work Unit integration progress phase'); const recordedAt = timestamp(entry.recordedAt, 'Work Unit integration progress recordedAt'); timestampAtOrAfter(authorizedAt, recordedAt, 'Work Unit integration progress'); return { phase: entry.phase as 'preparing' | 'applying' | 'recording', recordedAt }; })();
-  const attention = x.attention === undefined ? undefined : (() => { const entry = object(x.attention, 'Work Unit integration attention'); keys(entry, ['kind', 'safeCode', 'recordedAt'], 'Work Unit integration attention'); if (!['conflict', 'failure'].includes(entry.kind as string)) fail('invalid Work Unit integration attention kind'); const safeCode = entry.kind === 'conflict' ? 'integration_conflict' : 'integration_failure'; if (entry.safeCode !== safeCode) fail('invalid Work Unit integration attention code'); const recordedAt = timestamp(entry.recordedAt, 'Work Unit integration attention recordedAt'); timestampAtOrAfter(progress?.recordedAt ?? authorizedAt, recordedAt, 'Work Unit integration attention'); return { kind: entry.kind as 'conflict' | 'failure', safeCode: safeCode as 'integration_conflict' | 'integration_failure', recordedAt }; })();
-  const success = x.success === undefined ? undefined : (() => { const entry = object(x.success, 'Work Unit integration success'); keys(entry, ['recordedAt'], 'Work Unit integration success'); const recordedAt = timestamp(entry.recordedAt, 'Work Unit integration success recordedAt'); timestampAtOrAfter(progress?.recordedAt ?? authorizedAt, recordedAt, 'Work Unit integration success'); return { recordedAt }; })();
-  const settlement = x.settlement === undefined ? undefined : (() => { const entry = object(x.settlement, 'Work Unit settlement'); keys(entry, ['settledAt'], 'Work Unit settlement'); const settledAt = timestamp(entry.settledAt, 'Work Unit settlement settledAt'); if (!success) fail('Work Unit settlement requires integration success'); timestampAtOrAfter(success.recordedAt, settledAt, 'Work Unit settlement'); return { settledAt }; })();
-  const prerequisiteContribution = x.prerequisiteContribution === undefined ? undefined : (() => { const entry = object(x.prerequisiteContribution, 'Work Unit prerequisite contribution'); keys(entry, ['recordedAt', 'dependentCount'], 'Work Unit prerequisite contribution'); if (!Number.isSafeInteger(entry.dependentCount) || (entry.dependentCount as number) < 0) fail('invalid Work Unit prerequisite contribution count'); if (!settlement) fail('Work Unit prerequisite contribution requires settlement'); const recordedAt = timestamp(entry.recordedAt, 'Work Unit prerequisite contribution recordedAt'); timestampAtOrAfter(settlement.settledAt, recordedAt, 'Work Unit prerequisite contribution'); return { recordedAt, dependentCount: entry.dependentCount as number }; })();
-  if (attention && (success || settlement || prerequisiteContribution)) fail('Work Unit integration attention contradicts terminal facts');
-  return { requestedAt, authorizedAt, ...(progress ? { progress } : {}), ...(attention ? { attention } : {}), ...(success ? { success } : {}), ...(settlement ? { settlement } : {}), ...(prerequisiteContribution ? { prerequisiteContribution } : {}) };
+  const progress =
+    x.progress === undefined
+      ? undefined
+      : (() => {
+          const entry = object(x.progress, 'Work Unit integration progress');
+          keys(entry, ['phase', 'recordedAt'], 'Work Unit integration progress');
+          if (!['preparing', 'applying', 'recording'].includes(entry.phase as string))
+            fail('invalid Work Unit integration progress phase');
+          const recordedAt = timestamp(
+            entry.recordedAt,
+            'Work Unit integration progress recordedAt',
+          );
+          timestampAtOrAfter(authorizedAt, recordedAt, 'Work Unit integration progress');
+          return { phase: entry.phase as 'preparing' | 'applying' | 'recording', recordedAt };
+        })();
+  const attention =
+    x.attention === undefined
+      ? undefined
+      : (() => {
+          const entry = object(x.attention, 'Work Unit integration attention');
+          keys(entry, ['kind', 'safeCode', 'recordedAt'], 'Work Unit integration attention');
+          if (!['conflict', 'failure'].includes(entry.kind as string))
+            fail('invalid Work Unit integration attention kind');
+          const safeCode =
+            entry.kind === 'conflict' ? 'integration_conflict' : 'integration_failure';
+          if (entry.safeCode !== safeCode) fail('invalid Work Unit integration attention code');
+          const recordedAt = timestamp(
+            entry.recordedAt,
+            'Work Unit integration attention recordedAt',
+          );
+          timestampAtOrAfter(
+            progress?.recordedAt ?? authorizedAt,
+            recordedAt,
+            'Work Unit integration attention',
+          );
+          return {
+            kind: entry.kind as 'conflict' | 'failure',
+            safeCode: safeCode as 'integration_conflict' | 'integration_failure',
+            recordedAt,
+          };
+        })();
+  const success =
+    x.success === undefined
+      ? undefined
+      : (() => {
+          const entry = object(x.success, 'Work Unit integration success');
+          keys(entry, ['recordedAt'], 'Work Unit integration success');
+          const recordedAt = timestamp(
+            entry.recordedAt,
+            'Work Unit integration success recordedAt',
+          );
+          timestampAtOrAfter(
+            progress?.recordedAt ?? authorizedAt,
+            recordedAt,
+            'Work Unit integration success',
+          );
+          return { recordedAt };
+        })();
+  const settlement =
+    x.settlement === undefined
+      ? undefined
+      : (() => {
+          const entry = object(x.settlement, 'Work Unit settlement');
+          keys(entry, ['settledAt'], 'Work Unit settlement');
+          const settledAt = timestamp(entry.settledAt, 'Work Unit settlement settledAt');
+          if (!success) fail('Work Unit settlement requires integration success');
+          timestampAtOrAfter(success.recordedAt, settledAt, 'Work Unit settlement');
+          return { settledAt };
+        })();
+  const prerequisiteContribution =
+    x.prerequisiteContribution === undefined
+      ? undefined
+      : (() => {
+          const entry = object(x.prerequisiteContribution, 'Work Unit prerequisite contribution');
+          keys(entry, ['recordedAt', 'dependentCount'], 'Work Unit prerequisite contribution');
+          if (!Number.isSafeInteger(entry.dependentCount) || (entry.dependentCount as number) < 0)
+            fail('invalid Work Unit prerequisite contribution count');
+          if (!settlement) fail('Work Unit prerequisite contribution requires settlement');
+          const recordedAt = timestamp(
+            entry.recordedAt,
+            'Work Unit prerequisite contribution recordedAt',
+          );
+          timestampAtOrAfter(
+            settlement.settledAt,
+            recordedAt,
+            'Work Unit prerequisite contribution',
+          );
+          return { recordedAt, dependentCount: entry.dependentCount as number };
+        })();
+  if (attention && (success || settlement || prerequisiteContribution))
+    fail('Work Unit integration attention contradicts terminal facts');
+  return {
+    requestedAt,
+    authorizedAt,
+    ...(progress ? { progress } : {}),
+    ...(attention ? { attention } : {}),
+    ...(success ? { success } : {}),
+    ...(settlement ? { settlement } : {}),
+    ...(prerequisiteContribution ? { prerequisiteContribution } : {}),
+  };
 };
 const dependencyActivationIntent = (value: unknown): NativeWorkUnitDependencyActivationIntentV1 => {
   const x = object(value, 'dependency activation intent');
-  keys(x, ['workUnitId', 'materializationId', 'acceptedRevisionId', 'eligibilityState', 'blockedReason', 'eligibilityRecordedAt', 'activationIntendedAt'], 'dependency activation intent');
-  const eligibilityState = x.eligibilityState === 'blocked' || x.eligibilityState === 'eligible'
-    ? x.eligibilityState
-    : fail('invalid dependency eligibility state');
-  const blockedReason = x.blockedReason === undefined ? undefined : string(x.blockedReason, 'blockedReason');
-  const activationIntendedAt = x.activationIntendedAt === undefined ? undefined : timestamp(x.activationIntendedAt, 'activationIntendedAt');
+  keys(
+    x,
+    [
+      'workUnitId',
+      'materializationId',
+      'acceptedRevisionId',
+      'eligibilityState',
+      'blockedReason',
+      'eligibilityRecordedAt',
+      'activationIntendedAt',
+    ],
+    'dependency activation intent',
+  );
+  const eligibilityState =
+    x.eligibilityState === 'blocked' || x.eligibilityState === 'eligible'
+      ? x.eligibilityState
+      : fail('invalid dependency eligibility state');
+  const blockedReason =
+    x.blockedReason === undefined ? undefined : string(x.blockedReason, 'blockedReason');
+  const activationIntendedAt =
+    x.activationIntendedAt === undefined
+      ? undefined
+      : timestamp(x.activationIntendedAt, 'activationIntendedAt');
   if (eligibilityState === 'blocked' && !blockedReason)
     fail('blocked dependency intent requires a reason');
   if (eligibilityState === 'eligible' && blockedReason)
@@ -1802,8 +2348,8 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
     [
       'attemptId',
       'handlerSessionId',
-        'handlerInvocationId',
-        'handlerHarnessRevisionId',
+      'handlerInvocationId',
+      'handlerHarnessRevisionId',
       'eligibilityState',
       'blockedReason',
       'requestedAt',
@@ -2553,7 +3099,11 @@ const workUnitHandlerReview = (value: unknown): NativeWorkUnitHandlerReviewV1 =>
       240,
       'Handler review actionHandlerInvocationId',
     ),
-    reviewInvocationId: boundedString(x.reviewInvocationId, 240, 'Handler review reviewInvocationId'),
+    reviewInvocationId: boundedString(
+      x.reviewInvocationId,
+      240,
+      'Handler review reviewInvocationId',
+    ),
     reviewHarnessRevisionId: boundedString(
       x.reviewHarnessRevisionId,
       240,
@@ -2611,8 +3161,7 @@ const workUnitHandlerReview = (value: unknown): NativeWorkUnitHandlerReviewV1 =>
     'Handler review',
   );
   if (result.semanticJudgment) {
-    if (!result.reviewReadyAt)
-      fail('Handler review judgment requires review readiness');
+    if (!result.reviewReadyAt) fail('Handler review judgment requires review readiness');
     timestampAtOrAfter(
       result.reviewReadyAt,
       result.semanticJudgment.recordedAt,
@@ -2621,7 +3170,11 @@ const workUnitHandlerReview = (value: unknown): NativeWorkUnitHandlerReviewV1 =>
   }
   if (result.lifecycle) {
     if (!result.reviewReadyAt) fail('Handler review lifecycle requires review readiness');
-    timestampAtOrAfter(result.reviewReadyAt, result.lifecycle.observedAt, 'Handler review lifecycle');
+    timestampAtOrAfter(
+      result.reviewReadyAt,
+      result.lifecycle.observedAt,
+      'Handler review lifecycle',
+    );
     if (result.semanticJudgment)
       timestampAtOrAfter(
         result.semanticJudgment.recordedAt,
@@ -2649,8 +3202,10 @@ const workUnitHandlerDecision = (value: unknown): NativeWorkUnitHandlerDecisionV
     ],
     'Work Unit Handler decision',
   );
-  if (x.settlementReadyAt !== undefined) fail('Handler decision has forbidden settlement readiness');
-  if (x.variant !== 'accepted' && x.variant !== 'returned') fail('invalid Handler decision variant');
+  if (x.settlementReadyAt !== undefined)
+    fail('Handler decision has forbidden settlement readiness');
+  if (x.variant !== 'accepted' && x.variant !== 'returned')
+    fail('invalid Handler decision variant');
   const returnReason =
     x.returnReason === undefined
       ? undefined
@@ -2659,7 +3214,11 @@ const workUnitHandlerDecision = (value: unknown): NativeWorkUnitHandlerDecisionV
     x[key] === undefined ? undefined : timestamp(x[key], key);
   const result: NativeWorkUnitHandlerDecisionV1 = {
     attemptId: boundedString(x.attemptId, 240, 'Handler decision attemptId'),
-    reviewInvocationId: boundedString(x.reviewInvocationId, 240, 'Handler decision reviewInvocationId'),
+    reviewInvocationId: boundedString(
+      x.reviewInvocationId,
+      240,
+      'Handler decision reviewInvocationId',
+    ),
     variant: x.variant as 'accepted' | 'returned',
     fingerprint: boundedString(x.fingerprint, 240, 'Handler decision fingerprint'),
     ...(returnReason ? { returnReason } : {}),
@@ -2670,10 +3229,17 @@ const workUnitHandlerDecision = (value: unknown): NativeWorkUnitHandlerDecisionV
     ...(optionalTime('implementationReturnedAt')
       ? { implementationReturnedAt: optionalTime('implementationReturnedAt') }
       : {}),
-    ...(optionalTime('retryRequiredAt') ? { retryRequiredAt: optionalTime('retryRequiredAt') } : {}),
+    ...(optionalTime('retryRequiredAt')
+      ? { retryRequiredAt: optionalTime('retryRequiredAt') }
+      : {}),
   };
   if (result.variant === 'accepted') {
-    if (returnReason || !result.implementationAcceptedAt || result.implementationReturnedAt || result.retryRequiredAt)
+    if (
+      returnReason ||
+      !result.implementationAcceptedAt ||
+      result.implementationReturnedAt ||
+      result.retryRequiredAt
+    )
       fail('accepted Handler decision facts contradict their variant');
   } else if (!returnReason || !result.implementationReturnedAt || result.implementationAcceptedAt) {
     fail('returned Handler decision facts contradict their variant');
@@ -2682,43 +3248,141 @@ const workUnitHandlerDecision = (value: unknown): NativeWorkUnitHandlerDecisionV
 };
 const workUnitIncompleteDisposition = (value: unknown): NativeWorkUnitIncompleteDispositionV1 => {
   const x = object(value, 'Work Unit incomplete disposition');
-  keys(x, ['attemptId', 'reviewInvocationId', 'decisionFingerprint', 'classification', 'meaningfulProgress', 'recordedAt', 'nextAttemptAuthorizedAt', 'noProgressHandback'], 'Work Unit incomplete disposition');
-  if (!['refinement_needed', 'functional_objective_not_satisfied', 'blocked'].includes(x.classification as string) || typeof x.meaningfulProgress !== 'boolean') fail('invalid Work Unit incomplete disposition');
-  const nextAttemptAuthorizedAt = x.nextAttemptAuthorizedAt === undefined ? undefined : timestamp(x.nextAttemptAuthorizedAt, 'nextAttemptAuthorizedAt');
-  const noProgressHandback = x.noProgressHandback === undefined ? undefined : (() => {
-    const handback = object(x.noProgressHandback, 'no-progress Work Unit handback');
-    keys(handback, ['handbackId', 'sourceAttemptId', 'sourceReviewInvocationId', 'contextFingerprint', 'persistedAt', 'deliveryIntendedAt', 'sprintRunnerReceiverActivatedAt', 'sprintRunnerReceiverDecisionAt', 'sprintRunnerDelivery', 'epicRunnerReceiver'], 'no-progress Work Unit handback');
-    if (handback.sprintRunnerReceiverActivatedAt !== undefined || handback.sprintRunnerReceiverDecisionAt !== undefined) fail('no-progress Work Unit handback has forbidden receiver effects');
-    const persistedAt = timestamp(handback.persistedAt, 'persistedAt');
-    const deliveryIntendedAt = timestamp(handback.deliveryIntendedAt, 'deliveryIntendedAt');
-    if (Date.parse(deliveryIntendedAt) < Date.parse(persistedAt))
-      fail('no-progress handback delivery intent precedes persistence');
-    const sprintRunnerDelivery =
-      handback.sprintRunnerDelivery === undefined
-        ? undefined
-        : sprintRunnerHandbackDelivery(handback.sprintRunnerDelivery);
-    const epicRunnerReceiver = handback.epicRunnerReceiver === undefined ? undefined : epicEscalationReceiver(handback.epicRunnerReceiver);
-    if (sprintRunnerDelivery && Date.parse(sprintRunnerDelivery.deliveryRequestedAt) < Date.parse(deliveryIntendedAt))
-      fail('Sprint Runner delivery request precedes delivery intent');
-    return {
-      handbackId: boundedString(handback.handbackId, 240, 'handbackId'),
-      sourceAttemptId: boundedString(handback.sourceAttemptId, 240, 'sourceAttemptId'),
-      sourceReviewInvocationId: boundedString(handback.sourceReviewInvocationId, 240, 'sourceReviewInvocationId'),
-      contextFingerprint: boundedString(handback.contextFingerprint, 240, 'contextFingerprint'),
-      persistedAt,
-      deliveryIntendedAt,
-      ...(sprintRunnerDelivery ? { sprintRunnerDelivery } : {}),
-      ...(epicRunnerReceiver ? { epicRunnerReceiver } : {}),
-    };
-  })();
-  if (x.meaningfulProgress ? !nextAttemptAuthorizedAt || noProgressHandback : nextAttemptAuthorizedAt !== undefined || !noProgressHandback) fail('incomplete disposition has incoherent later effects');
-  return { attemptId: boundedString(x.attemptId, 240, 'incomplete disposition attemptId'), reviewInvocationId: boundedString(x.reviewInvocationId, 240, 'incomplete disposition reviewInvocationId'), decisionFingerprint: boundedString(x.decisionFingerprint, 240, 'incomplete disposition decisionFingerprint'), classification: x.classification as NativeWorkUnitIncompleteDispositionV1['classification'], meaningfulProgress: x.meaningfulProgress as boolean, recordedAt: timestamp(x.recordedAt, 'incomplete disposition recordedAt'), ...(nextAttemptAuthorizedAt ? { nextAttemptAuthorizedAt } : {}), ...(noProgressHandback ? { noProgressHandback } : {}) };
+  keys(
+    x,
+    [
+      'attemptId',
+      'reviewInvocationId',
+      'decisionFingerprint',
+      'classification',
+      'meaningfulProgress',
+      'recordedAt',
+      'nextAttemptAuthorizedAt',
+      'noProgressHandback',
+    ],
+    'Work Unit incomplete disposition',
+  );
+  if (
+    !['refinement_needed', 'functional_objective_not_satisfied', 'blocked'].includes(
+      x.classification as string,
+    ) ||
+    typeof x.meaningfulProgress !== 'boolean'
+  )
+    fail('invalid Work Unit incomplete disposition');
+  const nextAttemptAuthorizedAt =
+    x.nextAttemptAuthorizedAt === undefined
+      ? undefined
+      : timestamp(x.nextAttemptAuthorizedAt, 'nextAttemptAuthorizedAt');
+  const noProgressHandback =
+    x.noProgressHandback === undefined
+      ? undefined
+      : (() => {
+          const handback = object(x.noProgressHandback, 'no-progress Work Unit handback');
+          keys(
+            handback,
+            [
+              'handbackId',
+              'sourceAttemptId',
+              'sourceReviewInvocationId',
+              'contextFingerprint',
+              'persistedAt',
+              'deliveryIntendedAt',
+              'sprintRunnerReceiverActivatedAt',
+              'sprintRunnerReceiverDecisionAt',
+              'sprintRunnerDelivery',
+              'epicRunnerReceiver',
+            ],
+            'no-progress Work Unit handback',
+          );
+          if (
+            handback.sprintRunnerReceiverActivatedAt !== undefined ||
+            handback.sprintRunnerReceiverDecisionAt !== undefined
+          )
+            fail('no-progress Work Unit handback has forbidden receiver effects');
+          const persistedAt = timestamp(handback.persistedAt, 'persistedAt');
+          const deliveryIntendedAt = timestamp(handback.deliveryIntendedAt, 'deliveryIntendedAt');
+          if (Date.parse(deliveryIntendedAt) < Date.parse(persistedAt))
+            fail('no-progress handback delivery intent precedes persistence');
+          const sprintRunnerDelivery =
+            handback.sprintRunnerDelivery === undefined
+              ? undefined
+              : sprintRunnerHandbackDelivery(handback.sprintRunnerDelivery);
+          const epicRunnerReceiver =
+            handback.epicRunnerReceiver === undefined
+              ? undefined
+              : epicEscalationReceiver(handback.epicRunnerReceiver);
+          if (
+            sprintRunnerDelivery &&
+            Date.parse(sprintRunnerDelivery.deliveryRequestedAt) < Date.parse(deliveryIntendedAt)
+          )
+            fail('Sprint Runner delivery request precedes delivery intent');
+          return {
+            handbackId: boundedString(handback.handbackId, 240, 'handbackId'),
+            sourceAttemptId: boundedString(handback.sourceAttemptId, 240, 'sourceAttemptId'),
+            sourceReviewInvocationId: boundedString(
+              handback.sourceReviewInvocationId,
+              240,
+              'sourceReviewInvocationId',
+            ),
+            contextFingerprint: boundedString(
+              handback.contextFingerprint,
+              240,
+              'contextFingerprint',
+            ),
+            persistedAt,
+            deliveryIntendedAt,
+            ...(sprintRunnerDelivery ? { sprintRunnerDelivery } : {}),
+            ...(epicRunnerReceiver ? { epicRunnerReceiver } : {}),
+          };
+        })();
+  if (
+    x.meaningfulProgress
+      ? !nextAttemptAuthorizedAt || noProgressHandback
+      : nextAttemptAuthorizedAt !== undefined || !noProgressHandback
+  )
+    fail('incomplete disposition has incoherent later effects');
+  return {
+    attemptId: boundedString(x.attemptId, 240, 'incomplete disposition attemptId'),
+    reviewInvocationId: boundedString(
+      x.reviewInvocationId,
+      240,
+      'incomplete disposition reviewInvocationId',
+    ),
+    decisionFingerprint: boundedString(
+      x.decisionFingerprint,
+      240,
+      'incomplete disposition decisionFingerprint',
+    ),
+    classification: x.classification as NativeWorkUnitIncompleteDispositionV1['classification'],
+    meaningfulProgress: x.meaningfulProgress as boolean,
+    recordedAt: timestamp(x.recordedAt, 'incomplete disposition recordedAt'),
+    ...(nextAttemptAuthorizedAt ? { nextAttemptAuthorizedAt } : {}),
+    ...(noProgressHandback ? { noProgressHandback } : {}),
+  };
 };
 
 const epicEscalationReceiver = (value: unknown): NativeEpicEscalationReceiverV1 => {
   const x = object(value, 'Epic escalation receiver');
-  keys(x, ['sprintId', 'epicId', 'deliveryRequestedAt', 'deliveryPersistedAt', 'harnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt', 'providerActivationObservedAt', 'reassessmentLifecycleStatus', 'reassessmentLifecycleObservedAt', 'semanticReassessmentRecordedAt', 'disposition'], 'Epic escalation receiver');
-  const time = (key: string) => x[key] === undefined ? undefined : timestamp(x[key], `Epic receiver ${key}`);
+  keys(
+    x,
+    [
+      'sprintId',
+      'epicId',
+      'deliveryRequestedAt',
+      'deliveryPersistedAt',
+      'harnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+      'providerActivationObservedAt',
+      'reassessmentLifecycleStatus',
+      'reassessmentLifecycleObservedAt',
+      'semanticReassessmentRecordedAt',
+      'disposition',
+    ],
+    'Epic escalation receiver',
+  );
+  const time = (key: string) =>
+    x[key] === undefined ? undefined : timestamp(x[key], `Epic receiver ${key}`);
   const deliveryRequestedAt = timestamp(x.deliveryRequestedAt, 'Epic receiver deliveryRequestedAt');
   const deliveryPersistedAt = time('deliveryPersistedAt');
   const harnessBoundAt = time('harnessBoundAt');
@@ -2726,35 +3390,155 @@ const epicEscalationReceiver = (value: unknown): NativeEpicEscalationReceiverV1 
   const launchAcceptedAt = time('launchAcceptedAt');
   const providerActivationObservedAt = time('providerActivationObservedAt');
   const semanticReassessmentRecordedAt = time('semanticReassessmentRecordedAt');
-  phaseCoherence({ deliveryRequestedAt, deliveryPersistedAt, harnessBoundAt, launchRequestedAt, launchAcceptedAt }, ['deliveryRequestedAt', 'deliveryPersistedAt', 'harnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt'], 'Epic escalation receiver');
-  if ((providerActivationObservedAt || semanticReassessmentRecordedAt) && !launchAcceptedAt) fail('Epic receiver later observation lacks launch acceptance');
-  if (semanticReassessmentRecordedAt && x.disposition === undefined) { /* reassessment may end without a semantic disposition */ }
-  const disposition = x.disposition === undefined ? undefined : epicEscalationDisposition(x.disposition);
-  if (disposition && !semanticReassessmentRecordedAt) fail('Epic disposition lacks semantic reassessment');
-  return { sprintId: boundedString(x.sprintId, 240, 'Epic receiver sprintId'), epicId: boundedString(x.epicId, 240, 'Epic receiver epicId'), deliveryRequestedAt, ...(deliveryPersistedAt ? { deliveryPersistedAt } : {}), ...(harnessBoundAt ? { harnessBoundAt } : {}), ...(launchRequestedAt ? { launchRequestedAt } : {}), ...(launchAcceptedAt ? { launchAcceptedAt } : {}), ...(providerActivationObservedAt ? { providerActivationObservedAt } : {}), ...(x.reassessmentLifecycleStatus === undefined ? {} : { reassessmentLifecycleStatus: boundedString(x.reassessmentLifecycleStatus, 96, 'Epic receiver lifecycle status') }), ...(x.reassessmentLifecycleObservedAt === undefined ? {} : { reassessmentLifecycleObservedAt: timestamp(x.reassessmentLifecycleObservedAt, 'Epic receiver lifecycle observedAt') }), ...(semanticReassessmentRecordedAt ? { semanticReassessmentRecordedAt } : {}), ...(disposition ? { disposition } : {}) };
+  phaseCoherence(
+    {
+      deliveryRequestedAt,
+      deliveryPersistedAt,
+      harnessBoundAt,
+      launchRequestedAt,
+      launchAcceptedAt,
+    },
+    [
+      'deliveryRequestedAt',
+      'deliveryPersistedAt',
+      'harnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+    ],
+    'Epic escalation receiver',
+  );
+  if ((providerActivationObservedAt || semanticReassessmentRecordedAt) && !launchAcceptedAt)
+    fail('Epic receiver later observation lacks launch acceptance');
+  if (semanticReassessmentRecordedAt && x.disposition === undefined) {
+    /* reassessment may end without a semantic disposition */
+  }
+  const disposition =
+    x.disposition === undefined ? undefined : epicEscalationDisposition(x.disposition);
+  if (disposition && !semanticReassessmentRecordedAt)
+    fail('Epic disposition lacks semantic reassessment');
+  return {
+    sprintId: boundedString(x.sprintId, 240, 'Epic receiver sprintId'),
+    epicId: boundedString(x.epicId, 240, 'Epic receiver epicId'),
+    deliveryRequestedAt,
+    ...(deliveryPersistedAt ? { deliveryPersistedAt } : {}),
+    ...(harnessBoundAt ? { harnessBoundAt } : {}),
+    ...(launchRequestedAt ? { launchRequestedAt } : {}),
+    ...(launchAcceptedAt ? { launchAcceptedAt } : {}),
+    ...(providerActivationObservedAt ? { providerActivationObservedAt } : {}),
+    ...(x.reassessmentLifecycleStatus === undefined
+      ? {}
+      : {
+          reassessmentLifecycleStatus: boundedString(
+            x.reassessmentLifecycleStatus,
+            96,
+            'Epic receiver lifecycle status',
+          ),
+        }),
+    ...(x.reassessmentLifecycleObservedAt === undefined
+      ? {}
+      : {
+          reassessmentLifecycleObservedAt: timestamp(
+            x.reassessmentLifecycleObservedAt,
+            'Epic receiver lifecycle observedAt',
+          ),
+        }),
+    ...(semanticReassessmentRecordedAt ? { semanticReassessmentRecordedAt } : {}),
+    ...(disposition ? { disposition } : {}),
+  };
 };
 
 const epicEscalationDisposition = (value: unknown): ProductEpicEscalationDispositionV1 => {
   const x = object(value, 'Epic escalation disposition');
-  keys(x, ['movementKind', 'rationale', 'consideredIntent', 'downstreamRequest', 'humanExternalAttention'], 'Epic escalation disposition');
+  keys(
+    x,
+    [
+      'movementKind',
+      'rationale',
+      'consideredIntent',
+      'downstreamRequest',
+      'humanExternalAttention',
+    ],
+    'Epic escalation disposition',
+  );
   const movementKind = boundedString(x.movementKind, 96, 'Epic disposition movementKind');
   if (!/^[A-Za-z0-9_.-]+$/.test(movementKind)) fail('invalid Epic disposition movementKind');
   const rationale = boundedString(x.rationale, 20_000, 'Epic disposition rationale');
-  const downstreamRequest = x.downstreamRequest === undefined ? undefined : (() => {
-    const request = object(x.downstreamRequest, 'Epic downstream request');
-    keys(request, ['target', 'dependency', 'request', 'resumptionPath'], 'Epic downstream request');
-    if (!['sprint_runner', 'existing_agent_achievable_dependency'].includes(request.target as string)) fail('invalid Epic downstream target');
-    if (request.target === 'existing_agent_achievable_dependency' && request.dependency !== 'work_unit_handler') fail('invalid Epic known dependency');
-    if (request.target === 'sprint_runner' && request.dependency !== undefined) fail('Sprint Runner request has dependency detail');
-    return { target: request.target as 'sprint_runner' | 'existing_agent_achievable_dependency', ...(request.dependency === undefined ? {} : { dependency: 'work_unit_handler' as const }), request: boundedString(request.request, 20_000, 'Epic downstream request text'), resumptionPath: boundedString(request.resumptionPath, 20_000, 'Epic downstream resumption path') };
-  })();
-  const humanExternalAttention = x.humanExternalAttention === undefined ? undefined : (() => {
-    const attention = object(x.humanExternalAttention, 'Epic human/external attention');
-    keys(attention, ['reason', 'authorityNeeded', 'evidenceContext', 'resumptionPath'], 'Epic human/external attention');
-    return { reason: boundedString(attention.reason, 20_000, 'Epic attention reason'), authorityNeeded: boundedString(attention.authorityNeeded, 20_000, 'Epic attention authority'), evidenceContext: boundedString(attention.evidenceContext, 20_000, 'Epic attention evidence'), resumptionPath: boundedString(attention.resumptionPath, 20_000, 'Epic attention resumption path') };
-  })();
-  if (downstreamRequest && humanExternalAttention) fail('Epic disposition mixes downstream request and attention');
-  return { movementKind, rationale, ...(x.consideredIntent === undefined ? {} : { consideredIntent: boundedString(x.consideredIntent, 20_000, 'Epic considered intent') }), ...(downstreamRequest ? { downstreamRequest } : {}), ...(humanExternalAttention ? { humanExternalAttention } : {}) };
+  const downstreamRequest =
+    x.downstreamRequest === undefined
+      ? undefined
+      : (() => {
+          const request = object(x.downstreamRequest, 'Epic downstream request');
+          keys(
+            request,
+            ['target', 'dependency', 'request', 'resumptionPath'],
+            'Epic downstream request',
+          );
+          if (
+            !['sprint_runner', 'existing_agent_achievable_dependency'].includes(
+              request.target as string,
+            )
+          )
+            fail('invalid Epic downstream target');
+          if (
+            request.target === 'existing_agent_achievable_dependency' &&
+            request.dependency !== 'work_unit_handler'
+          )
+            fail('invalid Epic known dependency');
+          if (request.target === 'sprint_runner' && request.dependency !== undefined)
+            fail('Sprint Runner request has dependency detail');
+          return {
+            target: request.target as 'sprint_runner' | 'existing_agent_achievable_dependency',
+            ...(request.dependency === undefined
+              ? {}
+              : { dependency: 'work_unit_handler' as const }),
+            request: boundedString(request.request, 20_000, 'Epic downstream request text'),
+            resumptionPath: boundedString(
+              request.resumptionPath,
+              20_000,
+              'Epic downstream resumption path',
+            ),
+          };
+        })();
+  const humanExternalAttention =
+    x.humanExternalAttention === undefined
+      ? undefined
+      : (() => {
+          const attention = object(x.humanExternalAttention, 'Epic human/external attention');
+          keys(
+            attention,
+            ['reason', 'authorityNeeded', 'evidenceContext', 'resumptionPath'],
+            'Epic human/external attention',
+          );
+          return {
+            reason: boundedString(attention.reason, 20_000, 'Epic attention reason'),
+            authorityNeeded: boundedString(
+              attention.authorityNeeded,
+              20_000,
+              'Epic attention authority',
+            ),
+            evidenceContext: boundedString(
+              attention.evidenceContext,
+              20_000,
+              'Epic attention evidence',
+            ),
+            resumptionPath: boundedString(
+              attention.resumptionPath,
+              20_000,
+              'Epic attention resumption path',
+            ),
+          };
+        })();
+  if (downstreamRequest && humanExternalAttention)
+    fail('Epic disposition mixes downstream request and attention');
+  return {
+    movementKind,
+    rationale,
+    ...(x.consideredIntent === undefined
+      ? {}
+      : { consideredIntent: boundedString(x.consideredIntent, 20_000, 'Epic considered intent') }),
+    ...(downstreamRequest ? { downstreamRequest } : {}),
+    ...(humanExternalAttention ? { humanExternalAttention } : {}),
+  };
 };
 
 const sprintRunnerHandbackMovement = (value: unknown): ProductSprintRunnerHandbackMovementV1 => {
@@ -2775,44 +3559,108 @@ const sprintRunnerHandbackMovement = (value: unknown): ProductSprintRunnerHandba
     'Sprint Runner Handback movement',
   );
   const movementKind = string(x.movementKind, 'Handback movementKind');
-  if (!/^[A-Za-z0-9_.-]+$/.test(movementKind) || movementKind.length > 96) fail('invalid Handback movementKind');
+  if (!/^[A-Za-z0-9_.-]+$/.test(movementKind) || movementKind.length > 96)
+    fail('invalid Handback movementKind');
   const rationale = boundedString(x.rationale, 20_000, 'Handback rationale');
-  const boundedDetails = x.boundedDetails === undefined ? undefined : array(x.boundedDetails, 'boundedDetails').map((detail, index): ProductSprintRunnerHandbackBoundedDetailV1 => {
-    const item = object(detail, `boundedDetails[${index}]`);
-    keys(item, ['label', 'value'], `boundedDetails[${index}]`);
-    const label = boundedString(item.label, 96, `boundedDetails[${index}].label`);
-    if (!['eligibleWorkSummary', 'dependencyOwner', 'dependencyOwnerClassification', 'enablingResult', 'resumptionPath', 'localExhaustionSummary'].includes(label)) fail('invalid bounded Handback detail label');
-    return { label, value: boundedString(item.value, 20_000, `boundedDetails[${index}].value`) };
-  });
-  if (boundedDetails && new Set(boundedDetails.map((detail) => detail.label)).size !== boundedDetails.length)
+  const boundedDetails =
+    x.boundedDetails === undefined
+      ? undefined
+      : array(x.boundedDetails, 'boundedDetails').map(
+          (detail, index): ProductSprintRunnerHandbackBoundedDetailV1 => {
+            const item = object(detail, `boundedDetails[${index}]`);
+            keys(item, ['label', 'value'], `boundedDetails[${index}]`);
+            const label = boundedString(item.label, 96, `boundedDetails[${index}].label`);
+            if (
+              ![
+                'eligibleWorkSummary',
+                'dependencyOwner',
+                'dependencyOwnerClassification',
+                'enablingResult',
+                'resumptionPath',
+                'localExhaustionSummary',
+              ].includes(label)
+            )
+              fail('invalid bounded Handback detail label');
+            return {
+              label,
+              value: boundedString(item.value, 20_000, `boundedDetails[${index}].value`),
+            };
+          },
+        );
+  if (
+    boundedDetails &&
+    new Set(boundedDetails.map((detail) => detail.label)).size !== boundedDetails.length
+  )
     fail('duplicate bounded Handback detail label');
   if (movementKind === 'continue_eligible_work') {
-    if (x.dependencyOwner !== undefined || x.dependencyOwnerClassification !== undefined || x.enablingResult !== undefined || x.resumptionPath !== undefined || x.localExhaustionSummary !== undefined || boundedDetails !== undefined)
+    if (
+      x.dependencyOwner !== undefined ||
+      x.dependencyOwnerClassification !== undefined ||
+      x.enablingResult !== undefined ||
+      x.resumptionPath !== undefined ||
+      x.localExhaustionSummary !== undefined ||
+      boundedDetails !== undefined
+    )
       fail('alternate Handback movement has contradictory detail');
-    return { movementKind, rationale, eligibleWorkSummary: boundedString(x.eligibleWorkSummary, 4000, 'eligibleWorkSummary') };
+    return {
+      movementKind,
+      rationale,
+      eligibleWorkSummary: boundedString(x.eligibleWorkSummary, 4000, 'eligibleWorkSummary'),
+    };
   }
   if (movementKind === 'wait_for_agent_dependency') {
     const classification = string(x.dependencyOwnerClassification, 'dependencyOwnerClassification');
-    if (!['work_unit_handler', 'work_unit_implementer', 'work_slice_planner', 'sprint_runner'].includes(classification))
+    if (
+      ![
+        'work_unit_handler',
+        'work_unit_implementer',
+        'work_slice_planner',
+        'sprint_runner',
+      ].includes(classification)
+    )
       fail('invalid dependencyOwnerClassification');
     const owner = boundedString(x.dependencyOwner, 4000, 'dependencyOwner');
-    if (['human', 'external', 'approval', 'manual', 'user'].some((term) => owner.toLowerCase().includes(term)))
+    if (
+      ['human', 'external', 'approval', 'manual', 'user'].some((term) =>
+        owner.toLowerCase().includes(term),
+      )
+    )
       fail('dependency owner is outside the agent-achievable boundary');
-    if (x.eligibleWorkSummary !== undefined || x.localExhaustionSummary !== undefined || boundedDetails !== undefined)
+    if (
+      x.eligibleWorkSummary !== undefined ||
+      x.localExhaustionSummary !== undefined ||
+      boundedDetails !== undefined
+    )
       fail('dependency Handback movement has contradictory detail');
     return {
       movementKind,
       rationale,
       dependencyOwner: owner,
-      dependencyOwnerClassification: classification as ProductSprintRunnerHandbackDependencyOwnerClassificationV1,
+      dependencyOwnerClassification:
+        classification as ProductSprintRunnerHandbackDependencyOwnerClassificationV1,
       enablingResult: boundedString(x.enablingResult, 4000, 'enablingResult'),
       resumptionPath: boundedString(x.resumptionPath, 4000, 'resumptionPath'),
     };
   }
   if (movementKind === 'local_exhaustion_escalate') {
-    if (x.eligibleWorkSummary !== undefined || x.dependencyOwner !== undefined || x.dependencyOwnerClassification !== undefined || x.enablingResult !== undefined || x.resumptionPath !== undefined || boundedDetails !== undefined)
+    if (
+      x.eligibleWorkSummary !== undefined ||
+      x.dependencyOwner !== undefined ||
+      x.dependencyOwnerClassification !== undefined ||
+      x.enablingResult !== undefined ||
+      x.resumptionPath !== undefined ||
+      boundedDetails !== undefined
+    )
       fail('local exhaustion Handback movement has contradictory detail');
-    return { movementKind, rationale, localExhaustionSummary: boundedString(x.localExhaustionSummary, 4000, 'localExhaustionSummary') };
+    return {
+      movementKind,
+      rationale,
+      localExhaustionSummary: boundedString(
+        x.localExhaustionSummary,
+        4000,
+        'localExhaustionSummary',
+      ),
+    };
   }
   const rawDetailValues = [
     ['eligibleWorkSummary', x.eligibleWorkSummary],
@@ -2822,11 +3670,21 @@ const sprintRunnerHandbackMovement = (value: unknown): ProductSprintRunnerHandba
     ['resumptionPath', x.resumptionPath],
     ['localExhaustionSummary', x.localExhaustionSummary],
   ].filter(([, value]) => value !== undefined);
-  if (x.dependencyOwnerClassification !== undefined && !['work_unit_handler', 'work_unit_implementer', 'work_slice_planner', 'sprint_runner'].includes(string(x.dependencyOwnerClassification, 'dependencyOwnerClassification')))
+  if (
+    x.dependencyOwnerClassification !== undefined &&
+    !['work_unit_handler', 'work_unit_implementer', 'work_slice_planner', 'sprint_runner'].includes(
+      string(x.dependencyOwnerClassification, 'dependencyOwnerClassification'),
+    )
+  )
     fail('invalid bounded Handback detail classification');
   if (boundedDetails !== undefined && rawDetailValues.length > 0)
     fail('bounded Handback movement mixes projected and persisted detail shapes');
-  const projectedDetails = boundedDetails ?? rawDetailValues.map(([label, value]) => ({ label: label as string, value: boundedString(value, 20_000, label as string) }));
+  const projectedDetails =
+    boundedDetails ??
+    rawDetailValues.map(([label, value]) => ({
+      label: label as string,
+      value: boundedString(value, 20_000, label as string),
+    }));
   return {
     movementKind: movementKind as ProductSprintRunnerHandbackUnknownMovementKindV1,
     rationale,
@@ -2836,9 +3694,25 @@ const sprintRunnerHandbackMovement = (value: unknown): ProductSprintRunnerHandba
 
 const sprintRunnerHandbackDelivery = (value: unknown): ProductSprintRunnerHandbackDeliveryV1 => {
   const x = object(value, 'Sprint Runner Handback delivery');
-  keys(x, ['deliveryRequestedAt', 'deliveryPersistedAt', 'harnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt', 'providerActivationObservedAt', 'semanticReassessmentRecordedAt', 'selectedMovementKind', 'selectedMovement', 'escalationIntentRecordedAt', 'escalationDeliveryRequestedAt'], 'Sprint Runner Handback delivery');
+  keys(
+    x,
+    [
+      'deliveryRequestedAt',
+      'deliveryPersistedAt',
+      'harnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+      'providerActivationObservedAt',
+      'semanticReassessmentRecordedAt',
+      'selectedMovementKind',
+      'selectedMovement',
+      'escalationIntentRecordedAt',
+      'escalationDeliveryRequestedAt',
+    ],
+    'Sprint Runner Handback delivery',
+  );
   const deliveryRequestedAt = timestamp(x.deliveryRequestedAt, 'deliveryRequestedAt');
-  const optionalTime = (key: string) => x[key] === undefined ? undefined : timestamp(x[key], key);
+  const optionalTime = (key: string) => (x[key] === undefined ? undefined : timestamp(x[key], key));
   const deliveryPersistedAt = optionalTime('deliveryPersistedAt');
   const harnessBoundAt = optionalTime('harnessBoundAt');
   const launchRequestedAt = optionalTime('launchRequestedAt');
@@ -2847,17 +3721,45 @@ const sprintRunnerHandbackDelivery = (value: unknown): ProductSprintRunnerHandba
   const semanticReassessmentRecordedAt = optionalTime('semanticReassessmentRecordedAt');
   const escalationIntentRecordedAt = optionalTime('escalationIntentRecordedAt');
   const escalationDeliveryRequestedAt = optionalTime('escalationDeliveryRequestedAt');
-  phaseCoherence({ deliveryRequestedAt, deliveryPersistedAt, harnessBoundAt, launchRequestedAt, launchAcceptedAt }, ['deliveryRequestedAt', 'deliveryPersistedAt', 'harnessBoundAt', 'launchRequestedAt', 'launchAcceptedAt'], 'Sprint Runner Handback delivery');
+  phaseCoherence(
+    {
+      deliveryRequestedAt,
+      deliveryPersistedAt,
+      harnessBoundAt,
+      launchRequestedAt,
+      launchAcceptedAt,
+    },
+    [
+      'deliveryRequestedAt',
+      'deliveryPersistedAt',
+      'harnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+    ],
+    'Sprint Runner Handback delivery',
+  );
   if (providerActivationObservedAt) {
     if (!launchAcceptedAt) fail('Handback provider observation lacks launch acceptance');
-    timestampAtOrAfter(launchAcceptedAt, providerActivationObservedAt, 'Handback provider observation');
+    timestampAtOrAfter(
+      launchAcceptedAt,
+      providerActivationObservedAt,
+      'Handback provider observation',
+    );
   }
   if (semanticReassessmentRecordedAt) {
     if (!launchAcceptedAt) fail('Handback reassessment lacks launch acceptance');
-    timestampAtOrAfter(launchAcceptedAt, semanticReassessmentRecordedAt, 'Handback semantic reassessment');
+    timestampAtOrAfter(
+      launchAcceptedAt,
+      semanticReassessmentRecordedAt,
+      'Handback semantic reassessment',
+    );
   }
-  const selectedMovement = x.selectedMovement === undefined ? undefined : sprintRunnerHandbackMovement(x.selectedMovement);
-  const selectedMovementKind = x.selectedMovementKind === undefined ? undefined : boundedString(x.selectedMovementKind, 96, 'selectedMovementKind');
+  const selectedMovement =
+    x.selectedMovement === undefined ? undefined : sprintRunnerHandbackMovement(x.selectedMovement);
+  const selectedMovementKind =
+    x.selectedMovementKind === undefined
+      ? undefined
+      : boundedString(x.selectedMovementKind, 96, 'selectedMovementKind');
   if ((selectedMovementKind === undefined) !== (selectedMovement === undefined))
     fail('selected Handback movement kind and detail must be paired');
   if (selectedMovement && selectedMovementKind !== selectedMovement.movementKind)
@@ -2871,10 +3773,22 @@ const sprintRunnerHandbackDelivery = (value: unknown): ProductSprintRunnerHandba
       fail('escalation delivery lacks selected local exhaustion movement');
     if (!semanticReassessmentRecordedAt) fail('escalation intent lacks semantic reassessment');
     if (!escalationIntentRecordedAt) fail('escalation delivery request lacks recorded intent');
-    timestampAtOrAfter(semanticReassessmentRecordedAt, escalationIntentRecordedAt, 'Handback escalation intent');
+    timestampAtOrAfter(
+      semanticReassessmentRecordedAt,
+      escalationIntentRecordedAt,
+      'Handback escalation intent',
+    );
     if (escalationDeliveryRequestedAt) {
-      timestampAtOrAfter(escalationIntentRecordedAt, escalationDeliveryRequestedAt, 'Handback escalation delivery');
-      timestampAtOrAfter(semanticReassessmentRecordedAt, escalationDeliveryRequestedAt, 'Handback escalation delivery');
+      timestampAtOrAfter(
+        escalationIntentRecordedAt,
+        escalationDeliveryRequestedAt,
+        'Handback escalation delivery',
+      );
+      timestampAtOrAfter(
+        semanticReassessmentRecordedAt,
+        escalationDeliveryRequestedAt,
+        'Handback escalation delivery',
+      );
     }
   }
   return {
@@ -3170,26 +4084,66 @@ function validate(query: OrchestrationNativeQueryV2) {
     'Work Unit materialization planning point',
   );
   unique(query.workUnits, (x) => x.workUnitId, 'materialized Work Unit ID');
-  unique(query.workUnitExecutionStates, (x) => x.workUnitId, 'Work Unit execution state Work Unit ID');
-  unique(query.workSliceExecutionGraphCompletions, (x) => x.materializationId, 'Work Slice graph completion materialization ID');
-  unique(query.workSliceExecutionSettlements, (x) => x.materializationId, 'Work Slice execution settlement materialization ID');
-  unique(query.workSlicePlanningPointExecutionSettlements, (x) => x.planningPointId, 'Work Slice planning-point execution settlement planning point ID');
-  unique(query.workSliceExecutionAttentions, (x) => x.materializationId, 'Work Slice execution attention materialization ID');
+  unique(
+    query.workUnitExecutionStates,
+    (x) => x.workUnitId,
+    'Work Unit execution state Work Unit ID',
+  );
+  unique(
+    query.workSliceExecutionGraphCompletions,
+    (x) => x.materializationId,
+    'Work Slice graph completion materialization ID',
+  );
+  unique(
+    query.workSliceExecutionSettlements,
+    (x) => x.materializationId,
+    'Work Slice execution settlement materialization ID',
+  );
+  unique(
+    query.workSlicePlanningPointExecutionSettlements,
+    (x) => x.planningPointId,
+    'Work Slice planning-point execution settlement planning point ID',
+  );
+  unique(
+    query.workSliceExecutionAttentions,
+    (x) => x.materializationId,
+    'Work Slice execution attention materialization ID',
+  );
   unique(query.workUnitRelationships, (x) => x.relationshipId, 'Work Unit relationship ID');
-  unique(query.dependencyActivationIntents, (x) => x.workUnitId, 'dependency activation intent Work Unit ID');
+  unique(
+    query.dependencyActivationIntents,
+    (x) => x.workUnitId,
+    'dependency activation intent Work Unit ID',
+  );
   const materializations = new Map(
     query.workUnitMaterializations.map((x) => [x.materializationId, x]),
   );
   const unitsById = new Map(query.workUnits.map((unit) => [unit.workUnitId, unit]));
-  const stateByUnitId = new Map(query.workUnitExecutionStates.map((state) => [state.workUnitId, state]));
-  const completionByMaterializationId = new Map(query.workSliceExecutionGraphCompletions.map((item) => [item.materializationId, item]));
-  const settlementByMaterializationId = new Map(query.workSliceExecutionSettlements.map((item) => [item.materializationId, item]));
-  const attentionByMaterializationId = new Map(query.workSliceExecutionAttentions.map((item) => [item.materializationId, item]));
+  const stateByUnitId = new Map(
+    query.workUnitExecutionStates.map((state) => [state.workUnitId, state]),
+  );
+  const completionByMaterializationId = new Map(
+    query.workSliceExecutionGraphCompletions.map((item) => [item.materializationId, item]),
+  );
+  const settlementByMaterializationId = new Map(
+    query.workSliceExecutionSettlements.map((item) => [item.materializationId, item]),
+  );
+  const attentionByMaterializationId = new Map(
+    query.workSliceExecutionAttentions.map((item) => [item.materializationId, item]),
+  );
   query.dependencyActivationIntents.forEach((intent) => {
     const unit = unitsById.get(intent.workUnitId);
     const materialization = materializations.get(intent.materializationId);
-    if (!unit || !materialization || unit.materializationId !== intent.materializationId || unit.acceptedRevisionId !== intent.acceptedRevisionId || materialization.acceptedRevisionId !== intent.acceptedRevisionId)
-      fail('dependency activation intent has invalid Work Unit/materialization/revision correlation');
+    if (
+      !unit ||
+      !materialization ||
+      unit.materializationId !== intent.materializationId ||
+      unit.acceptedRevisionId !== intent.acceptedRevisionId ||
+      materialization.acceptedRevisionId !== intent.acceptedRevisionId
+    )
+      fail(
+        'dependency activation intent has invalid Work Unit/materialization/revision correlation',
+      );
   });
   query.workUnitMaterializations.forEach((materialization) => {
     if (!query.initiatedEpics.some((epic) => epic.epicId === materialization.epicId))
@@ -3231,18 +4185,55 @@ function validate(query: OrchestrationNativeQueryV2) {
         fail('materialized Work Unit does not match its materialization');
       validateActivationCorrelations(unit);
     });
-    if (query.workUnitExecutionStates.length && units.some((unit) => !stateByUnitId.has(unit.workUnitId))) fail('productive execution state is incomplete');
+    if (
+      query.workUnitExecutionStates.length &&
+      units.some((unit) => !stateByUnitId.has(unit.workUnitId))
+    )
+      fail('productive execution state is incomplete');
     const completion = completionByMaterializationId.get(materialization.materializationId);
     const attention = attentionByMaterializationId.get(materialization.materializationId);
     if (completion) {
-      if (completion.acceptedRevisionId !== materialization.acceptedRevisionId || attention || units.some((unit) => stateByUnitId.get(unit.workUnitId)?.state !== 'settled')) fail('Work Slice graph completion is incoherent');
+      if (
+        completion.acceptedRevisionId !== materialization.acceptedRevisionId ||
+        attention ||
+        units.some((unit) => stateByUnitId.get(unit.workUnitId)?.state !== 'settled')
+      )
+        fail('Work Slice graph completion is incoherent');
       const settlement = settlementByMaterializationId.get(materialization.materializationId);
-      if (settlement && (settlement.graphCompletionMaterializationId !== materialization.materializationId || Date.parse(settlement.settledAt) < Date.parse(completion.completedAt))) fail('Work Slice execution settlement is incoherent');
-    } else if (settlementByMaterializationId.has(materialization.materializationId)) fail('Work Slice execution settlement lacks graph completion');
+      if (
+        settlement &&
+        (settlement.graphCompletionMaterializationId !== materialization.materializationId ||
+          Date.parse(settlement.settledAt) < Date.parse(completion.completedAt))
+      )
+        fail('Work Slice execution settlement is incoherent');
+    } else if (settlementByMaterializationId.has(materialization.materializationId))
+      fail('Work Slice execution settlement lacks graph completion');
   });
-  query.workUnitExecutionStates.forEach((state) => { const unit = unitsById.get(state.workUnitId); if (!unit || unit.materializationId !== state.materializationId || unit.acceptedRevisionId !== state.acceptedRevisionId) fail('Work Unit execution state has invalid correlation'); });
-  query.workSliceExecutionAttentions.forEach((attention) => { if (!materializations.has(attention.materializationId)) fail('Work Slice execution attention references unknown materialization'); });
-  query.workSlicePlanningPointExecutionSettlements.forEach((item) => { const materialization = materializations.get(item.materializationId); const settlement = settlementByMaterializationId.get(item.materializationId); if (!materialization || item.planningPointId !== materialization.planningPointId || item.workSliceExecutionMaterializationId !== item.materializationId || !settlement || Date.parse(item.settledAt) < Date.parse(settlement.settledAt)) fail('Work Slice planning-point execution settlement is incoherent'); });
+  query.workUnitExecutionStates.forEach((state) => {
+    const unit = unitsById.get(state.workUnitId);
+    if (
+      !unit ||
+      unit.materializationId !== state.materializationId ||
+      unit.acceptedRevisionId !== state.acceptedRevisionId
+    )
+      fail('Work Unit execution state has invalid correlation');
+  });
+  query.workSliceExecutionAttentions.forEach((attention) => {
+    if (!materializations.has(attention.materializationId))
+      fail('Work Slice execution attention references unknown materialization');
+  });
+  query.workSlicePlanningPointExecutionSettlements.forEach((item) => {
+    const materialization = materializations.get(item.materializationId);
+    const settlement = settlementByMaterializationId.get(item.materializationId);
+    if (
+      !materialization ||
+      item.planningPointId !== materialization.planningPointId ||
+      item.workSliceExecutionMaterializationId !== item.materializationId ||
+      !settlement ||
+      Date.parse(item.settledAt) < Date.parse(settlement.settledAt)
+    )
+      fail('Work Slice planning-point execution settlement is incoherent');
+  });
   if (query.workUnits.some((unit) => !materializations.has(unit.materializationId)))
     fail('materialized Work Unit references unknown materialization');
   if (query.workUnitRelationships.some((item) => !materializations.has(item.materializationId)))
@@ -3256,7 +4247,9 @@ function validateSprintResultProjection(query: OrchestrationNativeQueryV2) {
   unique(projections, (item) => item.decisionId, 'Sprint-result projection decision ID');
   const sprintById = new Map(query.initiatedSprints.map((sprint) => [sprint.sprintId, sprint]));
   const resultById = new Map(query.sprintUpwardResults.map((result) => [result.resultId, result]));
-  const decisionById = new Map(query.sprintContinuationDecisions.map((decision) => [decision.decisionId, decision]));
+  const decisionById = new Map(
+    query.sprintContinuationDecisions.map((decision) => [decision.decisionId, decision]),
+  );
   const projectionResults = new Set<string>();
   for (const projection of projections) {
     const result = resultById.get(projection.resultId);
@@ -3275,11 +4268,18 @@ function validateSprintResultProjection(query: OrchestrationNativeQueryV2) {
     projectionResults.add(projection.resultId);
     if (projection.realization?.outcomeKind === 'successor_request') {
       const successor = sprintById.get(projection.realization.successorSprintId!);
-      if (!successor || successor.epicId !== projection.epicId || successor.ordinal !== sprint.ordinal + 1)
+      if (
+        !successor ||
+        successor.epicId !== projection.epicId ||
+        successor.ordinal !== sprint.ordinal + 1
+      )
         fail('Sprint-result successor is foreign or non-consecutive');
     }
   }
-  if (projections.length !== query.sprintUpwardResults.length || query.sprintUpwardResults.some((result) => !projectionResults.has(result.resultId)))
+  if (
+    projections.length !== query.sprintUpwardResults.length ||
+    query.sprintUpwardResults.some((result) => !projectionResults.has(result.resultId))
+  )
     fail('Sprint-result projection bundle is incomplete');
 }
 
@@ -3308,7 +4308,8 @@ function validateSprintContinuationProjection(query: OrchestrationNativeQueryV2)
   const decisionsById = new Map(decisions.map((decision) => [decision.decisionId, decision]));
   const decisionsBySprint = new Map<string, NativeSprintContinuationDecisionV1[]>();
   for (const decision of decisions) {
-    if (!sprintIds.has(decision.sprintId)) fail('Sprint continuation decision references an unknown Sprint');
+    if (!sprintIds.has(decision.sprintId))
+      fail('Sprint continuation decision references an unknown Sprint');
     const knownReason = knownSprintContinuationReason(decision.reason);
     if (knownReason !== 'unknown' && knownReason !== decision.state)
       fail('Sprint continuation decision state and reason contradict');
@@ -3345,7 +4346,8 @@ function validateSprintContinuationProjection(query: OrchestrationNativeQueryV2)
       fail('Sprint continuation latest materialization snapshot is stale');
   }
   for (const pointer of current) {
-    if (!sprintIds.has(pointer.sprintId)) fail('Sprint current decision references an unknown Sprint');
+    if (!sprintIds.has(pointer.sprintId))
+      fail('Sprint current decision references an unknown Sprint');
     const decision = decisionsById.get(pointer.decisionId);
     if (
       !decision ||
@@ -3374,7 +4376,9 @@ function validateSprintContinuationProjection(query: OrchestrationNativeQueryV2)
     fail('Sprint continuation history lacks one separate upward result per decision');
 }
 
-function knownSprintContinuationReason(reason: string): NativeSprintContinuationStateV1 | 'unknown' {
+function knownSprintContinuationReason(
+  reason: string,
+): NativeSprintContinuationStateV1 | 'unknown' {
   if (
     [
       'continue_eligible_work',
@@ -3408,7 +4412,11 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
   const retries = unit.retryAttempts;
   if (unit.integration) {
     const terminal = history.at(-1);
-    if (!terminal?.handlerDecision || terminal.handlerDecision.variant !== 'accepted' || terminal.incompleteDisposition)
+    if (
+      !terminal?.handlerDecision ||
+      terminal.handlerDecision.variant !== 'accepted' ||
+      terminal.incompleteDisposition
+    )
       fail('productive integration requires the final attempt to be accepted');
   }
   if (continuation) {
@@ -3466,10 +4474,21 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
       origin.incompleteDisposition === undefined &&
       origin.handlerDecision?.variant === 'returned' &&
       origin.handlerDecision.retryRequiredAt !== undefined;
-    if (!origin || !predecessor || predecessor.attemptId !== origin.attemptId || !originOutcome || retry.ordinal !== origin.ordinal + 1)
+    if (
+      !origin ||
+      !predecessor ||
+      predecessor.attemptId !== origin.attemptId ||
+      !originOutcome ||
+      retry.ordinal !== origin.ordinal + 1
+    )
       fail('retry attempt does not match its exact predecessor history member');
-    if (!legacyOrdinalOne && (!disposition || !disposition.meaningfulProgress || !disposition.nextAttemptAuthorizedAt))
-      fail('retry attempt requires a returned Handler decision or exact meaningful-progress authorization from its predecessor');
+    if (
+      !legacyOrdinalOne &&
+      (!disposition || !disposition.meaningfulProgress || !disposition.nextAttemptAuthorizedAt)
+    )
+      fail(
+        'retry attempt requires a returned Handler decision or exact meaningful-progress authorization from its predecessor',
+      );
     if (
       retry.implementerSessionId === originOutcome.implementerSessionId ||
       retry.implementerInvocationId === originOutcome.originalImplementerInvocationId
@@ -3485,19 +4504,33 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
     phaseCoherence(
       retry,
       [
-        'captureRequestedAt', 'candidatePinnedAt', 'authorizedAt',
-        'executionSupportGrantedAt', 'isolatedWorktreeReadyAt', 'implementerSessionCreatedAt',
-        'implementerInvocationPreparedAt', 'implementerHarnessBoundAt', 'launchRequestedAt',
-        'launchAcceptedAt', 'retryReadyAt',
+        'captureRequestedAt',
+        'candidatePinnedAt',
+        'authorizedAt',
+        'executionSupportGrantedAt',
+        'isolatedWorktreeReadyAt',
+        'implementerSessionCreatedAt',
+        'implementerInvocationPreparedAt',
+        'implementerHarnessBoundAt',
+        'launchRequestedAt',
+        'launchAcceptedAt',
+        'retryReadyAt',
       ],
       'retry Implementer activation',
     );
     if (retry.providerActivationObservedAt) {
-      if (!retry.launchRequestedAt)
-        fail('retry provider observation lacks launch request');
-      timestampAtOrAfter(retry.launchRequestedAt, retry.providerActivationObservedAt, 'retry provider observation');
+      if (!retry.launchRequestedAt) fail('retry provider observation lacks launch request');
+      timestampAtOrAfter(
+        retry.launchRequestedAt,
+        retry.providerActivationObservedAt,
+        'retry provider observation',
+      );
       if (retry.launchAcceptedAt)
-        timestampAtOrAfter(retry.launchAcceptedAt, retry.providerActivationObservedAt, 'retry provider observation');
+        timestampAtOrAfter(
+          retry.launchAcceptedAt,
+          retry.providerActivationObservedAt,
+          'retry provider observation',
+        );
     }
     if (retry.retryReadyAt && !retry.launchAcceptedAt)
       fail('retry readiness lacks launch acceptance');
@@ -3509,7 +4542,8 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
     if (
       retryHistory?.implementerOutcome &&
       (retryHistory.implementerOutcome.implementerSessionId !== retry.implementerSessionId ||
-        retryHistory.implementerOutcome.originalImplementerInvocationId !== retry.implementerInvocationId)
+        retryHistory.implementerOutcome.originalImplementerInvocationId !==
+          retry.implementerInvocationId)
     )
       fail('retry attempt history does not match its exact Session and invocation');
     if (!retryHistory && history.some((member) => member.attemptId === retry.retryAttemptId))
@@ -3519,7 +4553,9 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
   const attemptIds = new Set<string>();
   for (const member of history) {
     if (member.ordinal !== expectedOrdinal || attemptIds.has(member.attemptId))
-      fail('Work Unit attempt history must be strictly ordered without gaps and use unique identities');
+      fail(
+        'Work Unit attempt history must be strictly ordered without gaps and use unique identities',
+      );
     expectedOrdinal += 1;
     attemptIds.add(member.attemptId);
     const memberOutcome = member.implementerOutcome;
@@ -3543,9 +4579,12 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
         fail('Handler review requires the accepted Implementer claims and evidence');
       if (
         memberReview.delivered.summaryClaim !== memberOutcome.submittedOutcome.summaryClaim ||
-        memberReview.delivered.validationStatementClaim !== memberOutcome.submittedOutcome.validationStatementClaim ||
-        memberReview.delivered.comparisonFingerprint !== memberOutcome.evidence.comparisonFingerprint ||
-        JSON.stringify(memberReview.delivered.changedFiles) !== JSON.stringify(memberOutcome.evidence.changedFiles)
+        memberReview.delivered.validationStatementClaim !==
+          memberOutcome.submittedOutcome.validationStatementClaim ||
+        memberReview.delivered.comparisonFingerprint !==
+          memberOutcome.evidence.comparisonFingerprint ||
+        JSON.stringify(memberReview.delivered.changedFiles) !==
+          JSON.stringify(memberOutcome.evidence.changedFiles)
       )
         fail('Handler review delivered evidence differs from the Implementer outcome');
       if (memberReview.semanticJudgment && !memberReview.launchAcceptedAt)
@@ -3560,16 +4599,24 @@ function validateActivationCorrelations(unit: NativeMaterializedWorkUnitV1) {
         memberReview.lifecycle?.status !== 'completed'
       )
         fail('Handler decision lacks exact completed review correlation');
-      const expectedVariant = memberReview.semanticJudgment.variant === 'accept' ? 'accepted' : 'returned';
+      const expectedVariant =
+        memberReview.semanticJudgment.variant === 'accept' ? 'accepted' : 'returned';
       if (memberDecision.variant !== expectedVariant)
         fail('Handler decision contradicts semantic judgment');
       if (memberDecision.variant === 'returned') {
-        if (JSON.stringify(memberDecision.returnReason) !== JSON.stringify(memberReview.semanticJudgment.reason))
+        if (
+          JSON.stringify(memberDecision.returnReason) !==
+          JSON.stringify(memberReview.semanticJudgment.reason)
+        )
           fail('Handler decision return reason differs from semantic judgment');
       } else if (memberDecision.returnReason) {
         fail('accepted Handler decision cannot have a return reason');
       }
-      timestampAtOrAfter(memberReview.lifecycle.observedAt, memberDecision.recordedAt, 'Handler decision');
+      timestampAtOrAfter(
+        memberReview.lifecycle.observedAt,
+        memberDecision.recordedAt,
+        'Handler decision',
+      );
     }
     const memberDisposition = member.incompleteDisposition;
     if (memberDisposition) {

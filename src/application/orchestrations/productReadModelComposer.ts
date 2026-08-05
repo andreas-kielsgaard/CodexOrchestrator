@@ -160,14 +160,83 @@ function validateSprintResultProjections(
     const sprint = sprintById.get(projection.sprintId);
     if (!sprint || sprint.epicId !== projection.epicId)
       fail('Sprint-result projection has a foreign Sprint or Epic link');
+    if (
+      projection.realization &&
+      (!projection.disposition || !projection.receiver?.semanticReassessmentRecordedAt)
+    )
+      fail('Sprint-result realization lacks its exact disposition and semantic receiver');
+    if (
+      projection.realization &&
+      projection.realization.outcomeKind !== 'retained_attention' &&
+      (projection.resultKind !== 'settled' ||
+        localDecision.state !== 'settled' ||
+        projection.disposition?.movementKind !== 'advance_to_next_approved_sprint')
+    )
+      fail(
+        'Sprint-result successor or readiness is not authorized by the exact settled advance disposition',
+      );
     if (projection.realization?.outcomeKind === 'successor_request') {
       const successor = [...sprintById.values()].find(
         (candidate) => candidate.sprintId === projection.realization?.successorSprintId,
       );
-      const sourceOrdinal = events.sprints.findIndex((candidate) => candidate.sprintId === sprint.sprintId);
-      const successorOrdinal = events.sprints.findIndex((candidate) => candidate.sprintId === successor?.sprintId);
-      if (!successor || successor.epicId !== projection.epicId || successorOrdinal !== sourceOrdinal + 1)
+      const sourceOrdinal = events.sprints.findIndex(
+        (candidate) => candidate.sprintId === sprint.sprintId,
+      );
+      const successorOrdinal = events.sprints.findIndex(
+        (candidate) => candidate.sprintId === successor?.sprintId,
+      );
+      if (
+        !successor ||
+        successor.epicId !== projection.epicId ||
+        successorOrdinal !== sourceOrdinal + 1
+      )
         fail('Sprint-result successor is foreign or non-consecutive');
+      const transition = input.sprintRunnerTransition?.query.transitions.find(
+        (candidate) =>
+          candidate.sprintId === successor.sprintId && candidate.epicId === projection.epicId,
+      );
+      if (!transition || !projection.realization.successorTransition)
+        fail('Sprint-result successor lacks its exact Sprint Runner transition');
+      const projectedTransition = projection.realization.successorTransition;
+      const transitionStages = [
+        ['requestedAt', transition.requestedAt],
+        ['authorizedAt', transition.authorizedAt],
+        ['sessionCreatedAt', transition.sessionCreatedAt],
+        ['harnessAppliedAt', transition.harnessAppliedAt],
+        ['launchAcceptedAt', transition.launchAcceptedAt],
+        ['preStartSemanticOutcomeRecordedAt', transition.preStartSemanticOutcomeRecordedAt],
+        ['preStartLifecycleObservedAt', transition.preStartLifecycleObservedAt],
+        ['preStartOutcomeAcceptedAt', transition.preStartOutcomeAcceptedAt],
+        ['parentContinuationDeliveryRequestedAt', transition.parentContinuationDeliveryRequestedAt],
+        ['parentContinuationDeliveryPersistedAt', transition.parentContinuationDeliveryPersistedAt],
+        ['epicContinuationLaunchAcceptedAt', transition.epicContinuationLaunchAcceptedAt],
+        ['providerReceiverActivationObservedAt', transition.providerReceiverActivationObservedAt],
+        ['sprintStartAuthorizedAt', transition.sprintStartAuthorizedAt],
+        ['sprintStartPersistedAt', transition.sprintStartPersistedAt],
+        ['sprintContinuationLaunchAcceptedAt', transition.sprintContinuationLaunchAcceptedAt],
+        [
+          'repositoryBranchReevaluationRecordedAt',
+          transition.repositoryBranchReevaluationRecordedAt,
+        ],
+        [
+          'startedReevaluationLifecycleObservedAt',
+          transition.startedReevaluationLifecycleObservedAt,
+        ],
+      ] as const;
+      for (const [stage, value] of transitionStages) {
+        if (projectedTransition[stage] !== value)
+          fail(
+            'Sprint-result successor transition does not match the productive Sprint Runner transition',
+          );
+      }
+      if (
+        projectedTransition.preStartReady !== transition.preStartReady ||
+        projectedTransition.lifecycleObserved !== transition.lifecycleObserved ||
+        projectedTransition.accepted !== transition.accepted
+      )
+        fail(
+          'Sprint-result successor transition lifecycle does not match the productive transition',
+        );
     }
   });
 }
@@ -258,12 +327,15 @@ function composeSprint(
     'current revision view',
   );
   const epicEscalationReceivers = currentWorkUnits.flatMap((unit) =>
-    (unit.attemptHistory ?? []).flatMap((attempt) =>
-      attempt.incompleteDisposition?.noProgressHandback?.epicRunnerReceiver ?? [],
+    (unit.attemptHistory ?? []).flatMap(
+      (attempt) => attempt.incompleteDisposition?.noProgressHandback?.epicRunnerReceiver ?? [],
     ),
   );
   for (const receiver of epicEscalationReceivers) {
-    if (receiver.sprintId !== sprintId || receiver.epicId !== (events.sprints.find((item) => item.sprintId === sprintId)?.epicId ?? ''))
+    if (
+      receiver.sprintId !== sprintId ||
+      receiver.epicId !== (events.sprints.find((item) => item.sprintId === sprintId)?.epicId ?? '')
+    )
       fail('Epic escalation receiver does not match its Sprint and Epic owner');
   }
   return {

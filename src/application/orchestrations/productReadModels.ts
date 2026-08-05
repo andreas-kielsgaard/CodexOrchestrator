@@ -431,7 +431,14 @@ export type ProductWorkUnitIntegrationV1 = Readonly<{
   }>;
 }>;
 export type ProductWorkUnitExecutionStateV1 = Readonly<{
-  readonly state: 'waiting_on_prerequisites' | 'ready' | 'active' | 'retry_authorized' | 'handed_back' | 'settled' | 'attention';
+  readonly state:
+    | 'waiting_on_prerequisites'
+    | 'ready'
+    | 'active'
+    | 'retry_authorized'
+    | 'handed_back'
+    | 'settled'
+    | 'attention';
   readonly recordedAt: string;
 }>;
 
@@ -458,10 +465,7 @@ export type ProductWorkUnitIncompleteDispositionV1 = Readonly<{
 }>;
 
 export type ProductSprintRunnerHandbackDependencyOwnerClassificationV1 =
-  | 'work_unit_handler'
-  | 'work_unit_implementer'
-  | 'work_slice_planner'
-  | 'sprint_runner';
+  'work_unit_handler' | 'work_unit_implementer' | 'work_slice_planner' | 'sprint_runner';
 
 export type ProductSprintRunnerHandbackBoundedDetailV1 = Readonly<{
   readonly label: string;
@@ -473,9 +477,7 @@ export type ProductSprintRunnerHandbackUnknownMovementKindV1 = string & {
 };
 
 export type ProductSprintRunnerHandbackKnownMovementKindV1 =
-  | 'continue_eligible_work'
-  | 'wait_for_agent_dependency'
-  | 'local_exhaustion_escalate';
+  'continue_eligible_work' | 'wait_for_agent_dependency' | 'local_exhaustion_escalate';
 
 export type ProductSprintRunnerHandbackMovementV1 = Readonly<
   | {
@@ -574,7 +576,28 @@ export type ProductSprintResultProjectionV1 = Readonly<{
     readonly outcomeKind: 'successor_request' | 'terminal_readiness' | 'retained_attention';
     readonly consideredAt: string;
     readonly successorSprintId?: string;
-    readonly successorRequestedAt?: string;
+    readonly successorTransition?: Readonly<{
+      readonly requestedAt: string;
+      readonly authorizedAt: string;
+      readonly sessionCreatedAt?: string;
+      readonly harnessAppliedAt?: string;
+      readonly launchAcceptedAt?: string;
+      readonly preStartReady: boolean;
+      readonly lifecycleObserved: boolean;
+      readonly accepted: boolean;
+      readonly preStartSemanticOutcomeRecordedAt?: string;
+      readonly preStartLifecycleObservedAt?: string;
+      readonly preStartOutcomeAcceptedAt?: string;
+      readonly parentContinuationDeliveryRequestedAt?: string;
+      readonly parentContinuationDeliveryPersistedAt?: string;
+      readonly epicContinuationLaunchAcceptedAt?: string;
+      readonly providerReceiverActivationObservedAt?: string;
+      readonly sprintStartAuthorizedAt?: string;
+      readonly sprintStartPersistedAt?: string;
+      readonly sprintContinuationLaunchAcceptedAt?: string;
+      readonly repositoryBranchReevaluationRecordedAt?: string;
+      readonly startedReevaluationLifecycleObservedAt?: string;
+    }>;
     readonly successorRequestRecordedAt?: string;
     readonly terminalReadinessRecordedAt?: string;
     readonly retainedAttentionCode?: string;
