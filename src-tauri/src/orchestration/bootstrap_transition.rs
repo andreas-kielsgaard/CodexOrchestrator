@@ -76,6 +76,12 @@ CREATE TABLE IF NOT EXISTS epic_bootstrap_transitions (
   runner_launched_at TEXT,
   runner_lifecycle_status TEXT,
   runner_lifecycle_observed_at TEXT,
+  runner_authorized_sprint_id TEXT,
+  runner_recovery_invocation_id TEXT UNIQUE,
+  runner_recovery_harness_key TEXT,
+  runner_recovery_harness_version INTEGER,
+  runner_recovery_harness_applied_at TEXT,
+  runner_recovery_launch_accepted_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (initiation_id) REFERENCES epic_initiations(id) ON DELETE RESTRICT
@@ -115,6 +121,12 @@ ALTER TABLE epic_bootstrap_transitions ADD COLUMN runner_harness_key TEXT;
 ALTER TABLE epic_bootstrap_transitions ADD COLUMN runner_harness_version INTEGER;
 ALTER TABLE epic_bootstrap_transitions ADD COLUMN runner_harness_requested_at TEXT;
 ALTER TABLE epic_bootstrap_transitions ADD COLUMN runner_harness_applied_at TEXT;
+ALTER TABLE epic_bootstrap_transitions ADD COLUMN runner_authorized_sprint_id TEXT;
+ALTER TABLE epic_bootstrap_transitions ADD COLUMN runner_recovery_invocation_id TEXT;
+ALTER TABLE epic_bootstrap_transitions ADD COLUMN runner_recovery_harness_key TEXT;
+ALTER TABLE epic_bootstrap_transitions ADD COLUMN runner_recovery_harness_version INTEGER;
+ALTER TABLE epic_bootstrap_transitions ADD COLUMN runner_recovery_harness_applied_at TEXT;
+ALTER TABLE epic_bootstrap_transitions ADD COLUMN runner_recovery_launch_accepted_at TEXT;
 "#;
 
 pub(crate) const POST_CONFIRMATION_ATTEMPT_SCHEMA: &str = r#"
@@ -326,6 +338,14 @@ struct TransitionRecord {
     runner_harness_requested_at: Option<String>,
     runner_harness_applied_at: Option<String>,
     runner_launched_at: Option<String>,
+    runner_lifecycle_status: Option<String>,
+    runner_lifecycle_observed_at: Option<String>,
+    runner_authorized_sprint_id: Option<String>,
+    runner_recovery_invocation_id: Option<String>,
+    runner_recovery_harness_key: Option<String>,
+    runner_recovery_harness_version: Option<u16>,
+    runner_recovery_harness_applied_at: Option<String>,
+    runner_recovery_launch_accepted_at: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -558,6 +578,103 @@ impl SqliteBootstrapTransitionRepository {
                     .into(),
             ));
         }
+        Ok(())
+    }
+
+    /// The product chooses the first durable Sprint in the initiated Epic.  The Runner receives
+    /// this opaque identity; titles and transcript text are not routing authority.
+    fn bind_runner_authorized_sprint(
+        &self,
+        initiation_id: &str,
+        epic_id: &str,
+    ) -> Result<String, TransitionError> {
+        let now = self.timestamp();
+        let connection = self.lock()?;
+        let sprint_id: String = connection
+            .query_row(
+                "SELECT id FROM initiated_sprints WHERE epic_id=?1 ORDER BY ordinal,id LIMIT 1",
+                [epic_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(sql_unavailable("load durable authorized Sprint"))?
+            .ok_or_else(|| {
+                TransitionError::IdentityMismatch(
+                    "the initiated Epic has no durable authorized Sprint".into(),
+                )
+            })?;
+        let changed = connection
+            .execute(
+                "UPDATE epic_bootstrap_transitions SET runner_authorized_sprint_id=COALESCE(runner_authorized_sprint_id,?2),updated_at=?3 WHERE initiation_id=?1 AND epic_id=?4 AND (runner_authorized_sprint_id IS NULL OR runner_authorized_sprint_id=?2)",
+                params![initiation_id,sprint_id,now,epic_id],
+            )
+            .map_err(sql_unavailable("bind durable authorized Sprint for Epic Runner"))?;
+        if changed != 1 {
+            return Err(TransitionError::IdentityMismatch(
+                "Epic Runner durable Sprint identity conflicts with the initiated Epic".into(),
+            ));
+        }
+        Ok(sprint_id)
+    }
+
+    /// A Sprint transition is the durable semantic acceptance of the Runner's selection.  Any
+    /// unexpected correlation is an authority conflict, never a recovery candidate.
+    fn runner_selection_exists(&self, record: &TransitionRecord) -> Result<bool, TransitionError> {
+        let sprint_id = record.runner_authorized_sprint_id.as_ref().ok_or_else(|| {
+            TransitionError::IdentityMismatch("Epic Runner has no bound Sprint identity".into())
+        })?;
+        let connection = self.lock()?;
+        let selections: Vec<(String, String)> = connection
+            .prepare("SELECT sprint_id,epic_id FROM sprint_runner_transitions WHERE epic_runner_invocation_id=?1")
+            .map_err(sql_unavailable("prepare Epic Runner selection check"))?
+            .query_map([&record.runner_invocation_id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(sql_unavailable("read Epic Runner selection check"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql_unavailable("collect Epic Runner selection check"))?;
+        match selections.as_slice() {
+            [] => Ok(false),
+            [(selected_sprint, selected_epic)]
+                if selected_sprint == sprint_id && selected_epic == &record.epic_id => Ok(true),
+            _ => Err(TransitionError::IdentityMismatch(
+                "Epic Runner selection does not match its durable Sprint authority".into(),
+            )),
+        }
+    }
+
+    fn bind_runner_recovery(
+        &self,
+        record: &TransitionRecord,
+        harness_key: &str,
+        harness_version: u16,
+    ) -> Result<String, TransitionError> {
+        let invocation_id = stable_id("epic-runner-unselected-recovery", &record.initiation_id);
+        let now = self.timestamp();
+        let connection = self.lock()?;
+        let changed = connection.execute(
+            "UPDATE epic_bootstrap_transitions SET runner_recovery_invocation_id=COALESCE(runner_recovery_invocation_id,?2),runner_recovery_harness_key=COALESCE(runner_recovery_harness_key,?3),runner_recovery_harness_version=COALESCE(runner_recovery_harness_version,?4),updated_at=?5 WHERE initiation_id=?1 AND runner_lifecycle_status='completed' AND runner_lifecycle_observed_at IS NOT NULL AND runner_authorized_sprint_id IS NOT NULL AND (runner_recovery_invocation_id IS NULL OR (runner_recovery_invocation_id=?2 AND runner_recovery_harness_key=?3 AND runner_recovery_harness_version=?4))",
+            params![record.initiation_id,invocation_id,harness_key,harness_version,now],
+        ).map_err(sql_unavailable("bind Epic Runner no-selection recovery"))?;
+        if changed != 1 {
+            return Err(TransitionError::IdentityMismatch(
+                "Epic Runner no-selection recovery does not match the completed durable invocation".into(),
+            ));
+        }
+        Ok(invocation_id)
+    }
+
+    fn record_runner_recovery_stage(
+        &self,
+        initiation_id: &str,
+        column: &str,
+    ) -> Result<(), TransitionError> {
+        if !["runner_recovery_harness_applied_at", "runner_recovery_launch_accepted_at"].contains(&column) {
+            return Err(TransitionError::Unavailable("invalid Epic Runner recovery stage".into()));
+        }
+        let now = self.timestamp();
+        self.lock()?.execute(
+            &format!("UPDATE epic_bootstrap_transitions SET {column}=COALESCE({column},?2),updated_at=?2 WHERE initiation_id=?1"),
+            params![initiation_id,now],
+        ).map_err(sql_unavailable("record Epic Runner recovery stage"))?;
         Ok(())
     }
 
@@ -1323,6 +1440,8 @@ impl PostConfirmationTransitionService {
                 record = self.repository.transition(initiation_id)?;
                 self.ensure_runner(&record, &attempt.id)?;
             }
+            let runner = self.repository.transition(initiation_id)?;
+            self.ensure_runner_no_selection_recovery(&runner, &attempt.id)?;
         }
         Ok(())
     }
@@ -1332,6 +1451,9 @@ impl PostConfirmationTransitionService {
         record: &TransitionRecord,
         accepted_attempt_id: &str,
     ) -> Result<(), TransitionError> {
+        let authorized_sprint_id = self
+            .repository
+            .bind_runner_authorized_sprint(&record.initiation_id, &record.epic_id)?;
         let harness = conversation_harness::profile(ConversationHarnessRole::EpicRunner)
             .map_err(TransitionError::Unavailable)?;
         let discovery_root =
@@ -1406,7 +1528,7 @@ impl PostConfirmationTransitionService {
                                 message: SendAgentSessionMessageCommand {
                                     session_id: Some(session_id),
                                     submitted_text: self
-                                        .runner_prompt(&refreshed, accepted_attempt_id)?,
+                                        .runner_prompt(&refreshed, accepted_attempt_id, &authorized_sprint_id)?,
                                     title: None,
                                     working_directory: Some(discovery_root),
                                     requested_options: Some(harness.runtime_options()),
@@ -1428,22 +1550,159 @@ impl PostConfirmationTransitionService {
         Ok(())
     }
 
+    fn ensure_runner_no_selection_recovery(
+        self: &Arc<Self>,
+        record: &TransitionRecord,
+        accepted_attempt_id: &str,
+    ) -> Result<(), TransitionError> {
+        if record.runner_lifecycle_status.as_deref() != Some("completed")
+            || record.runner_lifecycle_observed_at.is_none()
+        {
+            return Ok(());
+        }
+        let authorized_sprint_id = self
+            .repository
+            .bind_runner_authorized_sprint(&record.initiation_id, &record.epic_id)?;
+        let refreshed = self.repository.transition(&record.initiation_id)?;
+        if self.repository.runner_selection_exists(&refreshed)? {
+            return Ok(());
+        }
+        let session_id = AgentSessionId::new(refreshed.runner_session_id.clone())
+            .map_err(|error| TransitionError::IdentityMismatch(error.to_string()))?;
+        let history = self
+            .sessions
+            .load_session(&session_id)
+            .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
+        if !history.invocations.iter().any(|candidate| {
+            candidate.invocation.id.as_str() == refreshed.runner_invocation_id
+                && candidate.invocation.status == AgentInvocationStatus::Completed
+        }) {
+            return Err(TransitionError::IdentityMismatch(
+                "completed Epic Runner lifecycle is not bound to its durable application Session"
+                    .into(),
+            ));
+        }
+        let harness = conversation_harness::profile(ConversationHarnessRole::EpicRunner)
+            .map_err(TransitionError::Unavailable)?;
+        let invocation_id = AgentInvocationId::new(self.repository.bind_runner_recovery(
+            &refreshed,
+            &harness.key,
+            harness.version,
+        )?)
+        .map_err(|error| TransitionError::IdentityMismatch(error.to_string()))?;
+        match self
+            .sessions
+            .application_invocation_launch_evidence(&invocation_id, &session_id)
+            .map_err(|error| TransitionError::Unavailable(error.to_string()))?
+        {
+            ApplicationInvocationLaunchEvidence::LaunchAccepted => {
+                self.repository.record_runner_recovery_stage(
+                    &refreshed.initiation_id,
+                    "runner_recovery_launch_accepted_at",
+                )?;
+            }
+            ApplicationInvocationLaunchEvidence::PersistedNotAccepted => {}
+            ApplicationInvocationLaunchEvidence::NeverPersisted => {
+                let sprint_runners = self
+                    .sprint_runners
+                    .lock()
+                    .map_err(|_| {
+                        TransitionError::Unavailable(
+                            "Sprint Runner transition attachment is unavailable".into(),
+                        )
+                    })?
+                    .clone()
+                    .ok_or_else(|| {
+                        TransitionError::Unavailable(
+                            "Sprint Runner application action is unavailable".into(),
+                        )
+                    })?;
+                let injection = sprint_runners
+                    .prepare_epic_runner_action(
+                        invocation_id.clone(),
+                        &harness.mcp.enabled_tools,
+                        harness.mcp.required,
+                    )
+                    .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
+                let mut additional_args = harness.runtime_configuration_args();
+                additional_args.extend(injection.configuration_args);
+                let launch = self
+                    .sessions
+                    .send_idempotent_application_message_with_launch_observation(
+                        SendIdempotentApplicationAgentSessionMessageCommand {
+                            invocation_id,
+                            message: SendAgentSessionMessageCommand {
+                                session_id: Some(session_id),
+                                submitted_text: self.runner_recovery_prompt(
+                                    &refreshed,
+                                    accepted_attempt_id,
+                                    &authorized_sprint_id,
+                                )?,
+                                title: None,
+                                working_directory: Some(
+                                    conversation_harness::role_discovery_root(
+                                        ConversationHarnessRole::EpicRunner,
+                                    )
+                                    .map_err(TransitionError::Unavailable)?,
+                                ),
+                                requested_options: Some(harness.runtime_options()),
+                            },
+                        },
+                        Some(RuntimeLaunchExtension {
+                            additional_args,
+                            environment: vec![injection.environment],
+                            initial_prompt_prefix: Some(harness.initial_prompt_prefix()),
+                        }),
+                    )
+                    .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
+                self.repository.record_runner_recovery_stage(
+                    &refreshed.initiation_id,
+                    "runner_recovery_harness_applied_at",
+                )?;
+                if launch.launch_accepted {
+                    self.repository.record_runner_recovery_stage(
+                        &refreshed.initiation_id,
+                        "runner_recovery_launch_accepted_at",
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn runner_prompt(
         &self,
         record: &TransitionRecord,
         accepted_attempt_id: &str,
+        authorized_sprint_id: &str,
     ) -> Result<String, TransitionError> {
         let inventory = self.repository.completion_inventory(accepted_attempt_id)?;
         let inventory = serde_json::to_string_pretty(&inventory)
             .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
         Ok(format!(
-            "Prepare to run the durably initiated Epic below. Do not create or start a product Sprint in this invocation. Review the approved proposal, then use request_next_sprint_runner exactly once to select the sole approved Sprint. That request prepares the application-owned pre-start route; it does not authorize or start the Sprint.\n\nInitiation ID: {}\nEpic ID: {}\nApproved plan: {}\nTransition manifest: {}\nAccepted material inventory:\n{}\n\nThe approved proposal snapshot is:\n{}",
+            "Prepare to run the durably initiated Epic below. Do not create or start a product Sprint in this invocation. Use request_next_sprint_runner exactly once with this exact durable Sprint ID: {}. Do not substitute a title, infer another ID, or select a later Sprint. That request prepares the application-owned pre-start route; it does not authorize or start the Sprint.\n\nInitiation ID: {}\nEpic ID: {}\nApproved plan: {}\nTransition manifest: {}\nAccepted material inventory:\n{}\n\nThe approved proposal snapshot is:\n{}",
+            authorized_sprint_id,
             record.initiation_id,
             record.epic_id,
             record.approved_plan_path,
             record.manifest_path,
             inventory,
             record.proposal_json,
+        ))
+    }
+
+    fn runner_recovery_prompt(
+        &self,
+        record: &TransitionRecord,
+        accepted_attempt_id: &str,
+        authorized_sprint_id: &str,
+    ) -> Result<String, TransitionError> {
+        let inventory = self.repository.completion_inventory(accepted_attempt_id)?;
+        let inventory = serde_json::to_string_pretty(&inventory)
+            .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
+        Ok(format!(
+            "The prior Epic Runner invocation completed without an accepted Sprint selection. It remains historical and immutable. This is one application-owned same-Session recovery invocation. Do not create or start a product Sprint. Use request_next_sprint_runner exactly once with this exact durable Sprint ID: {}. Do not substitute a title, infer another ID, or select a later Sprint. The request prepares only the application-owned pre-start route.\n\nInitiation ID: {}\nEpic ID: {}\nAccepted material inventory:\n{}",
+            authorized_sprint_id, record.initiation_id, record.epic_id, inventory,
         ))
     }
 
@@ -2613,6 +2872,63 @@ mod tests {
         let barrier=Arc::new(Barrier::new(2));let start_calls=(0..2).map(|_|{let service=service.clone();let barrier=barrier.clone();let invocation=accepted.epic_continuation_invocation_id.clone().unwrap();std::thread::spawn(move||{barrier.wait();service.start_selected_sprint(&AgentInvocationId::new(invocation).unwrap())})}).collect::<Vec<_>>();let start_results=start_calls.into_iter().map(|call|call.join().unwrap()).collect::<Vec<_>>();assert!(start_results.iter().all(Result::is_ok),"{start_results:?}");
         let started=service.query().unwrap().transitions.into_iter().next().unwrap();assert_eq!(started.sprint_runner_session_id,request.sprint_runner_session_id);assert!(started.sprint_continuation_launch_accepted_at.is_some());assert_eq!(fixture.runtime.requests().len(),5);
         let reevaluation=crate::orchestration::sprint_runner_transition::StartedReevaluation{repository_branch_evaluation:"branch is clean".into(),started_forecast_and_concerns:"started concern".into()};service.record_started_reevaluation(&AgentInvocationId::new(started.sprint_continuation_invocation_id.clone().unwrap()).unwrap(),reevaluation.clone()).unwrap();assert!(matches!(service.record_started_reevaluation(&AgentInvocationId::new(started.sprint_continuation_invocation_id.unwrap()).unwrap(),crate::orchestration::sprint_runner_transition::StartedReevaluation{repository_branch_evaluation:"different branch".into(),started_forecast_and_concerns:"started concern".into()}),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));let final_state=service.query().unwrap().transitions.into_iter().next().unwrap();assert!(final_state.planning_ready_at.is_none());assert!(final_state.downstream_not_started);
+    }
+
+    #[test]
+    fn completed_unselected_runner_recovers_once_with_the_durable_sprint_identity() {
+        let fixture = Fixture::new();
+        let bootstrap = fixture.status();
+        fixture.service.complete_bootstrap(
+            &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
+            Fixture::materials(),
+        ).unwrap();
+        fixture.runtime.finish(&bootstrap.bootstrap_invocation_id, AgentInvocationTerminalStatus::Completed);
+        let runner = fixture.status();
+        let sprint_id: String = Connection::open(&fixture.database_path).unwrap().query_row(
+            "SELECT id FROM initiated_sprints WHERE epic_id=?1 ORDER BY ordinal LIMIT 1",
+            [&runner.epic_id], |row| row.get(0),
+        ).unwrap();
+
+        // The original request did not make a selection. Its durable terminal observation creates
+        // one fresh application-owned continuation in the same Session without changing it.
+        fixture.runtime.finish(&runner.runner_invocation_id, AgentInvocationTerminalStatus::Completed);
+        assert_eq!(fixture.runtime.requests().len(), 3);
+        let recovery = fixture.runtime.requests()[2].clone();
+        assert_eq!(recovery.session_id.as_str(), runner.runner_session_id);
+        assert!(recovery.submitted_text.contains(&format!("exact durable Sprint ID: {sprint_id}")));
+        assert!(recovery.submitted_text.contains("historical and immutable"));
+        let recovery_id = recovery.invocation_id.clone();
+        let sprint = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path, fixture.sessions.clone(),
+        ).unwrap();
+        assert!(matches!(
+            sprint.request_next_sprint_runner(
+                &AgentInvocationId::new(recovery_id.clone()).unwrap(),
+                crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id: "Foundation".into() },
+            ),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        let later_sprint: String = Connection::open(&fixture.database_path).unwrap().query_row(
+            "SELECT id FROM initiated_sprints WHERE epic_id=?1 ORDER BY ordinal DESC LIMIT 1",
+            [&runner.epic_id], |row| row.get(0),
+        ).unwrap();
+        assert!(matches!(
+            sprint.request_next_sprint_runner(
+                &AgentInvocationId::new(recovery_id.clone()).unwrap(),
+                crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id: later_sprint },
+            ),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        sprint.request_next_sprint_runner(
+            &AgentInvocationId::new(recovery_id).unwrap(),
+            crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id: sprint_id.clone() },
+        ).unwrap();
+        fixture.service.reconcile_startup().unwrap();
+        fixture.service.reconcile_startup().unwrap();
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_bootstrap_transitions WHERE runner_recovery_invocation_id=?1 AND runner_authorized_sprint_id=?2", params![recovery.invocation_id.as_str(),sprint_id], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(fixture.runtime.requests().len(), 4);
     }
 
     #[test]
@@ -8355,7 +8671,7 @@ fn read_transition(
 ) -> Result<TransitionRecord, TransitionError> {
     connection
         .query_row(
-            "SELECT initiation_id,epic_id,proposal_revision_id,material_snapshot_hash,proposal_json,preparation_id,prepared_root,approved_plan_path,manifest_path,overview_path,runner_brief_path,bootstrap_session_id,bootstrap_invocation_id,runner_session_id,runner_invocation_id,prepared_at,bootstrap_session_created_at,bootstrap_launched_at,bootstrap_lifecycle_status,semantic_completion_fact_id,material_accepted_at,runner_session_created_at,runner_harness_key,runner_harness_version,runner_harness_requested_at,runner_harness_applied_at,runner_launched_at FROM epic_bootstrap_transitions WHERE initiation_id=?1",
+            "SELECT initiation_id,epic_id,proposal_revision_id,material_snapshot_hash,proposal_json,preparation_id,prepared_root,approved_plan_path,manifest_path,overview_path,runner_brief_path,bootstrap_session_id,bootstrap_invocation_id,runner_session_id,runner_invocation_id,prepared_at,bootstrap_session_created_at,bootstrap_launched_at,bootstrap_lifecycle_status,semantic_completion_fact_id,material_accepted_at,runner_session_created_at,runner_harness_key,runner_harness_version,runner_harness_requested_at,runner_harness_applied_at,runner_launched_at,runner_lifecycle_status,runner_lifecycle_observed_at,runner_authorized_sprint_id,runner_recovery_invocation_id,runner_recovery_harness_key,runner_recovery_harness_version,runner_recovery_harness_applied_at,runner_recovery_launch_accepted_at FROM epic_bootstrap_transitions WHERE initiation_id=?1",
             params![initiation_id],
             |row| {
                 let proposal_json: String = row.get(4)?;
@@ -8368,7 +8684,7 @@ fn read_transition(
                     manifest_path: row.get(8)?, overview_path: row.get(9)?, runner_brief_path: row.get(10)?, bootstrap_session_id: row.get(11)?,
                     bootstrap_invocation_id: row.get(12)?, runner_session_id: row.get(13)?, runner_invocation_id: row.get(14)?, prepared_at: row.get(15)?,
                     bootstrap_session_created_at: row.get(16)?, bootstrap_launched_at: row.get(17)?, bootstrap_lifecycle_status: row.get(18)?,
-                    semantic_completion_fact_id: row.get(19)?, material_accepted_at: row.get(20)?, runner_session_created_at: row.get(21)?, runner_harness_key: row.get(22)?, runner_harness_version: row.get(23)?, runner_harness_requested_at: row.get(24)?, runner_harness_applied_at: row.get(25)?, runner_launched_at: row.get(26)?,
+                    semantic_completion_fact_id: row.get(19)?, material_accepted_at: row.get(20)?, runner_session_created_at: row.get(21)?, runner_harness_key: row.get(22)?, runner_harness_version: row.get(23)?, runner_harness_requested_at: row.get(24)?, runner_harness_applied_at: row.get(25)?, runner_launched_at: row.get(26)?, runner_lifecycle_status: row.get(27)?, runner_lifecycle_observed_at: row.get(28)?, runner_authorized_sprint_id: row.get(29)?, runner_recovery_invocation_id: row.get(30)?, runner_recovery_harness_key: row.get(31)?, runner_recovery_harness_version: row.get(32)?, runner_recovery_harness_applied_at: row.get(33)?, runner_recovery_launch_accepted_at: row.get(34)?,
                 })
             },
         )
