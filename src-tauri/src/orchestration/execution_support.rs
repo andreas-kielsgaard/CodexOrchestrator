@@ -267,16 +267,21 @@ impl ProductExecutionWorkspaceResolver {
             let container = authority_root
                 .parent()
                 .ok_or(ExecutionSupportError::Unavailable)?;
+            let scope = stable_id(
+                "execution-workspace-parent",
+                &format!(
+                    "{}:{}",
+                    attempt.authority.authority_id,
+                    configured_parent.to_string_lossy()
+                ),
+            );
+            let scope = scope
+                .rsplit_once('-')
+                .map(|(_, digest)| digest)
+                .ok_or(ExecutionSupportError::Unavailable)?;
             let parent = container
-                .join(".codex-orchestrator-execution-workspaces")
-                .join(stable_id(
-                    "execution-workspace-parent",
-                    &format!(
-                        "{}:{}",
-                        attempt.authority.authority_id,
-                        configured_parent.to_string_lossy()
-                    ),
-                ));
+                .join(".co-exec")
+                .join(scope);
             if create_parent {
                 fs::create_dir_all(&parent).map_err(|_| ExecutionSupportError::Unavailable)?;
             }
