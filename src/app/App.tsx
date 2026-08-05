@@ -909,6 +909,7 @@ export function App({
           onSelectedSessionChange={(() => {
             const renderEpoch = productNavigationEpoch.current;
             return (sessionId: string | null) => {
+              if (currentProductDestination.kind !== 'agent_sessions') return;
               if (renderEpoch !== productNavigationEpoch.current) return;
               dispatchProductNavigation({
                 type: 'navigate',

@@ -366,6 +366,69 @@ describe('App application surfaces', () => {
     expect(loadedSessionIds).not.toContain('recorded-session-reviewer-WU-ECS2E');
   });
 
+  it('restores the exact Work Unit Activity after a late Agent Sessions collection refresh', async () => {
+    const composition = createRecordedDevelopmentApplicationComposition({
+      includeWorkUnitReview: true,
+    });
+    const summaries = await composition.agentSessionClient.listSessions({
+      availability: 'available',
+    });
+    let listCalls = 0;
+    let resolveLateList: ((value: typeof summaries) => void) | undefined;
+    const racingClient: AgentSessionClient = {
+      ...composition.agentSessionClient,
+      listSessions: async () => {
+        listCalls += 1;
+        if (listCalls === 2)
+          return new Promise<typeof summaries>((resolve) => {
+            resolveLateList = resolve;
+          });
+        return summaries;
+      },
+    };
+    render(
+      <App
+        {...composition}
+        agentSessionClient={racingClient}
+        orchestrationAgentSessionComposition={{ client: racingClient }}
+      />,
+    );
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open Codex Epic Runner workspace development' }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Sprint: Sprint Control Surface Discovery' }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Open Work Slice planning point: Integrated detail surfaces',
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Open Work Unit WU-ECS2E/ }));
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: /Implementation reviewed.*recorded-handler-WU-ECS2E-first-review/,
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Agent Sessions' }));
+    expect(
+      await screen.findByRole('heading', { name: 'Recorded WU-ECS2E Work Unit Handler' }),
+    ).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Return to Work Unit Activity' }));
+    await waitFor(() => expect(listCalls).toBeGreaterThanOrEqual(2));
+    await act(async () => {
+      resolveLateList?.(summaries);
+    });
+
+    expect(await screen.findByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
+    expect(
+      screen.getByLabelText('Agent Session turn: recorded-handler-WU-ECS2E-first-review'),
+    ).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Orientation discovery handler' })).toBeNull();
+  });
+
   it('keeps the application-owned File Review source out of Sprint Document actions', async () => {
     render(<App {...createRecordedFileReviewApplicationComposition()} />);
 
