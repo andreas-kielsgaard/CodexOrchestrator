@@ -112,12 +112,19 @@ fn reconcile_one(connection: &mut Connection, sprint_id: &str) -> Result<(), Str
         state,
         snapshot.fingerprint_input()
     ));
-    let existing: Option<(String, String)> = transaction.query_row(
-        "SELECT decision_id,decision_state FROM sprint_continuation_decisions WHERE input_fingerprint=?1", [&fingerprint], |row| Ok((row.get(0)?, row.get(1)?)),
+    let existing: Option<(String, String, String, i64)> = transaction.query_row(
+        "SELECT decision_id,sprint_id,decision_state,decision_sequence FROM sprint_continuation_decisions WHERE input_fingerprint=?1", [&fingerprint], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
     ).optional().map_err(|error| error.to_string())?;
-    let (decision_id, recorded_at) = if let Some((id, existing_state)) = existing {
-        if existing_state != state {
-            return Err("Sprint continuation fingerprint/state conflict".into());
+    let (decision_id, recorded_at, decision_sequence) = if let Some((
+        id,
+        existing_sprint,
+        existing_state,
+        sequence,
+    )) = existing
+    {
+        let exact: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM sprint_continuation_decisions WHERE decision_id=?1 AND sprint_id=?2 AND decision_state=?3 AND continuation_kind=?4 AND accepted_materialization_count=?5 AND input_fingerprint=?6)", params![id,sprint_id,state,kind,snapshot.materialization_count,fingerprint], |row| row.get(0)).map_err(|error| error.to_string())?;
+        if !exact || existing_sprint != sprint_id || existing_state != state {
+            return Err("Sprint continuation decision conflict".into());
         }
         let at = transaction
             .query_row(
@@ -126,7 +133,7 @@ fn reconcile_one(connection: &mut Connection, sprint_id: &str) -> Result<(), Str
                 |row| row.get(0),
             )
             .map_err(|error| error.to_string())?;
-        (id, at)
+        (id, at, sequence)
     } else {
         let sequence: i64 = transaction.query_row("SELECT COALESCE(MAX(decision_sequence),0)+1 FROM sprint_continuation_decisions WHERE sprint_id=?1", [sprint_id], |row| row.get(0)).map_err(|error| error.to_string())?;
         let id = digest(&format!(
@@ -138,8 +145,18 @@ fn reconcile_one(connection: &mut Connection, sprint_id: &str) -> Result<(), Str
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
             params![id, sprint_id, sequence, state, kind, snapshot.materialization_count, fingerprint, now],
         ).map_err(|error| error.to_string())?;
-        (id, now)
+        (id, now, sequence)
     };
+    let current: Option<(String, String, i64)> = transaction.query_row("SELECT c.decision_id,c.decision_state,c.decision_sequence FROM sprint_continuation_current_decisions current JOIN sprint_continuation_decisions c ON c.decision_id=current.decision_id WHERE current.sprint_id=?1", [sprint_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional().map_err(|error| error.to_string())?;
+    if let Some((current_id, current_state, current_sequence)) = current {
+        if current_id == decision_id {
+            if current_state != state {
+                return Err("Sprint continuation current-pointer state conflict".into());
+            }
+        } else if current_sequence >= decision_sequence || current_state == "settled" {
+            return Err("Sprint continuation current-pointer transition conflict".into());
+        }
+    }
     transaction.execute(
         "INSERT INTO sprint_continuation_current_decisions (sprint_id,decision_id,decision_state,updated_at) VALUES (?1,?2,?3,?4)
          ON CONFLICT(sprint_id) DO UPDATE SET decision_id=excluded.decision_id,decision_state=excluded.decision_state,updated_at=excluded.updated_at",
@@ -148,21 +165,34 @@ fn reconcile_one(connection: &mut Connection, sprint_id: &str) -> Result<(), Str
     if state == "attention" {
         let attention_id = digest(&format!("sprint-continuation-attention:{decision_id}"));
         let attention_fingerprint = digest(&format!("{decision_id}:{kind}"));
-        transaction.execute(
+        let changed = transaction.execute(
             "INSERT OR IGNORE INTO sprint_continuation_attentions (decision_id,attention_id,attention_code,attention_fingerprint,recorded_at) VALUES (?1,?2,?3,?4,?5)",
             params![decision_id, attention_id, kind, attention_fingerprint, recorded_at],
         ).map_err(|error| error.to_string())?;
+        if changed == 0 {
+            let exact:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM sprint_continuation_attentions WHERE decision_id=?1 AND attention_id=?2 AND attention_code=?3 AND attention_fingerprint=?4 AND recorded_at=?5)",params![decision_id,attention_id,kind,attention_fingerprint,recorded_at],|row|row.get(0)).map_err(|error|error.to_string())?;
+            if !exact {
+                return Err("Sprint continuation attention conflict".into());
+            }
+        }
     }
     let result_id = digest(&format!("sprint-upward-result:{decision_id}"));
     let chronology = digest(&format!("{sprint_id}:{decision_id}:{state}:{recorded_at}"));
-    transaction.execute(
+    let changed = transaction.execute(
         "INSERT OR IGNORE INTO sprint_upward_results (result_id,decision_id,sprint_id,result_kind,chronology_fingerprint,recorded_at) VALUES (?1,?2,?3,?4,?5,?6)",
         params![result_id, decision_id, sprint_id, state, chronology, recorded_at],
     ).map_err(|error| error.to_string())?;
+    if changed == 0 {
+        let exact:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM sprint_upward_results WHERE result_id=?1 AND decision_id=?2 AND sprint_id=?3 AND result_kind=?4 AND chronology_fingerprint=?5 AND recorded_at=?6)",params![result_id,decision_id,sprint_id,state,chronology,recorded_at],|row|row.get(0)).map_err(|error|error.to_string())?;
+        if !exact {
+            return Err("Sprint upward result conflict".into());
+        }
+    }
     transaction.commit().map_err(|error| error.to_string())
 }
 
 struct Snapshot {
+    identity: Vec<String>,
     materialization_count: i64,
     correlated_materialization_count: i64,
     terminal_materialization_count: i64,
@@ -178,6 +208,11 @@ struct Snapshot {
 
 impl Snapshot {
     fn load(tx: &rusqlite::Transaction<'_>, sprint: &str) -> Result<Self, String> {
+        let mut identity = canonical_rows(tx, "SELECT m.materialization_id,m.planning_point_id,m.accepted_revision_id,m.epic_id,m.sprint_id,COALESCE(r.accepted_at,'') FROM work_unit_materializations m LEFT JOIN work_slice_proposal_revisions r ON r.revision_id=m.accepted_revision_id WHERE m.sprint_id=?1 ORDER BY m.materialization_id", sprint, 6)?;
+        identity.extend(canonical_rows(tx, "SELECT m.materialization_id,COALESCE(g.accepted_revision_id,''),COALESCE(w.graph_completion_materialization_id,''),COALESCE(p.planning_point_id,'') FROM work_unit_materializations m LEFT JOIN work_slice_execution_graph_completions g ON g.materialization_id=m.materialization_id LEFT JOIN work_slice_execution_settlements w ON w.materialization_id=m.materialization_id LEFT JOIN work_slice_planning_point_execution_settlements p ON p.materialization_id=m.materialization_id WHERE m.sprint_id=?1 ORDER BY m.materialization_id", sprint, 4)?);
+        identity.extend(canonical_rows(tx, "SELECT h.work_unit_id,h.eligibility_state,COALESCE(h.handler_ready_at,'') FROM work_unit_handler_activations h WHERE h.sprint_id=?1 ORDER BY h.work_unit_id", sprint, 3)?);
+        identity.extend(canonical_rows(tx, "SELECT h.handback_id,h.work_unit_id,h.context_fingerprint,COALESCE(d.movement_kind,''),COALESCE(d.details_json,'') FROM work_unit_no_progress_handbacks h JOIN work_units u ON u.work_unit_id=h.work_unit_id JOIN work_unit_materializations m ON m.materialization_id=u.materialization_id LEFT JOIN sprint_runner_handback_dispositions d ON d.handback_id=h.handback_id WHERE m.sprint_id=?1 ORDER BY h.handback_id", sprint, 5)?);
+        identity.extend(canonical_rows(tx, "SELECT r.handback_id,r.epic_id,COALESCE(r.correlation_fingerprint,''),COALESCE(d.movement_kind,''),COALESCE(d.details_json,''),COALESCE(q.request_json,'') FROM epic_runner_escalation_receivers r LEFT JOIN epic_runner_escalation_dispositions d ON d.handback_id=r.handback_id LEFT JOIN epic_runner_escalation_downstream_requests q ON q.handback_id=r.handback_id WHERE r.sprint_id=?1 ORDER BY r.handback_id", sprint, 6)?);
         let materialization_count = count(
             tx,
             "SELECT COUNT(*) FROM work_unit_materializations WHERE sprint_id=?1",
@@ -194,6 +229,7 @@ impl Snapshot {
         let outstanding_continuation = exists(tx, "SELECT 1 FROM work_unit_handler_activations h LEFT JOIN work_unit_settlements s ON s.work_unit_id=h.work_unit_id WHERE h.sprint_id=?1 AND s.work_unit_id IS NULL UNION ALL SELECT 1 FROM work_unit_implementer_activations i JOIN work_units u ON u.work_unit_id=i.work_unit_id JOIN work_unit_materializations m ON m.materialization_id=u.materialization_id LEFT JOIN work_unit_settlements s ON s.work_unit_id=u.work_unit_id WHERE m.sprint_id=?1 AND s.work_unit_id IS NULL", sprint)?;
         let stale_epic_context = exists(tx, "SELECT 1 FROM epic_runner_escalation_receivers r JOIN sprint_runner_transitions t ON t.sprint_id=r.sprint_id WHERE r.sprint_id=?1 AND r.epic_id<>t.epic_id", sprint)?;
         Ok(Self {
+            identity,
             materialization_count,
             correlated_materialization_count,
             terminal_materialization_count,
@@ -248,7 +284,7 @@ impl Snapshot {
     }
 
     fn fingerprint_input(&self) -> String {
-        format!(
+        let aggregate = format!(
             "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
             self.materialization_count,
             self.correlated_materialization_count,
@@ -261,7 +297,8 @@ impl Snapshot {
             self.eligible_work as u8,
             self.outstanding_continuation as u8,
             self.stale_epic_context as u8
-        )
+        );
+        format!("{aggregate}:{}", self.identity.join("\u{1f}"))
     }
 }
 
@@ -274,6 +311,24 @@ fn exists(tx: &rusqlite::Transaction<'_>, query: &str, sprint: &str) -> Result<b
         row.get(0)
     })
     .map_err(|error| error.to_string())
+}
+fn canonical_rows(
+    tx: &rusqlite::Transaction<'_>,
+    query: &str,
+    sprint: &str,
+    columns: usize,
+) -> Result<Vec<String>, String> {
+    tx.prepare(query)
+        .map_err(|error| error.to_string())?
+        .query_map([sprint], |row| {
+            (0..columns)
+                .map(|index| row.get::<_, String>(index))
+                .collect::<Result<Vec<_>, _>>()
+                .map(|parts| parts.join("\u{1e}"))
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
 }
 fn digest(value: &str) -> String {
     let mut hash = Sha256::new();
@@ -288,7 +343,7 @@ mod tests {
 
     fn fixture() -> Connection {
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch("CREATE TABLE initiated_sprints(id TEXT PRIMARY KEY,epic_id TEXT);CREATE TABLE sprint_runner_transitions(sprint_id TEXT,epic_id TEXT);CREATE TABLE work_unit_materializations(materialization_id TEXT PRIMARY KEY,planning_point_id TEXT,accepted_revision_id TEXT,epic_id TEXT,sprint_id TEXT);CREATE TABLE work_slice_proposal_revisions(revision_id TEXT PRIMARY KEY,planning_point_id TEXT,accepted_at TEXT);CREATE TABLE work_slice_planning_episodes(planning_point_id TEXT PRIMARY KEY,sprint_id TEXT);CREATE TABLE work_slice_execution_graph_completions(materialization_id TEXT,accepted_revision_id TEXT);CREATE TABLE work_slice_execution_settlements(materialization_id TEXT,graph_completion_materialization_id TEXT);CREATE TABLE work_slice_planning_point_execution_settlements(planning_point_id TEXT,materialization_id TEXT,work_slice_execution_materialization_id TEXT);CREATE TABLE work_units(work_unit_id TEXT PRIMARY KEY,materialization_id TEXT);CREATE TABLE work_unit_settlements(work_unit_id TEXT);CREATE TABLE work_unit_retry_attempts(work_unit_id TEXT);CREATE TABLE work_unit_no_progress_handbacks(work_unit_id TEXT);CREATE TABLE sprint_runner_handback_deliveries(handback_id TEXT,sprint_id TEXT);CREATE TABLE sprint_runner_handback_dispositions(handback_id TEXT,movement_kind TEXT);CREATE TABLE epic_runner_escalation_downstream_requests(handback_id TEXT,request_kind TEXT);CREATE TABLE epic_runner_escalation_receivers(handback_id TEXT,sprint_id TEXT,epic_id TEXT);CREATE TABLE work_slice_execution_attentions(materialization_id TEXT);CREATE TABLE work_unit_execution_attentions(materialization_id TEXT);CREATE TABLE epic_runner_escalation_attentions(handback_id TEXT);CREATE TABLE work_unit_handler_activations(work_unit_id TEXT,sprint_id TEXT,eligibility_state TEXT,handler_ready_at TEXT);CREATE TABLE work_unit_implementer_activations(work_unit_id TEXT);INSERT INTO initiated_sprints VALUES('sprint','epic');INSERT INTO sprint_runner_transitions VALUES('sprint','epic');").unwrap();
+        connection.execute_batch("CREATE TABLE initiated_sprints(id TEXT PRIMARY KEY,epic_id TEXT);CREATE TABLE sprint_runner_transitions(sprint_id TEXT,epic_id TEXT);CREATE TABLE work_unit_materializations(materialization_id TEXT PRIMARY KEY,planning_point_id TEXT,accepted_revision_id TEXT,epic_id TEXT,sprint_id TEXT);CREATE TABLE work_slice_proposal_revisions(revision_id TEXT PRIMARY KEY,planning_point_id TEXT,accepted_at TEXT);CREATE TABLE work_slice_planning_episodes(planning_point_id TEXT PRIMARY KEY,sprint_id TEXT);CREATE TABLE work_slice_execution_graph_completions(materialization_id TEXT,accepted_revision_id TEXT);CREATE TABLE work_slice_execution_settlements(materialization_id TEXT,graph_completion_materialization_id TEXT);CREATE TABLE work_slice_planning_point_execution_settlements(planning_point_id TEXT,materialization_id TEXT,work_slice_execution_materialization_id TEXT);CREATE TABLE work_units(work_unit_id TEXT PRIMARY KEY,materialization_id TEXT);CREATE TABLE work_unit_settlements(work_unit_id TEXT);CREATE TABLE work_unit_retry_attempts(work_unit_id TEXT);CREATE TABLE work_unit_no_progress_handbacks(handback_id TEXT,work_unit_id TEXT,context_fingerprint TEXT);CREATE TABLE sprint_runner_handback_deliveries(handback_id TEXT,sprint_id TEXT);CREATE TABLE sprint_runner_handback_dispositions(handback_id TEXT,movement_kind TEXT,details_json TEXT);CREATE TABLE epic_runner_escalation_downstream_requests(handback_id TEXT,request_kind TEXT,request_json TEXT);CREATE TABLE epic_runner_escalation_receivers(handback_id TEXT,sprint_id TEXT,epic_id TEXT,correlation_fingerprint TEXT);CREATE TABLE epic_runner_escalation_dispositions(handback_id TEXT,movement_kind TEXT,details_json TEXT);CREATE TABLE work_slice_execution_attentions(materialization_id TEXT);CREATE TABLE work_unit_execution_attentions(materialization_id TEXT);CREATE TABLE epic_runner_escalation_attentions(handback_id TEXT);CREATE TABLE work_unit_handler_activations(work_unit_id TEXT,sprint_id TEXT,eligibility_state TEXT,handler_ready_at TEXT);CREATE TABLE work_unit_implementer_activations(work_unit_id TEXT);INSERT INTO initiated_sprints VALUES('sprint','epic');INSERT INTO sprint_runner_transitions VALUES('sprint','epic');").unwrap();
         initialize(&connection).unwrap();
         connection
     }
@@ -318,7 +373,7 @@ mod tests {
         assert_eq!(statuses(&c).unwrap()[0].1.state, "continuing");
         c.execute("DELETE FROM work_unit_retry_attempts", [])
             .unwrap();
-        c.execute_batch("INSERT INTO sprint_runner_handback_deliveries VALUES('handback','sprint');INSERT INTO sprint_runner_handback_dispositions VALUES('handback','wait_for_agent_dependency');").unwrap();
+        c.execute_batch("INSERT INTO sprint_runner_handback_deliveries VALUES('handback','sprint');INSERT INTO sprint_runner_handback_dispositions VALUES('handback','wait_for_agent_dependency','{}');").unwrap();
         reconcile(&mut c).unwrap();
         assert_eq!(c.query_row::<String,_,_>("SELECT continuation_kind FROM sprint_continuation_decisions ORDER BY decision_sequence DESC LIMIT 1",[],|r|r.get(0)).unwrap(),"wait_for_agent_dependency");
     }
@@ -327,7 +382,7 @@ mod tests {
         let mut c = fixture();
         accepted_materialization(&c);
         c.execute(
-            "INSERT INTO work_unit_no_progress_handbacks VALUES('unit')",
+            "INSERT INTO work_unit_no_progress_handbacks VALUES('handback','unit','context')",
             [],
         )
         .unwrap();
@@ -362,7 +417,7 @@ mod tests {
         let mut c = fixture();
         accepted_materialization(&c);
         c.execute(
-            "INSERT INTO epic_runner_escalation_receivers VALUES('handback','sprint','foreign')",
+            "INSERT INTO epic_runner_escalation_receivers VALUES('handback','sprint','foreign','correlation')",
             [],
         )
         .unwrap();
@@ -419,7 +474,7 @@ mod tests {
         let path = directory.path().join("state.sqlite");
         {
             let c = Connection::open(&path).unwrap();
-            c.execute_batch("CREATE TABLE initiated_sprints(id TEXT PRIMARY KEY,epic_id TEXT);CREATE TABLE sprint_runner_transitions(sprint_id TEXT,epic_id TEXT);CREATE TABLE work_unit_materializations(materialization_id TEXT PRIMARY KEY,planning_point_id TEXT,accepted_revision_id TEXT,epic_id TEXT,sprint_id TEXT);CREATE TABLE work_slice_proposal_revisions(revision_id TEXT PRIMARY KEY,planning_point_id TEXT,accepted_at TEXT);CREATE TABLE work_slice_planning_episodes(planning_point_id TEXT PRIMARY KEY,sprint_id TEXT);CREATE TABLE work_slice_execution_graph_completions(materialization_id TEXT,accepted_revision_id TEXT);CREATE TABLE work_slice_execution_settlements(materialization_id TEXT,graph_completion_materialization_id TEXT);CREATE TABLE work_slice_planning_point_execution_settlements(planning_point_id TEXT,materialization_id TEXT,work_slice_execution_materialization_id TEXT);CREATE TABLE work_units(work_unit_id TEXT PRIMARY KEY,materialization_id TEXT);CREATE TABLE work_unit_settlements(work_unit_id TEXT);CREATE TABLE work_unit_retry_attempts(work_unit_id TEXT);CREATE TABLE work_unit_no_progress_handbacks(work_unit_id TEXT);CREATE TABLE sprint_runner_handback_deliveries(handback_id TEXT,sprint_id TEXT);CREATE TABLE sprint_runner_handback_dispositions(handback_id TEXT,movement_kind TEXT);CREATE TABLE epic_runner_escalation_downstream_requests(handback_id TEXT,request_kind TEXT);CREATE TABLE epic_runner_escalation_receivers(handback_id TEXT,sprint_id TEXT,epic_id TEXT);CREATE TABLE work_slice_execution_attentions(materialization_id TEXT);CREATE TABLE work_unit_execution_attentions(materialization_id TEXT);CREATE TABLE epic_runner_escalation_attentions(handback_id TEXT);CREATE TABLE work_unit_handler_activations(work_unit_id TEXT,sprint_id TEXT,eligibility_state TEXT,handler_ready_at TEXT);CREATE TABLE work_unit_implementer_activations(work_unit_id TEXT);INSERT INTO initiated_sprints VALUES('sprint','epic');INSERT INTO sprint_runner_transitions VALUES('sprint','epic');").unwrap();
+            c.execute_batch("CREATE TABLE initiated_sprints(id TEXT PRIMARY KEY,epic_id TEXT);CREATE TABLE sprint_runner_transitions(sprint_id TEXT,epic_id TEXT);CREATE TABLE work_unit_materializations(materialization_id TEXT PRIMARY KEY,planning_point_id TEXT,accepted_revision_id TEXT,epic_id TEXT,sprint_id TEXT);CREATE TABLE work_slice_proposal_revisions(revision_id TEXT PRIMARY KEY,planning_point_id TEXT,accepted_at TEXT);CREATE TABLE work_slice_planning_episodes(planning_point_id TEXT PRIMARY KEY,sprint_id TEXT);CREATE TABLE work_slice_execution_graph_completions(materialization_id TEXT,accepted_revision_id TEXT);CREATE TABLE work_slice_execution_settlements(materialization_id TEXT,graph_completion_materialization_id TEXT);CREATE TABLE work_slice_planning_point_execution_settlements(planning_point_id TEXT,materialization_id TEXT,work_slice_execution_materialization_id TEXT);CREATE TABLE work_units(work_unit_id TEXT PRIMARY KEY,materialization_id TEXT);CREATE TABLE work_unit_settlements(work_unit_id TEXT);CREATE TABLE work_unit_retry_attempts(work_unit_id TEXT);CREATE TABLE work_unit_no_progress_handbacks(handback_id TEXT,work_unit_id TEXT,context_fingerprint TEXT);CREATE TABLE sprint_runner_handback_deliveries(handback_id TEXT,sprint_id TEXT);CREATE TABLE sprint_runner_handback_dispositions(handback_id TEXT,movement_kind TEXT,details_json TEXT);CREATE TABLE epic_runner_escalation_downstream_requests(handback_id TEXT,request_kind TEXT,request_json TEXT);CREATE TABLE epic_runner_escalation_receivers(handback_id TEXT,sprint_id TEXT,epic_id TEXT,correlation_fingerprint TEXT);CREATE TABLE epic_runner_escalation_dispositions(handback_id TEXT,movement_kind TEXT,details_json TEXT);CREATE TABLE work_slice_execution_attentions(materialization_id TEXT);CREATE TABLE work_unit_execution_attentions(materialization_id TEXT);CREATE TABLE epic_runner_escalation_attentions(handback_id TEXT);CREATE TABLE work_unit_handler_activations(work_unit_id TEXT,sprint_id TEXT,eligibility_state TEXT,handler_ready_at TEXT);CREATE TABLE work_unit_implementer_activations(work_unit_id TEXT);INSERT INTO initiated_sprints VALUES('sprint','epic');INSERT INTO sprint_runner_transitions VALUES('sprint','epic');").unwrap();
             initialize(&c).unwrap();
         }
         {

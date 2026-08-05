@@ -1300,6 +1300,7 @@ impl SprintRunnerTransitionService {
         });
         service.reconcile_work_slice_planners()?;
         service.reconcile_materializations()?;
+        service.reconcile_sprint_continuation_boundary()?;
         Ok(service)
     }
 
@@ -1651,6 +1652,11 @@ impl SprintRunnerTransitionService {
         let started: Option<String> = self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?.query_row("SELECT sprint_continuation_invocation_id FROM sprint_runner_transitions WHERE sprint_id=?1 AND repository_branch_reevaluation_fact_id IS NOT NULL",[sprint_id],|r|r.get(0)).optional().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?.flatten();
         if let Some(started)=started { if let Some(found)=history.invocations.iter().find(|candidate|candidate.invocation.id.as_str()==started) { if found.invocation.status.is_terminal(){self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?.execute("UPDATE sprint_runner_transitions SET started_reevaluation_lifecycle_status=?2,started_reevaluation_lifecycle_invocation_id=?3,started_reevaluation_lifecycle_observed_at=CASE WHEN started_reevaluation_lifecycle_invocation_id=?3 THEN started_reevaluation_lifecycle_observed_at ELSE ?4 END WHERE sprint_id=?1",params![sprint_id,lifecycle_status(found.invocation.status),started,chrono::Utc::now().to_rfc3339()]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;}}}
         Ok(())
+    }
+
+    fn reconcile_sprint_continuation_boundary(&self) -> Result<(), SprintRunnerTransitionError> {
+        let mut connection = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?;
+        sprint_continuation_settlement::reconcile(&mut connection).map_err(SprintRunnerTransitionError::Unavailable)
     }
 
     pub(crate) fn query(
@@ -2743,7 +2749,7 @@ impl SprintRunnerTransitionService {
         for (handback, sprint, session, context_fingerprint) in sources {
             self.reconcile_no_progress_handback(&handback, &sprint, &session, &context_fingerprint)?;
         }
-        Ok(())
+        self.reconcile_sprint_continuation_boundary()
     }
 
     fn reconcile_no_progress_handback(self: &Arc<Self>, handback: &str, sprint: &str, session: &str, context_fingerprint: &str) -> Result<(), SprintRunnerTransitionError> {
@@ -2837,7 +2843,7 @@ impl SprintRunnerTransitionService {
         transaction.commit().map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         drop(conn);
         if local_exhaustion {self.reconcile_epic_escalation_receivers()?;}
-        Ok(())
+        self.reconcile_sprint_continuation_boundary()
     }
 
     fn reconcile_epic_escalation_receivers(self:&Arc<Self>)->Result<(),SprintRunnerTransitionError>{let sources:Vec<(String,String,String,String,String,String,String,String)>=self.connection.lock().map_err(|_|SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.prepare("SELECT e.handback_id,e.escalation_intent_id,e.delivery_request_id,d.sprint_id,t.epic_id,t.epic_runner_session_id,t.epic_runner_invocation_id,d.context_fingerprint FROM sprint_runner_handback_escalations e JOIN sprint_runner_handback_deliveries d ON d.handback_id=e.handback_id JOIN sprint_runner_handback_dispositions m ON m.handback_id=e.handback_id JOIN sprint_runner_transitions t ON t.sprint_id=d.sprint_id LEFT JOIN epic_runner_escalation_receivers r ON r.handback_id=e.handback_id WHERE m.movement_kind='local_exhaustion_escalate' AND d.semantic_reassessment_recorded_at IS NOT NULL AND (r.handback_id IS NULL OR r.delivery_persisted_at IS NULL OR r.launch_accepted_at IS NULL) ORDER BY e.requested_at,e.handback_id").and_then(|mut s|s.query_map([],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?)))?.collect::<Result<Vec<_>,_>>()).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;for source in sources{self.reconcile_epic_escalation_receiver(source)?;}self.observe_epic_escalation_receiver_terminals()}
@@ -2876,7 +2882,7 @@ impl SprintRunnerTransitionService {
         if let Some(request)=input.downstream_request {let request_json=serde_json::to_string(&request).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let request_id=stable_id("epic-runner-escalation-downstream-request",&handback);let request_fingerprint=stable_id("epic-runner-escalation-downstream-request",&format!("{handback}:{request_json}"));let kind=match request.target{EpicEscalationDownstreamTarget::SprintRunner=>"sprint_runner",EpicEscalationDownstreamTarget::ExistingAgentAchievableDependency=>"existing_agent_achievable_dependency"};let changed=tx.execute("INSERT OR IGNORE INTO epic_runner_escalation_downstream_requests (handback_id,request_id,request_kind,request_json,request_fingerprint,requested_at) VALUES (?1,?2,?3,?4,?5,?6)",params![handback,request_id,kind,request_json,request_fingerprint,now]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if changed==0{let exact:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM epic_runner_escalation_downstream_requests WHERE handback_id=?1 AND request_id=?2 AND request_fingerprint=?3)",params![handback,request_id,request_fingerprint],|r|r.get(0)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if !exact{return Err(SprintRunnerTransitionError::Conflict)}}}
         if let Some(attention)=input.human_external_attention {let attention_json=serde_json::to_string(&attention).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let attention_id=stable_id("epic-runner-escalation-attention",&handback);let attention_fingerprint=stable_id("epic-runner-escalation-attention",&format!("{handback}:{attention_json}"));let changed=tx.execute("INSERT OR IGNORE INTO epic_runner_escalation_attentions (handback_id,attention_id,attention_json,attention_fingerprint,requested_at) VALUES (?1,?2,?3,?4,?5)",params![handback,attention_id,attention_json,attention_fingerprint,now]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if changed==0{let exact:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM epic_runner_escalation_attentions WHERE handback_id=?1 AND attention_id=?2 AND attention_fingerprint=?3)",params![handback,attention_id,attention_fingerprint],|r|r.get(0)).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if !exact{return Err(SprintRunnerTransitionError::Conflict)}}}
         tx.execute("UPDATE epic_runner_escalation_receivers SET semantic_reassessment_fact_id=COALESCE(semantic_reassessment_fact_id,?2),semantic_reassessment_recorded_at=COALESCE(semantic_reassessment_recorded_at,?3) WHERE handback_id=?1",params![handback,semantic,now]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
-        tx.commit().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;Ok(())
+        tx.commit().map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;drop(conn);self.reconcile_sprint_continuation_boundary()
     }
 
     fn reconcile_work_unit_retry(self: &Arc<Self>, handler: &Arc<WorkUnitExecutionHarnessService>, source: RetrySource) -> Result<(), SprintRunnerTransitionError> {
