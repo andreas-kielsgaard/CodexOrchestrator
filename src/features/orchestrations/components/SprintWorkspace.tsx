@@ -26,8 +26,12 @@ import {
 import {
   WorkUnitDetailWorkspace,
   type WorkUnitActivitySessionTarget,
+  type WorkUnitFileEvidenceOpenContext,
 } from './WorkUnitDetailWorkspace';
-import type { AgentSessionProductOrigin } from '../../../application/agentSessionNavigation';
+import type {
+  AgentSessionProductLocation,
+  AgentSessionProductOrigin,
+} from '../../../application/agentSessionNavigation';
 import '../styles/sprintWorkspace.css';
 import type { EmbeddedAgentSessionComposition } from '../../agentSessions';
 import type {
@@ -55,11 +59,17 @@ export interface SprintWorkspaceProps {
   readonly onDetailLocationChange: (location: SprintWorkspaceDetailLocation) => void;
   readonly onBack: () => void;
   readonly onOpenAgentSession?: (origin: AgentSessionProductOrigin) => void;
-  readonly onRequestFileReview?: (sprintId: string) => Promise<ContextualFileReviewResult>;
-  readonly onOpenFileEvidence?: (target: {
-    readonly reviewId: string;
-    readonly changedFileId: string;
-  }) => void;
+  readonly onRequestFileReview?: (
+    sprintId: string,
+    returnLocation?: AgentSessionProductLocation,
+  ) => Promise<ContextualFileReviewResult>;
+  readonly onOpenFileEvidence?: (
+    target: {
+      readonly reviewId: string;
+      readonly changedFileId: string;
+    },
+    returnLocation?: AgentSessionProductLocation,
+  ) => void;
   readonly onOpenWorkUnitActivitySession?: (
     target: WorkUnitActivitySessionTarget,
     origin: AgentSessionProductOrigin,
@@ -134,7 +144,10 @@ export function SprintWorkspace({
     if (!onRequestFileReview || fileReviewState.kind === 'pending') return;
     const sequence = ++fileReviewRequestSequence.current;
     setFileReviewState({ kind: 'pending' });
-    const result = await onRequestFileReview(workspace.sprint.sprintId);
+    const result = await onRequestFileReview(
+      workspace.sprint.sprintId,
+      fileReviewReturnLocation(workspace, detailLocation),
+    );
     if (fileReviewRequestSequence.current !== sequence) return;
     setFileReviewState(
       result.status === 'failed'
@@ -223,7 +236,9 @@ export function SprintWorkspace({
             },
           })
         }
-        onOpenFileEvidence={onOpenFileEvidence}
+        onOpenFileEvidence={(target, context) =>
+          onOpenFileEvidence?.(target, fileReviewReturnLocation(workspace, detailLocation, context))
+        }
         initialInspectionState={detailLocation.inspectionState}
         sprintControl={fileReviewControl}
       />
@@ -1169,4 +1184,50 @@ function workUnitSessions(
       [...planners, ...referenced].map((session) => [session.sessionId, session]),
     ).values(),
   ];
+}
+
+function fileReviewReturnLocation(
+  workspace: SprintWorkspacePresentationV1,
+  detailLocation: SprintWorkspaceDetailLocation,
+  context?: WorkUnitFileEvidenceOpenContext,
+): AgentSessionProductLocation {
+  const sprint = workspace.sprint;
+  if (detailLocation.kind === 'sprint')
+    return {
+      kind: 'sprint',
+      epicId: sprint.epicId,
+      sprintId: sprint.sprintId,
+      label: sprint.title,
+    };
+
+  const view = workspace.revisionViews.find(
+    ({ sprintPlanRevisionId }) => sprintPlanRevisionId === detailLocation.revisionId,
+  );
+  const workSlicePlanningPointGroup = view?.workSlicePlanningPointGroups.find(
+    ({ workSlicePlanningPointId }) =>
+      workSlicePlanningPointId === detailLocation.workSlicePlanningPointId,
+  );
+  if (detailLocation.kind === 'work_slice_planning_point')
+    return {
+      kind: 'work_slice_planning_point',
+      epicId: sprint.epicId,
+      sprintId: sprint.sprintId,
+      revisionId: detailLocation.revisionId,
+      workSlicePlanningPointId: detailLocation.workSlicePlanningPointId,
+      label: workSlicePlanningPointGroup?.title ?? 'Planning point',
+    };
+
+  const unit = view?.workUnits.find(({ workUnitId }) => workUnitId === detailLocation.workUnitId);
+  return {
+    kind: 'work_unit',
+    epicId: sprint.epicId,
+    sprintId: sprint.sprintId,
+    revisionId: detailLocation.revisionId,
+    workSlicePlanningPointId: detailLocation.workSlicePlanningPointId,
+    workUnitId: detailLocation.workUnitId,
+    label: unit?.title ?? 'Work Unit',
+    ...(context?.inspectionState || detailLocation.inspectionState
+      ? { inspectionState: context?.inspectionState ?? detailLocation.inspectionState }
+      : {}),
+  };
 }

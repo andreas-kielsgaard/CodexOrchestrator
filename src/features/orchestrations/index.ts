@@ -1,4 +1,8 @@
-export { OrchestrationSection, type OrchestrationSectionProps } from './OrchestrationSection';
+export {
+  OrchestrationSection,
+  type OrchestrationNavigationChangeIntent,
+  type OrchestrationSectionProps,
+} from './OrchestrationSection';
 export { EpicPlanBuilder, type EpicPlanBuilderProps } from './EpicPlanBuilder';
 export type {
   AgentSessionReferencePresentation,

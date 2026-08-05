@@ -110,10 +110,21 @@ describe('recorded Work Unit review consumer', () => {
         name: /Open exact diff for src\/features\/orchestrations\/components\/WorkUnitDetailWorkspace.tsx/,
       }),
     );
-    expect(openFileEvidence).toHaveBeenCalledWith({
-      reviewId: 'recorded-work-unit-review',
-      changedFileId: 'recorded-file-work-unit-detail',
-    });
+    expect(openFileEvidence).toHaveBeenCalledWith(
+      {
+        reviewId: 'recorded-work-unit-review',
+        changedFileId: 'recorded-file-work-unit-detail',
+      },
+      {
+        inspectionState: {
+          tab: 'evidence',
+          activityId:
+            'work-unit-inspection:WU-ECS2E:WU-ECS2E-attempt-2:implementer-reporting:recorded-implementer-WU-ECS2E-second-return',
+          sessionId: 'recorded-implementer-WU-ECS2E',
+          invocationId: 'recorded-implementer-WU-ECS2E-second-return',
+        },
+      },
+    );
     expect(
       screen.getByText('Focused Work Unit Activity and Evidence interaction checks'),
     ).toBeVisible();

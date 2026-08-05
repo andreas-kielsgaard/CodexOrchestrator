@@ -33,7 +33,6 @@ export interface AgentSessionScreenProps {
   readonly agentIdentityForSession?: (sessionId: string) => AgentIdentity | undefined;
   readonly focusInvocationId?: string;
   readonly returnOrigin?: AgentSessionProductOrigin | null;
-  readonly onReturnToProduct?: (origin: AgentSessionProductOrigin) => void;
 }
 
 export function StandaloneAgentSessionScreen({
@@ -50,7 +49,6 @@ export function StandaloneAgentSessionScreen({
   agentIdentityForSession,
   focusInvocationId,
   returnOrigin,
-  onReturnToProduct,
 }: AgentSessionScreenProps) {
   const [localExpandedNodeIds, setLocalExpandedNodeIds] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -146,16 +144,13 @@ export function StandaloneAgentSessionScreen({
         }
         secondary={
           <div className="agent-session-content">
-            {returnOrigin && onReturnToProduct ? (
+            {returnOrigin ? (
               <div
-                className="agent-session-return-bar"
+                className="agent-session-return-context"
                 role="region"
                 aria-label={returnContextLabel(returnOrigin.location)}
               >
                 <span>{returnContextText(returnOrigin.location)}</span>
-                <button type="button" onClick={() => onReturnToProduct(returnOrigin)}>
-                  {returnActionLabel(returnOrigin.location)}
-                </button>
               </div>
             ) : null}
             {collection.error && (
@@ -258,12 +253,6 @@ function returnContextLabel(location: AgentSessionProductLocation) {
 
 function returnContextText(location: AgentSessionProductLocation) {
   return `Opened from ${locationKindLabel(location)}`;
-}
-
-function returnActionLabel(location: AgentSessionProductLocation) {
-  return location.kind === 'work_unit'
-    ? 'Return to Work Unit Activity'
-    : `Return to ${locationKindLabel(location)}`;
 }
 
 function locationKindLabel(location: AgentSessionProductLocation) {
