@@ -1437,7 +1437,7 @@ impl PostConfirmationTransitionService {
         let inventory = serde_json::to_string_pretty(&inventory)
             .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
         Ok(format!(
-            "Prepare to run the durably initiated Epic below. Do not create or start a product Sprint in this invocation.\n\nInitiation ID: {}\nEpic ID: {}\nApproved plan: {}\nTransition manifest: {}\nAccepted material inventory:\n{}\n\nThe approved proposal snapshot is:\n{}",
+            "Prepare to run the durably initiated Epic below. Do not create or start a product Sprint in this invocation. Review the approved proposal, then use request_next_sprint_runner exactly once to select the sole approved Sprint. That request prepares the application-owned pre-start route; it does not authorize or start the Sprint.\n\nInitiation ID: {}\nEpic ID: {}\nApproved plan: {}\nTransition manifest: {}\nAccepted material inventory:\n{}\n\nThe approved proposal snapshot is:\n{}",
             record.initiation_id,
             record.epic_id,
             record.approved_plan_path,
@@ -2415,6 +2415,9 @@ mod tests {
         assert!(runner_request
             .submitted_text
             .contains("Do not create or start a product Sprint"));
+        assert!(runner_request
+            .submitted_text
+            .contains("use request_next_sprint_runner exactly once"));
         let runner_extension = runner_request.launch_extension.as_ref().unwrap();
         assert_eq!(runner_extension.environment.len(), 1);
         assert!(runner_extension
