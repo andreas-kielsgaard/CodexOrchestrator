@@ -1,11 +1,16 @@
 import { ArrowLeft, CornerUpLeft } from 'lucide-react';
 import type { AgentSessionProductOrigin } from '../application/agentSessionNavigation';
+import {
+  isAgentSessionProductOrigin,
+  type FileReviewProductOrigin,
+  type ProductContextualOrigin,
+} from '../application/productNavigation';
 
 export interface ProductCommandBarProps {
   readonly canGoBack: boolean;
   readonly onBack: () => void;
-  readonly returnOrigin?: AgentSessionProductOrigin | null;
-  readonly onReturn?: (origin: AgentSessionProductOrigin) => void;
+  readonly returnOrigin?: ProductContextualOrigin | null;
+  readonly onReturn?: (origin: ProductContextualOrigin) => void;
 }
 
 /** Product navigation only; this bar deliberately does not expose arbitrary commands. */
@@ -42,11 +47,14 @@ export function ProductCommandBar({
   );
 }
 
-function returnContextText(origin: AgentSessionProductOrigin) {
-  return `Opened from ${locationKindLabel(origin.location)}`;
+function returnContextText(origin: ProductContextualOrigin) {
+  return isAgentSessionProductOrigin(origin)
+    ? `Opened from ${locationKindLabel(origin.location)}`
+    : `Opened from ${fileReviewLocationLabel(origin)}`;
 }
 
-function returnActionLabel(origin: AgentSessionProductOrigin) {
+function returnActionLabel(origin: ProductContextualOrigin) {
+  if (!isAgentSessionProductOrigin(origin)) return `Return to ${fileReviewLocationLabel(origin)}`;
   return origin.location.kind === 'work_unit'
     ? 'Return to Work Unit Activity'
     : `Return to ${locationKindLabel(origin.location)}`;
@@ -60,4 +68,15 @@ function locationKindLabel(location: AgentSessionProductOrigin['location']) {
     work_unit: 'Work Unit',
     epic_planning_draft: 'Epic planning draft',
   }[location.kind];
+}
+
+function fileReviewLocationLabel(origin: FileReviewProductOrigin) {
+  const location = origin.returnTo.location;
+  if (location?.kind === 'work_unit' && location.inspectionState?.tab === 'evidence')
+    return 'Work Unit Evidence';
+  if (location?.kind === 'work_unit') return 'Work Unit Activity';
+  if (location?.kind === 'work_slice_planning_point') return 'Planning Point';
+  if (location?.kind === 'sprint') return 'Sprint';
+  if (location?.kind === 'epic') return 'Epic';
+  return 'Orchestration';
 }

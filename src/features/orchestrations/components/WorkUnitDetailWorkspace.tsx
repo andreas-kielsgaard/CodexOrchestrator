@@ -29,7 +29,10 @@ export interface WorkUnitDetailWorkspaceProps {
   readonly backLabel?: string;
   readonly onBack: () => void;
   readonly onOpenActivitySession?: (target: WorkUnitActivitySessionTarget) => void;
-  readonly onOpenFileEvidence?: (target: WorkUnitFileEvidenceTarget) => void;
+  readonly onOpenFileEvidence?: (
+    target: WorkUnitFileEvidenceTarget,
+    context?: WorkUnitFileEvidenceOpenContext,
+  ) => void;
   readonly initialInspectionState?: WorkUnitInspectionState;
   readonly sprintControl?: ReactNode;
 }
@@ -43,6 +46,10 @@ export interface WorkUnitActivitySessionTarget {
 export interface WorkUnitFileEvidenceTarget {
   readonly reviewId: string;
   readonly changedFileId: string;
+}
+
+export interface WorkUnitFileEvidenceOpenContext {
+  readonly inspectionState?: WorkUnitInspectionState;
 }
 
 export interface WorkUnitInspectionState {
@@ -511,7 +518,10 @@ function WorkUnitEvidenceView({
 }: {
   readonly inspection?: ProductWorkUnitInspectionV1;
   readonly onSelectActivity: (activityId: string) => void;
-  readonly onOpenFileEvidence?: (target: WorkUnitFileEvidenceTarget) => void;
+  readonly onOpenFileEvidence?: (
+    target: WorkUnitFileEvidenceTarget,
+    context?: WorkUnitFileEvidenceOpenContext,
+  ) => void;
 }) {
   const fileEvidence = inspection?.fileEvidence;
   const sourceActivity =
@@ -549,7 +559,22 @@ function WorkUnitEvidenceView({
                       type="button"
                       data-evidence-id={file.evidenceRef}
                       data-file-id={file.fileId}
-                      onClick={() => openFileEvidence(file.diffDestination, onOpenFileEvidence)}
+                      onClick={() =>
+                        openFileEvidence(
+                          file.diffDestination,
+                          onOpenFileEvidence,
+                          sourceActivity
+                            ? {
+                                inspectionState: {
+                                  tab: 'evidence',
+                                  activityId: sourceActivity.activityId,
+                                  sessionId: sourceActivity.agentSessionId,
+                                  invocationId: sourceActivity.invocationId,
+                                },
+                              }
+                            : undefined,
+                        )
+                      }
                     >
                       <strong>{file.displayName}</strong>
                       <span>{file.changeKind}</span>
@@ -661,10 +686,11 @@ function isAvailableDiffDestination(destination: unknown): destination is {
 
 function openFileEvidence(
   destination: unknown,
-  onOpen: (target: WorkUnitFileEvidenceTarget) => void,
+  onOpen: (target: WorkUnitFileEvidenceTarget, context?: WorkUnitFileEvidenceOpenContext) => void,
+  context?: WorkUnitFileEvidenceOpenContext,
 ) {
   if (!isAvailableDiffDestination(destination)) return;
-  onOpen({ reviewId: destination.reviewId, changedFileId: destination.changedFileId });
+  onOpen({ reviewId: destination.reviewId, changedFileId: destination.changedFileId }, context);
 }
 
 function roleLabel(role: ProductWorkUnitInspectionActivityV1['role']) {

@@ -21,12 +21,30 @@ export type ProductNavigationDestination =
 
 /** A File Review destination names its authoritative input; it never stores a display label or source. */
 export type FileReviewNavigationTarget =
+  | { readonly kind: 'direct' }
   | { readonly kind: 'contextual_sprint'; readonly sprintId: string }
   | {
       readonly kind: 'file_evidence';
       readonly reviewId: string;
       readonly changedFileId: string;
     };
+
+export type FileReviewProductOrigin =
+  | {
+      readonly kind: 'file_review';
+      readonly launchKind: 'contextual_sprint';
+      readonly sprintId: string;
+      readonly returnTo: Extract<ProductNavigationDestination, { readonly kind: 'orchestration' }>;
+    }
+  | {
+      readonly kind: 'file_review';
+      readonly launchKind: 'file_evidence';
+      readonly reviewId: string;
+      readonly changedFileId: string;
+      readonly returnTo: Extract<ProductNavigationDestination, { readonly kind: 'orchestration' }>;
+    };
+
+export type ProductContextualOrigin = AgentSessionProductOrigin | FileReviewProductOrigin;
 
 export type ProductNavigationIntent = 'direct' | 'push' | 'replace' | 'restore';
 
@@ -40,7 +58,7 @@ export interface ProductNavigationState {
   /** Only destinations entered through a product push are candidates for generic Back. */
   readonly history: readonly ProductNavigationEntry[];
   /** This single contextual pointer is independent of generic history. */
-  readonly contextualOrigin: AgentSessionProductOrigin | null;
+  readonly contextualOrigin: ProductContextualOrigin | null;
 }
 
 export type ProductNavigationAction =
@@ -54,9 +72,14 @@ export type ProductNavigationAction =
       readonly origin: AgentSessionProductOrigin;
       readonly focusedInvocationId: string | null;
     }
+  | {
+      readonly type: 'open_contextual_file_review';
+      readonly target: Exclude<FileReviewNavigationTarget, { readonly kind: 'direct' }>;
+      readonly origin: FileReviewProductOrigin;
+    }
   | { readonly type: 'enter_agent_sessions_directly' }
   | { readonly type: 'back' }
-  | { readonly type: 'return_to_contextual_origin'; readonly origin: AgentSessionProductOrigin }
+  | { readonly type: 'return_to_contextual_origin'; readonly origin: ProductContextualOrigin }
   | { readonly type: 'clear_contextual_origin' };
 
 export type ProductNavigationDestinationSupport = (
@@ -105,7 +128,9 @@ export function productNavigationReducer(
       return {
         current: { destination: action.destination, intent: action.intent },
         history: action.intent === 'push' ? [...state.history, state.current] : state.history,
-        contextualOrigin: keepsContextualOrigin(action.destination) ? state.contextualOrigin : null,
+        contextualOrigin: keepsContextualOrigin(state.contextualOrigin, action.destination)
+          ? state.contextualOrigin
+          : null,
       };
     case 'open_contextual_agent_session':
       if (
@@ -125,13 +150,26 @@ export function productNavigationReducer(
         history: [...state.history, state.current],
         contextualOrigin: action.origin,
       };
+    case 'open_contextual_file_review':
+      if (
+        !isFileReviewProductOrigin(action.origin) ||
+        !sameFileReviewLaunch(action.target, fileReviewTarget(action.origin)) ||
+        !supports({ kind: 'file_review', target: action.target }) ||
+        !supports(action.origin.returnTo)
+      )
+        return clearForeignOrigin(state);
+      return {
+        current: { destination: { kind: 'file_review', target: action.target }, intent: 'push' },
+        history: [...state.history, state.current],
+        contextualOrigin: action.origin,
+      };
     case 'enter_agent_sessions_directly': {
       const destination: ProductNavigationDestination = {
         kind: 'agent_sessions',
         selectedSessionId:
           state.current.destination.kind === 'agent_sessions'
             ? state.current.destination.selectedSessionId
-          : null,
+            : null,
         focusedInvocationId: null,
       };
       if (state.current.destination.kind === 'agent_sessions')
@@ -161,18 +199,35 @@ export function productNavigationReducer(
         contextualOrigin: null,
       };
     }
-    case 'return_to_contextual_origin':
+    case 'return_to_contextual_origin': {
+      if (state.contextualOrigin !== action.origin) return clearForeignOrigin(state);
+      if (isAgentSessionProductOrigin(action.origin)) {
+        if (
+          state.current.destination.kind !== 'agent_sessions' ||
+          !supports(orchestrationDestination(action.origin))
+        )
+          return clearForeignOrigin(state);
+        return {
+          current: { destination: orchestrationDestination(action.origin), intent: 'restore' },
+          history: state.history,
+          contextualOrigin: null,
+        };
+      }
+      if (!isFileReviewProductOrigin(action.origin)) return clearForeignOrigin(state);
+      const currentDestination = state.current.destination;
+      if (currentDestination.kind !== 'file_review') return clearForeignOrigin(state);
+      if (currentDestination.target.kind === 'direct') return clearForeignOrigin(state);
       if (
-        state.contextualOrigin !== action.origin ||
-        !isAgentSessionProductOrigin(action.origin) ||
-        !supports(orchestrationDestination(action.origin))
+        !sameFileReviewLaunch(currentDestination.target, fileReviewTarget(action.origin)) ||
+        !supports(action.origin.returnTo)
       )
         return clearForeignOrigin(state);
       return {
-        current: { destination: orchestrationDestination(action.origin), intent: 'restore' },
+        current: { destination: action.origin.returnTo, intent: 'restore' },
         history: state.history,
         contextualOrigin: null,
       };
+    }
     case 'clear_contextual_origin':
       return { ...state, contextualOrigin: null };
   }
@@ -227,12 +282,38 @@ export function isAgentSessionProductOrigin(value: unknown): value is AgentSessi
   );
 }
 
+export function isFileReviewProductOrigin(value: unknown): value is FileReviewProductOrigin {
+  if (
+    !isRecord(value) ||
+    value.kind !== 'file_review' ||
+    !isProductNavigationDestination(value.returnTo)
+  )
+    return false;
+  if (value.returnTo.kind !== 'orchestration') return false;
+  if (value.launchKind === 'contextual_sprint')
+    return (
+      hasOnlyKeys(value, ['kind', 'launchKind', 'sprintId', 'returnTo']) &&
+      isIdentifier(value.sprintId)
+    );
+  return (
+    value.launchKind === 'file_evidence' &&
+    hasOnlyKeys(value, ['kind', 'launchKind', 'reviewId', 'changedFileId', 'returnTo']) &&
+    isIdentifier(value.reviewId) &&
+    isIdentifier(value.changedFileId)
+  );
+}
+
 function orchestrationDestination(origin: AgentSessionProductOrigin): ProductNavigationDestination {
   return { kind: 'orchestration', location: origin.location };
 }
 
-function keepsContextualOrigin(destination: ProductNavigationDestination): boolean {
-  return destination.kind === 'agent_sessions';
+function keepsContextualOrigin(
+  origin: ProductContextualOrigin | null,
+  destination: ProductNavigationDestination,
+): boolean {
+  return (
+    origin !== null && isAgentSessionProductOrigin(origin) && destination.kind === 'agent_sessions'
+  );
 }
 
 function sameProductNavigationDestination(
@@ -248,6 +329,7 @@ function clearForeignOrigin(state: ProductNavigationState): ProductNavigationSta
 
 function isFileReviewNavigationTarget(value: unknown): value is FileReviewNavigationTarget {
   if (!isRecord(value) || typeof value.kind !== 'string') return false;
+  if (value.kind === 'direct') return hasOnlyKeys(value, ['kind']);
   if (value.kind === 'contextual_sprint')
     return hasOnlyKeys(value, ['kind', 'sprintId']) && isIdentifier(value.sprintId);
   return (
@@ -256,6 +338,25 @@ function isFileReviewNavigationTarget(value: unknown): value is FileReviewNaviga
     isIdentifier(value.reviewId) &&
     isIdentifier(value.changedFileId)
   );
+}
+
+function sameFileReviewLaunch(
+  target: Exclude<FileReviewNavigationTarget, { readonly kind: 'direct' }>,
+  expectedTarget: Exclude<FileReviewNavigationTarget, { readonly kind: 'direct' }>,
+): boolean {
+  return JSON.stringify(target) === JSON.stringify(expectedTarget);
+}
+
+function fileReviewTarget(
+  origin: FileReviewProductOrigin,
+): Exclude<FileReviewNavigationTarget, { readonly kind: 'direct' }> {
+  return origin.launchKind === 'contextual_sprint'
+    ? { kind: 'contextual_sprint', sprintId: origin.sprintId }
+    : {
+        kind: 'file_evidence',
+        reviewId: origin.reviewId,
+        changedFileId: origin.changedFileId,
+      };
 }
 
 function isAgentSessionProductLocation(value: unknown): value is AgentSessionProductLocation {

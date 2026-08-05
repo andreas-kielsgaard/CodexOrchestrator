@@ -4,6 +4,7 @@ import {
   createProductNavigation,
   productNavigationReducer,
   restoreProductNavigation,
+  type FileReviewProductOrigin,
   type ProductNavigationDestination,
 } from './productNavigation';
 
@@ -32,6 +33,19 @@ describe('Product navigation history', () => {
       },
     },
   };
+  const sprintFileReviewOrigin: FileReviewProductOrigin = {
+    kind: 'file_review',
+    launchKind: 'contextual_sprint',
+    sprintId: 'sprint-1',
+    returnTo: { kind: 'orchestration', location: workUnitOrigin.location },
+  };
+  const evidenceFileReviewOrigin: FileReviewProductOrigin = {
+    kind: 'file_review',
+    launchKind: 'file_evidence',
+    reviewId: 'review-1',
+    changedFileId: 'file-1',
+    returnTo: { kind: 'orchestration', location: workUnitOrigin.location },
+  };
 
   it('pushes and pops actual typed destinations deterministically', () => {
     let state = createProductNavigation(overview);
@@ -52,10 +66,11 @@ describe('Product navigation history', () => {
   });
 
   it('does not manufacture a self-history entry for a same-destination push', () => {
-    const state = productNavigationReducer(
-      createProductNavigation(overview),
-      { type: 'navigate', intent: 'push', destination: overview },
-    );
+    const state = productNavigationReducer(createProductNavigation(overview), {
+      type: 'navigate',
+      intent: 'push',
+      destination: overview,
+    });
     expect(state).toEqual(createProductNavigation(overview));
   });
 
@@ -194,5 +209,64 @@ describe('Product navigation history', () => {
     expect(state.current.destination).toBe(fileReview);
     expect(state.history).toEqual([]);
     expect(canNavigateBack(state)).toBe(false);
+  });
+
+  it('keeps direct File Review entry history-free and origin-free', () => {
+    const state = createProductNavigation({ kind: 'file_review', target: { kind: 'direct' } });
+    expect(state.history).toEqual([]);
+    expect(state.contextualOrigin).toBeNull();
+    expect(canNavigateBack(state)).toBe(false);
+  });
+
+  it('opens contextual Sprint and evidence reviews with typed Return separate from Back', () => {
+    let state = createProductNavigation(overview);
+    state = productNavigationReducer(
+      state,
+      {
+        type: 'open_contextual_file_review',
+        target: { kind: 'contextual_sprint', sprintId: 'sprint-1' },
+        origin: sprintFileReviewOrigin,
+      },
+      (destination) => destination.kind !== 'file_review' || destination.target.kind !== 'direct',
+    );
+    expect(state.current.destination).toEqual({
+      kind: 'file_review',
+      target: { kind: 'contextual_sprint', sprintId: 'sprint-1' },
+    });
+    expect(state.contextualOrigin).toBe(sprintFileReviewOrigin);
+    expect(canNavigateBack(state)).toBe(true);
+
+    state = productNavigationReducer(state, {
+      type: 'return_to_contextual_origin',
+      origin: sprintFileReviewOrigin,
+    });
+    expect(state.current.destination).toEqual({
+      kind: 'orchestration',
+      location: workUnitOrigin.location,
+    });
+    expect(state.contextualOrigin).toBeNull();
+    expect(canNavigateBack(state)).toBe(true);
+
+    state = productNavigationReducer(state, {
+      type: 'open_contextual_file_review',
+      target: { kind: 'file_evidence', reviewId: 'review-1', changedFileId: 'file-1' },
+      origin: evidenceFileReviewOrigin,
+    });
+    state = productNavigationReducer(state, { type: 'back' });
+    expect(state.current.destination).toEqual({
+      kind: 'orchestration',
+      location: workUnitOrigin.location,
+    });
+    expect(state.contextualOrigin).toBeNull();
+  });
+
+  it('rejects a foreign File Review origin instead of reviving another launch', () => {
+    let state = createProductNavigation({ kind: 'file_review', target: { kind: 'direct' } });
+    state = productNavigationReducer(state, {
+      type: 'return_to_contextual_origin',
+      origin: evidenceFileReviewOrigin,
+    });
+    expect(state.current.destination).toEqual({ kind: 'file_review', target: { kind: 'direct' } });
+    expect(state.contextualOrigin).toBeNull();
   });
 });

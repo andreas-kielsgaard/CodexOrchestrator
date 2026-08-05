@@ -19,7 +19,10 @@ import type {
   EpicAutomaticContinuationPolicyController,
 } from '../../../application/orchestrations';
 import type { ContextualFileReviewResult } from '../../../application/contextualFileReview';
-import type { AgentSessionProductOrigin } from '../../../application/agentSessionNavigation';
+import type {
+  AgentSessionProductLocation,
+  AgentSessionProductOrigin,
+} from '../../../application/agentSessionNavigation';
 import type { WorkUnitActivitySessionTarget } from './WorkUnitDetailWorkspace';
 
 export interface EpicDetailProps {
@@ -37,11 +40,17 @@ export interface EpicDetailProps {
   readonly onDetailLocationChange: (location: SprintWorkspaceDetailLocation) => void;
   readonly onBack: () => void;
   readonly onOpenAgentSession?: (origin: AgentSessionProductOrigin) => void;
-  readonly onRequestFileReview?: (sprintId: string) => Promise<ContextualFileReviewResult>;
-  readonly onOpenFileEvidence?: (target: {
-    readonly reviewId: string;
-    readonly changedFileId: string;
-  }) => void;
+  readonly onRequestFileReview?: (
+    sprintId: string,
+    returnLocation?: AgentSessionProductLocation,
+  ) => Promise<ContextualFileReviewResult>;
+  readonly onOpenFileEvidence?: (
+    target: {
+      readonly reviewId: string;
+      readonly changedFileId: string;
+    },
+    returnLocation?: AgentSessionProductLocation,
+  ) => void;
   readonly onOpenWorkUnitActivitySession?: (
     target: WorkUnitActivitySessionTarget,
     origin: AgentSessionProductOrigin,

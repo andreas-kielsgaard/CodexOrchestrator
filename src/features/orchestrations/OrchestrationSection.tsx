@@ -29,11 +29,17 @@ export interface OrchestrationSectionProps {
   readonly onOpenPlanningDraft?: (draft: EpicPlanningDraftSummary) => void;
   readonly requestedLocation?: AgentSessionProductLocation | null;
   readonly onOpenAgentSession?: (origin: AgentSessionProductOrigin) => void;
-  readonly onRequestFileReview?: (sprintId: string) => Promise<ContextualFileReviewResult>;
-  readonly onOpenFileEvidence?: (target: {
-    readonly reviewId: string;
-    readonly changedFileId: string;
-  }) => void;
+  readonly onRequestFileReview?: (
+    sprintId: string,
+    returnLocation?: AgentSessionProductLocation,
+  ) => Promise<ContextualFileReviewResult>;
+  readonly onOpenFileEvidence?: (
+    target: {
+      readonly reviewId: string;
+      readonly changedFileId: string;
+    },
+    returnLocation?: AgentSessionProductLocation,
+  ) => void;
   readonly onOpenWorkUnitActivitySession?: (
     target: WorkUnitActivitySessionTarget,
     origin: AgentSessionProductOrigin,

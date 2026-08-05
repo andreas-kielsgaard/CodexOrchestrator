@@ -54,7 +54,11 @@ import { ProductCommandBar } from './ProductCommandBar';
 import {
   canNavigateBack,
   createProductNavigation,
+  isAgentSessionProductOrigin,
+  isFileReviewProductOrigin,
   productNavigationReducer,
+  type FileReviewNavigationTarget,
+  type FileReviewProductOrigin,
   type ProductNavigationDestination,
 } from '../application/productNavigation';
 
@@ -138,9 +142,22 @@ export function App({
       : initialSurface;
   const [surface, setSurface] = useState<ApplicationSurface>(initialApplicationSurface);
   const productNavigationEpoch = useRef(0);
-  const [contextualFileReviewSource, setContextualFileReviewSource] = useState<FileReviewSource>();
-  const [fileReviewInitialFileId, setFileReviewInitialFileId] = useState<string>();
-  const activeFileReviewSource = fileReviewSource ?? contextualFileReviewSource;
+  type ContextualFileReviewState = {
+    readonly target: Exclude<FileReviewNavigationTarget, { readonly kind: 'direct' }>;
+    readonly source: FileReviewSource;
+    readonly initialFileId?: string;
+  };
+  const contextualFileReviewStateRef = useRef<ContextualFileReviewState | null>(null);
+  const fileReviewRequestSequence = useRef(0);
+  const [contextualFileReviewState, setContextualFileReviewStateState] =
+    useState<ContextualFileReviewState | null>(null);
+  const setContextualFileReviewState = useCallback((next: ContextualFileReviewState | null) => {
+    contextualFileReviewStateRef.current = next;
+    setContextualFileReviewStateState(next);
+  }, []);
+  const clearFileReviewState = useCallback(() => {
+    setContextualFileReviewState(null);
+  }, [setContextualFileReviewState]);
   const supportsProductDestination = useCallback(
     (destination: ProductNavigationDestination) => {
       switch (destination.kind) {
@@ -149,23 +166,29 @@ export function App({
         case 'agent_sessions':
           return true;
         case 'file_review':
-          return Boolean(activeFileReviewSource);
+          if (destination.target.kind === 'direct') return Boolean(fileReviewSource);
+          return sameFileReviewTarget(
+            contextualFileReviewStateRef.current?.target,
+            destination.target,
+          );
         case 'harness_inspector':
           return Boolean(harnessManagementPreviewSurface);
         case 'worktree_review':
           return Boolean(humanReviewLauncherView);
       }
     },
-    [activeFileReviewSource, harnessManagementPreviewSurface, humanReviewLauncherView],
+    [fileReviewSource, harnessManagementPreviewSurface, humanReviewLauncherView],
   );
   const initialNavigationDestination: ProductNavigationDestination =
     initialApplicationSurface === 'agent-sessions'
       ? { kind: 'agent_sessions', selectedSessionId: null, focusedInvocationId: null }
-      : initialApplicationSurface === 'harness-inspector'
-        ? { kind: 'harness_inspector' }
-        : initialApplicationSurface === 'worktree-review'
-          ? { kind: 'worktree_review' }
-          : { kind: 'orchestration', location: null };
+      : initialApplicationSurface === 'file-review'
+        ? { kind: 'file_review', target: { kind: 'direct' } }
+        : initialApplicationSurface === 'harness-inspector'
+          ? { kind: 'harness_inspector' }
+          : initialApplicationSurface === 'worktree-review'
+            ? { kind: 'worktree_review' }
+            : { kind: 'orchestration', location: null };
   const [productNavigation, dispatchProductNavigation] = useReducer(
     (
       state: ReturnType<typeof createProductNavigation>,
@@ -182,14 +205,34 @@ export function App({
       ? (productNavigation.current.destination.focusedInvocationId ?? undefined)
       : undefined;
   const currentProductDestination = productNavigation.current.destination;
+  const activeFileReviewSource =
+    currentProductDestination.kind === 'file_review'
+      ? currentProductDestination.target.kind === 'direct'
+        ? fileReviewSource
+        : sameFileReviewTarget(contextualFileReviewState?.target, currentProductDestination.target)
+          ? contextualFileReviewState?.source
+          : undefined
+      : undefined;
   const productReturnOrigin =
-    productNavigation.current.destination.kind === 'agent_sessions' &&
     productNavigation.contextualOrigin &&
-    supportsProductDestination({
-      kind: 'orchestration',
-      location: productNavigation.contextualOrigin.location,
-    })
+    ((isAgentSessionProductOrigin(productNavigation.contextualOrigin) &&
+      currentProductDestination.kind === 'agent_sessions' &&
+      supportsProductDestination({
+        kind: 'orchestration',
+        location: productNavigation.contextualOrigin.location,
+      })) ||
+      (isFileReviewProductOrigin(productNavigation.contextualOrigin) &&
+        currentProductDestination.kind === 'file_review' &&
+        sameFileReviewTarget(
+          currentProductDestination.target,
+          fileReviewTarget(productNavigation.contextualOrigin),
+        ) &&
+        supportsProductDestination(productNavigation.contextualOrigin.returnTo)))
       ? productNavigation.contextualOrigin
+      : null;
+  const agentSessionReturnOrigin =
+    productReturnOrigin && isAgentSessionProductOrigin(productReturnOrigin)
+      ? productReturnOrigin
       : null;
   const [expandedAgentSessionNodes, setExpandedAgentSessionNodes] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -224,6 +267,10 @@ export function App({
       setSurface('worktree-review');
     }
   }, [currentProductDestination]);
+
+  useEffect(() => {
+    if (currentProductDestination.kind !== 'file_review') clearFileReviewState();
+  }, [clearFileReviewState, currentProductDestination]);
 
   useEffect(() => {
     if (!humanReviewLauncherView || !humanReviewLauncherNavigation) return;
@@ -533,13 +580,24 @@ export function App({
     [planningDrafts],
   );
   const requestContextualFileReview = useCallback(
-    async (sprintId: string): Promise<ContextualFileReviewResult> => {
+    async (
+      sprintId: string,
+      returnLocation?: AgentSessionProductLocation,
+    ): Promise<ContextualFileReviewResult> => {
       if (!contextualFileReviewClient)
         return {
           status: 'failed',
           reason: 'unavailable',
           message: 'File Review is unavailable right now.',
         };
+      const sequence = ++fileReviewRequestSequence.current;
+      const launchEpoch = productNavigationEpoch.current;
+      const returnTo = returnLocation
+        ? { kind: 'orchestration' as const, location: returnLocation }
+        : currentProductDestination.kind === 'orchestration'
+          ? currentProductDestination
+          : null;
+      clearFileReviewState();
       let result: ContextualFileReviewResult;
       try {
         result = await contextualFileReviewClient.requestForSprint(sprintId);
@@ -550,28 +608,81 @@ export function App({
           message: 'File Review is unavailable right now.',
         };
       }
-      if (result.status === 'ready') {
-        setContextualFileReviewSource(result.source);
+      if (
+        result.status === 'ready' &&
+        sequence === fileReviewRequestSequence.current &&
+        launchEpoch === productNavigationEpoch.current &&
+        returnTo
+      ) {
+        const target = { kind: 'contextual_sprint' as const, sprintId };
+        const origin: FileReviewProductOrigin = {
+          kind: 'file_review',
+          launchKind: 'contextual_sprint',
+          sprintId,
+          returnTo,
+        };
+        setContextualFileReviewState({ target, source: result.source });
+        dispatchProductNavigation({ type: 'open_contextual_file_review', target, origin });
         setSurface('file-review');
       }
       return result;
     },
-    [contextualFileReviewClient],
+    [
+      clearFileReviewState,
+      contextualFileReviewClient,
+      currentProductDestination,
+      setContextualFileReviewState,
+    ],
   );
   const openFileEvidence = useCallback(
-    (target: { readonly reviewId: string; readonly changedFileId: string }) => {
+    (
+      target: { readonly reviewId: string; readonly changedFileId: string },
+      returnLocation?: AgentSessionProductLocation,
+    ) => {
+      productNavigationEpoch.current += 1;
+      fileReviewRequestSequence.current += 1;
+      clearFileReviewState();
       const source = fileReviewSourceForEvidence?.(target);
       if (!source) return;
-      setContextualFileReviewSource(source);
-      setFileReviewInitialFileId(target.changedFileId);
-      dispatchProductNavigation({
-        type: 'navigate',
-        intent: 'push',
-        destination: { kind: 'file_review', target: { kind: 'file_evidence', ...target } },
+      const fileReviewTarget = { kind: 'file_evidence' as const, ...target };
+      const returnTo = returnLocation
+        ? { kind: 'orchestration' as const, location: returnLocation }
+        : currentProductDestination.kind === 'orchestration'
+          ? currentProductDestination
+          : null;
+      setContextualFileReviewState({
+        target: fileReviewTarget,
+        source,
+        initialFileId: target.changedFileId,
       });
+      if (returnTo) {
+        const origin: FileReviewProductOrigin = {
+          kind: 'file_review',
+          launchKind: 'file_evidence',
+          reviewId: target.reviewId,
+          changedFileId: target.changedFileId,
+          returnTo,
+        };
+        dispatchProductNavigation({
+          type: 'open_contextual_file_review',
+          target: fileReviewTarget,
+          origin,
+        });
+      } else {
+        dispatchProductNavigation({
+          type: 'navigate',
+          intent: 'push',
+          destination: { kind: 'file_review', target: fileReviewTarget },
+        });
+      }
       setSurface('file-review');
     },
-    [fileReviewSourceForEvidence],
+    [
+      clearFileReviewState,
+      currentProductDestination,
+      fileReviewSourceForEvidence,
+      setContextualFileReviewState,
+    ],
   );
 
   return (
@@ -654,7 +765,13 @@ export function App({
             aria-current={surface === 'file-review' ? 'page' : undefined}
             onClick={() => {
               productNavigationEpoch.current += 1;
-              dispatchProductNavigation({ type: 'clear_contextual_origin' });
+              fileReviewRequestSequence.current += 1;
+              clearFileReviewState();
+              dispatchProductNavigation({
+                type: 'navigate',
+                intent: 'push',
+                destination: { kind: 'file_review', target: { kind: 'direct' } },
+              });
               setSurface('file-review');
             }}
           >
@@ -666,12 +783,14 @@ export function App({
         canGoBack={canNavigateBack(productNavigation, supportsProductDestination)}
         onBack={() => {
           productNavigationEpoch.current += 1;
+          fileReviewRequestSequence.current += 1;
           dispatchProductNavigation({ type: 'back' });
         }}
         returnOrigin={productReturnOrigin}
         onReturn={(origin) => {
           if (origin !== productReturnOrigin) return;
           productNavigationEpoch.current += 1;
+          fileReviewRequestSequence.current += 1;
           dispatchProductNavigation({ type: 'return_to_contextual_origin', origin });
         }}
       />
@@ -733,7 +852,19 @@ export function App({
           onOpenFileEvidence={fileReviewSourceForEvidence ? openFileEvidence : undefined}
         />
       ) : surface === 'file-review' && activeFileReviewSource ? (
-        <FileReviewScreen source={activeFileReviewSource} initialFileId={fileReviewInitialFileId} />
+        <FileReviewScreen
+          source={activeFileReviewSource}
+          initialFileId={
+            currentProductDestination.kind === 'file_review' &&
+            currentProductDestination.target.kind !== 'direct' &&
+            sameFileReviewTarget(
+              contextualFileReviewState?.target,
+              currentProductDestination.target,
+            )
+              ? contextualFileReviewState?.initialFileId
+              : undefined
+          }
+        />
       ) : surface === 'worktree-review' && humanReviewLauncherView ? (
         humanReviewLauncherView
       ) : surface === 'agent-sessions' ? (
@@ -747,7 +878,7 @@ export function App({
           planningDrafts={planningDrafts}
           selectedSessionId={selectedAgentSessionId}
           focusInvocationId={focusedAgentSessionInvocationId}
-          returnOrigin={productReturnOrigin}
+          returnOrigin={agentSessionReturnOrigin}
           onSelectedSessionChange={(() => {
             const renderEpoch = productNavigationEpoch.current;
             return (sessionId: string | null) => {
@@ -805,11 +936,17 @@ function OrchestrationSurface({
     target: WorkUnitActivitySessionTarget,
     origin: AgentSessionProductOrigin,
   ) => void;
-  readonly onRequestFileReview?: (sprintId: string) => Promise<ContextualFileReviewResult>;
-  readonly onOpenFileEvidence?: (target: {
-    readonly reviewId: string;
-    readonly changedFileId: string;
-  }) => void;
+  readonly onRequestFileReview?: (
+    sprintId: string,
+    returnLocation?: AgentSessionProductLocation,
+  ) => Promise<ContextualFileReviewResult>;
+  readonly onOpenFileEvidence?: (
+    target: {
+      readonly reviewId: string;
+      readonly changedFileId: string;
+    },
+    returnLocation?: AgentSessionProductLocation,
+  ) => void;
 }) {
   if (load.kind === 'ready')
     return (
@@ -879,4 +1016,23 @@ function OrchestrationSurface({
       )}
     </main>
   );
+}
+
+function sameFileReviewTarget(
+  left: FileReviewNavigationTarget | undefined,
+  right: FileReviewNavigationTarget,
+): boolean {
+  return left !== undefined && JSON.stringify(left) === JSON.stringify(right);
+}
+
+function fileReviewTarget(
+  origin: FileReviewProductOrigin,
+): Exclude<FileReviewNavigationTarget, { readonly kind: 'direct' }> {
+  return origin.launchKind === 'contextual_sprint'
+    ? { kind: 'contextual_sprint', sprintId: origin.sprintId }
+    : {
+        kind: 'file_evidence',
+        reviewId: origin.reviewId,
+        changedFileId: origin.changedFileId,
+      };
 }

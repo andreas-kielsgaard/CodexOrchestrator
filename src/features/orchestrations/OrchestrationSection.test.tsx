@@ -265,11 +265,20 @@ describe('OrchestrationSection', () => {
       <OrchestrationSection
         view={withTransition({
           label: 'Epic continuation invocation persisted; launch acceptance pending',
-          requestedAt: 't', authorizedAt: 't', sessionCreatedAt: 't', harnessAppliedAt: 't',
-          launchAcceptedAt: 't', preStartReady: true, lifecycleObserved: true, accepted: true,
-          preStartSemanticOutcomeRecordedAt: 't', preStartLifecycleObservedAt: 't',
-          preStartOutcomeAcceptedAt: 't', parentContinuationDeliveryRequestedAt: 't',
-          parentContinuationDeliveryPersistedAt: 't', downstreamNotStarted: true,
+          requestedAt: 't',
+          authorizedAt: 't',
+          sessionCreatedAt: 't',
+          harnessAppliedAt: 't',
+          launchAcceptedAt: 't',
+          preStartReady: true,
+          lifecycleObserved: true,
+          accepted: true,
+          preStartSemanticOutcomeRecordedAt: 't',
+          preStartLifecycleObservedAt: 't',
+          preStartOutcomeAcceptedAt: 't',
+          parentContinuationDeliveryRequestedAt: 't',
+          parentContinuationDeliveryPersistedAt: 't',
+          downstreamNotStarted: true,
         })}
       />,
     );
@@ -285,11 +294,20 @@ describe('OrchestrationSection', () => {
       <OrchestrationSection
         view={withTransition({
           label: 'Sprint planning-ready; downstream not started',
-          requestedAt: 't', authorizedAt: 't', sessionCreatedAt: 't', harnessAppliedAt: 't',
-          launchAcceptedAt: 't', preStartReady: true, lifecycleObserved: true, accepted: true,
-          sprintStartAuthorizedAt: 't', sprintStartPersistedAt: 't',
-          sprintContinuationLaunchAcceptedAt: 't', repositoryBranchReevaluationRecordedAt: 't',
-          planningReadyAt: 't', providerReceiverActivationObservedAt: 't',
+          requestedAt: 't',
+          authorizedAt: 't',
+          sessionCreatedAt: 't',
+          harnessAppliedAt: 't',
+          launchAcceptedAt: 't',
+          preStartReady: true,
+          lifecycleObserved: true,
+          accepted: true,
+          sprintStartAuthorizedAt: 't',
+          sprintStartPersistedAt: 't',
+          sprintContinuationLaunchAcceptedAt: 't',
+          repositoryBranchReevaluationRecordedAt: 't',
+          planningReadyAt: 't',
+          providerReceiverActivationObservedAt: 't',
           downstreamNotStarted: true,
         })}
       />,
@@ -334,7 +352,10 @@ describe('OrchestrationSection', () => {
     fireEvent.click(action);
     expect(action).toBeDisabled();
     expect(within(control).getByRole('status')).toHaveTextContent('Preparing File Review…');
-    expect(requestFileReview).toHaveBeenCalledWith('sprint-control-surface');
+    expect(requestFileReview).toHaveBeenCalledWith(
+      'sprint-control-surface',
+      expect.objectContaining({ kind: 'sprint', sprintId: 'sprint-control-surface' }),
+    );
 
     await act(async () => {
       settle({
@@ -386,7 +407,14 @@ describe('OrchestrationSection', () => {
     fireEvent.click(action);
     expect(action).toBeDisabled();
     expect(within(control).getByRole('status')).toHaveTextContent('Preparing File Review…');
-    expect(requestFileReview).toHaveBeenNthCalledWith(1, 'sprint-control-surface');
+    expect(requestFileReview).toHaveBeenNthCalledWith(
+      1,
+      'sprint-control-surface',
+      expect.objectContaining({
+        kind: 'work_slice_planning_point',
+        workSlicePlanningPointId: 'planner-r4-integration',
+      }),
+    );
 
     fireEvent.click(screen.getByRole('button', { name: /Open Work Unit WU-ECS2E/ }));
     expect(screen.getByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
@@ -396,7 +424,7 @@ describe('OrchestrationSection', () => {
     expect(action).toBeDisabled();
     expect(within(control).getByRole('status')).toHaveTextContent('Preparing File Review…');
     expect(requestFileReview).toHaveBeenCalledTimes(1);
-    expect(requestFileReview.mock.calls[0]).toEqual(['sprint-control-surface']);
+    expect(requestFileReview).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       settle({

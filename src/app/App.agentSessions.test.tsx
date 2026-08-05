@@ -306,6 +306,10 @@ describe('App application surfaces', () => {
         name: 'src/features/orchestrations/components/WorkUnitDetailWorkspace.tsx',
       }),
     ).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Return to Work Unit Evidence' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Return to Work Unit Evidence' }));
+    expect(await screen.findByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
+    expect(screen.getByRole('tab', { name: 'Evidence' })).toHaveAttribute('aria-selected', 'true');
     expect(loadedSessionIds).not.toContain('recorded-session-reviewer-WU-ECS2E');
   });
 
@@ -370,6 +374,52 @@ describe('App application surfaces', () => {
       'sprint-control-surface',
     );
     expect(screen.queryByRole('button', { name: 'Files & diffs' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Return to Sprint' })).toBeVisible();
+    expect(
+      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
+        name: 'Back',
+      }),
+    ).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Return to Sprint' }));
+    expect(await screen.findByRole('main', { name: 'Sprint detail' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Return to Sprint' })).toBeNull();
+  });
+
+  it('does not revive a late Sprint File Review result after direct navigation', async () => {
+    const composition = createRecordedDevelopmentApplicationComposition();
+    let settle!: (result: ContextualFileReviewResult) => void;
+    const contextualFileReviewClient: ContextualFileReviewClient = {
+      requestForSprint: vi.fn(
+        () =>
+          new Promise<ContextualFileReviewResult>((resolve) => {
+            settle = resolve;
+          }),
+      ),
+    };
+    render(<App {...composition} contextualFileReviewClient={contextualFileReviewClient} />);
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Open Codex Epic Runner workspace development',
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Sprint: Sprint Control Surface Discovery' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Review files' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Sessions' }));
+    expect(await screen.findByRole('heading', { name: 'Agent Sessions' })).toBeVisible();
+
+    await act(async () => {
+      settle({
+        status: 'ready',
+        source: createRecordedFileReviewSource('working-tree'),
+        idempotentReplay: false,
+      });
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Agent Sessions' })).toBeVisible();
+    expect(screen.queryByRole('main', { name: 'Files and diffs' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Return to/ })).toBeNull();
   });
 });
 
