@@ -72,6 +72,22 @@ CREATE TABLE IF NOT EXISTS epic_runner_sprint_result_attentions (
   attention_id TEXT NOT NULL UNIQUE, attention_json TEXT NOT NULL CHECK (json_valid(attention_json)),
   attention_fingerprint TEXT NOT NULL UNIQUE, requested_at TEXT NOT NULL
 );
+-- New Epic delivery is allowed only for the current exact decision.  A receiver that was
+-- already durably created remains recoverable after a later decision supersedes it.
+CREATE TRIGGER IF NOT EXISTS reject_noncurrent_sprint_result_epic_receiver
+BEFORE INSERT ON epic_runner_sprint_result_receivers
+WHEN NOT EXISTS (SELECT 1 FROM epic_runner_sprint_result_receivers existing WHERE existing.result_id=NEW.result_id)
+ AND NOT EXISTS (
+  SELECT 1 FROM sprint_upward_results r
+  JOIN sprint_continuation_decisions d ON d.decision_id=r.decision_id AND d.sprint_id=r.sprint_id
+  JOIN sprint_continuation_current_decisions current ON current.sprint_id=r.sprint_id AND current.decision_id=r.decision_id
+  JOIN initiated_sprints s ON s.id=r.sprint_id AND s.epic_id=NEW.epic_id
+  JOIN sprint_runner_transitions t ON t.sprint_id=s.id AND t.epic_id=s.epic_id
+  WHERE r.result_id=NEW.result_id AND r.decision_id=NEW.decision_id AND r.sprint_id=NEW.sprint_id
+    AND t.epic_runner_session_id=NEW.governing_runner_session_id
+    AND t.epic_runner_invocation_id=NEW.governing_runner_invocation_id
+)
+BEGIN SELECT RAISE(ABORT, 'Sprint-result Epic receiver correlation is not current and exact'); END;
 "#;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
