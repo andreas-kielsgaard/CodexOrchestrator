@@ -61,6 +61,8 @@ import {
   isAgentSessionProductOrigin,
   isFileReviewProductOrigin,
   productNavigationReducer,
+  sameFileReviewNavigationTarget,
+  sameProductNavigationDestination,
   type FileReviewNavigationTarget,
   type FileReviewProductOrigin,
   type ProductNavigationDestination,
@@ -171,7 +173,7 @@ export function App({
           return true;
         case 'file_review':
           if (destination.target.kind === 'direct') return Boolean(fileReviewSource);
-          return sameFileReviewTarget(
+          return sameFileReviewNavigationTarget(
             contextualFileReviewStateRef.current?.target,
             destination.target,
           );
@@ -213,7 +215,10 @@ export function App({
     currentProductDestination.kind === 'file_review'
       ? currentProductDestination.target.kind === 'direct'
         ? fileReviewSource
-        : sameFileReviewTarget(contextualFileReviewState?.target, currentProductDestination.target)
+        : sameFileReviewNavigationTarget(
+              contextualFileReviewState?.target,
+              currentProductDestination.target,
+            )
           ? contextualFileReviewState?.source
           : undefined
       : undefined;
@@ -227,7 +232,7 @@ export function App({
       })) ||
       (isFileReviewProductOrigin(productNavigation.contextualOrigin) &&
         currentProductDestination.kind === 'file_review' &&
-        sameFileReviewTarget(
+        sameFileReviewNavigationTarget(
           currentProductDestination.target,
           fileReviewTarget(productNavigation.contextualOrigin),
         ) &&
@@ -879,7 +884,7 @@ export function App({
           initialFileId={
             currentProductDestination.kind === 'file_review' &&
             currentProductDestination.target.kind !== 'direct' &&
-            sameFileReviewTarget(
+            sameFileReviewNavigationTarget(
               contextualFileReviewState?.target,
               currentProductDestination.target,
             )
@@ -1044,20 +1049,6 @@ function OrchestrationSurface({
       )}
     </main>
   );
-}
-
-function sameFileReviewTarget(
-  left: FileReviewNavigationTarget | undefined,
-  right: FileReviewNavigationTarget,
-): boolean {
-  return left !== undefined && JSON.stringify(left) === JSON.stringify(right);
-}
-
-function sameProductNavigationDestination(
-  left: ProductNavigationDestination,
-  right: ProductNavigationDestination,
-): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function fileReviewTarget(

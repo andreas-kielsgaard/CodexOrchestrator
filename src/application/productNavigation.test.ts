@@ -4,6 +4,7 @@ import {
   createProductNavigation,
   productNavigationReducer,
   restoreProductNavigation,
+  sameProductNavigationDestination,
   type FileReviewProductOrigin,
   type ProductNavigationDestination,
 } from './productNavigation';
@@ -72,6 +73,52 @@ describe('Product navigation history', () => {
       destination: overview,
     });
     expect(state).toEqual(createProductNavigation(overview));
+  });
+
+  it('recognizes structurally equivalent destinations and File Review targets', () => {
+    const reorderedOverview: ProductNavigationDestination = {
+      location: null,
+      kind: 'orchestration',
+    };
+    const sameDestination = productNavigationReducer(createProductNavigation(overview), {
+      type: 'navigate',
+      intent: 'push',
+      destination: reorderedOverview,
+    });
+    expect(sameDestination).toEqual(createProductNavigation(overview));
+
+    const reorderedTarget = { sprintId: 'sprint-1', kind: 'contextual_sprint' } as const;
+    const state = productNavigationReducer(createProductNavigation(overview), {
+      type: 'open_contextual_file_review',
+      target: reorderedTarget,
+      origin: sprintFileReviewOrigin,
+    });
+    expect(state.current.destination).toEqual({ kind: 'file_review', target: reorderedTarget });
+    expect(state.contextualOrigin).toBe(sprintFileReviewOrigin);
+
+    expect(
+      sameProductNavigationDestination(
+        { kind: 'orchestration', location: workUnitOrigin.location },
+        {
+          location: {
+            inspectionState: {
+              invocationId: 'invocation-handler',
+              sessionId: 'session-handler',
+              activityId: 'activity-1',
+              tab: 'activity',
+            },
+            label: 'Typed Work Unit',
+            workUnitId: 'work-unit-1',
+            workSlicePlanningPointId: 'activity-1',
+            revisionId: 'revision-1',
+            sprintId: 'sprint-1',
+            epicId: 'epic-1',
+            kind: 'work_unit',
+          },
+          kind: 'orchestration',
+        },
+      ),
+    ).toBe(true);
   });
 
   it('keeps contextual Return separate from generic Back and preserves exact Work Unit state', () => {

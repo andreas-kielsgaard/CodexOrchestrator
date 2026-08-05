@@ -316,11 +316,32 @@ function keepsContextualOrigin(
   );
 }
 
-function sameProductNavigationDestination(
+export function sameProductNavigationDestination(
   left: ProductNavigationDestination,
   right: ProductNavigationDestination,
 ): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  if (left.kind !== right.kind) return false;
+  switch (left.kind) {
+    case 'orchestration':
+      return right.kind === 'orchestration' && sameProductLocation(left.location, right.location);
+    case 'plan_builder':
+      return (
+        right.kind === 'plan_builder' && left.epicPlanningDraftId === right.epicPlanningDraftId
+      );
+    case 'agent_sessions':
+      return (
+        right.kind === 'agent_sessions' &&
+        left.selectedSessionId === right.selectedSessionId &&
+        left.focusedInvocationId === right.focusedInvocationId
+      );
+    case 'file_review':
+      return (
+        right.kind === 'file_review' && sameFileReviewNavigationTarget(left.target, right.target)
+      );
+    case 'harness_inspector':
+    case 'worktree_review':
+      return true;
+  }
 }
 
 function clearForeignOrigin(state: ProductNavigationState): ProductNavigationState {
@@ -344,7 +365,71 @@ function sameFileReviewLaunch(
   target: Exclude<FileReviewNavigationTarget, { readonly kind: 'direct' }>,
   expectedTarget: Exclude<FileReviewNavigationTarget, { readonly kind: 'direct' }>,
 ): boolean {
-  return JSON.stringify(target) === JSON.stringify(expectedTarget);
+  return sameFileReviewNavigationTarget(target, expectedTarget);
+}
+
+export function sameFileReviewNavigationTarget(
+  left: FileReviewNavigationTarget | undefined,
+  right: FileReviewNavigationTarget,
+): boolean {
+  if (!left || left.kind !== right.kind) return false;
+  if (left.kind === 'direct') return true;
+  if (left.kind === 'contextual_sprint')
+    return right.kind === 'contextual_sprint' && left.sprintId === right.sprintId;
+  return (
+    right.kind === 'file_evidence' &&
+    left.reviewId === right.reviewId &&
+    left.changedFileId === right.changedFileId
+  );
+}
+
+function sameProductLocation(
+  left: AgentSessionProductLocation | null,
+  right: AgentSessionProductLocation | null,
+): boolean {
+  if (left === null || right === null) return left === right;
+  if (left.kind !== right.kind || left.label !== right.label) return false;
+  if (left.kind === 'epic') return right.kind === 'epic' && left.epicId === right.epicId;
+  if (left.kind === 'sprint')
+    return (
+      right.kind === 'sprint' && left.epicId === right.epicId && left.sprintId === right.sprintId
+    );
+  if (left.kind === 'work_slice_planning_point')
+    return (
+      right.kind === 'work_slice_planning_point' &&
+      left.epicId === right.epicId &&
+      left.sprintId === right.sprintId &&
+      left.revisionId === right.revisionId &&
+      left.workSlicePlanningPointId === right.workSlicePlanningPointId
+    );
+  if (left.kind === 'work_unit')
+    return (
+      right.kind === 'work_unit' &&
+      left.epicId === right.epicId &&
+      left.sprintId === right.sprintId &&
+      left.revisionId === right.revisionId &&
+      left.workSlicePlanningPointId === right.workSlicePlanningPointId &&
+      left.workUnitId === right.workUnitId &&
+      sameWorkUnitInspectionState(left.inspectionState, right.inspectionState)
+    );
+  return (
+    right.kind === 'epic_planning_draft' && left.epicPlanningDraftId === right.epicPlanningDraftId
+  );
+}
+
+function sameWorkUnitInspectionState(
+  left: Extract<AgentSessionProductLocation, { readonly kind: 'work_unit' }>['inspectionState'],
+  right: Extract<AgentSessionProductLocation, { readonly kind: 'work_unit' }>['inspectionState'],
+): boolean {
+  return (
+    left === right ||
+    (left !== undefined &&
+      right !== undefined &&
+      left.tab === right.tab &&
+      left.activityId === right.activityId &&
+      left.sessionId === right.sessionId &&
+      left.invocationId === right.invocationId)
+  );
 }
 
 function fileReviewTarget(
