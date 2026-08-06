@@ -7,9 +7,11 @@ import type {
   ProductDecisionEvidence,
   ProductDecisionEvidenceNavigationRequest,
   ProductDecisionClient,
+  ProductDecisionCorrectionClient,
   ProductDecisionEvidenceDestination,
   ProductDecisionPublishTarget,
 } from '../../application/productDecisions';
+import type { AgentSessionClient } from '../../application/agentSessions';
 import { ProductiveProductDecisionsPanel } from './ProductiveProductDecisionsPanel';
 import './epicProductDecisions.css';
 
@@ -17,6 +19,8 @@ export interface EpicProductDecisionsPanelProps {
   readonly epicId: string;
   readonly source?: EpicProductDecisionSource;
   readonly productiveClient?: ProductDecisionClient;
+  readonly correctionClient?: ProductDecisionCorrectionClient;
+  readonly agentSessionClient?: AgentSessionClient;
   /** The application owns cross-surface navigation after the source resolves an exact record. */
   readonly onOpenEvidence?: (request: ProductDecisionEvidenceNavigationRequest) => void;
   readonly onOpenProductiveEvidence?: (destination: ProductDecisionEvidenceDestination) => void;
@@ -27,6 +31,8 @@ export function EpicProductDecisionsPanel({
   epicId,
   source,
   productiveClient,
+  correctionClient,
+  agentSessionClient,
   onOpenEvidence,
   onOpenProductiveEvidence,
   onPublish,
@@ -57,6 +63,8 @@ export function EpicProductDecisionsPanel({
     <ProductiveProductDecisionsPanel
       epicId={epicId}
       client={productiveClient}
+      correctionClient={correctionClient}
+      agentSessionClient={agentSessionClient}
       onOpenEvidence={onOpenProductiveEvidence}
       onPublish={onPublish}
     />

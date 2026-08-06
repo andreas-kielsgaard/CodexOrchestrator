@@ -1,6 +1,13 @@
 //! Durable, application-owned Product Decision versions. This module deliberately does not
 //! publish decisions into orchestration or infer any application scope.
 
+use crate::agent_sessions::{
+    application::{
+        AgentSessionApplication, CreateAgentSessionCommand, SendAgentSessionMessageCommand,
+        SendIdempotentApplicationAgentSessionMessageCommand,
+    },
+    domain::{AgentRuntimeOptions, AgentSessionId},
+};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
@@ -42,6 +49,25 @@ CREATE TABLE IF NOT EXISTS product_decision_acceptance_commands (
   payload_fingerprint TEXT NOT NULL,
   version_id TEXT NOT NULL,
   FOREIGN KEY(version_id) REFERENCES product_decision_versions(version_id) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS product_decision_correction_conversations (
+  correction_id TEXT PRIMARY KEY,
+  epic_id TEXT NOT NULL,
+  decision_id TEXT NOT NULL,
+  base_version INTEGER NOT NULL CHECK(base_version >= 1),
+  session_id TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  UNIQUE(epic_id, decision_id, base_version)
+);
+CREATE TABLE IF NOT EXISTS product_decision_correction_proposals (
+  proposal_id TEXT PRIMARY KEY,
+  correction_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  statement TEXT NOT NULL,
+  intent TEXT NOT NULL,
+  proposal_passage_json TEXT NOT NULL CHECK(json_valid(proposal_passage_json)),
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(correction_id) REFERENCES product_decision_correction_conversations(correction_id) ON DELETE RESTRICT
 );"#;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -195,11 +221,41 @@ pub(crate) struct ProductDecisionRepository {
 }
 pub(crate) struct ProductDecisionTauriState {
     repository: Arc<ProductDecisionRepository>,
+    sessions: Arc<AgentSessionApplication>,
 }
 impl ProductDecisionTauriState {
-    pub(crate) fn new(repository: Arc<ProductDecisionRepository>) -> Self {
-        Self { repository }
+    pub(crate) fn new(
+        repository: Arc<ProductDecisionRepository>,
+        sessions: Arc<AgentSessionApplication>,
+    ) -> Self {
+        Self {
+            repository,
+            sessions,
+        }
     }
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProductDecisionCorrectionConversation {
+    correction_id: String,
+    epic_id: String,
+    decision_id: String,
+    base_version: i64,
+    session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    latest_proposal: Option<ProductDecisionCorrectionProposal>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProductDecisionCorrectionProposal {
+    proposal_id: String,
+    correction_id: String,
+    title: String,
+    statement: String,
+    intent: String,
+    proposal_passage: AgentPassage,
 }
 
 #[derive(Deserialize)]
@@ -212,6 +268,41 @@ pub(crate) struct ProductDecisionHistoryInput {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProductDecisionCurrentQueryInput {
     epic_id: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StartProductDecisionCorrectionInput {
+    epic_id: String,
+    decision_id: String,
+    base_version: i64,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SendProductDecisionCorrectionMessageInput {
+    correction_id: String,
+    submitted_text: String,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProductDecisionCorrectionMessageResult {
+    session_id: String,
+    invocation_id: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SaveProductDecisionCorrectionProposalInput {
+    correction_id: String,
+    title: String,
+    statement: String,
+    intent: String,
+    proposal_passage: AgentPassage,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AcceptProductDecisionCorrectionProposalInput {
+    proposal_id: String,
+    human_interaction_id: String,
+    idempotency_key: String,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -245,6 +336,106 @@ pub(crate) fn load_product_decision_history(
     state
         .repository
         .history(&input.epic_id, &input.decision_id)
+        .map_err(Into::into)
+}
+/// Starts (or reopens) one durable, decision-bound Agent Session. The application supplies the
+/// context; this command does not create a Product Decision version or proposal.
+#[tauri::command]
+pub(crate) fn start_product_decision_correction_conversation(
+    state: State<'_, ProductDecisionTauriState>,
+    input: StartProductDecisionCorrectionInput,
+) -> Result<ProductDecisionCorrectionConversation, ProductDecisionTransportError> {
+    let session = state
+        .sessions
+        .create_session(CreateAgentSessionCommand {
+            title: Some("Product Decision correction".into()),
+            working_directory: None,
+            requested_options: AgentRuntimeOptions::default(),
+        })
+        .map_err(|_| ProductDecisionTransportError {
+            code: "unavailable",
+        })?;
+    let correction = state.repository.start_correction(
+        &input.epic_id,
+        &input.decision_id,
+        input.base_version,
+        session.id.as_str(),
+    )?;
+    if correction.session_id != session.id.as_str() {
+        return Ok(correction);
+    }
+    let prompt = format!(
+        "You are assisting with a proposed correction to one Product Decision. This conversation is bound to Epic {epic} and decision {decision} at version {version}. Discuss the correction only. Your responses are proposal material only: do not claim acceptance, publication, application, or changes to orchestration. When ready, clearly propose a title, statement, and intent for the user to review.",
+        epic = correction.epic_id,
+        decision = correction.decision_id,
+        version = correction.base_version,
+    );
+    let invocation_id = state.sessions.allocate_application_invocation_id();
+    state
+        .sessions
+        .send_idempotent_application_message_with_launch_observation(
+            SendIdempotentApplicationAgentSessionMessageCommand {
+                invocation_id,
+                message: SendAgentSessionMessageCommand {
+                    session_id: Some(session.id),
+                    submitted_text: prompt,
+                    title: None,
+                    working_directory: None,
+                    requested_options: None,
+                },
+            },
+            None,
+        )
+        .map_err(|_| ProductDecisionTransportError {
+            code: "unavailable",
+        })?;
+    Ok(correction)
+}
+#[tauri::command]
+pub(crate) fn send_product_decision_correction_message(
+    state: State<'_, ProductDecisionTauriState>,
+    input: SendProductDecisionCorrectionMessageInput,
+) -> Result<ProductDecisionCorrectionMessageResult, ProductDecisionTransportError> {
+    let session_id = state.repository.correction_session(&input.correction_id)?;
+    let result = state
+        .sessions
+        .send_message(SendAgentSessionMessageCommand {
+            session_id: Some(AgentSessionId::new(session_id).map_err(|_| {
+                ProductDecisionTransportError {
+                    code: "invalid_input",
+                }
+            })?),
+            submitted_text: input.submitted_text,
+            title: None,
+            working_directory: None,
+            requested_options: None,
+        })
+        .map_err(|_| ProductDecisionTransportError {
+            code: "unavailable",
+        })?;
+    Ok(ProductDecisionCorrectionMessageResult {
+        session_id: result.session_id.as_str().into(),
+        invocation_id: result.invocation_id.as_str().into(),
+    })
+}
+#[tauri::command]
+pub(crate) fn save_product_decision_correction_proposal(
+    state: State<'_, ProductDecisionTauriState>,
+    input: SaveProductDecisionCorrectionProposalInput,
+) -> Result<ProductDecisionCorrectionProposal, ProductDecisionTransportError> {
+    state
+        .repository
+        .save_correction_proposal(input)
+        .map_err(Into::into)
+}
+#[tauri::command]
+pub(crate) fn accept_product_decision_correction_proposal(
+    state: State<'_, ProductDecisionTauriState>,
+    input: AcceptProductDecisionCorrectionProposalInput,
+) -> Result<ProductDecisionVersion, ProductDecisionTransportError> {
+    state
+        .repository
+        .accept_correction_proposal(input)
         .map_err(Into::into)
 }
 impl ProductDecisionRepository {
@@ -408,6 +599,310 @@ impl ProductDecisionRepository {
         })
         .collect()
     }
+
+    fn start_correction(
+        &self,
+        epic_id: &str,
+        decision_id: &str,
+        base_version: i64,
+        session_id: &str,
+    ) -> Result<ProductDecisionCorrectionConversation, ProductDecisionError> {
+        if epic_id.trim().is_empty()
+            || decision_id.trim().is_empty()
+            || session_id.trim().is_empty()
+            || base_version < 1
+        {
+            return Err(ProductDecisionError::InvalidInput);
+        }
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| ProductDecisionError::Unavailable)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| ProductDecisionError::Unavailable)?;
+        let current: Option<i64> = transaction
+            .query_row(
+                "SELECT current_version FROM product_decisions WHERE epic_id=?1 AND decision_id=?2",
+                params![epic_id, decision_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| ProductDecisionError::Unavailable)?;
+        if current != Some(base_version) {
+            return Err(ProductDecisionError::RevisionConflict);
+        }
+        if let Some(mut existing) = transaction
+            .query_row(
+                "SELECT correction_id,epic_id,decision_id,base_version,session_id FROM product_decision_correction_conversations WHERE epic_id=?1 AND decision_id=?2 AND base_version=?3",
+                params![epic_id, decision_id, base_version],
+                correction_from_row,
+            )
+            .optional()
+            .map_err(|_| ProductDecisionError::Unavailable)?
+        {
+            existing.latest_proposal = load_latest_correction_proposal(&transaction, &existing.correction_id)?;
+            return Ok(existing);
+        }
+        let correction = ProductDecisionCorrectionConversation {
+            correction_id: format!("product-decision-correction-{}", Uuid::new_v4()),
+            epic_id: epic_id.into(),
+            decision_id: decision_id.into(),
+            base_version,
+            session_id: session_id.into(),
+            latest_proposal: None,
+        };
+        transaction
+            .execute(
+                "INSERT INTO product_decision_correction_conversations(correction_id,epic_id,decision_id,base_version,session_id,created_at) VALUES(?1,?2,?3,?4,?5,?6)",
+                params![correction.correction_id, correction.epic_id, correction.decision_id, correction.base_version, correction.session_id, Utc::now().to_rfc3339()],
+            )
+            .map_err(|_| ProductDecisionError::Unavailable)?;
+        transaction
+            .commit()
+            .map_err(|_| ProductDecisionError::Unavailable)?;
+        Ok(correction)
+    }
+
+    fn correction_session(&self, correction_id: &str) -> Result<String, ProductDecisionError> {
+        if correction_id.trim().is_empty() {
+            return Err(ProductDecisionError::InvalidInput);
+        }
+        self.connection
+            .lock()
+            .map_err(|_| ProductDecisionError::Unavailable)?
+            .query_row(
+                "SELECT session_id FROM product_decision_correction_conversations WHERE correction_id=?1",
+                [correction_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| ProductDecisionError::Unavailable)?
+            .ok_or(ProductDecisionError::NotFound)
+    }
+
+    fn save_correction_proposal(
+        &self,
+        input: SaveProductDecisionCorrectionProposalInput,
+    ) -> Result<ProductDecisionCorrectionProposal, ProductDecisionError> {
+        if input.correction_id.trim().is_empty()
+            || input.title.trim().is_empty()
+            || input.statement.trim().is_empty()
+            || input.intent.trim().is_empty()
+            || !matches!(
+                input.proposal_passage.passage,
+                AgentPassageKind::FinalResponse { .. }
+            )
+        {
+            return Err(ProductDecisionError::InvalidInput);
+        }
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| ProductDecisionError::Unavailable)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| ProductDecisionError::Unavailable)?;
+        let session_id: String = transaction
+            .query_row(
+                "SELECT session_id FROM product_decision_correction_conversations WHERE correction_id=?1",
+                [&input.correction_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| ProductDecisionError::Unavailable)?
+            .ok_or(ProductDecisionError::NotFound)?;
+        if input.proposal_passage.session_id != session_id {
+            return Err(ProductDecisionError::InvalidInput);
+        }
+        validate_passage(&transaction, &input.proposal_passage)?;
+        let proposal = ProductDecisionCorrectionProposal {
+            proposal_id: format!("product-decision-correction-proposal-{}", Uuid::new_v4()),
+            correction_id: input.correction_id,
+            title: input.title.trim().into(),
+            statement: input.statement.trim().into(),
+            intent: input.intent.trim().into(),
+            proposal_passage: input.proposal_passage,
+        };
+        transaction
+            .execute(
+                "INSERT INTO product_decision_correction_proposals(proposal_id,correction_id,title,statement,intent,proposal_passage_json,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                params![proposal.proposal_id, proposal.correction_id, proposal.title, proposal.statement, proposal.intent, serde_json::to_string(&proposal.proposal_passage).map_err(|_| ProductDecisionError::InvalidInput)?, Utc::now().to_rfc3339()],
+            )
+            .map_err(|_| ProductDecisionError::Unavailable)?;
+        transaction
+            .commit()
+            .map_err(|_| ProductDecisionError::Unavailable)?;
+        Ok(proposal)
+    }
+
+    fn accept_correction_proposal(
+        &self,
+        input: AcceptProductDecisionCorrectionProposalInput,
+    ) -> Result<ProductDecisionVersion, ProductDecisionError> {
+        if input.proposal_id.trim().is_empty()
+            || input.human_interaction_id.trim().is_empty()
+            || input.idempotency_key.trim().is_empty()
+        {
+            return Err(ProductDecisionError::InvalidInput);
+        }
+        let (proposal, correction) = self.load_correction_proposal(&input.proposal_id)?;
+        if let Some(existing) =
+            self.replay_correction_acceptance(&input.idempotency_key, &proposal)?
+        {
+            return Ok(existing);
+        }
+        let current = self
+            .query(&correction.epic_id)?
+            .decisions
+            .into_iter()
+            .find(|decision| decision.decision_id == correction.decision_id)
+            .ok_or(ProductDecisionError::NotFound)?;
+        let mut evidence = current.current_version.current_actionable_evidence;
+        let proposal_evidence_id = format!("agent-assisted-proposal:{}", proposal.proposal_id);
+        if !evidence
+            .iter()
+            .any(|item| item.evidence_id == proposal_evidence_id)
+        {
+            evidence.push(CurrentActionableEvidence {
+                evidence_id: proposal_evidence_id,
+                origin_reference: ProductDecisionEvidenceOriginReference::AgentSessionCompleted {
+                    opaque_id: proposal.proposal_passage.invocation_id.clone(),
+                },
+                destination: proposal.proposal_passage.clone(),
+            });
+        }
+        self.accept(AcceptProductDecisionVersionInput {
+            decision_id: correction.decision_id,
+            epic_id: correction.epic_id,
+            expected_current_version: Some(correction.base_version),
+            idempotency_key: input.idempotency_key,
+            title: proposal.title,
+            statement: proposal.statement,
+            intent: proposal.intent,
+            acceptance_provenance: AcceptanceProvenance::AgentAssisted {
+                human_interaction_origin:
+                    ProductDecisionEvidenceOriginReference::HumanInteraction {
+                        opaque_id: input.human_interaction_id,
+                    },
+                proposal_passage: proposal.proposal_passage,
+            },
+            current_actionable_evidence: evidence,
+            historical_unresolved_evidence: current.current_version.historical_unresolved_evidence,
+        })
+    }
+
+    fn replay_correction_acceptance(
+        &self,
+        idempotency_key: &str,
+        proposal: &ProductDecisionCorrectionProposal,
+    ) -> Result<Option<ProductDecisionVersion>, ProductDecisionError> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| ProductDecisionError::Unavailable)?;
+        let version_id: Option<String> = connection
+            .query_row(
+                "SELECT version_id FROM product_decision_acceptance_commands WHERE idempotency_key=?1",
+                [idempotency_key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| ProductDecisionError::Unavailable)?;
+        let Some(version_id) = version_id else {
+            return Ok(None);
+        };
+        let version = load_version(&connection, &version_id)?;
+        match &version.acceptance_provenance {
+            AcceptanceProvenance::AgentAssisted {
+                proposal_passage, ..
+            } if proposal_passage == &proposal.proposal_passage => Ok(Some(version)),
+            _ => Err(ProductDecisionError::IdempotencyConflict),
+        }
+    }
+
+    fn load_correction_proposal(
+        &self,
+        proposal_id: &str,
+    ) -> Result<
+        (
+            ProductDecisionCorrectionProposal,
+            ProductDecisionCorrectionConversation,
+        ),
+        ProductDecisionError,
+    > {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| ProductDecisionError::Unavailable)?;
+        connection
+            .query_row(
+                "SELECT p.proposal_id,p.correction_id,p.title,p.statement,p.intent,p.proposal_passage_json,c.correction_id,c.epic_id,c.decision_id,c.base_version,c.session_id FROM product_decision_correction_proposals p JOIN product_decision_correction_conversations c ON c.correction_id=p.correction_id WHERE p.proposal_id=?1",
+                [proposal_id],
+                |row| {
+                    let passage: String = row.get(5)?;
+                    Ok((
+                        ProductDecisionCorrectionProposal {
+                            proposal_id: row.get(0)?,
+                            correction_id: row.get(1)?,
+                            title: row.get(2)?,
+                            statement: row.get(3)?,
+                            intent: row.get(4)?,
+                            proposal_passage: serde_json::from_str(&passage).map_err(|_| rusqlite::Error::InvalidQuery)?,
+                        },
+                        ProductDecisionCorrectionConversation {
+                            correction_id: row.get(6)?,
+                            epic_id: row.get(7)?,
+                            decision_id: row.get(8)?,
+                            base_version: row.get(9)?,
+                            session_id: row.get(10)?,
+                            latest_proposal: None,
+                        },
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|_| ProductDecisionError::Unavailable)?
+            .ok_or(ProductDecisionError::NotFound)
+    }
+}
+
+fn load_latest_correction_proposal(
+    connection: &Connection,
+    correction_id: &str,
+) -> Result<Option<ProductDecisionCorrectionProposal>, ProductDecisionError> {
+    connection
+        .query_row(
+            "SELECT proposal_id,correction_id,title,statement,intent,proposal_passage_json FROM product_decision_correction_proposals WHERE correction_id=?1 ORDER BY created_at DESC,proposal_id DESC LIMIT 1",
+            [correction_id],
+            |row| {
+                let passage: String = row.get(5)?;
+                Ok(ProductDecisionCorrectionProposal {
+                    proposal_id: row.get(0)?,
+                    correction_id: row.get(1)?,
+                    title: row.get(2)?,
+                    statement: row.get(3)?,
+                    intent: row.get(4)?,
+                    proposal_passage: serde_json::from_str(&passage)
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|_| ProductDecisionError::Unavailable)
+}
+
+fn correction_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<ProductDecisionCorrectionConversation> {
+    Ok(ProductDecisionCorrectionConversation {
+        correction_id: row.get(0)?,
+        epic_id: row.get(1)?,
+        decision_id: row.get(2)?,
+        base_version: row.get(3)?,
+        session_id: row.get(4)?,
+        latest_proposal: None,
+    })
 }
 
 fn insert_evidence<T: Serialize>(
@@ -871,5 +1366,68 @@ mod tests {
             runtime_event_id: "activity".into(),
         };
         assert!(repo.accept(activity).is_ok());
+    }
+
+    #[test]
+    fn agent_assisted_correction_is_bound_to_its_base_and_only_explicit_acceptance_creates_a_version(
+    ) {
+        let (_dir, repo) = repo();
+        let first = repo.accept(input("first", None)).unwrap();
+        let correction = repo
+            .start_correction("epic", "decision", first.version, "session")
+            .unwrap();
+        let proposal = repo
+            .save_correction_proposal(SaveProductDecisionCorrectionProposalInput {
+                correction_id: correction.correction_id.clone(),
+                title: "Corrected title".into(),
+                statement: "Corrected statement".into(),
+                intent: "Corrected intent".into(),
+                proposal_passage: AgentPassage {
+                    kind: AgentPassageReferenceKind::AgentSessionPassage,
+                    session_id: "session".into(),
+                    invocation_id: "invocation".into(),
+                    passage: AgentPassageKind::FinalResponse {
+                        runtime_event_id: "event".into(),
+                    },
+                },
+            })
+            .unwrap();
+        let reopened = repo
+            .start_correction("epic", "decision", first.version, "unused-session")
+            .unwrap();
+        assert_eq!(reopened.session_id, correction.session_id);
+        assert_eq!(
+            reopened
+                .latest_proposal
+                .as_ref()
+                .map(|item| item.proposal_id.as_str()),
+            Some(proposal.proposal_id.as_str())
+        );
+        assert_eq!(repo.history("epic", "decision").unwrap().len(), 1);
+        let accepted = repo
+            .accept_correction_proposal(AcceptProductDecisionCorrectionProposalInput {
+                proposal_id: proposal.proposal_id.clone(),
+                human_interaction_id: "human-acceptance".into(),
+                idempotency_key: "accept-proposal".into(),
+            })
+            .unwrap();
+        assert_eq!(accepted.version, 2);
+        assert!(matches!(
+            accepted.acceptance_provenance,
+            AcceptanceProvenance::AgentAssisted { .. }
+        ));
+        assert!(accepted.current_actionable_evidence.iter().any(|evidence| {
+            evidence.evidence_id == format!("agent-assisted-proposal:{}", proposal.proposal_id)
+        }));
+        assert_eq!(
+            repo.accept_correction_proposal(AcceptProductDecisionCorrectionProposalInput {
+                proposal_id: proposal.proposal_id,
+                human_interaction_id: "human-acceptance".into(),
+                idempotency_key: "accept-proposal".into(),
+            })
+            .unwrap()
+            .version,
+            2
+        );
     }
 }

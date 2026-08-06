@@ -106,3 +106,55 @@ export interface ProductDecisionClient {
   /** This is the explicit human acceptance boundary for both manual and agent-assisted material. */
   acceptVersion(input: AcceptProductDecisionVersionInput): Promise<ProductDecisionVersion>;
 }
+
+/** A decision-owned conversation can discuss and retain proposals, but only this explicit
+ * acceptance command creates a new official immutable version. */
+export interface ProductDecisionCorrectionConversation {
+  readonly correctionId: string;
+  readonly epicId: string;
+  readonly decisionId: string;
+  readonly baseVersion: number;
+  readonly sessionId: string;
+  readonly latestProposal?: ProductDecisionCorrectionProposal;
+}
+
+export interface ProductDecisionCorrectionProposal {
+  readonly proposalId: string;
+  readonly correctionId: string;
+  readonly title: string;
+  readonly statement: string;
+  readonly intent: string;
+  readonly proposalPassage: ProductDecisionConversationPassageReference;
+}
+
+export interface ProductDecisionCorrectionClient {
+  startConversation(
+    input: Readonly<{
+      epicId: string;
+      decisionId: string;
+      baseVersion: number;
+    }>,
+  ): Promise<ProductDecisionCorrectionConversation>;
+  sendMessage(
+    input: Readonly<{
+      correctionId: string;
+      submittedText: string;
+    }>,
+  ): Promise<Readonly<{ sessionId: string; invocationId: string }>>;
+  saveProposal(
+    input: Readonly<{
+      correctionId: string;
+      title: string;
+      statement: string;
+      intent: string;
+      proposalPassage: ProductDecisionConversationPassageReference;
+    }>,
+  ): Promise<ProductDecisionCorrectionProposal>;
+  acceptProposal(
+    input: Readonly<{
+      proposalId: string;
+      humanInteractionId: string;
+      idempotencyKey: string;
+    }>,
+  ): Promise<ProductDecisionVersion>;
+}

@@ -167,6 +167,7 @@ pub(crate) fn run() {
             );
             app.manage(crate::product_decisions::ProductDecisionTauriState::new(
                 product_decisions,
+                application.clone(),
             ));
             let initiation_confirmations =
                 crate::orchestration::confirmation::InitiationConfirmationCoordinator::new(
@@ -313,6 +314,10 @@ pub(crate) fn run() {
             crate::product_decisions::accept_product_decision_version,
             crate::product_decisions::load_product_decision_current_query,
             crate::product_decisions::load_product_decision_history,
+            crate::product_decisions::start_product_decision_correction_conversation,
+            crate::product_decisions::send_product_decision_correction_message,
+            crate::product_decisions::save_product_decision_correction_proposal,
+            crate::product_decisions::accept_product_decision_correction_proposal,
             crate::orchestration::transport::send_managed_plan_builder_message,
             crate::orchestration::transport::request_managed_plan_builder_action,
             crate::orchestration::transport::reconcile_managed_plan_builder_session,

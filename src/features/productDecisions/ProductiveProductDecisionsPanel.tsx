@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { AgentSessionClient } from '../../application/agentSessions';
+import { AgentSessionWorkspace, useAgentSession } from '../agentSessions';
 import type {
   ProductDecisionClient,
+  ProductDecisionCorrectionClient,
   ProductDecisionCurrent,
   ProductDecisionEvidenceDestination,
   ProductDecisionPublishTarget,
@@ -11,6 +14,8 @@ import { productDecisionCommandErrorCode } from '../../application/productDecisi
 export interface ProductiveProductDecisionsPanelProps {
   readonly epicId: string;
   readonly client: ProductDecisionClient;
+  readonly correctionClient?: ProductDecisionCorrectionClient;
+  readonly agentSessionClient?: AgentSessionClient;
   readonly onOpenEvidence?: (destination: ProductDecisionEvidenceDestination) => void;
   readonly onPublish?: (target: ProductDecisionPublishTarget) => void;
 }
@@ -41,6 +46,8 @@ type HistoryRequest = {
 export function ProductiveProductDecisionsPanel({
   epicId,
   client,
+  correctionClient,
+  agentSessionClient,
   onOpenEvidence,
   onPublish,
 }: ProductiveProductDecisionsPanelProps) {
@@ -350,6 +357,21 @@ export function ProductiveProductDecisionsPanel({
               onLoadHistory={() => loadHistory(decision.decisionId)}
               onOpenEvidence={onOpenEvidence}
               onPublish={onPublish}
+              correctionClient={correctionClient}
+              agentSessionClient={agentSessionClient}
+              onAgentAccepted={(accepted) => {
+                const currentLoad = loadRef.current;
+                if (currentLoad.kind !== 'available') return;
+                setCurrentLoad({
+                  kind: 'available',
+                  decisions: currentLoad.decisions.map((item) =>
+                    item.decisionId === decision.decisionId
+                      ? { ...item, currentVersion: accepted }
+                      : item,
+                  ),
+                });
+                setMessage(`Accepted Product Decision version ${accepted.version}.`);
+              }}
             />
           ))}
         </ul>
@@ -371,6 +393,9 @@ function ProductiveDecisionCard({
   onLoadHistory,
   onOpenEvidence,
   onPublish,
+  correctionClient,
+  agentSessionClient,
+  onAgentAccepted,
 }: {
   readonly decision: ProductDecisionCurrent;
   readonly edit: EditState | null;
@@ -384,6 +409,9 @@ function ProductiveDecisionCard({
   readonly onLoadHistory: () => void;
   readonly onOpenEvidence?: (destination: ProductDecisionEvidenceDestination) => void;
   readonly onPublish?: (target: ProductDecisionPublishTarget) => void;
+  readonly correctionClient?: ProductDecisionCorrectionClient;
+  readonly agentSessionClient?: AgentSessionClient;
+  readonly onAgentAccepted: (version: ProductDecisionVersion) => void;
 }) {
   const version = decision.currentVersion;
   return (
@@ -453,6 +481,15 @@ function ProductiveDecisionCard({
               <button type="button" onClick={onBeginEdit} disabled={saving}>
                 Edit
               </button>
+              {correctionClient && agentSessionClient && (
+                <AgentAssistedCorrection
+                  decision={decision}
+                  client={correctionClient}
+                  agentSessionClient={agentSessionClient}
+                  disabled={saving}
+                  onAccepted={onAgentAccepted}
+                />
+              )}
               <button
                 type="button"
                 onClick={onLoadHistory}
@@ -489,6 +526,230 @@ function ProductiveDecisionCard({
         {history && <VersionHistory history={history} />}
       </article>
     </li>
+  );
+}
+
+function AgentAssistedCorrection({
+  decision,
+  client,
+  agentSessionClient,
+  disabled,
+  onAccepted,
+}: {
+  readonly decision: ProductDecisionCurrent;
+  readonly client: ProductDecisionCorrectionClient;
+  readonly agentSessionClient: AgentSessionClient;
+  readonly disabled: boolean;
+  readonly onAccepted: (version: ProductDecisionVersion) => void;
+}) {
+  const [conversation, setConversation] = useState<Awaited<
+    ReturnType<typeof client.startConversation>
+  > | null>(null);
+  const [opening, setOpening] = useState(false);
+  const [proposal, setProposal] = useState<Awaited<ReturnType<typeof client.saveProposal>> | null>(
+    null,
+  );
+  const [draft, setDraft] = useState({
+    title: decision.currentVersion.title,
+    statement: decision.currentVersion.statement,
+    intent: decision.currentVersion.intent,
+  });
+  const [message, setMessage] = useState<string | null>(null);
+  const [accepting, setAccepting] = useState(false);
+  const open = async () => {
+    if (opening || disabled) return;
+    setOpening(true);
+    setMessage(null);
+    try {
+      const opened = await client.startConversation({
+        epicId: decision.epicId,
+        decisionId: decision.decisionId,
+        baseVersion: decision.currentVersion.version,
+      });
+      setConversation(opened);
+      setProposal(opened.latestProposal ?? null);
+    } catch (error) {
+      setMessage(
+        productDecisionCommandErrorCode(error) === 'revision_conflict'
+          ? 'This decision changed. Reload before starting a new correction discussion.'
+          : 'The decision-bound correction conversation could not be opened.',
+      );
+    } finally {
+      setOpening(false);
+    }
+  };
+  if (!conversation) {
+    return (
+      <span>
+        <button type="button" onClick={() => void open()} disabled={disabled || opening}>
+          {opening ? 'Opening correction discussionâ€¦' : 'Discuss correction with agent'}
+        </button>
+        {message && <small role="alert">{message}</small>}
+      </span>
+    );
+  }
+  return (
+    <section className="product-decisions__agent-correction" aria-label="Agent-assisted correction">
+      <p className="product-decisions__tentative-note">
+        This discussion is bound to the displayed decision and version. Agent material is
+        proposal-only.
+      </p>
+      <CorrectionConversation
+        conversation={conversation}
+        correctionClient={client}
+        agentSessionClient={agentSessionClient}
+        draft={draft}
+        onDraftChange={setDraft}
+        onSavedProposal={setProposal}
+        disabled={disabled || accepting}
+        onMessage={setMessage}
+      />
+      {proposal && (
+        <section aria-label="Proposed corrected decision">
+          <h5>Proposed corrected decision</h5>
+          <p>
+            <strong>{proposal.title}</strong>
+          </p>
+          <p>{proposal.statement}</p>
+          <p>
+            <strong>Intent:</strong> {proposal.intent}
+          </p>
+          <button
+            type="button"
+            disabled={disabled || accepting}
+            onClick={() =>
+              void (async () => {
+                setAccepting(true);
+                setMessage(null);
+                try {
+                  const accepted = await client.acceptProposal({
+                    proposalId: proposal.proposalId,
+                    humanInteractionId: opaqueId(),
+                    idempotencyKey: `product-decision-agent-correction:${proposal.proposalId}`,
+                  });
+                  onAccepted(accepted);
+                  setMessage(`Accepted Product Decision version ${accepted.version}.`);
+                } catch (error) {
+                  setMessage(
+                    productDecisionCommandErrorCode(error) === 'revision_conflict'
+                      ? 'The current decision changed. This proposal remains available for review; reload and start a correction from the newer version.'
+                      : 'The proposal was not accepted. It remains available for explicit review.',
+                  );
+                } finally {
+                  setAccepting(false);
+                }
+              })()
+            }
+          >
+            {accepting ? 'Acceptingâ€¦' : 'Accept proposed correction'}
+          </button>
+        </section>
+      )}
+      {message && <p role="status">{message}</p>}
+    </section>
+  );
+}
+
+function CorrectionConversation({
+  conversation,
+  correctionClient,
+  agentSessionClient,
+  draft,
+  onDraftChange,
+  onSavedProposal,
+  disabled,
+  onMessage,
+}: {
+  readonly conversation: Awaited<ReturnType<ProductDecisionCorrectionClient['startConversation']>>;
+  readonly correctionClient: ProductDecisionCorrectionClient;
+  readonly agentSessionClient: AgentSessionClient;
+  readonly draft: { title: string; statement: string; intent: string };
+  readonly onDraftChange: (value: { title: string; statement: string; intent: string }) => void;
+  readonly onSavedProposal: (
+    proposal: Awaited<ReturnType<ProductDecisionCorrectionClient['saveProposal']>>,
+  ) => void;
+  readonly disabled: boolean;
+  readonly onMessage: (message: string | null) => void;
+}) {
+  const boundClient = useMemo<AgentSessionClient>(
+    () => ({
+      ...agentSessionClient,
+      sendMessage: ({ submittedText }) =>
+        correctionClient.sendMessage({
+          correctionId: conversation.correctionId,
+          submittedText,
+        }),
+    }),
+    [agentSessionClient, conversation.correctionId, correctionClient],
+  );
+  const session = useAgentSession(boundClient, { selectedSessionId: conversation.sessionId });
+  const latestResponse = [...(session.transcript?.invocations ?? [])]
+    .reverse()
+    .find((invocation) => invocation.finalResponse)?.finalResponse;
+  const save = async () => {
+    if (!latestResponse || disabled) {
+      onMessage('Wait for an exact final Agent Session response before saving a proposal.');
+      return;
+    }
+    try {
+      onSavedProposal(
+        await correctionClient.saveProposal({
+          correctionId: conversation.correctionId,
+          ...draft,
+          proposalPassage: {
+            kind: 'agent_session_passage',
+            sessionId: latestResponse.anchor.sessionId,
+            invocationId: latestResponse.anchor.invocationId,
+            passage: { kind: 'final_response', runtimeEventId: latestResponse.eventId },
+          },
+        }),
+      );
+      onMessage(null);
+    } catch {
+      onMessage('The proposal could not be retained. No Product Decision version was created.');
+    }
+  };
+  return (
+    <>
+      <AgentSessionWorkspace
+        controller={session}
+        presentation={{
+          showHeader: false,
+          ariaLabel: 'Product Decision correction conversation',
+          emptyState: {
+            heading: 'Correction discussion',
+            guidance: 'Discuss the displayed decision only.',
+          },
+        }}
+      />
+      <fieldset disabled={disabled}>
+        <legend>Review proposed correction</legend>
+        <label>
+          Title
+          <input
+            value={draft.title}
+            onChange={(event) => onDraftChange({ ...draft, title: event.target.value })}
+          />
+        </label>
+        <label>
+          Statement
+          <textarea
+            value={draft.statement}
+            onChange={(event) => onDraftChange({ ...draft, statement: event.target.value })}
+          />
+        </label>
+        <label>
+          Intent
+          <textarea
+            value={draft.intent}
+            onChange={(event) => onDraftChange({ ...draft, intent: event.target.value })}
+          />
+        </label>
+        <button type="button" onClick={() => void save()} disabled={!latestResponse}>
+          Save proposal for explicit review
+        </button>
+      </fieldset>
+    </>
   );
 }
 

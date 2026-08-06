@@ -2,9 +2,12 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { describe, expect, it, vi } from 'vitest';
 import type {
   ProductDecisionClient,
+  ProductDecisionCorrectionClient,
   ProductDecisionCurrent,
   ProductDecisionVersion,
 } from '../../application/productDecisions';
+import type { AgentSessionClient } from '../../application/agentSessions';
+import { runtimeEvent, sessionDetails } from '../agentSessions/testFixtures';
 import { ProductiveProductDecisionsPanel } from './ProductiveProductDecisionsPanel';
 
 const destination = {
@@ -88,6 +91,71 @@ function clientFor(
 }
 
 describe('ProductiveProductDecisionsPanel', () => {
+  it('keeps an agent-assisted proposal separate until the user explicitly accepts it', async () => {
+    const correctionClient: ProductDecisionCorrectionClient = {
+      startConversation: vi.fn().mockResolvedValue({
+        correctionId: 'correction-1',
+        epicId: 'epic-1',
+        decisionId: 'decision-1',
+        baseVersion: 1,
+        sessionId: 'session-1',
+      }),
+      sendMessage: vi.fn(),
+      saveProposal: vi.fn().mockResolvedValue({
+        proposalId: 'proposal-1',
+        correctionId: 'correction-1',
+        title: 'Proposed title',
+        statement: 'Proposed statement',
+        intent: 'Proposed intent',
+        proposalPassage: {
+          kind: 'agent_session_passage',
+          sessionId: 'session-1',
+          invocationId: 'invocation-1',
+          passage: { kind: 'final_response', runtimeEventId: 'event-1' },
+        },
+      }),
+      acceptProposal: vi
+        .fn()
+        .mockResolvedValue(version(2, 'Proposed statement', { title: 'Proposed title' })),
+    };
+    const details = sessionDetails('completed', [
+      runtimeEvent(1, 'agent_message', 'Suggested correction', { role: 'final' }),
+    ]);
+    const agentSessionClient: AgentSessionClient = {
+      createSession: vi.fn(),
+      listSessions: vi.fn().mockResolvedValue([]),
+      loadSession: vi.fn().mockResolvedValue(details),
+      reloadSession: vi.fn().mockResolvedValue(details),
+      subscribeUpdates: vi.fn().mockResolvedValue(() => undefined),
+      sendMessage: vi.fn(),
+      cancelInvocation: vi.fn(),
+      disconnectUpdates: vi.fn(),
+    };
+    render(
+      <ProductiveProductDecisionsPanel
+        epicId="epic-1"
+        client={clientFor()}
+        correctionClient={correctionClient}
+        agentSessionClient={agentSessionClient}
+      />,
+    );
+    await screen.findByText('Title 1');
+    fireEvent.click(screen.getByRole('button', { name: 'Discuss correction with agent' }));
+    const save = await screen.findByRole('button', { name: 'Save proposal for explicit review' });
+    await waitFor(() => expect(save).not.toBeDisabled());
+    fireEvent.click(save);
+    await screen.findByText('Proposed title');
+    expect(correctionClient.saveProposal).toHaveBeenCalledWith(
+      expect.objectContaining({ correctionId: 'correction-1' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Accept proposed correction' }));
+    await waitFor(() =>
+      expect(correctionClient.acceptProposal).toHaveBeenCalledWith(
+        expect.objectContaining({ proposalId: 'proposal-1' }),
+      ),
+    );
+  });
+
   it('keeps edits tentative until explicit acceptance and cancel discards them', async () => {
     const client = clientFor();
     render(<ProductiveProductDecisionsPanel epicId="epic-1" client={client} />);

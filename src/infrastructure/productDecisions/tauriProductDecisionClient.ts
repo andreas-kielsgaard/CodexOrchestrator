@@ -2,6 +2,9 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   AcceptProductDecisionVersionInput,
   ProductDecisionClient,
+  ProductDecisionCorrectionClient,
+  ProductDecisionCorrectionConversation,
+  ProductDecisionCorrectionProposal,
   ProductDecisionCurrent,
   ProductDecisionVersion,
 } from '../../application/productDecisions';
@@ -32,3 +35,36 @@ export function createTauriProductDecisionClient(
 }
 
 export const tauriProductDecisionClient = createTauriProductDecisionClient();
+
+/** Dedicated transport for the Product Decision-owned correction boundary. */
+export function createTauriProductDecisionCorrectionClient(
+  invokeCommand: Invoke = invoke,
+): ProductDecisionCorrectionClient {
+  return {
+    startConversation(input) {
+      return invokeCommand<ProductDecisionCorrectionConversation>(
+        'start_product_decision_correction_conversation',
+        { input },
+      );
+    },
+    sendMessage(input) {
+      return invokeCommand<Readonly<{ sessionId: string; invocationId: string }>>(
+        'send_product_decision_correction_message',
+        { input },
+      );
+    },
+    saveProposal(input) {
+      return invokeCommand<ProductDecisionCorrectionProposal>(
+        'save_product_decision_correction_proposal',
+        { input },
+      );
+    },
+    acceptProposal(input) {
+      return invokeCommand<ProductDecisionVersion>('accept_product_decision_correction_proposal', {
+        input,
+      });
+    },
+  };
+}
+
+export const tauriProductDecisionCorrectionClient = createTauriProductDecisionCorrectionClient();
