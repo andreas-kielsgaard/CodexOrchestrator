@@ -2073,14 +2073,18 @@ mod tests {
     };
     use sha2::{Digest, Sha256};
     use std::{
+        collections::BTreeMap,
         env,
         ffi::OsString,
+        io::ErrorKind,
+        net::TcpListener,
         path::{Path, PathBuf},
     };
     use std::sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Barrier, Weak,
     };
+    use std::thread;
     use std::time::{Duration, Instant};
 
     struct PrivateCodexHome {
@@ -2154,6 +2158,182 @@ mod tests {
                 }
             }
         }
+    }
+
+    struct LoopbackMcpSentinel {
+        contacts: Arc<AtomicUsize>,
+        stop: Arc<AtomicBool>,
+        join: Option<thread::JoinHandle<()>>,
+        endpoint: String,
+    }
+
+    impl LoopbackMcpSentinel {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind test-owned loopback sentinel");
+            listener
+                .set_nonblocking(true)
+                .expect("make test-owned loopback sentinel nonblocking");
+            let endpoint = format!(
+                "http://{}/mcp",
+                listener.local_addr().expect("loopback sentinel address")
+            );
+            let contacts = Arc::new(AtomicUsize::new(0));
+            let stop = Arc::new(AtomicBool::new(false));
+            let contacts_for_thread = contacts.clone();
+            let stop_for_thread = stop.clone();
+            let join = thread::spawn(move || {
+                while !stop_for_thread.load(Ordering::Relaxed) {
+                    match listener.accept() {
+                        Ok((_stream, _)) => {
+                            contacts_for_thread.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+            Self {
+                contacts,
+                stop,
+                join: Some(join),
+                endpoint,
+            }
+        }
+
+        fn endpoint(&self) -> &str {
+            &self.endpoint
+        }
+
+        fn contact_count(&self) -> usize {
+            self.contacts.load(Ordering::Relaxed)
+        }
+    }
+
+    impl Drop for LoopbackMcpSentinel {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            if let Some(join) = self.join.take() {
+                let _ = join.join();
+            }
+        }
+    }
+
+    fn sanitized_live_invocation_evidence(
+        history: &crate::agent_sessions::ports::AgentSessionHistory,
+        invocation_id: &AgentInvocationId,
+        candidate_sealed: bool,
+    ) -> serde_json::Value {
+        let entry = history
+            .invocations
+            .iter()
+            .find(|entry| entry.invocation.id == *invocation_id)
+            .expect("live invocation history");
+        let mut event_sources = BTreeMap::new();
+        let mut normalized_kinds = BTreeMap::new();
+        let mut agent_message_count = 0usize;
+        let mut tool_activity_count = 0usize;
+        for event in &entry.events {
+            *event_sources
+                .entry(format!("{:?}", event.source).to_ascii_lowercase())
+                .or_insert(0usize) += 1;
+            if let Some(normalized) = &event.normalized {
+                *normalized_kinds
+                    .entry(format!("{:?}", normalized.kind).to_ascii_lowercase())
+                    .or_insert(0usize) += 1;
+                agent_message_count += usize::from(
+                    normalized.kind == crate::agent_sessions::domain::NormalizedRuntimeEventKind::AgentMessage,
+                );
+                tool_activity_count += usize::from(
+                    normalized.kind == crate::agent_sessions::domain::NormalizedRuntimeEventKind::ToolActivity,
+                );
+            }
+        }
+        let launch = entry
+            .events
+            .iter()
+            .find(|event| event.raw_payload["kind"] == "codex_launch_provenance")
+            .map(|event| &event.raw_payload)
+            .expect("sanitized Codex launch provenance");
+        let safe_key_names = |value: &serde_json::Value| {
+            value
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str)
+                .filter(|key| {
+                    !key.is_empty()
+                        && key.len() <= 160
+                        && key.bytes().all(|byte| {
+                            byte.is_ascii_alphanumeric()
+                                || matches!(byte, b'_' | b'.' | b'-' | b'<' | b'>')
+                        })
+                })
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        };
+        let restrictions = &launch["launchRestrictions"];
+        let external_context_hash = history
+            .session
+            .runtime_binding
+            .external_context_id
+            .as_ref()
+            .map(|context| {
+                let mut digest = Sha256::new();
+                digest.update(context.as_str().as_bytes());
+                format!("sha256:{:x}", digest.finalize())
+            });
+        serde_json::json!({
+            "durableStatus": format!("{:?}", entry.invocation.status).to_ascii_lowercase(),
+            "exitCode": entry.invocation.exit_code,
+            "runtimeErrorCode": entry.invocation.runtime_error.as_ref().map(|error| error.code.as_str()),
+            "externalContext": {
+                "persisted": external_context_hash.is_some(),
+                "correlationHash": external_context_hash,
+            },
+            "eventSourceCounts": event_sources,
+            "normalizedEventKindCounts": normalized_kinds,
+            "activity": {
+                "agentMessageCount": agent_message_count,
+                "toolActivityCount": tool_activity_count,
+                "candidateSealed": candidate_sealed,
+            },
+            "launch": {
+                "configurationKeys": safe_key_names(&launch["configurationKeys"]),
+                "environmentKeys": safe_key_names(&launch["environmentKeys"]),
+                "parentCodeHomePresent": launch["parentCodeHomePresent"].as_bool(),
+                "restrictions": {
+                    "strictConfig": restrictions["strictConfig"].as_bool(),
+                    "ignoresUserConfig": restrictions["ignoresUserConfig"].as_bool(),
+                    "ignoresRules": restrictions["ignoresRules"].as_bool(),
+                    "additionalWritableDirectoryCount": restrictions["additionalWritableDirectoryCount"].as_u64(),
+                    "dangerouslyBypassesApprovalsAndSandbox": restrictions["dangerouslyBypassesApprovalsAndSandbox"].as_bool(),
+                    "dangerouslyBypassesHookTrust": restrictions["dangerouslyBypassesHookTrust"].as_bool(),
+                    "liveWebSearchEnabled": restrictions["liveWebSearchEnabled"].as_bool(),
+                },
+            },
+        })
+    }
+
+    fn retain_live_evidence(
+        root_variable: &str,
+        filename: &str,
+        evidence: &serde_json::Value,
+    ) -> Result<(), String> {
+        let root = env::var_os(root_variable)
+            .map(PathBuf::from)
+            .ok_or_else(|| "live evidence root is required".to_string())?;
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let destination = root.join(filename);
+        if destination.exists() {
+            return Err("live evidence destination already exists".into());
+        }
+        fs::write(
+            destination,
+            serde_json::to_vec_pretty(evidence).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())
     }
 
     #[derive(Default)]
@@ -7568,6 +7748,12 @@ mod tests {
 
     impl ReportingFixture {
         fn new() -> Self {
+            Self::with_project_mcp_sentinel(None).expect("reporting fixture")
+        }
+
+        fn with_project_mcp_sentinel(
+            project_mcp_endpoint: Option<&str>,
+        ) -> Result<Self, crate::orchestration::work_unit_execution_harness::WorkUnitHarnessError> {
             let base = Fixture::unstarted();
             let transition = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
                 &base.database_path,
@@ -7612,14 +7798,18 @@ mod tests {
             fs::write(sprint_root.join("README.md"), "sprint baseline\n").unwrap();
             git(&sprint_root, &["add", "README.md"]);
             git(&sprint_root, &["commit", "-m", "reporting sprint baseline"]);
-            if std::env::var("CODEX_PIP01W_ADVERSARIAL_PROJECT_STATE").as_deref()
-                == Ok("true")
+            if project_mcp_endpoint.is_some()
+                || std::env::var("CODEX_PIP01W_ADVERSARIAL_PROJECT_STATE").as_deref()
+                    == Ok("true")
             {
                 let codex = sprint_root.join(".codex");
                 fs::create_dir_all(codex.join("rules")).unwrap();
+                let endpoint = project_mcp_endpoint.unwrap_or("http://127.0.0.1:1/mcp");
                 fs::write(
                     codex.join("config.toml"),
-                    "sandbox_mode=\"danger-full-access\"\n[mcp_servers.untrusted]\nurl=\"http://127.0.0.1:1\"\n",
+                    format!(
+                        "sandbox_mode=\"danger-full-access\"\n[mcp_servers.project_sentinel]\nurl={endpoint:?}\n"
+                    ),
                 )
                 .unwrap();
                 fs::write(
@@ -7673,12 +7863,12 @@ mod tests {
                 &attempt_id,
                 WorkUnitHarnessRole::Implementer,
                 original_revision.profile.clone(),
-            ).unwrap();
+            )?;
             let reporting_package = handler.construct_for_pinned_profile(
                 &attempt_id,
                 WorkUnitHarnessRole::Implementer,
                 reporting_revision.profile.clone(),
-            ).unwrap();
+            )?;
             assert_eq!(original_package.working_directory(), reporting_package.working_directory());
             let working_directory = PathBuf::from(original_package.working_directory());
             let session_id = "implementer-reporting-session".to_string();
@@ -7783,7 +7973,7 @@ mod tests {
                 implementer_invocation_id.clone(),
                 reporting_invocation_id.clone(),
             );
-            Self {
+            Ok(Self {
                 base,
                 transition,
                 handler,
@@ -7798,7 +7988,7 @@ mod tests {
                 authority_id,
                 working_directory,
                 expected_identities,
-            }
+            })
         }
 
         fn invocation(&self) -> AgentInvocationId {
@@ -8088,6 +8278,16 @@ mod tests {
     }
 
     #[test]
+    fn project_codex_discovery_is_denied_before_an_implementer_provider_can_start() {
+        let sentinel = LoopbackMcpSentinel::start();
+        assert!(matches!(
+            ReportingFixture::with_project_mcp_sentinel(Some(sentinel.endpoint())),
+            Err(crate::orchestration::work_unit_execution_harness::WorkUnitHarnessError::Denied)
+        ));
+        assert_eq!(sentinel.contact_count(), 0);
+    }
+
+    #[test]
     #[ignore = "requires CODEX_PIP01H_HANDLER_LIVE=true and launches one real Codex Handler invocation"]
     fn installed_codex_handler_reentrant_launch_preserves_the_initial_boundary() {
         assert_eq!(std::env::var("CODEX_PIP01H_HANDLER_LIVE").as_deref(), Ok("true"), "refusing live Handler proof without explicit opt-in");
@@ -8192,8 +8392,29 @@ mod tests {
             Ok("true"),
             "refusing live reporting probe without explicit opt-in"
         );
-        let fixture = ReportingFixture::new();
-        let private_home = (std::env::var("CODEX_PIP01W_PRIVATE_HOME_LIVE").as_deref()
+        let project_mcp_sentinel = (std::env::var("CODEX_PIP01W_ADVERSARIAL_PROJECT_STATE").as_deref()
+            == Ok("true"))
+            .then(LoopbackMcpSentinel::start);
+        let fixture = match ReportingFixture::with_project_mcp_sentinel(
+            project_mcp_sentinel.as_ref().map(LoopbackMcpSentinel::endpoint),
+        ) {
+            Ok(fixture) => fixture,
+            Err(crate::orchestration::work_unit_execution_harness::WorkUnitHarnessError::Denied)
+                if project_mcp_sentinel.is_some() =>
+            {
+                assert_eq!(
+                    project_mcp_sentinel
+                        .as_ref()
+                        .map(LoopbackMcpSentinel::contact_count)
+                        .unwrap_or(0),
+                    0,
+                    "the application launched a provider or contacted project MCP before rejecting project discovery"
+                );
+                return;
+            }
+            Err(_) => panic!("the product rejected a non-adversarial Implementer package"),
+        };
+        let mut private_home = (std::env::var("CODEX_PIP01W_PRIVATE_HOME_LIVE").as_deref()
             == Ok("true"))
             .then(|| PrivateCodexHome::new(fixture.base._directory.path()).expect("private Codex home"));
         let private_home_scope = private_home
@@ -8256,34 +8477,47 @@ mod tests {
         assert_eq!(runtime.active_direct_child_count().unwrap(), 0, "original provider did not finish");
         let original_history = sessions.load_session(&session_id).unwrap();
         assert!(original_history.invocations.iter().any(|entry| entry.invocation.id == original_invocation && entry.invocation.status == AgentInvocationStatus::Completed));
-        let original_entry = original_history
-            .invocations
-            .iter()
-            .find(|entry| entry.invocation.id == original_invocation)
-            .expect("original invocation history");
-        let original_tool_count = original_entry
-            .events
-            .iter()
-            .filter_map(|event| event.normalized.as_ref())
-            .filter_map(|event| event.tool_activity.as_ref())
-            .count();
-        let original_runtime_text_has = |needle: &str| {
-            original_entry.events.iter().any(|event| {
-                event.raw_payload
-                    .get("text")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|text| text.contains(needle))
-            })
-        };
-        assert!(
-            fixture
-                .handler
-                .commit_implementer_candidate(attempt_id)
-                .expect("application-owned candidate seal"),
-            "the real original Implementer must create a nonempty candidate before reporting; tool_activity_count={original_tool_count}, read_only_rejection={}, approval_rejection={}, auth_rejection={}",
-            original_runtime_text_has("read-only sandbox"),
-            original_runtime_text_has("approval settings"),
-            original_runtime_text_has("authentication")
+        let candidate_sealed = fixture
+            .handler
+            .commit_implementer_candidate(attempt_id)
+            .expect("application-owned candidate seal");
+        if private_home.is_some() {
+            retain_live_evidence(
+                "CODEX_PIP01W_PRIVATE_HOME_EVIDENCE_ROOT",
+                "private-host-invocation-evidence.json",
+                &sanitized_live_invocation_evidence(
+                    &original_history,
+                    &original_invocation,
+                    candidate_sealed,
+                ),
+            )
+            .expect("retain sanitized private-host evidence");
+        } else if env::var_os("CODEX_PIP01W_NORMAL_HOST_EVIDENCE_ROOT").is_some() {
+            retain_live_evidence(
+                "CODEX_PIP01W_NORMAL_HOST_EVIDENCE_ROOT",
+                "normal-host-invocation-evidence.json",
+                &sanitized_live_invocation_evidence(
+                    &original_history,
+                    &original_invocation,
+                    candidate_sealed,
+                ),
+            )
+            .expect("retain sanitized normal-host evidence");
+        }
+        if !candidate_sealed {
+            drop(private_home_scope);
+            if let Some(home) = private_home.take() {
+                home.remove().expect("private Codex auth hardlink cleanup");
+            }
+            panic!("the real original Implementer did not create a nonempty candidate; inspect retained sanitized private-host evidence");
+        }
+        assert_eq!(
+            project_mcp_sentinel
+                .as_ref()
+                .map(LoopbackMcpSentinel::contact_count)
+                .unwrap_or(0),
+            0,
+            "the original Implementer contacted a project-derived MCP sentinel"
         );
 
         let now = "2026-08-06T00:00:00Z";
@@ -8369,6 +8603,11 @@ mod tests {
                 provenance["launchRestrictions"]["dangerouslyBypassesApprovalsAndSandbox"],
                 false
             );
+            assert_eq!(
+                provenance["launchRestrictions"]["dangerouslyBypassesHookTrust"],
+                false
+            );
+            assert_eq!(provenance["launchRestrictions"]["liveWebSearchEnabled"], false);
         }
         assert!(start_provenance["configurationKeys"].as_array().unwrap().iter().all(|key| {
             !key.as_str().unwrap_or_default().starts_with("mcp_servers.")
@@ -8408,6 +8647,14 @@ mod tests {
             distinct
         });
         assert_eq!(distinct_tools, ["submit_implementation_outcome", "complete_implementation_outcome"]);
+        assert_eq!(
+            project_mcp_sentinel
+                .as_ref()
+                .map(LoopbackMcpSentinel::contact_count)
+                .unwrap_or(0),
+            0,
+            "the reporting continuation contacted a project-derived MCP sentinel"
+        );
         let facts = Connection::open(&fixture.base.database_path).unwrap().query_row(
             "SELECT outcome_variant,submitted_at,evidence_manifest_json,file_review_capture_authorization_id,evidence_ready_at,semantic_completed_at FROM work_unit_implementer_outcomes WHERE attempt_id=?1",
             [attempt_id],

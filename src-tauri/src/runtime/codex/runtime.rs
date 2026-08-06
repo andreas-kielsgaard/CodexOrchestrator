@@ -377,6 +377,8 @@ impl RuntimeCoordinator {
             "ignoresRules": spec.args.iter().any(|argument| argument == "--ignore-rules"),
             "additionalWritableDirectoryCount": spec.args.iter().filter(|argument| argument.as_str() == "--add-dir").count(),
             "dangerouslyBypassesApprovalsAndSandbox": spec.args.iter().any(|argument| argument == "--dangerously-bypass-approvals-and-sandbox"),
+            "dangerouslyBypassesHookTrust": spec.args.iter().any(|argument| argument == "--dangerously-bypass-hook-trust"),
+            "liveWebSearchEnabled": spec.args.iter().any(|argument| argument == "--search"),
         });
         deliver_update(
             &sink,

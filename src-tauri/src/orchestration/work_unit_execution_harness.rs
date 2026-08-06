@@ -30,7 +30,10 @@ use crate::{
         ports::RuntimeLaunchExtension,
     },
 };
-use std::sync::{Arc, Mutex};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum WorkUnitHarnessRole {
@@ -439,6 +442,15 @@ impl WorkUnitExecutionHarnessService {
         let reference = self
             .execution_support
             .grant_for_role(attempt_id, role.execution_role())?;
+        if role == WorkUnitHarnessRole::Implementer
+            && is_exact_implementer_profile(&harness)
+            && Path::new(&reference.working_directory).join(".codex").exists()
+        {
+            // Codex 0.144 loads a trusted project's local configuration after command-line
+            // overrides. The application cannot safely enumerate or neutralize its discovery
+            // surfaces, so refuse this exact package before a provider process can start.
+            return Err(WorkUnitHarnessError::Denied);
+        }
         Ok(WorkUnitExecutionHarnessPackage {
             harness,
             discovery_root,
@@ -625,11 +637,13 @@ fn package_runtime_launch_configuration(
     // so pass one ephemeral, exact-project trust override only to its writable Implementer package.
     // It neither persists trust nor widens the workspace boundary.
     if is_exact_implementer_profile(harness) {
-        // The isolated worktree must not contribute execpolicy rules, hooks, MCP servers, network
-        // settings, or additional writable roots. The application passes the only allowed
-        // reporting MCP configuration separately on its exact continuation.
+        // The package ignores execpolicy rules and clears inherited MCP configuration. A bound
+        // worktree with local Codex discovery was already denied above. The application passes
+        // the only allowed reporting MCP configuration separately on its exact continuation.
         additional_args.extend([
             "--ignore-rules".into(),
+            "-c".into(),
+            "mcp_servers={}".into(),
         ]);
         additional_args.extend([
             "-c".into(),
@@ -747,8 +761,12 @@ mod tests {
             assert!(!configuration.extension.additional_args.iter().any(|argument| {
                     argument.contains("trust_level")
                     || argument == "--ignore-rules"
+                    || argument == "mcp_servers={}"
             }));
         }
         assert!(writable.extension.additional_args.iter().any(|argument| argument == "--ignore-rules"));
+        assert!(writable.extension.additional_args.windows(2).any(|arguments| {
+            arguments == ["-c", "mcp_servers={}"]
+        }));
     }
 }
