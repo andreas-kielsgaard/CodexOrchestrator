@@ -4,22 +4,45 @@ export type ProductDecisionAgentPassage = Readonly<{
   invocationId: string;
   passage:
     | Readonly<{ kind: 'submitted_input' }>
-    | Readonly<{ kind: 'runtime_event'; runtimeEventId: string }>;
+    | Readonly<{ kind: 'outcome' }>
+    | Readonly<{ kind: 'activity'; runtimeEventId: string }>
+    | Readonly<{ kind: 'final_response'; runtimeEventId: string }>;
+}>;
+
+export type ProductDecisionEvidenceOriginReference =
+  | Readonly<{ kind: 'human_interaction'; opaqueId: string }>
+  | Readonly<{ kind: 'agent_session_completed'; opaqueId: string }>
+  | Readonly<{ kind: 'work_unit_approved'; opaqueId: string }>
+  | Readonly<{ kind: 'sprint_completed'; opaqueId: string }>
+  | Readonly<{ kind: 'epic_completed'; opaqueId: string }>;
+
+export type ProductDecisionHumanAcceptanceOrigin = Readonly<{
+  kind: 'human_interaction';
+  opaqueId: string;
 }>;
 
 export type ProductDecisionAcceptanceProvenance =
-  | Readonly<{ kind: 'manual_human_application' }>
-  | Readonly<{ kind: 'agent_assisted'; passage: ProductDecisionAgentPassage }>;
+  | Readonly<{
+      kind: 'manual_human_application';
+      humanInteractionOrigin: ProductDecisionHumanAcceptanceOrigin;
+    }>
+  | Readonly<{
+      kind: 'agent_assisted';
+      humanInteractionOrigin: ProductDecisionHumanAcceptanceOrigin;
+      proposalPassage: ProductDecisionAgentPassage;
+    }>;
 
 export type ProductDecisionCurrentActionableEvidence = Readonly<{
   evidenceId: string;
-  passage: ProductDecisionAgentPassage;
+  originReference: ProductDecisionEvidenceOriginReference;
+  /** Exact, application-recognized destination for the established Product Decision navigation seam. */
+  destination: ProductDecisionAgentPassage;
 }>;
 
 /** Retained audit context only: it has no current actionable destination until relinked. */
 export type ProductDecisionHistoricalUnresolvedEvidence = Readonly<{
   evidenceId: string;
-  legacyReference: string;
+  originReference: ProductDecisionEvidenceOriginReference;
   label: string;
 }>;
 
@@ -59,7 +82,7 @@ export interface ProductDecisionCurrent {
 }
 
 export interface ProductDecisionClient {
-  loadCurrent(): Promise<readonly ProductDecisionCurrent[]>;
+  loadCurrent(epicId: string): Promise<readonly ProductDecisionCurrent[]>;
   loadHistory(epicId: string, decisionId: string): Promise<readonly ProductDecisionVersion[]>;
   /** This is the explicit human acceptance boundary for both manual and agent-assisted material. */
   acceptVersion(input: AcceptProductDecisionVersionInput): Promise<ProductDecisionVersion>;

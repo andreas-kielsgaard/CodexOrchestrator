@@ -53,33 +53,63 @@ pub(crate) struct AgentPassage {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub(crate) enum AgentPassageKind {
     SubmittedInput,
-    RuntimeEvent { runtime_event_id: String },
+    Outcome,
+    Activity { runtime_event_id: String },
+    FinalResponse { runtime_event_id: String },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub(crate) enum ProductDecisionEvidenceOriginReference {
+    HumanInteraction { opaque_id: String },
+    AgentSessionCompleted { opaque_id: String },
+    WorkUnitApproved { opaque_id: String },
+    SprintCompleted { opaque_id: String },
+    EpicCompleted { opaque_id: String },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub(crate) enum AcceptanceProvenance {
     /// The command itself is the explicit human acceptance; no reason is required.
-    ManualHumanApplication,
+    ManualHumanApplication {
+        human_interaction_origin: ProductDecisionEvidenceOriginReference,
+    },
     /// Agent material remains proposal-only until this explicit human acceptance command records it.
-    AgentAssisted { passage: AgentPassage },
+    AgentAssisted {
+        human_interaction_origin: ProductDecisionEvidenceOriginReference,
+        proposal_passage: AgentPassage,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct CurrentAgentPassageEvidence {
+pub(crate) struct CurrentActionableEvidence {
     evidence_id: String,
-    passage: AgentPassage,
+    origin_reference: ProductDecisionEvidenceOriginReference,
+    destination: AgentPassage,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistoricalUnresolvedEvidence {
     evidence_id: String,
-    legacy_reference: String,
+    origin_reference: ProductDecisionEvidenceOriginReference,
     label: String,
 }
 
@@ -95,7 +125,7 @@ pub(crate) struct AcceptProductDecisionVersionInput {
     intent: String,
     acceptance_provenance: AcceptanceProvenance,
     #[serde(default)]
-    current_actionable_evidence: Vec<CurrentAgentPassageEvidence>,
+    current_actionable_evidence: Vec<CurrentActionableEvidence>,
     #[serde(default)]
     historical_unresolved_evidence: Vec<HistoricalUnresolvedEvidence>,
 }
@@ -111,7 +141,7 @@ pub(crate) struct ProductDecisionVersion {
     statement: String,
     intent: String,
     acceptance_provenance: AcceptanceProvenance,
-    current_actionable_evidence: Vec<CurrentAgentPassageEvidence>,
+    current_actionable_evidence: Vec<CurrentActionableEvidence>,
     historical_unresolved_evidence: Vec<HistoricalUnresolvedEvidence>,
     accepted_at: String,
 }
@@ -129,6 +159,7 @@ pub(crate) struct ProductDecisionCurrent {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProductDecisionQuery {
+    epic_id: String,
     decisions: Vec<ProductDecisionCurrent>,
 }
 
@@ -170,6 +201,11 @@ pub(crate) struct ProductDecisionHistoryInput {
     epic_id: String,
     decision_id: String,
 }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProductDecisionCurrentQueryInput {
+    epic_id: String,
+}
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProductDecisionTransportError {
@@ -190,8 +226,9 @@ pub(crate) fn accept_product_decision_version(
 #[tauri::command]
 pub(crate) fn load_product_decision_current_query(
     state: State<'_, ProductDecisionTauriState>,
+    input: ProductDecisionCurrentQueryInput,
 ) -> Result<ProductDecisionQuery, ProductDecisionTransportError> {
-    state.repository.query().map_err(Into::into)
+    state.repository.query(&input.epic_id).map_err(Into::into)
 }
 #[tauri::command]
 pub(crate) fn load_product_decision_history(
@@ -233,9 +270,13 @@ impl ProductDecisionRepository {
         if let Some((existing_fingerprint, version_id)) = transaction.query_row("SELECT payload_fingerprint,version_id FROM product_decision_acceptance_commands WHERE idempotency_key=?1", [&input.idempotency_key], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).optional().map_err(|_| ProductDecisionError::Unavailable)? {
             return if existing_fingerprint == fingerprint { load_version(&transaction, &version_id) } else { Err(ProductDecisionError::IdempotencyConflict) };
         }
-        validate_agent_references(&transaction, &input.acceptance_provenance)?;
+        validate_acceptance_provenance(&transaction, &input.acceptance_provenance)?;
         for evidence in &input.current_actionable_evidence {
-            validate_passage(&transaction, &evidence.passage)?;
+            validate_origin(&evidence.origin_reference)?;
+            validate_passage(&transaction, &evidence.destination)?;
+        }
+        for evidence in &input.historical_unresolved_evidence {
+            validate_origin(&evidence.origin_reference)?;
         }
         let existing: Option<(String, i64)> = transaction
             .query_row(
@@ -290,14 +331,20 @@ impl ProductDecisionRepository {
         Ok(version)
     }
 
-    pub(crate) fn query(&self) -> Result<ProductDecisionQuery, ProductDecisionError> {
+    pub(crate) fn query(
+        &self,
+        epic_id: &str,
+    ) -> Result<ProductDecisionQuery, ProductDecisionError> {
+        if epic_id.trim().is_empty() {
+            return Err(ProductDecisionError::InvalidInput);
+        }
         let connection = self
             .connection
             .lock()
             .map_err(|_| ProductDecisionError::Unavailable)?;
-        let mut statement = connection.prepare("SELECT d.decision_id,d.epic_id,v.version_id FROM product_decisions d JOIN product_decision_versions v ON v.decision_id=d.decision_id AND v.version=d.current_version ORDER BY d.decision_id").map_err(|_| ProductDecisionError::Unavailable)?;
+        let mut statement = connection.prepare("SELECT d.decision_id,d.epic_id,v.version_id FROM product_decisions d JOIN product_decision_versions v ON v.decision_id=d.decision_id AND v.version=d.current_version WHERE d.epic_id=?1 ORDER BY d.decision_id").map_err(|_| ProductDecisionError::Unavailable)?;
         let rows = statement
-            .query_map([], |r| {
+            .query_map([epic_id], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
@@ -316,7 +363,10 @@ impl ProductDecisionRepository {
                 application_state: "not_applied",
             });
         }
-        Ok(ProductDecisionQuery { decisions })
+        Ok(ProductDecisionQuery {
+            epic_id: epic_id.into(),
+            decisions,
+        })
     }
 
     pub(crate) fn history(
@@ -435,7 +485,6 @@ fn validate_input(input: &AcceptProductDecisionVersionInput) -> Result<(), Produ
     }
     for evidence in &input.historical_unresolved_evidence {
         if evidence.evidence_id.trim().is_empty()
-            || evidence.legacy_reference.trim().is_empty()
             || evidence.label.trim().is_empty()
             || !ids.insert(&evidence.evidence_id)
         {
@@ -444,14 +493,48 @@ fn validate_input(input: &AcceptProductDecisionVersionInput) -> Result<(), Produ
     }
     Ok(())
 }
-fn validate_agent_references(
+fn validate_origin(
+    origin: &ProductDecisionEvidenceOriginReference,
+) -> Result<(), ProductDecisionError> {
+    let opaque_id = match origin {
+        ProductDecisionEvidenceOriginReference::HumanInteraction { opaque_id }
+        | ProductDecisionEvidenceOriginReference::AgentSessionCompleted { opaque_id }
+        | ProductDecisionEvidenceOriginReference::WorkUnitApproved { opaque_id }
+        | ProductDecisionEvidenceOriginReference::SprintCompleted { opaque_id }
+        | ProductDecisionEvidenceOriginReference::EpicCompleted { opaque_id } => opaque_id,
+    };
+    if opaque_id.trim().is_empty() {
+        return Err(ProductDecisionError::InvalidInput);
+    }
+    Ok(())
+}
+fn validate_human_acceptance_origin(
+    origin: &ProductDecisionEvidenceOriginReference,
+) -> Result<(), ProductDecisionError> {
+    if !matches!(
+        origin,
+        ProductDecisionEvidenceOriginReference::HumanInteraction { .. }
+    ) {
+        return Err(ProductDecisionError::InvalidInput);
+    }
+    validate_origin(origin)
+}
+fn validate_acceptance_provenance(
     connection: &rusqlite::Transaction<'_>,
     provenance: &AcceptanceProvenance,
 ) -> Result<(), ProductDecisionError> {
-    if let AcceptanceProvenance::AgentAssisted { passage } = provenance {
-        validate_passage(connection, passage)?;
+    match provenance {
+        AcceptanceProvenance::ManualHumanApplication {
+            human_interaction_origin,
+        } => validate_human_acceptance_origin(human_interaction_origin),
+        AcceptanceProvenance::AgentAssisted {
+            human_interaction_origin,
+            proposal_passage,
+        } => {
+            validate_human_acceptance_origin(human_interaction_origin)?;
+            validate_passage(connection, proposal_passage)
+        }
     }
-    Ok(())
 }
 fn validate_passage(
     connection: &rusqlite::Transaction<'_>,
@@ -471,7 +554,9 @@ fn validate_passage(
     if exists.is_none() {
         return Err(ProductDecisionError::InvalidInput);
     }
-    if let AgentPassageKind::RuntimeEvent { runtime_event_id } = &passage.passage {
+    if let AgentPassageKind::Activity { runtime_event_id }
+    | AgentPassageKind::FinalResponse { runtime_event_id } = &passage.passage
+    {
         if runtime_event_id.trim().is_empty() {
             return Err(ProductDecisionError::InvalidInput);
         }
@@ -514,17 +599,24 @@ mod tests {
             statement: "Statement".into(),
             intent: "Intent".into(),
             acceptance_provenance: AcceptanceProvenance::AgentAssisted {
-                passage: AgentPassage {
+                human_interaction_origin:
+                    ProductDecisionEvidenceOriginReference::HumanInteraction {
+                        opaque_id: "human-acceptance".into(),
+                    },
+                proposal_passage: AgentPassage {
                     session_id: "session".into(),
                     invocation_id: "invocation".into(),
-                    passage: AgentPassageKind::RuntimeEvent {
+                    passage: AgentPassageKind::FinalResponse {
                         runtime_event_id: "event".into(),
                     },
                 },
             },
-            current_actionable_evidence: vec![CurrentAgentPassageEvidence {
+            current_actionable_evidence: vec![CurrentActionableEvidence {
                 evidence_id: "current".into(),
-                passage: AgentPassage {
+                origin_reference: ProductDecisionEvidenceOriginReference::AgentSessionCompleted {
+                    opaque_id: "agent-record".into(),
+                },
+                destination: AgentPassage {
                     session_id: "session".into(),
                     invocation_id: "invocation".into(),
                     passage: AgentPassageKind::SubmittedInput,
@@ -532,7 +624,9 @@ mod tests {
             }],
             historical_unresolved_evidence: vec![HistoricalUnresolvedEvidence {
                 evidence_id: "old".into(),
-                legacy_reference: "legacy-ref".into(),
+                origin_reference: ProductDecisionEvidenceOriginReference::WorkUnitApproved {
+                    opaque_id: "legacy-work-unit".into(),
+                },
                 label: "Retained history".into(),
             }],
         }
@@ -546,14 +640,14 @@ mod tests {
         let second = repo.accept(second_input).unwrap();
         assert_eq!((first.version, second.version), (1, 2));
         assert_eq!(
-            repo.query().unwrap().decisions[0].application_state,
+            repo.query("epic").unwrap().decisions[0].application_state,
             "not_applied"
         );
         assert_eq!(repo.history("epic", "decision").unwrap().len(), 2);
         drop(repo);
         let reopened = ProductDecisionRepository::open(dir.path().join("active.sqlite")).unwrap();
         assert_eq!(
-            reopened.query().unwrap().decisions[0]
+            reopened.query("epic").unwrap().decisions[0]
                 .current_version
                 .statement,
             "Corrected"
@@ -583,12 +677,21 @@ mod tests {
     fn manual_acceptance_is_typed_without_a_required_reason() {
         let (_dir, repo) = repo();
         let mut manual = input("manual", None);
-        manual.acceptance_provenance = AcceptanceProvenance::ManualHumanApplication;
+        manual.acceptance_provenance = AcceptanceProvenance::ManualHumanApplication {
+            human_interaction_origin: ProductDecisionEvidenceOriginReference::HumanInteraction {
+                opaque_id: "human-manual".into(),
+            },
+        };
         manual.current_actionable_evidence.clear();
         let accepted = repo.accept(manual).unwrap();
         assert_eq!(
             accepted.acceptance_provenance,
-            AcceptanceProvenance::ManualHumanApplication
+            AcceptanceProvenance::ManualHumanApplication {
+                human_interaction_origin:
+                    ProductDecisionEvidenceOriginReference::HumanInteraction {
+                        opaque_id: "human-manual".into()
+                    },
+            }
         );
     }
     #[test]
@@ -596,7 +699,10 @@ mod tests {
         let (_dir, repo) = repo();
         let mut foreign = input("foreign", None);
         foreign.acceptance_provenance = AcceptanceProvenance::AgentAssisted {
-            passage: AgentPassage {
+            human_interaction_origin: ProductDecisionEvidenceOriginReference::HumanInteraction {
+                opaque_id: "human-acceptance".into(),
+            },
+            proposal_passage: AgentPassage {
                 session_id: "foreign".into(),
                 invocation_id: "invocation".into(),
                 passage: AgentPassageKind::SubmittedInput,
@@ -607,7 +713,7 @@ mod tests {
             Err(ProductDecisionError::InvalidInput)
         );
         let mut mismatch = input("mismatch", None);
-        mismatch.current_actionable_evidence[0].passage.passage = AgentPassageKind::RuntimeEvent {
+        mismatch.current_actionable_evidence[0].destination.passage = AgentPassageKind::Activity {
             runtime_event_id: "foreign".into(),
         };
         assert_eq!(
@@ -624,6 +730,65 @@ mod tests {
         assert_eq!(
             repo.history("other", "decision"),
             Err(ProductDecisionError::NotFound)
+        );
+    }
+    #[test]
+    fn current_query_is_epic_scoped_and_retains_typed_current_and_historical_origins() {
+        let (_dir, repo) = repo();
+        repo.accept(input("one", None)).unwrap();
+        let mut other = input("other", None);
+        other.decision_id = "other-decision".into();
+        other.epic_id = "other-epic".into();
+        repo.accept(other).unwrap();
+        let query = repo.query("epic").unwrap();
+        assert_eq!(query.epic_id, "epic");
+        assert_eq!(query.decisions.len(), 1);
+        assert_eq!(query.decisions[0].decision_id, "decision");
+        let version = &query.decisions[0].current_version;
+        assert!(matches!(
+            &version.current_actionable_evidence[0].destination.passage,
+            AgentPassageKind::SubmittedInput
+        ));
+        assert!(matches!(
+            &version.historical_unresolved_evidence[0].origin_reference,
+            ProductDecisionEvidenceOriginReference::WorkUnitApproved { .. }
+        ));
+        assert!(repo
+            .query("other-epic")
+            .unwrap()
+            .decisions
+            .iter()
+            .all(|item| item.epic_id == "other-epic"));
+    }
+    #[test]
+    fn wire_contract_uses_exact_navigation_destinations_and_rejects_unsupported_origins() {
+        let value = serde_json::to_value(input("wire", None)).unwrap();
+        assert_eq!(
+            value["acceptanceProvenance"]["humanInteractionOrigin"]["opaqueId"],
+            "human-acceptance"
+        );
+        assert_eq!(
+            value["acceptanceProvenance"]["proposalPassage"]["passage"]["kind"],
+            "final_response"
+        );
+        assert_eq!(
+            value["acceptanceProvenance"]["proposalPassage"]["passage"]["runtimeEventId"],
+            "event"
+        );
+        let mut malformed = value;
+        malformed["historicalUnresolvedEvidence"][0]["originReference"]["kind"] =
+            serde_json::json!("unsupported");
+        assert!(serde_json::from_value::<AcceptProductDecisionVersionInput>(malformed).is_err());
+        let (_dir, repo) = repo();
+        let mut invalid_manual = input("invalid-manual", None);
+        invalid_manual.acceptance_provenance = AcceptanceProvenance::ManualHumanApplication {
+            human_interaction_origin: ProductDecisionEvidenceOriginReference::EpicCompleted {
+                opaque_id: "not-human".into(),
+            },
+        };
+        assert_eq!(
+            repo.accept(invalid_manual),
+            Err(ProductDecisionError::InvalidInput)
         );
     }
 }

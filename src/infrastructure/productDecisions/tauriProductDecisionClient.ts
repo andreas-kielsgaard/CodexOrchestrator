@@ -13,9 +13,10 @@ export function createTauriProductDecisionClient(
   invokeCommand: Invoke = invoke,
 ): ProductDecisionClient {
   return {
-    async loadCurrent() {
+    async loadCurrent(epicId) {
       const result = await invokeCommand<{ decisions: ProductDecisionCurrent[] }>(
         'load_product_decision_current_query',
+        { input: { epicId } },
       );
       return result.decisions;
     },
