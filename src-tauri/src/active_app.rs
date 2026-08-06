@@ -95,6 +95,10 @@ pub(crate) fn run() {
                 )
                 .map_err(|error| error.to_string())?,
             );
+            let product_decisions = Arc::new(
+                crate::product_decisions::ProductDecisionRepository::open(&database_path)
+                    .map_err(|_| "Unable to open Product Decision storage.".to_string())?,
+            );
             // This product-native seam resolves only durable application-owned attempt authority.
             let execution_support = crate::orchestration::execution_support::ProductExecutionSupportState::new(
                 &database_path,
@@ -161,6 +165,9 @@ pub(crate) fn run() {
                     orchestration.clone(),
                 ),
             );
+            app.manage(crate::product_decisions::ProductDecisionTauriState::new(
+                product_decisions,
+            ));
             let initiation_confirmations =
                 crate::orchestration::confirmation::InitiationConfirmationCoordinator::new(
                     orchestration.clone(),
@@ -303,6 +310,9 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::load_agent_session,
             crate::agent_sessions::transport::send_agent_session_message,
             crate::agent_sessions::transport::cancel_agent_invocation,
+            crate::product_decisions::accept_product_decision_version,
+            crate::product_decisions::load_product_decision_current_query,
+            crate::product_decisions::load_product_decision_history,
             crate::orchestration::transport::send_managed_plan_builder_message,
             crate::orchestration::transport::request_managed_plan_builder_action,
             crate::orchestration::transport::reconcile_managed_plan_builder_session,

@@ -70,6 +70,7 @@ import {
 } from '../application/productNavigation';
 import type {
   EpicProductDecisionSource,
+  ProductDecisionClient,
   ProductDecisionEvidenceNavigationRequest,
 } from '../application/productDecisions';
 
@@ -109,6 +110,8 @@ export interface AppProps {
   }) => FileReviewSource | undefined;
   /** Development-recorded read only; product boot deliberately leaves it absent. */
   readonly epicProductDecisionSource?: EpicProductDecisionSource;
+  /** Product-owned durable decision command/query boundary; no UI is attached in PD-2. */
+  readonly productDecisionClient?: ProductDecisionClient;
   /** Present only in the injected development launcher composition. */
   readonly humanReviewLauncherView?: ReactNode;
   /** Enumerated proof navigation; it cannot activate or focus a native window. */

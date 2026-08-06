@@ -16,6 +16,7 @@ mod agent_sessions;
 // The semantic save command is intentionally dormant until the later MCP adapter owns its input.
 #[allow(dead_code)]
 mod orchestration;
+mod product_decisions;
 mod runtime;
 mod storage;
 #[cfg(debug_assertions)]

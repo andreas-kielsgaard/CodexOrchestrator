@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-const ACTIVE_SCHEMA_VERSION: i64 = 20;
+const ACTIVE_SCHEMA_VERSION: i64 = 21;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
@@ -30,17 +30,20 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     if current_version == ACTIVE_SCHEMA_VERSION {
         let transaction = connection
             .unchecked_transaction()
-            .map_err(|error| format!("Unable to begin active v20 schema evolution: {error}"))?;
+            .map_err(|error| format!("Unable to begin active v21 schema evolution: {error}"))?;
         crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
             .map_err(|error| format!("Unable to evolve accepted-integration schema: {error}"))?;
         transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
             .map_err(|error| format!("Unable to evolve dependency-wave schema: {error}"))?;
         transaction
+            .execute_batch(crate::product_decisions::PRODUCT_DECISION_SCHEMA)
+            .map_err(|error| format!("Unable to evolve Product Decision schema: {error}"))?;
+        transaction
             .commit()
-            .map_err(|error| format!("Unable to commit active v20 schema evolution: {error}"))?;
+            .map_err(|error| format!("Unable to commit active v21 schema evolution: {error}"))?;
         return Ok(());
     }
-    if (1..=19).contains(&current_version) {
+    if (1..=20).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -136,6 +139,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| format!("Unable to migrate accepted-integration schema: {error}"))?;
         transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
             .map_err(|error| format!("Unable to migrate dependency-wave schema: {error}"))?;
+        transaction
+            .execute_batch(crate::product_decisions::PRODUCT_DECISION_SCHEMA)
+            .map_err(|error| format!("Unable to migrate Product Decision schema: {error}"))?;
         if current_version == 14 {
             transaction
                 .execute_batch(
@@ -217,6 +223,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .map_err(|error| format!("Unable to initialize accepted-integration schema: {error}"))?;
     transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
         .map_err(|error| format!("Unable to initialize dependency-wave schema: {error}"))?;
+    transaction
+        .execute_batch(crate::product_decisions::PRODUCT_DECISION_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Product Decision schema: {error}"))?;
     transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
         .map_err(|error| format!("Unable to record active schema version: {error}"))?;
@@ -352,6 +361,10 @@ mod tests {
                 "planning_draft_agent_session_associations",
                 "planning_draft_lifecycle_events",
                 "planning_draft_profile_assignments",
+                "product_decision_acceptance_commands",
+                "product_decision_evidence",
+                "product_decision_versions",
+                "product_decisions",
                 "proposal_command_results",
                 "proposal_commands",
                 "proposal_events",

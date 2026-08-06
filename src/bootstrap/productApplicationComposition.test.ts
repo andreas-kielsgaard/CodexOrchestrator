@@ -26,6 +26,7 @@ describe('product application composition', () => {
       }),
     ).resolves.toMatchObject({ status: 'unsupported' });
     expect(composition.contextualFileReviewClient).toBeDefined();
+    expect(composition.productDecisionClient).toBeDefined();
   });
 
   it('keeps product startup free of development fixture authority', () => {
