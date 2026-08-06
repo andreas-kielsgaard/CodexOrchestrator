@@ -25,7 +25,22 @@ describe('native profile client', () => {
     expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, setupAttempt: { ...profile.setupAttempt, workspaceSandboxSupported: 'yes' } }] })).toThrow(/workspace sandbox capability/);
     expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, setupAttempt: { ...profile.setupAttempt, opaqueSandboxState: 'private' } }] })).toThrow(/setup attempt.*unknown field/);
     expect(decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, setupAttempt: { ...profile.setupAttempt, disposition: 'legacy_unclassified_failed', terminalClassification: 'legacy_unclassified_failed' } }] }).profiles[0].setupAttempt).toMatchObject({ disposition: 'legacy_unclassified_failed', terminalClassification: 'legacy_unclassified_failed' });
-    expect(decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, setupAttempt: { ...profile.setupAttempt, disposition: 'policy_unsupported', terminalClassification: 'policy_unsupported', workspaceSandboxSupported: false } }] }).profiles[0].setupAttempt).toMatchObject({ disposition: 'policy_unsupported', terminalClassification: 'policy_unsupported', workspaceSandboxSupported: false });
+    const policyUnsupported = { ...profile.setupAttempt, phase: 'sandbox_initialization', disposition: 'policy_unsupported', executable: 'C:/application-owned/codex.exe', version: 'codex-cli test', workspaceSandboxSupported: false, correlationId: 'native-setup-correlation', requestedAt: '2026-08-07T12:00:00Z', deadlineAt: '2026-08-07T12:02:00Z', settledAt: '2026-08-07T12:00:00Z', terminalClassification: 'policy_unsupported', terminalExitCode: null };
+    expect(decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, setupAttempt: policyUnsupported }] }).profiles[0].setupAttempt).toMatchObject({ disposition: 'policy_unsupported', terminalClassification: 'policy_unsupported', workspaceSandboxSupported: false });
+    for (const contradiction of [
+      { launchAcceptedAt: '2026-08-07T12:00:01Z' },
+      { workspaceSandboxSupported: true },
+      { terminalExitCode: 1 },
+      { terminalClassification: 'exit_code' },
+      { phase: 'not_requested' },
+      { executable: null },
+      { version: null },
+      { correlationId: null },
+      { requestedAt: null },
+      { deadlineAt: null },
+      { settledAt: null },
+      { settledAt: 'not-a-timestamp' },
+    ]) expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, setupAttempt: { ...policyUnsupported, ...contradiction } }] })).toThrow(/policy_unsupported/);
   });
   it('serializes actions and reloads durable state after each action', async () => {
     const calls: string[] = [];

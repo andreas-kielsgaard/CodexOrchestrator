@@ -115,6 +115,28 @@ function nullableString(value: unknown, label: string): string | null {
     throw new Error(`${label} must be null or a non-empty trimmed string`);
   return value as string | null;
 }
+function requiredRfc3339(value: string | null, label: string): string {
+  if (value === null || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) || Number.isNaN(Date.parse(value)))
+    throw new Error(`${label} must be an RFC3339 timestamp`);
+  return value;
+}
+function validatePolicyUnsupportedSetupAttempt(attempt: NativeProfileSetupAttempt) {
+  if (attempt.disposition !== 'policy_unsupported') return;
+  if (!['sandbox_initialization', 'workspace_write_canary'].includes(attempt.phase)
+    || attempt.terminalClassification !== 'policy_unsupported'
+    || attempt.workspaceSandboxSupported !== false
+    || attempt.executable === null
+    || attempt.version === null
+    || attempt.correlationId === null
+    || attempt.launchAcceptedAt !== null
+    || attempt.terminalExitCode !== null)
+    throw new Error('policy_unsupported setup attempt violates its invariant');
+  const requested = requiredRfc3339(attempt.requestedAt, 'policy_unsupported request timestamp');
+  const deadline = requiredRfc3339(attempt.deadlineAt, 'policy_unsupported deadline timestamp');
+  const settled = requiredRfc3339(attempt.settledAt, 'policy_unsupported settlement timestamp');
+  if (Date.parse(deadline) < Date.parse(requested) || Date.parse(settled) < Date.parse(requested))
+    throw new Error('policy_unsupported setup attempt has contradictory timestamps');
+}
 
 function absolutePath(value: unknown, label: string): string {
   const path = stringValue(value, label);
@@ -153,6 +175,21 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
   if (typeof execution.dangerFullAccessAuthorized !== 'boolean') throw new Error(`native profile ${index} danger authorization must be boolean`);
   const attentions = object(readiness.attentions, 'attentions');
   keys(attentions, ['authentication', 'sandbox', 'canary', 'mcpReporting', 'continuity', 'cli'], 'attentions');
+  const decodedSetupAttempt: NativeProfileSetupAttempt = {
+    phase: enumValue(setupAttempt.phase, ['not_requested', 'sandbox_initialization', 'workspace_write_canary'], 'setup attempt phase'),
+    disposition: enumValue(setupAttempt.disposition, ['not_requested', 'pending', 'launch_failed', 'terminal_succeeded', 'terminal_failed', 'timed_out', 'cancelled', 'recovered_unobserved', 'legacy_unclassified_failed', 'policy_unsupported'], 'setup attempt disposition'),
+    executable: nullableString(setupAttempt.executable, 'setup executable'),
+    version: nullableString(setupAttempt.version, 'setup executable version'),
+    workspaceSandboxSupported: setupAttempt.workspaceSandboxSupported === null ? null : booleanValue(setupAttempt.workspaceSandboxSupported, 'workspace sandbox capability'),
+    correlationId: nullableString(setupAttempt.correlationId, 'setup attempt correlation'),
+    requestedAt: nullableString(setupAttempt.requestedAt, 'setup request timestamp'),
+    launchAcceptedAt: nullableString(setupAttempt.launchAcceptedAt, 'setup launch timestamp'),
+    deadlineAt: nullableString(setupAttempt.deadlineAt, 'setup deadline timestamp'),
+    settledAt: nullableString(setupAttempt.settledAt, 'setup settlement timestamp'),
+    terminalClassification: enumValue(setupAttempt.terminalClassification, ['not_observed', 'exit_code', 'launch_failed', 'timed_out', 'cancelled', 'recovered_unobserved', 'legacy_unclassified_failed', 'policy_unsupported'], 'setup terminal classification'),
+    terminalExitCode: setupAttempt.terminalExitCode === null ? null : integerValue(setupAttempt.terminalExitCode, 'setup terminal exit code'),
+  };
+  validatePolicyUnsupportedSetupAttempt(decodedSetupAttempt);
   return {
     id: stringValue(profile.id, 'profile id'),
     homePath: absolutePath(profile.homePath, 'profile home path'),
@@ -170,20 +207,7 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
       launchAcceptedAt: nullableString(loginAttempt.launchAcceptedAt, 'login launch timestamp'),
       settledAt: nullableString(loginAttempt.settledAt, 'login settlement timestamp'),
     },
-    setupAttempt: {
-      phase: enumValue(setupAttempt.phase, ['not_requested', 'sandbox_initialization', 'workspace_write_canary'], 'setup attempt phase'),
-      disposition: enumValue(setupAttempt.disposition, ['not_requested', 'pending', 'launch_failed', 'terminal_succeeded', 'terminal_failed', 'timed_out', 'cancelled', 'recovered_unobserved', 'legacy_unclassified_failed', 'policy_unsupported'], 'setup attempt disposition'),
-      executable: nullableString(setupAttempt.executable, 'setup executable'),
-      version: nullableString(setupAttempt.version, 'setup executable version'),
-      workspaceSandboxSupported: setupAttempt.workspaceSandboxSupported === null ? null : booleanValue(setupAttempt.workspaceSandboxSupported, 'workspace sandbox capability'),
-      correlationId: nullableString(setupAttempt.correlationId, 'setup attempt correlation'),
-      requestedAt: nullableString(setupAttempt.requestedAt, 'setup request timestamp'),
-      launchAcceptedAt: nullableString(setupAttempt.launchAcceptedAt, 'setup launch timestamp'),
-      deadlineAt: nullableString(setupAttempt.deadlineAt, 'setup deadline timestamp'),
-      settledAt: nullableString(setupAttempt.settledAt, 'setup settlement timestamp'),
-      terminalClassification: enumValue(setupAttempt.terminalClassification, ['not_observed', 'exit_code', 'launch_failed', 'timed_out', 'cancelled', 'recovered_unobserved', 'legacy_unclassified_failed', 'policy_unsupported'], 'setup terminal classification'),
-      terminalExitCode: setupAttempt.terminalExitCode === null ? null : integerValue(setupAttempt.terminalExitCode, 'setup terminal exit code'),
-    },
+    setupAttempt: decodedSetupAttempt,
     readiness: {
       authentication: enumValue(readiness.authentication, ['unknown', 'authenticated', 'unauthenticated'], 'authentication'),
       sandboxInitialization: enumValue(readiness.sandboxInitialization, ['unknown', 'initialized', 'failed', 'attention_required'], 'sandbox initialization'),

@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_setup_attempts (
   settled_at TEXT,
   terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','launch_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed','policy_unsupported')),
   terminal_exit_code INTEGER,
+  CHECK (state <> 'policy_unsupported' OR (phase IN ('sandbox_initialization','workspace_write_canary') AND terminal_classification='policy_unsupported' AND workspace_sandbox_supported=0 AND executable IS NOT NULL AND length(trim(executable))>0 AND version IS NOT NULL AND length(trim(version))>0 AND length(trim(correlation_id))>0 AND length(trim(requested_at))>0 AND length(trim(deadline_at))>0 AND settled_at IS NOT NULL AND length(trim(settled_at))>0 AND launch_accepted_at IS NULL AND terminal_exit_code IS NULL)),
   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_setup_attempt_pending
@@ -276,6 +277,7 @@ CREATE TABLE native_codex_profile_setup_attempts (
   settled_at TEXT,
   terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','launch_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed','policy_unsupported')),
   terminal_exit_code INTEGER,
+  CHECK (state <> 'policy_unsupported' OR (phase IN ('sandbox_initialization','workspace_write_canary') AND terminal_classification='policy_unsupported' AND workspace_sandbox_supported=0 AND executable IS NOT NULL AND length(trim(executable))>0 AND version IS NOT NULL AND length(trim(version))>0 AND length(trim(correlation_id))>0 AND length(trim(requested_at))>0 AND length(trim(deadline_at))>0 AND settled_at IS NOT NULL AND length(trim(settled_at))>0 AND launch_accepted_at IS NULL AND terminal_exit_code IS NULL)),
   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
 );
 INSERT INTO native_codex_profile_setup_attempts (attempt_id,profile_id,filesystem_identity,phase,state,executable,version,workspace_sandbox_supported,correlation_id,requested_at,launch_accepted_at,deadline_at,settled_at,terminal_classification,terminal_exit_code)
@@ -322,12 +324,42 @@ CREATE TABLE native_codex_profile_setup_attempts (
   settled_at TEXT,
   terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','launch_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed','policy_unsupported')),
   terminal_exit_code INTEGER,
+  CHECK (state <> 'policy_unsupported' OR (phase IN ('sandbox_initialization','workspace_write_canary') AND terminal_classification='policy_unsupported' AND workspace_sandbox_supported=0 AND executable IS NOT NULL AND length(trim(executable))>0 AND version IS NOT NULL AND length(trim(version))>0 AND length(trim(correlation_id))>0 AND length(trim(requested_at))>0 AND length(trim(deadline_at))>0 AND settled_at IS NOT NULL AND length(trim(settled_at))>0 AND launch_accepted_at IS NULL AND terminal_exit_code IS NULL)),
   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
 );
 INSERT INTO native_codex_profile_setup_attempts (attempt_id,profile_id,filesystem_identity,phase,state,executable,version,workspace_sandbox_supported,correlation_id,requested_at,launch_accepted_at,deadline_at,settled_at,terminal_classification,terminal_exit_code)
 SELECT attempt_id,profile_id,filesystem_identity,phase,state,executable,version,workspace_sandbox_supported,correlation_id,requested_at,launch_accepted_at,deadline_at,settled_at,terminal_classification,terminal_exit_code
 FROM native_codex_profile_setup_attempts_v28;
 DROP TABLE native_codex_profile_setup_attempts_v28;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_setup_attempt_pending
+ON native_codex_profile_setup_attempts(profile_id,phase) WHERE state='pending';
+"#;
+
+pub(crate) const NATIVE_PROFILE_V30_MIGRATION: &str = r#"
+ALTER TABLE native_codex_profile_setup_attempts RENAME TO native_codex_profile_setup_attempts_v29;
+CREATE TABLE native_codex_profile_setup_attempts (
+  attempt_id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  filesystem_identity TEXT NOT NULL,
+  phase TEXT NOT NULL CHECK (phase IN ('sandbox_initialization','workspace_write_canary')),
+  state TEXT NOT NULL CHECK (state IN ('pending','launch_failed','terminal_succeeded','terminal_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed','policy_unsupported')),
+  executable TEXT,
+  version TEXT,
+  workspace_sandbox_supported INTEGER,
+  correlation_id TEXT NOT NULL UNIQUE,
+  requested_at TEXT NOT NULL,
+  launch_accepted_at TEXT,
+  deadline_at TEXT NOT NULL,
+  settled_at TEXT,
+  terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','launch_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed','policy_unsupported')),
+  terminal_exit_code INTEGER,
+  CHECK (state <> 'policy_unsupported' OR (phase IN ('sandbox_initialization','workspace_write_canary') AND terminal_classification='policy_unsupported' AND workspace_sandbox_supported=0 AND executable IS NOT NULL AND length(trim(executable))>0 AND version IS NOT NULL AND length(trim(version))>0 AND length(trim(correlation_id))>0 AND length(trim(requested_at))>0 AND length(trim(deadline_at))>0 AND settled_at IS NOT NULL AND length(trim(settled_at))>0 AND launch_accepted_at IS NULL AND terminal_exit_code IS NULL)),
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+INSERT INTO native_codex_profile_setup_attempts (attempt_id,profile_id,filesystem_identity,phase,state,executable,version,workspace_sandbox_supported,correlation_id,requested_at,launch_accepted_at,deadline_at,settled_at,terminal_classification,terminal_exit_code)
+SELECT attempt_id,profile_id,filesystem_identity,phase,state,executable,version,workspace_sandbox_supported,correlation_id,requested_at,launch_accepted_at,deadline_at,settled_at,terminal_classification,terminal_exit_code
+FROM native_codex_profile_setup_attempts_v29;
+DROP TABLE native_codex_profile_setup_attempts_v29;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_setup_attempt_pending
 ON native_codex_profile_setup_attempts(profile_id,phase) WHERE state='pending';
 "#;
@@ -2542,8 +2574,50 @@ fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, Stri
             })
         })
         .map_err(|error| error.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())
+    let profiles = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    for profile in &profiles {
+        validate_setup_attempt(&profile.setup_attempt)?;
+    }
+    Ok(profiles)
+}
+
+fn validate_setup_attempt(attempt: &NativeProfileSetupAttempt) -> Result<(), String> {
+    if attempt.disposition != "policy_unsupported" {
+        return Ok(());
+    }
+    let required = |value: &Option<String>| {
+        value
+            .as_deref()
+            .is_some_and(|value| !value.is_empty() && value.trim() == value)
+    };
+    if !matches!(
+        attempt.phase.as_str(),
+        "sandbox_initialization" | "workspace_write_canary"
+    ) || attempt.terminal_classification != "policy_unsupported"
+        || attempt.workspace_sandbox_supported != Some(false)
+        || !required(&attempt.executable)
+        || !required(&attempt.version)
+        || !required(&attempt.correlation_id)
+        || !required(&attempt.requested_at)
+        || !required(&attempt.deadline_at)
+        || !required(&attempt.settled_at)
+        || attempt.launch_accepted_at.is_some()
+        || attempt.terminal_exit_code.is_some()
+    {
+        return Err("Native policy-unsupported setup attempt violates its durable invariant".into());
+    }
+    let requested = DateTime::parse_from_rfc3339(attempt.requested_at.as_deref().unwrap())
+        .map_err(|_| "Native policy-unsupported setup attempt has an invalid request timestamp")?;
+    let deadline = DateTime::parse_from_rfc3339(attempt.deadline_at.as_deref().unwrap())
+        .map_err(|_| "Native policy-unsupported setup attempt has an invalid deadline timestamp")?;
+    let settled = DateTime::parse_from_rfc3339(attempt.settled_at.as_deref().unwrap())
+        .map_err(|_| "Native policy-unsupported setup attempt has an invalid settlement timestamp")?;
+    if deadline < requested || settled < requested {
+        return Err("Native policy-unsupported setup attempt has contradictory timestamps".into());
+    }
+    Ok(())
 }
 
 pub(crate) struct NativeProfileTauriState {
@@ -3024,8 +3098,17 @@ mod tests {
             "policy_unsupported"
         );
         assert_eq!(requested.setup_attempt.workspace_sandbox_supported, Some(false));
+        assert_eq!(
+            requested.setup_attempt.executable.as_deref(),
+            Some("C:/application-owned/codex.exe")
+        );
+        assert_eq!(requested.setup_attempt.version.as_deref(), Some("codex-cli test"));
+        assert!(requested.setup_attempt.correlation_id.is_some());
+        assert!(requested.setup_attempt.requested_at.is_some());
+        assert!(requested.setup_attempt.deadline_at.is_some());
         assert!(requested.setup_attempt.launch_accepted_at.is_none());
         assert!(requested.setup_attempt.settled_at.is_some());
+        assert!(requested.setup_attempt.terminal_exit_code.is_none());
         assert_eq!(*fake.starts.lock().unwrap(), 0);
         assert_eq!(
             requested.readiness.attentions.sandbox,
@@ -3042,6 +3125,52 @@ mod tests {
         );
         assert_eq!(*fake.starts.lock().unwrap(), 0);
         assert!(!directory.path().join("app").join("probes").exists());
+    }
+
+    #[test]
+    fn policy_unsupported_attempts_reject_contradictory_storage_and_query_facts() {
+        let (_directory, mut service) = service();
+        service.cli = Arc::new(FakeCli::unsupported_workspace_policy());
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        service.request_sandbox_initialization(&profile.id).unwrap();
+        let connection = service.connection().unwrap();
+        for mutation in [
+            "phase='not_requested'",
+            "launch_accepted_at='2026-08-07T12:00:01Z'",
+            "workspace_sandbox_supported=1",
+            "terminal_exit_code=1",
+            "terminal_classification='exit_code'",
+            "executable=NULL",
+            "executable=''",
+            "version=NULL",
+            "version=''",
+            "correlation_id=''",
+            "requested_at=''",
+            "deadline_at=''",
+            "settled_at=NULL",
+            "settled_at=''",
+        ] {
+            assert!(connection
+                .execute(
+                    &format!("UPDATE native_codex_profile_setup_attempts SET {mutation} WHERE profile_id=?1"),
+                    params![profile.id],
+                )
+                .is_err());
+        }
+        connection
+            .execute_batch("PRAGMA ignore_check_constraints=ON;")
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE native_codex_profile_setup_attempts SET launch_accepted_at='2026-08-07T12:00:01Z' WHERE profile_id=?1",
+                params![profile.id],
+            )
+            .unwrap();
+        connection
+            .execute_batch("PRAGMA ignore_check_constraints=OFF;")
+            .unwrap();
+        assert!(service.query().is_err());
     }
 
     #[test]
@@ -3792,7 +3921,7 @@ mod tests {
     }
 
     #[test]
-    fn v29_policy_migration_preserves_existing_v28_attempt_evidence() {
+    fn v30_policy_invariant_migration_preserves_existing_v28_attempt_evidence() {
         let directory = tempfile::tempdir().unwrap();
         let database = directory.path().join("active.sqlite");
         let connection = Connection::open(&database).unwrap();
@@ -3819,7 +3948,7 @@ mod tests {
             )
         );
         connection
-            .execute("INSERT INTO native_codex_profile_setup_attempts (attempt_id,profile_id,filesystem_identity,phase,state,correlation_id,requested_at,deadline_at,settled_at,terminal_classification) VALUES ('unsupported','profile','identity','sandbox_initialization','policy_unsupported','correlation-unsupported','2026-08-07T12:03:00Z','2026-08-07T12:05:00Z','2026-08-07T12:03:00Z','policy_unsupported')", [])
+            .execute("INSERT INTO native_codex_profile_setup_attempts (attempt_id,profile_id,filesystem_identity,phase,state,executable,version,workspace_sandbox_supported,correlation_id,requested_at,deadline_at,settled_at,terminal_classification) VALUES ('unsupported','profile','identity','sandbox_initialization','policy_unsupported','C:/application-owned/codex.exe','codex-cli test',0,'correlation-unsupported','2026-08-07T12:03:00Z','2026-08-07T12:05:00Z','2026-08-07T12:03:00Z','policy_unsupported')", [])
             .unwrap();
     }
 
