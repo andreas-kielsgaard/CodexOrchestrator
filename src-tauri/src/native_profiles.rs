@@ -1,8 +1,8 @@
 //! Product-owned Codex home profiles. This module deliberately records only filesystem identity
 //! and bounded setup observations; it never reads authentication, sandbox, or provider payloads.
 
-use chrono::Utc;
-use rusqlite::{params, Connection};
+use chrono::{DateTime, Duration, Utc};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -47,6 +47,34 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_attentions (
   PRIMARY KEY(profile_id, concern),
   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
 );
+CREATE TABLE IF NOT EXISTS native_codex_profile_setup_attempts (
+  attempt_id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  phase TEXT NOT NULL CHECK (phase IN ('sandbox_initialization','workspace_write_canary')),
+  state TEXT NOT NULL CHECK (state IN ('pending','completed','failed','timed_out','cancelled')),
+  started_at TEXT NOT NULL,
+  deadline_at TEXT NOT NULL,
+  completed_at TEXT,
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_setup_attempt_pending
+ON native_codex_profile_setup_attempts(profile_id,phase) WHERE state='pending';
+CREATE TABLE IF NOT EXISTS native_codex_profile_mcp_probes (
+  request_id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  correlation_id TEXT NOT NULL UNIQUE,
+  expected_capability TEXT NOT NULL,
+  expected_server TEXT NOT NULL,
+  expected_tool TEXT NOT NULL,
+  expected_probe_root TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('pending','received','expired','cancelled')),
+  requested_at TEXT NOT NULL,
+  deadline_at TEXT NOT NULL,
+  received_at TEXT,
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_mcp_probe_pending
+ON native_codex_profile_mcp_probes(profile_id) WHERE state='pending';
 "#;
 
 pub(crate) const NATIVE_PROFILE_V22_MIGRATION: &str = r#"
@@ -87,11 +115,44 @@ FROM native_codex_profile_readiness
 WHERE attention IS NOT NULL;
 "#;
 
+pub(crate) const NATIVE_PROFILE_V24_MIGRATION: &str = r#"
+CREATE TABLE IF NOT EXISTS native_codex_profile_setup_attempts (
+  attempt_id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  phase TEXT NOT NULL CHECK (phase IN ('sandbox_initialization','workspace_write_canary')),
+  state TEXT NOT NULL CHECK (state IN ('pending','completed','failed','timed_out','cancelled')),
+  started_at TEXT NOT NULL,
+  deadline_at TEXT NOT NULL,
+  completed_at TEXT,
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_setup_attempt_pending
+ON native_codex_profile_setup_attempts(profile_id,phase) WHERE state='pending';
+CREATE TABLE IF NOT EXISTS native_codex_profile_mcp_probes (
+  request_id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  correlation_id TEXT NOT NULL UNIQUE,
+  expected_capability TEXT NOT NULL,
+  expected_server TEXT NOT NULL,
+  expected_tool TEXT NOT NULL,
+  expected_probe_root TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('pending','received','expired','cancelled')),
+  requested_at TEXT NOT NULL,
+  deadline_at TEXT NOT NULL,
+  received_at TEXT,
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_mcp_probe_pending
+ON native_codex_profile_mcp_probes(profile_id) WHERE state='pending';
+"#;
+
 const MARKER_FILE: &str = ".codex-orchestrator-profile.json";
 const PROFILE_QUERY_CONTRACT: &str = "native-codex-profile-query/v1";
 const MCP_REPORTING_CAPABILITY: &str = "native-codex-profile-reporting/v1";
 const MCP_REPORTING_SERVER: &str = "codex-orchestrator-reporting";
 const MCP_REPORTING_TOOL: &str = "report_native_profile_readiness";
+const SETUP_ATTEMPT_TIMEOUT_SECONDS: i64 = 120;
+const MCP_PROBE_TIMEOUT_SECONDS: i64 = 300;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct NativeCliInvocation {
@@ -109,7 +170,7 @@ struct NativeCliReceipt {
 }
 
 trait NativeCliChild: Send {
-    fn try_wait(&mut self) -> Result<Option<bool>, String>;
+    fn try_wait(&mut self) -> Result<Option<NativeCliReceipt>, String>;
     fn terminate(&mut self) -> Result<(), String>;
 }
 
@@ -121,20 +182,37 @@ trait NativeCliPort: Send + Sync {
 struct SystemNativeCliPort {
     program: Result<String, String>,
 }
-struct SystemNativeCliChild(Child);
+struct SystemNativeCliChild {
+    child: Child,
+    sandbox_receipt: Option<PathBuf>,
+}
 
 impl NativeCliChild for SystemNativeCliChild {
-    fn try_wait(&mut self) -> Result<Option<bool>, String> {
-        self.0
+    fn try_wait(&mut self) -> Result<Option<NativeCliReceipt>, String> {
+        self.child
             .try_wait()
-            .map(|status| status.map(|status| status.success()))
+            .map(|status| {
+                status.map(|status| NativeCliReceipt {
+                    succeeded: status.success(),
+                    sandbox_receipt_observed: self.sandbox_receipt.as_ref().is_some_and(|path| {
+                        fs::read_to_string(path)
+                            .map(|value| value.trim() == "native-codex-profile-canary")
+                            .unwrap_or(false)
+                    }),
+                })
+            })
             .map_err(|error| error.to_string())
     }
     fn terminate(&mut self) -> Result<(), String> {
-        self.0
+        self.child
             .kill()
             .map_err(|error| error.to_string())
-            .and_then(|_| self.0.wait().map(|_| ()).map_err(|error| error.to_string()))
+            .and_then(|_| {
+                self.child
+                    .wait()
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
     }
 }
 
@@ -189,7 +267,10 @@ impl NativeCliPort for SystemNativeCliPort {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|error| error.to_string())?;
-        Ok(Box::new(SystemNativeCliChild(child)))
+        Ok(Box::new(SystemNativeCliChild {
+            child,
+            sandbox_receipt: invocation.sandbox_receipt.clone(),
+        }))
     }
 }
 
@@ -300,6 +381,55 @@ pub(crate) struct NativeMcpReportingReceipt {
     pub(crate) probe_root: PathBuf,
 }
 
+/// Private application authority for NCHP-03. This never appears in settings DTOs.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NativeMcpReportingProbeAuthority {
+    pub(crate) profile_id: String,
+    pub(crate) correlation_id: String,
+    pub(crate) capability: String,
+    pub(crate) server: String,
+    pub(crate) tool: String,
+    pub(crate) probe_root: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SetupPhase {
+    SandboxInitialization,
+    WorkspaceWriteCanary,
+}
+
+impl SetupPhase {
+    fn database(self) -> &'static str {
+        match self {
+            Self::SandboxInitialization => "sandbox_initialization",
+            Self::WorkspaceWriteCanary => "workspace_write_canary",
+        }
+    }
+
+    fn from_database(value: &str) -> Result<Self, String> {
+        match value {
+            "sandbox_initialization" => Ok(Self::SandboxInitialization),
+            "workspace_write_canary" => Ok(Self::WorkspaceWriteCanary),
+            _ => Err("Stored native profile setup phase is invalid".into()),
+        }
+    }
+
+    fn attention_concern(self) -> &'static str {
+        match self {
+            Self::SandboxInitialization => "sandbox",
+            Self::WorkspaceWriteCanary => "canary",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PendingSetupAttempt {
+    attempt_id: String,
+    profile_id: String,
+    phase: SetupPhase,
+    deadline_at: DateTime<Utc>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StoredProfile {
     id: String,
@@ -343,6 +473,7 @@ pub(crate) struct NativeProfileService {
     dedicated_root: PathBuf,
     cli: Arc<dyn NativeCliPort>,
     login_children: Mutex<HashMap<String, Box<dyn NativeCliChild>>>,
+    setup_children: Mutex<HashMap<String, Box<dyn NativeCliChild>>>,
 }
 
 impl NativeProfileService {
@@ -358,6 +489,7 @@ impl NativeProfileService {
                 program: crate::runtime::codex::resolve_program("codex".into()),
             }),
             login_children: Mutex::new(HashMap::new()),
+            setup_children: Mutex::new(HashMap::new()),
         })
     }
 
@@ -369,6 +501,9 @@ impl NativeProfileService {
         let mut connection = self.connection()?;
         for profile in load_profiles(&mut connection)? {
             self.revalidate(&profile)?;
+            self.reap_login(&profile.id)?;
+            self.reconcile_setup_attempts(&profile.id)?;
+            self.expire_mcp_probe(&profile.id)?;
         }
         let profiles = load_profiles(&mut connection)?;
         Ok(NativeProfileQueryDto {
@@ -494,46 +629,18 @@ impl NativeProfileService {
 
     pub(crate) fn request_login(&self, id: &str) -> Result<NativeProfileDto, String> {
         let profile = self.require_active(id)?;
-        let mut children = self
-            .login_children
-            .lock()
-            .map_err(|_| "Native profile login supervision is unavailable")?;
-        if let Some(child) = children.get_mut(id) {
-            if child
-                .try_wait()
-                .map_err(|error| format!("Unable to observe browser login: {error}"))?
-                .is_none()
-            {
-                return self.profile(id).map(Into::into);
-            }
-            let succeeded = children
-                .remove(id)
-                .expect("present")
-                .try_wait()?
-                .unwrap_or(false);
-            self.update_readiness(
-                id,
-                Some(if succeeded {
-                    "authenticated"
-                } else {
-                    "unauthenticated"
-                }),
-                None,
-                None,
-                None,
-                Some((
-                    "authentication",
-                    Some(if succeeded {
-                        "login_completed_refresh_required"
-                    } else {
-                        "browser_login_not_completed"
-                    }),
-                )),
-            )?;
+        if self.reap_login(id)?
+            || self
+                .login_children
+                .lock()
+                .map_err(|_| "Native profile login supervision is unavailable")?
+                .contains_key(id)
+        {
+            return self.profile(id).map(Into::into);
         }
         let root = self.probe_root(id);
         fs::create_dir_all(&root).map_err(|error| error.to_string())?;
-        let child = self
+        let mut child = self
             .cli
             .start(&NativeCliInvocation {
                 args: vec!["login".into()],
@@ -547,7 +654,15 @@ impl NativeProfileService {
                     .ok();
                 "Unable to start supported Codex browser login".to_string()
             })?;
-        children.insert(id.to_string(), child);
+        match self.login_children.lock() {
+            Ok(mut children) => {
+                children.insert(id.to_string(), child);
+            }
+            Err(_) => {
+                let _ = child.terminate();
+                return Err("Native profile login supervision is unavailable".into());
+            }
+        }
         self.set_attention(
             id,
             "authentication",
@@ -595,18 +710,61 @@ impl NativeProfileService {
         id: &str,
     ) -> Result<NativeProfileDto, String> {
         let profile = self.require_active(id)?;
-        self.run_bounded_sandbox_probe(id, &profile, "initialize")?;
+        self.reconcile_setup_attempts(id)?;
+        self.start_setup_attempt(&profile, SetupPhase::SandboxInitialization)?;
         self.profile(id).map(Into::into)
     }
 
     pub(crate) fn run_workspace_write_canary(&self, id: &str) -> Result<NativeProfileDto, String> {
         let profile = self.require_active(id)?;
-        self.run_bounded_sandbox_probe(id, &profile, "canary")?;
+        self.reconcile_setup_attempts(id)?;
+        if self.profile(id)?.readiness.sandbox_initialization != "initialized" {
+            self.update_readiness(
+                id,
+                None,
+                None,
+                Some("blocked"),
+                None,
+                Some((
+                    "canary",
+                    Some("workspace_write_canary_requires_observed_sandbox_initialization"),
+                )),
+            )?;
+            return self.profile(id).map(Into::into);
+        }
+        self.start_setup_attempt(&profile, SetupPhase::WorkspaceWriteCanary)?;
         self.profile(id).map(Into::into)
     }
 
     pub(crate) fn probe_mcp_reporting(&self, id: &str) -> Result<NativeProfileDto, String> {
+        self.begin_mcp_reporting_probe(id)?;
+        self.profile(id).map(Into::into)
+    }
+
+    pub(crate) fn begin_mcp_reporting_probe(
+        &self,
+        id: &str,
+    ) -> Result<NativeMcpReportingProbeAuthority, String> {
         self.require_active(id)?;
+        self.expire_mcp_probe(id)?;
+        let root = self.probe_root(id);
+        let connection = self.connection()?;
+        if let Some(authority) = load_pending_mcp_probe(&connection, id)? {
+            return Ok(authority);
+        }
+        let now = Utc::now();
+        let authority = NativeMcpReportingProbeAuthority {
+            profile_id: id.into(),
+            correlation_id: format!("native-mcp-probe-{}", Uuid::new_v4()),
+            capability: MCP_REPORTING_CAPABILITY.into(),
+            server: MCP_REPORTING_SERVER.into(),
+            tool: MCP_REPORTING_TOOL.into(),
+            probe_root: root,
+        };
+        connection.execute(
+            "INSERT INTO native_codex_profile_mcp_probes (request_id,profile_id,correlation_id,expected_capability,expected_server,expected_tool,expected_probe_root,state,requested_at,deadline_at) VALUES (?1,?2,?3,?4,?5,?6,?7,'pending',?8,?9)",
+            params![format!("native-mcp-request-{}", Uuid::new_v4()), authority.profile_id, authority.correlation_id, authority.capability, authority.server, authority.tool, authority.probe_root.to_string_lossy(), now.to_rfc3339(), (now + Duration::seconds(MCP_PROBE_TIMEOUT_SECONDS)).to_rfc3339()],
+        ).map_err(|error| format!("Unable to persist native MCP reporting probe: {error}"))?;
         self.update_readiness(
             id,
             None,
@@ -615,10 +773,10 @@ impl NativeProfileService {
             Some("not_assessed"),
             Some((
                 "mcp_reporting",
-                Some("mcp_reporting_probe_requires_correlated_receipt"),
+                Some("mcp_reporting_probe_pending_application_receipt"),
             )),
         )?;
-        self.profile(id).map(Into::into)
+        Ok(authority)
     }
 
     pub(crate) fn record_mcp_reporting_receipt(
@@ -627,21 +785,31 @@ impl NativeProfileService {
         receipt: &NativeMcpReportingReceipt,
     ) -> Result<NativeProfileDto, String> {
         self.require_active(id)?;
-        let valid = receipt.capability == MCP_REPORTING_CAPABILITY
-            && receipt.server == MCP_REPORTING_SERVER
-            && receipt.tool == MCP_REPORTING_TOOL
-            && !receipt.correlation_id.trim().is_empty()
-            && receipt.probe_root == self.probe_root(id);
+        self.expire_mcp_probe(id)?;
+        let connection = self.connection()?;
+        let pending = load_pending_mcp_probe(&connection, id)?
+            .ok_or("No pending application-owned MCP reporting probe exists for this profile")?;
+        let valid = receipt.correlation_id == pending.correlation_id
+            && receipt.capability == pending.capability
+            && receipt.server == pending.server
+            && receipt.tool == pending.tool
+            && receipt.probe_root == pending.probe_root;
+        if !valid {
+            return Err(
+                "MCP reporting receipt does not match the pending application probe".into(),
+            );
+        }
+        connection.execute(
+            "UPDATE native_codex_profile_mcp_probes SET state='received',received_at=?2 WHERE profile_id=?1 AND state='pending' AND correlation_id=?3",
+            params![id, Utc::now().to_rfc3339(), receipt.correlation_id],
+        ).map_err(|error| error.to_string())?;
         self.update_readiness(
             id,
             None,
             None,
             None,
-            Some(if valid { "ready" } else { "probe_failed" }),
-            Some((
-                "mcp_reporting",
-                (!valid).then_some("mcp_reporting_receipt_invalid"),
-            )),
+            Some("ready"),
+            Some(("mcp_reporting", None)),
         )?;
         self.profile(id).map(Into::into)
     }
@@ -708,18 +876,38 @@ impl NativeProfileService {
             .join(id)
     }
 
-    fn run_bounded_sandbox_probe(
+    fn start_setup_attempt(
         &self,
-        id: &str,
         profile: &StoredProfile,
-        purpose: &str,
+        phase: SetupPhase,
     ) -> Result<(), String> {
+        let id = &profile.id;
         let root = self.probe_root(id);
         fs::create_dir_all(&root).map_err(|error| {
             format!("Unable to create application-owned sandbox probe root: {error}")
         })?;
-        let output = root.join(format!("{purpose}.txt"));
+        let output = root.join(format!("{}.txt", phase.database()));
         let command = format!("echo native-codex-profile-canary>\"{}\"", output.display());
+        let now = Utc::now();
+        let attempt = PendingSetupAttempt {
+            attempt_id: format!("native-setup-attempt-{}", Uuid::new_v4()),
+            profile_id: id.clone(),
+            phase,
+            deadline_at: now + Duration::seconds(SETUP_ATTEMPT_TIMEOUT_SECONDS),
+        };
+        let connection = self.connection()?;
+        let inserted = connection.execute(
+            "INSERT OR IGNORE INTO native_codex_profile_setup_attempts (attempt_id,profile_id,phase,state,started_at,deadline_at) VALUES (?1,?2,?3,'pending',?4,?5)",
+            params![attempt.attempt_id, attempt.profile_id, attempt.phase.database(), now.to_rfc3339(), attempt.deadline_at.to_rfc3339()],
+        ).map_err(|error| format!("Unable to persist native sandbox attempt: {error}"))?;
+        if inserted == 0 {
+            return self.set_attention(
+                id,
+                phase.attention_concern(),
+                Some("native_sandbox_attempt_pending_human_or_uac_attention"),
+                false,
+            );
+        }
         let invocation = NativeCliInvocation {
             args: vec![
                 "--cd".into(),
@@ -738,79 +926,174 @@ impl NativeProfileService {
             cwd: root.clone(),
             codex_home: profile.home.clone(),
             environment: native_profile_environment(&profile.home),
-            sandbox_receipt: (purpose == "canary").then_some(output),
+            sandbox_receipt: (phase == SetupPhase::WorkspaceWriteCanary).then_some(output),
         };
-        let receipt = self.cli.run(&invocation).map_err(|_| {
-            self.set_attention(id, "cli", Some("codex_cli_unavailable"), false)
-                .ok();
-            "Codex CLI is unavailable for this profile".to_string()
-        })?;
-        if purpose == "initialize" && receipt.succeeded {
-            self.update_readiness(
-                id,
-                None,
-                Some("initialized"),
-                None,
-                None,
-                Some(("sandbox", None)),
-            )?;
-        } else if purpose == "canary" && receipt.succeeded && receipt.sandbox_receipt_observed {
-            self.update_readiness(id, None, None, Some("passed"), None, Some(("canary", None)))?;
-        } else {
-            self.update_readiness(
-                id,
-                None,
-                (purpose == "initialize").then_some("attention_required"),
-                (purpose == "canary").then_some("blocked"),
-                None,
-                Some((
-                    if purpose == "initialize" {
-                        "sandbox"
-                    } else {
-                        "canary"
+        match self.cli.start(&invocation) {
+            Ok(mut child) => {
+                match self.setup_children.lock() {
+                    Ok(mut children) => {
+                        children.insert(attempt.attempt_id.clone(), child);
+                    }
+                    Err(_) => {
+                        let _ = child.terminate();
+                        self.set_setup_attempt_state(&attempt.attempt_id, "cancelled")?;
+                        return Err("Native sandbox child supervision is unavailable".into());
+                    }
+                }
+                self.set_attention(
+                    id,
+                    phase.attention_concern(),
+                    Some("native_sandbox_attempt_pending_human_or_uac_attention"),
+                    false,
+                )
+            }
+            Err(_) => {
+                self.set_setup_attempt_state(&attempt.attempt_id, "failed")?;
+                self.set_attention(id, "cli", Some("codex_cli_unavailable"), false)?;
+                self.update_readiness(
+                    id,
+                    None,
+                    (phase == SetupPhase::SandboxInitialization).then_some("attention_required"),
+                    (phase == SetupPhase::WorkspaceWriteCanary).then_some("blocked"),
+                    None,
+                    Some((
+                        phase.attention_concern(),
+                        Some("native_sandbox_launch_failed"),
+                    )),
+                )
+            }
+        }
+    }
+
+    fn reconcile_setup_attempts(&self, id: &str) -> Result<(), String> {
+        for attempt in load_pending_setup_attempts(&self.connection()?, id)? {
+            let outcome = {
+                let mut children = self
+                    .setup_children
+                    .lock()
+                    .map_err(|_| "Native sandbox child supervision is unavailable")?;
+                match children.get_mut(&attempt.attempt_id) {
+                    Some(child) => match child.try_wait()? {
+                        Some(receipt) => {
+                            children.remove(&attempt.attempt_id);
+                            Some(Ok(receipt))
+                        }
+                        None if Utc::now() >= attempt.deadline_at => {
+                            let mut child = children.remove(&attempt.attempt_id).expect("present");
+                            let _ = child.terminate();
+                            Some(Err("timed_out"))
+                        }
+                        None => None,
                     },
-                    Some(if purpose == "initialize" {
-                        "sandbox_setup_failed_or_uac_attention_required"
-                    } else {
-                        "workspace_write_canary_failed"
-                    }),
-                )),
+                    None if Utc::now() >= attempt.deadline_at => Some(Err("timed_out")),
+                    None => Some(Err("cancelled")),
+                }
+            };
+            let Some(outcome) = outcome else { continue };
+            match outcome {
+                Ok(receipt)
+                    if receipt.succeeded
+                        && (attempt.phase == SetupPhase::SandboxInitialization
+                            || receipt.sandbox_receipt_observed) =>
+                {
+                    self.set_setup_attempt_state(&attempt.attempt_id, "completed")?;
+                    self.update_readiness(
+                        id,
+                        None,
+                        (attempt.phase == SetupPhase::SandboxInitialization)
+                            .then_some("initialized"),
+                        (attempt.phase == SetupPhase::WorkspaceWriteCanary).then_some("passed"),
+                        None,
+                        Some((attempt.phase.attention_concern(), None)),
+                    )?;
+                }
+                Ok(_) => self.settle_failed_setup_attempt(&attempt, "failed")?,
+                Err(state) => self.settle_failed_setup_attempt(&attempt, state)?,
+            }
+        }
+        Ok(())
+    }
+
+    fn settle_failed_setup_attempt(
+        &self,
+        attempt: &PendingSetupAttempt,
+        state: &str,
+    ) -> Result<(), String> {
+        self.set_setup_attempt_state(&attempt.attempt_id, state)?;
+        self.update_readiness(
+            &attempt.profile_id,
+            None,
+            (attempt.phase == SetupPhase::SandboxInitialization).then_some("attention_required"),
+            (attempt.phase == SetupPhase::WorkspaceWriteCanary).then_some("blocked"),
+            None,
+            Some((
+                attempt.phase.attention_concern(),
+                Some(match state {
+                    "timed_out" => "native_sandbox_attempt_timed_out_human_or_uac_attention",
+                    "cancelled" => "native_sandbox_attempt_cancelled_before_observation",
+                    _ => "native_sandbox_attempt_failed",
+                }),
+            )),
+        )
+    }
+
+    fn set_setup_attempt_state(&self, attempt_id: &str, state: &str) -> Result<(), String> {
+        self.connection()?.execute(
+            "UPDATE native_codex_profile_setup_attempts SET state=?2,completed_at=?3 WHERE attempt_id=?1 AND state='pending'",
+            params![attempt_id, state, Utc::now().to_rfc3339()],
+        ).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn expire_mcp_probe(&self, id: &str) -> Result<(), String> {
+        let connection = self.connection()?;
+        let expired = connection
+            .execute(
+                "UPDATE native_codex_profile_mcp_probes SET state='expired' WHERE profile_id=?1 AND state='pending' AND deadline_at <= ?2",
+                params![id, Utc::now().to_rfc3339()],
+            )
+            .map_err(|error| error.to_string())?;
+        if expired != 0 {
+            self.update_readiness(
+                id,
+                None,
+                None,
+                None,
+                Some("not_assessed"),
+                Some(("mcp_reporting", Some("mcp_reporting_probe_expired"))),
             )?;
         }
         Ok(())
     }
 
-    fn reap_login(&self, id: &str) -> Result<(), String> {
+    fn reap_login(&self, id: &str) -> Result<bool, String> {
         let mut children = self
             .login_children
             .lock()
             .map_err(|_| "Native profile login supervision is unavailable")?;
         let Some(child) = children.get_mut(id) else {
-            return Ok(());
+            return Ok(false);
         };
-        let Some(succeeded) = child.try_wait()? else {
-            return Ok(());
+        let Some(receipt) = child.try_wait()? else {
+            return Ok(false);
         };
         children.remove(id);
         self.update_readiness(
             id,
-            Some(if succeeded {
-                "authenticated"
-            } else {
-                "unauthenticated"
-            }),
+            (!receipt.succeeded).then_some("unauthenticated"),
             None,
             None,
             None,
             Some((
                 "authentication",
-                Some(if succeeded {
+                Some(if receipt.succeeded {
                     "login_completed_refresh_required"
                 } else {
                     "browser_login_not_completed"
                 }),
             )),
-        )
+        )?;
+        Ok(true)
     }
 
     fn profile(&self, id: &str) -> Result<StoredProfile, String> {
@@ -832,6 +1115,8 @@ impl NativeProfileService {
         let connection = self.connection()?;
         connection.execute("UPDATE native_codex_profiles SET lifecycle=?2,selected_at=NULL,updated_at=?3 WHERE id=?1", params![id, lifecycle.database(), Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+        connection.execute("UPDATE native_codex_profile_setup_attempts SET state='cancelled',completed_at=?2 WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+        connection.execute("UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state='pending'", params![id]).map_err(|error| error.to_string())?;
         self.write_attention(
             &connection,
             id,
@@ -908,6 +1193,12 @@ impl NativeProfileService {
 impl Drop for NativeProfileService {
     fn drop(&mut self) {
         if let Ok(mut children) = self.login_children.lock() {
+            for child in children.values_mut() {
+                let _ = child.terminate();
+            }
+            children.clear();
+        }
+        if let Ok(mut children) = self.setup_children.lock() {
             for child in children.values_mut() {
                 let _ = child.terminate();
             }
@@ -1049,6 +1340,55 @@ fn validate_profile(profile: &StoredProfile) -> Lifecycle {
     }
 }
 
+fn load_pending_setup_attempts(
+    connection: &Connection,
+    profile_id: &str,
+) -> Result<Vec<PendingSetupAttempt>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT attempt_id,profile_id,phase,deadline_at FROM native_codex_profile_setup_attempts WHERE profile_id=?1 AND state='pending' ORDER BY started_at",
+        )
+        .map_err(|error| error.to_string())?;
+    let attempts = statement
+        .query_map(params![profile_id], |row| {
+            let deadline: String = row.get(3)?;
+            Ok(PendingSetupAttempt {
+                attempt_id: row.get(0)?,
+                profile_id: row.get(1)?,
+                phase: SetupPhase::from_database(&row.get::<_, String>(2)?)
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                deadline_at: DateTime::parse_from_rfc3339(&deadline)
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?
+                    .with_timezone(&Utc),
+            })
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok(attempts)
+}
+
+fn load_pending_mcp_probe(
+    connection: &Connection,
+    profile_id: &str,
+) -> Result<Option<NativeMcpReportingProbeAuthority>, String> {
+    connection
+        .query_row(
+            "SELECT correlation_id,expected_capability,expected_server,expected_tool,expected_probe_root FROM native_codex_profile_mcp_probes WHERE profile_id=?1 AND state='pending'",
+            params![profile_id],
+            |row| Ok(NativeMcpReportingProbeAuthority {
+                profile_id: profile_id.into(),
+                correlation_id: row.get(0)?,
+                capability: row.get(1)?,
+                server: row.get(2)?,
+                tool: row.get(3)?,
+                probe_root: PathBuf::from(row.get::<_, String>(4)?),
+            }),
+        )
+        .optional()
+        .map_err(|error| error.to_string())
+}
+
 fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, String> {
     let mut statement = connection.prepare("SELECT p.id,p.canonical_home_path,p.filesystem_identity,p.ownership,p.lifecycle,p.selected_at,r.authentication,r.sandbox_initialization,r.workspace_write_canary,r.mcp_reporting,(SELECT detail FROM native_codex_profile_attentions a WHERE a.profile_id=p.id AND a.concern='authentication'),(SELECT detail FROM native_codex_profile_attentions a WHERE a.profile_id=p.id AND a.concern='sandbox'),(SELECT detail FROM native_codex_profile_attentions a WHERE a.profile_id=p.id AND a.concern='canary'),(SELECT detail FROM native_codex_profile_attentions a WHERE a.profile_id=p.id AND a.concern='mcp_reporting'),(SELECT detail FROM native_codex_profile_attentions a WHERE a.profile_id=p.id AND a.concern='continuity'),(SELECT detail FROM native_codex_profile_attentions a WHERE a.profile_id=p.id AND a.concern='cli') FROM native_codex_profiles p JOIN native_codex_profile_readiness r ON r.profile_id=p.id ORDER BY p.created_at").map_err(|error| error.to_string())?;
     let rows = statement
@@ -1172,15 +1512,18 @@ mod tests {
     use super::*;
 
     struct FakeChild {
-        result: Option<bool>,
+        result: Option<NativeCliReceipt>,
         terminated: Arc<Mutex<usize>>,
     }
     impl NativeCliChild for FakeChild {
-        fn try_wait(&mut self) -> Result<Option<bool>, String> {
+        fn try_wait(&mut self) -> Result<Option<NativeCliReceipt>, String> {
             Ok(self.result.take())
         }
         fn terminate(&mut self) -> Result<(), String> {
-            self.result = Some(false);
+            self.result = Some(NativeCliReceipt {
+                succeeded: false,
+                sandbox_receipt_observed: false,
+            });
             *self.terminated.lock().unwrap() += 1;
             Ok(())
         }
@@ -1190,6 +1533,7 @@ mod tests {
         calls: Mutex<Vec<NativeCliInvocation>>,
         starts: Mutex<usize>,
         terminated: Arc<Mutex<usize>>,
+        next_child_result: Mutex<Option<NativeCliReceipt>>,
     }
     impl FakeCli {
         fn succeeding() -> Self {
@@ -1201,6 +1545,7 @@ mod tests {
                 calls: Mutex::new(vec![]),
                 starts: Mutex::new(0),
                 terminated: Arc::new(Mutex::new(0)),
+                next_child_result: Mutex::new(None),
             }
         }
     }
@@ -1216,7 +1561,7 @@ mod tests {
             self.calls.lock().unwrap().push(invocation.clone());
             *self.starts.lock().unwrap() += 1;
             Ok(Box::new(FakeChild {
-                result: None,
+                result: self.next_child_result.lock().unwrap().take(),
                 terminated: self.terminated.clone(),
             }))
         }
@@ -1330,7 +1675,7 @@ mod tests {
                 .unwrap()
                 .readiness
                 .workspace_write_canary,
-            "passed"
+            "blocked"
         );
 
         let connection =
@@ -1349,7 +1694,7 @@ mod tests {
             connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
-            23
+            24
         );
     }
 
@@ -1364,10 +1709,22 @@ mod tests {
         let fake = Arc::new(FakeCli::succeeding());
         service.cli = fake.clone();
         let profile = service.create_dedicated().unwrap();
-        let initialized = service.request_sandbox_initialization(&profile.id).unwrap();
+        *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
+            succeeded: true,
+            sandbox_receipt_observed: false,
+        });
+        service.request_sandbox_initialization(&profile.id).unwrap();
+        let mut query = service.query().unwrap();
+        let initialized = query.profiles.remove(0);
         assert_eq!(initialized.readiness.sandbox_initialization, "initialized");
         assert_eq!(initialized.readiness.workspace_write_canary, "not_run");
-        let canaried = service.run_workspace_write_canary(&profile.id).unwrap();
+        *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
+            succeeded: true,
+            sandbox_receipt_observed: true,
+        });
+        service.run_workspace_write_canary(&profile.id).unwrap();
+        let mut query = service.query().unwrap();
+        let canaried = query.profiles.remove(0);
         assert_eq!(canaried.readiness.workspace_write_canary, "passed");
 
         let calls = fake.calls.lock().unwrap();
@@ -1398,6 +1755,81 @@ mod tests {
     }
 
     #[test]
+    fn pending_sandbox_attempts_are_reused_then_timeout_without_launch_success() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake.clone();
+        let profile = service.create_dedicated().unwrap();
+        service.request_sandbox_initialization(&profile.id).unwrap();
+        service.request_sandbox_initialization(&profile.id).unwrap();
+        assert_eq!(*fake.starts.lock().unwrap(), 1);
+        let connection = service.connection().unwrap();
+        connection
+            .execute(
+                "UPDATE native_codex_profile_setup_attempts SET deadline_at='2000-01-01T00:00:00+00:00' WHERE profile_id=?1",
+                params![profile.id],
+            )
+            .unwrap();
+        let result = service.query().unwrap();
+        assert_eq!(
+            result.profiles[0].readiness.sandbox_initialization,
+            "attention_required"
+        );
+        assert_eq!(
+            result.profiles[0].readiness.attentions.sandbox,
+            Some("native_sandbox_attempt_timed_out_human_or_uac_attention".into())
+        );
+        assert_eq!(*fake.terminated.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn reopened_pending_setup_is_cancelled_without_an_owned_child_to_observe() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("active.sqlite");
+        let mut service =
+            NativeProfileService::open(database.clone(), directory.path().join("app")).unwrap();
+        service.cli = Arc::new(FakeCli::succeeding());
+        let profile = service.create_dedicated().unwrap();
+        service.request_sandbox_initialization(&profile.id).unwrap();
+        drop(service);
+        let reopened = NativeProfileService::open(database, directory.path().join("app")).unwrap();
+        let query = reopened.query().unwrap();
+        assert_eq!(
+            query.profiles[0].readiness.sandbox_initialization,
+            "attention_required"
+        );
+        assert_eq!(
+            query.profiles[0].readiness.attentions.sandbox,
+            Some("native_sandbox_attempt_cancelled_before_observation".into())
+        );
+    }
+
+    #[test]
+    fn canary_before_observed_initialization_never_starts_a_child() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake.clone();
+        let profile = service.create_dedicated().unwrap();
+        let blocked = service.run_workspace_write_canary(&profile.id).unwrap();
+        assert_eq!(blocked.readiness.workspace_write_canary, "blocked");
+        assert_eq!(*fake.starts.lock().unwrap(), 0);
+        assert_eq!(
+            blocked.readiness.attentions.canary,
+            Some("workspace_write_canary_requires_observed_sandbox_initialization".into())
+        );
+    }
+
+    #[test]
     fn browser_login_is_idempotently_supervised_and_owned_children_are_reaped_on_shutdown() {
         let directory = tempfile::tempdir().unwrap();
         let mut service = NativeProfileService::open(
@@ -1422,6 +1854,31 @@ mod tests {
         );
         drop(service);
         assert_eq!(*fake.terminated.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn browser_login_exit_requires_a_separate_status_observation() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        let fake = Arc::new(FakeCli::succeeding());
+        *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
+            succeeded: true,
+            sandbox_receipt_observed: false,
+        });
+        service.cli = fake;
+        let profile = service.create_dedicated().unwrap();
+        service.request_login(&profile.id).unwrap();
+        let mut query = service.query().unwrap();
+        let after_exit = query.profiles.remove(0);
+        assert_eq!(after_exit.readiness.authentication, "unknown");
+        assert_eq!(
+            after_exit.readiness.attentions.authentication,
+            Some("login_completed_refresh_required".into())
+        );
     }
 
     #[test]
@@ -1546,36 +2003,119 @@ mod tests {
         assert_eq!(result.readiness.mcp_reporting, "not_assessed");
         assert_eq!(
             result.readiness.attentions.mcp_reporting,
-            Some("mcp_reporting_probe_requires_correlated_receipt".into())
+            Some("mcp_reporting_probe_pending_application_receipt".into())
         );
     }
 
     #[test]
-    fn mcp_list_style_presence_never_becomes_ready_without_a_correlated_receipt() {
+    fn mcp_receipts_require_one_pending_application_owned_correlation() {
         let (_directory, service) = service();
         let profile = service.create_dedicated().unwrap();
-        let rejected = service
+        let authority = service.begin_mcp_reporting_probe(&profile.id).unwrap();
+        assert!(service
             .record_mcp_reporting_receipt(
                 &profile.id,
                 &NativeMcpReportingReceipt {
-                    capability: MCP_REPORTING_CAPABILITY.into(),
-                    server: MCP_REPORTING_SERVER.into(),
-                    tool: MCP_REPORTING_TOOL.into(),
+                    capability: authority.capability.clone(),
+                    server: authority.server.clone(),
+                    tool: authority.tool.clone(),
                     correlation_id: String::new(),
-                    probe_root: service.probe_root(&profile.id),
+                    probe_root: authority.probe_root.clone(),
                 },
             )
-            .unwrap();
-        assert_eq!(rejected.readiness.mcp_reporting, "probe_failed");
+            .is_err());
         let ready = service
             .record_mcp_reporting_receipt(
                 &profile.id,
                 &NativeMcpReportingReceipt {
-                    capability: MCP_REPORTING_CAPABILITY.into(),
-                    server: MCP_REPORTING_SERVER.into(),
-                    tool: MCP_REPORTING_TOOL.into(),
-                    correlation_id: "application-owned-correlation".into(),
-                    probe_root: service.probe_root(&profile.id),
+                    capability: authority.capability.clone(),
+                    server: authority.server.clone(),
+                    tool: authority.tool.clone(),
+                    correlation_id: authority.correlation_id.clone(),
+                    probe_root: authority.probe_root.clone(),
+                },
+            )
+            .unwrap();
+        assert_eq!(ready.readiness.mcp_reporting, "ready");
+        assert!(service
+            .record_mcp_reporting_receipt(
+                &profile.id,
+                &NativeMcpReportingReceipt {
+                    capability: authority.capability,
+                    server: authority.server,
+                    tool: authority.tool,
+                    correlation_id: authority.correlation_id,
+                    probe_root: authority.probe_root,
+                },
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn foreign_and_stale_mcp_probe_receipts_are_rejected_without_readiness_success() {
+        let (_directory, service) = service();
+        let first = service.create_dedicated().unwrap();
+        let second = service.create_dedicated().unwrap();
+        let authority = service.begin_mcp_reporting_probe(&first.id).unwrap();
+        assert!(service
+            .record_mcp_reporting_receipt(
+                &second.id,
+                &NativeMcpReportingReceipt {
+                    capability: authority.capability.clone(),
+                    server: authority.server.clone(),
+                    tool: authority.tool.clone(),
+                    correlation_id: authority.correlation_id.clone(),
+                    probe_root: authority.probe_root.clone(),
+                },
+            )
+            .is_err());
+        let connection = service.connection().unwrap();
+        connection
+            .execute(
+                "UPDATE native_codex_profile_mcp_probes SET deadline_at='2000-01-01T00:00:00+00:00' WHERE profile_id=?1",
+                params![first.id],
+            )
+            .unwrap();
+        service.query().unwrap();
+        assert!(service
+            .record_mcp_reporting_receipt(
+                &first.id,
+                &NativeMcpReportingReceipt {
+                    capability: authority.capability,
+                    server: authority.server,
+                    tool: authority.tool,
+                    correlation_id: authority.correlation_id,
+                    probe_root: authority.probe_root,
+                },
+            )
+            .is_err());
+        assert_eq!(
+            service.profile(&first.id).unwrap().readiness.mcp_reporting,
+            "not_assessed"
+        );
+    }
+
+    #[test]
+    fn pending_mcp_probe_reopens_with_the_same_private_correlation() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("active.sqlite");
+        let service =
+            NativeProfileService::open(database.clone(), directory.path().join("app")).unwrap();
+        let profile = service.create_dedicated().unwrap();
+        let authority = service.begin_mcp_reporting_probe(&profile.id).unwrap();
+        drop(service);
+        let reopened = NativeProfileService::open(database, directory.path().join("app")).unwrap();
+        let retained = reopened.begin_mcp_reporting_probe(&profile.id).unwrap();
+        assert_eq!(retained, authority);
+        let ready = reopened
+            .record_mcp_reporting_receipt(
+                &profile.id,
+                &NativeMcpReportingReceipt {
+                    capability: retained.capability,
+                    server: retained.server,
+                    tool: retained.tool,
+                    correlation_id: retained.correlation_id,
+                    probe_root: retained.probe_root,
                 },
             )
             .unwrap();

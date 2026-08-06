@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-const ACTIVE_SCHEMA_VERSION: i64 = 23;
+const ACTIVE_SCHEMA_VERSION: i64 = 24;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
@@ -42,7 +42,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| format!("Unable to commit active v22 schema evolution: {error}"))?;
         return Ok(());
     }
-    if (1..=22).contains(&current_version) {
+    if (1..=23).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -147,6 +147,10 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         if current_version <= 22 {
             transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V23_MIGRATION)
                 .map_err(|error| format!("Unable to migrate native profile attention schema: {error}"))?;
+        }
+        if current_version <= 23 {
+            transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V24_MIGRATION)
+                .map_err(|error| format!("Unable to migrate native profile producer-attempt schema: {error}"))?;
         }
         if current_version == 14 {
             transaction
