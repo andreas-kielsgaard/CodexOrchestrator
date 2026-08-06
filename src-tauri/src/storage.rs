@@ -376,6 +376,8 @@ mod tests {
                 "work_slice_execution_settlements",
                 "work_slice_planning_point_execution_settlements",
                 "work_unit_dependency_activation_intents",
+                "work_unit_execution_attentions",
+                "work_unit_execution_states",
                 "work_unit_prerequisite_contributions",
                 "work_unit_settlements",
             ]
