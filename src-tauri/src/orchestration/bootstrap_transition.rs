@@ -2079,6 +2079,7 @@ mod tests {
         io::ErrorKind,
         net::TcpListener,
         path::{Path, PathBuf},
+        process::{Command, Stdio},
     };
     use std::sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -2334,6 +2335,95 @@ mod tests {
             serde_json::to_vec_pretty(evidence).map_err(|error| error.to_string())?,
         )
         .map_err(|error| error.to_string())
+    }
+
+    fn allowlisted_doctor_codes(value: &serde_json::Value) -> Vec<String> {
+        fn collect(value: &serde_json::Value, entries: &mut Vec<String>, depth: usize) {
+            if depth > 8 {
+                return;
+            }
+            match value {
+                serde_json::Value::Array(values) => {
+                    for value in values {
+                        collect(value, entries, depth + 1);
+                    }
+                }
+                serde_json::Value::Object(values) => {
+                    for (key, value) in values {
+                        if matches!(key.as_str(), "status" | "code" | "check" | "id" | "name") {
+                            if let Some(value) = value.as_str() {
+                                if !value.is_empty()
+                                    && value.len() <= 120
+                                    && value.bytes().all(|byte| {
+                                        byte.is_ascii_alphanumeric()
+                                            || matches!(byte, b'_' | b'.' | b'-')
+                                    })
+                                {
+                                    entries.push(format!("{key}:{value}"));
+                                }
+                            }
+                        }
+                        if !matches!(
+                            key.as_str(),
+                            "config"
+                                | "configuration"
+                                | "details"
+                                | "message"
+                                | "path"
+                                | "paths"
+                                | "error"
+                                | "errors"
+                                | "auth"
+                                | "token"
+                                | "value"
+                                | "values"
+                        ) {
+                            collect(value, entries, depth + 1);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut entries = Vec::new();
+        collect(value, &mut entries, 0);
+        entries.sort();
+        entries.dedup();
+        entries
+    }
+
+    fn private_home_artifact_names_and_types(root: &Path) -> Result<Vec<serde_json::Value>, String> {
+        fn collect(root: &Path, entries: &mut Vec<serde_json::Value>) -> Result<(), String> {
+            for entry in fs::read_dir(root).map_err(|error| error.to_string())? {
+                let entry = entry.map_err(|error| error.to_string())?;
+                let file_type = entry.file_type().map_err(|error| error.to_string())?;
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !name.is_empty() && name.len() <= 160 {
+                    let kind = if file_type.is_dir() {
+                        "directory".to_owned()
+                    } else if file_type.is_file() {
+                        let path = entry.path();
+                        path
+                            .extension()
+                            .and_then(|extension| extension.to_str())
+                            .filter(|extension| !extension.is_empty())
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| "file".into())
+                    } else {
+                        "other".into()
+                    };
+                    entries.push(serde_json::json!({"name": name, "type": kind}));
+                }
+                if file_type.is_dir() {
+                    collect(&entry.path(), entries)?;
+                }
+            }
+            Ok(())
+        }
+        let mut entries = Vec::new();
+        collect(root, &mut entries)?;
+        entries.sort_by(|left, right| left.to_string().cmp(&right.to_string()));
+        Ok(entries)
     }
 
     #[derive(Default)]
@@ -8285,6 +8375,69 @@ mod tests {
             Err(crate::orchestration::work_unit_execution_harness::WorkUnitHarnessError::Denied)
         ));
         assert_eq!(sentinel.contact_count(), 0);
+    }
+
+    #[test]
+    #[ignore = "requires CODEX_PIP01W_PRIVATE_HOME_DOCTOR_LIVE=true and runs redacted codex doctor"]
+    fn installed_cli_private_home_doctor_retains_only_allowlisted_bootstrap_evidence() {
+        assert_eq!(
+            env::var("CODEX_PIP01W_PRIVATE_HOME_DOCTOR_LIVE").as_deref(),
+            Ok("true"),
+            "refusing private-home doctor without explicit opt-in"
+        );
+        let fixture = Fixture::unstarted();
+        let home = PrivateCodexHome::new(fixture._directory.path()).expect("private Codex home");
+        let scope = ScopedCodexHome::set(home.path());
+        let executable = crate::runtime::codex::resolve_program("codex".into())
+            .expect("resolve installed native Codex executable");
+        let output = Command::new(&executable)
+            .args(["doctor", "--json"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .expect("run installed redacted Codex doctor");
+        let sandbox_help = Command::new(&executable)
+            .args(["sandbox", "--help"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .expect("run installed Codex sandbox help");
+        let sandbox_help_text = String::from_utf8_lossy(&sandbox_help.stdout);
+        let sandbox_state_application_options_present = [
+            "--sandbox-state-json",
+            "--sandbox-state-readable-root",
+            "--sandbox-state-disable-network",
+        ]
+        .iter()
+        .all(|option| sandbox_help_text.contains(option));
+        let sandbox_initialization_option_present = sandbox_help_text.contains("--init")
+            || sandbox_help_text.contains("initialize");
+        let diagnostic = serde_json::from_slice::<serde_json::Value>(&output.stdout).ok();
+        let artifacts = private_home_artifact_names_and_types(home.path())
+            .expect("list private-home artifact names and types");
+        let evidence = serde_json::json!({
+            "diagnostic": "codex-doctor-json",
+            "exitCode": output.status.code(),
+            "jsonParsed": diagnostic.is_some(),
+            "sandboxHelp": {
+                "exitCode": sandbox_help.status.code(),
+                "stateApplicationOptionsPresent": sandbox_state_application_options_present,
+                "initializationOptionPresent": sandbox_initialization_option_present,
+            },
+            "allowedStatusOrCode": diagnostic
+                .as_ref()
+                .map(allowlisted_doctor_codes)
+                .unwrap_or_default(),
+            "privateHomeArtifactNamesAndTypes": artifacts,
+        });
+        retain_live_evidence(
+            "CODEX_PIP01W_PRIVATE_HOME_DOCTOR_EVIDENCE_ROOT",
+            "doctor-sanitized-evidence.json",
+            &evidence,
+        )
+        .expect("retain sanitized private-home doctor evidence");
+        drop(scope);
+        home.remove().expect("private Codex auth hardlink cleanup");
     }
 
     #[test]

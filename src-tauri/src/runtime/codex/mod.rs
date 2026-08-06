@@ -9,7 +9,7 @@ mod protocol;
 mod runtime;
 
 #[cfg(test)]
-pub(crate) use capabilities::{CodexCliCapabilities, CodexCliCapabilityProbe};
+pub(crate) use capabilities::{CodexCliCapabilities, CodexCliCapabilityProbe, resolve_program};
 #[allow(unused_imports)]
 pub(crate) use runtime::CodexCliRuntime;
 
