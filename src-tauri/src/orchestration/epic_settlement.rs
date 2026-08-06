@@ -230,22 +230,47 @@ impl Snapshot {
                 &plan_fingerprint,
             ));
         }
-        let settled = rows(tx, "SELECT s.id,c.decision_id,r.result_id FROM initiated_sprints s JOIN sprint_continuation_current_decisions current ON current.sprint_id=s.id JOIN sprint_continuation_decisions c ON c.decision_id=current.decision_id AND c.decision_state='settled' JOIN sprint_upward_results r ON r.decision_id=c.decision_id AND r.sprint_id=s.id AND r.result_kind='settled' WHERE s.epic_id=?1 ORDER BY s.ordinal,s.id", epic, 3)?;
-        if settled.len() != plan.len() {
+        if exists_epic(tx, "SELECT 1 FROM work_slice_execution_attentions a JOIN work_unit_materializations m ON m.materialization_id=a.materialization_id WHERE m.epic_id=?1 UNION ALL SELECT 1 FROM work_unit_execution_attentions a JOIN work_unit_materializations m ON m.materialization_id=a.materialization_id WHERE m.epic_id=?1 UNION ALL SELECT 1 FROM epic_runner_escalation_attentions a JOIN epic_runner_escalation_receivers r ON r.handback_id=a.handback_id WHERE r.epic_id=?1", epic)? {
+            return Ok(Self::unresolved("structured_attention_unresolved", "resolve the recorded structured human or external attention, then reassess", &plan_fingerprint));
+        }
+        if exists_epic(tx, "SELECT 1 FROM work_unit_retry_attempts retry JOIN work_units unit ON unit.work_unit_id=retry.work_unit_id JOIN work_unit_materializations m ON m.materialization_id=unit.materialization_id LEFT JOIN work_unit_settlements settled ON settled.work_unit_id=unit.work_unit_id WHERE m.epic_id=?1 AND settled.work_unit_id IS NULL", epic)? {
+            return Ok(Self::unresolved("descendant_retry_unresolved", "complete or return the exact retry responsibility through its authoritative Sprint lifecycle, then reassess", &plan_fingerprint));
+        }
+        if exists_epic(tx, "SELECT 1 FROM work_unit_no_progress_handbacks handback JOIN work_units unit ON unit.work_unit_id=handback.work_unit_id JOIN work_unit_materializations m ON m.materialization_id=unit.materialization_id LEFT JOIN work_unit_settlements settled ON settled.work_unit_id=unit.work_unit_id WHERE m.epic_id=?1 AND settled.work_unit_id IS NULL", epic)? {
+            return Ok(Self::unresolved("descendant_handback_unresolved", "resolve the recorded Handback through its authoritative reassessment route, then reassess", &plan_fingerprint));
+        }
+        if exists_epic(tx, "SELECT 1 FROM sprint_runner_handback_dispositions disposition JOIN sprint_runner_handback_deliveries delivery ON delivery.handback_id=disposition.handback_id JOIN initiated_sprints sprint ON sprint.id=delivery.sprint_id LEFT JOIN sprint_handback_dependency_routes route ON route.handback_id=disposition.handback_id LEFT JOIN work_unit_settlements settled ON settled.work_unit_id=route.work_unit_id WHERE sprint.epic_id=?1 AND disposition.movement_kind='wait_for_agent_dependency' AND (route.work_unit_id IS NULL OR settled.work_unit_id IS NULL) UNION ALL SELECT 1 FROM epic_runner_escalation_downstream_requests request JOIN epic_runner_escalation_receivers receiver ON receiver.handback_id=request.handback_id LEFT JOIN sprint_handback_dependency_routes route ON route.handback_id=request.handback_id LEFT JOIN work_unit_settlements settled ON settled.work_unit_id=route.work_unit_id WHERE receiver.epic_id=?1 AND request.request_kind='existing_agent_achievable_dependency' AND (route.work_unit_id IS NULL OR settled.work_unit_id IS NULL)", epic)? {
+            return Ok(Self::unresolved("agent_dependency_unresolved", "wait for the exact routed agent-achievable dependency to settle, then reassess", &plan_fingerprint));
+        }
+        if exists_epic(tx, "SELECT 1 FROM work_unit_handler_activations handler JOIN work_units unit ON unit.work_unit_id=handler.work_unit_id JOIN work_unit_materializations m ON m.materialization_id=unit.materialization_id LEFT JOIN work_unit_settlements settled ON settled.work_unit_id=unit.work_unit_id WHERE m.epic_id=?1 AND settled.work_unit_id IS NULL UNION ALL SELECT 1 FROM work_unit_implementer_activations implementer JOIN work_units unit ON unit.work_unit_id=implementer.work_unit_id JOIN work_unit_materializations m ON m.materialization_id=unit.materialization_id LEFT JOIN work_unit_settlements settled ON settled.work_unit_id=unit.work_unit_id WHERE m.epic_id=?1 AND settled.work_unit_id IS NULL UNION ALL SELECT 1 FROM epic_runner_sprint_result_downstream_requests request JOIN epic_runner_sprint_result_realizations realization ON realization.result_id=request.result_id WHERE realization.epic_id=?1", epic)? {
+            return Ok(Self::unresolved("descendant_continuation_unresolved", "complete the recorded descendant continuation or downstream request through its authoritative route, then reassess", &plan_fingerprint));
+        }
+        let settled = rows(tx, "SELECT s.id,c.decision_id,r.result_id FROM initiated_sprints s JOIN sprint_continuation_current_decisions current ON current.sprint_id=s.id AND current.decision_state='settled' JOIN sprint_continuation_decisions c ON c.decision_id=current.decision_id AND c.sprint_id=s.id AND c.decision_state='settled' JOIN sprint_upward_results r ON r.decision_id=c.decision_id AND r.sprint_id=s.id AND r.result_kind='settled' WHERE s.epic_id=?1 ORDER BY s.ordinal,s.id", epic, 3)?;
+        if settled.len() != plan.len()
+            || settled
+                .iter()
+                .zip(plan.iter())
+                .any(|(settled, approved)| settled[0] != approved[0])
+        {
             return Ok(Self::unresolved(
-                "approved_sprint_not_currently_settled",
-                "record current settled upward results for every approved Sprint, then reassess",
+                "current_sprint_result_correlation_unresolved",
+                "record one current settled decision and correlated upward result for every approved Sprint, then reassess",
                 &plan_fingerprint,
             ));
         }
         let final_sprint = &plan.last().expect("nonempty plan")[0];
-        let readiness: Option<String> = tx.query_row("SELECT readiness.readiness_id FROM epic_runner_sprint_result_terminal_readiness readiness JOIN epic_runner_sprint_result_realizations realization ON realization.result_id=readiness.result_id AND realization.outcome_kind='terminal_readiness' JOIN sprint_upward_results result ON result.result_id=readiness.result_id AND result.result_kind='settled' JOIN sprint_continuation_current_decisions current ON current.sprint_id=realization.source_sprint_id AND current.decision_id=result.decision_id JOIN sprint_continuation_decisions decision ON decision.decision_id=result.decision_id AND decision.decision_state='settled' WHERE realization.epic_id=?1 AND realization.source_sprint_id=?2 ORDER BY readiness.recorded_at DESC,readiness.readiness_id DESC LIMIT 1", params![epic,final_sprint], |row| row.get(0)).optional().map_err(|error| error.to_string())?;
+        let readiness: Option<String> = tx.query_row("SELECT readiness.readiness_id FROM epic_runner_sprint_result_terminal_readiness readiness JOIN epic_runner_sprint_result_realizations realization ON realization.result_id=readiness.result_id AND realization.outcome_kind='terminal_readiness' JOIN sprint_upward_results result ON result.result_id=readiness.result_id AND result.decision_id=realization.decision_id AND result.result_kind='settled' JOIN sprint_continuation_current_decisions current ON current.sprint_id=realization.source_sprint_id AND current.decision_id=result.decision_id AND current.decision_state='settled' JOIN sprint_continuation_decisions decision ON decision.decision_id=result.decision_id AND decision.sprint_id=realization.source_sprint_id AND decision.decision_state='settled' WHERE realization.epic_id=?1 AND realization.source_sprint_id=?2 ORDER BY readiness.recorded_at DESC,readiness.readiness_id DESC LIMIT 1", params![epic,final_sprint], |row| row.get(0)).optional().map_err(|error| error.to_string())?;
         let Some(readiness_id) = readiness else {
-            return Ok(Self::unresolved("terminal_readiness_not_current", "record terminal readiness from the current final approved Sprint result, then reassess", &plan_fingerprint));
+            return Ok(Self::unresolved("terminal_readiness_correlation_unresolved", "record terminal readiness correlated to the exact current final approved Sprint decision and result, then reassess", &plan_fingerprint));
         };
-        let incomplete_descendants: i64 = tx.query_row("SELECT COUNT(*) FROM work_unit_materializations m LEFT JOIN work_slice_execution_graph_completions graph ON graph.materialization_id=m.materialization_id AND graph.accepted_revision_id=m.accepted_revision_id LEFT JOIN work_slice_execution_settlements settlement ON settlement.materialization_id=m.materialization_id AND settlement.graph_completion_materialization_id=graph.materialization_id LEFT JOIN work_slice_planning_point_execution_settlements point ON point.materialization_id=m.materialization_id AND point.planning_point_id=m.planning_point_id LEFT JOIN work_units unit ON unit.materialization_id=m.materialization_id LEFT JOIN work_unit_settlements unit_settlement ON unit_settlement.work_unit_id=unit.work_unit_id WHERE m.epic_id=?1 AND (graph.materialization_id IS NULL OR settlement.materialization_id IS NULL OR point.materialization_id IS NULL OR (unit.work_unit_id IS NOT NULL AND unit_settlement.work_unit_id IS NULL))", [epic], |row| row.get(0)).map_err(|error| error.to_string())?;
-        if incomplete_descendants != 0 {
-            return Ok(Self::unresolved("descendant_responsibility_unresolved", "record graph, Work Slice, planning-point, and Work Unit settlement for every approved descendant, then reassess", &format!("{plan_fingerprint}:{readiness_id}")));
+        if exists_epic(tx, "SELECT 1 FROM initiated_sprints sprint LEFT JOIN work_unit_materializations m ON m.epic_id=sprint.epic_id AND m.sprint_id=sprint.id WHERE sprint.epic_id=?1 AND m.materialization_id IS NULL", epic)? {
+            return Ok(Self::unresolved("approved_sprint_descendant_materialization_unresolved", "materialize every approved Sprint through its accepted planning point, then reassess", &format!("{plan_fingerprint}:{readiness_id}")));
+        }
+        if exists_epic(tx, "SELECT 1 FROM work_unit_materializations m LEFT JOIN initiated_sprints sprint ON sprint.id=m.sprint_id AND sprint.epic_id=m.epic_id LEFT JOIN work_slice_execution_graph_completions graph ON graph.materialization_id=m.materialization_id AND graph.accepted_revision_id=m.accepted_revision_id LEFT JOIN work_slice_execution_settlements settlement ON settlement.materialization_id=m.materialization_id AND settlement.graph_completion_materialization_id=graph.materialization_id LEFT JOIN work_slice_planning_point_execution_settlements point ON point.materialization_id=m.materialization_id AND point.work_slice_execution_materialization_id=settlement.materialization_id AND point.planning_point_id=m.planning_point_id WHERE m.epic_id=?1 AND (sprint.id IS NULL OR graph.materialization_id IS NULL OR settlement.materialization_id IS NULL OR point.materialization_id IS NULL)", epic)? {
+            return Ok(Self::unresolved("descendant_execution_chain_unresolved", "record the exact graph-completion, Work Slice settlement, and planning-point settlement chain for every materialization, then reassess", &format!("{plan_fingerprint}:{readiness_id}")));
+        }
+        if exists_epic(tx, "SELECT 1 FROM work_units unit JOIN work_unit_materializations m ON m.materialization_id=unit.materialization_id LEFT JOIN work_unit_settlements settled ON settled.work_unit_id=unit.work_unit_id WHERE m.epic_id=?1 AND settled.work_unit_id IS NULL", epic)? {
+            return Ok(Self::unresolved("work_unit_closure_unresolved", "record Work Unit settlement for every materialized descendant, then reassess", &format!("{plan_fingerprint}:{readiness_id}")));
         }
         let fingerprint = digest(&format!(
             "{plan_fingerprint}:{readiness_id}:{}",
@@ -307,6 +332,10 @@ fn rows(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())
 }
+fn exists_epic(tx: &rusqlite::Transaction<'_>, sql: &str, epic: &str) -> Result<bool, String> {
+    tx.query_row(&format!("SELECT EXISTS({sql})"), [epic], |row| row.get(0))
+        .map_err(|error| error.to_string())
+}
 fn digest(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))
 }
@@ -327,7 +356,7 @@ mod tests {
 
     fn fixture() -> Connection {
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch("CREATE TABLE initiated_sprints (id TEXT PRIMARY KEY,epic_id TEXT NOT NULL,ordinal INTEGER NOT NULL);CREATE TABLE sprint_continuation_current_decisions (sprint_id TEXT PRIMARY KEY,decision_id TEXT NOT NULL);CREATE TABLE sprint_continuation_decisions (decision_id TEXT PRIMARY KEY,decision_state TEXT NOT NULL);CREATE TABLE sprint_upward_results (result_id TEXT PRIMARY KEY,decision_id TEXT NOT NULL,sprint_id TEXT NOT NULL,result_kind TEXT NOT NULL);CREATE TABLE epic_runner_sprint_result_realizations (result_id TEXT PRIMARY KEY,source_sprint_id TEXT NOT NULL,epic_id TEXT NOT NULL,outcome_kind TEXT NOT NULL);CREATE TABLE epic_runner_sprint_result_terminal_readiness (result_id TEXT PRIMARY KEY,readiness_id TEXT NOT NULL,recorded_at TEXT NOT NULL);CREATE TABLE work_unit_materializations (materialization_id TEXT PRIMARY KEY,epic_id TEXT NOT NULL,accepted_revision_id TEXT NOT NULL,planning_point_id TEXT NOT NULL);CREATE TABLE work_slice_execution_graph_completions (materialization_id TEXT PRIMARY KEY,accepted_revision_id TEXT NOT NULL);CREATE TABLE work_slice_execution_settlements (materialization_id TEXT PRIMARY KEY,graph_completion_materialization_id TEXT NOT NULL);CREATE TABLE work_slice_planning_point_execution_settlements (planning_point_id TEXT PRIMARY KEY,materialization_id TEXT NOT NULL);CREATE TABLE work_units (work_unit_id TEXT PRIMARY KEY,materialization_id TEXT NOT NULL);CREATE TABLE work_unit_settlements (work_unit_id TEXT PRIMARY KEY);").unwrap();
+        connection.execute_batch("CREATE TABLE initiated_sprints (id TEXT PRIMARY KEY,epic_id TEXT NOT NULL,ordinal INTEGER NOT NULL);CREATE TABLE sprint_continuation_current_decisions (sprint_id TEXT PRIMARY KEY,decision_id TEXT NOT NULL,decision_state TEXT NOT NULL);CREATE TABLE sprint_continuation_decisions (decision_id TEXT PRIMARY KEY,sprint_id TEXT NOT NULL,decision_state TEXT NOT NULL);CREATE TABLE sprint_upward_results (result_id TEXT PRIMARY KEY,decision_id TEXT NOT NULL,sprint_id TEXT NOT NULL,result_kind TEXT NOT NULL);CREATE TABLE epic_runner_sprint_result_realizations (result_id TEXT PRIMARY KEY,decision_id TEXT NOT NULL,source_sprint_id TEXT NOT NULL,epic_id TEXT NOT NULL,outcome_kind TEXT NOT NULL);CREATE TABLE epic_runner_sprint_result_terminal_readiness (result_id TEXT PRIMARY KEY,readiness_id TEXT NOT NULL,recorded_at TEXT NOT NULL);CREATE TABLE work_unit_materializations (materialization_id TEXT PRIMARY KEY,epic_id TEXT NOT NULL,sprint_id TEXT NOT NULL,accepted_revision_id TEXT NOT NULL,planning_point_id TEXT NOT NULL);CREATE TABLE work_slice_execution_graph_completions (materialization_id TEXT PRIMARY KEY,accepted_revision_id TEXT NOT NULL);CREATE TABLE work_slice_execution_settlements (materialization_id TEXT PRIMARY KEY,graph_completion_materialization_id TEXT NOT NULL);CREATE TABLE work_slice_planning_point_execution_settlements (planning_point_id TEXT PRIMARY KEY,materialization_id TEXT NOT NULL,work_slice_execution_materialization_id TEXT NOT NULL);CREATE TABLE work_units (work_unit_id TEXT PRIMARY KEY,materialization_id TEXT NOT NULL);CREATE TABLE work_unit_settlements (work_unit_id TEXT PRIMARY KEY);CREATE TABLE work_unit_retry_attempts (work_unit_id TEXT);CREATE TABLE work_unit_no_progress_handbacks (handback_id TEXT,work_unit_id TEXT);CREATE TABLE sprint_runner_handback_dispositions (handback_id TEXT,movement_kind TEXT);CREATE TABLE sprint_runner_handback_deliveries (handback_id TEXT,sprint_id TEXT);CREATE TABLE sprint_handback_dependency_routes (handback_id TEXT,work_unit_id TEXT);CREATE TABLE epic_runner_escalation_downstream_requests (handback_id TEXT,request_kind TEXT);CREATE TABLE epic_runner_escalation_receivers (handback_id TEXT,epic_id TEXT);CREATE TABLE work_unit_handler_activations (work_unit_id TEXT);CREATE TABLE work_unit_implementer_activations (work_unit_id TEXT);CREATE TABLE epic_runner_sprint_result_downstream_requests (result_id TEXT);CREATE TABLE work_slice_execution_attentions (materialization_id TEXT);CREATE TABLE work_unit_execution_attentions (materialization_id TEXT);CREATE TABLE epic_runner_escalation_attentions (handback_id TEXT);").unwrap();
         initialize(&connection).unwrap();
         for (sprint, ordinal) in [("sprint-1", 0), ("sprint-2", 1)] {
             connection
@@ -338,13 +367,13 @@ mod tests {
                 .unwrap();
             connection
                 .execute(
-                    "INSERT INTO sprint_continuation_decisions VALUES (?1,'settled')",
-                    [format!("decision-{sprint}")],
+                    "INSERT INTO sprint_continuation_decisions VALUES (?1,?2,'settled')",
+                    params![format!("decision-{sprint}"), sprint],
                 )
                 .unwrap();
             connection
                 .execute(
-                    "INSERT INTO sprint_continuation_current_decisions VALUES (?1,?2)",
+                    "INSERT INTO sprint_continuation_current_decisions VALUES (?1,?2,'settled')",
                     params![sprint, format!("decision-{sprint}")],
                 )
                 .unwrap();
@@ -359,9 +388,63 @@ mod tests {
                 )
                 .unwrap();
         }
-        connection.execute("INSERT INTO epic_runner_sprint_result_realizations VALUES ('result-sprint-2','sprint-2','epic','terminal_readiness')", []).unwrap();
+        for sprint in ["sprint-1", "sprint-2"] {
+            let materialization = format!("materialization-{sprint}");
+            let revision = format!("revision-{sprint}");
+            let point = format!("point-{sprint}");
+            let unit = format!("unit-{sprint}");
+            connection
+                .execute(
+                    "INSERT INTO work_unit_materializations VALUES (?1,'epic',?2,?3,?4)",
+                    params![materialization, sprint, revision, point],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO work_slice_execution_graph_completions VALUES (?1,?2)",
+                    params![materialization, revision],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO work_slice_execution_settlements VALUES (?1,?1)",
+                    [&materialization],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO work_slice_planning_point_execution_settlements VALUES (?1,?2,?2)",
+                    params![point, materialization],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO work_units VALUES (?1,?2)",
+                    params![unit, materialization],
+                )
+                .unwrap();
+            connection
+                .execute("INSERT INTO work_unit_settlements VALUES (?1)", [unit])
+                .unwrap();
+        }
+        connection.execute("INSERT INTO epic_runner_sprint_result_realizations VALUES ('result-sprint-2','decision-sprint-2','sprint-2','epic','terminal_readiness')", []).unwrap();
         connection.execute("INSERT INTO epic_runner_sprint_result_terminal_readiness VALUES ('result-sprint-2','readiness','now')", []).unwrap();
         connection
+    }
+
+    fn assert_unresolved(connection: &mut Connection, expected: &str) {
+        reconcile(connection).unwrap();
+        match statuses(connection).unwrap().pop().unwrap().1 {
+            EpicSettlementStatus::Unresolved {
+                reason_code,
+                resumption_fact,
+                ..
+            } => {
+                assert_eq!(reason_code, expected);
+                assert!(!resumption_fact.is_empty());
+            }
+            status => panic!("expected unresolved {expected}, got {status:?}"),
+        }
     }
 
     #[test]
@@ -400,24 +483,28 @@ mod tests {
             .unwrap();
         reconcile(&mut connection).unwrap();
         assert!(
-            matches!(statuses(&connection).unwrap().pop().unwrap().1, EpicSettlementStatus::Unresolved { ref reason_code, .. } if reason_code=="approved_sprint_not_currently_settled")
+            matches!(statuses(&connection).unwrap().pop().unwrap().1, EpicSettlementStatus::Unresolved { ref reason_code, .. } if reason_code=="current_sprint_result_correlation_unresolved")
         );
-        connection.execute("INSERT INTO sprint_continuation_current_decisions VALUES ('sprint-1','decision-sprint-1')", []).unwrap();
-        connection.execute("INSERT INTO work_unit_materializations VALUES ('materialization','epic','revision','point')", []).unwrap();
+        connection.execute("INSERT INTO sprint_continuation_current_decisions VALUES ('sprint-1','decision-sprint-1','settled')", []).unwrap();
+        connection.execute("INSERT INTO work_unit_materializations VALUES ('materialization','epic','sprint-1','revision','point')", []).unwrap();
         reconcile(&mut connection).unwrap();
         assert!(
-            matches!(statuses(&connection).unwrap().pop().unwrap().1, EpicSettlementStatus::Unresolved { ref reason_code, .. } if reason_code=="descendant_responsibility_unresolved")
+            matches!(statuses(&connection).unwrap().pop().unwrap().1, EpicSettlementStatus::Unresolved { ref reason_code, .. } if reason_code=="descendant_execution_chain_unresolved")
         );
     }
 
     #[test]
     fn attention_is_unresolved_work_not_epic_settlement() {
         let mut connection = fixture();
-        connection.execute("UPDATE sprint_continuation_decisions SET decision_state='attention' WHERE decision_id='decision-sprint-1'", []).unwrap();
-        connection.execute("UPDATE sprint_upward_results SET result_kind='attention' WHERE result_id='result-sprint-1'", []).unwrap();
+        connection
+            .execute(
+                "INSERT INTO work_slice_execution_attentions VALUES ('materialization-sprint-1')",
+                [],
+            )
+            .unwrap();
         reconcile(&mut connection).unwrap();
         assert!(
-            matches!(statuses(&connection).unwrap().pop().unwrap().1, EpicSettlementStatus::Unresolved { ref reason_code, .. } if reason_code=="approved_sprint_not_currently_settled")
+            matches!(statuses(&connection).unwrap().pop().unwrap().1, EpicSettlementStatus::Unresolved { ref reason_code, .. } if reason_code=="structured_attention_unresolved")
         );
         assert_eq!(
             connection
@@ -440,8 +527,18 @@ mod tests {
             .unwrap();
         reconcile(&mut connection).unwrap();
         assert!(
-            matches!(statuses(&connection).unwrap().pop().unwrap().1, EpicSettlementStatus::Unresolved { ref reason_code, .. } if reason_code=="approved_sprint_not_currently_settled")
+            matches!(statuses(&connection).unwrap().pop().unwrap().1, EpicSettlementStatus::Unresolved { ref reason_code, .. } if reason_code=="current_sprint_result_correlation_unresolved")
         );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>("SELECT COUNT(*) FROM epic_settlements", [], |row| row
+                    .get(0))
+                .unwrap(),
+            1
+        );
+        connection.execute("INSERT INTO sprint_continuation_current_decisions VALUES ('sprint-2','decision-sprint-2','settled')", []).unwrap();
+        connection.execute("UPDATE epic_runner_sprint_result_terminal_readiness SET readiness_id='replacement-readiness'", []).unwrap();
+        assert_unresolved(&mut connection, "settlement_authority_superseded");
         assert_eq!(
             connection
                 .query_row::<i64, _, _>("SELECT COUNT(*) FROM epic_settlements", [], |row| row
@@ -464,6 +561,148 @@ mod tests {
         reconcile(&mut connection).unwrap();
         assert_eq!(
             connection
+                .query_row::<String, _, _>(
+                    "SELECT settlement_id FROM epic_settlements",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            id
+        );
+    }
+
+    #[test]
+    fn plan_and_current_result_correlation_fail_closed() {
+        let mut connection = fixture();
+        connection
+            .execute(
+                "UPDATE initiated_sprints SET ordinal=3 WHERE id='sprint-2'",
+                [],
+            )
+            .unwrap();
+        assert_unresolved(&mut connection, "approved_plan_nonconsecutive");
+        let mut connection = fixture();
+        connection.execute("UPDATE sprint_upward_results SET sprint_id='sprint-1' WHERE result_id='result-sprint-2'", []).unwrap();
+        assert_unresolved(
+            &mut connection,
+            "current_sprint_result_correlation_unresolved",
+        );
+        let mut connection = fixture();
+        connection.execute("UPDATE sprint_continuation_current_decisions SET decision_id='foreign-decision' WHERE sprint_id='sprint-2'", []).unwrap();
+        assert_unresolved(
+            &mut connection,
+            "current_sprint_result_correlation_unresolved",
+        );
+        let mut connection = fixture();
+        connection.execute("UPDATE epic_runner_sprint_result_realizations SET decision_id='decision-sprint-1' WHERE result_id='result-sprint-2'", []).unwrap();
+        assert_unresolved(&mut connection, "terminal_readiness_correlation_unresolved");
+    }
+
+    #[test]
+    fn exact_descendant_chain_and_work_unit_closure_are_required() {
+        let mut connection = fixture();
+        connection.execute("UPDATE work_slice_execution_settlements SET graph_completion_materialization_id='foreign' WHERE materialization_id='materialization-sprint-1'", []).unwrap();
+        assert_unresolved(&mut connection, "descendant_execution_chain_unresolved");
+        let mut connection = fixture();
+        connection
+            .execute(
+                "DELETE FROM work_unit_settlements WHERE work_unit_id='unit-sprint-1'",
+                [],
+            )
+            .unwrap();
+        assert_unresolved(&mut connection, "work_unit_closure_unresolved");
+        let mut connection = fixture();
+        connection.execute("DELETE FROM work_unit_materializations WHERE materialization_id='materialization-sprint-1'", []).unwrap();
+        assert_unresolved(
+            &mut connection,
+            "approved_sprint_descendant_materialization_unresolved",
+        );
+    }
+
+    #[test]
+    fn each_pending_descendant_category_retains_its_resumption_path() {
+        let mut connection = fixture();
+        connection
+            .execute(
+                "DELETE FROM work_unit_settlements WHERE work_unit_id='unit-sprint-1'",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO work_unit_retry_attempts VALUES ('unit-sprint-1')",
+                [],
+            )
+            .unwrap();
+        assert_unresolved(&mut connection, "descendant_retry_unresolved");
+        let mut connection = fixture();
+        connection
+            .execute(
+                "DELETE FROM work_unit_settlements WHERE work_unit_id='unit-sprint-1'",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO work_unit_no_progress_handbacks VALUES ('handback','unit-sprint-1')",
+                [],
+            )
+            .unwrap();
+        assert_unresolved(&mut connection, "descendant_handback_unresolved");
+        let mut connection = fixture();
+        connection
+            .execute(
+                "DELETE FROM work_unit_settlements WHERE work_unit_id='unit-sprint-1'",
+                [],
+            )
+            .unwrap();
+        connection.execute_batch("INSERT INTO sprint_runner_handback_dispositions VALUES ('dependency','wait_for_agent_dependency');INSERT INTO sprint_runner_handback_deliveries VALUES ('dependency','sprint-1');INSERT INTO sprint_handback_dependency_routes VALUES ('dependency','unit-sprint-1');").unwrap();
+        assert_unresolved(&mut connection, "agent_dependency_unresolved");
+        let mut connection = fixture();
+        connection
+            .execute(
+                "DELETE FROM work_unit_settlements WHERE work_unit_id='unit-sprint-1'",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO work_unit_handler_activations VALUES ('unit-sprint-1')",
+                [],
+            )
+            .unwrap();
+        assert_unresolved(&mut connection, "descendant_continuation_unresolved");
+        let mut connection = fixture();
+        connection.execute("INSERT INTO epic_runner_sprint_result_downstream_requests VALUES ('result-sprint-2')", []).unwrap();
+        assert_unresolved(&mut connection, "descendant_continuation_unresolved");
+    }
+
+    #[test]
+    fn fresh_open_recovers_partial_effects_with_the_original_identity() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("reopen.sqlite");
+        let seed = fixture();
+        seed.execute_batch(&format!(
+            "VACUUM INTO '{}'",
+            path.display().to_string().replace('\'', "''")
+        ))
+        .unwrap();
+        drop(seed);
+        let id = {
+            let mut connection = Connection::open(&path).unwrap();
+            reconcile(&mut connection).unwrap();
+            let id: String = connection
+                .query_row("SELECT settlement_id FROM epic_settlements", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            connection.execute_batch("PRAGMA foreign_keys=OFF;DELETE FROM epic_settlements;DELETE FROM epic_settlement_evidence;DELETE FROM epic_settlement_authorizations;PRAGMA foreign_keys=ON;").unwrap();
+            id
+        };
+        let mut reopened = Connection::open(path).unwrap();
+        reconcile(&mut reopened).unwrap();
+        assert_eq!(
+            reopened
                 .query_row::<String, _, _>(
                     "SELECT settlement_id FROM epic_settlements",
                     [],
