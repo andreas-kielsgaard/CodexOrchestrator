@@ -32,6 +32,7 @@ import {
   addRecordedWorkUnitReviewInspection,
   recordedWorkUnitReviewFileSource,
 } from './recordedWorkUnitReviewFixture';
+import { recordedEpicProductDecisionSource } from '../productDecisions/recordedEpicProductDecisionSource';
 
 /** Recorded development data enters through canonical composition; it is not a product connector. */
 export const recordedDevelopmentOrchestrationClient = recordedOrchestrationClient(
@@ -97,6 +98,7 @@ export function createRecordedDevelopmentApplicationComposition(options?: {
     orchestrationAgentSessionComposition: { client: recordedDevelopmentAgentSessionClient },
     fileReviewSourceForEvidence: (target) =>
       recordedWorkUnitReviewFileSource(target.reviewId, target.changedFileId),
+    epicProductDecisionSource: recordedEpicProductDecisionSource,
     artifactAccessController: unsupportedArtifactAccessController,
     sprintAutomaticContinuationPolicyController:
       unsupportedProductSprintAutomaticContinuationPolicyController,

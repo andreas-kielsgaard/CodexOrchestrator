@@ -3,6 +3,8 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import type { AgentIdentity } from '../../application/agentSessions';
 import { AgentIdentityMarker } from './AgentIdentityMarker';
 import { ConversationViewport } from './ConversationViewport';
+import { AgentSessionTurnInspector } from './AgentSessionTurnInspector';
+import type { TranscriptAnchorRange } from './transcriptProjector';
 import {
   browserAgentSessionClipboard,
   formatAgentSessionContext,
@@ -31,6 +33,10 @@ export interface AgentSessionWorkspaceProps {
   controller: AgentSessionWorkspaceController;
   readonly presentation?: AgentSessionPresentation;
   readonly clipboard?: AgentSessionClipboard;
+  /** A product-owned exact evidence excerpt; ordinary Session views keep the full transcript. */
+  readonly transcriptRange?: TranscriptAnchorRange;
+  /** An exact product-owned Session turn opens through the established read-only inspection seam. */
+  readonly inspection?: Readonly<{ sessionId: string; invocationId: string }>;
 }
 
 const AgentSessionChromeContext = createContext<{
@@ -58,6 +64,8 @@ export function AgentSessionWorkspace({
   controller,
   presentation = {},
   clipboard = browserAgentSessionClipboard,
+  transcriptRange,
+  inspection,
 }: AgentSessionWorkspaceProps) {
   const contextualChrome = useContext(AgentSessionChromeContext);
   const active = Boolean(controller.transcript?.activeInvocationId);
@@ -169,33 +177,52 @@ export function AgentSessionWorkspace({
       {contextualChrome.settings && (
         <div className="agent-session-settings">{contextualChrome.settings}</div>
       )}
-      <ConversationViewport
-        agentIdentity={identityHeader?.agentIdentity}
-        segments={
-          controller.transcript
-            ? [{ id: controller.transcript.sessionId, transcript: controller.transcript }]
-            : []
-        }
-        loading={controller.loading}
-        expandedProcessing={controller.expandedProcessing}
-        onToggleProcessing={controller.toggleProcessing}
-        error={controller.error}
-        onClearError={controller.clearError}
-        emptyState={presentation.emptyState}
-        composerPresentation={presentation.composer}
-        composerTarget={{
-          sessionId: controller.selectedSessionId,
-          draft: controller.draft,
-          workingDirectory: controller.workingDirectory,
-          sending: controller.sending,
-          active,
-          canceling: controller.canceling,
-          setDraft: controller.setDraft,
-          setWorkingDirectory: controller.setWorkingDirectory,
-          send: controller.send,
-          cancel: controller.cancel,
-        }}
-      />
+      {inspection ? (
+        <AgentSessionTurnInspector
+          sessionId={inspection.sessionId}
+          invocationId={inspection.invocationId}
+          transcript={controller.transcript}
+          loading={controller.loading}
+          error={controller.error}
+          agentIdentity={identityHeader?.agentIdentity}
+          ariaLabel="Supporting Agent Session passage"
+          transcriptRange={transcriptRange}
+        />
+      ) : (
+        <ConversationViewport
+          agentIdentity={identityHeader?.agentIdentity}
+          segments={
+            controller.transcript
+              ? [
+                  {
+                    id: controller.transcript.sessionId,
+                    transcript: controller.transcript,
+                    ...(transcriptRange ? { range: transcriptRange } : {}),
+                  },
+                ]
+              : []
+          }
+          loading={controller.loading}
+          expandedProcessing={controller.expandedProcessing}
+          onToggleProcessing={controller.toggleProcessing}
+          error={controller.error}
+          onClearError={controller.clearError}
+          emptyState={presentation.emptyState}
+          composerPresentation={presentation.composer}
+          composerTarget={{
+            sessionId: controller.selectedSessionId,
+            draft: controller.draft,
+            workingDirectory: controller.workingDirectory,
+            sending: controller.sending,
+            active,
+            canceling: controller.canceling,
+            setDraft: controller.setDraft,
+            setWorkingDirectory: controller.setWorkingDirectory,
+            send: controller.send,
+            cancel: controller.cancel,
+          }}
+        />
+      )}
     </section>
   );
 }

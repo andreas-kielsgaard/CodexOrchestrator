@@ -13,6 +13,12 @@ export type AgentSessionProductLocation =
       readonly label: string;
     }
   | {
+      /** Recorded Product Decisions is an Epic-local view, not a production policy store. */
+      readonly kind: 'epic_product_decisions';
+      readonly epicId: string;
+      readonly label: string;
+    }
+  | {
       readonly kind: 'sprint';
       readonly epicId: string;
       readonly sprintId: string;

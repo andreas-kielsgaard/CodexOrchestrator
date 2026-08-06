@@ -672,6 +672,42 @@ describe('App application surfaces', () => {
       }),
     ).toBeDisabled();
   });
+  it('opens exact recorded Product Decision evidence and restores its Product Decisions origin', async () => {
+    render(<App {...createRecordedDevelopmentApplicationComposition()} />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Open Codex Epic Runner workspace development/ }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Product decisions' }));
+    const details = (await screen.findAllByText('Intent and evidence'))[0]!;
+    fireEvent.click(details);
+    fireEvent.click(
+      screen.getAllByRole('button', { name: 'Open supporting Agent Session passage' })[0]!,
+    );
+
+    expect(
+      await screen.findByRole('heading', { name: 'Orientation discovery handler' }),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(document.body).toHaveTextContent(
+        'Recorded development presentation only; no runtime continuation was initiated.',
+      ),
+    );
+    expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();
+    await waitFor(() =>
+      expect(
+        document.querySelector(
+          '[data-invocation-id="recorded-epic-runner-manual-continuation-ready-recorded-turn"]',
+        ),
+      ).toHaveFocus(),
+    );
+    fireEvent.click(
+      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
+        name: 'Back',
+      }),
+    );
+    expect(await screen.findByRole('main', { name: 'Epic Product Decisions' })).toBeVisible();
+  });
 });
 
 async function expandTreeItem(tree: HTMLElement, name: string | RegExp) {

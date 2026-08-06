@@ -17,6 +17,10 @@ import type {
 } from '../../application/agentSessionNavigation';
 import type { ContextualFileReviewResult } from '../../application/contextualFileReview';
 import type { WorkUnitActivitySessionTarget } from './components/WorkUnitDetailWorkspace';
+import type {
+  EpicProductDecisionSource,
+  ProductDecisionEvidenceNavigationRequest,
+} from '../../application/productDecisions';
 
 export type OrchestrationNavigationChangeIntent = 'push' | 'back';
 
@@ -52,6 +56,11 @@ export interface OrchestrationSectionProps {
   ) => void;
   /** The application shell owns actual typed history; details retain local Back only without it. */
   readonly globalBackAvailable?: boolean;
+  readonly epicProductDecisionSource?: EpicProductDecisionSource;
+  readonly onOpenProductDecisionEvidence?: (
+    request: ProductDecisionEvidenceNavigationRequest,
+    origin: AgentSessionProductOrigin,
+  ) => void;
 }
 
 export function OrchestrationSection({
@@ -70,6 +79,8 @@ export function OrchestrationSection({
   onOpenFileEvidence,
   onOpenWorkUnitActivitySession,
   globalBackAvailable = false,
+  epicProductDecisionSource,
+  onOpenProductDecisionEvidence,
 }: OrchestrationSectionProps) {
   const workspace = useOrchestrationWorkspace(view, requestedLocation, onProductLocationChange);
   const selected = view.epics.find(({ id }) => id === workspace.epicId);
@@ -95,6 +106,9 @@ export function OrchestrationSection({
         onRequestFileReview={onRequestFileReview}
         onOpenFileEvidence={onOpenFileEvidence}
         onOpenWorkUnitActivitySession={onOpenWorkUnitActivitySession}
+        epicProductDecisionSource={epicProductDecisionSource}
+        requestedProductDecisions={requestedLocation?.kind === 'epic_product_decisions'}
+        onOpenProductDecisionEvidence={onOpenProductDecisionEvidence}
       />
     );
   }
@@ -198,7 +212,7 @@ function useOrchestrationWorkspace(
     }
     if (requestedLocation.kind === 'epic_planning_draft') return;
     setEpicId(requestedLocation.epicId);
-    if (requestedLocation.kind === 'epic') {
+    if (requestedLocation.kind === 'epic' || requestedLocation.kind === 'epic_product_decisions') {
       setSprintId(null);
       setSelectedRevisionId(null);
       setDetailLocation({ kind: 'sprint' });

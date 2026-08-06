@@ -68,6 +68,10 @@ import {
   type FileReviewProductOrigin,
   type ProductNavigationDestination,
 } from '../application/productNavigation';
+import type {
+  EpicProductDecisionSource,
+  ProductDecisionEvidenceNavigationRequest,
+} from '../application/productDecisions';
 
 export type ApplicationSurface =
   'epics' | 'agent-sessions' | 'harness-inspector' | 'file-review' | 'worktree-review';
@@ -103,6 +107,8 @@ export interface AppProps {
     readonly reviewId: string;
     readonly changedFileId: string;
   }) => FileReviewSource | undefined;
+  /** Development-recorded read only; product boot deliberately leaves it absent. */
+  readonly epicProductDecisionSource?: EpicProductDecisionSource;
   /** Present only in the injected development launcher composition. */
   readonly humanReviewLauncherView?: ReactNode;
   /** Enumerated proof navigation; it cannot activate or focus a native window. */
@@ -137,6 +143,7 @@ export function App({
   fileReviewSource,
   contextualFileReviewClient,
   fileReviewSourceForEvidence,
+  epicProductDecisionSource,
   humanReviewLauncherView,
   humanReviewLauncherNavigation,
   initialSurface = 'epics',
@@ -210,6 +217,10 @@ export function App({
   const focusedAgentSessionInvocationId =
     productNavigation.current.destination.kind === 'agent_sessions'
       ? (productNavigation.current.destination.focusedInvocationId ?? undefined)
+      : undefined;
+  const focusedAgentSessionEvidence =
+    productNavigation.current.destination.kind === 'agent_sessions'
+      ? productNavigation.current.destination.focusedEvidence
       : undefined;
   const currentProductDestination = productNavigation.current.destination;
   const activeFileReviewSource =
@@ -561,6 +572,34 @@ export function App({
     },
     [],
   );
+  const openProductDecisionEvidence = useCallback(
+    (request: ProductDecisionEvidenceNavigationRequest, origin: AgentSessionProductOrigin) => {
+      const resolution = epicProductDecisionSource?.resolveEvidenceNavigation(request);
+      if (
+        !resolution ||
+        resolution.kind !== 'available' ||
+        origin.location.kind !== 'epic_product_decisions' ||
+        origin.location.epicId !== request.epicId ||
+        origin.sessionId !== resolution.destination.sessionId ||
+        origin.invocationId !== resolution.destination.invocationId
+      )
+        return;
+      productNavigationEpoch.current += 1;
+      dispatchProductNavigation({
+        type: 'navigate',
+        intent: 'replace',
+        destination: { kind: 'orchestration', location: origin.location },
+      });
+      dispatchProductNavigation({
+        type: 'open_contextual_agent_session',
+        origin,
+        focusedInvocationId: resolution.destination.invocationId,
+        focusedEvidence: resolution.destination,
+      });
+      setSurface('agent-sessions');
+    },
+    [epicProductDecisionSource],
+  );
   const navigateToProductLocation = useCallback(
     (location: AgentSessionProductLocation) => {
       productNavigationEpoch.current += 1;
@@ -889,6 +928,8 @@ export function App({
           onRequestFileReview={contextualFileReviewClient ? requestContextualFileReview : undefined}
           onOpenFileEvidence={fileReviewSourceForEvidence ? openFileEvidence : undefined}
           globalBackAvailable={canGoBack}
+          epicProductDecisionSource={epicProductDecisionSource}
+          onOpenProductDecisionEvidence={openProductDecisionEvidence}
         />
       ) : surface === 'file-review' && activeFileReviewSource ? (
         <FileReviewScreen
@@ -917,6 +958,7 @@ export function App({
           planningDrafts={planningDrafts}
           selectedSessionId={selectedAgentSessionId}
           focusInvocationId={focusedAgentSessionInvocationId}
+          focusEvidence={focusedAgentSessionEvidence}
           returnOrigin={agentSessionReturnOrigin}
           onSelectedSessionChange={(() => {
             const renderEpoch = productNavigationEpoch.current;
@@ -962,6 +1004,8 @@ function OrchestrationSurface({
   onRequestFileReview,
   onOpenFileEvidence,
   globalBackAvailable,
+  epicProductDecisionSource,
+  onOpenProductDecisionEvidence,
 }: {
   readonly load: ReturnType<typeof useOrchestrationLoad>;
   readonly presentation: OrchestrationPresentationAdapter;
@@ -994,6 +1038,11 @@ function OrchestrationSurface({
     returnLocation?: AgentSessionProductLocation,
   ) => void;
   readonly globalBackAvailable: boolean;
+  readonly epicProductDecisionSource?: EpicProductDecisionSource;
+  readonly onOpenProductDecisionEvidence: (
+    request: ProductDecisionEvidenceNavigationRequest,
+    origin: AgentSessionProductOrigin,
+  ) => void;
 }) {
   if (load.kind === 'ready')
     return (
@@ -1013,6 +1062,8 @@ function OrchestrationSurface({
         onRequestFileReview={onRequestFileReview}
         onOpenFileEvidence={onOpenFileEvidence}
         globalBackAvailable={globalBackAvailable}
+        epicProductDecisionSource={epicProductDecisionSource}
+        onOpenProductDecisionEvidence={onOpenProductDecisionEvidence}
       />
     );
   const copy =

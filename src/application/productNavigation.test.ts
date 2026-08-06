@@ -226,6 +226,68 @@ describe('Product navigation history', () => {
     });
   });
 
+  it('keeps an exact evidence destination aligned to its Session and rejects evidence reloads', () => {
+    const origin: AgentSessionProductOrigin = {
+      sessionId: 'session-evidence',
+      invocationId: 'invocation-evidence',
+      location: {
+        kind: 'epic_product_decisions',
+        epicId: 'epic-1',
+        label: 'Recorded decisions',
+      },
+    };
+    const evidence = {
+      kind: 'agent_session_passage' as const,
+      sessionId: 'session-evidence',
+      invocationId: 'invocation-evidence',
+      passage: { kind: 'final_response' as const, runtimeEventId: 'event-evidence' },
+    };
+    const originDestination: ProductNavigationDestination = {
+      kind: 'orchestration',
+      location: origin.location,
+    };
+    const opened = productNavigationReducer(createProductNavigation(originDestination), {
+      type: 'open_contextual_agent_session',
+      origin,
+      focusedInvocationId: evidence.invocationId,
+      focusedEvidence: evidence,
+    });
+    expect(opened.current.destination).toEqual({
+      kind: 'agent_sessions',
+      selectedSessionId: evidence.sessionId,
+      focusedInvocationId: evidence.invocationId,
+      focusedEvidence: evidence,
+    });
+    expect(productNavigationReducer(opened, { type: 'back' }).current.destination).toEqual({
+      kind: 'orchestration',
+      location: origin.location,
+    });
+    expect(
+      restoreProductNavigation(
+        {
+          kind: 'agent_sessions',
+          selectedSessionId: evidence.sessionId,
+          focusedInvocationId: evidence.invocationId,
+          focusedEvidence: evidence,
+        },
+        overview,
+        () => true,
+      ),
+    ).toEqual(createProductNavigation(overview, 'restore'));
+    expect(
+      restoreProductNavigation(
+        {
+          kind: 'agent_sessions',
+          selectedSessionId: 'foreign-session',
+          focusedInvocationId: evidence.invocationId,
+          focusedEvidence: evidence,
+        },
+        overview,
+        () => true,
+      ),
+    ).toEqual(createProductNavigation(overview, 'restore'));
+  });
+
   it('fails closed for unsupported, stale, mismatched, and foreign return state', () => {
     const fallback = { kind: 'orchestration', location: null } as const;
     expect(

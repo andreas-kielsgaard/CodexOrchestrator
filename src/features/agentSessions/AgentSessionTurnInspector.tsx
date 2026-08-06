@@ -3,8 +3,10 @@ import type { AgentIdentity } from '../../application/agentSessions';
 import { AgentSessionTranscript } from './AgentSessionTranscript';
 import {
   projectedTranscriptContent,
+  selectTranscriptRange,
   selectTranscriptInvocation,
   type ProjectedTranscript,
+  type TranscriptAnchorRange,
 } from './transcriptProjector';
 
 export interface AgentSessionTurnInspectorProps {
@@ -15,6 +17,8 @@ export interface AgentSessionTurnInspectorProps {
   readonly error?: string | null;
   readonly agentIdentity?: AgentIdentity;
   readonly ariaLabel?: string;
+  /** Optional exact passage inside the selected durable turn. */
+  readonly transcriptRange?: TranscriptAnchorRange;
   /** Optional explicit prior invocation supplied by the owning product context. */
   readonly precedingInput?: Readonly<{
     readonly invocationId: string;
@@ -32,6 +36,7 @@ export function AgentSessionTurnInspector({
   error = null,
   agentIdentity,
   ariaLabel = 'Agent Session turn inspector',
+  transcriptRange,
   precedingInput,
 }: AgentSessionTurnInspectorProps) {
   const [expandedProcessing, setExpandedProcessing] = useState<ReadonlySet<string>>(new Set());
@@ -47,7 +52,15 @@ export function AgentSessionTurnInspector({
     );
   }
 
-  if (!invocation) {
+  const content = transcript
+    ? transcriptRange
+      ? selectTranscriptRange(transcript, transcriptRange)
+      : projectedTranscriptContent(transcript).filter(
+          (item) => item.anchor.invocationId === invocationId,
+        )
+    : [];
+
+  if (!invocation || (transcriptRange && content.length === 0)) {
     return (
       <section className="agent-session-turn-inspector" aria-label={ariaLabel} role="alert">
         <h2>Agent Session turn unavailable</h2>
@@ -57,9 +70,6 @@ export function AgentSessionTurnInspector({
     );
   }
 
-  const content = projectedTranscriptContent(transcript!).filter(
-    (item) => item.anchor.invocationId === invocation.id,
-  );
   const startLabel = formatDateTime(invocation.startedAt);
   const durationLabel = formatDuration(invocation.startedAt, invocation.completedAt);
 
@@ -69,6 +79,7 @@ export function AgentSessionTurnInspector({
       aria-label={ariaLabel}
       data-session-id={sessionId}
       data-invocation-id={invocationId}
+      tabIndex={-1}
     >
       <header className="agent-session-turn-inspector__heading">
         <div>

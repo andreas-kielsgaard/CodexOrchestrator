@@ -1,3 +1,4 @@
+import { ArrowLeft } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type {
   SprintPlanItemPresentation,
@@ -24,6 +25,11 @@ import type {
   AgentSessionProductOrigin,
 } from '../../../application/agentSessionNavigation';
 import type { WorkUnitActivitySessionTarget } from './WorkUnitDetailWorkspace';
+import type {
+  EpicProductDecisionSource,
+  ProductDecisionEvidenceNavigationRequest,
+} from '../../../application/productDecisions';
+import { EpicProductDecisionsPanel } from '../../productDecisions';
 
 export interface EpicDetailProps {
   readonly epic: EpicPresentation;
@@ -56,6 +62,12 @@ export interface EpicDetailProps {
     target: WorkUnitActivitySessionTarget,
     origin: AgentSessionProductOrigin,
   ) => void;
+  readonly epicProductDecisionSource?: EpicProductDecisionSource;
+  readonly requestedProductDecisions?: boolean;
+  readonly onOpenProductDecisionEvidence?: (
+    request: ProductDecisionEvidenceNavigationRequest,
+    origin: AgentSessionProductOrigin,
+  ) => void;
 }
 
 export function EpicDetail({
@@ -77,12 +89,18 @@ export function EpicDetail({
   onRequestFileReview,
   onOpenFileEvidence,
   onOpenWorkUnitActivitySession,
+  epicProductDecisionSource,
+  requestedProductDecisions = false,
+  onOpenProductDecisionEvidence,
 }: EpicDetailProps) {
   const restoreSprintIdRef = useRef<string | null>(null);
   const [selectedSprintOpener, setSelectedSprintOpener] = useState<{
     readonly sprint: SprintPlanItemPresentation;
     readonly opener: HTMLButtonElement;
   } | null>(null);
+  const [epicSection, setEpicSection] = useState<'plan' | 'product-decisions'>(
+    requestedProductDecisions ? 'product-decisions' : 'plan',
+  );
   const selectedSprint = epic.plan.items.find(({ id }) => id === selectedSprintId);
   const activeSprint =
     epic.plan.items.find(({ status }) => status === 'in_progress') ??
@@ -96,6 +114,10 @@ export function EpicDetail({
       .find((button) => button.dataset.sprintId === sprintId)
       ?.focus();
   }, [selectedSprint]);
+
+  useEffect(() => {
+    setEpicSection(requestedProductDecisions ? 'product-decisions' : 'plan');
+  }, [requestedProductDecisions]);
 
   if (selectedSprint?.workspace) {
     return (
@@ -124,6 +146,41 @@ export function EpicDetail({
     );
   }
 
+  if (epicSection === 'product-decisions' && epicProductDecisionSource) {
+    return (
+      <main
+        className="epic-product-decisions-view"
+        aria-label="Epic Product Decisions"
+        data-viewport-contained="true"
+        data-view-layout="single-column"
+      >
+        <div className="epic-product-decisions-view__menu" aria-label="Epic controls">
+          <button className="epic-product-decisions-view__back" type="button" onClick={onBack}>
+            <ArrowLeft size={16} aria-hidden="true" />
+            Back to Epics
+          </button>
+          <EpicIdentity epicName={epic.name} />
+          <EpicViewNavigation current="product-decisions" onChange={setEpicSection} />
+        </div>
+        <div className="epic-product-decisions-view__content">
+          <EpicProductDecisionsPanel
+            epicId={epic.id}
+            source={epicProductDecisionSource}
+            onOpenEvidence={(request) => {
+              const resolution = epicProductDecisionSource.resolveEvidenceNavigation(request);
+              if (resolution.kind !== 'available') return;
+              onOpenProductDecisionEvidence?.(request, {
+                sessionId: resolution.destination.sessionId,
+                invocationId: resolution.destination.invocationId,
+                location: { kind: 'epic_product_decisions', epicId: epic.id, label: epic.name },
+              });
+            }}
+          />
+        </div>
+      </main>
+    );
+  }
+
   return (
     <>
       <DetailWorkspace
@@ -133,6 +190,12 @@ export function EpicDetail({
         backLabel={globalBackAvailable ? undefined : 'Back to Epics'}
         onBack={onBack}
         showBack={!globalBackAvailable}
+        hotbarContext={<EpicIdentity epicName={epic.name} />}
+        hotbarNavigation={
+          epicProductDecisionSource ? (
+            <EpicViewNavigation current="plan" onChange={setEpicSection} />
+          ) : undefined
+        }
         control={
           epic.continuation ? (
             <ContinuationControl
@@ -230,5 +293,41 @@ export function EpicDetail({
         />
       )}
     </>
+  );
+}
+
+function EpicIdentity({ epicName }: { readonly epicName: string }) {
+  return (
+    <span className="epic-detail__identity" aria-label={`Current Epic: ${epicName}`}>
+      <small>Epic</small>
+      <strong>{epicName}</strong>
+    </span>
+  );
+}
+
+function EpicViewNavigation({
+  current,
+  onChange,
+}: {
+  readonly current: 'plan' | 'product-decisions';
+  readonly onChange: (view: 'plan' | 'product-decisions') => void;
+}) {
+  return (
+    <div className="epic-detail__section-switch" aria-label="Epic views">
+      <button
+        type="button"
+        aria-current={current === 'plan' ? 'page' : undefined}
+        onClick={() => onChange('plan')}
+      >
+        Plan
+      </button>
+      <button
+        type="button"
+        aria-current={current === 'product-decisions' ? 'page' : undefined}
+        onClick={() => onChange('product-decisions')}
+      >
+        Product decisions
+      </button>
+    </div>
   );
 }

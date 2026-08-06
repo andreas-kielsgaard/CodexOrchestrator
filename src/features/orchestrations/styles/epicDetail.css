@@ -28,6 +28,103 @@
   font-weight: 800;
 }
 
+.epic-detail__section-switch {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid #d5dce2;
+  border-radius: 8px;
+  background: #f3f6f7;
+}
+
+.epic-detail__identity {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.epic-detail__identity small {
+  color: #7a898f;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.epic-detail__identity strong {
+  overflow: hidden;
+  color: #43565f;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.epic-detail__section-switch button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #5b6d77;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.epic-detail__section-switch button[aria-current='page'] {
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(31 48 56 / 12%);
+  color: #23453a;
+}
+
+.epic-product-decisions-view {
+  position: fixed;
+  inset: 48px 0 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #f6f8f6;
+}
+
+.epic-product-decisions-view__menu {
+  position: relative;
+  z-index: 8;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 6px 14px;
+  border-bottom: 1px solid #d5dce2;
+  background: rgb(255 255 255 / 96%);
+  backdrop-filter: blur(8px);
+}
+
+.epic-product-decisions-view__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #344854;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.epic-product-decisions-view__content {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 @media (max-width: 720px) {
   .orchestration-context-rail__epic {
     gap: 6px;
@@ -42,5 +139,16 @@
 
   .orchestration-context-rail__sprint > strong {
     font-size: 0.76rem;
+  }
+
+  .epic-product-decisions-view__menu {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 6px;
+    padding: 6px 8px;
+  }
+
+  .epic-product-decisions-view__menu .epic-detail__section-switch {
+    grid-column: 1 / -1;
+    justify-self: center;
   }
 }

@@ -2,6 +2,7 @@ import type {
   AgentSessionProductLocation,
   AgentSessionProductOrigin,
 } from './agentSessionNavigation';
+import type { ProductDecisionEvidenceDestination } from './productDecisions';
 
 /** Product-owned destinations only; this is deliberately not a command vocabulary. */
 export type ProductNavigationDestination =
@@ -14,6 +15,8 @@ export type ProductNavigationDestination =
       readonly kind: 'agent_sessions';
       readonly selectedSessionId: string | null;
       readonly focusedInvocationId: string | null;
+      /** An exact evidence passage; optional so ordinary Session navigation remains unchanged. */
+      readonly focusedEvidence?: ProductDecisionEvidenceDestination;
     }
   | { readonly kind: 'file_review'; readonly target: FileReviewNavigationTarget }
   | { readonly kind: 'harness_inspector' }
@@ -71,6 +74,7 @@ export type ProductNavigationAction =
       readonly type: 'open_contextual_agent_session';
       readonly origin: AgentSessionProductOrigin;
       readonly focusedInvocationId: string | null;
+      readonly focusedEvidence?: ProductDecisionEvidenceDestination;
     }
   | {
       readonly type: 'open_contextual_file_review';
@@ -108,7 +112,8 @@ export function restoreProductNavigation(
   supports: ProductNavigationDestinationSupport,
 ): ProductNavigationState {
   const candidate = restoredDestination(value);
-  const destination = candidate && supports(candidate) ? candidate : fallback;
+  const destination =
+    candidate && isReloadSafeDestination(candidate) && supports(candidate) ? candidate : fallback;
   return createProductNavigation(destination, 'restore');
 }
 
@@ -135,6 +140,9 @@ export function productNavigationReducer(
     case 'open_contextual_agent_session':
       if (
         !isAgentSessionProductOrigin(action.origin) ||
+        (action.focusedEvidence !== undefined &&
+          (action.focusedEvidence.sessionId !== action.origin.sessionId ||
+            action.focusedEvidence.invocationId !== action.focusedInvocationId)) ||
         !supports(orchestrationDestination(action.origin))
       )
         return clearForeignOrigin(state);
@@ -144,6 +152,7 @@ export function productNavigationReducer(
             kind: 'agent_sessions',
             selectedSessionId: action.origin.sessionId,
             focusedInvocationId: action.focusedInvocationId,
+            ...(action.focusedEvidence ? { focusedEvidence: action.focusedEvidence } : {}),
           },
           intent: 'push',
         },
@@ -267,9 +276,18 @@ export function isProductNavigationDestination(
       );
     case 'agent_sessions':
       return (
-        hasOnlyKeys(value, ['kind', 'selectedSessionId', 'focusedInvocationId']) &&
+        hasOnlyKeys(value, [
+          'kind',
+          'selectedSessionId',
+          'focusedInvocationId',
+          'focusedEvidence',
+        ]) &&
         (value.selectedSessionId === null || isIdentifier(value.selectedSessionId)) &&
-        (value.focusedInvocationId === null || isIdentifier(value.focusedInvocationId))
+        (value.focusedInvocationId === null || isIdentifier(value.focusedInvocationId)) &&
+        (value.focusedEvidence === undefined ||
+          (isProductDecisionEvidenceDestination(value.focusedEvidence) &&
+            value.selectedSessionId === value.focusedEvidence.sessionId &&
+            value.focusedInvocationId === value.focusedEvidence.invocationId))
       );
     case 'file_review':
       return hasOnlyKeys(value, ['kind', 'target']) && isFileReviewNavigationTarget(value.target);
@@ -341,7 +359,8 @@ export function sameProductNavigationDestination(
       return (
         right.kind === 'agent_sessions' &&
         left.selectedSessionId === right.selectedSessionId &&
-        left.focusedInvocationId === right.focusedInvocationId
+        left.focusedInvocationId === right.focusedInvocationId &&
+        sameFocusedEvidence(left.focusedEvidence, right.focusedEvidence)
       );
     case 'file_review':
       return (
@@ -398,7 +417,8 @@ function sameProductLocation(
 ): boolean {
   if (left === null || right === null) return left === right;
   if (left.kind !== right.kind || left.label !== right.label) return false;
-  if (left.kind === 'epic') return right.kind === 'epic' && left.epicId === right.epicId;
+  if (left.kind === 'epic' || left.kind === 'epic_product_decisions')
+    return right.kind === left.kind && left.epicId === right.epicId;
   if (left.kind === 'sprint')
     return (
       right.kind === 'sprint' && left.epicId === right.epicId && left.sprintId === right.sprintId
@@ -456,7 +476,7 @@ function fileReviewTarget(
 function isAgentSessionProductLocation(value: unknown): value is AgentSessionProductLocation {
   if (!isRecord(value) || typeof value.kind !== 'string' || !isIdentifier(value.label))
     return false;
-  if (value.kind === 'epic')
+  if (value.kind === 'epic' || value.kind === 'epic_product_decisions')
     return hasOnlyKeys(value, ['kind', 'epicId', 'label']) && isIdentifier(value.epicId);
   if (value.kind === 'sprint')
     return (
@@ -514,6 +534,52 @@ function isWorkUnitInspectionState(value: unknown): boolean {
     isIdentifier(value.sessionId) &&
     isIdentifier(value.invocationId)
   );
+}
+
+function isProductDecisionEvidenceDestination(
+  value: unknown,
+): value is ProductDecisionEvidenceDestination {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['kind', 'sessionId', 'invocationId', 'passage']))
+    return false;
+  if (
+    value.kind !== 'agent_session_passage' ||
+    !isIdentifier(value.sessionId) ||
+    !isIdentifier(value.invocationId) ||
+    !isRecord(value.passage) ||
+    !isIdentifier(value.passage.kind)
+  )
+    return false;
+  if (value.passage.kind === 'submitted_input' || value.passage.kind === 'outcome')
+    return hasOnlyKeys(value.passage, ['kind']);
+  return (
+    (value.passage.kind === 'activity' || value.passage.kind === 'final_response') &&
+    hasOnlyKeys(value.passage, ['kind', 'runtimeEventId']) &&
+    isIdentifier(value.passage.runtimeEventId)
+  );
+}
+
+function sameFocusedEvidence(
+  left: ProductDecisionEvidenceDestination | undefined,
+  right: ProductDecisionEvidenceDestination | undefined,
+) {
+  return (
+    left === right ||
+    (left !== undefined &&
+      right !== undefined &&
+      left.kind === right.kind &&
+      left.sessionId === right.sessionId &&
+      left.invocationId === right.invocationId &&
+      left.passage.kind === right.passage.kind &&
+      ('runtimeEventId' in left.passage
+        ? 'runtimeEventId' in right.passage &&
+          left.passage.runtimeEventId === right.passage.runtimeEventId
+        : !('runtimeEventId' in right.passage)))
+  );
+}
+
+/** Evidence focus is introduced only by a live, source-resolved contextual origin. */
+function isReloadSafeDestination(destination: ProductNavigationDestination): boolean {
+  return destination.kind !== 'agent_sessions' || destination.focusedEvidence === undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

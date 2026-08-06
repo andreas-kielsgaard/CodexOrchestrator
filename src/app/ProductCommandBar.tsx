@@ -63,6 +63,7 @@ function returnActionLabel(origin: ProductContextualOrigin) {
 function locationKindLabel(location: AgentSessionProductOrigin['location']) {
   return {
     epic: 'Epic',
+    epic_product_decisions: 'Product decisions',
     sprint: 'Sprint',
     work_slice_planning_point: 'Planning',
     work_unit: 'Work Unit',
