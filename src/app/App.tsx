@@ -45,9 +45,11 @@ import type {
   ContextualFileReviewResult,
 } from '../application/contextualFileReview';
 import { FileReviewScreen } from '../features/fileReview';
+import type { NativeProfileClient } from '../infrastructure/nativeProfiles/nativeProfileClient';
+import { NativeProfileSettings } from '../features/nativeProfiles/NativeProfileSettings';
 
 export type ApplicationSurface =
-  'epics' | 'agent-sessions' | 'harness-inspector' | 'file-review' | 'worktree-review';
+  | 'epics' | 'agent-sessions' | 'harness-inspector' | 'file-review' | 'worktree-review' | 'native-settings';
 
 export interface AppProps {
   readonly agentSessionClient: AgentSessionClient;
@@ -75,6 +77,7 @@ export interface AppProps {
   readonly harnessManagementPreviewSurface?: ReactNode;
   readonly fileReviewSource?: FileReviewSource;
   readonly contextualFileReviewClient?: ContextualFileReviewClient;
+  readonly nativeProfileClient?: NativeProfileClient;
   /** Present only in the injected development launcher composition. */
   readonly humanReviewLauncherView?: ReactNode;
   /** Enumerated proof navigation; it cannot activate or focus a native window. */
@@ -108,6 +111,7 @@ export function App({
   harnessManagementPreviewSurface,
   fileReviewSource,
   contextualFileReviewClient,
+  nativeProfileClient,
   humanReviewLauncherView,
   humanReviewLauncherNavigation,
   initialSurface = 'epics',
@@ -464,6 +468,11 @@ export function App({
             Files &amp; diffs
           </button>
         ) : null}
+        {nativeProfileClient && (
+          <button className={surface === 'native-settings' ? 'active' : undefined} type="button" aria-current={surface === 'native-settings' ? 'page' : undefined} onClick={() => setSurface('native-settings')}>
+            Technical Settings
+          </button>
+        )}
       </nav>
       {surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
         <EpicPlanBuilder
@@ -527,6 +536,8 @@ export function App({
           onExpandedNodeIdsChange={setExpandedAgentSessionNodes}
           onNavigateToProduct={navigateToProductLocation}
         />
+      ) : surface === 'native-settings' && nativeProfileClient ? (
+        <NativeProfileSettings client={nativeProfileClient} />
       ) : (
         harnessManagementPreviewSurface
       )}
