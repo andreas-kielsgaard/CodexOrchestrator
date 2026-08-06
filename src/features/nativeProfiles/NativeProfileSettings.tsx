@@ -39,7 +39,7 @@ export function NativeProfileSettings({ client }: { readonly client: NativeProfi
     finally { if (version === requestVersion.current) setBusy(null); }
   }, [busy]);
   return (
-    <main className="native-profile-settings" aria-label="Technical Codex settings">
+    <main className="native-profile-settings" aria-label="Technical Codex settings" tabIndex={0}>
       <header><p className="eyebrow">Technical Settings</p><h1>Codex home profiles</h1><p>Manage product-owned Codex homes and their observed setup state. Account identity and provider readiness are never inferred here.</p></header>
       <section aria-labelledby="profile-registration"><h2 id="profile-registration">Register or create a home</h2>
         <div className="native-profile-register"><label>Existing Codex home path<input value={homePath} onChange={(event) => setHomePath(event.target.value)} placeholder="C:\\Users\\you\\.codex" /></label>

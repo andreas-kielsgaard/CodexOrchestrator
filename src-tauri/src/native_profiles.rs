@@ -1005,7 +1005,7 @@ impl NativeProfileService {
             args: vec!["login".into()],
             cwd: root,
             codex_home: profile.home.clone(),
-            environment: native_profile_environment(&profile.home),
+            environment: native_login_environment(&profile.home),
             sandbox_receipt: None,
         }) {
             Ok(child) => child,
@@ -1054,7 +1054,7 @@ impl NativeProfileService {
                 args: vec!["login".into(), "status".into()],
                 cwd: root,
                 codex_home: profile.home.clone(),
-                environment: native_profile_environment(&profile.home),
+                environment: native_login_environment(&profile.home),
                 sandbox_receipt: None,
             })
             .map_err(|_| {
@@ -2061,6 +2061,40 @@ fn native_profile_environment(home: &Path) -> Vec<(String, String)> {
     vec![("CODEX_HOME".into(), home.to_string_lossy().into_owned())]
 }
 
+/// Browser login retains only the Windows process variables the supported CLI needs to locate
+/// system launch facilities and the launching user's standard directories. `CODEX_HOME` remains
+/// product-selected; no inherited Codex home, credentials, or provider state is admitted.
+fn native_login_environment(home: &Path) -> Vec<(String, String)> {
+    native_login_environment_from(home, &|key| std::env::var(key).ok())
+}
+
+fn native_login_environment_from(
+    home: &Path,
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> Vec<(String, String)> {
+    let mut environment = native_profile_environment(home);
+    #[cfg(windows)]
+    for key in [
+        "APPDATA",
+        "COMSPEC",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "LOCALAPPDATA",
+        "PATH",
+        "PATHEXT",
+        "SYSTEMROOT",
+        "TEMP",
+        "TMP",
+        "USERPROFILE",
+        "WINDIR",
+    ] {
+        if let Some(value) = lookup(key).filter(|value| !value.trim().is_empty()) {
+            environment.push((key.into(), value));
+        }
+    }
+    environment
+}
+
 fn filesystem_identity(home: &Path) -> Result<String, String> {
     #[cfg(windows)]
     {
@@ -2867,6 +2901,47 @@ mod tests {
         );
         drop(service);
         assert_eq!(*fake.terminated.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn windows_login_environment_is_allowlisted_and_keeps_the_product_selected_home() {
+        let environment = native_login_environment_from(Path::new("C:/product-owned-home"), &|key| {
+            match key {
+                "PATH" => Some("C:/Windows/System32;C:/Windows".into()),
+                "SYSTEMROOT" => Some("C:/Windows".into()),
+                "USERPROFILE" => Some("C:/Users/launching-user".into()),
+                "CODEX_HOME" => Some("C:/foreign-home".into()),
+                "UNRELATED_SECRET" => Some("must-not-pass".into()),
+                _ => None,
+            }
+        });
+        assert!(environment.contains(&("CODEX_HOME".into(), "C:/product-owned-home".into())));
+        assert!(environment.contains(&("PATH".into(), "C:/Windows/System32;C:/Windows".into())));
+        assert!(environment.contains(&("SYSTEMROOT".into(), "C:/Windows".into())));
+        assert!(environment.contains(&("USERPROFILE".into(), "C:/Users/launching-user".into())));
+        assert!(!environment.iter().any(|(key, _)| key == "UNRELATED_SECRET"));
+        assert!(!environment.iter().any(|(_, value)| value == "C:/foreign-home"));
+    }
+
+    #[test]
+    fn login_and_status_use_the_allowlisted_windows_environment_without_a_real_browser() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake.clone();
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        service.request_login(&profile.id).unwrap();
+        service.refresh_readiness(&profile.id).unwrap();
+        let calls = fake.calls.lock().unwrap();
+        for call in calls.iter().filter(|call| call.args.first().is_some_and(|arg| arg == "login")) {
+            assert_eq!(call.environment, native_login_environment(Path::new(&profile.home_path)));
+            assert!(call.environment.iter().any(|(key, _)| key == "CODEX_HOME"));
+        }
     }
 
     #[test]

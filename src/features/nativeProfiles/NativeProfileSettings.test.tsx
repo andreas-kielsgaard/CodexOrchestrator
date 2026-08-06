@@ -1,4 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { NativeProfileSettings } from './NativeProfileSettings';
@@ -74,5 +76,17 @@ describe('NativeProfileSettings', () => {
     expect(within(card).getByText('Login process launch was accepted; browser handoff is unobserved.')).toBeInTheDocument();
     expect(within(card).getByText('Process activity, browser handoff, and authentication are separate facts.')).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('Browser login request returned; review the durable login-attempt state.');
+  });
+
+  it('contains the reported short viewport in an internal scroll region with narrow wrapping', async () => {
+    render(<NativeProfileSettings client={client()} />);
+    const settings = await screen.findByRole('main', { name: 'Technical Codex settings' });
+    expect(settings).toHaveClass('native-profile-settings');
+    expect(settings).toHaveAttribute('tabindex', '0');
+    const styles = readFileSync(resolve('src/features/nativeProfiles/nativeProfileSettings.css'), 'utf8');
+    const shell = readFileSync(resolve('src/styles.css'), 'utf8');
+    expect(shell).toMatch(/\.primary-app-shell\s*\{[\s\S]*height: 100vh;[\s\S]*padding-top: 48px;[\s\S]*overflow: hidden;/);
+    expect(styles).toMatch(/\.native-profile-settings\s*\{[\s\S]*height: 100%;[\s\S]*min-height: 0;[\s\S]*overflow-x: hidden;[\s\S]*overflow-y: auto;[\s\S]*overscroll-behavior: contain;/);
+    expect(styles).toMatch(/@media \(max-width: 520px\)\s*\{[\s\S]*\.native-profile-facts, \.native-profile-login-attempt dl\s*\{[\s\S]*grid-template-columns: minmax\(0, 1fr\);/);
   });
 });
