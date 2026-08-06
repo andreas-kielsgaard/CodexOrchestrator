@@ -7882,6 +7882,113 @@ mod tests {
                 |row| row.get(0),
             ).unwrap()
         }
+
+        fn remove_prepared_reporting_continuation(&self) {
+            let connection = Connection::open(&self.base.database_path).unwrap();
+            connection.pragma_update(None, "foreign_keys", false).unwrap();
+            connection.execute(
+                "DELETE FROM agent_session_runtime_events WHERE invocation_id=?1",
+                [&self.reporting_invocation_id],
+            ).unwrap();
+            connection.execute(
+                "DELETE FROM agent_session_invocations WHERE id=?1",
+                [&self.reporting_invocation_id],
+            ).unwrap();
+            connection.execute(
+                "DELETE FROM work_unit_implementer_outcomes WHERE attempt_id=?1",
+                [&self.attempt_id],
+            ).unwrap();
+            connection.execute(
+                "INSERT OR IGNORE INTO work_units (work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification) VALUES (?1,'reporting-materialization','reporting-slice','reporting-revision',0,'Reporting','Bounded reporting candidate')",
+                [&self.work_unit_id],
+            ).unwrap();
+            connection.pragma_update(None, "foreign_keys", true).unwrap();
+        }
+
+        fn candidate_failure(&self) -> Option<String> {
+            Connection::open(&self.base.database_path).unwrap().query_row(
+                "SELECT failure_reason FROM work_unit_implementer_activations WHERE work_unit_id=?1",
+                [&self.work_unit_id],
+                |row| row.get(0),
+            ).unwrap()
+        }
+
+        fn reporting_failure(&self) -> Option<String> {
+            Connection::open(&self.base.database_path).unwrap().query_row(
+                "SELECT failure_reason FROM work_unit_implementer_outcomes WHERE attempt_id=?1",
+                [&self.attempt_id],
+                |row| row.get(0),
+            ).unwrap()
+        }
+    }
+
+    #[test]
+    fn unchanged_implementer_baseline_records_one_attention_without_reporting_or_outcome() {
+        let fixture = ReportingFixture::new();
+        fixture.remove_prepared_reporting_continuation();
+        let launches = fixture.base.runtime.requests().len();
+
+        fixture.transition.prepare_later_attempt_reporting_for_test().unwrap();
+        assert_eq!(fixture.candidate_failure().as_deref(), Some("implementer_candidate_absent"));
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1", [&fixture.attempt_id], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1", [&fixture.reporting_invocation_id], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(fixture.base.runtime.requests().len(), launches);
+
+        fixture.reopened().prepare_later_attempt_reporting_for_test().unwrap();
+        assert_eq!(fixture.candidate_failure().as_deref(), Some("implementer_candidate_absent"));
+        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1", [&fixture.attempt_id], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(fixture.base.runtime.requests().len(), launches);
+    }
+
+    #[test]
+    fn newly_sealed_and_already_sealed_candidates_both_gate_one_reporting_continuation() {
+        let fresh = ReportingFixture::new();
+        fresh.remove_prepared_reporting_continuation();
+        fs::write(fresh.working_directory.join("README.md"), "fresh candidate\n").unwrap();
+        fresh.transition.prepare_later_attempt_reporting_for_test().unwrap();
+        assert!(fresh.candidate_failure().is_none());
+        assert_eq!(Connection::open(&fresh.base.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1", [&fresh.attempt_id], |row| row.get(0)).unwrap(), 1);
+        fresh.assert_pinned_evidence_available();
+        let fresh_launches = fresh.base.runtime.requests().len();
+        fresh.reopened().prepare_later_attempt_reporting_for_test().unwrap();
+        assert_eq!(fresh.base.runtime.requests().len(), fresh_launches);
+        assert_eq!(Connection::open(&fresh.base.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1", [&fresh.attempt_id], |row| row.get(0)).unwrap(), 1);
+
+        let replay = ReportingFixture::new();
+        replay.remove_prepared_reporting_continuation();
+        fs::write(replay.working_directory.join("README.md"), "already sealed candidate\n").unwrap();
+        assert!(replay.handler.commit_implementer_candidate(&replay.attempt_id).unwrap());
+        replay.transition.prepare_later_attempt_reporting_for_test().unwrap();
+        assert!(replay.candidate_failure().is_none());
+        assert_eq!(Connection::open(&replay.base.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1", [&replay.attempt_id], |row| row.get(0)).unwrap(), 1);
+        replay.assert_pinned_evidence_available();
+    }
+
+    #[test]
+    fn dirty_descendant_candidate_is_rejected_before_reporting_creation() {
+        let fixture = ReportingFixture::new();
+        fixture.remove_prepared_reporting_continuation();
+        fs::write(fixture.working_directory.join("README.md"), "sealed candidate\n").unwrap();
+        assert!(fixture.handler.commit_implementer_candidate(&fixture.attempt_id).unwrap());
+        fs::write(fixture.working_directory.join("README.md"), "dirty descendant\n").unwrap();
+
+        fixture.transition.prepare_later_attempt_reporting_for_test().unwrap();
+        assert_eq!(fixture.candidate_failure().as_deref(), Some("implementer_candidate_revalidation_failed"));
+        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1", [&fixture.attempt_id], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1", [&fixture.reporting_invocation_id], |row| row.get(0)).unwrap(), 0);
+    }
+
+    #[test]
+    fn completed_reporting_without_semantic_effects_records_failure_without_acceptance() {
+        let fixture = ReportingFixture::new();
+        fixture.enable_notifications();
+        fixture.finish(AgentInvocationTerminalStatus::Completed);
+        assert_eq!(fixture.reporting_failure().as_deref(), Some("reporting_required_semantic_effects_missing"));
+        fixture.assert_no_submission_evidence_or_completion();
+        let facts = fixture.facts();
+        assert_eq!(facts.lifecycle_status.as_deref(), Some("completed"));
+        assert!(facts.application_accepted_at.is_none() && facts.handler_review_ready_at.is_none());
     }
 
     #[test]
