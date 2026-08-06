@@ -10,9 +10,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::Mutex,
-    thread,
-    time::{Duration, Instant},
+    sync::{Arc, Mutex},
 };
 use tauri::State;
 use uuid::Uuid;
@@ -41,6 +39,14 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_readiness (
   observed_at TEXT NOT NULL,
   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
 );
+CREATE TABLE IF NOT EXISTS native_codex_profile_attentions (
+  profile_id TEXT NOT NULL,
+  concern TEXT NOT NULL CHECK (concern IN ('authentication','sandbox','canary','mcp_reporting','continuity','cli')),
+  detail TEXT NOT NULL,
+  recorded_at TEXT NOT NULL,
+  PRIMARY KEY(profile_id, concern),
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
 "#;
 
 pub(crate) const NATIVE_PROFILE_V22_MIGRATION: &str = r#"
@@ -66,8 +72,126 @@ FROM native_codex_profile_readiness_v21;
 DROP TABLE native_codex_profile_readiness_v21;
 "#;
 
+pub(crate) const NATIVE_PROFILE_V23_MIGRATION: &str = r#"
+CREATE TABLE IF NOT EXISTS native_codex_profile_attentions (
+  profile_id TEXT NOT NULL,
+  concern TEXT NOT NULL CHECK (concern IN ('authentication','sandbox','canary','mcp_reporting','continuity','cli')),
+  detail TEXT NOT NULL,
+  recorded_at TEXT NOT NULL,
+  PRIMARY KEY(profile_id, concern),
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+INSERT OR IGNORE INTO native_codex_profile_attentions (profile_id,concern,detail,recorded_at)
+SELECT profile_id,'continuity',attention,observed_at
+FROM native_codex_profile_readiness
+WHERE attention IS NOT NULL;
+"#;
+
 const MARKER_FILE: &str = ".codex-orchestrator-profile.json";
 const PROFILE_QUERY_CONTRACT: &str = "native-codex-profile-query/v1";
+const MCP_REPORTING_CAPABILITY: &str = "native-codex-profile-reporting/v1";
+const MCP_REPORTING_SERVER: &str = "codex-orchestrator-reporting";
+const MCP_REPORTING_TOOL: &str = "report_native_profile_readiness";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NativeCliInvocation {
+    args: Vec<String>,
+    cwd: PathBuf,
+    codex_home: PathBuf,
+    environment: Vec<(String, String)>,
+    sandbox_receipt: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NativeCliReceipt {
+    succeeded: bool,
+    sandbox_receipt_observed: bool,
+}
+
+trait NativeCliChild: Send {
+    fn try_wait(&mut self) -> Result<Option<bool>, String>;
+    fn terminate(&mut self) -> Result<(), String>;
+}
+
+trait NativeCliPort: Send + Sync {
+    fn run(&self, invocation: &NativeCliInvocation) -> Result<NativeCliReceipt, String>;
+    fn start(&self, invocation: &NativeCliInvocation) -> Result<Box<dyn NativeCliChild>, String>;
+}
+
+struct SystemNativeCliPort {
+    program: Result<String, String>,
+}
+struct SystemNativeCliChild(Child);
+
+impl NativeCliChild for SystemNativeCliChild {
+    fn try_wait(&mut self) -> Result<Option<bool>, String> {
+        self.0
+            .try_wait()
+            .map(|status| status.map(|status| status.success()))
+            .map_err(|error| error.to_string())
+    }
+    fn terminate(&mut self) -> Result<(), String> {
+        self.0
+            .kill()
+            .map_err(|error| error.to_string())
+            .and_then(|_| self.0.wait().map(|_| ()).map_err(|error| error.to_string()))
+    }
+}
+
+impl NativeCliPort for SystemNativeCliPort {
+    fn run(&self, invocation: &NativeCliInvocation) -> Result<NativeCliReceipt, String> {
+        let program = self
+            .program
+            .as_ref()
+            .map_err(|_| "Codex CLI is unavailable for this profile".to_string())?;
+        let status = Command::new(program)
+            .args(&invocation.args)
+            .current_dir(&invocation.cwd)
+            .env_clear()
+            .envs(
+                invocation
+                    .environment
+                    .iter()
+                    .map(|(key, value)| (key, value)),
+            )
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|error| error.to_string())?;
+        let sandbox_receipt_observed = invocation.sandbox_receipt.as_ref().is_some_and(|path| {
+            fs::read_to_string(path)
+                .map(|value| value.trim() == "native-codex-profile-canary")
+                .unwrap_or(false)
+        });
+        Ok(NativeCliReceipt {
+            succeeded: status.success(),
+            sandbox_receipt_observed,
+        })
+    }
+    fn start(&self, invocation: &NativeCliInvocation) -> Result<Box<dyn NativeCliChild>, String> {
+        let program = self
+            .program
+            .as_ref()
+            .map_err(|_| "Codex CLI is unavailable for this profile".to_string())?;
+        let child = Command::new(program)
+            .args(&invocation.args)
+            .current_dir(&invocation.cwd)
+            .env_clear()
+            .envs(
+                invocation
+                    .environment
+                    .iter()
+                    .map(|(key, value)| (key, value)),
+            )
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        Ok(Box::new(SystemNativeCliChild(child)))
+    }
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -133,7 +257,18 @@ pub(crate) struct NativeProfileReadiness {
     sandbox_initialization: String,
     workspace_write_canary: String,
     mcp_reporting: String,
-    attention: Option<String>,
+    attentions: NativeProfileAttentions,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NativeProfileAttentions {
+    authentication: Option<String>,
+    sandbox: Option<String>,
+    canary: Option<String>,
+    mcp_reporting: Option<String>,
+    continuity: Option<String>,
+    cli: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -152,6 +287,17 @@ pub(crate) struct NativeProfileDto {
 pub(crate) struct NativeProfileQueryDto {
     contract: &'static str,
     profiles: Vec<NativeProfileDto>,
+}
+
+/// NCHP-03 supplies this only after its bounded, application-owned MCP action receives a
+/// correlated receipt. It is deliberately not inferred from `codex mcp list` or a file write.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NativeMcpReportingReceipt {
+    pub(crate) capability: String,
+    pub(crate) server: String,
+    pub(crate) tool: String,
+    pub(crate) correlation_id: String,
+    pub(crate) probe_root: PathBuf,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -195,8 +341,8 @@ struct ReadDedicatedMarker {
 pub(crate) struct NativeProfileService {
     database_path: PathBuf,
     dedicated_root: PathBuf,
-    codex_program: Result<String, String>,
-    login_children: Mutex<HashMap<String, Child>>,
+    cli: Arc<dyn NativeCliPort>,
+    login_children: Mutex<HashMap<String, Box<dyn NativeCliChild>>>,
 }
 
 impl NativeProfileService {
@@ -208,7 +354,9 @@ impl NativeProfileService {
         Ok(Self {
             database_path,
             dedicated_root: app_data_dir.join("native-codex-homes"),
-            codex_program: crate::runtime::codex::resolve_program("codex".into()),
+            cli: Arc::new(SystemNativeCliPort {
+                program: crate::runtime::codex::resolve_program("codex".into()),
+            }),
             login_children: Mutex::new(HashMap::new()),
         })
     }
@@ -318,6 +466,9 @@ impl NativeProfileService {
 
     pub(crate) fn select(&self, id: &str) -> Result<NativeProfileDto, String> {
         let profile = self.profile(id)?;
+        if profile.lifecycle != Lifecycle::Active {
+            return Err("Native Codex home lost continuity and must be registered again".into());
+        }
         let lifecycle = validate_profile(&profile);
         if lifecycle != Lifecycle::Active {
             self.record_lifecycle(id, lifecycle)?;
@@ -343,11 +494,6 @@ impl NativeProfileService {
 
     pub(crate) fn request_login(&self, id: &str) -> Result<NativeProfileDto, String> {
         let profile = self.require_active(id)?;
-        let program = self.codex_program.as_ref().map_err(|_| {
-            self.set_attention(id, Some("codex_cli_unavailable"), true)
-                .ok();
-            "Codex CLI is unavailable for this profile".to_string()
-        })?;
         let mut children = self
             .login_children
             .lock()
@@ -360,34 +506,75 @@ impl NativeProfileService {
             {
                 return self.profile(id).map(Into::into);
             }
-            children.remove(id);
-            self.set_attention(id, None, false)?;
+            let succeeded = children
+                .remove(id)
+                .expect("present")
+                .try_wait()?
+                .unwrap_or(false);
+            self.update_readiness(
+                id,
+                Some(if succeeded {
+                    "authenticated"
+                } else {
+                    "unauthenticated"
+                }),
+                None,
+                None,
+                None,
+                Some((
+                    "authentication",
+                    Some(if succeeded {
+                        "login_completed_refresh_required"
+                    } else {
+                        "browser_login_not_completed"
+                    }),
+                )),
+            )?;
         }
-        let mut command = Command::new(program);
-        command
-            // Default login is the supported browser flow. Device authentication is deliberately
-            // not hidden behind nulled output because its link and one-time code are user-facing.
-            .arg("login")
-            .env("CODEX_HOME", &profile.home)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        let child = command
-            .spawn()
-            .map_err(|error| format!("Unable to start supported Codex browser login: {error}"))?;
+        let root = self.probe_root(id);
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let child = self
+            .cli
+            .start(&NativeCliInvocation {
+                args: vec!["login".into()],
+                cwd: root,
+                codex_home: profile.home.clone(),
+                environment: native_profile_environment(&profile.home),
+                sandbox_receipt: None,
+            })
+            .map_err(|_| {
+                self.set_attention(id, "cli", Some("codex_cli_unavailable"), true)
+                    .ok();
+                "Unable to start supported Codex browser login".to_string()
+            })?;
         children.insert(id.to_string(), child);
-        self.set_attention(id, Some("browser_login_in_progress"), false)?;
+        self.set_attention(
+            id,
+            "authentication",
+            Some("browser_login_in_progress"),
+            false,
+        )?;
         self.profile(id).map(Into::into)
     }
 
     pub(crate) fn refresh_readiness(&self, id: &str) -> Result<NativeProfileDto, String> {
         let profile = self.require_active(id)?;
-        let program = self.codex_program.as_ref().map_err(|_| {
-            self.set_attention(id, Some("codex_cli_unavailable"), true)
-                .ok();
-            "Codex CLI is unavailable for this profile".to_string()
-        })?;
-        let authenticated = run_status(program, &["login", "status"], &profile.home)?;
+        self.reap_login(id)?;
+        let authenticated = self
+            .cli
+            .run(&NativeCliInvocation {
+                args: vec!["login".into(), "status".into()],
+                cwd: self.probe_root(id),
+                codex_home: profile.home.clone(),
+                environment: native_profile_environment(&profile.home),
+                sandbox_receipt: None,
+            })
+            .map_err(|_| {
+                self.set_attention(id, "cli", Some("codex_cli_unavailable"), true)
+                    .ok();
+                "Codex CLI is unavailable for this profile".to_string()
+            })?
+            .succeeded;
         self.update_readiness(
             id,
             Some(if authenticated {
@@ -398,7 +585,7 @@ impl NativeProfileService {
             None,
             None,
             None,
-            None,
+            Some(("authentication", None)),
         )?;
         self.profile(id).map(Into::into)
     }
@@ -419,27 +606,42 @@ impl NativeProfileService {
     }
 
     pub(crate) fn probe_mcp_reporting(&self, id: &str) -> Result<NativeProfileDto, String> {
-        let profile = self.require_active(id)?;
-        let program = self.codex_program.as_ref().map_err(|_| {
-            self.set_attention(id, Some("codex_cli_unavailable"), false)
-                .ok();
-            "Codex CLI is unavailable for this profile".to_string()
-        })?;
-        // The probe has no network or provider interaction: it only verifies the installed CLI's
-        // MCP command against the selected home and records an application-owned result file.
-        let ready = run_status(program, &["mcp", "list"], &profile.home)?;
-        let report = self.probe_root(id).join("mcp-reporting-probe.json");
-        fs::create_dir_all(report.parent().expect("probe parent"))
-            .map_err(|error| error.to_string())?;
-        fs::write(&report, br#"{"contract":"native-mcp-reporting-probe/v1"}"#)
-            .map_err(|error| error.to_string())?;
+        self.require_active(id)?;
         self.update_readiness(
             id,
             None,
             None,
             None,
-            Some(if ready { "ready" } else { "probe_failed" }),
+            Some("not_assessed"),
+            Some((
+                "mcp_reporting",
+                Some("mcp_reporting_probe_requires_correlated_receipt"),
+            )),
+        )?;
+        self.profile(id).map(Into::into)
+    }
+
+    pub(crate) fn record_mcp_reporting_receipt(
+        &self,
+        id: &str,
+        receipt: &NativeMcpReportingReceipt,
+    ) -> Result<NativeProfileDto, String> {
+        self.require_active(id)?;
+        let valid = receipt.capability == MCP_REPORTING_CAPABILITY
+            && receipt.server == MCP_REPORTING_SERVER
+            && receipt.tool == MCP_REPORTING_TOOL
+            && !receipt.correlation_id.trim().is_empty()
+            && receipt.probe_root == self.probe_root(id);
+        self.update_readiness(
+            id,
             None,
+            None,
+            None,
+            Some(if valid { "ready" } else { "probe_failed" }),
+            Some((
+                "mcp_reporting",
+                (!valid).then_some("mcp_reporting_receipt_invalid"),
+            )),
         )?;
         self.profile(id).map(Into::into)
     }
@@ -450,6 +652,12 @@ impl NativeProfileService {
             .into_iter()
             .find(|profile| profile.selected)
             .ok_or("No native Codex home is selected")?;
+        if profile.lifecycle != Lifecycle::Active {
+            return Err(
+                "The selected native Codex home lost continuity and must be registered again"
+                    .into(),
+            );
+        }
         let lifecycle = validate_profile(&profile);
         if lifecycle != Lifecycle::Active {
             self.record_lifecycle(&profile.id, lifecycle)?;
@@ -473,6 +681,9 @@ impl NativeProfileService {
 
     fn require_active(&self, id: &str) -> Result<StoredProfile, String> {
         let profile = self.profile(id)?;
+        if profile.lifecycle != Lifecycle::Active {
+            return Err("Native Codex home lost continuity and must be registered again".into());
+        }
         let lifecycle = validate_profile(&profile);
         if lifecycle != Lifecycle::Active {
             self.record_lifecycle(id, lifecycle)?;
@@ -503,42 +714,103 @@ impl NativeProfileService {
         profile: &StoredProfile,
         purpose: &str,
     ) -> Result<(), String> {
-        let program = self.codex_program.as_ref().map_err(|_| {
-            self.set_attention(id, Some("codex_cli_unavailable"), false)
-                .ok();
-            "Codex CLI is unavailable for this profile".to_string()
-        })?;
         let root = self.probe_root(id);
         fs::create_dir_all(&root).map_err(|error| {
             format!("Unable to create application-owned sandbox probe root: {error}")
         })?;
         let output = root.join(format!("{purpose}.txt"));
-        let command = format!(
-            "echo native-codex-profile-{purpose}>\"{}\"",
-            output.display()
-        );
-        let success = run_status(
-            program,
-            &["sandbox", "--", "cmd.exe", "/d", "/s", "/c", &command],
-            &profile.home,
-        )?;
-        let expected = format!("native-codex-profile-{purpose}");
-        let wrote_expected = fs::read_to_string(&output)
-            .map(|value| value.trim() == expected)
-            .unwrap_or(false);
-        if success && wrote_expected {
-            self.update_readiness(id, None, Some("initialized"), Some("passed"), None, None)?;
+        let command = format!("echo native-codex-profile-canary>\"{}\"", output.display());
+        let invocation = NativeCliInvocation {
+            args: vec![
+                "--cd".into(),
+                root.to_string_lossy().into_owned(),
+                "sandbox".into(),
+                "--sandbox-state-disable-network".into(),
+                "--sandbox-state-readable-root".into(),
+                root.to_string_lossy().into_owned(),
+                "--".into(),
+                "cmd.exe".into(),
+                "/d".into(),
+                "/s".into(),
+                "/c".into(),
+                command,
+            ],
+            cwd: root.clone(),
+            codex_home: profile.home.clone(),
+            environment: native_profile_environment(&profile.home),
+            sandbox_receipt: (purpose == "canary").then_some(output),
+        };
+        let receipt = self.cli.run(&invocation).map_err(|_| {
+            self.set_attention(id, "cli", Some("codex_cli_unavailable"), false)
+                .ok();
+            "Codex CLI is unavailable for this profile".to_string()
+        })?;
+        if purpose == "initialize" && receipt.succeeded {
+            self.update_readiness(
+                id,
+                None,
+                Some("initialized"),
+                None,
+                None,
+                Some(("sandbox", None)),
+            )?;
+        } else if purpose == "canary" && receipt.succeeded && receipt.sandbox_receipt_observed {
+            self.update_readiness(id, None, None, Some("passed"), None, Some(("canary", None)))?;
         } else {
             self.update_readiness(
                 id,
                 None,
-                Some("attention_required"),
-                Some("blocked"),
+                (purpose == "initialize").then_some("attention_required"),
+                (purpose == "canary").then_some("blocked"),
                 None,
-                Some("sandbox_probe_failed_or_uac_attention_required"),
+                Some((
+                    if purpose == "initialize" {
+                        "sandbox"
+                    } else {
+                        "canary"
+                    },
+                    Some(if purpose == "initialize" {
+                        "sandbox_setup_failed_or_uac_attention_required"
+                    } else {
+                        "workspace_write_canary_failed"
+                    }),
+                )),
             )?;
         }
         Ok(())
+    }
+
+    fn reap_login(&self, id: &str) -> Result<(), String> {
+        let mut children = self
+            .login_children
+            .lock()
+            .map_err(|_| "Native profile login supervision is unavailable")?;
+        let Some(child) = children.get_mut(id) else {
+            return Ok(());
+        };
+        let Some(succeeded) = child.try_wait()? else {
+            return Ok(());
+        };
+        children.remove(id);
+        self.update_readiness(
+            id,
+            Some(if succeeded {
+                "authenticated"
+            } else {
+                "unauthenticated"
+            }),
+            None,
+            None,
+            None,
+            Some((
+                "authentication",
+                Some(if succeeded {
+                    "login_completed_refresh_required"
+                } else {
+                    "browser_login_not_completed"
+                }),
+            )),
+        )
     }
 
     fn profile(&self, id: &str) -> Result<StoredProfile, String> {
@@ -559,7 +831,13 @@ impl NativeProfileService {
     fn record_lifecycle(&self, id: &str, lifecycle: Lifecycle) -> Result<(), String> {
         let connection = self.connection()?;
         connection.execute("UPDATE native_codex_profiles SET lifecycle=?2,selected_at=NULL,updated_at=?3 WHERE id=?1", params![id, lifecycle.database(), Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
-        connection.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',mcp_reporting='not_assessed',attention='profile_continuity_lost',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+        connection.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+        self.write_attention(
+            &connection,
+            id,
+            "continuity",
+            Some("profile_continuity_lost"),
+        )?;
         Ok(())
     }
 
@@ -570,29 +848,71 @@ impl NativeProfileService {
         sandbox: Option<&str>,
         canary: Option<&str>,
         mcp: Option<&str>,
-        attention: Option<&str>,
+        attention: Option<(&str, Option<&str>)>,
     ) -> Result<(), String> {
         let connection = self.connection()?;
         connection.execute(
-            "UPDATE native_codex_profile_readiness SET authentication=COALESCE(?2,authentication),sandbox_initialization=COALESCE(?3,sandbox_initialization),workspace_write_canary=COALESCE(?4,workspace_write_canary),mcp_reporting=COALESCE(?5,mcp_reporting),attention=?6,observed_at=?7 WHERE profile_id=?1",
-            params![id, authentication, sandbox, canary, mcp, attention, Utc::now().to_rfc3339()],
+            "UPDATE native_codex_profile_readiness SET authentication=COALESCE(?2,authentication),sandbox_initialization=COALESCE(?3,sandbox_initialization),workspace_write_canary=COALESCE(?4,workspace_write_canary),mcp_reporting=COALESCE(?5,mcp_reporting),observed_at=?6 WHERE profile_id=?1",
+            params![id, authentication, sandbox, canary, mcp, Utc::now().to_rfc3339()],
         ).map_err(|error| format!("Unable to record native profile readiness: {error}"))?;
+        if let Some((concern, detail)) = attention {
+            self.write_attention(&connection, id, concern, detail)?;
+        }
         Ok(())
     }
 
     fn set_attention(
         &self,
         id: &str,
+        concern: &str,
         attention: Option<&str>,
         reset_readiness: bool,
     ) -> Result<(), String> {
         let connection = self.connection()?;
         if reset_readiness {
-            connection.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',mcp_reporting='not_assessed',attention=?2,observed_at=?3 WHERE profile_id=?1", params![id, attention, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+            connection.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         } else {
-            connection.execute("UPDATE native_codex_profile_readiness SET attention=?2,observed_at=?3 WHERE profile_id=?1", params![id, attention, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+            connection
+                .execute(
+                    "UPDATE native_codex_profile_readiness SET observed_at=?2 WHERE profile_id=?1",
+                    params![id, Utc::now().to_rfc3339()],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        self.write_attention(&connection, id, concern, attention)?;
+        Ok(())
+    }
+
+    fn write_attention(
+        &self,
+        connection: &Connection,
+        id: &str,
+        concern: &str,
+        detail: Option<&str>,
+    ) -> Result<(), String> {
+        if let Some(detail) = detail {
+            connection.execute(
+                "INSERT INTO native_codex_profile_attentions (profile_id,concern,detail,recorded_at) VALUES (?1,?2,?3,?4) ON CONFLICT(profile_id,concern) DO UPDATE SET detail=excluded.detail,recorded_at=excluded.recorded_at",
+                params![id, concern, detail, Utc::now().to_rfc3339()],
+            ).map_err(|error| error.to_string())?;
+        } else {
+            connection.execute(
+                "DELETE FROM native_codex_profile_attentions WHERE profile_id=?1 AND concern=?2",
+                params![id, concern],
+            ).map_err(|error| error.to_string())?;
         }
         Ok(())
+    }
+}
+
+impl Drop for NativeProfileService {
+    fn drop(&mut self) {
+        if let Ok(mut children) = self.login_children.lock() {
+            for child in children.values_mut() {
+                let _ = child.terminate();
+            }
+            children.clear();
+        }
     }
 }
 
@@ -614,6 +934,10 @@ fn validated_absolute_directory(supplied: &str) -> Result<PathBuf, String> {
         return Err("Codex home must be a directory".into());
     }
     Ok(canonical)
+}
+
+fn native_profile_environment(home: &Path) -> Vec<(String, String)> {
+    vec![("CODEX_HOME".into(), home.to_string_lossy().into_owned())]
 }
 
 fn filesystem_identity(home: &Path) -> Result<String, String> {
@@ -725,34 +1049,8 @@ fn validate_profile(profile: &StoredProfile) -> Lifecycle {
     }
 }
 
-fn run_status(program: &str, args: &[&str], home: &Path) -> Result<bool, String> {
-    let mut child = Command::new(program)
-        .args(args)
-        .env("CODEX_HOME", home)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| format!("Unable to probe Codex authentication status: {error}"))?;
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("Unable to observe Codex authentication status: {error}"))?
-        {
-            return Ok(status.success());
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("Codex authentication status probe exceeded its bounded duration".into());
-        }
-        thread::sleep(Duration::from_millis(25));
-    }
-}
-
 fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, String> {
-    let mut statement = connection.prepare("SELECT p.id,p.canonical_home_path,p.filesystem_identity,p.ownership,p.lifecycle,p.selected_at,r.authentication,r.sandbox_initialization,r.workspace_write_canary,r.mcp_reporting,r.attention FROM native_codex_profiles p JOIN native_codex_profile_readiness r ON r.profile_id=p.id ORDER BY p.created_at").map_err(|error| error.to_string())?;
+    let mut statement = connection.prepare("SELECT p.id,p.canonical_home_path,p.filesystem_identity,p.ownership,p.lifecycle,p.selected_at,r.authentication,r.sandbox_initialization,r.workspace_write_canary,r.mcp_reporting,(SELECT detail FROM native_codex_profile_attentions a WHERE a.profile_id=p.id AND a.concern='authentication'),(SELECT detail FROM native_codex_profile_attentions a WHERE a.profile_id=p.id AND a.concern='sandbox'),(SELECT detail FROM native_codex_profile_attentions a WHERE a.profile_id=p.id AND a.concern='canary'),(SELECT detail FROM native_codex_profile_attentions a WHERE a.profile_id=p.id AND a.concern='mcp_reporting'),(SELECT detail FROM native_codex_profile_attentions a WHERE a.profile_id=p.id AND a.concern='continuity'),(SELECT detail FROM native_codex_profile_attentions a WHERE a.profile_id=p.id AND a.concern='cli') FROM native_codex_profiles p JOIN native_codex_profile_readiness r ON r.profile_id=p.id ORDER BY p.created_at").map_err(|error| error.to_string())?;
     let rows = statement
         .query_map([], |row| {
             Ok(StoredProfile {
@@ -769,7 +1067,14 @@ fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, Stri
                     sandbox_initialization: row.get(7)?,
                     workspace_write_canary: row.get(8)?,
                     mcp_reporting: row.get(9)?,
-                    attention: row.get(10)?,
+                    attentions: NativeProfileAttentions {
+                        authentication: row.get(10)?,
+                        sandbox: row.get(11)?,
+                        canary: row.get(12)?,
+                        mcp_reporting: row.get(13)?,
+                        continuity: row.get(14)?,
+                        cli: row.get(15)?,
+                    },
                 },
             })
         })
@@ -866,13 +1171,65 @@ pub(crate) fn probe_native_profile_mcp_reporting(
 mod tests {
     use super::*;
 
+    struct FakeChild {
+        result: Option<bool>,
+        terminated: Arc<Mutex<usize>>,
+    }
+    impl NativeCliChild for FakeChild {
+        fn try_wait(&mut self) -> Result<Option<bool>, String> {
+            Ok(self.result.take())
+        }
+        fn terminate(&mut self) -> Result<(), String> {
+            self.result = Some(false);
+            *self.terminated.lock().unwrap() += 1;
+            Ok(())
+        }
+    }
+    struct FakeCli {
+        receipt: NativeCliReceipt,
+        calls: Mutex<Vec<NativeCliInvocation>>,
+        starts: Mutex<usize>,
+        terminated: Arc<Mutex<usize>>,
+    }
+    impl FakeCli {
+        fn succeeding() -> Self {
+            Self {
+                receipt: NativeCliReceipt {
+                    succeeded: true,
+                    sandbox_receipt_observed: true,
+                },
+                calls: Mutex::new(vec![]),
+                starts: Mutex::new(0),
+                terminated: Arc::new(Mutex::new(0)),
+            }
+        }
+    }
+    impl NativeCliPort for FakeCli {
+        fn run(&self, invocation: &NativeCliInvocation) -> Result<NativeCliReceipt, String> {
+            self.calls.lock().unwrap().push(invocation.clone());
+            Ok(self.receipt)
+        }
+        fn start(
+            &self,
+            invocation: &NativeCliInvocation,
+        ) -> Result<Box<dyn NativeCliChild>, String> {
+            self.calls.lock().unwrap().push(invocation.clone());
+            *self.starts.lock().unwrap() += 1;
+            Ok(Box::new(FakeChild {
+                result: None,
+                terminated: self.terminated.clone(),
+            }))
+        }
+    }
+
     fn service() -> (tempfile::TempDir, NativeProfileService) {
         let directory = tempfile::tempdir().unwrap();
-        let service = NativeProfileService::open(
+        let mut service = NativeProfileService::open(
             directory.path().join("active.sqlite"),
             directory.path().join("app"),
         )
         .unwrap();
+        service.cli = Arc::new(FakeCli::succeeding());
         (directory, service)
     }
 
@@ -930,7 +1287,10 @@ mod tests {
                 Some("attention_required"),
                 Some("blocked"),
                 Some("probe_failed"),
-                Some("sandbox_probe_failed_or_uac_attention_required"),
+                Some((
+                    "sandbox",
+                    Some("sandbox_probe_failed_or_uac_attention_required"),
+                )),
             )
             .unwrap();
         assert!(service.resolve_selected_home().is_err());
@@ -970,7 +1330,7 @@ mod tests {
                 .unwrap()
                 .readiness
                 .workspace_write_canary,
-            "blocked"
+            "passed"
         );
 
         let connection =
@@ -989,8 +1349,79 @@ mod tests {
             connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
-            22
+            23
         );
+    }
+
+    #[test]
+    fn sandbox_port_receives_only_the_profile_probe_root_and_separate_phase_receipts() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake.clone();
+        let profile = service.create_dedicated().unwrap();
+        let initialized = service.request_sandbox_initialization(&profile.id).unwrap();
+        assert_eq!(initialized.readiness.sandbox_initialization, "initialized");
+        assert_eq!(initialized.readiness.workspace_write_canary, "not_run");
+        let canaried = service.run_workspace_write_canary(&profile.id).unwrap();
+        assert_eq!(canaried.readiness.workspace_write_canary, "passed");
+
+        let calls = fake.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        for call in calls.iter() {
+            assert_eq!(call.cwd, service.probe_root(&profile.id));
+            assert_eq!(
+                call.environment,
+                native_profile_environment(Path::new(&profile.home_path))
+            );
+            assert!(call.args.windows(2).any(|window| window
+                .iter()
+                .map(String::as_str)
+                .eq(["--cd", call.cwd.to_string_lossy().as_ref()])));
+            assert!(call.args.windows(2).any(|window| {
+                window.iter().map(String::as_str).eq([
+                    "--sandbox-state-disable-network",
+                    "--sandbox-state-readable-root",
+                ])
+            }));
+            assert!(!call
+                .args
+                .iter()
+                .any(|argument| argument.contains("dangerously")));
+        }
+        assert!(calls[0].sandbox_receipt.is_none());
+        assert!(calls[1].sandbox_receipt.is_some());
+    }
+
+    #[test]
+    fn browser_login_is_idempotently_supervised_and_owned_children_are_reaped_on_shutdown() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake.clone();
+        let profile = service.create_dedicated().unwrap();
+        service.request_login(&profile.id).unwrap();
+        service.request_login(&profile.id).unwrap();
+        assert_eq!(*fake.starts.lock().unwrap(), 1);
+        assert_eq!(
+            service
+                .profile(&profile.id)
+                .unwrap()
+                .readiness
+                .attentions
+                .authentication,
+            Some("browser_login_in_progress".into())
+        );
+        drop(service);
+        assert_eq!(*fake.terminated.lock().unwrap(), 1);
     }
 
     #[test]
@@ -1020,16 +1451,60 @@ mod tests {
     }
 
     #[test]
-    fn attention_can_be_cleared_without_implying_readiness() {
+    fn continuity_loss_is_terminal_until_the_home_is_registered_again() {
+        let (_directory, service) = service();
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        let home = PathBuf::from(&profile.home_path);
+        fs::remove_file(home.join(MARKER_FILE)).unwrap();
+        service.query().unwrap();
+        write_marker(&home, &profile.id).unwrap();
+        let query = service.query().unwrap();
+        assert_eq!(query.profiles[0].lifecycle, Lifecycle::Malformed);
+        assert!(service.select(&profile.id).is_err());
+        assert!(service.request_sandbox_initialization(&profile.id).is_err());
+    }
+
+    #[test]
+    fn one_attention_can_be_cleared_without_erasing_another_concern() {
         let (_directory, service) = service();
         let profile = service.create_dedicated().unwrap();
         service
-            .set_attention(&profile.id, Some("browser_login_in_progress"), false)
+            .set_attention(
+                &profile.id,
+                "sandbox",
+                Some("sandbox_setup_failed_or_uac_attention_required"),
+                false,
+            )
             .unwrap();
-        service.set_attention(&profile.id, None, false).unwrap();
+        service
+            .set_attention(
+                &profile.id,
+                "authentication",
+                Some("browser_login_in_progress"),
+                false,
+            )
+            .unwrap();
+        service
+            .set_attention(&profile.id, "authentication", None, false)
+            .unwrap();
         assert_eq!(
-            service.profile(&profile.id).unwrap().readiness.attention,
+            service
+                .profile(&profile.id)
+                .unwrap()
+                .readiness
+                .attentions
+                .authentication,
             None
+        );
+        assert_eq!(
+            service
+                .profile(&profile.id)
+                .unwrap()
+                .readiness
+                .attentions
+                .sandbox,
+            Some("sandbox_setup_failed_or_uac_attention_required".into())
         );
         assert_eq!(
             service
@@ -1050,6 +1525,14 @@ mod tests {
         crate::storage::initialize_active_database(&connection).unwrap();
         let row: (String, String) = connection.query_row("SELECT sandbox_initialization,mcp_reporting FROM native_codex_profile_readiness WHERE profile_id='profile'", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
         assert_eq!(row, ("attention_required".into(), "not_assessed".into()));
+        let attention: String = connection
+            .query_row(
+                "SELECT detail FROM native_codex_profile_attentions WHERE profile_id='profile' AND concern='continuity'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(attention, "legacy");
     }
 
     #[test]
@@ -1060,17 +1543,67 @@ mod tests {
         assert_eq!(result.readiness.authentication, "unknown");
         assert_eq!(result.readiness.sandbox_initialization, "unknown");
         assert_eq!(result.readiness.workspace_write_canary, "not_run");
-        assert_eq!(result.readiness.mcp_reporting, "ready");
+        assert_eq!(result.readiness.mcp_reporting, "not_assessed");
+        assert_eq!(
+            result.readiness.attentions.mcp_reporting,
+            Some("mcp_reporting_probe_requires_correlated_receipt".into())
+        );
+    }
+
+    #[test]
+    fn mcp_list_style_presence_never_becomes_ready_without_a_correlated_receipt() {
+        let (_directory, service) = service();
+        let profile = service.create_dedicated().unwrap();
+        let rejected = service
+            .record_mcp_reporting_receipt(
+                &profile.id,
+                &NativeMcpReportingReceipt {
+                    capability: MCP_REPORTING_CAPABILITY.into(),
+                    server: MCP_REPORTING_SERVER.into(),
+                    tool: MCP_REPORTING_TOOL.into(),
+                    correlation_id: String::new(),
+                    probe_root: service.probe_root(&profile.id),
+                },
+            )
+            .unwrap();
+        assert_eq!(rejected.readiness.mcp_reporting, "probe_failed");
+        let ready = service
+            .record_mcp_reporting_receipt(
+                &profile.id,
+                &NativeMcpReportingReceipt {
+                    capability: MCP_REPORTING_CAPABILITY.into(),
+                    server: MCP_REPORTING_SERVER.into(),
+                    tool: MCP_REPORTING_TOOL.into(),
+                    correlation_id: "application-owned-correlation".into(),
+                    probe_root: service.probe_root(&profile.id),
+                },
+            )
+            .unwrap();
+        assert_eq!(ready.readiness.mcp_reporting, "ready");
     }
 
     #[test]
     fn unavailable_cli_is_profile_attention_not_composition_failure() {
         let (_directory, mut service) = service();
-        service.codex_program = Err("missing".into());
+        struct UnavailableCli;
+        impl NativeCliPort for UnavailableCli {
+            fn run(&self, _: &NativeCliInvocation) -> Result<NativeCliReceipt, String> {
+                Err("missing".into())
+            }
+            fn start(&self, _: &NativeCliInvocation) -> Result<Box<dyn NativeCliChild>, String> {
+                Err("missing".into())
+            }
+        }
+        service.cli = Arc::new(UnavailableCli);
         let profile = service.create_dedicated().unwrap();
         assert!(service.refresh_readiness(&profile.id).is_err());
         assert_eq!(
-            service.profile(&profile.id).unwrap().readiness.attention,
+            service
+                .profile(&profile.id)
+                .unwrap()
+                .readiness
+                .attentions
+                .cli,
             Some("codex_cli_unavailable".into())
         );
     }
