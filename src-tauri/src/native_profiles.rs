@@ -959,7 +959,15 @@ impl NativeProfileService {
             format!("Unable to create application-owned sandbox probe root: {error}")
         })?;
         let output = root.join(format!("{}.txt", phase.database()));
-        let command = format!("echo native-codex-profile-canary>\"{}\"", output.display());
+        let command = match phase {
+            // `codex sandbox` is the supported Windows restricted-token executor. This benign
+            // exercise establishes only that the application-owned request completed; UAC and
+            // readiness still require the distinct human confirmation below.
+            SetupPhase::SandboxInitialization => "exit /b 0".into(),
+            SetupPhase::WorkspaceWriteCanary => {
+                format!("echo native-codex-profile-canary>\"{}\"", output.display())
+            }
+        };
         let now = Utc::now();
         let attempt = PendingSetupAttempt {
             attempt_id: format!("native-setup-attempt-{}", Uuid::new_v4()),
@@ -985,9 +993,6 @@ impl NativeProfileService {
             root.to_string_lossy().into_owned(),
             "sandbox".into(),
         ];
-        if phase == SetupPhase::SandboxInitialization {
-            args.push("--init".into());
-        }
         args.extend([
             "--sandbox-state-disable-network".into(),
             "--sandbox-state-readable-root".into(),
@@ -1869,8 +1874,15 @@ mod tests {
 
         let calls = fake.calls.lock().unwrap();
         assert_eq!(calls.len(), 2);
-        assert!(calls[0].args.iter().any(|argument| argument == "--init"));
+        assert_eq!(calls[0].args[2], "sandbox");
+        assert!(!calls[0].args.iter().any(|argument| argument == "--init"));
+        assert_eq!(calls[0].args.last().map(String::as_str), Some("exit /b 0"));
+        assert_eq!(calls[1].args[2], "sandbox");
         assert!(!calls[1].args.iter().any(|argument| argument == "--init"));
+        assert!(calls[1]
+            .args
+            .last()
+            .is_some_and(|argument| argument.starts_with("echo native-codex-profile-canary>")));
         for call in calls.iter() {
             assert_eq!(call.cwd, service.probe_root(&profile.id));
             assert_eq!(
