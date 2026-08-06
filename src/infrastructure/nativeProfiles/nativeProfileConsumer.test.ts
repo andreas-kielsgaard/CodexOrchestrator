@@ -6,7 +6,8 @@ const query: NativeProfileQuery = {
   contract: 'native-codex-profile-query/v1',
   profiles: [{
     id: 'p1', homePath: 'C:/codex', ownership: 'registered_existing', lifecycle: 'active', selected: true,
-    readiness: { authentication: 'unknown', sandboxInitialization: 'unknown', workspaceWriteCanary: 'not_run', mcpReporting: 'not_assessed', attentions: { authentication: null, sandbox: null, canary: null, mcpReporting: null, continuity: null, cli: null } },
+    execution: { selectedMode: 'workspace_write', dangerFullAccessAuthorized: false },
+    readiness: { authentication: 'unknown', sandboxInitialization: 'unknown', workspaceWriteCanary: 'not_run', dangerFullAccessCanary: 'not_run', mcpReporting: 'not_assessed', attentions: { authentication: null, sandbox: null, canary: null, mcpReporting: null, continuity: null, cli: null } },
   }],
 };
 

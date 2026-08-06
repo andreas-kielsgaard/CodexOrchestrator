@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-const ACTIVE_SCHEMA_VERSION: i64 = 24;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 26;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
@@ -45,7 +45,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| format!("Unable to commit active v22 schema evolution: {error}"))?;
         return Ok(());
     }
-    if (1..=23).contains(&current_version) {
+    if (1..=25).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -154,6 +154,26 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         if current_version <= 23 {
             transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V24_MIGRATION)
                 .map_err(|error| format!("Unable to migrate native profile producer-attempt schema: {error}"))?;
+        }
+        if current_version <= 24 {
+            let has_full_access_canary = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('native_codex_profile_readiness') WHERE name='danger_full_access_canary')",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|error| format!("Unable to inspect native profile readiness schema: {error}"))?
+                != 0;
+            if !has_full_access_canary {
+                transaction.execute_batch("ALTER TABLE native_codex_profile_readiness ADD COLUMN danger_full_access_canary TEXT NOT NULL DEFAULT 'not_run' CHECK (danger_full_access_canary IN ('not_run','passed','blocked'));")
+                    .map_err(|error| format!("Unable to migrate native full-access canary state: {error}"))?;
+            }
+            transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V25_MIGRATION)
+                .map_err(|error| format!("Unable to migrate native execution-mode authority schema: {error}"))?;
+        }
+        if current_version <= 25 {
+            transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V26_MIGRATION)
+                .map_err(|error| format!("Unable to migrate native full-access canary schema: {error}"))?;
         }
         if current_version == 14 {
             transaction

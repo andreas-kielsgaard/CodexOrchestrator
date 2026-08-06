@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_readiness (
   authentication TEXT NOT NULL CHECK (authentication IN ('unknown','authenticated','unauthenticated')),
   sandbox_initialization TEXT NOT NULL CHECK (sandbox_initialization IN ('unknown','initialized','failed','attention_required')),
   workspace_write_canary TEXT NOT NULL CHECK (workspace_write_canary IN ('not_run','passed','blocked')),
+  danger_full_access_canary TEXT NOT NULL DEFAULT 'not_run' CHECK (danger_full_access_canary IN ('not_run','passed','blocked')),
   mcp_reporting TEXT NOT NULL CHECK (mcp_reporting IN ('not_assessed','ready','probe_failed')),
   attention TEXT,
   login_requested_at TEXT,
@@ -75,6 +76,36 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_mcp_probes (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_mcp_probe_pending
 ON native_codex_profile_mcp_probes(profile_id) WHERE state='pending';
+CREATE TABLE IF NOT EXISTS native_codex_profile_execution_modes (
+  profile_id TEXT PRIMARY KEY,
+  selected_mode TEXT NOT NULL CHECK (selected_mode IN ('workspace_write','danger_full_access')),
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS native_codex_profile_mode_authorizations (
+  profile_id TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode='danger_full_access'),
+  filesystem_identity TEXT NOT NULL,
+  authorized_at TEXT NOT NULL,
+  revoked_at TEXT,
+  PRIMARY KEY(profile_id, mode),
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS native_codex_profile_full_access_canaries (
+  attempt_id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  filesystem_identity TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode='danger_full_access'),
+  executable TEXT NOT NULL,
+  version TEXT NOT NULL,
+  sentinel_path TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('pending','passed','blocked','cancelled')),
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_full_access_canary_pending
+ON native_codex_profile_full_access_canaries(profile_id) WHERE state='pending';
 "#;
 
 pub(crate) const NATIVE_PROFILE_V22_MIGRATION: &str = r#"
@@ -146,6 +177,44 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_mcp_probe_pending
 ON native_codex_profile_mcp_probes(profile_id) WHERE state='pending';
 "#;
 
+pub(crate) const NATIVE_PROFILE_V25_MIGRATION: &str = r#"
+CREATE TABLE IF NOT EXISTS native_codex_profile_execution_modes (
+  profile_id TEXT PRIMARY KEY,
+  selected_mode TEXT NOT NULL CHECK (selected_mode IN ('workspace_write','danger_full_access')),
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+INSERT OR IGNORE INTO native_codex_profile_execution_modes (profile_id,selected_mode,updated_at)
+SELECT id,'workspace_write',updated_at FROM native_codex_profiles;
+CREATE TABLE IF NOT EXISTS native_codex_profile_mode_authorizations (
+  profile_id TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode='danger_full_access'),
+  filesystem_identity TEXT NOT NULL,
+  authorized_at TEXT NOT NULL,
+  revoked_at TEXT,
+  PRIMARY KEY(profile_id, mode),
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+"#;
+
+pub(crate) const NATIVE_PROFILE_V26_MIGRATION: &str = r#"
+CREATE TABLE IF NOT EXISTS native_codex_profile_full_access_canaries (
+  attempt_id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  filesystem_identity TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode='danger_full_access'),
+  executable TEXT NOT NULL,
+  version TEXT NOT NULL,
+  sentinel_path TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('pending','passed','blocked','cancelled')),
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_full_access_canary_pending
+ON native_codex_profile_full_access_canaries(profile_id) WHERE state='pending';
+"#;
+
 const MARKER_FILE: &str = ".codex-orchestrator-profile.json";
 const PROFILE_QUERY_CONTRACT: &str = "native-codex-profile-query/v1";
 const MCP_REPORTING_CAPABILITY: &str = "native-codex-profile-reporting/v1";
@@ -153,6 +222,7 @@ const MCP_REPORTING_SERVER: &str = "codex-orchestrator-reporting";
 const MCP_REPORTING_TOOL: &str = "report_native_profile_readiness";
 const SETUP_ATTEMPT_TIMEOUT_SECONDS: i64 = 120;
 const MCP_PROBE_TIMEOUT_SECONDS: i64 = 300;
+const WORKSPACE_SANDBOX_STATE_JSON: &str = r#"{"permissionProfile":"workspace-write"}"#;
 
 static NATIVE_PROFILE_OPEN_GATE: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -165,10 +235,35 @@ struct NativeCliInvocation {
     sandbox_receipt: Option<PathBuf>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeCliProvenance {
+    executable: String,
+    version: String,
+    workspace_sandbox_supported: bool,
+    danger_full_access_supported: bool,
+    non_interactive_approval_supported: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NativeCliSurface {
+    provenance: NativeCliProvenance,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct NativeCliReceipt {
     succeeded: bool,
     sandbox_receipt_observed: bool,
+}
+
+#[derive(Clone, Debug)]
+struct PendingFullAccessCanary {
+    attempt_id: String,
+    profile_id: String,
+    filesystem_identity: String,
+    executable: String,
+    version: String,
+    sentinel_path: PathBuf,
 }
 
 trait NativeCliChild: Send {
@@ -179,6 +274,7 @@ trait NativeCliChild: Send {
 trait NativeCliPort: Send + Sync {
     fn run(&self, invocation: &NativeCliInvocation) -> Result<NativeCliReceipt, String>;
     fn start(&self, invocation: &NativeCliInvocation) -> Result<Box<dyn NativeCliChild>, String>;
+    fn surface(&self) -> Result<NativeCliSurface, String>;
 }
 
 struct SystemNativeCliPort {
@@ -274,6 +370,44 @@ impl NativeCliPort for SystemNativeCliPort {
             sandbox_receipt: invocation.sandbox_receipt.clone(),
         }))
     }
+    fn surface(&self) -> Result<NativeCliSurface, String> {
+        let program = self
+            .program
+            .as_ref()
+            .map_err(|_| "Codex CLI is unavailable for this profile".to_string())?;
+        let version = native_cli_stdout(program, &["--version"])?;
+        let exec_help = native_cli_stdout(program, &["exec", "--help"])?;
+        let sandbox_help = native_cli_stdout(program, &["sandbox", "--help"])?;
+        let workspace_sandbox_supported = sandbox_help.contains("--sandbox-state-json")
+            && sandbox_help.contains("--sandbox-state-readable-root")
+            && sandbox_help.contains("--sandbox-state-disable-network");
+        let danger_full_access_supported = exec_help.contains("danger-full-access");
+        let non_interactive_approval_supported = exec_help.contains("--dangerously-bypass-approvals-and-sandbox");
+        Ok(NativeCliSurface {
+            provenance: NativeCliProvenance {
+                executable: program.clone(),
+                version: version.trim().to_string(),
+                workspace_sandbox_supported,
+                danger_full_access_supported,
+                non_interactive_approval_supported,
+            },
+        })
+    }
+}
+
+fn native_cli_stdout(program: &str, args: &[&str]) -> Result<String, String> {
+    let output = Command::new(program)
+        .args(args)
+        .env_clear()
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|_| "Unable to inspect the resolved Codex CLI surface".to_string())?;
+    if !output.status.success() {
+        return Err("The resolved Codex CLI surface is unsupported".into());
+    }
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    Ok(text)
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -310,6 +444,37 @@ enum Lifecycle {
     Malformed,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ExecutionMode {
+    WorkspaceWrite,
+    DangerFullAccess,
+}
+
+impl ExecutionMode {
+    fn database(self) -> &'static str {
+        match self {
+            Self::WorkspaceWrite => "workspace_write",
+            Self::DangerFullAccess => "danger_full_access",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "workspace_write" => Ok(Self::WorkspaceWrite),
+            "danger_full_access" => Ok(Self::DangerFullAccess),
+            _ => Err("Stored execution mode is invalid".into()),
+        }
+    }
+
+    fn codex_sandbox(self) -> &'static str {
+        match self {
+            Self::WorkspaceWrite => "workspace-write",
+            Self::DangerFullAccess => "danger-full-access",
+        }
+    }
+}
+
 impl Lifecycle {
     fn database(self) -> &'static str {
         match self {
@@ -339,8 +504,16 @@ pub(crate) struct NativeProfileReadiness {
     authentication: String,
     sandbox_initialization: String,
     workspace_write_canary: String,
+    danger_full_access_canary: String,
     mcp_reporting: String,
     attentions: NativeProfileAttentions,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NativeProfileExecution {
+    selected_mode: ExecutionMode,
+    danger_full_access_authorized: bool,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -362,6 +535,7 @@ pub(crate) struct NativeProfileDto {
     ownership: Ownership,
     lifecycle: Lifecycle,
     selected: bool,
+    execution: NativeProfileExecution,
     readiness: NativeProfileReadiness,
 }
 
@@ -370,6 +544,56 @@ pub(crate) struct NativeProfileDto {
 pub(crate) struct NativeProfileQueryDto {
     contract: &'static str,
     profiles: Vec<NativeProfileDto>,
+}
+
+/// A validated command description, not a launch request, acceptance, provider observation, or
+/// workflow outcome. Its working root and network restriction come from a separate application
+/// target and are never profile-derived.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NativeLaunchProjectionDto {
+    profile_id: String,
+    mode: ExecutionMode,
+    executable: String,
+    version: String,
+    arguments: Vec<String>,
+    working_root: String,
+    network_disabled: bool,
+    non_interactive_approval: bool,
+    windows_uac_authority: &'static str,
+}
+
+/// Obtained from a separate application-owned work assignment. A profile never supplies a root,
+/// network setting, role, project configuration, or MCP authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NativeLaunchTarget {
+    working_root: PathBuf,
+    network_disabled: bool,
+}
+
+impl NativeLaunchTarget {
+    pub(crate) fn application_owned(
+        working_root: PathBuf,
+        network_disabled: bool,
+    ) -> Result<Self, String> {
+        let canonical = fs::canonicalize(&working_root)
+            .map_err(|_| "Application-owned launch root is missing or inaccessible")?;
+        if !canonical.is_absolute() || !canonical.is_dir() {
+            return Err("Application-owned launch root must be an absolute directory".into());
+        }
+        Ok(Self {
+            working_root: canonical,
+            network_disabled,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NativeFullAccessCanaryProjectionDto {
+    launch: NativeLaunchProjectionDto,
+    sentinel_path: String,
+    evidence_state: &'static str,
 }
 
 /// NCHP-03 supplies this only after its bounded, application-owned MCP action receives a
@@ -440,6 +664,7 @@ struct StoredProfile {
     ownership: Ownership,
     lifecycle: Lifecycle,
     selected: bool,
+    execution: NativeProfileExecution,
     readiness: NativeProfileReadiness,
 }
 
@@ -451,6 +676,7 @@ impl From<StoredProfile> for NativeProfileDto {
             ownership: value.ownership,
             lifecycle: value.lifecycle,
             selected: value.selected,
+            execution: value.execution,
             readiness: value.readiness,
         }
     }
@@ -476,6 +702,7 @@ pub(crate) struct NativeProfileService {
     cli: Arc<dyn NativeCliPort>,
     login_children: Mutex<HashMap<String, Box<dyn NativeCliChild>>>,
     setup_children: Mutex<HashMap<String, Box<dyn NativeCliChild>>>,
+    full_access_canary_children: Mutex<HashMap<String, Box<dyn NativeCliChild>>>,
     operation_gate: Mutex<()>,
 }
 
@@ -497,6 +724,7 @@ impl NativeProfileService {
             }),
             login_children: Mutex::new(HashMap::new()),
             setup_children: Mutex::new(HashMap::new()),
+            full_access_canary_children: Mutex::new(HashMap::new()),
             operation_gate: Mutex::new(()),
         })
     }
@@ -511,6 +739,7 @@ impl NativeProfileService {
             self.revalidate(&profile)?;
             self.reap_login(&profile.id)?;
             self.reconcile_setup_attempts(&profile.id)?;
+            self.reconcile_full_access_canary(&profile.id)?;
             self.expire_mcp_probe(&profile.id)?;
         }
         let profiles = load_profiles(&mut connection)?;
@@ -602,6 +831,12 @@ impl NativeProfileService {
             )
             .map_err(|error| format!("Unable to initialize profile readiness: {error}"))?;
         transaction
+            .execute(
+                "INSERT INTO native_codex_profile_execution_modes (profile_id,selected_mode,updated_at) VALUES (?1,'workspace_write',?2)",
+                params![id, now],
+            )
+            .map_err(|error| format!("Unable to initialize profile execution mode: {error}"))?;
+        transaction
             .commit()
             .map_err(|error| format!("Unable to commit profile registration: {error}"))?;
         self.profile(&id).map(Into::into)
@@ -632,6 +867,51 @@ impl NativeProfileService {
             )
             .map_err(|error| error.to_string())?;
         transaction.commit().map_err(|error| error.to_string())?;
+        self.profile(id).map(Into::into)
+    }
+
+    pub(crate) fn select_execution_mode(
+        &self,
+        id: &str,
+        mode: ExecutionMode,
+    ) -> Result<NativeProfileDto, String> {
+        self.require_active(id)?;
+        self.connection()?
+            .execute(
+                "UPDATE native_codex_profile_execution_modes SET selected_mode=?2,updated_at=?3 WHERE profile_id=?1",
+                params![id, mode.database(), Utc::now().to_rfc3339()],
+            )
+            .map_err(|error| format!("Unable to select native execution mode: {error}"))?;
+        self.profile(id).map(Into::into)
+    }
+
+    /// This is the only durable opt-in for the dangerous mode. Authentication, readiness,
+    /// ownership, and an earlier launch never create it.
+    pub(crate) fn authorize_danger_full_access(
+        &self,
+        id: &str,
+    ) -> Result<NativeProfileDto, String> {
+        let profile = self.require_active(id)?;
+        if profile.execution.selected_mode != ExecutionMode::DangerFullAccess {
+            return Err("Danger full access must be selected before it can be authorized".into());
+        }
+        self.connection()?
+            .execute(
+                "INSERT INTO native_codex_profile_mode_authorizations (profile_id,mode,filesystem_identity,authorized_at,revoked_at) VALUES (?1,'danger_full_access',?2,?3,NULL) ON CONFLICT(profile_id,mode) DO UPDATE SET filesystem_identity=excluded.filesystem_identity,authorized_at=excluded.authorized_at,revoked_at=NULL",
+                params![id, profile.identity, Utc::now().to_rfc3339()],
+            )
+            .map_err(|error| format!("Unable to record danger full access authorization: {error}"))?;
+        self.profile(id).map(Into::into)
+    }
+
+    pub(crate) fn revoke_danger_full_access(&self, id: &str) -> Result<NativeProfileDto, String> {
+        self.require_active(id)?;
+        self.connection()?
+            .execute(
+                "UPDATE native_codex_profile_mode_authorizations SET revoked_at=?2 WHERE profile_id=?1 AND mode='danger_full_access' AND revoked_at IS NULL",
+                params![id, Utc::now().to_rfc3339()],
+            )
+            .map_err(|error| format!("Unable to revoke danger full access authorization: {error}"))?;
         self.profile(id).map(Into::into)
     }
 
@@ -906,6 +1186,216 @@ impl NativeProfileService {
         })
     }
 
+    /// Produces a command only after all mode-specific authority is independently valid. It does
+    /// not start Codex and consequently cannot be mistaken for launch acceptance or activity.
+    pub(crate) fn project_launch(
+        &self,
+        id: &str,
+        target: &NativeLaunchTarget,
+    ) -> Result<NativeLaunchProjectionDto, String> {
+        let profile = self.require_active(id)?;
+        if !profile.selected {
+            return Err(
+                "Only the currently selected native profile can receive a launch projection".into(),
+            );
+        }
+        if !target.network_disabled {
+            return Err(
+                "Native execution requires an application-owned target with network disabled"
+                    .into(),
+            );
+        }
+        let surface = self.cli.surface().map_err(|_| {
+            self.set_attention(id, "cli", Some("codex_cli_surface_unsupported"), false)
+                .ok();
+            "The resolved Codex CLI surface is unsupported for native execution".to_string()
+        })?;
+        let mode = profile.execution.selected_mode;
+        match mode {
+            ExecutionMode::WorkspaceWrite => {
+                if !surface.provenance.workspace_sandbox_supported
+                    || profile.readiness.sandbox_initialization != "initialized"
+                    || profile.readiness.workspace_write_canary != "passed"
+                {
+                    return Err(
+                        "Workspace-write launch authority is not currently established".into(),
+                    );
+                }
+            }
+            ExecutionMode::DangerFullAccess => {
+                if !surface.provenance.danger_full_access_supported
+                    || !surface.provenance.non_interactive_approval_supported
+                    || !profile.execution.danger_full_access_authorized
+                {
+                    return Err(
+                        "Danger full access launch authority is not currently established".into(),
+                    );
+                }
+            }
+        }
+        Ok(NativeLaunchProjectionDto {
+            profile_id: profile.id,
+            mode,
+            executable: surface.provenance.executable,
+            version: surface.provenance.version,
+            arguments: vec![
+                "exec".into(),
+                "--json".into(),
+                "--sandbox".into(),
+                mode.codex_sandbox().into(),
+                "--cd".into(),
+                target.working_root.to_string_lossy().into_owned(),
+                "--skip-git-repo-check".into(),
+            ]
+            .into_iter()
+            .chain((mode == ExecutionMode::DangerFullAccess).then_some("--dangerously-bypass-approvals-and-sandbox".into()))
+            .collect(),
+            working_root: target.working_root.to_string_lossy().into_owned(),
+            // `danger-full-access` bypasses Codex sandboxing. The separate target requirement is
+            // retained, but it is not evidence that this invocation enforces network denial.
+            network_disabled: mode == ExecutionMode::WorkspaceWrite && target.network_disabled,
+            non_interactive_approval: mode == ExecutionMode::DangerFullAccess,
+            windows_uac_authority: "not_granted",
+        })
+    }
+
+    pub(crate) fn project_full_access_canary(
+        &self,
+        id: &str,
+    ) -> Result<NativeFullAccessCanaryProjectionDto, String> {
+        let target =
+            NativeLaunchTarget::application_owned(self.full_access_canary_root(id)?, true)?;
+        let launch = self.project_launch(id, &target)?;
+        if launch.mode != ExecutionMode::DangerFullAccess {
+            return Err(
+                "The full-access canary requires the selected danger full access mode".into(),
+            );
+        }
+        let sentinel_path = self
+            .full_access_canary_root(id)?
+            .join("native-full-access-canary.txt");
+        Ok(NativeFullAccessCanaryProjectionDto {
+            launch,
+            sentinel_path: sentinel_path.to_string_lossy().into_owned(),
+            evidence_state: "not_run",
+        })
+    }
+
+    /// Starts only the bounded, application-owned canary. Provider activity and semantic workflow
+    /// completion remain outside this receipt; only the exact sentinel settles the canary fact.
+    pub(crate) fn run_danger_full_access_canary(
+        &self,
+        id: &str,
+    ) -> Result<NativeProfileDto, String> {
+        self.reconcile_full_access_canary(id)?;
+        if load_pending_full_access_canary(&self.connection()?, id)?.is_some() {
+            return self.profile(id).map(Into::into);
+        }
+        let profile = self.require_active(id)?;
+        let projection = self.project_full_access_canary(id)?;
+        let sentinel = PathBuf::from(&projection.sentinel_path);
+        let prompt = format!(
+            "Create only the application-owned sentinel file at {} with the exact contents native-codex-profile-full-access-canary, then stop.",
+            sentinel.display()
+        );
+        let attempt = PendingFullAccessCanary {
+            attempt_id: format!("native-full-access-canary-{}", Uuid::new_v4()),
+            profile_id: profile.id.clone(),
+            filesystem_identity: profile.identity,
+            executable: projection.launch.executable.clone(),
+            version: projection.launch.version.clone(),
+            sentinel_path: sentinel.clone(),
+        };
+        self.connection()?.execute(
+            "INSERT INTO native_codex_profile_full_access_canaries (attempt_id,profile_id,filesystem_identity,mode,executable,version,sentinel_path,state,started_at) VALUES (?1,?2,?3,'danger_full_access',?4,?5,?6,'pending',?7)",
+            params![attempt.attempt_id, attempt.profile_id, attempt.filesystem_identity, attempt.executable, attempt.version, attempt.sentinel_path.to_string_lossy(), Utc::now().to_rfc3339()],
+        ).map_err(|error| format!("Unable to persist full-access canary request: {error}"))?;
+        let mut args = projection.launch.arguments;
+        args.push(prompt);
+        let invocation = NativeCliInvocation {
+            args,
+            cwd: PathBuf::from(&projection.launch.working_root),
+            codex_home: profile.home.clone(),
+            environment: native_profile_environment(&profile.home),
+            sandbox_receipt: Some(sentinel),
+        };
+        match self.cli.start(&invocation) {
+            Ok(mut child) => match self.full_access_canary_children.lock() {
+                Ok(mut children) => {
+                    children.insert(attempt.attempt_id, child);
+                    self.profile(id).map(Into::into)
+                }
+                Err(_) => {
+                    let _ = child.terminate();
+                    self.set_full_access_canary_state(id, "blocked")?;
+                    Err("Native full-access canary supervision is unavailable".into())
+                }
+            },
+            Err(_) => {
+                self.set_full_access_canary_state(id, "blocked")?;
+                Err("Unable to start the supported full-access canary".into())
+            }
+        }
+    }
+
+    fn reconcile_full_access_canary(&self, id: &str) -> Result<(), String> {
+        let Some(attempt) = load_pending_full_access_canary(&self.connection()?, id)? else {
+            return Ok(());
+        };
+        let current = self.require_active(id);
+        let surface = self.cli.surface();
+        let authority_valid = current.as_ref().is_ok_and(|profile| {
+            profile.selected
+                && profile.execution.selected_mode == ExecutionMode::DangerFullAccess
+                && profile.execution.danger_full_access_authorized
+                && profile.identity == attempt.filesystem_identity
+        }) && surface.as_ref().is_ok_and(|surface| {
+            surface.provenance.danger_full_access_supported
+                && surface.provenance.non_interactive_approval_supported
+                && surface.provenance.executable == attempt.executable
+                && surface.provenance.version == attempt.version
+        });
+        if !authority_valid {
+            self.set_full_access_canary_state(id, "blocked")?;
+            return Ok(());
+        }
+        let outcome = self
+            .full_access_canary_children
+            .lock()
+            .map_err(|_| "Native full-access canary supervision is unavailable")?
+            .get_mut(&attempt.attempt_id)
+            .map(|child| child.try_wait())
+            .transpose()?
+            .flatten();
+        match outcome {
+            Some(receipt) if receipt.succeeded && receipt.sandbox_receipt_observed => {
+                self.full_access_canary_children.lock().ok().and_then(|mut children| children.remove(&attempt.attempt_id));
+                self.set_full_access_canary_state(id, "passed")?;
+            }
+            Some(_) => {
+                self.full_access_canary_children.lock().ok().and_then(|mut children| children.remove(&attempt.attempt_id));
+                self.set_full_access_canary_state(id, "blocked")?;
+            }
+            None if !self.full_access_canary_children.lock().map_err(|_| "Native full-access canary supervision is unavailable")?.contains_key(&attempt.attempt_id) => {
+                self.set_full_access_canary_state(id, "blocked")?;
+            }
+            None => {}
+        }
+        Ok(())
+    }
+
+    fn set_full_access_canary_state(&self, id: &str, state: &str) -> Result<(), String> {
+        self.connection()?.execute(
+            "UPDATE native_codex_profile_full_access_canaries SET state=?2,completed_at=?3 WHERE profile_id=?1 AND state='pending'",
+            params![id, state, Utc::now().to_rfc3339()],
+        ).map_err(|error| error.to_string())?;
+        self.connection()?.execute(
+            "UPDATE native_codex_profile_readiness SET danger_full_access_canary=?2,observed_at=?3 WHERE profile_id=?1",
+            params![id, state, Utc::now().to_rfc3339()],
+        ).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     fn require_active(&self, id: &str) -> Result<StoredProfile, String> {
         let profile = self.profile(id)?;
         if profile.lifecycle != Lifecycle::Active {
@@ -935,6 +1425,20 @@ impl NativeProfileService {
             .join(id)
     }
 
+    fn full_access_canary_root(&self, id: &str) -> Result<PathBuf, String> {
+        let root = self
+            .dedicated_root
+            .parent()
+            .unwrap_or(&self.dedicated_root)
+            .join("native-codex-full-access-canaries")
+            .join(id);
+        fs::create_dir_all(&root).map_err(|error| {
+            format!("Unable to create application-owned full-access canary root: {error}")
+        })?;
+        fs::canonicalize(root)
+            .map_err(|_| "Unable to validate application-owned full-access canary root".into())
+    }
+
     fn start_setup_attempt(
         &self,
         profile: &StoredProfile,
@@ -955,6 +1459,23 @@ impl NativeProfileService {
             return Err("Native Codex home is not currently validated".into());
         }
         let root = self.probe_root(id);
+        let surface = self.cli.surface().map_err(|_| {
+            self.set_attention(id, "cli", Some("codex_cli_surface_unsupported"), false)
+                .ok();
+            "The resolved Codex CLI surface is unsupported for native sandbox setup".to_string()
+        })?;
+        if !surface.provenance.workspace_sandbox_supported {
+            self.set_attention(
+                id,
+                "cli",
+                Some("codex_cli_workspace_sandbox_unsupported"),
+                false,
+            )?;
+            return Err(
+                "The resolved Codex CLI does not support the required workspace sandbox state"
+                    .into(),
+            );
+        }
         fs::create_dir_all(&root).map_err(|error| {
             format!("Unable to create application-owned sandbox probe root: {error}")
         })?;
@@ -994,6 +1515,8 @@ impl NativeProfileService {
             "sandbox".into(),
         ];
         args.extend([
+            "--sandbox-state-json".into(),
+            WORKSPACE_SANDBOX_STATE_JSON.into(),
             "--sandbox-state-disable-network".into(),
             "--sandbox-state-readable-root".into(),
             root.to_string_lossy().into_owned(),
@@ -1231,11 +1754,20 @@ impl NativeProfileService {
             }
         }
         drop(children);
+        if let Ok(mut children) = self.full_access_canary_children.lock() {
+            if let Some(mut child) = load_pending_full_access_canary(&self.connection()?, id)?
+                .and_then(|attempt| children.remove(&attempt.attempt_id))
+            {
+                let _ = child.terminate();
+            }
+        }
         let connection = self.connection()?;
         connection.execute("UPDATE native_codex_profiles SET lifecycle=?2,selected_at=NULL,updated_at=?3 WHERE id=?1", params![id, lifecycle.database(), Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
-        connection.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+        connection.execute("UPDATE native_codex_profile_mode_authorizations SET revoked_at=COALESCE(revoked_at,?2) WHERE profile_id=?1 AND mode='danger_full_access'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+        connection.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',danger_full_access_canary='blocked',mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_setup_attempts SET state='cancelled',completed_at=?2 WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state='pending'", params![id]).map_err(|error| error.to_string())?;
+        connection.execute("UPDATE native_codex_profile_full_access_canaries SET state='cancelled',completed_at=?2 WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         self.write_attention(
             &connection,
             id,
@@ -1318,6 +1850,12 @@ impl Drop for NativeProfileService {
             children.clear();
         }
         if let Ok(mut children) = self.setup_children.lock() {
+            for child in children.values_mut() {
+                let _ = child.terminate();
+            }
+            children.clear();
+        }
+        if let Ok(mut children) = self.full_access_canary_children.lock() {
             for child in children.values_mut() {
                 let _ = child.terminate();
             }
@@ -1487,6 +2025,27 @@ fn load_pending_setup_attempts(
     Ok(attempts)
 }
 
+fn load_pending_full_access_canary(
+    connection: &Connection,
+    profile_id: &str,
+) -> Result<Option<PendingFullAccessCanary>, String> {
+    connection
+        .query_row(
+            "SELECT attempt_id,profile_id,filesystem_identity,executable,version,sentinel_path FROM native_codex_profile_full_access_canaries WHERE profile_id=?1 AND state='pending'",
+            params![profile_id],
+            |row| Ok(PendingFullAccessCanary {
+                attempt_id: row.get(0)?,
+                profile_id: row.get(1)?,
+                filesystem_identity: row.get(2)?,
+                executable: row.get(3)?,
+                version: row.get(4)?,
+                sentinel_path: PathBuf::from(row.get::<_, String>(5)?),
+            }),
+        )
+        .optional()
+        .map_err(|error| error.to_string())
+}
+
 fn load_pending_mcp_probe(
     connection: &Connection,
     profile_id: &str,
@@ -1509,30 +2068,40 @@ fn load_pending_mcp_probe(
 }
 
 fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, String> {
-    let mut statement = connection.prepare("SELECT p.id,p.canonical_home_path,p.filesystem_identity,p.ownership,p.lifecycle,p.selected_at,r.authentication,r.sandbox_initialization,r.workspace_write_canary,r.mcp_reporting,(SELECT detail FROM native_codex_profile_attentions a WHERE a.profile_id=p.id AND a.concern='authentication'),(SELECT detail FROM native_codex_profile_attentions a WHERE a.profile_id=p.id AND a.concern='sandbox'),(SELECT detail FROM native_codex_profile_attentions a WHERE a.profile_id=p.id AND a.concern='canary'),(SELECT detail FROM native_codex_profile_attentions a WHERE a.profile_id=p.id AND a.concern='mcp_reporting'),(SELECT detail FROM native_codex_profile_attentions a WHERE a.profile_id=p.id AND a.concern='continuity'),(SELECT detail FROM native_codex_profile_attentions a WHERE a.profile_id=p.id AND a.concern='cli') FROM native_codex_profiles p JOIN native_codex_profile_readiness r ON r.profile_id=p.id ORDER BY p.created_at").map_err(|error| error.to_string())?;
+    let mut statement = connection.prepare("SELECT p.id,p.canonical_home_path,p.filesystem_identity,p.ownership,p.lifecycle,p.selected_at,r.authentication,r.sandbox_initialization,r.workspace_write_canary,r.danger_full_access_canary,r.mcp_reporting,e.selected_mode,a.filesystem_identity,a.revoked_at,(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='authentication'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='sandbox'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='canary'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='mcp_reporting'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='continuity'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='cli') FROM native_codex_profiles p JOIN native_codex_profile_readiness r ON r.profile_id=p.id JOIN native_codex_profile_execution_modes e ON e.profile_id=p.id LEFT JOIN native_codex_profile_mode_authorizations a ON a.profile_id=p.id AND a.mode='danger_full_access' ORDER BY p.created_at").map_err(|error| error.to_string())?;
     let rows = statement
         .query_map([], |row| {
+            let identity: String = row.get(2)?;
+            let authorization_identity: Option<String> = row.get(12)?;
+            let authorization_revoked: Option<String> = row.get(13)?;
             Ok(StoredProfile {
                 id: row.get(0)?,
                 home: PathBuf::from(row.get::<_, String>(1)?),
-                identity: row.get(2)?,
+                identity: identity.clone(),
                 ownership: Ownership::parse(&row.get::<_, String>(3)?)
                     .map_err(|_| rusqlite::Error::InvalidQuery)?,
                 lifecycle: Lifecycle::parse(&row.get::<_, String>(4)?)
                     .map_err(|_| rusqlite::Error::InvalidQuery)?,
                 selected: row.get::<_, Option<String>>(5)?.is_some(),
+                execution: NativeProfileExecution {
+                    selected_mode: ExecutionMode::parse(&row.get::<_, String>(11)?)
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                    danger_full_access_authorized: authorization_identity == Some(identity)
+                        && authorization_revoked.is_none(),
+                },
                 readiness: NativeProfileReadiness {
                     authentication: row.get(6)?,
                     sandbox_initialization: row.get(7)?,
                     workspace_write_canary: row.get(8)?,
-                    mcp_reporting: row.get(9)?,
+                    danger_full_access_canary: row.get(9)?,
+                    mcp_reporting: row.get(10)?,
                     attentions: NativeProfileAttentions {
-                        authentication: row.get(10)?,
-                        sandbox: row.get(11)?,
-                        canary: row.get(12)?,
-                        mcp_reporting: row.get(13)?,
-                        continuity: row.get(14)?,
-                        cli: row.get(15)?,
+                        authentication: row.get(14)?,
+                        sandbox: row.get(15)?,
+                        canary: row.get(16)?,
+                        mcp_reporting: row.get(17)?,
+                        continuity: row.get(18)?,
+                        cli: row.get(19)?,
                     },
                 },
             })
@@ -1561,6 +2130,12 @@ pub(crate) struct RegisterNativeProfileInput {
 pub(crate) struct NativeProfileIdInput {
     profile_id: String,
 }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct NativeExecutionModeInput {
+    profile_id: String,
+    mode: ExecutionMode,
+}
 
 #[tauri::command]
 pub(crate) fn load_native_profile_query(
@@ -1587,6 +2162,31 @@ pub(crate) fn select_native_profile(
     input: NativeProfileIdInput,
 ) -> Result<NativeProfileDto, String> {
     state.service.select(&input.profile_id)
+}
+#[tauri::command]
+pub(crate) fn select_native_profile_execution_mode(
+    state: State<'_, NativeProfileTauriState>,
+    input: NativeExecutionModeInput,
+) -> Result<NativeProfileDto, String> {
+    state
+        .service
+        .select_execution_mode(&input.profile_id, input.mode)
+}
+#[tauri::command]
+pub(crate) fn authorize_native_profile_danger_full_access(
+    state: State<'_, NativeProfileTauriState>,
+    input: NativeProfileIdInput,
+) -> Result<NativeProfileDto, String> {
+    state
+        .service
+        .authorize_danger_full_access(&input.profile_id)
+}
+#[tauri::command]
+pub(crate) fn revoke_native_profile_danger_full_access(
+    state: State<'_, NativeProfileTauriState>,
+    input: NativeProfileIdInput,
+) -> Result<NativeProfileDto, String> {
+    state.service.revoke_danger_full_access(&input.profile_id)
 }
 #[tauri::command]
 pub(crate) fn request_native_profile_login(
@@ -1628,6 +2228,13 @@ pub(crate) fn run_native_profile_workspace_write_canary(
     state.service.run_workspace_write_canary(&input.profile_id)
 }
 #[tauri::command]
+pub(crate) fn run_native_profile_danger_full_access_canary(
+    state: State<'_, NativeProfileTauriState>,
+    input: NativeProfileIdInput,
+) -> Result<NativeProfileDto, String> {
+    state.service.run_danger_full_access_canary(&input.profile_id)
+}
+#[tauri::command]
 pub(crate) fn probe_native_profile_mcp_reporting(
     state: State<'_, NativeProfileTauriState>,
     input: NativeProfileIdInput,
@@ -1664,6 +2271,7 @@ mod tests {
         starts: Mutex<usize>,
         terminated: Arc<Mutex<usize>>,
         next_child_result: Mutex<Option<NativeCliReceipt>>,
+        surface_supported: bool,
     }
     impl FakeCli {
         fn succeeding() -> Self {
@@ -1676,6 +2284,14 @@ mod tests {
                 starts: Mutex::new(0),
                 terminated: Arc::new(Mutex::new(0)),
                 next_child_result: Mutex::new(None),
+                surface_supported: true,
+            }
+        }
+
+        fn unsupported_surface() -> Self {
+            Self {
+                surface_supported: false,
+                ..Self::succeeding()
             }
         }
     }
@@ -1694,6 +2310,20 @@ mod tests {
                 result: self.next_child_result.lock().unwrap().take(),
                 terminated: self.terminated.clone(),
             }))
+        }
+        fn surface(&self) -> Result<NativeCliSurface, String> {
+            if !self.surface_supported {
+                return Err("unsupported".into());
+            }
+            Ok(NativeCliSurface {
+                provenance: NativeCliProvenance {
+                    executable: "C:/application-owned/codex.exe".into(),
+                    version: "codex-cli test".into(),
+                    workspace_sandbox_supported: true,
+                    danger_full_access_supported: true,
+                    non_interactive_approval_supported: true,
+                },
+            })
         }
     }
 
@@ -1824,7 +2454,7 @@ mod tests {
             connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
-            24
+            crate::storage::ACTIVE_SCHEMA_VERSION
         );
     }
 
@@ -1898,6 +2528,12 @@ mod tests {
                     "--sandbox-state-disable-network",
                     "--sandbox-state-readable-root",
                 ])
+            }));
+            assert!(call.args.windows(2).any(|window| {
+                window
+                    .iter()
+                    .map(String::as_str)
+                    .eq(["--sandbox-state-json", WORKSPACE_SANDBOX_STATE_JSON])
             }));
             assert!(!call
                 .args
@@ -1974,9 +2610,7 @@ mod tests {
         let fake = Arc::new(FakeCli::succeeding());
         service.cli = fake.clone();
         let profile = service.create_dedicated().unwrap();
-        assert!(service
-            .confirm_sandbox_initialization(&profile.id)
-            .is_err());
+        assert!(service.confirm_sandbox_initialization(&profile.id).is_err());
         let blocked = service.run_workspace_write_canary(&profile.id).unwrap();
         assert_eq!(blocked.readiness.workspace_write_canary, "blocked");
         assert_eq!(*fake.starts.lock().unwrap(), 0);
@@ -2062,6 +2696,208 @@ mod tests {
             query.profiles[0].readiness.workspace_write_canary,
             "not_run"
         );
+    }
+
+    #[test]
+    fn danger_full_access_is_explicit_durable_and_revocable_per_profile_identity() {
+        let (directory, service) = service();
+        let first = service.create_dedicated().unwrap();
+        let second = service.create_dedicated().unwrap();
+        service.select(&first.id).unwrap();
+        service
+            .select_execution_mode(&first.id, ExecutionMode::DangerFullAccess)
+            .unwrap();
+        assert!(
+            !service
+                .profile(&first.id)
+                .unwrap()
+                .execution
+                .danger_full_access_authorized
+        );
+        service.authorize_danger_full_access(&first.id).unwrap();
+        assert!(
+            service
+                .profile(&first.id)
+                .unwrap()
+                .execution
+                .danger_full_access_authorized
+        );
+        assert!(
+            !service
+                .profile(&second.id)
+                .unwrap()
+                .execution
+                .danger_full_access_authorized
+        );
+        drop(service);
+        let reopened = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        assert!(
+            reopened
+                .profile(&first.id)
+                .unwrap()
+                .execution
+                .danger_full_access_authorized
+        );
+        reopened.revoke_danger_full_access(&first.id).unwrap();
+        assert!(
+            !reopened
+                .profile(&first.id)
+                .unwrap()
+                .execution
+                .danger_full_access_authorized
+        );
+    }
+
+    #[test]
+    fn danger_authority_fails_closed_when_identity_is_stale_or_continuity_is_lost() {
+        let (_directory, service) = service();
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        service
+            .select_execution_mode(&profile.id, ExecutionMode::DangerFullAccess)
+            .unwrap();
+        service.authorize_danger_full_access(&profile.id).unwrap();
+        service
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE native_codex_profile_mode_authorizations SET filesystem_identity='stale' WHERE profile_id=?1",
+                params![profile.id],
+            )
+            .unwrap();
+        assert!(
+            !service
+                .profile(&profile.id)
+                .unwrap()
+                .execution
+                .danger_full_access_authorized
+        );
+        service.authorize_danger_full_access(&profile.id).unwrap();
+        fs::remove_file(Path::new(&profile.home_path).join(MARKER_FILE)).unwrap();
+        service.query().unwrap();
+        let revoked: Option<String> = service.connection().unwrap().query_row(
+            "SELECT revoked_at FROM native_codex_profile_mode_authorizations WHERE profile_id=?1 AND mode='danger_full_access'",
+            params![profile.id], |row| row.get(0),
+        ).unwrap();
+        assert!(revoked.is_some());
+    }
+
+    #[test]
+    fn mode_specific_launch_projections_are_bounded_and_do_not_claim_uac() {
+        let (directory, service) = service();
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        let root = directory.path().join("assigned-application-root");
+        fs::create_dir_all(&root).unwrap();
+        let workspace_target = NativeLaunchTarget::application_owned(root.clone(), true).unwrap();
+        assert!(service
+            .project_launch(&profile.id, &workspace_target)
+            .is_err());
+        service
+            .update_readiness(
+                &profile.id,
+                None,
+                Some("initialized"),
+                Some("passed"),
+                None,
+                None,
+            )
+            .unwrap();
+        let workspace = service
+            .project_launch(&profile.id, &workspace_target)
+            .unwrap();
+        assert!(workspace
+            .arguments
+            .windows(2)
+            .any(|pair| pair == ["--sandbox", "workspace-write"]));
+        assert_eq!(workspace.executable, "C:/application-owned/codex.exe");
+        assert_eq!(workspace.version, "codex-cli test");
+        assert!(workspace.network_disabled);
+        assert_eq!(workspace.windows_uac_authority, "not_granted");
+        service
+            .select_execution_mode(&profile.id, ExecutionMode::DangerFullAccess)
+            .unwrap();
+        assert!(service
+            .project_launch(&profile.id, &workspace_target)
+            .is_err());
+        service.authorize_danger_full_access(&profile.id).unwrap();
+        let danger = service
+            .project_launch(&profile.id, &workspace_target)
+            .unwrap();
+        assert!(danger
+            .arguments
+            .windows(2)
+            .any(|pair| pair == ["--sandbox", "danger-full-access"]));
+        assert!(danger
+            .arguments
+            .iter()
+            .any(|argument| argument == "--dangerously-bypass-approvals-and-sandbox"));
+        assert!(danger.non_interactive_approval);
+        assert!(!danger.network_disabled);
+        assert_eq!(danger.windows_uac_authority, "not_granted");
+        let canary = service.project_full_access_canary(&profile.id).unwrap();
+        assert_eq!(canary.evidence_state, "not_run");
+        assert!(canary
+            .sentinel_path
+            .contains("native-full-access-canary.txt"));
+        assert_ne!(canary.launch.working_root, workspace.working_root);
+    }
+
+    #[test]
+    fn unsupported_cli_surface_fails_closed_before_launch_projection() {
+        let (directory, mut service) = service();
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        service
+            .select_execution_mode(&profile.id, ExecutionMode::DangerFullAccess)
+            .unwrap();
+        service.authorize_danger_full_access(&profile.id).unwrap();
+        service.cli = Arc::new(FakeCli::unsupported_surface());
+        let root = directory.path().join("assigned-application-root");
+        fs::create_dir_all(&root).unwrap();
+        let target = NativeLaunchTarget::application_owned(root, true).unwrap();
+        assert!(service.project_launch(&profile.id, &target).is_err());
+        assert_eq!(
+            service.profile(&profile.id).unwrap().readiness.attentions.cli,
+            Some("codex_cli_surface_unsupported".into())
+        );
+    }
+
+    #[test]
+    fn full_access_canary_persists_then_settles_only_the_owned_sentinel_receipt() {
+        let (directory, mut service) = service();
+        let fake = Arc::new(FakeCli::succeeding());
+        *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
+            succeeded: true,
+            sandbox_receipt_observed: true,
+        });
+        service.cli = fake;
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        service
+            .select_execution_mode(&profile.id, ExecutionMode::DangerFullAccess)
+            .unwrap();
+        service.authorize_danger_full_access(&profile.id).unwrap();
+        service.run_danger_full_access_canary(&profile.id).unwrap();
+        assert_eq!(
+            service.profile(&profile.id).unwrap().readiness.danger_full_access_canary,
+            "not_run"
+        );
+        service.query().unwrap();
+        assert_eq!(
+            service.profile(&profile.id).unwrap().readiness.danger_full_access_canary,
+            "passed"
+        );
+        let persisted: String = service.connection().unwrap().query_row(
+            "SELECT state FROM native_codex_profile_full_access_canaries WHERE profile_id=?1",
+            params![profile.id], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(persisted, "passed");
+        assert!(directory.path().join("app").exists());
     }
 
     #[test]
@@ -2419,6 +3255,9 @@ mod tests {
                 Err("missing".into())
             }
             fn start(&self, _: &NativeCliInvocation) -> Result<Box<dyn NativeCliChild>, String> {
+                Err("missing".into())
+            }
+            fn surface(&self) -> Result<NativeCliSurface, String> {
                 Err("missing".into())
             }
         }

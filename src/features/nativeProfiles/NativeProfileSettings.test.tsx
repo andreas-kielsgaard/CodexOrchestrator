@@ -4,15 +4,16 @@ import { describe, expect, it, vi } from 'vitest';
 import { NativeProfileSettings } from './NativeProfileSettings';
 import type { NativeProfile, NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
 
-const readiness = { authentication: 'unknown' as const, sandboxInitialization: 'unknown' as const, workspaceWriteCanary: 'not_run' as const, mcpReporting: 'not_assessed' as const, attentions: { authentication: null, sandbox: null, canary: null, mcpReporting: null, continuity: null, cli: null } };
+const readiness = { authentication: 'unknown' as const, sandboxInitialization: 'unknown' as const, workspaceWriteCanary: 'not_run' as const, dangerFullAccessCanary: 'not_run' as const, mcpReporting: 'not_assessed' as const, attentions: { authentication: null, sandbox: null, canary: null, mcpReporting: null, continuity: null, cli: null } };
+const execution = { selectedMode: 'workspace_write' as const, dangerFullAccessAuthorized: false };
 const profiles: readonly NativeProfile[] = [
-  { id: 'p1', homePath: 'C:/one', ownership: 'registered_existing', lifecycle: 'active', selected: true, readiness },
-  { id: 'p2', homePath: 'C:/two', ownership: 'application_dedicated', lifecycle: 'active', selected: false, readiness },
+  { id: 'p1', homePath: 'C:/one', ownership: 'registered_existing', lifecycle: 'active', selected: true, execution, readiness },
+  { id: 'p2', homePath: 'C:/two', ownership: 'application_dedicated', lifecycle: 'active', selected: false, execution, readiness },
 ];
 
 function client(overrides: Partial<NativeProfileClient> = {}): NativeProfileClient {
   const query = async () => ({ contract: 'native-codex-profile-query/v1' as const, profiles });
-  return { load: query, registerExisting: query, createDedicated: query, select: query, requestLogin: query, refreshReadiness: query, initializeSandbox: query, confirmSandboxInitialization: query, runCanary: query, probeMcp: query, ...overrides };
+  return { load: query, registerExisting: query, createDedicated: query, select: query, selectExecutionMode: query, authorizeDangerFullAccess: query, revokeDangerFullAccess: query, requestLogin: query, refreshReadiness: query, initializeSandbox: query, confirmSandboxInitialization: query, runCanary: query, runDangerFullAccessCanary: query, probeMcp: query, ...overrides };
 }
 
 describe('NativeProfileSettings', () => {
