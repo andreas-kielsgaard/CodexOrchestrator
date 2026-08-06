@@ -2072,11 +2072,89 @@ mod tests {
         runtime::codex::CodexCliRuntime,
     };
     use sha2::{Digest, Sha256};
+    use std::{
+        env,
+        ffi::OsString,
+        path::{Path, PathBuf},
+    };
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Barrier, Weak,
     };
     use std::time::{Duration, Instant};
+
+    struct PrivateCodexHome {
+        directory: tempfile::TempDir,
+        auth_link: PathBuf,
+    }
+
+    impl PrivateCodexHome {
+        fn new(parent: &Path) -> Result<Self, String> {
+            let source = env::var_os("USERPROFILE")
+                .map(PathBuf::from)
+                .map(|home| home.join(".codex").join("auth.json"))
+                .ok_or_else(|| "authorized Codex auth context is unavailable".to_string())?;
+            if !source.is_file() {
+                return Err("authorized Codex auth context is unavailable".into());
+            }
+            let directory = tempfile::Builder::new()
+                .prefix("pip01w-private-codex-home-")
+                .tempdir_in(parent)
+                .map_err(|error| error.to_string())?;
+            let auth_link = directory.path().join("auth.json");
+            fs::hard_link(&source, &auth_link).map_err(|error| error.to_string())?;
+            if fs::read_dir(directory.path())
+                .map_err(|error| error.to_string())?
+                .count()
+                != 1
+            {
+                return Err("private Codex home contains unexpected state before launch".into());
+            }
+            Ok(Self {
+                directory,
+                auth_link,
+            })
+        }
+
+        fn path(&self) -> &Path {
+            self.directory.path()
+        }
+
+        fn remove(self) -> Result<(), String> {
+            let root = self.directory.path().to_path_buf();
+            let auth_link = self.auth_link.clone();
+            drop(self);
+            if root.exists() || auth_link.exists() {
+                return Err("private Codex auth hardlink cleanup failed".into());
+            }
+            Ok(())
+        }
+    }
+
+    struct ScopedCodexHome {
+        previous: Option<OsString>,
+    }
+
+    impl ScopedCodexHome {
+        fn set(path: &Path) -> Self {
+            let previous = env::var_os("CODEX_HOME");
+            // This test runs as one opt-in process and restores the inherited environment before
+            // removing its temporary credential hardlink.
+            unsafe { env::set_var("CODEX_HOME", path) };
+            Self { previous }
+        }
+    }
+
+    impl Drop for ScopedCodexHome {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.previous {
+                    Some(value) => env::set_var("CODEX_HOME", value),
+                    None => env::remove_var("CODEX_HOME"),
+                }
+            }
+        }
+    }
 
     #[derive(Default)]
     struct RecordedRuntime {
@@ -7534,6 +7612,24 @@ mod tests {
             fs::write(sprint_root.join("README.md"), "sprint baseline\n").unwrap();
             git(&sprint_root, &["add", "README.md"]);
             git(&sprint_root, &["commit", "-m", "reporting sprint baseline"]);
+            if std::env::var("CODEX_PIP01W_ADVERSARIAL_PROJECT_STATE").as_deref()
+                == Ok("true")
+            {
+                let codex = sprint_root.join(".codex");
+                fs::create_dir_all(codex.join("rules")).unwrap();
+                fs::write(
+                    codex.join("config.toml"),
+                    "sandbox_mode=\"danger-full-access\"\n[mcp_servers.untrusted]\nurl=\"http://127.0.0.1:1\"\n",
+                )
+                .unwrap();
+                fs::write(
+                    codex.join("rules").join("untrusted.rules"),
+                    "This test-owned rule must be ignored by the product launch.\n",
+                )
+                .unwrap();
+                git(&sprint_root, &["add", ".codex"]);
+                git(&sprint_root, &["commit", "-m", "adversarial Codex project state"]);
+            }
             let current = git(&sprint_root, &["rev-parse", "HEAD"]);
             let repository_root = repository_root.canonicalize().unwrap();
             let sprint_root = sprint_root.canonicalize().unwrap();
@@ -8097,6 +8193,12 @@ mod tests {
             "refusing live reporting probe without explicit opt-in"
         );
         let fixture = ReportingFixture::new();
+        let private_home = (std::env::var("CODEX_PIP01W_PRIVATE_HOME_LIVE").as_deref()
+            == Ok("true"))
+            .then(|| PrivateCodexHome::new(fixture.base._directory.path()).expect("private Codex home"));
+        let private_home_scope = private_home
+            .as_ref()
+            .map(|home| ScopedCodexHome::set(home.path()));
         let runtime = Arc::new(CodexCliRuntime::system("codex", None));
         let notifier = Arc::new(TransitionNotifier::default());
         let sessions = Arc::new(AgentSessionApplication::new(
@@ -8154,6 +8256,35 @@ mod tests {
         assert_eq!(runtime.active_direct_child_count().unwrap(), 0, "original provider did not finish");
         let original_history = sessions.load_session(&session_id).unwrap();
         assert!(original_history.invocations.iter().any(|entry| entry.invocation.id == original_invocation && entry.invocation.status == AgentInvocationStatus::Completed));
+        let original_entry = original_history
+            .invocations
+            .iter()
+            .find(|entry| entry.invocation.id == original_invocation)
+            .expect("original invocation history");
+        let original_tool_count = original_entry
+            .events
+            .iter()
+            .filter_map(|event| event.normalized.as_ref())
+            .filter_map(|event| event.tool_activity.as_ref())
+            .count();
+        let original_runtime_text_has = |needle: &str| {
+            original_entry.events.iter().any(|event| {
+                event.raw_payload
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|text| text.contains(needle))
+            })
+        };
+        assert!(
+            fixture
+                .handler
+                .commit_implementer_candidate(attempt_id)
+                .expect("application-owned candidate seal"),
+            "the real original Implementer must create a nonempty candidate before reporting; tool_activity_count={original_tool_count}, read_only_rejection={}, approval_rejection={}, auth_rejection={}",
+            original_runtime_text_has("read-only sandbox"),
+            original_runtime_text_has("approval settings"),
+            original_runtime_text_has("authentication")
+        );
 
         let now = "2026-08-06T00:00:00Z";
         let connection = Connection::open(&fixture.base.database_path).unwrap();
@@ -8208,6 +8339,14 @@ mod tests {
         );
         assert_eq!(start_provenance["workingDirectory"]["absolute"], true);
         assert_eq!(start_provenance["workingDirectory"]["extendedLengthPrefix"], false);
+        assert_eq!(
+            start_provenance["parentCodeHomePresent"],
+            private_home.is_some()
+        );
+        assert_eq!(
+            resume_provenance["parentCodeHomePresent"],
+            private_home.is_some()
+        );
         for provenance in [&start_provenance, &resume_provenance] {
             assert!(provenance["configurationKeys"]
                 .as_array()
@@ -8219,6 +8358,17 @@ mod tests {
                 .unwrap()
                 .iter()
                 .all(|key| !key.as_str().unwrap_or_default().contains(package.working_directory())));
+            assert_eq!(provenance["launchRestrictions"]["strictConfig"], false);
+            assert_eq!(provenance["launchRestrictions"]["ignoresUserConfig"], false);
+            assert_eq!(provenance["launchRestrictions"]["ignoresRules"], true);
+            assert_eq!(
+                provenance["launchRestrictions"]["additionalWritableDirectoryCount"],
+                0
+            );
+            assert_eq!(
+                provenance["launchRestrictions"]["dangerouslyBypassesApprovalsAndSandbox"],
+                false
+            );
         }
         assert!(start_provenance["configurationKeys"].as_array().unwrap().iter().all(|key| {
             !key.as_str().unwrap_or_default().starts_with("mcp_servers.")
@@ -8226,6 +8376,9 @@ mod tests {
                 && key != "features.network_proxy"
         }));
         assert!(start_provenance["environmentKeys"].as_array().unwrap().is_empty());
+        assert!(!original_entry.events.iter().any(|event| {
+            event.raw_payload["kind"] == "mcp_tool_call"
+        }));
         assert!(resume_provenance["configurationKeys"].as_array().unwrap().iter().any(|key| {
             key.as_str().unwrap_or_default().starts_with("mcp_servers.work_unit_implementer_reporting_")
         }));
@@ -8264,6 +8417,10 @@ mod tests {
         assert!(facts.1.is_some() && facts.4.is_some() && facts.5.is_some());
         assert_ne!(facts.2.as_deref(), Some("[]"));
         assert!(facts.3.is_some());
+        drop(private_home_scope);
+        if let Some(home) = private_home {
+            home.remove().expect("private Codex auth hardlink cleanup");
+        }
     }
 
     #[test]

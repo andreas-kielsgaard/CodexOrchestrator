@@ -371,6 +371,13 @@ impl RuntimeCoordinator {
                 "absolute": path.is_absolute(),
             })
         }).unwrap_or_else(|| json!({"provided": false}));
+        let launch_restrictions = json!({
+            "strictConfig": spec.args.iter().any(|argument| argument == "--strict-config"),
+            "ignoresUserConfig": spec.args.iter().any(|argument| argument == "--ignore-user-config"),
+            "ignoresRules": spec.args.iter().any(|argument| argument == "--ignore-rules"),
+            "additionalWritableDirectoryCount": spec.args.iter().filter(|argument| argument.as_str() == "--add-dir").count(),
+            "dangerouslyBypassesApprovalsAndSandbox": spec.args.iter().any(|argument| argument == "--dangerously-bypass-approvals-and-sandbox"),
+        });
         deliver_update(
             &sink,
             invocation_id,
@@ -389,6 +396,8 @@ impl RuntimeCoordinator {
                     "configurationKeys": configuration_keys,
                     "environmentKeys": spec.environment.iter().map(|(key, _)| key).collect::<Vec<_>>(),
                     "inheritsParentEnvironment": true,
+                    "parentCodeHomePresent": std::env::var_os("CODEX_HOME").is_some(),
+                    "launchRestrictions": launch_restrictions,
                     "workingDirectory": working_directory,
                 }),
                 normalized: None,

@@ -431,7 +431,7 @@ impl WorkUnitExecutionHarnessService {
         role: WorkUnitHarnessRole,
         harness: ConversationHarnessProfile,
     ) -> Result<WorkUnitExecutionHarnessPackage, WorkUnitHarnessError> {
-        if role == WorkUnitHarnessRole::Implementer && !valid_implementer_mcp_profile(&harness) {
+        if role == WorkUnitHarnessRole::Implementer && !is_exact_implementer_profile(&harness) {
             return Err(WorkUnitHarnessError::Unavailable);
         }
         let discovery_root = conversation_harness::role_discovery_root(role.harness_role())
@@ -483,11 +483,14 @@ impl WorkUnitExecutionHarnessService {
     }
 }
 
-fn valid_implementer_mcp_profile(harness: &ConversationHarnessProfile) -> bool {
-    (!harness.mcp.required && harness.mcp.enabled_tools.is_empty())
-        || (harness.mcp.required
-            && harness.mcp.enabled_tools
-                == ["submit_implementation_outcome", "complete_implementation_outcome"])
+fn is_exact_implementer_profile(harness: &ConversationHarnessProfile) -> bool {
+    harness.key == "work_unit_implementer"
+        && harness.runtime_options().sandbox
+            == Some(crate::agent_sessions::domain::RuntimeSandboxMode::WorkspaceWrite)
+        && ((!harness.mcp.required && harness.mcp.enabled_tools.is_empty())
+            || (harness.mcp.required
+                && harness.mcp.enabled_tools
+                    == ["submit_implementation_outcome", "complete_implementation_outcome"]))
 }
 
 /// A constructed package contains the application-derived working directory and opaque
@@ -621,9 +624,13 @@ fn package_runtime_launch_configuration(
     // has already authenticated this exact isolated worktree through the execution-support grant,
     // so pass one ephemeral, exact-project trust override only to its writable Implementer package.
     // It neither persists trust nor widens the workspace boundary.
-    if harness.runtime_options().sandbox
-        == Some(crate::agent_sessions::domain::RuntimeSandboxMode::WorkspaceWrite)
-    {
+    if is_exact_implementer_profile(harness) {
+        // The isolated worktree must not contribute execpolicy rules, hooks, MCP servers, network
+        // settings, or additional writable roots. The application passes the only allowed
+        // reporting MCP configuration separately on its exact continuation.
+        additional_args.extend([
+            "--ignore-rules".into(),
+        ]);
         additional_args.extend([
             "-c".into(),
             workspace_trust_configuration(working_directory),
@@ -639,22 +646,23 @@ fn package_runtime_launch_configuration(
     }
 }
 
-/// Encodes the single quoted TOML key segment accepted by Codex CLI's `-c` surface.  This is
+/// Encodes the single-quoted TOML key segment persisted by Codex for Windows projects. This is
 /// derived only from the already-authorized package reference, never from agent input.  Values
 /// are intentionally not retained in launch provenance.
 fn workspace_trust_configuration(working_directory: &str) -> String {
-    let mut encoded = String::with_capacity(working_directory.len());
-    for character in working_directory.chars() {
+    // Codex persists Windows project-trust keys in canonical lower-case form. The execution
+    // support reference remains case-preserving for filesystem authority; only this CLI config
+    // key receives the Windows-insensitive normalization.
+    let normalized = working_directory.to_ascii_lowercase();
+    let mut encoded = String::with_capacity(normalized.len());
+    for character in normalized.chars() {
         match character {
-            '\\' => encoded.push_str("\\\\"),
-            '"' => encoded.push_str("\\\""),
-            '\n' => encoded.push_str("\\n"),
-            '\r' => encoded.push_str("\\r"),
-            '\t' => encoded.push_str("\\t"),
+            '\'' => encoded.push_str("''"),
+            '\n' | '\r' | '\t' => encoded.push(' '),
             value => encoded.push(value),
         }
     }
-    format!("projects.\"{encoded}\".trust_level=\"trusted\"")
+    format!("projects.'{encoded}'.trust_level=\"trusted\"")
 }
 
 #[cfg(test)]
@@ -671,22 +679,22 @@ mod tests {
     }
 
     #[test]
-    fn implementer_mcp_profile_accepts_only_actionless_or_exact_reporting_pair() {
+    fn exact_implementer_profile_accepts_only_actionless_or_exact_reporting_pair() {
         let actionless = conversation_harness::profile(ConversationHarnessRole::WorkUnitImplementer).unwrap();
-        assert!(valid_implementer_mcp_profile(&actionless));
+        assert!(is_exact_implementer_profile(&actionless));
         let mut false_nonempty = actionless.clone();
         false_nonempty.mcp.enabled_tools = vec!["unexpected".into()];
-        assert!(!valid_implementer_mcp_profile(&false_nonempty));
+        assert!(!is_exact_implementer_profile(&false_nonempty));
         let mut false_pair = actionless.clone();
         false_pair.mcp.enabled_tools = vec!["submit_implementation_outcome".into(), "complete_implementation_outcome".into()];
-        assert!(!valid_implementer_mcp_profile(&false_pair));
+        assert!(!is_exact_implementer_profile(&false_pair));
         let mut required_empty = actionless.clone();
         required_empty.mcp.required = true;
-        assert!(!valid_implementer_mcp_profile(&required_empty));
+        assert!(!is_exact_implementer_profile(&required_empty));
         let mut reporting = actionless;
         reporting.mcp.required = true;
         reporting.mcp.enabled_tools = vec!["submit_implementation_outcome".into(), "complete_implementation_outcome".into()];
-        assert!(valid_implementer_mcp_profile(&reporting));
+        assert!(is_exact_implementer_profile(&reporting));
     }
 
     #[test]
@@ -719,15 +727,28 @@ mod tests {
         let working_directory = r"C:\isolated\execution-workspace";
         let writable = package_runtime_launch_configuration(&implementer, working_directory);
         let read_only = package_runtime_launch_configuration(&handler, working_directory);
+        let mut foreign_workspace_write = implementer.clone();
+        foreign_workspace_write.key = "future_workspace_write_role".into();
+        let foreign = package_runtime_launch_configuration(&foreign_workspace_write, working_directory);
+        let mut malformed_workspace_write = implementer.clone();
+        malformed_workspace_write.mcp.enabled_tools = vec!["unexpected".into()];
+        let malformed = package_runtime_launch_configuration(&malformed_workspace_write, working_directory);
 
         assert!(writable.extension.additional_args.windows(2).any(|arguments| {
             arguments[0] == "-c"
                 && arguments[1]
-                    == r#"projects."C:\\isolated\\execution-workspace".trust_level="trusted""#
+                    == r#"projects.'c:\isolated\execution-workspace'.trust_level="trusted""#
         }));
         assert!(!read_only.extension.additional_args.iter().any(|argument| {
             argument.contains("trust_level") || argument.contains("execution-workspace")
         }));
         assert!(read_only.extension.environment.is_empty());
+        for configuration in [&foreign, &malformed] {
+            assert!(!configuration.extension.additional_args.iter().any(|argument| {
+                    argument.contains("trust_level")
+                    || argument == "--ignore-rules"
+            }));
+        }
+        assert!(writable.extension.additional_args.iter().any(|argument| argument == "--ignore-rules"));
     }
 }

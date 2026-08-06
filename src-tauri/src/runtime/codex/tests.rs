@@ -320,7 +320,7 @@ fn resume_assembles_sandbox_through_the_supported_strict_config_surface() {
 fn launch_provenance_redacts_the_exact_workspace_from_project_trust_configuration() {
     assert_eq!(
         super::runtime::sanitized_configuration_key(
-            r#"projects."C:\\isolated\\execution-workspace".trust_level"#
+            r#"projects.'c:\isolated\execution-workspace'.trust_level"#
         ),
         "projects.<application-bound-workspace>.trust_level"
     );
