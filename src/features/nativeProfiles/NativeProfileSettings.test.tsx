@@ -6,9 +6,10 @@ import type { NativeProfile, NativeProfileClient } from '../../infrastructure/na
 
 const readiness = { authentication: 'unknown' as const, sandboxInitialization: 'unknown' as const, workspaceWriteCanary: 'not_run' as const, dangerFullAccessCanary: 'not_run' as const, mcpReporting: 'not_assessed' as const, attentions: { authentication: null, sandbox: null, canary: null, mcpReporting: null, continuity: null, cli: null } };
 const execution = { selectedMode: 'workspace_write' as const, dangerFullAccessAuthorized: false };
+const loginAttempt = { disposition: 'not_requested' as const, browserHandoff: 'unobserved' as const, requestedAt: null, launchAcceptedAt: null, settledAt: null };
 const profiles: readonly NativeProfile[] = [
-  { id: 'p1', homePath: 'C:/one', ownership: 'registered_existing', lifecycle: 'active', selected: true, execution, readiness },
-  { id: 'p2', homePath: 'C:/two', ownership: 'application_dedicated', lifecycle: 'active', selected: false, execution, readiness },
+  { id: 'p1', homePath: 'C:/one', ownership: 'registered_existing', lifecycle: 'active', selected: true, execution, loginAttempt, readiness },
+  { id: 'p2', homePath: 'C:/two', ownership: 'application_dedicated', lifecycle: 'active', selected: false, execution, loginAttempt, readiness },
 ];
 
 function client(overrides: Partial<NativeProfileClient> = {}): NativeProfileClient {
@@ -60,5 +61,18 @@ describe('NativeProfileSettings', () => {
     await user.click(within(card).getByRole('button', { name: 'Authorize Danger Full Access for this profile' }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Danger Full Access authorization failed: Danger authorization was rejected.'));
     expect(within(card).getByText('not authorized')).toBeInTheDocument();
+  });
+
+  it('shows durable login disposition without treating a request return as browser or authentication proof', async () => {
+    const user = userEvent.setup();
+    const requestedProfiles = profiles.map((profile) => profile.id === 'p1' ? { ...profile, loginAttempt: { disposition: 'pending' as const, browserHandoff: 'unobserved' as const, requestedAt: '2026-08-07T12:00:00Z', launchAcceptedAt: '2026-08-07T12:00:01Z', settledAt: null } } : profile);
+    const requestLogin = vi.fn(async () => ({ contract: 'native-codex-profile-query/v1' as const, profiles: requestedProfiles }));
+    render(<NativeProfileSettings client={client({ requestLogin })} />);
+    const card = await screen.findByRole('article', { name: 'Codex home p1' });
+    await user.click(within(card).getByRole('button', { name: 'Request browser login' }));
+    await waitFor(() => expect(requestLogin).toHaveBeenCalledWith('p1'));
+    expect(within(card).getByText('Login process launch was accepted; browser handoff is unobserved.')).toBeInTheDocument();
+    expect(within(card).getByText('Process activity, browser handoff, and authentication are separate facts.')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Browser login request returned; review the durable login-attempt state.');
   });
 });

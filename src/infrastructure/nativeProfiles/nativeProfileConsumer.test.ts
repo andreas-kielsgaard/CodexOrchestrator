@@ -7,6 +7,7 @@ const query: NativeProfileQuery = {
   profiles: [{
     id: 'p1', homePath: 'C:/codex', ownership: 'registered_existing', lifecycle: 'active', selected: true,
     execution: { selectedMode: 'workspace_write', dangerFullAccessAuthorized: false },
+    loginAttempt: { disposition: 'not_requested', browserHandoff: 'unobserved', requestedAt: null, launchAcceptedAt: null, settledAt: null },
     readiness: { authentication: 'unknown', sandboxInitialization: 'unknown', workspaceWriteCanary: 'not_run', dangerFullAccessCanary: 'not_run', mcpReporting: 'not_assessed', attentions: { authentication: null, sandbox: null, canary: null, mcpReporting: null, continuity: null, cli: null } },
   }],
 };

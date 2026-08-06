@@ -31,7 +31,7 @@ export function NativeProfileSettings({ client }: { readonly client: NativeProfi
       const result = await action();
       if (version !== requestVersion.current) return;
       setProfiles(result.profiles);
-      setMessage(`${label} completed; state was refreshed from durable storage.`);
+      setMessage(name === 'login' ? 'Browser login request returned; review the durable login-attempt state. Browser handoff and authentication are separate facts.' : `${label} completed; state was refreshed from durable storage.`);
     } catch (error) {
       if (version !== requestVersion.current) return;
       setMessage(`${label} failed: ${error instanceof Error ? error.message : 'the request was rejected.'}`);
@@ -75,11 +75,14 @@ function ProfileCard({ profile, busy, onSelect, onLogin, onRefresh, onSelectExec
   return <article className="native-profile-card" aria-label={`Codex home ${profile.id}`}>
     <header><div><h2>{profile.ownership === 'application_dedicated' ? 'Dedicated Orchestrator home' : 'Existing Codex home'}</h2><code>{profile.homePath}</code></div><strong>{profile.selected ? 'Selected' : 'Available'}</strong></header>
     <dl className="native-profile-facts"><Fact label="Identity" value={profile.id} /><Fact label="Ownership" value={profile.ownership} /><Fact label="Lifecycle" value={profile.lifecycle} /><Fact label="Authentication" value={readiness.authentication} /><Fact label="Sandbox" value={readiness.sandboxInitialization} /><Fact label="Workspace Write canary" value={readiness.workspaceWriteCanary} /><Fact label="Full-access canary" value={readiness.dangerFullAccessCanary} /><Fact label="MCP reporting" value={readiness.mcpReporting} /></dl>
+    <LoginAttempt attempt={profile.loginAttempt} />
     <ExecutionSettings profile={profile} busy={busy} onSelectExecutionMode={onSelectExecutionMode} onAuthorizeDanger={onAuthorizeDanger} onRevokeDanger={onRevokeDanger} />
     <div className="native-profile-actions"><button type="button" disabled={busy !== null || profile.selected} onClick={onSelect}>Select</button><button type="button" disabled={busy !== null} onClick={onRefresh}>Refresh login status</button><button type="button" disabled={busy !== null} onClick={onLogin}>Request browser login</button><button type="button" disabled={busy !== null} onClick={onSandbox}>Request sandbox initialization</button><button type="button" disabled={busy !== null} onClick={onConfirmSandbox}>Confirm sandbox/UAC completion</button><button type="button" disabled={busy !== null} onClick={onCanary}>Run WorkspaceWrite canary</button><button type="button" disabled={busy !== null} onClick={onMcp}>Start MCP/reporting probe</button></div>
     <Attention facts={readiness.attentions} />
   </article>;
 }
+function LoginAttempt({ attempt }: { readonly attempt: NativeProfile['loginAttempt'] }) { return <section className="native-profile-login-attempt" aria-label="Browser login attempt"><h3>Browser login attempt</h3><p><strong>{loginDisposition(attempt.disposition)}</strong></p><dl><Fact label="Browser handoff" value={attempt.browserHandoff} /><Fact label="Requested" value={attempt.requestedAt ?? 'not recorded'} /><Fact label="Launch accepted" value={attempt.launchAcceptedAt ?? 'not observed'} /><Fact label="Terminal disposition" value={attempt.settledAt ?? 'not settled'} /></dl><p>Process activity, browser handoff, and authentication are separate facts.</p></section>; }
+function loginDisposition(value: NativeProfile['loginAttempt']['disposition']) { return ({ not_requested: 'No login attempt recorded.', pending: 'Login process launch was accepted; browser handoff is unobserved.', launch_failed: 'Login process was not launched.', terminal_succeeded: 'Login process ended successfully; browser handoff is unobserved.', terminal_failed: 'Login process ended unsuccessfully.', cancelled: 'Login attempt was cancelled.', recovered_unobserved: 'Login attempt was recovered without an owned process to observe.' } as Record<NativeProfile['loginAttempt']['disposition'], string>)[value]; }
 function ExecutionSettings({ profile, busy, onSelectExecutionMode, onAuthorizeDanger, onRevokeDanger }: { readonly profile: NativeProfile; readonly busy: string | null; readonly onSelectExecutionMode?: (mode: NativeProfile['execution']['selectedMode']) => void; readonly onAuthorizeDanger?: () => void; readonly onRevokeDanger?: () => void }) {
   const { selectedMode, dangerFullAccessAuthorized } = profile.execution;
   return <section className="native-profile-execution" aria-labelledby={`execution-${profile.id}`}>

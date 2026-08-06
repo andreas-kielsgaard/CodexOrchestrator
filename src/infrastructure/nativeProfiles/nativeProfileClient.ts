@@ -12,6 +12,8 @@ export type NativeProfileSandbox = 'unknown' | 'initialized' | 'failed' | 'atten
 export type NativeProfileCanary = 'not_run' | 'passed' | 'blocked';
 export type NativeProfileMcp = 'not_assessed' | 'ready' | 'probe_failed';
 export type NativeExecutionMode = 'workspace_write' | 'danger_full_access';
+export type NativeProfileLoginDisposition = 'not_requested' | 'pending' | 'launch_failed' | 'terminal_succeeded' | 'terminal_failed' | 'cancelled' | 'recovered_unobserved';
+export type NativeProfileBrowserHandoff = 'unobserved';
 
 export interface NativeProfileAttentions {
   readonly authentication: string | null;
@@ -36,6 +38,14 @@ export interface NativeProfileExecution {
   readonly dangerFullAccessAuthorized: boolean;
 }
 
+export interface NativeProfileLoginAttempt {
+  readonly disposition: NativeProfileLoginDisposition;
+  readonly browserHandoff: NativeProfileBrowserHandoff;
+  readonly requestedAt: string | null;
+  readonly launchAcceptedAt: string | null;
+  readonly settledAt: string | null;
+}
+
 export interface NativeProfile {
   readonly id: string;
   readonly homePath: string;
@@ -43,6 +53,7 @@ export interface NativeProfile {
   readonly lifecycle: NativeProfileLifecycle;
   readonly selected: boolean;
   readonly execution: NativeProfileExecution;
+  readonly loginAttempt: NativeProfileLoginAttempt;
   readonly readiness: NativeProfileReadiness;
 }
 
@@ -102,12 +113,14 @@ export function decodeNativeProfileQuery(value: unknown): NativeProfileQuery {
 
 export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
   const profile = object(value, `native profile ${index}`);
-  keys(profile, ['id', 'homePath', 'ownership', 'lifecycle', 'selected', 'execution', 'readiness'], `native profile ${index}`);
+  keys(profile, ['id', 'homePath', 'ownership', 'lifecycle', 'selected', 'execution', 'loginAttempt', 'readiness'], `native profile ${index}`);
   if (typeof profile.selected !== 'boolean') throw new Error(`native profile ${index} selected must be boolean`);
   const readiness = object(profile.readiness, `native profile ${index} readiness`);
   keys(readiness, ['authentication', 'sandboxInitialization', 'workspaceWriteCanary', 'dangerFullAccessCanary', 'mcpReporting', 'attentions'], 'readiness');
   const execution = object(profile.execution, `native profile ${index} execution`);
+  const loginAttempt = object(profile.loginAttempt, `native profile ${index} login attempt`);
   keys(execution, ['selectedMode', 'dangerFullAccessAuthorized'], `native profile ${index} execution`);
+  keys(loginAttempt, ['disposition', 'browserHandoff', 'requestedAt', 'launchAcceptedAt', 'settledAt'], `native profile ${index} login attempt`);
   if (typeof execution.dangerFullAccessAuthorized !== 'boolean') throw new Error(`native profile ${index} danger authorization must be boolean`);
   const attentions = object(readiness.attentions, 'attentions');
   keys(attentions, ['authentication', 'sandbox', 'canary', 'mcpReporting', 'continuity', 'cli'], 'attentions');
@@ -120,6 +133,13 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
     execution: {
       selectedMode: enumValue(execution.selectedMode, ['workspace_write', 'danger_full_access'], 'execution mode'),
       dangerFullAccessAuthorized: execution.dangerFullAccessAuthorized,
+    },
+    loginAttempt: {
+      disposition: enumValue(loginAttempt.disposition, ['not_requested', 'pending', 'launch_failed', 'terminal_succeeded', 'terminal_failed', 'cancelled', 'recovered_unobserved'], 'login attempt disposition'),
+      browserHandoff: enumValue(loginAttempt.browserHandoff, ['unobserved'], 'browser handoff observation'),
+      requestedAt: nullableString(loginAttempt.requestedAt, 'login request timestamp'),
+      launchAcceptedAt: nullableString(loginAttempt.launchAcceptedAt, 'login launch timestamp'),
+      settledAt: nullableString(loginAttempt.settledAt, 'login settlement timestamp'),
     },
     readiness: {
       authentication: enumValue(readiness.authentication, ['unknown', 'authenticated', 'unauthenticated'], 'authentication'),

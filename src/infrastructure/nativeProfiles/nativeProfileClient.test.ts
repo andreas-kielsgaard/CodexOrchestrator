@@ -4,6 +4,7 @@ import { decodeNativeProfileQuery, createNativeProfileClient } from './nativePro
 const profile = {
   id: 'p1', homePath: 'C:/codex', ownership: 'registered_existing', lifecycle: 'active', selected: true,
   execution: { selectedMode: 'workspace_write', dangerFullAccessAuthorized: false },
+  loginAttempt: { disposition: 'not_requested', browserHandoff: 'unobserved', requestedAt: null, launchAcceptedAt: null, settledAt: null },
   readiness: { authentication: 'unknown', sandboxInitialization: 'unknown', workspaceWriteCanary: 'not_run', dangerFullAccessCanary: 'not_run', mcpReporting: 'not_assessed', attentions: { authentication: null, sandbox: null, canary: null, mcpReporting: null, continuity: null, cli: null } },
 };
 const query = () => ({ contract: 'native-codex-profile-query/v1', profiles: [profile] });
@@ -17,6 +18,8 @@ describe('native profile client', () => {
     expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, lifecycle: 'missing_or_moved' }] })).toThrow(/stale/);
     expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, homePath: 'relative/home' }] })).toThrow(/absolute/);
     expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, readiness: { ...profile.readiness, attentions: { ...profile.readiness.attentions, cli: ' ' } } }] })).toThrow(/attention/);
+    expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, loginAttempt: { ...profile.loginAttempt, browserHandoff: 'observed' } }] })).toThrow(/browser handoff/);
+    expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, loginAttempt: { ...profile.loginAttempt, extra: true } }] })).toThrow(/login attempt.*unknown field/);
   });
   it('serializes actions and reloads durable state after each action', async () => {
     const calls: string[] = [];

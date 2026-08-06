@@ -106,6 +106,22 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_full_access_canaries (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_full_access_canary_pending
 ON native_codex_profile_full_access_canaries(profile_id) WHERE state='pending';
+CREATE TABLE IF NOT EXISTS native_codex_profile_login_attempts (
+  attempt_id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  filesystem_identity TEXT NOT NULL,
+  executable TEXT NOT NULL,
+  version TEXT NOT NULL,
+  correlation_id TEXT NOT NULL UNIQUE,
+  state TEXT NOT NULL CHECK (state IN ('pending','launch_failed','terminal_succeeded','terminal_failed','cancelled','recovered_unobserved')),
+  browser_handoff TEXT NOT NULL CHECK (browser_handoff='unobserved'),
+  requested_at TEXT NOT NULL,
+  launch_accepted_at TEXT,
+  settled_at TEXT,
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_login_attempt_pending
+ON native_codex_profile_login_attempts(profile_id) WHERE state='pending';
 "#;
 
 pub(crate) const NATIVE_PROFILE_V22_MIGRATION: &str = r#"
@@ -213,6 +229,25 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_full_access_canaries (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_full_access_canary_pending
 ON native_codex_profile_full_access_canaries(profile_id) WHERE state='pending';
+"#;
+
+pub(crate) const NATIVE_PROFILE_V27_MIGRATION: &str = r#"
+CREATE TABLE IF NOT EXISTS native_codex_profile_login_attempts (
+  attempt_id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  filesystem_identity TEXT NOT NULL,
+  executable TEXT NOT NULL,
+  version TEXT NOT NULL,
+  correlation_id TEXT NOT NULL UNIQUE,
+  state TEXT NOT NULL CHECK (state IN ('pending','launch_failed','terminal_succeeded','terminal_failed','cancelled','recovered_unobserved')),
+  browser_handoff TEXT NOT NULL CHECK (browser_handoff='unobserved'),
+  requested_at TEXT NOT NULL,
+  launch_accepted_at TEXT,
+  settled_at TEXT,
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_login_attempt_pending
+ON native_codex_profile_login_attempts(profile_id) WHERE state='pending';
 "#;
 
 const MARKER_FILE: &str = ".codex-orchestrator-profile.json";
@@ -521,6 +556,16 @@ pub(crate) struct NativeProfileExecution {
     danger_full_access_authorized: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NativeProfileLoginAttempt {
+    disposition: String,
+    browser_handoff: String,
+    requested_at: Option<String>,
+    launch_accepted_at: Option<String>,
+    settled_at: Option<String>,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NativeProfileAttentions {
@@ -541,6 +586,7 @@ pub(crate) struct NativeProfileDto {
     lifecycle: Lifecycle,
     selected: bool,
     execution: NativeProfileExecution,
+    login_attempt: NativeProfileLoginAttempt,
     readiness: NativeProfileReadiness,
 }
 
@@ -662,6 +708,13 @@ struct PendingSetupAttempt {
     deadline_at: DateTime<Utc>,
 }
 
+#[derive(Clone, Debug)]
+struct PendingLoginAttempt {
+    attempt_id: String,
+    profile_id: String,
+    filesystem_identity: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StoredProfile {
     id: String,
@@ -671,6 +724,7 @@ struct StoredProfile {
     lifecycle: Lifecycle,
     selected: bool,
     execution: NativeProfileExecution,
+    login_attempt: NativeProfileLoginAttempt,
     readiness: NativeProfileReadiness,
 }
 
@@ -683,6 +737,7 @@ impl From<StoredProfile> for NativeProfileDto {
             lifecycle: value.lifecycle,
             selected: value.selected,
             execution: value.execution,
+            login_attempt: value.login_attempt,
             readiness: value.readiness,
         }
     }
@@ -743,7 +798,7 @@ impl NativeProfileService {
         let mut connection = self.connection()?;
         for profile in load_profiles(&mut connection)? {
             self.revalidate(&profile)?;
-            self.reap_login(&profile.id)?;
+            self.reconcile_login_attempt(&profile.id)?;
             self.reconcile_setup_attempts(&profile.id)?;
             self.reconcile_full_access_canary(&profile.id)?;
             self.expire_mcp_probe(&profile.id)?;
@@ -922,68 +977,93 @@ impl NativeProfileService {
     }
 
     pub(crate) fn request_login(&self, id: &str) -> Result<NativeProfileDto, String> {
-        let profile = self.require_active(id)?;
-        if self.reap_login(id)?
-            || self
-                .login_children
-                .lock()
-                .map_err(|_| "Native profile login supervision is unavailable")?
-                .contains_key(id)
-        {
+        let profile = self.require_selected_active(id)?;
+        self.reconcile_login_attempt(id)?;
+        if load_pending_login_attempt(&self.connection()?, id)?.is_some() {
             return self.profile(id).map(Into::into);
         }
-        let root = self.probe_root(id);
-        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
-        let mut child = self
-            .cli
-            .start(&NativeCliInvocation {
-                args: vec!["login".into()],
-                cwd: root,
-                codex_home: profile.home.clone(),
-                environment: native_profile_environment(&profile.home),
-                sandbox_receipt: None,
-            })
-            .map_err(|_| {
-                self.set_attention(id, "cli", Some("codex_cli_unavailable"), true)
-                    .ok();
-                "Unable to start supported Codex browser login".to_string()
-            })?;
+        let root = self.ensure_probe_root(id)?;
+        let surface = self.cli.surface().map_err(|_| {
+            self.set_attention(id, "cli", Some("codex_cli_unavailable"), false)
+                .ok();
+            "Unable to resolve supported Codex CLI for browser login".to_string()
+        })?;
+        let now = Utc::now();
+        let attempt = PendingLoginAttempt {
+            attempt_id: format!("native-login-attempt-{}", Uuid::new_v4()),
+            profile_id: profile.id.clone(),
+            filesystem_identity: profile.identity.clone(),
+        };
+        let inserted = self.connection()?.execute(
+            "INSERT OR IGNORE INTO native_codex_profile_login_attempts (attempt_id,profile_id,filesystem_identity,executable,version,correlation_id,state,browser_handoff,requested_at) VALUES (?1,?2,?3,?4,?5,?6,'pending','unobserved',?7)",
+            params![attempt.attempt_id, attempt.profile_id, attempt.filesystem_identity, surface.provenance.executable, surface.provenance.version, format!("native-login-{}", Uuid::new_v4()), now.to_rfc3339()],
+        ).map_err(|error| format!("Unable to persist native browser login attempt: {error}"))?;
+        if inserted == 0 {
+            return self.profile(id).map(Into::into);
+        }
+        let mut child = match self.cli.start(&NativeCliInvocation {
+            args: vec!["login".into()],
+            cwd: root,
+            codex_home: profile.home.clone(),
+            environment: native_profile_environment(&profile.home),
+            sandbox_receipt: None,
+        }) {
+            Ok(child) => child,
+            Err(_) => {
+                self.set_login_attempt_state(&attempt.attempt_id, "launch_failed")?;
+                self.set_attention(id, "cli", Some("codex_cli_unavailable"), false)?;
+                self.set_attention(
+                    id,
+                    "authentication",
+                    Some("browser_login_launch_failed"),
+                    false,
+                )?;
+                return self.profile(id).map(Into::into);
+            }
+        };
         match self.login_children.lock() {
             Ok(mut children) => {
                 children.insert(id.to_string(), child);
             }
             Err(_) => {
                 let _ = child.terminate();
+                self.set_login_attempt_state(&attempt.attempt_id, "cancelled")?;
                 return Err("Native profile login supervision is unavailable".into());
             }
         }
+        self.connection()?.execute(
+            "UPDATE native_codex_profile_login_attempts SET launch_accepted_at=?2 WHERE attempt_id=?1 AND state='pending'",
+            params![attempt.attempt_id, Utc::now().to_rfc3339()],
+        ).map_err(|error| error.to_string())?;
         self.set_attention(
             id,
             "authentication",
-            Some("browser_login_in_progress"),
+            Some("browser_login_attempt_pending"),
             false,
         )?;
         self.profile(id).map(Into::into)
     }
 
     pub(crate) fn refresh_readiness(&self, id: &str) -> Result<NativeProfileDto, String> {
-        let profile = self.require_active(id)?;
-        self.reap_login(id)?;
+        let profile = self.require_selected_active(id)?;
+        self.reconcile_login_attempt(id)?;
+        let root = self.ensure_probe_root(id)?;
         let authenticated = self
             .cli
             .run(&NativeCliInvocation {
                 args: vec!["login".into(), "status".into()],
-                cwd: self.probe_root(id),
+                cwd: root,
                 codex_home: profile.home.clone(),
                 environment: native_profile_environment(&profile.home),
                 sandbox_receipt: None,
             })
             .map_err(|_| {
-                self.set_attention(id, "cli", Some("codex_cli_unavailable"), true)
+                self.set_attention(id, "cli", Some("codex_cli_unavailable"), false)
                     .ok();
                 "Codex CLI is unavailable for this profile".to_string()
             })?
             .succeeded;
+        self.set_attention(id, "cli", None, false)?;
         self.update_readiness(
             id,
             Some(if authenticated {
@@ -994,7 +1074,7 @@ impl NativeProfileService {
             None,
             None,
             None,
-            Some(("authentication", None)),
+            None,
         )?;
         self.profile(id).map(Into::into)
     }
@@ -1430,6 +1510,14 @@ impl NativeProfileService {
         Ok(profile)
     }
 
+    fn require_selected_active(&self, id: &str) -> Result<StoredProfile, String> {
+        let profile = self.require_active(id)?;
+        if !profile.selected {
+            return Err("Only the selected native Codex profile can perform this operation".into());
+        }
+        Ok(profile)
+    }
+
     fn revalidate(&self, profile: &StoredProfile) -> Result<(), String> {
         let lifecycle = validate_profile(profile);
         if lifecycle != Lifecycle::Active {
@@ -1444,6 +1532,15 @@ impl NativeProfileService {
             .unwrap_or(&self.dedicated_root)
             .join("native-codex-profile-probes")
             .join(id)
+    }
+
+    fn ensure_probe_root(&self, id: &str) -> Result<PathBuf, String> {
+        let root = self.probe_root(id);
+        fs::create_dir_all(&root).map_err(|error| {
+            format!("Unable to create application-owned native profile probe root: {error}")
+        })?;
+        fs::canonicalize(root)
+            .map_err(|_| "Unable to validate application-owned native profile probe root".into())
     }
 
     fn full_access_canary_root(&self, id: &str) -> Result<PathBuf, String> {
@@ -1706,34 +1803,88 @@ impl NativeProfileService {
         Ok(())
     }
 
-    fn reap_login(&self, id: &str) -> Result<bool, String> {
-        let mut children = self
-            .login_children
-            .lock()
-            .map_err(|_| "Native profile login supervision is unavailable")?;
-        let Some(child) = children.get_mut(id) else {
-            return Ok(false);
+    fn reconcile_login_attempt(&self, id: &str) -> Result<(), String> {
+        let Some(attempt) = load_pending_login_attempt(&self.connection()?, id)? else {
+            return Ok(());
         };
-        let Some(receipt) = child.try_wait()? else {
-            return Ok(false);
-        };
-        children.remove(id);
-        self.update_readiness(
-            id,
-            (!receipt.succeeded).then_some("unauthenticated"),
-            None,
-            None,
-            None,
-            Some((
+        let profile = self.profile(id)?;
+        let authority_valid = profile.selected
+            && profile.lifecycle == Lifecycle::Active
+            && validate_profile(&profile) == Lifecycle::Active
+            && profile.identity == attempt.filesystem_identity;
+        if !authority_valid {
+            if let Some(mut child) = self
+                .login_children
+                .lock()
+                .map_err(|_| "Native profile login supervision is unavailable")?
+                .remove(id)
+            {
+                let _ = child.terminate();
+            }
+            self.set_login_attempt_state(&attempt.attempt_id, "cancelled")?;
+            self.set_attention(
+                id,
                 "authentication",
-                Some(if receipt.succeeded {
-                    "login_completed_refresh_required"
-                } else {
-                    "browser_login_not_completed"
-                }),
-            )),
-        )?;
-        Ok(true)
+                Some("browser_login_attempt_cancelled"),
+                false,
+            )?;
+            return Ok(());
+        }
+        let outcome = {
+            let mut children = self
+                .login_children
+                .lock()
+                .map_err(|_| "Native profile login supervision is unavailable")?;
+            match children.get_mut(id) {
+                Some(child) => match child.try_wait()? {
+                    Some(receipt) => {
+                        children.remove(id);
+                        Some(Ok(receipt.succeeded))
+                    }
+                    None => None,
+                },
+                None => Some(Err(())),
+            }
+        };
+        match outcome {
+            Some(Ok(true)) => {
+                self.set_login_attempt_state(&attempt.attempt_id, "terminal_succeeded")?;
+                self.set_attention(
+                    id,
+                    "authentication",
+                    Some("browser_login_terminal_succeeded_browser_handoff_unobserved"),
+                    false,
+                )?;
+            }
+            Some(Ok(false)) => {
+                self.set_login_attempt_state(&attempt.attempt_id, "terminal_failed")?;
+                self.set_attention(
+                    id,
+                    "authentication",
+                    Some("browser_login_terminal_failed"),
+                    false,
+                )?;
+            }
+            Some(Err(())) => {
+                self.set_login_attempt_state(&attempt.attempt_id, "recovered_unobserved")?;
+                self.set_attention(
+                    id,
+                    "authentication",
+                    Some("browser_login_recovered_without_owned_process"),
+                    false,
+                )?;
+            }
+            None => {}
+        }
+        Ok(())
+    }
+
+    fn set_login_attempt_state(&self, attempt_id: &str, state: &str) -> Result<(), String> {
+        self.connection()?.execute(
+            "UPDATE native_codex_profile_login_attempts SET state=?2,settled_at=?3 WHERE attempt_id=?1 AND state='pending'",
+            params![attempt_id, state, Utc::now().to_rfc3339()],
+        ).map_err(|error| error.to_string())?;
+        Ok(())
     }
 
     fn profile(&self, id: &str) -> Result<StoredProfile, String> {
@@ -1789,6 +1940,7 @@ impl NativeProfileService {
         connection.execute("UPDATE native_codex_profile_setup_attempts SET state='cancelled',completed_at=?2 WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state='pending'", params![id]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_full_access_canaries SET state='cancelled',completed_at=?2 WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+        connection.execute("UPDATE native_codex_profile_login_attempts SET state='cancelled',settled_at=?2 WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         self.write_attention(
             &connection,
             id,
@@ -2067,6 +2219,21 @@ fn load_pending_full_access_canary(
         .map_err(|error| error.to_string())
 }
 
+fn load_pending_login_attempt(
+    connection: &Connection,
+    profile_id: &str,
+) -> Result<Option<PendingLoginAttempt>, String> {
+    connection.query_row(
+        "SELECT attempt_id,profile_id,filesystem_identity FROM native_codex_profile_login_attempts WHERE profile_id=?1 AND state='pending'",
+        params![profile_id],
+        |row| Ok(PendingLoginAttempt {
+            attempt_id: row.get(0)?,
+            profile_id: row.get(1)?,
+            filesystem_identity: row.get(2)?,
+        }),
+    ).optional().map_err(|error| error.to_string())
+}
+
 fn load_pending_mcp_probe(
     connection: &Connection,
     profile_id: &str,
@@ -2089,7 +2256,7 @@ fn load_pending_mcp_probe(
 }
 
 fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, String> {
-    let mut statement = connection.prepare("SELECT p.id,p.canonical_home_path,p.filesystem_identity,p.ownership,p.lifecycle,p.selected_at,r.authentication,r.sandbox_initialization,r.workspace_write_canary,r.danger_full_access_canary,r.mcp_reporting,e.selected_mode,a.filesystem_identity,a.revoked_at,(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='authentication'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='sandbox'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='canary'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='mcp_reporting'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='continuity'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='cli') FROM native_codex_profiles p JOIN native_codex_profile_readiness r ON r.profile_id=p.id JOIN native_codex_profile_execution_modes e ON e.profile_id=p.id LEFT JOIN native_codex_profile_mode_authorizations a ON a.profile_id=p.id AND a.mode='danger_full_access' ORDER BY p.created_at").map_err(|error| error.to_string())?;
+    let mut statement = connection.prepare("SELECT p.id,p.canonical_home_path,p.filesystem_identity,p.ownership,p.lifecycle,p.selected_at,r.authentication,r.sandbox_initialization,r.workspace_write_canary,r.danger_full_access_canary,r.mcp_reporting,e.selected_mode,a.filesystem_identity,a.revoked_at,(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='authentication'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='sandbox'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='canary'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='mcp_reporting'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='continuity'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='cli'),(SELECT state FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT browser_handoff FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT requested_at FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT launch_accepted_at FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT settled_at FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1) FROM native_codex_profiles p JOIN native_codex_profile_readiness r ON r.profile_id=p.id JOIN native_codex_profile_execution_modes e ON e.profile_id=p.id LEFT JOIN native_codex_profile_mode_authorizations a ON a.profile_id=p.id AND a.mode='danger_full_access' ORDER BY p.created_at").map_err(|error| error.to_string())?;
     let rows = statement
         .query_map([], |row| {
             let identity: String = row.get(2)?;
@@ -2109,6 +2276,17 @@ fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, Stri
                         .map_err(|_| rusqlite::Error::InvalidQuery)?,
                     danger_full_access_authorized: authorization_identity == Some(identity)
                         && authorization_revoked.is_none(),
+                },
+                login_attempt: NativeProfileLoginAttempt {
+                    disposition: row
+                        .get::<_, Option<String>>(20)?
+                        .unwrap_or_else(|| "not_requested".into()),
+                    browser_handoff: row
+                        .get::<_, Option<String>>(21)?
+                        .unwrap_or_else(|| "unobserved".into()),
+                    requested_at: row.get(22)?,
+                    launch_accepted_at: row.get(23)?,
+                    settled_at: row.get(24)?,
                 },
                 readiness: NativeProfileReadiness {
                     authentication: row.get(6)?,
@@ -2292,6 +2470,7 @@ mod tests {
         starts: Mutex<usize>,
         terminated: Arc<Mutex<usize>>,
         next_child_result: Mutex<Option<NativeCliReceipt>>,
+        start_error: bool,
         surface_supported: bool,
         danger_network_enforcement_supported: bool,
     }
@@ -2306,6 +2485,7 @@ mod tests {
                 starts: Mutex::new(0),
                 terminated: Arc::new(Mutex::new(0)),
                 next_child_result: Mutex::new(None),
+                start_error: false,
                 surface_supported: true,
                 danger_network_enforcement_supported: false,
             }
@@ -2324,6 +2504,13 @@ mod tests {
                 ..Self::succeeding()
             }
         }
+
+        fn failing_start() -> Self {
+            Self {
+                start_error: true,
+                ..Self::succeeding()
+            }
+        }
     }
     impl NativeCliPort for FakeCli {
         fn run(&self, invocation: &NativeCliInvocation) -> Result<NativeCliReceipt, String> {
@@ -2336,6 +2523,9 @@ mod tests {
         ) -> Result<Box<dyn NativeCliChild>, String> {
             self.calls.lock().unwrap().push(invocation.clone());
             *self.starts.lock().unwrap() += 1;
+            if self.start_error {
+                return Err("launch failed".into());
+            }
             Ok(Box::new(FakeChild {
                 result: self.next_child_result.lock().unwrap().take(),
                 terminated: self.terminated.clone(),
@@ -2662,6 +2852,7 @@ mod tests {
         let fake = Arc::new(FakeCli::succeeding());
         service.cli = fake.clone();
         let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
         service.request_login(&profile.id).unwrap();
         service.request_login(&profile.id).unwrap();
         assert_eq!(*fake.starts.lock().unwrap(), 1);
@@ -2672,7 +2863,7 @@ mod tests {
                 .readiness
                 .attentions
                 .authentication,
-            Some("browser_login_in_progress".into())
+            Some("browser_login_attempt_pending".into())
         );
         drop(service);
         assert_eq!(*fake.terminated.lock().unwrap(), 1);
@@ -2693,14 +2884,131 @@ mod tests {
         });
         service.cli = fake;
         let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
         service.request_login(&profile.id).unwrap();
         let mut query = service.query().unwrap();
         let after_exit = query.profiles.remove(0);
         assert_eq!(after_exit.readiness.authentication, "unknown");
         assert_eq!(
             after_exit.readiness.attentions.authentication,
-            Some("login_completed_refresh_required".into())
+            Some("browser_login_terminal_succeeded_browser_handoff_unobserved".into())
         );
+        assert_eq!(after_exit.login_attempt.disposition, "terminal_succeeded");
+        assert_eq!(after_exit.login_attempt.browser_handoff, "unobserved");
+    }
+
+    #[test]
+    fn browser_login_launch_failure_is_durable_without_authentication_or_handoff_claims() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        service.cli = Arc::new(FakeCli::failing_start());
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        let result = service.request_login(&profile.id).unwrap();
+        assert_eq!(result.login_attempt.disposition, "launch_failed");
+        assert_eq!(result.login_attempt.browser_handoff, "unobserved");
+        assert_eq!(result.readiness.authentication, "unknown");
+        let persisted: (String, String, Option<String>) = service.connection().unwrap().query_row(
+            "SELECT executable,version,launch_accepted_at FROM native_codex_profile_login_attempts WHERE profile_id=?1",
+            params![profile.id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(persisted.0, "C:/application-owned/codex.exe");
+        assert_eq!(persisted.1, "codex-cli test");
+        assert!(persisted.2.is_none());
+    }
+
+    #[test]
+    fn browser_login_terminal_failure_is_durable_and_does_not_claim_unauthenticated() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        let fake = Arc::new(FakeCli::succeeding());
+        *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
+            succeeded: false,
+            sandbox_receipt_observed: false,
+        });
+        service.cli = fake;
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        service.request_login(&profile.id).unwrap();
+        let result = service.query().unwrap().profiles.remove(0);
+        assert_eq!(result.login_attempt.disposition, "terminal_failed");
+        assert_eq!(result.login_attempt.browser_handoff, "unobserved");
+        assert_eq!(result.readiness.authentication, "unknown");
+    }
+
+    #[test]
+    fn login_refresh_preserves_pending_attempt_creates_probe_root_and_reconciles_cli_attention() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake.clone();
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        service
+            .set_attention(&profile.id, "cli", Some("codex_cli_unavailable"), false)
+            .unwrap();
+        let refreshed = service.refresh_readiness(&profile.id).unwrap();
+        assert!(service.probe_root(&profile.id).is_dir());
+        assert_eq!(refreshed.login_attempt.disposition, "not_requested");
+        assert_eq!(refreshed.readiness.attentions.cli, None);
+        service.request_login(&profile.id).unwrap();
+        let refreshed = service.refresh_readiness(&profile.id).unwrap();
+        assert_eq!(refreshed.login_attempt.disposition, "pending");
+        assert_eq!(refreshed.login_attempt.browser_handoff, "unobserved");
+        assert_eq!(refreshed.readiness.authentication, "authenticated");
+        assert_eq!(
+            refreshed.readiness.attentions.authentication,
+            Some("browser_login_attempt_pending".into())
+        );
+        assert_eq!(
+            fake.calls.lock().unwrap().last().unwrap().cwd,
+            fs::canonicalize(service.probe_root(&profile.id)).unwrap()
+        );
+    }
+
+    #[test]
+    fn pending_login_reopen_recovers_without_claiming_process_or_browser_activity() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("active.sqlite");
+        let mut service =
+            NativeProfileService::open(database.clone(), directory.path().join("app")).unwrap();
+        service.cli = Arc::new(FakeCli::succeeding());
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        service.request_login(&profile.id).unwrap();
+        drop(service);
+        let reopened = NativeProfileService::open(database, directory.path().join("app")).unwrap();
+        let profile = reopened.query().unwrap().profiles.remove(0);
+        assert_eq!(profile.login_attempt.disposition, "recovered_unobserved");
+        assert_eq!(profile.login_attempt.browser_handoff, "unobserved");
+        assert_eq!(profile.readiness.authentication, "unknown");
+    }
+
+    #[test]
+    fn login_operations_require_the_selected_validated_profile() {
+        let (_directory, mut service) = service();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake.clone();
+        let profile = service.create_dedicated().unwrap();
+        assert!(service.request_login(&profile.id).is_err());
+        assert!(service.refresh_readiness(&profile.id).is_err());
+        assert_eq!(*fake.starts.lock().unwrap(), 0);
+        assert!(fake.calls.lock().unwrap().is_empty());
+        service.select(&profile.id).unwrap();
+        fs::remove_file(Path::new(&profile.home_path).join(MARKER_FILE)).unwrap();
+        assert!(service.request_login(&profile.id).is_err());
     }
 
     #[test]
@@ -2972,6 +3280,7 @@ mod tests {
         let fake = Arc::new(FakeCli::succeeding());
         service.cli = fake.clone();
         let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
         service.request_login(&profile.id).unwrap();
         service.request_sandbox_initialization(&profile.id).unwrap();
 
@@ -2982,6 +3291,10 @@ mod tests {
         assert_eq!(
             service.profile(&profile.id).unwrap().lifecycle,
             Lifecycle::Malformed
+        );
+        assert_eq!(
+            service.profile(&profile.id).unwrap().login_attempt.disposition,
+            "cancelled"
         );
     }
 
@@ -3324,6 +3637,7 @@ mod tests {
         }
         service.cli = Arc::new(UnavailableCli);
         let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
         assert!(service.refresh_readiness(&profile.id).is_err());
         assert_eq!(
             service
