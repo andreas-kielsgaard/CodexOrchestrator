@@ -39,6 +39,7 @@ export interface EpicDetailProps {
   readonly onSelectedRevisionChange: (revisionId: string) => void;
   readonly onDetailLocationChange: (location: SprintWorkspaceDetailLocation) => void;
   readonly onBack: () => void;
+  readonly globalBackAvailable?: boolean;
   readonly onOpenAgentSession?: (origin: AgentSessionProductOrigin) => void;
   readonly onRequestFileReview?: (
     sprintId: string,
@@ -71,6 +72,7 @@ export function EpicDetail({
   onSelectedRevisionChange,
   onDetailLocationChange,
   onBack,
+  globalBackAvailable = false,
   onOpenAgentSession,
   onRequestFileReview,
   onOpenFileEvidence,
@@ -113,6 +115,7 @@ export function EpicDetail({
           restoreSprintIdRef.current = selectedSprint.id;
           onCloseSprint();
         }}
+        globalBackAvailable={globalBackAvailable}
         onOpenAgentSession={onOpenAgentSession}
         onRequestFileReview={onRequestFileReview}
         onOpenFileEvidence={onOpenFileEvidence}
@@ -127,8 +130,9 @@ export function EpicDetail({
         ariaLabel="Epic detail"
         controlsLabel="Epic controls"
         contextLabel="Epic context"
-        backLabel="Back to Epics"
+        backLabel={globalBackAvailable ? undefined : 'Back to Epics'}
         onBack={onBack}
+        showBack={!globalBackAvailable}
         control={
           epic.continuation ? (
             <ContinuationControl

@@ -7,8 +7,9 @@ export interface DetailWorkspaceProps {
   readonly ariaLabel: string;
   readonly controlsLabel: string;
   readonly contextLabel: string;
-  readonly backLabel: string;
+  readonly backLabel?: string;
   readonly onBack: () => void;
+  readonly showBack?: boolean;
   readonly focusBackOnMount?: boolean;
   readonly hotbarContext?: ReactNode;
   readonly hotbarNavigation?: ReactNode;
@@ -25,6 +26,7 @@ export function DetailWorkspace({
   contextLabel,
   backLabel,
   onBack,
+  showBack = true,
   focusBackOnMount = false,
   hotbarContext,
   hotbarNavigation,
@@ -46,15 +48,17 @@ export function DetailWorkspace({
       data-viewport-contained="true"
     >
       <div className="detail-workspace__hotbar" aria-label={controlsLabel}>
-        <button
-          ref={backButtonRef}
-          className="detail-workspace__back"
-          type="button"
-          onClick={onBack}
-        >
-          <ArrowLeft size={16} aria-hidden="true" />
-          {backLabel}
-        </button>
+        {showBack && backLabel ? (
+          <button
+            ref={backButtonRef}
+            className="detail-workspace__back"
+            type="button"
+            onClick={onBack}
+          >
+            <ArrowLeft size={16} aria-hidden="true" />
+            {backLabel}
+          </button>
+        ) : null}
         {hotbarContext && <div className="detail-workspace__hotbar-context">{hotbarContext}</div>}
         {hotbarNavigation && (
           <nav className="detail-workspace__hotbar-navigation">{hotbarNavigation}</nav>

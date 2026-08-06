@@ -113,6 +113,7 @@ describe('App application surfaces', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: /Open Work Unit WU-ECS2E/ }));
     expect(screen.getByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Back to Work Slice planning point' })).toBeNull();
 
     const back = async () => {
       const button = within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole(
@@ -126,10 +127,13 @@ describe('App application surfaces', () => {
     expect(
       await screen.findByRole('main', { name: /Work Slice planning point detail/ }),
     ).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Back to Sprint' })).toBeNull();
     await back();
     expect(await screen.findByRole('main', { name: 'Sprint detail' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Back to Epic' })).toBeNull();
     await back();
     expect(await screen.findByRole('main', { name: 'Epic detail' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Back to Epics' })).toBeNull();
     await back();
     expect(await screen.findByRole('main', { name: 'Orchestration' })).toBeVisible();
     expect(
@@ -229,7 +233,12 @@ describe('App application surfaces', () => {
     );
 
     expect(screen.getByRole('region', { name: 'Epic return context' })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Return to Epic' }));
+    expect(screen.queryByRole('button', { name: 'Return to Epic' })).toBeNull();
+    fireEvent.click(
+      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
+        name: 'Back',
+      }),
+    );
     expect(await screen.findByRole('main', { name: 'Epic detail' })).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Agent Sessions' }));
@@ -327,11 +336,7 @@ describe('App application surfaces', () => {
         'button',
       ),
     ).toBeNull();
-    expect(
-      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
-        name: 'Return to Work Unit Activity',
-      }),
-    ).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Return to Work Unit Activity' })).toBeNull();
 
     fireEvent.click(
       screen.getByRole('treeitem', { name: /Recorded WU-ECS2E Work Unit Implementer/ }),
@@ -341,7 +346,11 @@ describe('App application surfaces', () => {
       screen.queryByLabelText('Agent Session turn: recorded-handler-WU-ECS2E-first-review'),
     ).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Return to Work Unit Activity' }));
+    fireEvent.click(
+      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
+        name: 'Back',
+      }),
+    );
     expect(await screen.findByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
     expect(
       screen.getByLabelText('Agent Session turn: recorded-handler-WU-ECS2E-first-review'),
@@ -416,7 +425,11 @@ describe('App application surfaces', () => {
       await screen.findByRole('heading', { name: 'Recorded WU-ECS2E Work Unit Handler' }),
     ).toBeVisible();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Return to Work Unit Activity' }));
+    fireEvent.click(
+      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
+        name: 'Back',
+      }),
+    );
     await waitFor(() => expect(listCalls).toBeGreaterThanOrEqual(2));
     await act(async () => {
       resolveLateList?.(summaries);
@@ -490,13 +503,17 @@ describe('App application surfaces', () => {
       'sprint-control-surface',
     );
     expect(screen.queryByRole('button', { name: 'Files & diffs' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Return to Sprint' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Return to Sprint' })).toBeNull();
     expect(
       within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
         name: 'Back',
       }),
     ).toBeEnabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Return to Sprint' }));
+    fireEvent.click(
+      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
+        name: 'Back',
+      }),
+    );
     expect(await screen.findByRole('main', { name: 'Sprint detail' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Return to Sprint' })).toBeNull();
   });
@@ -536,7 +553,7 @@ describe('App application surfaces', () => {
       });
     });
     expect(await screen.findByRole('main', { name: 'Files and diffs' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Return to Sprint' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Return to Sprint' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Files & diffs' }));
     expect(screen.getByRole('main', { name: 'Files and diffs' })).toBeVisible();

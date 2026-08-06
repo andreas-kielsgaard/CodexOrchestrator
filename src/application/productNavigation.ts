@@ -241,6 +241,15 @@ export function canNavigateBack(
   return previous !== undefined && supports(previous.destination);
 }
 
+/** Maps an already-validated contextual origin to its typed restoration destination. */
+export function contextualOriginDestination(
+  origin: ProductContextualOrigin,
+): Extract<ProductNavigationDestination, { readonly kind: 'orchestration' }> {
+  return isAgentSessionProductOrigin(origin)
+    ? { kind: 'orchestration', location: origin.location }
+    : origin.returnTo;
+}
+
 export function isProductNavigationDestination(
   value: unknown,
 ): value is ProductNavigationDestination {

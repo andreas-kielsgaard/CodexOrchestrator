@@ -1,6 +1,7 @@
 import type { AgentSessionProductOrigin } from './agentSessionNavigation';
 import {
   canNavigateBack,
+  contextualOriginDestination,
   createProductNavigation,
   productNavigationReducer,
   restoreProductNavigation,
@@ -119,6 +120,16 @@ describe('Product navigation history', () => {
         },
       ),
     ).toBe(true);
+  });
+
+  it('maps contextual origins only to their typed restoration destinations', () => {
+    expect(contextualOriginDestination(workUnitOrigin)).toEqual({
+      kind: 'orchestration',
+      location: workUnitOrigin.location,
+    });
+    expect(contextualOriginDestination(evidenceFileReviewOrigin)).toEqual(
+      evidenceFileReviewOrigin.returnTo,
+    );
   });
 
   it('keeps contextual Return separate from generic Back and preserves exact Work Unit state', () => {

@@ -50,6 +50,8 @@ export interface OrchestrationSectionProps {
     target: WorkUnitActivitySessionTarget,
     origin: AgentSessionProductOrigin,
   ) => void;
+  /** The application shell owns actual typed history; details retain local Back only without it. */
+  readonly globalBackAvailable?: boolean;
 }
 
 export function OrchestrationSection({
@@ -67,6 +69,7 @@ export function OrchestrationSection({
   onRequestFileReview,
   onOpenFileEvidence,
   onOpenWorkUnitActivitySession,
+  globalBackAvailable = false,
 }: OrchestrationSectionProps) {
   const workspace = useOrchestrationWorkspace(view, requestedLocation, onProductLocationChange);
   const selected = view.epics.find(({ id }) => id === workspace.epicId);
@@ -87,6 +90,7 @@ export function OrchestrationSection({
         onSelectedRevisionChange={workspace.selectRevision}
         onDetailLocationChange={workspace.setDetailLocation}
         onBack={workspace.backToOverview}
+        globalBackAvailable={globalBackAvailable}
         onOpenAgentSession={onOpenAgentSession}
         onRequestFileReview={onRequestFileReview}
         onOpenFileEvidence={onOpenFileEvidence}

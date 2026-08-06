@@ -58,6 +58,7 @@ export interface SprintWorkspaceProps {
   readonly detailLocation: SprintWorkspaceDetailLocation;
   readonly onDetailLocationChange: (location: SprintWorkspaceDetailLocation) => void;
   readonly onBack: () => void;
+  readonly globalBackAvailable?: boolean;
   readonly onOpenAgentSession?: (origin: AgentSessionProductOrigin) => void;
   readonly onRequestFileReview?: (
     sprintId: string,
@@ -87,6 +88,7 @@ export function SprintWorkspace({
   detailLocation,
   onDetailLocationChange,
   onBack,
+  globalBackAvailable = false,
   onOpenAgentSession,
   onRequestFileReview,
   onOpenFileEvidence,
@@ -215,6 +217,7 @@ export function SprintWorkspace({
             workSlicePlanningPointId: detailLocation.workSlicePlanningPointId,
           });
         }}
+        globalBackAvailable={globalBackAvailable}
         onOpenActivitySession={(target) =>
           onOpenWorkUnitActivitySession?.(target, {
             sessionId: target.sessionId,
@@ -274,6 +277,7 @@ export function SprintWorkspace({
             workSlicePlanningPointId === workSlicePlanningPointGroup.workSlicePlanningPointId,
         )}
         onBack={() => onDetailLocationChange({ kind: 'sprint' })}
+        globalBackAvailable={globalBackAvailable}
         onOpenWorkUnit={(workUnitId) => {
           onDetailLocationChange({
             kind: 'work_unit',
@@ -306,9 +310,10 @@ export function SprintWorkspace({
       ariaLabel="Sprint detail"
       controlsLabel="Sprint controls"
       contextLabel="Sprint context"
-      backLabel="Back to Epic"
+      backLabel={globalBackAvailable ? undefined : 'Back to Epic'}
       onBack={onBack}
-      focusBackOnMount
+      showBack={!globalBackAvailable}
+      focusBackOnMount={!globalBackAvailable}
       hotbarNavigation={
         hasStartedPlan ? (
           <SprintWorkspaceTabs selected={selectedTab} onSelect={setSelectedTab} />

@@ -57,6 +57,7 @@ import type { WorkUnitActivitySessionTarget } from '../features/orchestrations/c
 import { ProductCommandBar } from './ProductCommandBar';
 import {
   canNavigateBack,
+  contextualOriginDestination,
   createProductNavigation,
   isAgentSessionProductOrigin,
   isFileReviewProductOrigin,
@@ -243,6 +244,14 @@ export function App({
     productReturnOrigin && isAgentSessionProductOrigin(productReturnOrigin)
       ? productReturnOrigin
       : null;
+  const canGoBack = canNavigateBack(productNavigation, supportsProductDestination);
+  const contextualReturnDuplicatesBack =
+    canGoBack &&
+    productReturnOrigin !== null &&
+    sameProductNavigationDestination(
+      productNavigation.history.at(-1)!.destination,
+      contextualOriginDestination(productReturnOrigin),
+    );
   const [expandedAgentSessionNodes, setExpandedAgentSessionNodes] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -720,7 +729,7 @@ export function App({
         </p>
       )}
       <EpicInitiationConfirmationModal confirmation={confirmation} />
-      <nav className="surface-switcher" aria-label="Application surfaces">
+      <div className="surface-switcher" role="navigation" aria-label="Application surfaces">
         <button
           className={surface === 'epics' ? 'active' : undefined}
           type="button"
@@ -804,22 +813,22 @@ export function App({
             Files &amp; diffs
           </button>
         ) : null}
-      </nav>
-      <ProductCommandBar
-        canGoBack={canNavigateBack(productNavigation, supportsProductDestination)}
-        onBack={() => {
-          productNavigationEpoch.current += 1;
-          fileReviewRequestSequence.current += 1;
-          dispatchProductNavigation({ type: 'back' });
-        }}
-        returnOrigin={productReturnOrigin}
-        onReturn={(origin) => {
-          if (origin !== productReturnOrigin) return;
-          productNavigationEpoch.current += 1;
-          fileReviewRequestSequence.current += 1;
-          dispatchProductNavigation({ type: 'return_to_contextual_origin', origin });
-        }}
-      />
+        <ProductCommandBar
+          canGoBack={canGoBack}
+          onBack={() => {
+            productNavigationEpoch.current += 1;
+            fileReviewRequestSequence.current += 1;
+            dispatchProductNavigation({ type: 'back' });
+          }}
+          returnOrigin={contextualReturnDuplicatesBack ? null : productReturnOrigin}
+          onReturn={(origin) => {
+            if (origin !== productReturnOrigin) return;
+            productNavigationEpoch.current += 1;
+            fileReviewRequestSequence.current += 1;
+            dispatchProductNavigation({ type: 'return_to_contextual_origin', origin });
+          }}
+        />
+      </div>
       {surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
         <EpicPlanBuilder
           agentSessionClient={managedPlanBuilderSessionClient}
@@ -877,6 +886,7 @@ export function App({
           onOpenWorkUnitActivitySession={openWorkUnitActivitySession}
           onRequestFileReview={contextualFileReviewClient ? requestContextualFileReview : undefined}
           onOpenFileEvidence={fileReviewSourceForEvidence ? openFileEvidence : undefined}
+          globalBackAvailable={canGoBack}
         />
       ) : surface === 'file-review' && activeFileReviewSource ? (
         <FileReviewScreen
@@ -949,6 +959,7 @@ function OrchestrationSurface({
   onOpenWorkUnitActivitySession,
   onRequestFileReview,
   onOpenFileEvidence,
+  globalBackAvailable,
 }: {
   readonly load: ReturnType<typeof useOrchestrationLoad>;
   readonly presentation: OrchestrationPresentationAdapter;
@@ -980,6 +991,7 @@ function OrchestrationSurface({
     },
     returnLocation?: AgentSessionProductLocation,
   ) => void;
+  readonly globalBackAvailable: boolean;
 }) {
   if (load.kind === 'ready')
     return (
@@ -998,6 +1010,7 @@ function OrchestrationSurface({
         onOpenWorkUnitActivitySession={onOpenWorkUnitActivitySession}
         onRequestFileReview={onRequestFileReview}
         onOpenFileEvidence={onOpenFileEvidence}
+        globalBackAvailable={globalBackAvailable}
       />
     );
   const copy =

@@ -800,7 +800,7 @@ h3 {
 
 /* Shared shell; feature styles are owned beside their screens. */
 .primary-app-shell {
-  --app-top-offset: 92px;
+  --app-top-offset: 48px;
   width: 100%;
   height: 100vh;
   min-width: 0;
@@ -816,6 +816,7 @@ h3 {
   inset: 0 0 auto;
   display: flex;
   grid-auto-flow: unset;
+  align-items: center;
   gap: 4px;
   height: 48px;
   padding: 6px 12px;
@@ -824,18 +825,11 @@ h3 {
 }
 
 .application-command-bar {
-  position: fixed;
-  z-index: 10;
-  inset: 48px 0 auto;
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 44px;
-  padding: 4px 12px;
-  border-bottom: 1px solid #d8ddd5;
-  background: rgb(255 253 248 / 96%);
-  box-shadow: 0 2px 8px rgb(23 33 27 / 5%);
-  backdrop-filter: blur(8px);
+  min-width: 0;
+  margin-left: auto;
 }
 
 .application-command-bar button {
@@ -877,7 +871,7 @@ h3 {
   align-items: center;
   gap: 10px;
   min-width: 0;
-  margin-left: auto;
+  margin-left: 2px;
 }
 
 .application-command-bar__context {
@@ -916,7 +910,7 @@ h3 {
   inset: var(--app-top-offset) 0 0;
 }
 
-.surface-switcher button {
+.surface-switcher > button {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -994,15 +988,18 @@ h3 {
     grid-template-columns: 1fr;
   }
 
-  .surface-switcher button {
-    flex: 1;
-    justify-content: center;
+  .surface-switcher {
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .surface-switcher > button {
+    flex: 0 0 auto;
   }
 
   .application-command-bar {
     gap: 6px;
-    padding-right: 8px;
-    padding-left: 8px;
+    flex: 0 0 auto;
   }
 
   .application-command-bar__context {

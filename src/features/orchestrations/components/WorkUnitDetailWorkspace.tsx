@@ -28,6 +28,7 @@ export interface WorkUnitDetailWorkspaceProps {
   readonly agentSessionComposition?: EmbeddedAgentSessionComposition;
   readonly backLabel?: string;
   readonly onBack: () => void;
+  readonly globalBackAvailable?: boolean;
   readonly onOpenActivitySession?: (target: WorkUnitActivitySessionTarget) => void;
   readonly onOpenFileEvidence?: (
     target: WorkUnitFileEvidenceTarget,
@@ -75,6 +76,7 @@ export function WorkUnitDetailWorkspace({
   sessions,
   backLabel = 'Back to Work Slice planning point',
   onBack,
+  globalBackAvailable = false,
   onOpenActivitySession,
   onOpenFileEvidence,
   initialInspectionState,
@@ -182,9 +184,10 @@ export function WorkUnitDetailWorkspace({
       ariaLabel={`Work Unit detail: ${workUnitId}`}
       controlsLabel="Work Unit controls"
       contextLabel="Work Unit context"
-      backLabel={backLabel}
+      backLabel={globalBackAvailable ? undefined : backLabel}
       onBack={onBack}
-      focusBackOnMount
+      showBack={!globalBackAvailable}
+      focusBackOnMount={!globalBackAvailable}
       hotbarContext={workSlicePlanningPointGroupTitle}
       control={
         <div className="sprint-header-controls">
