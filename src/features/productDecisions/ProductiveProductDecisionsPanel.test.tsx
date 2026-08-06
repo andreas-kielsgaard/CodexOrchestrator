@@ -359,4 +359,83 @@ describe('ProductiveProductDecisionsPanel', () => {
     expect(screen.queryByText('Old accepted result')).toBeNull();
     expect(screen.queryByText(/Accepted Product Decision version 2/)).toBeNull();
   });
+
+  it('does not apply a late agent acceptance to a reloaded Epic with the same decision id', async () => {
+    const acceptance = deferred<ProductDecisionVersion>();
+    const correctionClient: ProductDecisionCorrectionClient = {
+      startConversation: vi.fn().mockResolvedValue({
+        correctionId: 'correction-1',
+        epicId: 'epic-1',
+        decisionId: 'decision-1',
+        baseVersion: 1,
+        sessionId: 'session-1',
+        latestProposal: {
+          proposalId: 'proposal-1',
+          correctionId: 'correction-1',
+          title: 'Old agent title',
+          statement: 'Old agent statement',
+          intent: 'Old agent intent',
+          proposalPassage: {
+            kind: 'agent_session_passage',
+            sessionId: 'session-1',
+            invocationId: 'invocation-1',
+            passage: { kind: 'final_response', runtimeEventId: 'event-1' },
+          },
+        },
+      }),
+      sendMessage: vi.fn(),
+      saveProposal: vi.fn(),
+      acceptProposal: vi.fn().mockImplementation(() => acceptance.promise),
+    };
+    const details = sessionDetails('completed', [
+      runtimeEvent(1, 'agent_message', 'Suggested correction', { role: 'final' }),
+    ]);
+    const agentSessionClient: AgentSessionClient = {
+      createSession: vi.fn(),
+      listSessions: vi.fn().mockResolvedValue([]),
+      loadSession: vi.fn().mockResolvedValue(details),
+      reloadSession: vi.fn().mockResolvedValue(details),
+      subscribeUpdates: vi.fn().mockResolvedValue(() => undefined),
+      sendMessage: vi.fn(),
+      cancelInvocation: vi.fn(),
+      disconnectUpdates: vi.fn(),
+    };
+    const oldClient = clientFor();
+    const replacement = current(
+      version(1, 'New Epic statement', { epicId: 'epic-2', title: 'New Epic title' }),
+      { epicId: 'epic-2' },
+    );
+    const newClient = clientFor({ loadCurrent: vi.fn().mockResolvedValue([replacement]) });
+    const view = render(
+      <ProductiveProductDecisionsPanel
+        epicId="epic-1"
+        client={oldClient}
+        correctionClient={correctionClient}
+        agentSessionClient={agentSessionClient}
+      />,
+    );
+    await screen.findByText('Title 1');
+    fireEvent.click(screen.getByRole('button', { name: 'Discuss correction with agent' }));
+    await screen.findByText('Old agent title');
+    const accept = screen.getByRole('button', { name: 'Accept proposed correction' });
+    fireEvent.click(accept);
+    fireEvent.click(accept);
+    expect(correctionClient.acceptProposal).toHaveBeenCalledTimes(1);
+
+    view.rerender(
+      <ProductiveProductDecisionsPanel
+        epicId="epic-2"
+        client={newClient}
+        correctionClient={correctionClient}
+        agentSessionClient={agentSessionClient}
+      />,
+    );
+    await screen.findByText('New Epic title');
+    acceptance.resolve(version(2, 'Old accepted agent result', { epicId: 'epic-1' }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.getByText('New Epic title')).toBeVisible();
+    expect(screen.queryByText('Old accepted agent result')).toBeNull();
+    expect(screen.queryByText(/Accepted Product Decision version 2/)).toBeNull();
+  });
 });

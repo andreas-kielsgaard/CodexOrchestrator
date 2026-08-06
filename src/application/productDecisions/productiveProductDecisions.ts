@@ -150,11 +150,5 @@ export interface ProductDecisionCorrectionClient {
       proposalPassage: ProductDecisionConversationPassageReference;
     }>,
   ): Promise<ProductDecisionCorrectionProposal>;
-  acceptProposal(
-    input: Readonly<{
-      proposalId: string;
-      humanInteractionId: string;
-      idempotencyKey: string;
-    }>,
-  ): Promise<ProductDecisionVersion>;
+  acceptProposal(input: Readonly<{ proposalId: string }>): Promise<ProductDecisionVersion>;
 }

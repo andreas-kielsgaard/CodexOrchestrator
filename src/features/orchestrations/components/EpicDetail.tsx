@@ -28,6 +28,7 @@ import type { WorkUnitActivitySessionTarget } from './WorkUnitDetailWorkspace';
 import type {
   EpicProductDecisionSource,
   ProductDecisionClient,
+  ProductDecisionCorrectionClient,
   ProductDecisionEvidenceDestination,
   ProductDecisionEvidenceNavigationRequest,
   ProductDecisionPublishTarget,
@@ -67,6 +68,7 @@ export interface EpicDetailProps {
   ) => void;
   readonly epicProductDecisionSource?: EpicProductDecisionSource;
   readonly productDecisionClient?: ProductDecisionClient;
+  readonly productDecisionCorrectionClient?: ProductDecisionCorrectionClient;
   readonly requestedProductDecisions?: boolean;
   readonly onOpenProductDecisionEvidence?: (
     request: ProductDecisionEvidenceNavigationRequest,
@@ -100,6 +102,7 @@ export function EpicDetail({
   onOpenWorkUnitActivitySession,
   epicProductDecisionSource,
   productDecisionClient,
+  productDecisionCorrectionClient,
   requestedProductDecisions = false,
   onOpenProductDecisionEvidence,
   onOpenProductiveDecisionEvidence,
@@ -181,6 +184,8 @@ export function EpicDetail({
             epicId={epic.id}
             source={epicProductDecisionSource}
             productiveClient={productDecisionClient}
+            correctionClient={productDecisionCorrectionClient}
+            agentSessionClient={agentSessionComposition?.client}
             onOpenEvidence={(request) => {
               if (!epicProductDecisionSource) return;
               const resolution = epicProductDecisionSource.resolveEvidenceNavigation(request);

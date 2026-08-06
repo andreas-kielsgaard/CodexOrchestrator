@@ -20,6 +20,7 @@ import type { WorkUnitActivitySessionTarget } from './components/WorkUnitDetailW
 import type {
   EpicProductDecisionSource,
   ProductDecisionClient,
+  ProductDecisionCorrectionClient,
   ProductDecisionEvidenceDestination,
   ProductDecisionEvidenceNavigationRequest,
   ProductDecisionPublishTarget,
@@ -61,6 +62,7 @@ export interface OrchestrationSectionProps {
   readonly globalBackAvailable?: boolean;
   readonly epicProductDecisionSource?: EpicProductDecisionSource;
   readonly productDecisionClient?: ProductDecisionClient;
+  readonly productDecisionCorrectionClient?: ProductDecisionCorrectionClient;
   readonly onOpenProductDecisionEvidence?: (
     request: ProductDecisionEvidenceNavigationRequest,
     origin: AgentSessionProductOrigin,
@@ -90,6 +92,7 @@ export function OrchestrationSection({
   globalBackAvailable = false,
   epicProductDecisionSource,
   productDecisionClient,
+  productDecisionCorrectionClient,
   onOpenProductDecisionEvidence,
   onOpenProductiveDecisionEvidence,
   onPublishProductDecision,
@@ -120,6 +123,7 @@ export function OrchestrationSection({
         onOpenWorkUnitActivitySession={onOpenWorkUnitActivitySession}
         epicProductDecisionSource={epicProductDecisionSource}
         productDecisionClient={productDecisionClient}
+        productDecisionCorrectionClient={productDecisionCorrectionClient}
         requestedProductDecisions={requestedLocation?.kind === 'epic_product_decisions'}
         onOpenProductDecisionEvidence={onOpenProductDecisionEvidence}
         onOpenProductiveDecisionEvidence={onOpenProductiveDecisionEvidence}

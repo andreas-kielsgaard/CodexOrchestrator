@@ -72,6 +72,7 @@ import {
 import type {
   EpicProductDecisionSource,
   ProductDecisionClient,
+  ProductDecisionCorrectionClient,
   ProductDecisionEvidenceDestination,
   ProductDecisionEvidenceNavigationRequest,
   ProductDecisionPublishTarget,
@@ -120,6 +121,8 @@ export interface AppProps {
   readonly epicProductDecisionSource?: EpicProductDecisionSource;
   /** Product-owned durable decision command/query boundary for the productive Epic view. */
   readonly productDecisionClient?: ProductDecisionClient;
+  /** Product-owned decision correction conversation boundary; it is never a general chat client. */
+  readonly productDecisionCorrectionClient?: ProductDecisionCorrectionClient;
   /** Present only in the injected development launcher composition. */
   readonly humanReviewLauncherView?: ReactNode;
   /** Enumerated proof navigation; it cannot activate or focus a native window. */
@@ -156,6 +159,7 @@ export function App({
   fileReviewSourceForEvidence,
   epicProductDecisionSource,
   productDecisionClient,
+  productDecisionCorrectionClient,
   humanReviewLauncherView,
   humanReviewLauncherNavigation,
   initialSurface = 'epics',
@@ -991,6 +995,7 @@ export function App({
           globalBackAvailable={canGoBack}
           epicProductDecisionSource={epicProductDecisionSource}
           productDecisionClient={productDecisionClient}
+          productDecisionCorrectionClient={productDecisionCorrectionClient}
           onOpenProductDecisionEvidence={openProductDecisionEvidence}
           onOpenProductiveDecisionEvidence={openProductiveDecisionEvidence}
           onPublishProductDecision={openProductDecisionPublish}
@@ -1070,6 +1075,7 @@ function OrchestrationSurface({
   globalBackAvailable,
   epicProductDecisionSource,
   productDecisionClient,
+  productDecisionCorrectionClient,
   onOpenProductDecisionEvidence,
   onOpenProductiveDecisionEvidence,
   onPublishProductDecision,
@@ -1107,6 +1113,7 @@ function OrchestrationSurface({
   readonly globalBackAvailable: boolean;
   readonly epicProductDecisionSource?: EpicProductDecisionSource;
   readonly productDecisionClient?: ProductDecisionClient;
+  readonly productDecisionCorrectionClient?: ProductDecisionCorrectionClient;
   readonly onOpenProductDecisionEvidence: (
     request: ProductDecisionEvidenceNavigationRequest,
     origin: AgentSessionProductOrigin,
@@ -1137,6 +1144,7 @@ function OrchestrationSurface({
         globalBackAvailable={globalBackAvailable}
         epicProductDecisionSource={epicProductDecisionSource}
         productDecisionClient={productDecisionClient}
+        productDecisionCorrectionClient={productDecisionCorrectionClient}
         onOpenProductDecisionEvidence={onOpenProductDecisionEvidence}
         onOpenProductiveDecisionEvidence={onOpenProductiveDecisionEvidence}
         onPublishProductDecision={onPublishProductDecision}

@@ -61,6 +61,7 @@ export function ProductiveProductDecisionsPanel({
   const [historyLoading, setHistoryLoading] = useState<ReadonlySet<string>>(() => new Set());
 
   const mountedRef = useRef(false);
+  const clientRef = useRef(client);
   const contextEpochRef = useRef(0);
   const requestTokenRef = useRef(0);
   const operationTokenRef = useRef(0);
@@ -162,6 +163,7 @@ export function ProductiveProductDecisionsPanel({
 
   useEffect(() => {
     mountedRef.current = true;
+    clientRef.current = client;
     startCurrentLoad(true);
     const historyRequests = historyRequestsRef.current;
     return () => {
@@ -337,7 +339,7 @@ export function ProductiveProductDecisionsPanel({
         <ul className="product-decisions__productive-list">
           {load.decisions.map((decision) => (
             <ProductiveDecisionCard
-              key={decision.decisionId}
+              key={`${decision.epicId}:${decision.decisionId}:${decision.currentVersion.versionId}`}
               decision={decision}
               edit={edit?.decisionId === decision.decisionId ? edit : null}
               saving={saving}
@@ -359,13 +361,31 @@ export function ProductiveProductDecisionsPanel({
               onPublish={onPublish}
               correctionClient={correctionClient}
               agentSessionClient={agentSessionClient}
-              onAgentAccepted={(accepted) => {
+              onAgentBusyChange={setCurrentSaving}
+              contextEpoch={contextEpochRef.current}
+              onAgentAccepted={(accepted, operationEpoch) => {
                 const currentLoad = loadRef.current;
-                if (currentLoad.kind !== 'available') return;
+                if (
+                  currentLoad.kind !== 'available' ||
+                  clientRef.current !== client ||
+                  contextEpochRef.current !== operationEpoch
+                )
+                  return;
+                if (
+                  !currentLoad.decisions.some(
+                    (item) =>
+                      item.epicId === decision.epicId &&
+                      item.decisionId === decision.decisionId &&
+                      item.currentVersion.version === decision.currentVersion.version &&
+                      item.currentVersion.versionId === decision.currentVersion.versionId,
+                  )
+                ) {
+                  return;
+                }
                 setCurrentLoad({
                   kind: 'available',
                   decisions: currentLoad.decisions.map((item) =>
-                    item.decisionId === decision.decisionId
+                    item.epicId === decision.epicId && item.decisionId === decision.decisionId
                       ? { ...item, currentVersion: accepted }
                       : item,
                   ),
@@ -396,6 +416,8 @@ function ProductiveDecisionCard({
   correctionClient,
   agentSessionClient,
   onAgentAccepted,
+  onAgentBusyChange,
+  contextEpoch,
 }: {
   readonly decision: ProductDecisionCurrent;
   readonly edit: EditState | null;
@@ -411,7 +433,9 @@ function ProductiveDecisionCard({
   readonly onPublish?: (target: ProductDecisionPublishTarget) => void;
   readonly correctionClient?: ProductDecisionCorrectionClient;
   readonly agentSessionClient?: AgentSessionClient;
-  readonly onAgentAccepted: (version: ProductDecisionVersion) => void;
+  readonly onAgentAccepted: (version: ProductDecisionVersion, operationEpoch: number) => void;
+  readonly onAgentBusyChange: (busy: boolean) => void;
+  readonly contextEpoch: number;
 }) {
   const version = decision.currentVersion;
   return (
@@ -488,6 +512,8 @@ function ProductiveDecisionCard({
                   agentSessionClient={agentSessionClient}
                   disabled={saving}
                   onAccepted={onAgentAccepted}
+                  onBusyChange={onAgentBusyChange}
+                  contextEpoch={contextEpoch}
                 />
               )}
               <button
@@ -535,13 +561,27 @@ function AgentAssistedCorrection({
   agentSessionClient,
   disabled,
   onAccepted,
+  onBusyChange,
+  contextEpoch,
 }: {
   readonly decision: ProductDecisionCurrent;
   readonly client: ProductDecisionCorrectionClient;
   readonly agentSessionClient: AgentSessionClient;
   readonly disabled: boolean;
-  readonly onAccepted: (version: ProductDecisionVersion) => void;
+  readonly onAccepted: (version: ProductDecisionVersion, operationEpoch: number) => void;
+  readonly onBusyChange: (busy: boolean) => void;
+  readonly contextEpoch: number;
 }) {
+  const boundary = {
+    contextEpoch,
+    client,
+    epicId: decision.epicId,
+    decisionId: decision.decisionId,
+    version: decision.currentVersion.version,
+    versionId: decision.currentVersion.versionId,
+  };
+  const activeBoundaryRef = useRef(boundary);
+  activeBoundaryRef.current = boundary;
   const [conversation, setConversation] = useState<Awaited<
     ReturnType<typeof client.startConversation>
   > | null>(null);
@@ -556,9 +596,43 @@ function AgentAssistedCorrection({
   });
   const [message, setMessage] = useState<string | null>(null);
   const [accepting, setAccepting] = useState(false);
+  const isCurrentBoundary = (expected: typeof boundary) => {
+    const current = activeBoundaryRef.current;
+    return (
+      current.contextEpoch === expected.contextEpoch &&
+      current.client === expected.client &&
+      current.epicId === expected.epicId &&
+      current.decisionId === expected.decisionId &&
+      current.version === expected.version &&
+      current.versionId === expected.versionId
+    );
+  };
+
+  useEffect(() => {
+    setConversation(null);
+    setProposal(null);
+    setDraft({
+      title: decision.currentVersion.title,
+      statement: decision.currentVersion.statement,
+      intent: decision.currentVersion.intent,
+    });
+    setMessage(null);
+    setOpening(false);
+    setAccepting(false);
+  }, [
+    contextEpoch,
+    decision.currentVersion.intent,
+    decision.currentVersion.statement,
+    decision.currentVersion.title,
+    decision.currentVersion.version,
+    decision.currentVersion.versionId,
+  ]);
+
   const open = async () => {
     if (opening || disabled) return;
+    const operationBoundary = boundary;
     setOpening(true);
+    onBusyChange(true);
     setMessage(null);
     try {
       const opened = await client.startConversation({
@@ -566,23 +640,27 @@ function AgentAssistedCorrection({
         decisionId: decision.decisionId,
         baseVersion: decision.currentVersion.version,
       });
+      if (!isCurrentBoundary(operationBoundary)) return;
       setConversation(opened);
       setProposal(opened.latestProposal ?? null);
     } catch (error) {
+      if (!isCurrentBoundary(operationBoundary)) return;
       setMessage(
         productDecisionCommandErrorCode(error) === 'revision_conflict'
           ? 'This decision changed. Reload before starting a new correction discussion.'
           : 'The decision-bound correction conversation could not be opened.',
       );
     } finally {
+      if (!isCurrentBoundary(operationBoundary)) return;
       setOpening(false);
+      onBusyChange(false);
     }
   };
   if (!conversation) {
     return (
       <span>
         <button type="button" onClick={() => void open()} disabled={disabled || opening}>
-          {opening ? 'Opening correction discussionâ€¦' : 'Discuss correction with agent'}
+          {opening ? 'Opening correction discussion…' : 'Discuss correction with agent'}
         </button>
         {message && <small role="alert">{message}</small>}
       </span>
@@ -603,6 +681,9 @@ function AgentAssistedCorrection({
         onSavedProposal={setProposal}
         disabled={disabled || accepting}
         onMessage={setMessage}
+        onBusyChange={onBusyChange}
+        boundary={boundary}
+        isCurrentBoundary={isCurrentBoundary}
       />
       {proposal && (
         <section aria-label="Proposed corrected decision">
@@ -619,29 +700,33 @@ function AgentAssistedCorrection({
             disabled={disabled || accepting}
             onClick={() =>
               void (async () => {
+                const operationBoundary = boundary;
                 setAccepting(true);
+                onBusyChange(true);
                 setMessage(null);
                 try {
                   const accepted = await client.acceptProposal({
                     proposalId: proposal.proposalId,
-                    humanInteractionId: opaqueId(),
-                    idempotencyKey: `product-decision-agent-correction:${proposal.proposalId}`,
                   });
-                  onAccepted(accepted);
+                  if (!isCurrentBoundary(operationBoundary)) return;
+                  onAccepted(accepted, operationBoundary.contextEpoch);
                   setMessage(`Accepted Product Decision version ${accepted.version}.`);
                 } catch (error) {
+                  if (!isCurrentBoundary(operationBoundary)) return;
                   setMessage(
                     productDecisionCommandErrorCode(error) === 'revision_conflict'
                       ? 'The current decision changed. This proposal remains available for review; reload and start a correction from the newer version.'
                       : 'The proposal was not accepted. It remains available for explicit review.',
                   );
                 } finally {
+                  if (!isCurrentBoundary(operationBoundary)) return;
                   setAccepting(false);
+                  onBusyChange(false);
                 }
               })()
             }
           >
-            {accepting ? 'Acceptingâ€¦' : 'Accept proposed correction'}
+            {accepting ? 'Accepting…' : 'Accept proposed correction'}
           </button>
         </section>
       )}
@@ -659,6 +744,9 @@ function CorrectionConversation({
   onSavedProposal,
   disabled,
   onMessage,
+  onBusyChange,
+  boundary,
+  isCurrentBoundary,
 }: {
   readonly conversation: Awaited<ReturnType<ProductDecisionCorrectionClient['startConversation']>>;
   readonly correctionClient: ProductDecisionCorrectionClient;
@@ -670,6 +758,23 @@ function CorrectionConversation({
   ) => void;
   readonly disabled: boolean;
   readonly onMessage: (message: string | null) => void;
+  readonly onBusyChange: (busy: boolean) => void;
+  readonly boundary: {
+    readonly contextEpoch: number;
+    readonly client: ProductDecisionCorrectionClient;
+    readonly epicId: string;
+    readonly decisionId: string;
+    readonly version: number;
+    readonly versionId: string;
+  };
+  readonly isCurrentBoundary: (expected: {
+    readonly contextEpoch: number;
+    readonly client: ProductDecisionCorrectionClient;
+    readonly epicId: string;
+    readonly decisionId: string;
+    readonly version: number;
+    readonly versionId: string;
+  }) => boolean;
 }) {
   const boundClient = useMemo<AgentSessionClient>(
     () => ({
@@ -691,22 +796,28 @@ function CorrectionConversation({
       onMessage('Wait for an exact final Agent Session response before saving a proposal.');
       return;
     }
+    const operationBoundary = boundary;
+    const isCurrentSave = () => isCurrentBoundary(operationBoundary);
+    onBusyChange(true);
     try {
-      onSavedProposal(
-        await correctionClient.saveProposal({
-          correctionId: conversation.correctionId,
-          ...draft,
-          proposalPassage: {
-            kind: 'agent_session_passage',
-            sessionId: latestResponse.anchor.sessionId,
-            invocationId: latestResponse.anchor.invocationId,
-            passage: { kind: 'final_response', runtimeEventId: latestResponse.eventId },
-          },
-        }),
-      );
+      const saved = await correctionClient.saveProposal({
+        correctionId: conversation.correctionId,
+        ...draft,
+        proposalPassage: {
+          kind: 'agent_session_passage',
+          sessionId: latestResponse.anchor.sessionId,
+          invocationId: latestResponse.anchor.invocationId,
+          passage: { kind: 'final_response', runtimeEventId: latestResponse.eventId },
+        },
+      });
+      if (!isCurrentSave()) return;
+      onSavedProposal(saved);
       onMessage(null);
     } catch {
+      if (!isCurrentSave()) return;
       onMessage('The proposal could not be retained. No Product Decision version was created.');
+    } finally {
+      if (isCurrentSave()) onBusyChange(false);
     }
   };
   return (
