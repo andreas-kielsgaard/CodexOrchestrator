@@ -2042,11 +2042,11 @@ mod tests {
     use crate::{
         agent_sessions::{
             application::{AgentSessionApplication, AgentSessionNotifier, SystemAgentSessionProviders},
-            domain::{AgentInvocation, AgentInvocationId, AgentInvocationTerminalStatus, AgentRuntimeOptions, AgentSessionId, ToolActivityPhase},
+            domain::{AgentInvocation, AgentInvocationId, AgentInvocationTerminalStatus, AgentRuntimeEventSource, AgentRuntimeOptions, AgentSessionId, ToolActivityPhase},
             ports::{
                 AgentRuntime, AgentRuntimeUpdateSink, RuntimeInvocationMode,
                 RuntimeInvocationOutcome, RuntimeInvocationPreflight, RuntimeInvocationRequest,
-                RuntimePortError, RuntimePortErrorKind, RuntimeUpdate,
+                RuntimeEventDraft, RuntimePortError, RuntimePortErrorKind, RuntimeUpdate,
             },
             repository::SqliteAgentSessionRepository,
         },
@@ -2084,6 +2084,7 @@ mod tests {
         sinks: Mutex<HashMap<AgentInvocationId, Arc<dyn AgentRuntimeUpdateSink>>>,
         fail_next_launch: AtomicUsize,
         terminal_on_next_start: AtomicUsize,
+        event_on_next_start: AtomicUsize,
         candidate_change_invocation: Mutex<Option<String>>,
     }
 
@@ -2117,6 +2118,12 @@ mod tests {
         /// returns. This exercises notifier re-entry rather than calling transition methods directly.
         fn terminal_on_next_start(&self) {
             self.terminal_on_next_start.store(1, Ordering::SeqCst);
+        }
+
+        /// Emits an application-owned launch observation before the runtime start returns. This
+        /// is the same re-entrant shape as Codex launch provenance, without provider payload.
+        fn event_on_next_start(&self) {
+            self.event_on_next_start.store(1, Ordering::SeqCst);
         }
 
         fn finish(&self, invocation_id: &str, status: AgentInvocationTerminalStatus) {
@@ -2207,6 +2214,24 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(request.invocation_id.clone(), sink);
+            if self.event_on_next_start.swap(0, Ordering::SeqCst) == 1 {
+                self.sinks
+                    .lock()
+                    .unwrap()
+                    .get(&request.invocation_id)
+                    .cloned()
+                    .unwrap()
+                    .emit_update(
+                        &request.invocation_id,
+                        RuntimeUpdate::Event(RuntimeEventDraft {
+                            source: AgentRuntimeEventSource::Runtime,
+                            raw_payload: serde_json::json!({
+                                "kind": "recorded_launch_provenance"
+                            }),
+                            normalized: None,
+                        }),
+                    )?;
+            }
             if self.terminal_on_next_start.swap(0, Ordering::SeqCst) == 1 {
                 self.finish_result(
                     request.invocation_id.as_str(),
@@ -2257,24 +2282,26 @@ mod tests {
 
     impl AgentSessionNotifier for TransitionNotifier {
         fn notify(&self, notification: AgentSessionNotification) -> Result<(), String> {
-            if let Some(service) = self
-                .service
-                .lock()
-                .map_err(|_| "test notification registry unavailable".to_string())?
-                .as_ref()
-                .and_then(Weak::upgrade)
-            {
+            let transition = {
+                self.service
+                    .lock()
+                    .map_err(|_| "test notification registry unavailable".to_string())?
+                    .clone()
+                    .and_then(|service| service.upgrade())
+            };
+            if let Some(service) = transition {
                 service
                     .on_agent_notification(&notification)
                     .map_err(|error| error.to_string())?;
             }
-            if let Some(service) = self
-                .sprint
-                .lock()
-                .map_err(|_| "test Sprint notification registry unavailable".to_string())?
-                .as_ref()
-                .and_then(Weak::upgrade)
-            {
+            let sprint = {
+                self.sprint
+                    .lock()
+                    .map_err(|_| "test Sprint notification registry unavailable".to_string())?
+                    .clone()
+                    .and_then(|service| service.upgrade())
+            };
+            if let Some(service) = sprint {
                 service
                     .on_agent_notification(&notification)
                     .map_err(|error| error.to_string())?;
@@ -2286,6 +2313,7 @@ mod tests {
     #[derive(Default)]
     struct LiveTransitionNotifier {
         service: Mutex<Option<Weak<PostConfirmationTransitionService>>>,
+        sprint: Mutex<Option<Weak<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>>>,
         terminals: Mutex<Vec<AgentInvocation>>,
         ready: std::sync::Condvar,
     }
@@ -2293,6 +2321,13 @@ mod tests {
     impl LiveTransitionNotifier {
         fn set(&self, service: &Arc<PostConfirmationTransitionService>) {
             *self.service.lock().unwrap() = Some(Arc::downgrade(service));
+        }
+
+        fn set_sprint(
+            &self,
+            service: &Arc<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>,
+        ) {
+            *self.sprint.lock().unwrap() = Some(Arc::downgrade(service));
         }
 
         fn wait_for_terminals(&self, count: usize) -> Vec<AgentInvocation> {
@@ -2310,13 +2345,26 @@ mod tests {
 
     impl AgentSessionNotifier for LiveTransitionNotifier {
         fn notify(&self, notification: AgentSessionNotification) -> Result<(), String> {
-            if let Some(service) = self
-                .service
-                .lock()
-                .map_err(|_| "live transition registry unavailable".to_string())?
-                .as_ref()
-                .and_then(Weak::upgrade)
-            {
+            let transition = {
+                self.service
+                    .lock()
+                    .map_err(|_| "live transition registry unavailable".to_string())?
+                    .clone()
+                    .and_then(|service| service.upgrade())
+            };
+            if let Some(service) = transition {
+                service
+                    .on_agent_notification(&notification)
+                    .map_err(|error| error.to_string())?;
+            }
+            let sprint = {
+                self.sprint
+                    .lock()
+                    .map_err(|_| "live Sprint notification registry unavailable".to_string())?
+                    .clone()
+                    .and_then(|service| service.upgrade())
+            };
+            if let Some(service) = sprint {
                 service
                     .on_agent_notification(&notification)
                     .map_err(|error| error.to_string())?;
@@ -3300,6 +3348,71 @@ mod tests {
         .unwrap();
         reopened.reconcile_startup().unwrap();
         assert_eq!(fixture.runtime.requests().len(), 5);
+    }
+
+    #[test]
+    fn bootstrap_runner_provenance_reentry_releases_product_notification_registries() {
+        let fixture = Fixture::new();
+        let bootstrap = fixture.status();
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        let sprint = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+        )
+        .unwrap();
+        fixture.notifier.set_sprint(&sprint);
+
+        // Bootstrap terminal delivery enters PostConfirmationTransitionService. Its Runner
+        // start immediately persists a provenance event and re-enters both notifier consumers
+        // before `start_invocation` returns.
+        fixture.runtime.event_on_next_start();
+        fixture.runtime.finish(
+            &bootstrap.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+
+        let runner = fixture.status();
+        let harness_applied: Option<String> = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT runner_harness_applied_at FROM epic_bootstrap_transitions WHERE initiation_id=?1",
+                [&fixture.initiation_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(harness_applied.is_some());
+        assert!(runner.runner_launched_at.is_some());
+        assert_eq!(fixture.runtime.requests().len(), 2);
+        let session = AgentSessionId::new(runner.runner_session_id.clone()).unwrap();
+        let invocation = AgentInvocationId::new(runner.runner_invocation_id.clone()).unwrap();
+        assert_eq!(
+            fixture
+                .sessions
+                .application_invocation_launch_evidence(&invocation, &session)
+                .unwrap(),
+            ApplicationInvocationLaunchEvidence::LaunchAccepted
+        );
+        let history = fixture.sessions.load_session(&session).unwrap();
+        let runner_history = history
+            .invocations
+            .iter()
+            .find(|candidate| candidate.invocation.id == invocation)
+            .unwrap();
+        assert_eq!(runner_history.events.len(), 1);
+        assert_eq!(runner_history.events[0].sequence, 0);
+        assert_eq!(
+            runner_history.events[0].raw_payload["kind"],
+            "recorded_launch_provenance"
+        );
+
+        fixture.service.reconcile_startup().unwrap();
+        assert_eq!(fixture.runtime.requests().len(), 2);
     }
 
     #[test]
@@ -4319,8 +4432,13 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "paid installed-Codex Bootstrap and Runner proof from isolated confirmed state"]
+    #[ignore = "requires CODEX_PIP01D_RUNNER_LIVE=true and launches one Bootstrap plus one Runner"]
     fn installed_codex_bootstrap_and_runner_converge_without_starting_a_sprint() {
+        assert_eq!(
+            std::env::var("CODEX_PIP01D_RUNNER_LIVE").as_deref(),
+            Ok("true"),
+            "refusing installed Codex Runner proof without explicit opt-in"
+        );
         let directory = tempfile::tempdir().unwrap();
         let database_path = directory.path().join("active.sqlite");
         drop(crate::storage::open_active_database(&database_path).unwrap());
@@ -4379,10 +4497,20 @@ mod tests {
         ));
         let service = PostConfirmationTransitionService::new(
             Arc::new(SqliteBootstrapTransitionRepository::open(&database_path).unwrap()),
-            sessions,
+            sessions.clone(),
             directory.path().join("materials"),
         );
+        let sprint_runners =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &database_path,
+                sessions.clone(),
+            )
+            .unwrap();
+        service
+            .attach_sprint_runner_transition(sprint_runners.clone())
+            .unwrap();
         notifier.set(&service);
+        notifier.set_sprint(&sprint_runners);
         service
             .on_initiation_persisted(initiated.initiation_id.as_str())
             .unwrap();
@@ -4410,13 +4538,37 @@ mod tests {
             Some(status.current_attempt_id.as_str())
         );
 
+        let runner_session = AgentSessionId::new(status.runner_session_id.clone()).unwrap();
+        let runner_invocation = AgentInvocationId::new(status.runner_invocation_id.clone()).unwrap();
+        assert_eq!(
+            sessions
+                .application_invocation_launch_evidence(&runner_invocation, &runner_session)
+                .unwrap(),
+            ApplicationInvocationLaunchEvidence::LaunchAccepted
+        );
+        let runner_history = sessions.load_session(&runner_session).unwrap();
+        assert!(runner_history.session.runtime_binding.external_context_id.is_some());
+        let runner = runner_history
+            .invocations
+            .iter()
+            .find(|candidate| candidate.invocation.id == runner_invocation)
+            .unwrap();
+        assert_eq!(runner.invocation.status, AgentInvocationStatus::Completed);
+        assert_eq!(runner.invocation.exit_code, Some(0));
+        assert!(runner
+            .events
+            .iter()
+            .any(|event| event.raw_payload["kind"] == "codex_launch_provenance"));
+
         let connection = Connection::open(&database_path).unwrap();
         for (table, expected) in [
             ("epic_bootstrap_attempt_completion_commands", 1),
             ("epic_bootstrap_attempt_completion_results", 1),
             ("epic_bootstrap_attempt_completion_facts", 1),
-            ("agent_session_invocation_launch_acceptances", 2),
-            ("agent_session_invocations", 2),
+            // The Runner's required authorized request creates one pre-start route. It does not
+            // start the Sprint and remains distinct from the Bootstrap and Runner activations.
+            ("agent_session_invocation_launch_acceptances", 3),
+            ("agent_session_invocations", 3),
             ("epic_initiations", 1),
             ("initiated_sprints", 1),
         ] {
@@ -4441,17 +4593,18 @@ mod tests {
             1
         );
         assert_eq!(
-            completed_mcp_calls(&status.runner_invocation_id, "mcp_tool_call"),
-            0
+            completed_mcp_calls(&status.runner_invocation_id, "request_next_sprint_runner"),
+            1
         );
-        let sprint_sessions: i64 = connection
+        let (pre_start_routes, started_sprints): (i64, i64) = connection
             .query_row(
-                "SELECT COUNT(*) FROM agent_sessions WHERE title LIKE '%Sprint%'",
-                [],
-                |row| row.get(0),
+                "SELECT COUNT(*),SUM(CASE WHEN sprint_start_persisted_at IS NOT NULL THEN 1 ELSE 0 END) FROM sprint_runner_transitions WHERE epic_runner_invocation_id=?1",
+                [&status.runner_invocation_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(sprint_sessions, 0);
+        assert_eq!(pre_start_routes, 1);
+        assert_eq!(started_sprints, 0);
         let inventory: String = connection
             .query_row(
                 "SELECT inventory_json FROM epic_bootstrap_attempt_completion_facts",
@@ -4468,7 +4621,10 @@ mod tests {
         }
         drop(connection);
         eprintln!(
-            "live transition: 1 Bootstrap call, 1 accepted inventory, 1 Runner launch, 0 Sprint sessions"
+            "PIP01D_RUNNER_COMPOSITION_EVIDENCE={{\"schemaVersion\":2,\"launchAccepted\":true,\"externalContextPersisted\":true,\"durableStatus\":\"completed\",\"exitCode\":0,\"provenanceObserved\":true,\"bootstrapAndRunnerTerminalCount\":2,\"authorizedPreStartRouteCount\":1,\"sprintExecutionStarted\":false}}"
+        );
+        eprintln!(
+            "live transition: 1 Bootstrap call, 1 accepted inventory, 1 Runner launch, 1 authorized pre-start route, 0 Sprint starts"
         );
         service.shutdown();
         runtime.shutdown().unwrap();

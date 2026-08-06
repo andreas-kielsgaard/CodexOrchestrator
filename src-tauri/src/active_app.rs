@@ -37,21 +37,29 @@ impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBui
         {
             self.registry.on_terminal(invocation);
         }
-        let transition_error = self
-            .transition
-            .lock()
-            .map_err(|_| "post-confirmation notification registry is unavailable".to_string())?
-            .clone()
+        // Runtime launch provenance is persisted synchronously before the process start returns.
+        // A Bootstrap-terminal transition can therefore launch the Runner and re-enter this
+        // notifier before the outer notification completes. Never retain a registry lock while
+        // dispatching that callback.
+        let transition = {
+            self.transition
+                .lock()
+                .map_err(|_| "post-confirmation notification registry is unavailable".to_string())?
+                .clone()
+        };
+        let transition_error = transition
             .and_then(|service| service.upgrade())
             .map(|service| service.on_agent_notification(&notification))
             .transpose()
             .err()
             .map(|error| error.to_string());
-        let sprint_transition_error = self
-            .sprint_transition
-            .lock()
-            .map_err(|_| "Sprint Runner notification registry is unavailable".to_string())?
-            .clone()
+        let sprint_transition = {
+            self.sprint_transition
+                .lock()
+                .map_err(|_| "Sprint Runner notification registry is unavailable".to_string())?
+                .clone()
+        };
+        let sprint_transition_error = sprint_transition
             .and_then(|service| service.upgrade())
             .map(|service| service.on_agent_notification(&notification))
             .transpose()
