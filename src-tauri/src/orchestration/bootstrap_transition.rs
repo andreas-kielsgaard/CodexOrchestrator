@@ -2121,7 +2121,7 @@ mod tests {
         }
 
         /// Emits an application-owned launch observation before the runtime start returns. This
-        /// is the same re-entrant shape as Codex launch provenance, without provider payload.
+        /// is the same re-entrant shape as Codex launch provenance, using only its safe shape.
         fn event_on_next_start(&self) {
             self.event_on_next_start.store(1, Ordering::SeqCst);
         }
@@ -2226,7 +2226,11 @@ mod tests {
                         RuntimeUpdate::Event(RuntimeEventDraft {
                             source: AgentRuntimeEventSource::Runtime,
                             raw_payload: serde_json::json!({
-                                "kind": "recorded_launch_provenance"
+                                "kind": "codex_launch_provenance",
+                                "executable": "codex.exe",
+                                "invocationMode": "start",
+                                "configurationKeys": ["approval_policy"],
+                                "environmentKeys": []
                             }),
                             normalized: None,
                         }),
@@ -3408,7 +3412,7 @@ mod tests {
         assert_eq!(runner_history.events[0].sequence, 0);
         assert_eq!(
             runner_history.events[0].raw_payload["kind"],
-            "recorded_launch_provenance"
+            "codex_launch_provenance"
         );
 
         fixture.service.reconcile_startup().unwrap();
@@ -5738,6 +5742,9 @@ mod tests {
             worktree_root: handler_sprint_root.to_string_lossy().into_owned(), baseline_object_id: handler_initial,
             current_object_id: handler_head, runtime_instance_ref: "handler-runtime".into(), runtime_source_ref: "handler-source".into(), source_fingerprint: "d".repeat(64),
         }).unwrap();
+        // The production notifier synchronously re-enters Handler reconciliation from sequence-0
+        // launch provenance before the initial runtime start returns.
+        fixture.runtime.event_on_next_start();
         handler_runner.attach_work_unit_handler_activation(handler.clone()).unwrap();
         let connection = Connection::open(&fixture.database_path).unwrap();
         let activations = connection.prepare("SELECT work_unit_id,attempt_id,handler_session_id,handler_invocation_id,eligibility_state,blocked_reason,handler_harness_revision_id,handler_harness_configuration_digest,handler_harness_repository_commit_ref,authorized_at,attempt_created_at,execution_support_granted_at,isolated_worktree_ready_at,handler_session_created_at,handler_invocation_prepared_at,handler_harness_bound_at,launch_requested_at,launch_accepted_at,handler_ready_at,provider_activation_observed_at FROM work_unit_handler_activations ORDER BY work_unit_id").unwrap().query_map([], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?,row.get::<_,Option<String>>(5)?,row.get::<_,Option<String>>(6)?,row.get::<_,Option<String>>(7)?,row.get::<_,Option<String>>(8)?,row.get::<_,Option<String>>(9)?,row.get::<_,Option<String>>(10)?,row.get::<_,Option<String>>(11)?,row.get::<_,Option<String>>(12)?,row.get::<_,Option<String>>(13)?,row.get::<_,Option<String>>(14)?,row.get::<_,Option<String>>(15)?,row.get::<_,Option<String>>(16)?,row.get::<_,Option<String>>(17)?,row.get::<_,Option<String>>(18)?,row.get::<_,Option<String>>(19)?))).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
@@ -5756,6 +5763,18 @@ mod tests {
         for timestamp in [&dependent.9,&dependent.10,&dependent.11,&dependent.12,&dependent.13,&dependent.14,&dependent.15,&dependent.16,&dependent.17,&dependent.18,&dependent.19] { assert!(timestamp.is_none()); }
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_sessions WHERE id LIKE 'work-unit-handler-session-%'", [], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_session_invocations WHERE id LIKE 'work-unit-handler-invocation-%' AND input_provenance='application'", [], |row| row.get(0)).unwrap(), 1);
+        let provenance: (i64,String,String,i64,i64) = connection.query_row(
+            "SELECT sequence,
+                    json_extract(raw_payload_json,'$.executable'),
+                    json_extract(raw_payload_json,'$.invocationMode'),
+                    json_array_length(json_extract(raw_payload_json,'$.configurationKeys')),
+                    json_array_length(json_extract(raw_payload_json,'$.environmentKeys'))
+             FROM agent_session_runtime_events
+             WHERE invocation_id=?1 AND json_extract(raw_payload_json,'$.kind')='codex_launch_provenance'",
+            [&root.3],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)),
+        ).unwrap();
+        assert_eq!(provenance, (0, "codex.exe".into(), "start".into(), 1, 0));
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM execution_support_attempt_authorizations WHERE role_kind='implementer'", [], |row| row.get(0)).unwrap(), 0);
         drop(connection);
         assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 1);

@@ -3267,10 +3267,18 @@ impl SprintRunnerTransitionService {
         self.mark_handler(work_unit_id, "handler_invocation_prepared_at")?;
         package.bind_correlated_invocation(session.clone(), invocation.clone()).map_err(|_| SprintRunnerTransitionError::Conflict)?;
         self.mark_handler(work_unit_id, "handler_harness_bound_at")?;
-        match self.sessions.application_invocation_launch_evidence(&invocation, &session).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))? {
+        let launch_evidence = self.sessions.application_invocation_launch_evidence(&invocation, &session)
+            .map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        if launch_evidence == ApplicationInvocationLaunchEvidence::PersistedNotAccepted {
+            // Persist the durable launch intent while the per-Sprint transition is serialized,
+            // then release that guard before runtime dispatch. A runtime can synchronously persist
+            // sequence-0 provenance and re-enter Handler reconciliation before this call returns.
+            self.mark_handler(work_unit_id, "launch_requested_at")?;
+        }
+        drop(_guard);
+        match launch_evidence {
             ApplicationInvocationLaunchEvidence::LaunchAccepted => { self.mark_handler(work_unit_id, "launch_accepted_at")?; self.mark_handler(work_unit_id, "handler_ready_at")?; }
             ApplicationInvocationLaunchEvidence::PersistedNotAccepted => {
-                self.mark_handler(work_unit_id, "launch_requested_at")?;
                 let launch = self.sessions.launch_prepared_application_invocation_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: prompt, title: None, working_directory: Some(package.working_directory().into()), requested_options: Some(runtime.requested_options) }}, Some(runtime.extension)).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
                 if launch.launch_accepted { self.mark_handler(work_unit_id, "launch_accepted_at")?; self.mark_handler(work_unit_id, "handler_ready_at")?; }
             }
