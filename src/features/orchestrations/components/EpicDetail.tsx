@@ -155,10 +155,12 @@ export function EpicDetail({
         data-view-layout="single-column"
       >
         <div className="epic-product-decisions-view__menu" aria-label="Epic controls">
-          <button className="epic-product-decisions-view__back" type="button" onClick={onBack}>
-            <ArrowLeft size={16} aria-hidden="true" />
-            Back to Epics
-          </button>
+          {!globalBackAvailable && (
+            <button className="epic-product-decisions-view__back" type="button" onClick={onBack}>
+              <ArrowLeft size={16} aria-hidden="true" />
+              Back to Epics
+            </button>
+          )}
           <EpicIdentity epicName={epic.name} />
           <EpicViewNavigation current="product-decisions" onChange={setEpicSection} />
         </div>

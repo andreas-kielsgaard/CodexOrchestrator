@@ -42,6 +42,10 @@ export function EpicProductDecisionsPanel({
     };
   }, [epicId, source]);
 
+  useEffect(() => {
+    setReviewExpanded(false);
+  }, [epicId, source]);
+
   const snapshot = load.kind === 'available' ? load.snapshot : undefined;
   const decisionById = useMemo(
     () => new Map(snapshot?.decisions.map((decision) => [decision.decisionId, decision]) ?? []),

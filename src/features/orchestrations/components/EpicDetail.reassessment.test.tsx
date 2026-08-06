@@ -1,4 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { vi } from 'vitest';
+import { recordedEpicProductDecisionSource } from '../../../dev/productDecisions/recordedEpicProductDecisionSource';
 import { EpicDetail } from './EpicDetail';
 
 describe('Epic reassessment presentation', () => {
@@ -51,4 +53,44 @@ describe('Epic reassessment presentation', () => {
       'not Sprint selection, start, settlement, completion, or acceptance',
     );
   });
+
+  it('suppresses the Product Decisions local Back when global history is available', () => {
+    renderProductDecisions(true);
+    expect(screen.queryByRole('button', { name: 'Back to Epics' })).toBeNull();
+  });
+
+  it('keeps the Product Decisions local Back as a truthful fallback without history', () => {
+    const onBack = renderProductDecisions(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Epics' }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
 });
+
+function renderProductDecisions(globalBackAvailable: boolean) {
+  const onBack = vi.fn();
+  render(
+    <EpicDetail
+      epic={{
+        id: 'epic-codex-runner-workspace',
+        name: 'Recorded Epic',
+        goal: 'Review.',
+        movement: { kind: 'planning_next_work' },
+        state: 'running',
+        plan: { items: [] },
+      }}
+      artifactAccessController={undefined as never}
+      selectedSprintId={null}
+      selectedRevisionId={null}
+      detailLocation={{ kind: 'sprint' }}
+      onOpenSprint={vi.fn()}
+      onCloseSprint={vi.fn()}
+      onSelectedRevisionChange={vi.fn()}
+      onDetailLocationChange={vi.fn()}
+      onBack={onBack}
+      globalBackAvailable={globalBackAvailable}
+      requestedProductDecisions
+      epicProductDecisionSource={recordedEpicProductDecisionSource}
+    />,
+  );
+  return onBack;
+}
