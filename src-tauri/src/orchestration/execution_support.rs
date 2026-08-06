@@ -564,9 +564,7 @@ impl ExecutionWorkspaceResolver for ProductExecutionWorkspaceResolver {
         binding: &ExecutionWorkspaceBinding,
     ) -> Result<String, ExecutionSupportError> {
         let (root, _) = self.validate_attempt_workspace(attempt, binding)?;
-        root.to_str()
-            .map(str::to_owned)
-            .ok_or(ExecutionSupportError::Unavailable)
+        Ok(runtime_argument_path(&root))
     }
 }
 
@@ -1093,6 +1091,12 @@ fn git_is_detached(root: &Path) -> Result<bool, ExecutionSupportError> {
     }
 }
 fn git_argument_path(path: &Path) -> String {
+    runtime_argument_path(path)
+}
+
+/// Windows canonical paths may use the extended-length prefix. Git receives a portable path
+/// already; the provider process must receive the same representation for WorkspaceWrite.
+fn runtime_argument_path(path: &Path) -> String {
     let value = path.to_string_lossy();
     value
         .strip_prefix(r"\\?\")
@@ -1195,6 +1199,14 @@ mod tests {
         InitiatedSprintGitAuthorityWrite, StoreInitiatedSprintGitAuthorityResult,
     };
     use super::*;
+    use crate::{
+        agent_sessions::{
+            domain::{AgentInvocationId, AgentInvocationTerminalStatus, AgentRuntimeOptions, AgentSessionId, RuntimeSandboxMode},
+            ports::{AgentRuntime, AgentRuntimeUpdateSink, RuntimeInvocationRequest, RuntimeUpdate, RuntimeUpdateDeliveryFailure},
+        },
+        runtime::codex::CodexCliRuntime,
+    };
+    use std::time::{Duration, Instant};
 
     struct Fixture {
         _temp: tempfile::TempDir,
@@ -1456,6 +1468,90 @@ mod tests {
                 .unwrap(),
             1
         );
+    }
+
+    #[test]
+    fn runtime_argument_path_removes_only_the_windows_extended_length_prefix() {
+        assert_eq!(
+            runtime_argument_path(Path::new(r"\\?\C:\isolated\execution-workspace")),
+            r"C:\isolated\execution-workspace"
+        );
+        assert_eq!(
+            runtime_argument_path(Path::new("C:/isolated/execution-workspace")),
+            "C:/isolated/execution-workspace"
+        );
+    }
+
+    #[derive(Default)]
+    struct LiveRuntimeSink {
+        updates: Mutex<Vec<RuntimeUpdate>>,
+    }
+
+    impl AgentRuntimeUpdateSink for LiveRuntimeSink {
+        fn emit_update(
+            &self,
+            _invocation_id: &AgentInvocationId,
+            update: RuntimeUpdate,
+        ) -> Result<(), crate::agent_sessions::ports::RuntimePortError> {
+            self.updates.lock().unwrap().push(update);
+            Ok(())
+        }
+
+        fn report_delivery_failure(
+            &self,
+            _invocation_id: &AgentInvocationId,
+            _failure: RuntimeUpdateDeliveryFailure,
+        ) {
+        }
+    }
+
+    #[test]
+    #[ignore = "requires CODEX_PIP01W_PRODUCT_LIVE=true and launches one real Codex invocation"]
+    fn installed_cli_edits_the_product_created_implementer_workspace_before_application_sealing() {
+        assert_eq!(
+            std::env::var("CODEX_PIP01W_PRODUCT_LIVE").as_deref(),
+            Ok("true"),
+            "refusing live product workspace probe without explicit opt-in"
+        );
+        let fixture = fixture();
+        let service = fixture.service();
+        fixture.authorize(&service, "live-attempt-1", "work-unit-1");
+        let reference = service.grant("live-attempt-1").unwrap();
+        let sink = Arc::new(LiveRuntimeSink::default());
+        let runtime = CodexCliRuntime::system("codex", None);
+        let options = AgentRuntimeOptions {
+            model: None,
+            sandbox: Some(RuntimeSandboxMode::WorkspaceWrite),
+        };
+        let effective = runtime
+            .preflight_invocation(crate::agent_sessions::ports::RuntimeInvocationMode::Start, &options)
+            .unwrap()
+            .effective_options;
+        runtime
+            .start_invocation(
+                RuntimeInvocationRequest {
+                    session_id: AgentSessionId::new("pip01w-live-session").unwrap(),
+                    invocation_id: AgentInvocationId::new("pip01w-live-invocation").unwrap(),
+                    submitted_text: "Use only the file-editing tool to append exactly PIP01W_PRODUCT_LIVE followed by a newline to file.txt in the current workspace. Do not use shell or command tools. Do not access any path outside the current workspace. Stop after the edit.".into(),
+                    working_directory: Some(reference.working_directory.clone()),
+                    options: effective,
+                    launch_extension: None,
+                },
+                sink.clone(),
+            )
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(180);
+        while runtime.active_direct_child_count().unwrap() != 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(runtime.active_direct_child_count().unwrap(), 0, "live provider did not finish");
+        let updates = sink.updates.lock().unwrap();
+        assert!(updates.iter().any(|update| matches!(update, RuntimeUpdate::Event(event) if event.raw_payload["kind"] == "codex_launch_provenance" && event.raw_payload["sandbox"] == "workspace-write" && event.raw_payload["workingDirectory"]["extendedLengthPrefix"] == false && event.raw_payload["inheritsParentEnvironment"] == true)));
+        assert!(updates.iter().any(|update| matches!(update, RuntimeUpdate::Finished(outcome) if outcome.status == AgentInvocationTerminalStatus::Completed)));
+        drop(updates);
+        assert!(std::fs::read_to_string(fixture.attempt_root("live-attempt-1").join("file.txt")).unwrap().contains("PIP01W_PRODUCT_LIVE"));
+        assert!(service.commit_implementer_candidate("live-attempt-1").unwrap());
+        assert!(matches!(service.consume(&reference.capability_ref, ExecutionSupportIntent::ChangedFileManifest), Ok(ExecutionSupportResponse::ChangedFileManifest(files)) if !files.is_empty()));
     }
 
     #[test]
