@@ -6,20 +6,30 @@ import type {
   ProductDecision,
   ProductDecisionEvidence,
   ProductDecisionEvidenceNavigationRequest,
+  ProductDecisionClient,
+  ProductDecisionEvidenceDestination,
+  ProductDecisionPublishTarget,
 } from '../../application/productDecisions';
+import { ProductiveProductDecisionsPanel } from './ProductiveProductDecisionsPanel';
 import './epicProductDecisions.css';
 
 export interface EpicProductDecisionsPanelProps {
   readonly epicId: string;
-  readonly source: EpicProductDecisionSource;
+  readonly source?: EpicProductDecisionSource;
+  readonly productiveClient?: ProductDecisionClient;
   /** The application owns cross-surface navigation after the source resolves an exact record. */
   readonly onOpenEvidence?: (request: ProductDecisionEvidenceNavigationRequest) => void;
+  readonly onOpenProductiveEvidence?: (destination: ProductDecisionEvidenceDestination) => void;
+  readonly onPublish?: (target: ProductDecisionPublishTarget) => void;
 }
 
 export function EpicProductDecisionsPanel({
   epicId,
   source,
+  productiveClient,
   onOpenEvidence,
+  onOpenProductiveEvidence,
+  onPublish,
 }: EpicProductDecisionsPanelProps) {
   const [load, setLoad] = useState<EpicProductDecisionLoadResult | { kind: 'loading' }>({
     kind: 'loading',
@@ -28,6 +38,7 @@ export function EpicProductDecisionsPanel({
 
   useEffect(() => {
     let active = true;
+    if (!source) return undefined;
     setLoad({ kind: 'loading' });
     void source.loadEpicProductDecisions(epicId).then(
       (result) => {
@@ -42,6 +53,15 @@ export function EpicProductDecisionsPanel({
     };
   }, [epicId, source]);
 
+  const productivePanel = productiveClient ? (
+    <ProductiveProductDecisionsPanel
+      epicId={epicId}
+      client={productiveClient}
+      onOpenEvidence={onOpenProductiveEvidence}
+      onPublish={onPublish}
+    />
+  ) : null;
+
   const snapshot = load.kind === 'available' ? load.snapshot : undefined;
   const decisionById = useMemo(
     () => new Map(snapshot?.decisions.map((decision) => [decision.decisionId, decision]) ?? []),
@@ -52,18 +72,37 @@ export function EpicProductDecisionsPanel({
     [snapshot],
   );
 
+  if (!source)
+    return (
+      productivePanel ?? (
+        <section
+          className="product-decisions product-decisions--message"
+          aria-label="Product decisions"
+        >
+          <p className="eyebrow">Product decisions</p>
+          <h2>Product decisions unavailable</h2>
+          <p role="alert">No Product Decision read boundary is available.</p>
+        </section>
+      )
+    );
+
   if (load.kind !== 'available')
     return (
-      <section
-        className="product-decisions product-decisions--message"
-        aria-label="Product decisions"
-      >
-        <p className="eyebrow">Product decisions</p>
-        <h2>
-          {load.kind === 'loading' ? 'Loading product decisions' : 'Product decisions unavailable'}
-        </h2>
-        {load.kind !== 'loading' && <p role="alert">{load.reason}</p>}
-      </section>
+      <>
+        {productivePanel}
+        <section
+          className="product-decisions product-decisions--message"
+          aria-label="Recorded Product decisions"
+        >
+          <p className="eyebrow">Recorded development preview</p>
+          <h2>
+            {load.kind === 'loading'
+              ? 'Loading recorded product decisions'
+              : 'Recorded preview unavailable'}
+          </h2>
+          {load.kind !== 'loading' && <p role="alert">{load.reason}</p>}
+        </section>
+      </>
     );
   const available = load.snapshot;
 
@@ -78,104 +117,112 @@ export function EpicProductDecisionsPanel({
       : null;
 
   return (
-    <section className="product-decisions" aria-label="Product decisions">
-      <header className="product-decisions__header">
-        <div>
-          <p className="eyebrow">Epic product identity</p>
-          <h2>Product decisions</h2>
-          <p>Recorded policy for this Epic. Conversation passages remain supporting context.</p>
-        </div>
-        <button
-          className="product-decisions__review-toggle"
-          type="button"
-          aria-expanded={reviewExpanded}
-          aria-controls="product-decisions-review"
-          onClick={() => setReviewExpanded((current) => !current)}
-        >
-          Review recorded changes
-          {available.conflicts.length > 0 && <span>{available.conflicts.length}</span>}
-        </button>
-      </header>
-
-      <div className="product-decisions__content">
-        <section className="product-decisions__current" aria-labelledby="current-decisions-heading">
-          <h3 id="current-decisions-heading">Current decisions</h3>
-          <p>Relationships appear only when they are explicitly recorded.</p>
-          <DecisionHierarchy
-            decisions={available.decisions}
-            decisionById={decisionById}
-            evidenceById={evidenceById}
-            complianceReviewRequests={available.complianceReviewRequests}
-            resolveEvidence={(evidence) => {
-              const request = evidenceRequest(evidence);
-              return request
-                ? { request, resolution: source.resolveEvidenceNavigation(request) }
-                : null;
-            }}
-            onOpenEvidence={onOpenEvidence}
-          />
-        </section>
-
-        {reviewExpanded && (
-          <section
-            className="product-decisions__reviews"
-            id="product-decisions-review"
-            aria-label="Recorded Product Decision changes"
+    <>
+      {productivePanel}
+      <section className="product-decisions" aria-label="Recorded Product decisions">
+        <header className="product-decisions__header">
+          <div>
+            <p className="eyebrow">Epic product identity</p>
+            <h2>Product decisions</h2>
+            <p>Recorded development preview only. It is not productive durable authority.</p>
+          </div>
+          <button
+            className="product-decisions__review-toggle"
+            type="button"
+            aria-expanded={reviewExpanded}
+            aria-controls="product-decisions-review"
+            onClick={() => setReviewExpanded((current) => !current)}
           >
-            <header>
-              <AlertTriangle size={19} aria-hidden="true" />
-              <div>
-                <h3>Changes needing human review</h3>
-                <p>Recorded candidates cannot rewrite current policy in this read-only view.</p>
-              </div>
-            </header>
-            {available.conflicts.length ? (
-              available.conflicts.map((conflict) => {
-                const candidate = available.candidates.find(
-                  ({ candidateId }) => candidateId === conflict.candidateId,
-                );
-                if (!candidate) return null;
-                return (
-                  <article key={conflict.conflictId}>
-                    <p className="eyebrow">Proposed change</p>
-                    <h4>{candidate.title}</h4>
-                    <blockquote>{candidate.proposedStatement}</blockquote>
-                    <p>{conflict.explanation}</p>
-                    <dl>
-                      <div>
-                        <dt>Conflicts with</dt>
-                        <dd>
-                          {conflict.conflictsWithDecisionIds
-                            .map((decisionId) => decisionById.get(decisionId)?.title ?? decisionId)
-                            .join(', ')}
-                        </dd>
-                      </div>
-                    </dl>
-                    <EvidenceList
-                      evidence={candidate.evidenceIds
-                        .map((evidenceId) => evidenceById.get(evidenceId))
-                        .filter((item): item is ProductDecisionEvidence => Boolean(item))}
-                      resolveEvidence={(evidence) => {
-                        const request = evidenceRequest(evidence);
-                        return request
-                          ? { request, resolution: source.resolveEvidenceNavigation(request) }
-                          : null;
-                      }}
-                      onOpenEvidence={onOpenEvidence}
-                    />
-                    <p className="product-decisions__read-only-note">
-                      Recorded candidate only. Acceptance and rejection are not implemented.
-                    </p>
-                  </article>
-                );
-              })
-            ) : (
-              <p>No recorded changes need review.</p>
-            )}
+            Review recorded changes
+            {available.conflicts.length > 0 && <span>{available.conflicts.length}</span>}
+          </button>
+        </header>
+
+        <div className="product-decisions__content">
+          <section
+            className="product-decisions__current"
+            aria-labelledby="current-decisions-heading"
+          >
+            <h3 id="current-decisions-heading">Current decisions</h3>
+            <p>Relationships appear only when they are explicitly recorded.</p>
+            <DecisionHierarchy
+              decisions={available.decisions}
+              decisionById={decisionById}
+              evidenceById={evidenceById}
+              complianceReviewRequests={available.complianceReviewRequests}
+              resolveEvidence={(evidence) => {
+                const request = evidenceRequest(evidence);
+                return request
+                  ? { request, resolution: source.resolveEvidenceNavigation(request) }
+                  : null;
+              }}
+              onOpenEvidence={onOpenEvidence}
+            />
           </section>
-        )}
-      </div>
-    </section>
+
+          {reviewExpanded && (
+            <section
+              className="product-decisions__reviews"
+              id="product-decisions-review"
+              aria-label="Recorded Product Decision changes"
+            >
+              <header>
+                <AlertTriangle size={19} aria-hidden="true" />
+                <div>
+                  <h3>Changes needing human review</h3>
+                  <p>Recorded candidates cannot rewrite current policy in this read-only view.</p>
+                </div>
+              </header>
+              {available.conflicts.length ? (
+                available.conflicts.map((conflict) => {
+                  const candidate = available.candidates.find(
+                    ({ candidateId }) => candidateId === conflict.candidateId,
+                  );
+                  if (!candidate) return null;
+                  return (
+                    <article key={conflict.conflictId}>
+                      <p className="eyebrow">Proposed change</p>
+                      <h4>{candidate.title}</h4>
+                      <blockquote>{candidate.proposedStatement}</blockquote>
+                      <p>{conflict.explanation}</p>
+                      <dl>
+                        <div>
+                          <dt>Conflicts with</dt>
+                          <dd>
+                            {conflict.conflictsWithDecisionIds
+                              .map(
+                                (decisionId) => decisionById.get(decisionId)?.title ?? decisionId,
+                              )
+                              .join(', ')}
+                          </dd>
+                        </div>
+                      </dl>
+                      <EvidenceList
+                        evidence={candidate.evidenceIds
+                          .map((evidenceId) => evidenceById.get(evidenceId))
+                          .filter((item): item is ProductDecisionEvidence => Boolean(item))}
+                        resolveEvidence={(evidence) => {
+                          const request = evidenceRequest(evidence);
+                          return request
+                            ? { request, resolution: source.resolveEvidenceNavigation(request) }
+                            : null;
+                        }}
+                        onOpenEvidence={onOpenEvidence}
+                      />
+                      <p className="product-decisions__read-only-note">
+                        Recorded candidate only. Acceptance and rejection are not implemented.
+                      </p>
+                    </article>
+                  );
+                })
+              ) : (
+                <p>No recorded changes need review.</p>
+              )}
+            </section>
+          )}
+        </div>
+      </section>
+    </>
   );
 }
 

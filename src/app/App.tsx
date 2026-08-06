@@ -53,6 +53,7 @@ import type {
   ContextualFileReviewResult,
 } from '../application/contextualFileReview';
 import { FileReviewScreen } from '../features/fileReview';
+import { ProductDecisionPublishPlaceholder } from '../features/productDecisions';
 import type { WorkUnitActivitySessionTarget } from '../features/orchestrations/components/WorkUnitDetailWorkspace';
 import { ProductCommandBar } from './ProductCommandBar';
 import {
@@ -71,11 +72,18 @@ import {
 import type {
   EpicProductDecisionSource,
   ProductDecisionClient,
+  ProductDecisionEvidenceDestination,
   ProductDecisionEvidenceNavigationRequest,
+  ProductDecisionPublishTarget,
 } from '../application/productDecisions';
 
 export type ApplicationSurface =
-  'epics' | 'agent-sessions' | 'harness-inspector' | 'file-review' | 'worktree-review';
+  | 'epics'
+  | 'agent-sessions'
+  | 'harness-inspector'
+  | 'file-review'
+  | 'worktree-review'
+  | 'product-decision-publish';
 
 export interface AppProps {
   readonly agentSessionClient: AgentSessionClient;
@@ -110,7 +118,7 @@ export interface AppProps {
   }) => FileReviewSource | undefined;
   /** Development-recorded read only; product boot deliberately leaves it absent. */
   readonly epicProductDecisionSource?: EpicProductDecisionSource;
-  /** Product-owned durable decision command/query boundary; no UI is attached in PD-2. */
+  /** Product-owned durable decision command/query boundary for the productive Epic view. */
   readonly productDecisionClient?: ProductDecisionClient;
   /** Present only in the injected development launcher composition. */
   readonly humanReviewLauncherView?: ReactNode;
@@ -147,6 +155,7 @@ export function App({
   contextualFileReviewClient,
   fileReviewSourceForEvidence,
   epicProductDecisionSource,
+  productDecisionClient,
   humanReviewLauncherView,
   humanReviewLauncherNavigation,
   initialSurface = 'epics',
@@ -192,9 +201,16 @@ export function App({
           return Boolean(harnessManagementPreviewSurface);
         case 'worktree_review':
           return Boolean(humanReviewLauncherView);
+        case 'product_decision_publish':
+          return Boolean(productDecisionClient);
       }
     },
-    [fileReviewSource, harnessManagementPreviewSurface, humanReviewLauncherView],
+    [
+      fileReviewSource,
+      harnessManagementPreviewSurface,
+      humanReviewLauncherView,
+      productDecisionClient,
+    ],
   );
   const initialNavigationDestination: ProductNavigationDestination =
     initialApplicationSurface === 'agent-sessions'
@@ -299,6 +315,8 @@ export function App({
       setSurface('worktree-review');
     } else if (destination.kind === 'file_review') {
       setSurface('file-review');
+    } else if (destination.kind === 'product_decision_publish') {
+      setSurface('product-decision-publish');
     }
   }, [currentProductDestination]);
 
@@ -603,6 +621,43 @@ export function App({
     },
     [epicProductDecisionSource],
   );
+  const openProductiveDecisionEvidence = useCallback(
+    (destination: ProductDecisionEvidenceDestination, origin: AgentSessionProductOrigin) => {
+      if (
+        origin.location.kind !== 'epic_product_decisions' ||
+        origin.sessionId !== destination.sessionId ||
+        origin.invocationId !== destination.invocationId
+      )
+        return;
+      productNavigationEpoch.current += 1;
+      dispatchProductNavigation({
+        type: 'navigate',
+        intent: 'replace',
+        destination: { kind: 'orchestration', location: origin.location },
+      });
+      dispatchProductNavigation({
+        type: 'open_contextual_agent_session',
+        origin,
+        focusedInvocationId: destination.invocationId,
+        focusedEvidence: destination,
+      });
+      setSurface('agent-sessions');
+    },
+    [],
+  );
+  const openProductDecisionPublish = useCallback(
+    (target: ProductDecisionPublishTarget) => {
+      if (!productDecisionClient) return;
+      productNavigationEpoch.current += 1;
+      dispatchProductNavigation({
+        type: 'navigate',
+        intent: 'push',
+        destination: { kind: 'product_decision_publish', ...target },
+      });
+      setSurface('product-decision-publish');
+    },
+    [productDecisionClient],
+  );
   const navigateToProductLocation = useCallback(
     (location: AgentSessionProductLocation) => {
       productNavigationEpoch.current += 1;
@@ -873,7 +928,10 @@ export function App({
           }}
         />
       </div>
-      {surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
+      {surface === 'product-decision-publish' &&
+      currentProductDestination.kind === 'product_decision_publish' ? (
+        <ProductDecisionPublishPlaceholder destination={currentProductDestination} />
+      ) : surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
         <EpicPlanBuilder
           agentSessionClient={managedPlanBuilderSessionClient}
           agentIdentity={managedPlanBuilderAgentIdentity}
@@ -932,7 +990,10 @@ export function App({
           onOpenFileEvidence={fileReviewSourceForEvidence ? openFileEvidence : undefined}
           globalBackAvailable={canGoBack}
           epicProductDecisionSource={epicProductDecisionSource}
+          productDecisionClient={productDecisionClient}
           onOpenProductDecisionEvidence={openProductDecisionEvidence}
+          onOpenProductiveDecisionEvidence={openProductiveDecisionEvidence}
+          onPublishProductDecision={openProductDecisionPublish}
         />
       ) : surface === 'file-review' && activeFileReviewSource ? (
         <FileReviewScreen
@@ -1008,7 +1069,10 @@ function OrchestrationSurface({
   onOpenFileEvidence,
   globalBackAvailable,
   epicProductDecisionSource,
+  productDecisionClient,
   onOpenProductDecisionEvidence,
+  onOpenProductiveDecisionEvidence,
+  onPublishProductDecision,
 }: {
   readonly load: ReturnType<typeof useOrchestrationLoad>;
   readonly presentation: OrchestrationPresentationAdapter;
@@ -1042,10 +1106,16 @@ function OrchestrationSurface({
   ) => void;
   readonly globalBackAvailable: boolean;
   readonly epicProductDecisionSource?: EpicProductDecisionSource;
+  readonly productDecisionClient?: ProductDecisionClient;
   readonly onOpenProductDecisionEvidence: (
     request: ProductDecisionEvidenceNavigationRequest,
     origin: AgentSessionProductOrigin,
   ) => void;
+  readonly onOpenProductiveDecisionEvidence: (
+    destination: ProductDecisionEvidenceDestination,
+    origin: AgentSessionProductOrigin,
+  ) => void;
+  readonly onPublishProductDecision: (target: ProductDecisionPublishTarget) => void;
 }) {
   if (load.kind === 'ready')
     return (
@@ -1066,7 +1136,10 @@ function OrchestrationSurface({
         onOpenFileEvidence={onOpenFileEvidence}
         globalBackAvailable={globalBackAvailable}
         epicProductDecisionSource={epicProductDecisionSource}
+        productDecisionClient={productDecisionClient}
         onOpenProductDecisionEvidence={onOpenProductDecisionEvidence}
+        onOpenProductiveDecisionEvidence={onOpenProductiveDecisionEvidence}
+        onPublishProductDecision={onPublishProductDecision}
       />
     );
   const copy =

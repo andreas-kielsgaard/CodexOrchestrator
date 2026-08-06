@@ -70,6 +70,36 @@ export interface ProductDecisionCurrent {
   readonly applicationState: 'not_applied';
 }
 
+export type ProductDecisionPublishTarget = Readonly<{
+  epicId: string;
+  decisionId: string;
+  versionId: string;
+  version: number;
+}>;
+
+export type ProductDecisionCommandErrorCode =
+  'invalid_input' | 'revision_conflict' | 'idempotency_conflict' | 'not_found' | 'unavailable';
+
+export function productDecisionCommandErrorCode(
+  error: unknown,
+): ProductDecisionCommandErrorCode | undefined {
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof error.code === 'string' &&
+    new Set<ProductDecisionCommandErrorCode>([
+      'invalid_input',
+      'revision_conflict',
+      'idempotency_conflict',
+      'not_found',
+      'unavailable',
+    ]).has(error.code as ProductDecisionCommandErrorCode)
+  )
+    return error.code as ProductDecisionCommandErrorCode;
+  return undefined;
+}
+
 export interface ProductDecisionClient {
   loadCurrent(epicId: string): Promise<readonly ProductDecisionCurrent[]>;
   loadHistory(epicId: string, decisionId: string): Promise<readonly ProductDecisionVersion[]>;

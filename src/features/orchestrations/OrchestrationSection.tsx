@@ -19,7 +19,10 @@ import type { ContextualFileReviewResult } from '../../application/contextualFil
 import type { WorkUnitActivitySessionTarget } from './components/WorkUnitDetailWorkspace';
 import type {
   EpicProductDecisionSource,
+  ProductDecisionClient,
+  ProductDecisionEvidenceDestination,
   ProductDecisionEvidenceNavigationRequest,
+  ProductDecisionPublishTarget,
 } from '../../application/productDecisions';
 
 export type OrchestrationNavigationChangeIntent = 'push' | 'back';
@@ -57,10 +60,16 @@ export interface OrchestrationSectionProps {
   /** The application shell owns actual typed history; details retain local Back only without it. */
   readonly globalBackAvailable?: boolean;
   readonly epicProductDecisionSource?: EpicProductDecisionSource;
+  readonly productDecisionClient?: ProductDecisionClient;
   readonly onOpenProductDecisionEvidence?: (
     request: ProductDecisionEvidenceNavigationRequest,
     origin: AgentSessionProductOrigin,
   ) => void;
+  readonly onOpenProductiveDecisionEvidence?: (
+    destination: ProductDecisionEvidenceDestination,
+    origin: AgentSessionProductOrigin,
+  ) => void;
+  readonly onPublishProductDecision?: (target: ProductDecisionPublishTarget) => void;
 }
 
 export function OrchestrationSection({
@@ -80,7 +89,10 @@ export function OrchestrationSection({
   onOpenWorkUnitActivitySession,
   globalBackAvailable = false,
   epicProductDecisionSource,
+  productDecisionClient,
   onOpenProductDecisionEvidence,
+  onOpenProductiveDecisionEvidence,
+  onPublishProductDecision,
 }: OrchestrationSectionProps) {
   const workspace = useOrchestrationWorkspace(view, requestedLocation, onProductLocationChange);
   const selected = view.epics.find(({ id }) => id === workspace.epicId);
@@ -107,8 +119,11 @@ export function OrchestrationSection({
         onOpenFileEvidence={onOpenFileEvidence}
         onOpenWorkUnitActivitySession={onOpenWorkUnitActivitySession}
         epicProductDecisionSource={epicProductDecisionSource}
+        productDecisionClient={productDecisionClient}
         requestedProductDecisions={requestedLocation?.kind === 'epic_product_decisions'}
         onOpenProductDecisionEvidence={onOpenProductDecisionEvidence}
+        onOpenProductiveDecisionEvidence={onOpenProductiveDecisionEvidence}
+        onPublishProductDecision={onPublishProductDecision}
       />
     );
   }

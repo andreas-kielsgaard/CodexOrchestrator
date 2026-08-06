@@ -389,4 +389,38 @@ describe('Product navigation history', () => {
     expect(state.current.destination).toEqual({ kind: 'file_review', target: { kind: 'direct' } });
     expect(state.contextualOrigin).toBeNull();
   });
+
+  it('supports typed Publish-placeholder direct entry, Back, and fail-closed reload', () => {
+    const publish: ProductNavigationDestination = {
+      kind: 'product_decision_publish',
+      epicId: 'epic-1',
+      decisionId: 'decision-1',
+      versionId: 'version-2',
+      version: 2,
+    };
+    expect(createProductNavigation(publish)).toEqual({
+      current: { destination: publish, intent: 'direct' },
+      history: [],
+      contextualOrigin: null,
+    });
+    const opened = productNavigationReducer(createProductNavigation(overview), {
+      type: 'navigate',
+      intent: 'push',
+      destination: publish,
+    });
+    expect(opened.current.destination).toEqual(publish);
+    expect(productNavigationReducer(opened, { type: 'back' }).current.destination).toEqual(
+      overview,
+    );
+    expect(
+      restoreProductNavigation(
+        publish,
+        overview,
+        (destination) => destination.kind === publish.kind,
+      ),
+    ).toEqual(createProductNavigation(publish, 'restore'));
+    expect(restoreProductNavigation({ ...publish, version: 0 }, overview, () => true)).toEqual(
+      createProductNavigation(overview, 'restore'),
+    );
+  });
 });

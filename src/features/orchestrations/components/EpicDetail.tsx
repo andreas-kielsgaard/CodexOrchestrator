@@ -27,7 +27,10 @@ import type {
 import type { WorkUnitActivitySessionTarget } from './WorkUnitDetailWorkspace';
 import type {
   EpicProductDecisionSource,
+  ProductDecisionClient,
+  ProductDecisionEvidenceDestination,
   ProductDecisionEvidenceNavigationRequest,
+  ProductDecisionPublishTarget,
 } from '../../../application/productDecisions';
 import { EpicProductDecisionsPanel } from '../../productDecisions';
 
@@ -63,11 +66,17 @@ export interface EpicDetailProps {
     origin: AgentSessionProductOrigin,
   ) => void;
   readonly epicProductDecisionSource?: EpicProductDecisionSource;
+  readonly productDecisionClient?: ProductDecisionClient;
   readonly requestedProductDecisions?: boolean;
   readonly onOpenProductDecisionEvidence?: (
     request: ProductDecisionEvidenceNavigationRequest,
     origin: AgentSessionProductOrigin,
   ) => void;
+  readonly onOpenProductiveDecisionEvidence?: (
+    destination: ProductDecisionEvidenceDestination,
+    origin: AgentSessionProductOrigin,
+  ) => void;
+  readonly onPublishProductDecision?: (target: ProductDecisionPublishTarget) => void;
 }
 
 export function EpicDetail({
@@ -90,8 +99,11 @@ export function EpicDetail({
   onOpenFileEvidence,
   onOpenWorkUnitActivitySession,
   epicProductDecisionSource,
+  productDecisionClient,
   requestedProductDecisions = false,
   onOpenProductDecisionEvidence,
+  onOpenProductiveDecisionEvidence,
+  onPublishProductDecision,
 }: EpicDetailProps) {
   const restoreSprintIdRef = useRef<string | null>(null);
   const [selectedSprintOpener, setSelectedSprintOpener] = useState<{
@@ -146,7 +158,7 @@ export function EpicDetail({
     );
   }
 
-  if (epicSection === 'product-decisions' && epicProductDecisionSource) {
+  if (epicSection === 'product-decisions' && (epicProductDecisionSource || productDecisionClient)) {
     return (
       <main
         className="epic-product-decisions-view"
@@ -168,7 +180,9 @@ export function EpicDetail({
           <EpicProductDecisionsPanel
             epicId={epic.id}
             source={epicProductDecisionSource}
+            productiveClient={productDecisionClient}
             onOpenEvidence={(request) => {
+              if (!epicProductDecisionSource) return;
               const resolution = epicProductDecisionSource.resolveEvidenceNavigation(request);
               if (resolution.kind !== 'available') return;
               onOpenProductDecisionEvidence?.(request, {
@@ -177,6 +191,14 @@ export function EpicDetail({
                 location: { kind: 'epic_product_decisions', epicId: epic.id, label: epic.name },
               });
             }}
+            onOpenProductiveEvidence={(destination) => {
+              onOpenProductiveDecisionEvidence?.(destination, {
+                sessionId: destination.sessionId,
+                invocationId: destination.invocationId,
+                location: { kind: 'epic_product_decisions', epicId: epic.id, label: epic.name },
+              });
+            }}
+            onPublish={onPublishProductDecision}
           />
         </div>
       </main>
@@ -194,7 +216,7 @@ export function EpicDetail({
         showBack={!globalBackAvailable}
         hotbarContext={<EpicIdentity epicName={epic.name} />}
         hotbarNavigation={
-          epicProductDecisionSource ? (
+          epicProductDecisionSource || productDecisionClient ? (
             <EpicViewNavigation current="plan" onChange={setEpicSection} />
           ) : undefined
         }

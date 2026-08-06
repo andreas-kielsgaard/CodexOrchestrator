@@ -20,7 +20,14 @@ export type ProductNavigationDestination =
     }
   | { readonly kind: 'file_review'; readonly target: FileReviewNavigationTarget }
   | { readonly kind: 'harness_inspector' }
-  | { readonly kind: 'worktree_review' };
+  | { readonly kind: 'worktree_review' }
+  | {
+      readonly kind: 'product_decision_publish';
+      readonly epicId: string;
+      readonly decisionId: string;
+      readonly versionId: string;
+      readonly version: number;
+    };
 
 /** A File Review destination names its authoritative input; it never stores a display label or source. */
 export type FileReviewNavigationTarget =
@@ -294,6 +301,16 @@ export function isProductNavigationDestination(
     case 'harness_inspector':
     case 'worktree_review':
       return hasOnlyKeys(value, ['kind']);
+    case 'product_decision_publish':
+      return (
+        hasOnlyKeys(value, ['kind', 'epicId', 'decisionId', 'versionId', 'version']) &&
+        isIdentifier(value.epicId) &&
+        isIdentifier(value.decisionId) &&
+        isIdentifier(value.versionId) &&
+        typeof value.version === 'number' &&
+        Number.isInteger(value.version) &&
+        value.version >= 1
+      );
     default:
       return false;
   }
@@ -369,6 +386,14 @@ export function sameProductNavigationDestination(
     case 'harness_inspector':
     case 'worktree_review':
       return true;
+    case 'product_decision_publish':
+      return (
+        right.kind === 'product_decision_publish' &&
+        left.epicId === right.epicId &&
+        left.decisionId === right.decisionId &&
+        left.versionId === right.versionId &&
+        left.version === right.version
+      );
   }
 }
 

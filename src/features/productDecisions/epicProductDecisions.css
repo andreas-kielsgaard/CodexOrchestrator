@@ -356,6 +356,122 @@
   border-top: 1px solid #dfe5e1;
 }
 
+.product-decisions__productive,
+.product-decision-publish-placeholder {
+  display: grid;
+  gap: 1rem;
+  padding: 1.5rem;
+  border: 1px solid #dfe5e1;
+  border-radius: 0.75rem;
+  background: #fff;
+}
+
+.product-decisions__productive-header,
+.product-decisions__productive-status,
+.product-decisions__card-actions,
+.product-decisions__form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.product-decisions__productive-list,
+.product-decisions__productive-evidence ul,
+.product-decisions__history ol {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.product-decisions__productive-card,
+.product-decisions__history,
+.product-decisions__productive-evidence {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid #dfe5e1;
+  border-radius: 0.5rem;
+}
+
+.product-decisions__productive-card label {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+  font-weight: 600;
+}
+
+.product-decisions__productive-card input,
+.product-decisions__productive-card textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.55rem;
+  border: 1px solid #dfe5e1;
+  border-radius: 0.35rem;
+  font: inherit;
+}
+
+.product-decisions__productive-card textarea {
+  min-height: 5rem;
+  resize: vertical;
+}
+
+.product-decisions__productive-status span {
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+  background: #f2f5f3;
+  color: #5e6a64;
+  font-size: 0.8rem;
+}
+
+.product-decisions__productive-evidence h5,
+.product-decisions__productive-evidence h6,
+.product-decisions__history h5 {
+  margin: 0;
+}
+
+.product-decisions__productive-evidence li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.product-decisions__productive-evidence small,
+.product-decisions__history small,
+.product-decisions__tentative-note,
+.product-decisions__command-message {
+  color: #5e6a64;
+}
+
+.product-decision-publish-placeholder {
+  max-width: 52rem;
+  margin: 2rem auto;
+}
+
+.product-decision-publish-placeholder dl {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.product-decision-publish-placeholder dl div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.product-decision-publish-placeholder dt {
+  color: #5e6a64;
+  font-size: 0.85rem;
+}
+
+.product-decision-publish-placeholder dd {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
 @media (max-width: 720px) {
   .product-decisions__header {
     align-items: start;
