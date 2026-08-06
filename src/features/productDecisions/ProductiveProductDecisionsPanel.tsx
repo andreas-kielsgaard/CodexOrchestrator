@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   ProductDecisionClient,
   ProductDecisionCurrent,
@@ -21,6 +21,7 @@ type ProductiveLoad =
   | { readonly kind: 'unavailable'; readonly reason: string };
 
 type EditState = {
+  readonly operationToken: number;
   readonly decisionId: string;
   readonly expectedCurrentVersion: number;
   readonly idempotencyKey: string;
@@ -28,6 +29,13 @@ type EditState = {
   title: string;
   statement: string;
   intent: string;
+};
+
+type HistoryRequest = {
+  readonly token: number;
+  readonly epoch: number;
+  readonly epicId: string;
+  readonly client: ProductDecisionClient;
 };
 
 export function ProductiveProductDecisionsPanel({
@@ -45,28 +53,126 @@ export function ProductiveProductDecisionsPanel({
   >({});
   const [historyLoading, setHistoryLoading] = useState<ReadonlySet<string>>(() => new Set());
 
-  const reload = () => {
-    setEdit(null);
+  const mountedRef = useRef(false);
+  const contextEpochRef = useRef(0);
+  const requestTokenRef = useRef(0);
+  const operationTokenRef = useRef(0);
+  const loadRef = useRef<ProductiveLoad>({ kind: 'loading' });
+  const editRef = useRef<EditState | null>(null);
+  const savingRef = useRef(false);
+  const historyByDecisionRef = useRef<Readonly<Record<string, readonly ProductDecisionVersion[]>>>(
+    {},
+  );
+  const historyLoadingRef = useRef<ReadonlySet<string>>(new Set());
+  const historyRequestsRef = useRef(new Map<string, HistoryRequest>());
+
+  const setCurrentLoad = (next: ProductiveLoad) => {
+    loadRef.current = next;
+    setLoad(next);
+  };
+
+  const setCurrentEdit = (next: EditState | null) => {
+    editRef.current = next;
+    setEdit(next);
+  };
+
+  const setCurrentSaving = (next: boolean) => {
+    savingRef.current = next;
+    setSaving(next);
+  };
+
+  const setCurrentHistory = (next: Readonly<Record<string, readonly ProductDecisionVersion[]>>) => {
+    historyByDecisionRef.current = next;
+    setHistoryByDecision(next);
+  };
+
+  const addHistoryLoading = (decisionId: string) => {
+    const next = new Set(historyLoadingRef.current);
+    next.add(decisionId);
+    historyLoadingRef.current = next;
+    setHistoryLoading(next);
+  };
+
+  const removeHistoryLoading = (decisionId: string) => {
+    const next = without(historyLoadingRef.current, decisionId);
+    historyLoadingRef.current = next;
+    setHistoryLoading(next);
+  };
+
+  const startCurrentLoad = (allowDuringAcceptance: boolean) => {
+    if (!allowDuringAcceptance && savingRef.current) return;
+    const epoch = ++contextEpochRef.current;
+    const requestToken = ++requestTokenRef.current;
+    const requestClient = client;
+    const requestEpicId = epicId;
+    setCurrentSaving(false);
+    setCurrentEdit(null);
     setMessage(null);
-    setHistoryByDecision({});
-    setLoad({ kind: 'loading' });
-    void client.loadCurrent(epicId).then(
-      (decisions) => setLoad({ kind: 'available', decisions }),
-      () => setLoad({ kind: 'unavailable', reason: 'Productive decisions could not be loaded.' }),
+    historyRequestsRef.current.clear();
+    historyLoadingRef.current = new Set();
+    setHistoryLoading(new Set());
+    setCurrentHistory({});
+    setCurrentLoad({ kind: 'loading' });
+    void requestClient.loadCurrent(requestEpicId).then(
+      (decisions) => {
+        if (
+          !mountedRef.current ||
+          contextEpochRef.current !== epoch ||
+          requestTokenRef.current !== requestToken ||
+          client !== requestClient ||
+          epicId !== requestEpicId
+        ) {
+          return;
+        }
+        setCurrentLoad({ kind: 'available', decisions });
+      },
+      () => {
+        if (
+          !mountedRef.current ||
+          contextEpochRef.current !== epoch ||
+          requestTokenRef.current !== requestToken ||
+          client !== requestClient ||
+          epicId !== requestEpicId
+        ) {
+          return;
+        }
+        setCurrentLoad({
+          kind: 'unavailable',
+          reason: 'Productive decisions could not be loaded.',
+        });
+      },
     );
   };
 
+  const reload = () => startCurrentLoad(false);
+
+  const isCurrentHistoryRequest = (current: HistoryRequest | undefined, expected: HistoryRequest) =>
+    mountedRef.current &&
+    current === expected &&
+    contextEpochRef.current === expected.epoch &&
+    client === expected.client &&
+    epicId === expected.epicId;
+
   useEffect(() => {
-    reload();
-    return undefined;
+    mountedRef.current = true;
+    startCurrentLoad(true);
+    const historyRequests = historyRequestsRef.current;
+    return () => {
+      mountedRef.current = false;
+      contextEpochRef.current += 1;
+      requestTokenRef.current += 1;
+      historyRequests.clear();
+    };
     // The client is an injected boundary and must not be recreated by this view.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, epicId]);
 
   const beginEdit = (decision: ProductDecisionCurrent) => {
+    if (savingRef.current) return;
     const version = decision.currentVersion;
     setMessage(null);
-    setEdit({
+    setCurrentEdit({
+      operationToken: ++operationTokenRef.current,
       decisionId: decision.decisionId,
       expectedCurrentVersion: version.version,
       idempotencyKey: `product-decision-accept:${decision.decisionId}:${opaqueId()}`,
@@ -78,72 +184,119 @@ export function ProductiveProductDecisionsPanel({
   };
 
   const acceptEdit = async () => {
-    if (!edit || load.kind !== 'available') return;
-    const decision = load.decisions.find(({ decisionId }) => decisionId === edit.decisionId);
+    const activeEdit = editRef.current;
+    const activeLoad = loadRef.current;
+    if (!activeEdit || activeLoad.kind !== 'available' || savingRef.current) return;
+    const decision = activeLoad.decisions.find(
+      ({ decisionId }) => decisionId === activeEdit.decisionId,
+    );
     if (!decision) return;
-    setSaving(true);
+    const epoch = contextEpochRef.current;
+    const requestClient = client;
+    const requestEpicId = epicId;
+    const displayedVersion = decision.currentVersion.version;
+    const displayedVersionId = decision.currentVersion.versionId;
+    const operationToken = activeEdit.operationToken;
+    const isCurrentOperation = () =>
+      mountedRef.current &&
+      contextEpochRef.current === epoch &&
+      requestClient === client &&
+      requestEpicId === epicId &&
+      editRef.current?.operationToken === operationToken &&
+      loadRef.current.kind === 'available' &&
+      loadRef.current.decisions.some(
+        (item) =>
+          item.decisionId === decision.decisionId &&
+          item.currentVersion.version === displayedVersion &&
+          item.currentVersion.versionId === displayedVersionId,
+      );
+    historyRequestsRef.current.clear();
+    historyLoadingRef.current = new Set();
+    setHistoryLoading(new Set());
+    setCurrentSaving(true);
     setMessage(null);
     try {
-      const accepted = await client.acceptVersion({
+      const accepted = await requestClient.acceptVersion({
         decisionId: decision.decisionId,
-        epicId,
-        expectedCurrentVersion: edit.expectedCurrentVersion,
-        idempotencyKey: edit.idempotencyKey,
-        title: edit.title.trim(),
-        statement: edit.statement.trim(),
-        intent: edit.intent.trim(),
+        epicId: requestEpicId,
+        expectedCurrentVersion: activeEdit.expectedCurrentVersion,
+        idempotencyKey: activeEdit.idempotencyKey,
+        title: activeEdit.title.trim(),
+        statement: activeEdit.statement.trim(),
+        intent: activeEdit.intent.trim(),
         acceptanceProvenance: {
           kind: 'manual_human_application',
           humanInteractionOrigin: {
             kind: 'human_interaction',
-            opaqueId: edit.humanInteractionId,
+            opaqueId: activeEdit.humanInteractionId,
           },
         },
         currentActionableEvidence: decision.currentVersion.currentActionableEvidence,
         historicalUnresolvedEvidence: decision.currentVersion.historicalUnresolvedEvidence,
       });
+      if (!isCurrentOperation()) return;
+      const currentLoad = loadRef.current;
+      if (currentLoad.kind !== 'available') return;
       const next: ProductDecisionCurrent = {
         ...decision,
         currentVersion: accepted,
       };
-      setLoad({
+      setCurrentLoad({
         kind: 'available',
-        decisions: load.decisions.map((item) =>
+        decisions: currentLoad.decisions.map((item) =>
           item.decisionId === decision.decisionId ? next : item,
         ),
       });
-      setHistoryByDecision((current) => ({
-        ...current,
+      setCurrentHistory({
+        ...historyByDecisionRef.current,
         [decision.decisionId]: appendVersion(
-          current[decision.decisionId] ?? [decision.currentVersion],
+          historyByDecisionRef.current[decision.decisionId] ?? [decision.currentVersion],
           accepted,
         ),
-      }));
-      setEdit(null);
+      });
+      setCurrentSaving(false);
+      setCurrentEdit(null);
       setMessage(`Accepted Product Decision version ${accepted.version}.`);
     } catch (error) {
+      if (!isCurrentOperation()) return;
       const code = productDecisionCommandErrorCode(error);
       setMessage(
         code === 'revision_conflict' || code === 'idempotency_conflict'
           ? 'This decision changed or conflicted elsewhere. Your edits are preserved; reload to review the current version before trying again.'
           : 'The correction was not accepted. Your edits are preserved for review.',
       );
-    } finally {
-      setSaving(false);
+      setCurrentSaving(false);
     }
   };
 
   const loadHistory = (decisionId: string) => {
-    if (historyByDecision[decisionId] || historyLoading.has(decisionId)) return;
-    setHistoryLoading((current) => new Set(current).add(decisionId));
-    void client.loadHistory(epicId, decisionId).then(
+    if (
+      savingRef.current ||
+      historyByDecisionRef.current[decisionId] ||
+      historyLoadingRef.current.has(decisionId)
+    ) {
+      return;
+    }
+    const request = {
+      token: ++requestTokenRef.current,
+      epoch: contextEpochRef.current,
+      epicId,
+      client,
+    } satisfies HistoryRequest;
+    historyRequestsRef.current.set(decisionId, request);
+    addHistoryLoading(decisionId);
+    void request.client.loadHistory(request.epicId, decisionId).then(
       (history) => {
-        setHistoryByDecision((current) => ({ ...current, [decisionId]: history }));
-        setHistoryLoading((current) => without(current, decisionId));
+        if (!isCurrentHistoryRequest(historyRequestsRef.current.get(decisionId), request)) return;
+        historyRequestsRef.current.delete(decisionId);
+        setCurrentHistory({ ...historyByDecisionRef.current, [decisionId]: history });
+        removeHistoryLoading(decisionId);
       },
       () => {
+        if (!isCurrentHistoryRequest(historyRequestsRef.current.get(decisionId), request)) return;
+        historyRequestsRef.current.delete(decisionId);
         setMessage('Version history could not be loaded.');
-        setHistoryLoading((current) => without(current, decisionId));
+        removeHistoryLoading(decisionId);
       },
     );
   };
@@ -159,7 +312,7 @@ export function ProductiveProductDecisionsPanel({
             or application effect has occurred.
           </p>
         </div>
-        <button type="button" onClick={reload} disabled={load.kind === 'loading'}>
+        <button type="button" onClick={reload} disabled={saving || load.kind === 'loading'}>
           Reload
         </button>
       </header>
@@ -185,11 +338,13 @@ export function ProductiveProductDecisionsPanel({
               historyLoading={historyLoading.has(decision.decisionId)}
               onBeginEdit={() => beginEdit(decision)}
               onCancel={() => {
-                setEdit(null);
+                if (savingRef.current) return;
+                setCurrentEdit(null);
                 setMessage(null);
               }}
               onChange={(field, value) =>
-                setEdit((current) => (current ? { ...current, [field]: value } : current))
+                !savingRef.current &&
+                setCurrentEdit(editRef.current ? { ...editRef.current, [field]: value } : null)
               }
               onAccept={() => void acceptEdit()}
               onLoadHistory={() => loadHistory(decision.decisionId)}
@@ -253,6 +408,7 @@ function ProductiveDecisionCard({
               <input
                 value={edit.title}
                 onChange={(event) => onChange('title', event.target.value)}
+                disabled={saving}
                 required
               />
             </label>
@@ -261,6 +417,7 @@ function ProductiveDecisionCard({
               <textarea
                 value={edit.statement}
                 onChange={(event) => onChange('statement', event.target.value)}
+                disabled={saving}
                 required
               />
             </label>
@@ -269,6 +426,7 @@ function ProductiveDecisionCard({
               <textarea
                 value={edit.intent}
                 onChange={(event) => onChange('intent', event.target.value)}
+                disabled={saving}
                 required
               />
             </label>
@@ -292,13 +450,13 @@ function ProductiveDecisionCard({
               <strong>Intent:</strong> {version.intent}
             </p>
             <div className="product-decisions__card-actions">
-              <button type="button" onClick={onBeginEdit}>
+              <button type="button" onClick={onBeginEdit} disabled={saving}>
                 Edit
               </button>
               <button
                 type="button"
                 onClick={onLoadHistory}
-                disabled={historyLoading}
+                disabled={historyLoading || saving}
                 aria-expanded={history !== undefined}
               >
                 {historyLoading ? 'Loading history…' : 'Version history'}
@@ -306,6 +464,7 @@ function ProductiveDecisionCard({
               {onPublish && (
                 <button
                   type="button"
+                  disabled={saving}
                   onClick={() =>
                     onPublish({
                       epicId: decision.epicId,
@@ -324,6 +483,7 @@ function ProductiveDecisionCard({
         <ProductiveEvidence
           current={version.currentActionableEvidence}
           historical={version.historicalUnresolvedEvidence}
+          busy={saving}
           onOpenEvidence={onOpenEvidence}
         />
         {history && <VersionHistory history={history} />}
@@ -335,10 +495,12 @@ function ProductiveDecisionCard({
 function ProductiveEvidence({
   current,
   historical,
+  busy,
   onOpenEvidence,
 }: {
   readonly current: ProductDecisionCurrent['currentVersion']['currentActionableEvidence'];
   readonly historical: ProductDecisionCurrent['currentVersion']['historicalUnresolvedEvidence'];
+  readonly busy: boolean;
   readonly onOpenEvidence?: (destination: ProductDecisionEvidenceDestination) => void;
 }) {
   return (
@@ -351,7 +513,11 @@ function ProductiveEvidence({
             <li key={item.evidenceId}>
               <strong>{item.evidenceId}</strong>
               {onOpenEvidence ? (
-                <button type="button" onClick={() => onOpenEvidence(item.destination)}>
+                <button
+                  type="button"
+                  onClick={() => onOpenEvidence(item.destination)}
+                  disabled={busy}
+                >
                   Open supporting Agent Session passage
                 </button>
               ) : (
