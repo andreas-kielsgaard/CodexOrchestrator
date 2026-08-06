@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_setup_attempts (
   profile_id TEXT NOT NULL,
   filesystem_identity TEXT NOT NULL,
   phase TEXT NOT NULL CHECK (phase IN ('sandbox_initialization','workspace_write_canary')),
-  state TEXT NOT NULL CHECK (state IN ('pending','launch_failed','terminal_succeeded','terminal_failed','timed_out','cancelled','recovered_unobserved')),
+  state TEXT NOT NULL CHECK (state IN ('pending','launch_failed','terminal_succeeded','terminal_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed')),
   executable TEXT,
   version TEXT,
   workspace_sandbox_supported INTEGER,
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_setup_attempts (
   launch_accepted_at TEXT,
   deadline_at TEXT NOT NULL,
   settled_at TEXT,
-  terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','launch_failed','timed_out','cancelled','recovered_unobserved')),
+  terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','launch_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed')),
   terminal_exit_code INTEGER,
   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
 );
@@ -265,7 +265,7 @@ CREATE TABLE native_codex_profile_setup_attempts (
   profile_id TEXT NOT NULL,
   filesystem_identity TEXT NOT NULL,
   phase TEXT NOT NULL CHECK (phase IN ('sandbox_initialization','workspace_write_canary')),
-  state TEXT NOT NULL CHECK (state IN ('pending','launch_failed','terminal_succeeded','terminal_failed','timed_out','cancelled','recovered_unobserved')),
+  state TEXT NOT NULL CHECK (state IN ('pending','launch_failed','terminal_succeeded','terminal_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed')),
   executable TEXT,
   version TEXT,
   workspace_sandbox_supported INTEGER,
@@ -274,23 +274,28 @@ CREATE TABLE native_codex_profile_setup_attempts (
   launch_accepted_at TEXT,
   deadline_at TEXT NOT NULL,
   settled_at TEXT,
-  terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','launch_failed','timed_out','cancelled','recovered_unobserved')),
+  terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','launch_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed')),
   terminal_exit_code INTEGER,
   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
 );
 INSERT INTO native_codex_profile_setup_attempts (attempt_id,profile_id,filesystem_identity,phase,state,executable,version,workspace_sandbox_supported,correlation_id,requested_at,launch_accepted_at,deadline_at,settled_at,terminal_classification,terminal_exit_code)
 SELECT attempt_id,profile_id,'',phase,
   CASE state
+    WHEN 'failed' THEN 'legacy_unclassified_failed'
     WHEN 'completed' THEN 'terminal_succeeded'
     WHEN 'timed_out' THEN 'timed_out'
     WHEN 'cancelled' THEN 'cancelled'
-    ELSE 'recovered_unobserved'
+    WHEN 'pending' THEN 'recovered_unobserved'
+    ELSE 'legacy_unclassified_failed'
   END,
   NULL,NULL,NULL,'legacy-' || attempt_id,started_at,NULL,deadline_at,completed_at,
   CASE state
+    WHEN 'failed' THEN 'legacy_unclassified_failed'
+    WHEN 'completed' THEN 'not_observed'
     WHEN 'timed_out' THEN 'timed_out'
     WHEN 'cancelled' THEN 'cancelled'
-    ELSE 'recovered_unobserved'
+    WHEN 'pending' THEN 'recovered_unobserved'
+    ELSE 'legacy_unclassified_failed'
   END,
   NULL
 FROM native_codex_profile_setup_attempts_v27;
@@ -3700,19 +3705,22 @@ mod tests {
     }
 
     #[test]
-    fn v28_setup_attempt_migration_preserves_legacy_rows_without_fabricating_provenance() {
+    fn v28_setup_attempt_migration_preserves_each_legacy_state_without_fabricating_provenance() {
         let directory = tempfile::tempdir().unwrap();
         let database = directory.path().join("active.sqlite");
         let connection = Connection::open(&database).unwrap();
         connection.execute_batch(NATIVE_PROFILE_SCHEMA).unwrap();
-        connection.execute_batch("DROP INDEX ux_native_codex_profile_setup_attempt_pending; DROP TABLE native_codex_profile_setup_attempts; CREATE TABLE native_codex_profile_setup_attempts (attempt_id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, phase TEXT NOT NULL, state TEXT NOT NULL, started_at TEXT NOT NULL, deadline_at TEXT NOT NULL, completed_at TEXT); INSERT INTO native_codex_profiles (id,canonical_home_path,filesystem_identity,ownership,lifecycle,created_at,updated_at) VALUES ('profile','C:\\profile','identity','registered_existing','active','t','t'); INSERT INTO native_codex_profile_setup_attempts VALUES ('native-setup-attempt-legacy','profile','sandbox_initialization','failed','2026-08-06T22:41:12Z','2026-08-06T22:43:12Z','2026-08-06T22:41:13Z'); PRAGMA user_version=27;").unwrap();
+        connection.execute_batch("DROP INDEX ux_native_codex_profile_setup_attempt_pending; DROP TABLE native_codex_profile_setup_attempts; CREATE TABLE native_codex_profile_setup_attempts (attempt_id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, phase TEXT NOT NULL, state TEXT NOT NULL, started_at TEXT NOT NULL, deadline_at TEXT NOT NULL, completed_at TEXT); INSERT INTO native_codex_profiles (id,canonical_home_path,filesystem_identity,ownership,lifecycle,created_at,updated_at) VALUES ('profile','C:\\profile','identity','registered_existing','active','t','t'); INSERT INTO native_codex_profile_setup_attempts VALUES ('failed','profile','sandbox_initialization','failed','2026-08-06T22:41:12Z','2026-08-06T22:43:12Z','2026-08-06T22:41:13Z'),('pending','profile','sandbox_initialization','pending','2026-08-06T22:42:12Z','2026-08-06T22:44:12Z',NULL),('completed','profile','sandbox_initialization','completed','2026-08-06T22:43:12Z','2026-08-06T22:45:12Z','2026-08-06T22:43:13Z'),('timed_out','profile','sandbox_initialization','timed_out','2026-08-06T22:44:12Z','2026-08-06T22:46:12Z','2026-08-06T22:46:12Z'),('cancelled','profile','sandbox_initialization','cancelled','2026-08-06T22:45:12Z','2026-08-06T22:47:12Z','2026-08-06T22:45:13Z'); PRAGMA user_version=27;").unwrap();
         crate::storage::initialize_active_database(&connection).unwrap();
-        let row: (String, Option<String>, Option<String>, String) = connection.query_row(
-            "SELECT state,executable,version,terminal_classification FROM native_codex_profile_setup_attempts WHERE attempt_id='native-setup-attempt-legacy'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        ).unwrap();
-        assert_eq!(row, ("recovered_unobserved".into(), None, None, "recovered_unobserved".into()));
+        let mut statement = connection.prepare("SELECT attempt_id,state,terminal_classification,executable,version,workspace_sandbox_supported,launch_accepted_at,terminal_exit_code FROM native_codex_profile_setup_attempts ORDER BY requested_at").unwrap();
+        let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?, row.get::<_, Option<i64>>(5)?, row.get::<_, Option<String>>(6)?, row.get::<_, Option<i32>>(7)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_eq!(rows, vec![
+            ("failed".into(), "legacy_unclassified_failed".into(), "legacy_unclassified_failed".into(), None, None, None, None, None),
+            ("pending".into(), "recovered_unobserved".into(), "recovered_unobserved".into(), None, None, None, None, None),
+            ("completed".into(), "terminal_succeeded".into(), "not_observed".into(), None, None, None, None, None),
+            ("timed_out".into(), "timed_out".into(), "timed_out".into(), None, None, None, None, None),
+            ("cancelled".into(), "cancelled".into(), "cancelled".into(), None, None, None, None, None),
+        ]);
     }
 
     #[test]

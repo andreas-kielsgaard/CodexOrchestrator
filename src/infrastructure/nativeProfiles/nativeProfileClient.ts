@@ -15,8 +15,8 @@ export type NativeExecutionMode = 'workspace_write' | 'danger_full_access';
 export type NativeProfileLoginDisposition = 'not_requested' | 'pending' | 'launch_failed' | 'terminal_succeeded' | 'terminal_failed' | 'cancelled' | 'recovered_unobserved';
 export type NativeProfileBrowserHandoff = 'unobserved';
 export type NativeProfileSetupPhase = 'not_requested' | 'sandbox_initialization' | 'workspace_write_canary';
-export type NativeProfileSetupDisposition = 'not_requested' | 'pending' | 'launch_failed' | 'terminal_succeeded' | 'terminal_failed' | 'timed_out' | 'cancelled' | 'recovered_unobserved';
-export type NativeProfileSetupTerminalClassification = 'not_observed' | 'exit_code' | 'launch_failed' | 'timed_out' | 'cancelled' | 'recovered_unobserved';
+export type NativeProfileSetupDisposition = 'not_requested' | 'pending' | 'launch_failed' | 'terminal_succeeded' | 'terminal_failed' | 'timed_out' | 'cancelled' | 'recovered_unobserved' | 'legacy_unclassified_failed';
+export type NativeProfileSetupTerminalClassification = 'not_observed' | 'exit_code' | 'launch_failed' | 'timed_out' | 'cancelled' | 'recovered_unobserved' | 'legacy_unclassified_failed';
 
 export interface NativeProfileAttentions {
   readonly authentication: string | null;
@@ -172,7 +172,7 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
     },
     setupAttempt: {
       phase: enumValue(setupAttempt.phase, ['not_requested', 'sandbox_initialization', 'workspace_write_canary'], 'setup attempt phase'),
-      disposition: enumValue(setupAttempt.disposition, ['not_requested', 'pending', 'launch_failed', 'terminal_succeeded', 'terminal_failed', 'timed_out', 'cancelled', 'recovered_unobserved'], 'setup attempt disposition'),
+      disposition: enumValue(setupAttempt.disposition, ['not_requested', 'pending', 'launch_failed', 'terminal_succeeded', 'terminal_failed', 'timed_out', 'cancelled', 'recovered_unobserved', 'legacy_unclassified_failed'], 'setup attempt disposition'),
       executable: nullableString(setupAttempt.executable, 'setup executable'),
       version: nullableString(setupAttempt.version, 'setup executable version'),
       workspaceSandboxSupported: setupAttempt.workspaceSandboxSupported === null ? null : booleanValue(setupAttempt.workspaceSandboxSupported, 'workspace sandbox capability'),
@@ -181,7 +181,7 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
       launchAcceptedAt: nullableString(setupAttempt.launchAcceptedAt, 'setup launch timestamp'),
       deadlineAt: nullableString(setupAttempt.deadlineAt, 'setup deadline timestamp'),
       settledAt: nullableString(setupAttempt.settledAt, 'setup settlement timestamp'),
-      terminalClassification: enumValue(setupAttempt.terminalClassification, ['not_observed', 'exit_code', 'launch_failed', 'timed_out', 'cancelled', 'recovered_unobserved'], 'setup terminal classification'),
+      terminalClassification: enumValue(setupAttempt.terminalClassification, ['not_observed', 'exit_code', 'launch_failed', 'timed_out', 'cancelled', 'recovered_unobserved', 'legacy_unclassified_failed'], 'setup terminal classification'),
       terminalExitCode: setupAttempt.terminalExitCode === null ? null : integerValue(setupAttempt.terminalExitCode, 'setup terminal exit code'),
     },
     readiness: {

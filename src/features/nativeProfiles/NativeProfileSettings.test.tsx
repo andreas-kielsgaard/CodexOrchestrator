@@ -93,6 +93,15 @@ describe('NativeProfileSettings', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Sandbox initialization request returned; review the durable setup-attempt facts.');
   });
 
+  it('describes an old generic failure without inventing launch or terminal evidence', async () => {
+    const legacyProfiles = profiles.map((profile) => profile.id === 'p1' ? { ...profile, setupAttempt: { ...setupAttempt, phase: 'sandbox_initialization' as const, disposition: 'legacy_unclassified_failed' as const, terminalClassification: 'legacy_unclassified_failed' as const, requestedAt: '2026-08-06T22:41:12Z', deadlineAt: '2026-08-06T22:43:12Z', settledAt: '2026-08-06T22:41:13Z' } } : profile);
+    render(<NativeProfileSettings client={client({ load: async () => ({ contract: 'native-codex-profile-query/v1' as const, profiles: legacyProfiles }) })} />);
+    const card = await screen.findByRole('article', { name: 'Codex home p1' });
+    expect(within(card).getByText('Native setup was durably recorded as failed under the old schema; launch acceptance, terminal category, and exit code were not recorded.')).toBeInTheDocument();
+    expect(within(card).queryByText('Native setup process was not launched.')).not.toBeInTheDocument();
+    expect(within(card).queryByText('Native setup process ended unsuccessfully.')).not.toBeInTheDocument();
+  });
+
   it('contains the reported short viewport in an internal scroll region with narrow wrapping', async () => {
     render(<NativeProfileSettings client={client()} />);
     const settings = await screen.findByRole('main', { name: 'Technical Codex settings' });

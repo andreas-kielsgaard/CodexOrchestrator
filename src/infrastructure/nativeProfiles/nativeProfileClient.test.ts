@@ -24,6 +24,7 @@ describe('native profile client', () => {
     expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, setupAttempt: { ...profile.setupAttempt, terminalExitCode: 1.5 } }] })).toThrow(/terminal exit code/);
     expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, setupAttempt: { ...profile.setupAttempt, workspaceSandboxSupported: 'yes' } }] })).toThrow(/workspace sandbox capability/);
     expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, setupAttempt: { ...profile.setupAttempt, opaqueSandboxState: 'private' } }] })).toThrow(/setup attempt.*unknown field/);
+    expect(decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, setupAttempt: { ...profile.setupAttempt, disposition: 'legacy_unclassified_failed', terminalClassification: 'legacy_unclassified_failed' } }] }).profiles[0].setupAttempt).toMatchObject({ disposition: 'legacy_unclassified_failed', terminalClassification: 'legacy_unclassified_failed' });
   });
   it('serializes actions and reloads durable state after each action', async () => {
     const calls: string[] = [];
