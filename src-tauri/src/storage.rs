@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-const ACTIVE_SCHEMA_VERSION: i64 = 20;
+const ACTIVE_SCHEMA_VERSION: i64 = 21;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
@@ -30,17 +30,19 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     if current_version == ACTIVE_SCHEMA_VERSION {
         let transaction = connection
             .unchecked_transaction()
-            .map_err(|error| format!("Unable to begin active v20 schema evolution: {error}"))?;
+            .map_err(|error| format!("Unable to begin active v21 schema evolution: {error}"))?;
         crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
             .map_err(|error| format!("Unable to evolve accepted-integration schema: {error}"))?;
         transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
             .map_err(|error| format!("Unable to evolve dependency-wave schema: {error}"))?;
+        transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
+            .map_err(|error| format!("Unable to evolve native profile schema: {error}"))?;
         transaction
             .commit()
-            .map_err(|error| format!("Unable to commit active v20 schema evolution: {error}"))?;
+            .map_err(|error| format!("Unable to commit active v21 schema evolution: {error}"))?;
         return Ok(());
     }
-    if (1..=19).contains(&current_version) {
+    if (1..=20).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -136,6 +138,8 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| format!("Unable to migrate accepted-integration schema: {error}"))?;
         transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
             .map_err(|error| format!("Unable to migrate dependency-wave schema: {error}"))?;
+        transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
+            .map_err(|error| format!("Unable to migrate native profile schema: {error}"))?;
         if current_version == 14 {
             transaction
                 .execute_batch(
@@ -217,6 +221,8 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .map_err(|error| format!("Unable to initialize accepted-integration schema: {error}"))?;
     transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
         .map_err(|error| format!("Unable to initialize dependency-wave schema: {error}"))?;
+    transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
+        .map_err(|error| format!("Unable to initialize native profile schema: {error}"))?;
     transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
         .map_err(|error| format!("Unable to record active schema version: {error}"))?;
@@ -348,6 +354,8 @@ mod tests {
                 "initiated_planning_drafts",
                 "initiated_sprint_git_authorities",
                 "initiated_sprints",
+                "native_codex_profile_readiness",
+                "native_codex_profiles",
                 "plan_builder_context_deliveries",
                 "planning_draft_agent_session_associations",
                 "planning_draft_lifecycle_events",
@@ -359,7 +367,13 @@ mod tests {
                 "sprint_target_current_attentions",
                 "sprint_target_currents",
                 "stored_file_review_artifacts",
+                "work_slice_execution_attentions",
+                "work_slice_execution_graph_completions",
+                "work_slice_execution_settlements",
+                "work_slice_planning_point_execution_settlements",
                 "work_unit_dependency_activation_intents",
+                "work_unit_execution_attentions",
+                "work_unit_execution_states",
                 "work_unit_prerequisite_contributions",
                 "work_unit_settlements",
             ]

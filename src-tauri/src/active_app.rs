@@ -92,6 +92,10 @@ pub(crate) fn run() {
                 .map_err(|error| format!("Unable to create app data directory: {error}"))?;
             let database_path = crate::storage::active_database_path(&app_data_dir);
             let connection = crate::storage::open_active_database(&database_path)?;
+            let native_profiles = crate::native_profiles::NativeProfileService::open(
+                database_path.clone(),
+                app_data_dir.clone(),
+            )?;
             let repository = Arc::new(
                 crate::agent_sessions::repository::SqliteAgentSessionRepository::new(connection)
                     .map_err(|error| error.to_string())?,
@@ -149,6 +153,9 @@ pub(crate) fn run() {
             app.manage(
                 crate::agent_sessions::transport::AgentSessionTauriState::new(application.clone()),
             );
+            app.manage(crate::native_profiles::NativeProfileTauriState::new(
+                native_profiles,
+            ));
             let orchestration = Arc::new(
                 crate::orchestration::application::OrchestrationApplication::new(
                     orchestration_repository.clone(),
@@ -311,6 +318,14 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::load_agent_session,
             crate::agent_sessions::transport::send_agent_session_message,
             crate::agent_sessions::transport::cancel_agent_invocation,
+            crate::native_profiles::load_native_profile_query,
+            crate::native_profiles::register_native_profile,
+            crate::native_profiles::create_dedicated_native_profile,
+            crate::native_profiles::select_native_profile,
+            crate::native_profiles::request_native_profile_login,
+            crate::native_profiles::refresh_native_profile_readiness,
+            crate::native_profiles::request_native_profile_sandbox_initialization,
+            crate::native_profiles::run_native_profile_workspace_write_canary,
             crate::orchestration::transport::send_managed_plan_builder_message,
             crate::orchestration::transport::request_managed_plan_builder_action,
             crate::orchestration::transport::reconcile_managed_plan_builder_session,
