@@ -12,7 +12,7 @@ const profiles: readonly NativeProfile[] = [
 
 function client(overrides: Partial<NativeProfileClient> = {}): NativeProfileClient {
   const query = async () => ({ contract: 'native-codex-profile-query/v1' as const, profiles });
-  return { load: query, registerExisting: query, createDedicated: query, select: query, requestLogin: query, refreshReadiness: query, initializeSandbox: query, runCanary: query, probeMcp: query, ...overrides };
+  return { load: query, registerExisting: query, createDedicated: query, select: query, requestLogin: query, refreshReadiness: query, initializeSandbox: query, confirmSandboxInitialization: query, runCanary: query, probeMcp: query, ...overrides };
 }
 
 describe('NativeProfileSettings', () => {

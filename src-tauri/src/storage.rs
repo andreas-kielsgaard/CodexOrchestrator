@@ -28,6 +28,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
         .map_err(|error| format!("Unable to read active schema version: {error}"))?;
     if current_version == ACTIVE_SCHEMA_VERSION {
+        if native_profile_schema_is_present(connection)? {
+            return Ok(());
+        }
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active v22 schema evolution: {error}"))?;
@@ -242,6 +245,17 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .commit()
         .map_err(|error| format!("Unable to commit active schema initialization: {error}"))?;
     Ok(())
+}
+
+fn native_profile_schema_is_present(connection: &Connection) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='native_codex_profiles')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|present| present != 0)
+        .map_err(|error| format!("Unable to inspect active native-profile schema: {error}"))
 }
 use std::time::Duration;
 

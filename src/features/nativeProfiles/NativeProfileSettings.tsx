@@ -55,6 +55,7 @@ export function NativeProfileSettings({ client }: { readonly client: NativeProfi
           onLogin={() => void run('login', () => client.requestLogin(profile.id))}
           onRefresh={() => void run('refresh', () => client.refreshReadiness(profile.id))}
           onSandbox={() => void run('sandbox', () => client.initializeSandbox(profile.id))}
+          onConfirmSandbox={() => void run('confirmSandbox', () => client.confirmSandboxInitialization(profile.id))}
           onCanary={() => void run('canary', () => client.runCanary(profile.id))}
           onMcp={() => void run('mcp', () => client.probeMcp(profile.id))} />
       ))}
@@ -63,15 +64,15 @@ export function NativeProfileSettings({ client }: { readonly client: NativeProfi
 }
 
 function actionLabel(name: string): string {
-  return ({ select: 'Profile selection', login: 'Browser login request', refresh: 'Login status refresh', sandbox: 'Sandbox initialization request', canary: 'WorkspaceWrite canary', mcp: 'MCP/reporting probe' } as Record<string, string>)[name] ?? 'Profile action';
+  return ({ select: 'Profile selection', login: 'Browser login request', refresh: 'Login status refresh', sandbox: 'Sandbox initialization request', confirmSandbox: 'Sandbox/UAC confirmation', canary: 'WorkspaceWrite canary', mcp: 'MCP/reporting probe' } as Record<string, string>)[name] ?? 'Profile action';
 }
 
-function ProfileCard({ profile, busy, onSelect, onLogin, onRefresh, onSandbox, onCanary, onMcp }: { readonly profile: NativeProfile; readonly busy: string | null; readonly onSelect?: () => void; readonly onLogin?: () => void; readonly onRefresh?: () => void; readonly onSandbox?: () => void; readonly onCanary?: () => void; readonly onMcp?: () => void }) {
+function ProfileCard({ profile, busy, onSelect, onLogin, onRefresh, onSandbox, onConfirmSandbox, onCanary, onMcp }: { readonly profile: NativeProfile; readonly busy: string | null; readonly onSelect?: () => void; readonly onLogin?: () => void; readonly onRefresh?: () => void; readonly onSandbox?: () => void; readonly onConfirmSandbox?: () => void; readonly onCanary?: () => void; readonly onMcp?: () => void }) {
   const { readiness } = profile;
   return <article className="native-profile-card" aria-label={`Codex home ${profile.id}`}>
     <header><div><h2>{profile.ownership === 'application_dedicated' ? 'Dedicated Orchestrator home' : 'Existing Codex home'}</h2><code>{profile.homePath}</code></div><strong>{profile.selected ? 'Selected' : 'Available'}</strong></header>
     <dl className="native-profile-facts"><Fact label="Identity" value={profile.id} /><Fact label="Ownership" value={profile.ownership} /><Fact label="Lifecycle" value={profile.lifecycle} /><Fact label="Authentication" value={readiness.authentication} /><Fact label="Sandbox" value={readiness.sandboxInitialization} /><Fact label="WorkspaceWrite canary" value={readiness.workspaceWriteCanary} /><Fact label="MCP reporting" value={readiness.mcpReporting} /></dl>
-    <div className="native-profile-actions"><button type="button" disabled={busy !== null || profile.selected} onClick={onSelect}>Select</button><button type="button" disabled={busy !== null} onClick={onRefresh}>Refresh login status</button><button type="button" disabled={busy !== null} onClick={onLogin}>Request browser login</button><button type="button" disabled={busy !== null} onClick={onSandbox}>Request sandbox initialization</button><button type="button" disabled={busy !== null} onClick={onCanary}>Run WorkspaceWrite canary</button><button type="button" disabled={busy !== null} onClick={onMcp}>Start MCP/reporting probe</button></div>
+    <div className="native-profile-actions"><button type="button" disabled={busy !== null || profile.selected} onClick={onSelect}>Select</button><button type="button" disabled={busy !== null} onClick={onRefresh}>Refresh login status</button><button type="button" disabled={busy !== null} onClick={onLogin}>Request browser login</button><button type="button" disabled={busy !== null} onClick={onSandbox}>Request sandbox initialization</button><button type="button" disabled={busy !== null} onClick={onConfirmSandbox}>Confirm sandbox/UAC completion</button><button type="button" disabled={busy !== null} onClick={onCanary}>Run WorkspaceWrite canary</button><button type="button" disabled={busy !== null} onClick={onMcp}>Start MCP/reporting probe</button></div>
     <Attention facts={readiness.attentions} />
   </article>;
 }

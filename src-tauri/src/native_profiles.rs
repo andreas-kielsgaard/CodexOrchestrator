@@ -10,7 +10,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 use tauri::State;
 use uuid::Uuid;
@@ -153,6 +153,8 @@ const MCP_REPORTING_SERVER: &str = "codex-orchestrator-reporting";
 const MCP_REPORTING_TOOL: &str = "report_native_profile_readiness";
 const SETUP_ATTEMPT_TIMEOUT_SECONDS: i64 = 120;
 const MCP_PROBE_TIMEOUT_SECONDS: i64 = 300;
+
+static NATIVE_PROFILE_OPEN_GATE: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct NativeCliInvocation {
@@ -474,10 +476,15 @@ pub(crate) struct NativeProfileService {
     cli: Arc<dyn NativeCliPort>,
     login_children: Mutex<HashMap<String, Box<dyn NativeCliChild>>>,
     setup_children: Mutex<HashMap<String, Box<dyn NativeCliChild>>>,
+    operation_gate: Mutex<()>,
 }
 
 impl NativeProfileService {
     pub(crate) fn open(database_path: PathBuf, app_data_dir: PathBuf) -> Result<Self, String> {
+        let _gate = NATIVE_PROFILE_OPEN_GATE
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .map_err(|_| "Native profile initialization supervision is unavailable")?;
         let connection = crate::storage::open_active_database(&database_path)?;
         connection
             .execute_batch(NATIVE_PROFILE_SCHEMA)
@@ -490,6 +497,7 @@ impl NativeProfileService {
             }),
             login_children: Mutex::new(HashMap::new()),
             setup_children: Mutex::new(HashMap::new()),
+            operation_gate: Mutex::new(()),
         })
     }
 
@@ -715,6 +723,37 @@ impl NativeProfileService {
         self.profile(id).map(Into::into)
     }
 
+    /// A person must explicitly confirm the Windows/UAC stage. A successful setup process only
+    /// records that the application-owned request completed; it never establishes this fact.
+    pub(crate) fn confirm_sandbox_initialization(
+        &self,
+        id: &str,
+    ) -> Result<NativeProfileDto, String> {
+        self.require_active(id)?;
+        self.reconcile_setup_attempts(id)?;
+        let connection = self.connection()?;
+        let latest_state = connection
+            .query_row(
+                "SELECT state FROM native_codex_profile_setup_attempts WHERE profile_id=?1 AND phase='sandbox_initialization' ORDER BY started_at DESC,attempt_id DESC LIMIT 1",
+                params![id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        if latest_state.as_deref() != Some("completed") {
+            return Err("A completed application-owned sandbox setup request is required before confirmation".into());
+        }
+        self.update_readiness(
+            id,
+            None,
+            Some("initialized"),
+            None,
+            None,
+            Some(("sandbox", None)),
+        )?;
+        self.profile(id).map(Into::into)
+    }
+
     pub(crate) fn run_workspace_write_canary(&self, id: &str) -> Result<NativeProfileDto, String> {
         let profile = self.require_active(id)?;
         self.reconcile_setup_attempts(id)?;
@@ -902,6 +941,19 @@ impl NativeProfileService {
         phase: SetupPhase,
     ) -> Result<(), String> {
         let id = &profile.id;
+        let gate = self
+            .operation_gate
+            .lock()
+            .map_err(|_| "Native profile operation supervision is unavailable")?;
+        let current = self.profile(id)?;
+        let lifecycle = validate_profile(&current);
+        if current.lifecycle != Lifecycle::Active || lifecycle != Lifecycle::Active {
+            drop(gate);
+            if lifecycle != Lifecycle::Active {
+                self.record_lifecycle(id, lifecycle)?;
+            }
+            return Err("Native Codex home is not currently validated".into());
+        }
         let root = self.probe_root(id);
         fs::create_dir_all(&root).map_err(|error| {
             format!("Unable to create application-owned sandbox probe root: {error}")
@@ -928,21 +980,27 @@ impl NativeProfileService {
                 false,
             );
         }
+        let mut args = vec![
+            "--cd".into(),
+            root.to_string_lossy().into_owned(),
+            "sandbox".into(),
+        ];
+        if phase == SetupPhase::SandboxInitialization {
+            args.push("--init".into());
+        }
+        args.extend([
+            "--sandbox-state-disable-network".into(),
+            "--sandbox-state-readable-root".into(),
+            root.to_string_lossy().into_owned(),
+            "--".into(),
+            "cmd.exe".into(),
+            "/d".into(),
+            "/s".into(),
+            "/c".into(),
+            command,
+        ]);
         let invocation = NativeCliInvocation {
-            args: vec![
-                "--cd".into(),
-                root.to_string_lossy().into_owned(),
-                "sandbox".into(),
-                "--sandbox-state-disable-network".into(),
-                "--sandbox-state-readable-root".into(),
-                root.to_string_lossy().into_owned(),
-                "--".into(),
-                "cmd.exe".into(),
-                "/d".into(),
-                "/s".into(),
-                "/c".into(),
-                command,
-            ],
+            args,
             cwd: root.clone(),
             codex_home: profile.home.clone(),
             environment: native_profile_environment(&profile.home),
@@ -1017,15 +1075,28 @@ impl NativeProfileService {
                             || receipt.sandbox_receipt_observed) =>
                 {
                     self.set_setup_attempt_state(&attempt.attempt_id, "completed")?;
-                    self.update_readiness(
-                        id,
-                        None,
-                        (attempt.phase == SetupPhase::SandboxInitialization)
-                            .then_some("initialized"),
-                        (attempt.phase == SetupPhase::WorkspaceWriteCanary).then_some("passed"),
-                        None,
-                        Some((attempt.phase.attention_concern(), None)),
-                    )?;
+                    if attempt.phase == SetupPhase::SandboxInitialization {
+                        self.update_readiness(
+                            id,
+                            None,
+                            Some("attention_required"),
+                            None,
+                            None,
+                            Some((
+                                "sandbox",
+                                Some("native_sandbox_setup_completed_explicit_uac_confirmation_required"),
+                            )),
+                        )?;
+                    } else {
+                        self.update_readiness(
+                            id,
+                            None,
+                            None,
+                            Some("passed"),
+                            None,
+                            Some((attempt.phase.attention_concern(), None)),
+                        )?;
+                    }
                 }
                 Ok(_) => self.settle_failed_setup_attempt(&attempt, "failed")?,
                 Err(state) => self.settle_failed_setup_attempt(&attempt, state)?,
@@ -1132,6 +1203,29 @@ impl NativeProfileService {
     }
 
     fn record_lifecycle(&self, id: &str, lifecycle: Lifecycle) -> Result<(), String> {
+        let _gate = self
+            .operation_gate
+            .lock()
+            .map_err(|_| "Native profile operation supervision is unavailable")?;
+        if let Some(mut child) = self
+            .login_children
+            .lock()
+            .map_err(|_| "Native profile login supervision is unavailable")?
+            .remove(id)
+        {
+            let _ = child.terminate();
+        }
+        let attempts = load_pending_setup_attempts(&self.connection()?, id)?;
+        let mut children = self
+            .setup_children
+            .lock()
+            .map_err(|_| "Native sandbox child supervision is unavailable")?;
+        for attempt in attempts {
+            if let Some(mut child) = children.remove(&attempt.attempt_id) {
+                let _ = child.terminate();
+            }
+        }
+        drop(children);
         let connection = self.connection()?;
         connection.execute("UPDATE native_codex_profiles SET lifecycle=?2,selected_at=NULL,updated_at=?3 WHERE id=?1", params![id, lifecycle.database(), Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
@@ -1513,6 +1607,15 @@ pub(crate) fn request_native_profile_sandbox_initialization(
         .request_sandbox_initialization(&input.profile_id)
 }
 #[tauri::command]
+pub(crate) fn confirm_native_profile_sandbox_initialization(
+    state: State<'_, NativeProfileTauriState>,
+    input: NativeProfileIdInput,
+) -> Result<NativeProfileDto, String> {
+    state
+        .service
+        .confirm_sandbox_initialization(&input.profile_id)
+}
+#[tauri::command]
 pub(crate) fn run_native_profile_workspace_write_canary(
     state: State<'_, NativeProfileTauriState>,
     input: NativeProfileIdInput,
@@ -1721,7 +1824,7 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_port_receives_only_the_profile_probe_root_and_separate_phase_receipts() {
+    fn sandbox_setup_requires_explicit_uac_confirmation_before_the_canary_can_start() {
         let directory = tempfile::tempdir().unwrap();
         let mut service = NativeProfileService::open(
             directory.path().join("active.sqlite"),
@@ -1737,9 +1840,24 @@ mod tests {
         });
         service.request_sandbox_initialization(&profile.id).unwrap();
         let mut query = service.query().unwrap();
-        let initialized = query.profiles.remove(0);
-        assert_eq!(initialized.readiness.sandbox_initialization, "initialized");
-        assert_eq!(initialized.readiness.workspace_write_canary, "not_run");
+        let awaiting_confirmation = query.profiles.remove(0);
+        assert_eq!(
+            awaiting_confirmation.readiness.sandbox_initialization,
+            "attention_required"
+        );
+        assert_eq!(
+            awaiting_confirmation.readiness.attentions.sandbox,
+            Some("native_sandbox_setup_completed_explicit_uac_confirmation_required".into())
+        );
+        assert_eq!(
+            service
+                .run_workspace_write_canary(&profile.id)
+                .unwrap()
+                .readiness
+                .workspace_write_canary,
+            "blocked"
+        );
+        service.confirm_sandbox_initialization(&profile.id).unwrap();
         *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
             succeeded: true,
             sandbox_receipt_observed: true,
@@ -1751,6 +1869,8 @@ mod tests {
 
         let calls = fake.calls.lock().unwrap();
         assert_eq!(calls.len(), 2);
+        assert!(calls[0].args.iter().any(|argument| argument == "--init"));
+        assert!(!calls[1].args.iter().any(|argument| argument == "--init"));
         for call in calls.iter() {
             assert_eq!(call.cwd, service.probe_root(&profile.id));
             assert_eq!(
@@ -1842,6 +1962,9 @@ mod tests {
         let fake = Arc::new(FakeCli::succeeding());
         service.cli = fake.clone();
         let profile = service.create_dedicated().unwrap();
+        assert!(service
+            .confirm_sandbox_initialization(&profile.id)
+            .is_err());
         let blocked = service.run_workspace_write_canary(&profile.id).unwrap();
         assert_eq!(blocked.readiness.workspace_write_canary, "blocked");
         assert_eq!(*fake.starts.lock().unwrap(), 0);
@@ -1926,6 +2049,30 @@ mod tests {
         assert_eq!(
             query.profiles[0].readiness.workspace_write_canary,
             "not_run"
+        );
+    }
+
+    #[test]
+    fn continuity_loss_cancels_owned_login_and_sandbox_children() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake.clone();
+        let profile = service.create_dedicated().unwrap();
+        service.request_login(&profile.id).unwrap();
+        service.request_sandbox_initialization(&profile.id).unwrap();
+
+        fs::remove_file(Path::new(&profile.home_path).join(MARKER_FILE)).unwrap();
+        service.query().unwrap();
+
+        assert_eq!(*fake.terminated.lock().unwrap(), 2);
+        assert_eq!(
+            service.profile(&profile.id).unwrap().lifecycle,
+            Lifecycle::Malformed
         );
     }
 

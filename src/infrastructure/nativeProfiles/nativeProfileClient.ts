@@ -118,6 +118,7 @@ export interface NativeProfileClient {
   requestLogin(profileId: string): Promise<NativeProfileQuery>;
   refreshReadiness(profileId: string): Promise<NativeProfileQuery>;
   initializeSandbox(profileId: string): Promise<NativeProfileQuery>;
+  confirmSandboxInitialization(profileId: string): Promise<NativeProfileQuery>;
   runCanary(profileId: string): Promise<NativeProfileQuery>;
   probeMcp(profileId: string): Promise<NativeProfileQuery>;
 }
@@ -148,6 +149,7 @@ export function createNativeProfileClient(invokeCommand: Invoke = invoke): Nativ
     requestLogin: (profileId) => action('request_native_profile_login', id(profileId)),
     refreshReadiness: (profileId) => action('refresh_native_profile_readiness', id(profileId)),
     initializeSandbox: (profileId) => action('request_native_profile_sandbox_initialization', id(profileId)),
+    confirmSandboxInitialization: (profileId) => action('confirm_native_profile_sandbox_initialization', id(profileId)),
     runCanary: (profileId) => action('run_native_profile_workspace_write_canary', id(profileId)),
     probeMcp: (profileId) => action('probe_native_profile_mcp_reporting', id(profileId)),
   };
