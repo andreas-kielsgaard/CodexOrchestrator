@@ -16,3 +16,12 @@
 .native-profile-attention { margin-bottom: 0 !important; padding-top: 12px; border-top: 1px solid #e0e4dc; }
 .native-profile-attention h3 { font-size: .9rem; margin: 0; }
 .native-profile-attention p, .native-profile-attention ul { margin: 6px 0 0; }
+.native-profile-execution { margin: 20px 0 !important; padding: 16px; background: #f2f5ef; border: 1px solid #cbd3cb; border-radius: 7px; }
+.native-profile-execution h3 { margin: 0 0 6px; }
+.native-profile-execution p { margin: 6px 0 12px; }
+.native-profile-execution fieldset { display: grid; gap: 9px; border: 0; padding: 0; margin: 14px 0; }
+.native-profile-execution legend { font-weight: 700; padding: 0; }
+.native-profile-execution label { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; align-items: start; }
+.native-profile-execution label span { grid-column: 2; color: #5d685f; font-size: .9rem; }
+.native-profile-danger-warning { padding: 12px; border-left: 4px solid #a44b26; background: #fff3e9; }
+.native-profile-authorization { font-size: .95rem; }

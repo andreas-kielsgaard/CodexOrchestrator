@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { NativeProfileSettings } from './NativeProfileSettings';
@@ -29,5 +29,36 @@ describe('NativeProfileSettings', () => {
     await waitFor(() => expect(select).toHaveBeenCalledWith('p2'));
     await user.click(screen.getAllByRole('button', { name: 'Refresh login status' })[1]);
     await waitFor(() => expect(refreshReadiness).toHaveBeenCalledWith('p2'));
+  });
+
+  it('keeps danger authorization separate from mode selection and supports revocation', async () => {
+    const user = userEvent.setup();
+    const selectExecutionMode = vi.fn(async (_id: string, mode: 'workspace_write' | 'danger_full_access') => ({ contract: 'native-codex-profile-query/v1' as const, profiles: profiles.map((profile) => ({ ...profile, execution: { ...profile.execution, selectedMode: mode } })) }));
+    const authorizeDangerFullAccess = vi.fn(async () => ({ contract: 'native-codex-profile-query/v1' as const, profiles: profiles.map((profile) => ({ ...profile, execution: { ...profile.execution, selectedMode: 'danger_full_access' as const, dangerFullAccessAuthorized: true } })) }));
+    const revokeDangerFullAccess = vi.fn(async () => ({ contract: 'native-codex-profile-query/v1' as const, profiles }));
+    render(<NativeProfileSettings client={client({ selectExecutionMode, authorizeDangerFullAccess, revokeDangerFullAccess })} />);
+    const card = await screen.findByRole('article', { name: 'Codex home p1' });
+    expect(within(card).getByText(/does not authorize itself/)).toBeInTheDocument();
+    const danger = within(card).getByRole('radio', { name: /Danger Full Access/ });
+    await user.click(danger);
+    await waitFor(() => expect(selectExecutionMode).toHaveBeenCalledWith('p1', 'danger_full_access'));
+    expect(within(card).getByRole('button', { name: 'Authorize Danger Full Access for this profile' })).toBeEnabled();
+    await user.click(within(card).getByRole('button', { name: 'Authorize Danger Full Access for this profile' }));
+    await waitFor(() => expect(authorizeDangerFullAccess).toHaveBeenCalledWith('p1'));
+    expect(within(card).getByText('Authorization:')).toBeInTheDocument();
+    const refreshedCard = await screen.findByRole('article', { name: 'Codex home p1' });
+    expect(within(refreshedCard).getByRole('button', { name: 'Revoke Danger Full Access authorization' })).toBeInTheDocument();
+  });
+
+  it('reports rejected authorization without claiming it succeeded', async () => {
+    const user = userEvent.setup();
+    const selectExecutionMode = vi.fn(async () => ({ contract: 'native-codex-profile-query/v1' as const, profiles: profiles.map((profile) => ({ ...profile, execution: { ...profile.execution, selectedMode: 'danger_full_access' as const } })) }));
+    const authorizeDangerFullAccess = vi.fn(async () => { throw new Error('Danger authorization was rejected.'); });
+    render(<NativeProfileSettings client={client({ selectExecutionMode, authorizeDangerFullAccess })} />);
+    const card = await screen.findByRole('article', { name: 'Codex home p1' });
+    await user.click(within(card).getByRole('radio', { name: /Danger Full Access/ }));
+    await user.click(within(card).getByRole('button', { name: 'Authorize Danger Full Access for this profile' }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Danger Full Access authorization failed: Danger authorization was rejected.'));
+    expect(within(card).getByText('not authorized')).toBeInTheDocument();
   });
 });
