@@ -46,6 +46,7 @@ import type {
 } from '../application/contextualFileReview';
 import { FileReviewScreen } from '../features/fileReview';
 import type { NativeProfileClient } from '../infrastructure/nativeProfiles/nativeProfileClient';
+import type { NativeProfileApplicationConsumer } from '../infrastructure/nativeProfiles/nativeProfileConsumer';
 import { NativeProfileSettings } from '../features/nativeProfiles/NativeProfileSettings';
 
 export type ApplicationSurface =
@@ -78,6 +79,7 @@ export interface AppProps {
   readonly fileReviewSource?: FileReviewSource;
   readonly contextualFileReviewClient?: ContextualFileReviewClient;
   readonly nativeProfileClient?: NativeProfileClient;
+  readonly nativeProfileApplicationConsumer?: NativeProfileApplicationConsumer;
   /** Present only in the injected development launcher composition. */
   readonly humanReviewLauncherView?: ReactNode;
   /** Enumerated proof navigation; it cannot activate or focus a native window. */

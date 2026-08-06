@@ -12,6 +12,10 @@ describe('native profile client', () => {
     expect(() => decodeNativeProfileQuery({ ...query(), extra: true })).toThrow(/unknown field/);
     expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, ownership: 'admin' }] })).toThrow(/ownership/);
     expect(() => decodeNativeProfileQuery({ ...query(), profiles: [profile, { ...profile, id: 'p2' }] })).toThrow(/multiple selected/);
+    expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, id: 'p1' }, { ...profile, selected: false }] })).toThrow(/duplicate profile ids/);
+    expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, lifecycle: 'missing_or_moved' }] })).toThrow(/stale/);
+    expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, homePath: 'relative/home' }] })).toThrow(/absolute/);
+    expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, readiness: { ...profile.readiness, attentions: { ...profile.readiness.attentions, cli: ' ' } } }] })).toThrow(/attention/);
   });
   it('serializes actions and reloads durable state after each action', async () => {
     const calls: string[] = [];
@@ -20,6 +24,11 @@ describe('native profile client', () => {
     await Promise.all([client.select('p1'), client.refreshReadiness('p1')]);
     expect(calls.filter((call) => call === 'load_native_profile_query')).toHaveLength(2);
     expect(calls.indexOf('select_native_profile')).toBeLessThan(calls.indexOf('refresh_native_profile_readiness'));
+  });
+
+  it('rejects malformed action DTOs before reloading durable state', async () => {
+    const invoke = async <T>(command: string) => (command === 'load_native_profile_query' ? query() : { ...profile, extra: true }) as T;
+    await expect(createNativeProfileClient(invoke).select('p1')).rejects.toThrow(/unknown field/);
   });
   it('orders a public load behind an in-flight action', async () => {
     const calls: string[] = [];
