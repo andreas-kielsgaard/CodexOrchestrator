@@ -343,7 +343,14 @@ impl RuntimeCoordinator {
         let configuration_keys = spec
             .args
             .windows(2)
-            .filter_map(|pair| (pair[0] == "-c").then_some(pair[1].split_once('=').map_or(pair[1].as_str(), |(key, _)| key)))
+            .filter_map(|pair| {
+                (pair[0] == "-c").then_some(
+                    pair[1]
+                        .split_once('=')
+                        .map_or(pair[1].as_str(), |(key, _)| key),
+                )
+            })
+            .map(sanitized_configuration_key)
             .collect::<Vec<_>>();
         let sandbox = spec
             .args
@@ -374,6 +381,11 @@ impl RuntimeCoordinator {
                     "invocationMode": invocation_mode,
                     "executable": PathBuf::from(&spec.program).file_name().and_then(|name| name.to_str()).unwrap_or("codex"),
                     "sandbox": sandbox,
+                    "sandboxAuthorityEvidence": if sandbox == Some("workspace-write") {
+                        "unverified_until_application_candidate_evidence"
+                    } else {
+                        "configuration_only"
+                    },
                     "configurationKeys": configuration_keys,
                     "environmentKeys": spec.environment.iter().map(|(key, _)| key).collect::<Vec<_>>(),
                     "inheritsParentEnvironment": true,
@@ -382,6 +394,17 @@ impl RuntimeCoordinator {
                 normalized: None,
             }),
         );
+    }
+}
+
+/// Launch provenance intentionally keeps configuration names but never an isolated-worktree
+/// path.  The provider still receives the exact launch-only key; persistence records only the
+/// bounded purpose of that key.
+pub(super) fn sanitized_configuration_key(key: &str) -> String {
+    if key.starts_with("projects.") && key.ends_with(".trust_level") {
+        "projects.<application-bound-workspace>.trust_level".into()
+    } else {
+        key.into()
     }
 }
 

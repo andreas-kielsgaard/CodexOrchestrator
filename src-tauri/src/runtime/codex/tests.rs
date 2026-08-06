@@ -317,6 +317,20 @@ fn resume_assembles_sandbox_through_the_supported_strict_config_surface() {
 }
 
 #[test]
+fn launch_provenance_redacts_the_exact_workspace_from_project_trust_configuration() {
+    assert_eq!(
+        super::runtime::sanitized_configuration_key(
+            r#"projects."C:\\isolated\\execution-workspace".trust_level"#
+        ),
+        "projects.<application-bound-workspace>.trust_level"
+    );
+    assert_eq!(
+        super::runtime::sanitized_configuration_key("approval_policy"),
+        "approval_policy"
+    );
+}
+
+#[test]
 fn omits_optional_options_when_capability_data_is_absent() {
     let options = AgentRuntimeOptions {
         model: Some("unverified-model".to_string()),

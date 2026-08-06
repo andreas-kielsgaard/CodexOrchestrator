@@ -8198,8 +8198,28 @@ mod tests {
         assert_eq!(resume_provenance["invocationMode"], "resume");
         assert_eq!(start_provenance["sandbox"], "workspace-write");
         assert_eq!(resume_provenance["sandbox"], "workspace-write");
+        assert_eq!(
+            start_provenance["sandboxAuthorityEvidence"],
+            "unverified_until_application_candidate_evidence"
+        );
+        assert_eq!(
+            resume_provenance["sandboxAuthorityEvidence"],
+            "unverified_until_application_candidate_evidence"
+        );
         assert_eq!(start_provenance["workingDirectory"]["absolute"], true);
         assert_eq!(start_provenance["workingDirectory"]["extendedLengthPrefix"], false);
+        for provenance in [&start_provenance, &resume_provenance] {
+            assert!(provenance["configurationKeys"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|key| key == "projects.<application-bound-workspace>.trust_level"));
+            assert!(provenance["configurationKeys"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|key| !key.as_str().unwrap_or_default().contains(package.working_directory())));
+        }
         assert!(start_provenance["configurationKeys"].as_array().unwrap().iter().all(|key| {
             !key.as_str().unwrap_or_default().starts_with("mcp_servers.")
                 && key != "sandbox_workspace_write.network_access"

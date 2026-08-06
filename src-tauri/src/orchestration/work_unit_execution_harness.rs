@@ -513,7 +513,7 @@ impl WorkUnitExecutionHarnessPackage {
     pub(crate) fn runtime_launch_configuration(
         &self,
     ) -> WorkUnitExecutionRuntimeLaunchConfiguration {
-        package_runtime_launch_configuration(&self.harness)
+        package_runtime_launch_configuration(&self.harness, &self.reference.working_directory)
     }
 
     pub(crate) fn working_directory(&self) -> &str {
@@ -612,15 +612,49 @@ impl WorkUnitExecutionHarnessPackage {
 
 fn package_runtime_launch_configuration(
     harness: &ConversationHarnessProfile,
+    working_directory: &str,
 ) -> WorkUnitExecutionRuntimeLaunchConfiguration {
+    let mut additional_args = harness.runtime_configuration_args();
+    // A worktree-runtime instance gives Codex a private CODEX_HOME without a trust record for
+    // this just-created isolated worktree. Codex 0.144 then treats it as untrusted; with approval
+    // set to never that reduces a requested WorkspaceWrite invocation to read-only. The application
+    // has already authenticated this exact isolated worktree through the execution-support grant,
+    // so pass one ephemeral, exact-project trust override only to its writable Implementer package.
+    // It neither persists trust nor widens the workspace boundary.
+    if harness.runtime_options().sandbox
+        == Some(crate::agent_sessions::domain::RuntimeSandboxMode::WorkspaceWrite)
+    {
+        additional_args.extend([
+            "-c".into(),
+            workspace_trust_configuration(working_directory),
+        ]);
+    }
     WorkUnitExecutionRuntimeLaunchConfiguration {
         requested_options: harness.runtime_options(),
         extension: RuntimeLaunchExtension {
-            additional_args: harness.runtime_configuration_args(),
+            additional_args,
             environment: vec![],
             initial_prompt_prefix: Some(harness.initial_prompt_prefix()),
         },
     }
+}
+
+/// Encodes the single quoted TOML key segment accepted by Codex CLI's `-c` surface.  This is
+/// derived only from the already-authorized package reference, never from agent input.  Values
+/// are intentionally not retained in launch provenance.
+fn workspace_trust_configuration(working_directory: &str) -> String {
+    let mut encoded = String::with_capacity(working_directory.len());
+    for character in working_directory.chars() {
+        match character {
+            '\\' => encoded.push_str("\\\\"),
+            '"' => encoded.push_str("\\\""),
+            '\n' => encoded.push_str("\\n"),
+            '\r' => encoded.push_str("\\r"),
+            '\t' => encoded.push_str("\\t"),
+            value => encoded.push(value),
+        }
+    }
+    format!("projects.\"{encoded}\".trust_level=\"trusted\"")
 }
 
 #[cfg(test)]
@@ -659,7 +693,7 @@ mod tests {
     fn runtime_launch_configuration_force_carries_read_only_harness_options() {
         let profile =
             conversation_harness::profile(ConversationHarnessRole::WorkUnitHandler).unwrap();
-        let configuration = package_runtime_launch_configuration(&profile);
+        let configuration = package_runtime_launch_configuration(&profile, "C:/read-only");
         assert_eq!(
             configuration.extension.additional_args,
             ["-c", "approval_policy=\"never\""]
@@ -675,5 +709,25 @@ mod tests {
             .unwrap()
             .content
             .contains("already-authorized execution attempt"));
+    }
+
+    #[test]
+    fn workspace_write_package_carries_only_its_exact_ephemeral_project_trust_override() {
+        let implementer =
+            conversation_harness::profile(ConversationHarnessRole::WorkUnitImplementer).unwrap();
+        let handler = conversation_harness::profile(ConversationHarnessRole::WorkUnitHandler).unwrap();
+        let working_directory = r"C:\isolated\execution-workspace";
+        let writable = package_runtime_launch_configuration(&implementer, working_directory);
+        let read_only = package_runtime_launch_configuration(&handler, working_directory);
+
+        assert!(writable.extension.additional_args.windows(2).any(|arguments| {
+            arguments[0] == "-c"
+                && arguments[1]
+                    == r#"projects."C:\\isolated\\execution-workspace".trust_level="trusted""#
+        }));
+        assert!(!read_only.extension.additional_args.iter().any(|argument| {
+            argument.contains("trust_level") || argument.contains("execution-workspace")
+        }));
+        assert!(read_only.extension.environment.is_empty());
     }
 }
