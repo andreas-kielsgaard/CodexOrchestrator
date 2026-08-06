@@ -56,7 +56,8 @@ function keys(value: Record<string, unknown>, allowed: readonly string[], label:
     if (!allowed.includes(key)) throw new Error(`${label} contains unknown field: ${key}`);
 }
 function stringValue(value: unknown, label: string): string {
-  if (typeof value !== 'string' || value.length === 0) throw new Error(`${label} must be a non-empty string`);
+  if (typeof value !== 'string' || value.length === 0 || value.trim() !== value)
+    throw new Error(`${label} must be a non-empty trimmed string`);
   return value;
 }
 function enumValue<T extends string>(value: unknown, values: readonly T[], label: string): T {
@@ -64,8 +65,16 @@ function enumValue<T extends string>(value: unknown, values: readonly T[], label
   return value as T;
 }
 function nullableString(value: unknown, label: string): string | null {
-  if (value !== null && typeof value !== 'string') throw new Error(`${label} must be string or null`);
+  if (value !== null && (typeof value !== 'string' || value.length === 0 || value.trim() !== value))
+    throw new Error(`${label} must be null or a non-empty trimmed string`);
   return value as string | null;
+}
+
+function absolutePath(value: unknown, label: string): string {
+  const path = stringValue(value, label);
+  if (!/^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+|\/)/.test(path))
+    throw new Error(`${label} must be absolute`);
+  return path;
 }
 
 export function decodeNativeProfileQuery(value: unknown): NativeProfileQuery {
@@ -74,8 +83,12 @@ export function decodeNativeProfileQuery(value: unknown): NativeProfileQuery {
   if (query.contract !== 'native-codex-profile-query/v1') throw new Error('Unsupported native profile contract');
   if (!Array.isArray(query.profiles)) throw new Error('native profile query profiles must be an array');
   const profiles = query.profiles.map((item, index) => decodeNativeProfile(item, index));
+  if (new Set(profiles.map((profile) => profile.id)).size !== profiles.length)
+    throw new Error('Native profile query contains duplicate profile ids');
   if (profiles.filter((profile) => profile.selected).length > 1)
     throw new Error('Native profile query contains multiple selected profiles');
+  if (profiles.some((profile) => profile.selected && profile.lifecycle !== 'active'))
+    throw new Error('Native profile query selects a stale or invalid profile');
   return { contract: query.contract, profiles };
 }
 
@@ -89,7 +102,7 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
   keys(attentions, ['authentication', 'sandbox', 'canary', 'mcpReporting', 'continuity', 'cli'], 'attentions');
   return {
     id: stringValue(profile.id, 'profile id'),
-    homePath: stringValue(profile.homePath, 'profile home path'),
+    homePath: absolutePath(profile.homePath, 'profile home path'),
     ownership: enumValue(profile.ownership, ['registered_existing', 'application_dedicated'], 'profile ownership'),
     lifecycle: enumValue(profile.lifecycle, ['active', 'missing_or_moved', 'replaced', 'foreign', 'malformed'], 'profile lifecycle'),
     selected: profile.selected,
@@ -132,7 +145,8 @@ export function createNativeProfileClient(invokeCommand: Invoke = invoke): Nativ
   };
   const action = (command: string, args?: Record<string, unknown>) => {
     const run = queue.then(async () => {
-      await invokeCommand<unknown>(command, args);
+      const actionResult = await invokeCommand<unknown>(command, args);
+      decodeNativeProfile(actionResult, 0);
       const result = await read();
       return result;
     });
