@@ -448,6 +448,13 @@ pub(crate) fn accept_product_decision_correction_proposal(
     state: State<'_, ProductDecisionTauriState>,
     input: AcceptProductDecisionCorrectionProposalInput,
 ) -> Result<ProductDecisionVersion, ProductDecisionTransportError> {
+    accept_product_decision_correction(&state, input)
+}
+
+fn accept_product_decision_correction(
+    state: &ProductDecisionTauriState,
+    input: AcceptProductDecisionCorrectionProposalInput,
+) -> Result<ProductDecisionVersion, ProductDecisionTransportError> {
     state
         .repository
         .accept_correction_proposal(input)
@@ -1429,7 +1436,13 @@ mod tests {
             },
         };
         seeded.current_actionable_evidence.clear();
-        seeded.historical_unresolved_evidence.clear();
+        seeded.historical_unresolved_evidence = vec![HistoricalUnresolvedEvidence {
+            evidence_id: "prior-live-evidence".into(),
+            origin_reference: ProductDecisionEvidenceOriginReference::HumanInteraction {
+                opaque_id: "prior-live-human".into(),
+            },
+            label: "Retained isolated live evidence".into(),
+        }];
         repository.accept(seeded).unwrap()
     }
     fn repo() -> (tempfile::TempDir, ProductDecisionRepository) {
@@ -1899,6 +1912,28 @@ mod tests {
             let initial_id = AgentInvocationId::new(initialization.initial_invocation_id)
                 .map_err(|error| error.to_string())?;
             wait_for_terminal_invocation(&state, &session_id, &initial_id)?;
+            let launches_before_reopen = launches.lock().unwrap().len();
+            let reopened = start_product_decision_correction(
+                &state,
+                StartProductDecisionCorrectionInput {
+                    epic_id: "epic".into(),
+                    decision_id: "decision".into(),
+                    base_version: current.version,
+                },
+            )
+            .map_err(|error| format!("reopen: {error:?}"))?;
+            let reopened_initialization = state
+                .repository
+                .correction_initialization(&reopened.correction_id)
+                .map_err(|error| format!("reopen initialization: {error:?}"))?;
+            if reopened.correction_id != correction.correction_id
+                || reopened.session_id != correction.session_id
+                || reopened_initialization.initial_invocation_id != initial_id.as_str()
+                || reopened_initialization.initial_prompt != initialization.initial_prompt
+                || launches.lock().unwrap().len() != launches_before_reopen
+            {
+                return Err("reopen changed the persisted correction initialization".into());
+            }
             let continuation = send_product_decision_correction(&state, SendProductDecisionCorrectionMessageInput { correction_id: correction.correction_id.clone(), submitted_text: "Return one concise correction proposal for review: title, statement, and intent. Do not accept or apply it.".into() }).map_err(|error| format!("continuation: {error:?}"))?;
             let continuation_id = AgentInvocationId::new(continuation.invocation_id)
                 .map_err(|error| error.to_string())?;
@@ -1922,8 +1957,51 @@ mod tests {
                 },
             )
             .map_err(|error| format!("save proposal: {error:?}"))?;
+            let accepted = accept_product_decision_correction(
+                &state,
+                AcceptProductDecisionCorrectionProposalInput {
+                    proposal_id: proposal.proposal_id.clone(),
+                },
+            )
+            .map_err(|error| format!("accept proposal: {error:?}"))?;
+            let replay = accept_product_decision_correction(
+                &state,
+                AcceptProductDecisionCorrectionProposalInput {
+                    proposal_id: proposal.proposal_id.clone(),
+                },
+            )
+            .map_err(|error| format!("replay proposal acceptance: {error:?}"))?;
+            let query = state
+                .repository
+                .query("epic")
+                .map_err(|error| format!("current query: {error:?}"))?;
+            let version_history = state
+                .repository
+                .history("epic", "decision")
+                .map_err(|error| format!("history: {error:?}"))?;
+            let exact_destination = AgentPassage {
+                kind: AgentPassageReferenceKind::AgentSessionPassage,
+                session_id: correction.session_id.clone(),
+                invocation_id: continuation_id.as_str().into(),
+                passage: AgentPassageKind::FinalResponse {
+                    runtime_event_id: response.id.as_str().into(),
+                },
+            };
+            if replay.version_id != accepted.version_id
+                || accepted.version != 2
+                || query.decisions.len() != 1
+                || query.decisions[0].application_state != "not_applied"
+                || query.decisions[0].current_version.version_id != accepted.version_id
+                || version_history.len() != 2
+                || accepted.current_actionable_evidence.len() != 1
+                || accepted.current_actionable_evidence[0].destination != exact_destination
+                || accepted.historical_unresolved_evidence.len() != 1
+                || !matches!(accepted.acceptance_provenance, AcceptanceProvenance::AgentAssisted { human_interaction_origin: ProductDecisionEvidenceOriginReference::HumanInteraction { .. }, ref proposal_passage } if *proposal_passage == exact_destination)
+            {
+                return Err("accepted live Product Decision state did not retain the exact immutable evidence contract".into());
+            }
             Ok(
-                serde_json::json!({"observed":{"isolatedTestOwnedDatabase":true,"startReopen":true,"initialPrompt":"completed","userContinuation":"completed","exactFinalResponseRetained":proposal.proposal_passage.passage == AgentPassageKind::FinalResponse { runtime_event_id: response.id.as_str().into() },"explicitAcceptance":false},"unobserved":{"explicitAcceptance":true,"publicationOrApplication":true},"launches":launches.lock().unwrap().iter().map(|launch| serde_json::json!({"program":launch.program,"args":launch.args,"workingDirectory":launch.working_directory})).collect::<Vec<_>>() }),
+                serde_json::json!({"observed":{"isolatedTestOwnedDatabase":true,"correctionId":correction.correction_id,"sessionId":correction.session_id,"initialInvocationId":initial_id,"continuationInvocationId":continuation_id,"finalResponseEventId":response.id,"proposalId":proposal.proposal_id,"acceptedVersionId":accepted.version_id,"acceptedVersion":accepted.version,"startReopenExactAndNoNewLaunch":true,"launchCount":launches.lock().unwrap().len(),"initialPrompt":"completed","userContinuation":"completed","exactFinalResponseRetained":true,"explicitAcceptanceReplaySameVersion":true,"currentDecisionCount":query.decisions.len(),"historyVersionCount":version_history.len(),"currentActionableEvidenceCount":accepted.current_actionable_evidence.len(),"retainedPriorEvidenceCount":accepted.historical_unresolved_evidence.len(),"applicationState":query.decisions[0].application_state},"unobserved":{"publicationOrApplication":true},"launches":launches.lock().unwrap().iter().map(|launch| serde_json::json!({"program":launch.program,"args":launch.args,"workingDirectory":launch.working_directory})).collect::<Vec<_>>() }),
             )
         })();
         let shutdown = state.sessions.shutdown_runtime();
