@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { NativeProfile, NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
 import './nativeProfileSettings.css';
 
@@ -7,12 +7,16 @@ export function NativeProfileSettings({ client }: { readonly client: NativeProfi
   const [homePath, setHomePath] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState('Loading durable Codex home profiles.');
-  const selected = useMemo(() => profiles.find((profile) => profile.selected), [profiles]);
+  const requestVersion = useRef(0);
   const refresh = useCallback(async () => {
+    const version = ++requestVersion.current;
     try {
-      setProfiles((await client.load()).profiles);
+      const result = await client.load();
+      if (version !== requestVersion.current) return;
+      setProfiles(result.profiles);
       setMessage('Showing current durable profile state.');
     } catch (error) {
+      if (version !== requestVersion.current) return;
       setProfiles([]);
       setMessage(error instanceof Error ? error.message : 'Profile state is unavailable.');
     }
@@ -20,13 +24,20 @@ export function NativeProfileSettings({ client }: { readonly client: NativeProfi
   useEffect(() => { void refresh(); }, [refresh]);
   const run = useCallback(async (name: string, action: () => Promise<{ profiles: readonly NativeProfile[] }>) => {
     if (busy) return;
+    const version = ++requestVersion.current;
+    const label = actionLabel(name);
     setBusy(name); setMessage('Waiting for durable profile state.');
-    try { setProfiles((await action()).profiles); setMessage('Action completed; state was refreshed from durable storage.'); }
-    catch (error) { setMessage(error instanceof Error ? error.message : 'The action failed.'); }
-    finally { setBusy(null); }
+    try {
+      const result = await action();
+      if (version !== requestVersion.current) return;
+      setProfiles(result.profiles);
+      setMessage(`${label} completed; state was refreshed from durable storage.`);
+    } catch (error) {
+      if (version !== requestVersion.current) return;
+      setMessage(`${label} failed: ${error instanceof Error ? error.message : 'the request was rejected.'}`);
+    }
+    finally { if (version === requestVersion.current) setBusy(null); }
   }, [busy]);
-  const profileAction = (name: string, action: (id: string) => Promise<{ profiles: readonly NativeProfile[] }>) =>
-    selected ? () => run(name, () => action(selected.id)) : undefined;
   return (
     <main className="native-profile-settings" aria-label="Technical Codex settings">
       <header><p className="eyebrow">Technical Settings</p><h1>Codex home profiles</h1><p>Manage product-owned Codex homes and their observed setup state. Account identity and provider readiness are never inferred here.</p></header>
@@ -39,10 +50,20 @@ export function NativeProfileSettings({ client }: { readonly client: NativeProfi
       <button type="button" disabled={busy !== null} onClick={() => void refresh()}>Refresh durable state</button>
       {message && <p role="status">{message}</p>}
       {profiles.length === 0 ? <p>No Codex home profiles are registered.</p> : profiles.map((profile) => (
-        <ProfileCard key={profile.id} profile={profile} busy={busy} onSelect={profileAction('select', client.select)} onLogin={profileAction('login', client.requestLogin)} onRefresh={profileAction('refresh', client.refreshReadiness)} onSandbox={profileAction('sandbox', client.initializeSandbox)} onCanary={profileAction('canary', client.runCanary)} onMcp={profileAction('mcp', client.probeMcp)} />
+        <ProfileCard key={profile.id} profile={profile} busy={busy}
+          onSelect={() => void run('select', () => client.select(profile.id))}
+          onLogin={() => void run('login', () => client.requestLogin(profile.id))}
+          onRefresh={() => void run('refresh', () => client.refreshReadiness(profile.id))}
+          onSandbox={() => void run('sandbox', () => client.initializeSandbox(profile.id))}
+          onCanary={() => void run('canary', () => client.runCanary(profile.id))}
+          onMcp={() => void run('mcp', () => client.probeMcp(profile.id))} />
       ))}
     </main>
   );
+}
+
+function actionLabel(name: string): string {
+  return ({ select: 'Profile selection', login: 'Browser login request', refresh: 'Login status refresh', sandbox: 'Sandbox initialization request', canary: 'WorkspaceWrite canary', mcp: 'MCP/reporting probe' } as Record<string, string>)[name] ?? 'Profile action';
 }
 
 function ProfileCard({ profile, busy, onSelect, onLogin, onRefresh, onSandbox, onCanary, onMcp }: { readonly profile: NativeProfile; readonly busy: string | null; readonly onSelect?: () => void; readonly onLogin?: () => void; readonly onRefresh?: () => void; readonly onSandbox?: () => void; readonly onCanary?: () => void; readonly onMcp?: () => void }) {

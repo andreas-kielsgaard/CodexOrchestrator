@@ -11,6 +11,7 @@ describe('native profile client', () => {
   it('rejects unknown fields and authority-bearing enum values', () => {
     expect(() => decodeNativeProfileQuery({ ...query(), extra: true })).toThrow(/unknown field/);
     expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, ownership: 'admin' }] })).toThrow(/ownership/);
+    expect(() => decodeNativeProfileQuery({ ...query(), profiles: [profile, { ...profile, id: 'p2' }] })).toThrow(/multiple selected/);
   });
   it('serializes actions and reloads durable state after each action', async () => {
     const calls: string[] = [];
@@ -19,5 +20,23 @@ describe('native profile client', () => {
     await Promise.all([client.select('p1'), client.refreshReadiness('p1')]);
     expect(calls.filter((call) => call === 'load_native_profile_query')).toHaveLength(2);
     expect(calls.indexOf('select_native_profile')).toBeLessThan(calls.indexOf('refresh_native_profile_readiness'));
+  });
+  it('orders a public load behind an in-flight action', async () => {
+    const calls: string[] = [];
+    let releaseAction!: () => void;
+    const actionGate = new Promise<void>((resolve) => { releaseAction = resolve; });
+    const invoke = async <T>(command: string) => {
+      calls.push(command);
+      if (command === 'select_native_profile') await actionGate;
+      return (command === 'load_native_profile_query' ? query() : profile) as T;
+    };
+    const client = createNativeProfileClient(invoke);
+    const action = client.select('p1');
+    const load = client.load();
+    await Promise.resolve();
+    expect(calls).toEqual(['select_native_profile']);
+    releaseAction();
+    await Promise.all([action, load]);
+    expect(calls).toEqual(['select_native_profile', 'load_native_profile_query', 'load_native_profile_query']);
   });
 });

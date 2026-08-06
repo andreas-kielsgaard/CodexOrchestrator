@@ -73,7 +73,10 @@ export function decodeNativeProfileQuery(value: unknown): NativeProfileQuery {
   keys(query, ['contract', 'profiles'], 'native profile query');
   if (query.contract !== 'native-codex-profile-query/v1') throw new Error('Unsupported native profile contract');
   if (!Array.isArray(query.profiles)) throw new Error('native profile query profiles must be an array');
-  return { contract: query.contract, profiles: query.profiles.map((item, index) => decodeNativeProfile(item, index)) };
+  const profiles = query.profiles.map((item, index) => decodeNativeProfile(item, index));
+  if (profiles.filter((profile) => profile.selected).length > 1)
+    throw new Error('Native profile query contains multiple selected profiles');
+  return { contract: query.contract, profiles };
 }
 
 export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
@@ -121,11 +124,16 @@ export interface NativeProfileClient {
 
 export function createNativeProfileClient(invokeCommand: Invoke = invoke): NativeProfileClient {
   let queue = Promise.resolve();
-  const load = () => invokeCommand<unknown>('load_native_profile_query').then(decodeNativeProfileQuery);
+  const read = () => invokeCommand<unknown>('load_native_profile_query').then(decodeNativeProfileQuery);
+  const load = () => {
+    const run = queue.then(read);
+    queue = run.then(() => undefined, () => undefined);
+    return run;
+  };
   const action = (command: string, args?: Record<string, unknown>) => {
     const run = queue.then(async () => {
       await invokeCommand<unknown>(command, args);
-      const result = await load();
+      const result = await read();
       return result;
     });
     queue = run.then(() => undefined, () => undefined);
