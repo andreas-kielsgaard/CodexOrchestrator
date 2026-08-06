@@ -83,4 +83,43 @@ describe('Epic reassessment presentation', () => {
     expect(region).toHaveTextContent('Retained concern/attention recorded');
     expect(region).toHaveTextContent('do not settle the Epic');
   });
+
+  it('shows settled and unresolved Epic settlement facts with calm non-private wording', () => {
+    const base = {
+      id: 'epic-1', name: 'Settlement Epic', goal: 'Preserve settlement facts.',
+      movement: { kind: 'reevaluating_direction' as const }, state: 'running' as const,
+      plan: { items: [] },
+    };
+    const { rerender } = render(
+      <EpicDetail
+        epic={{ ...base, epicSettlement: {
+          kind: 'settled', settlementId: 'private-settlement-id', persistedAt: '2026-08-05T00:00:00Z',
+        } }}
+        artifactAccessController={undefined as never}
+        selectedSprintId={null} selectedRevisionId={null} detailLocation={{ kind: 'sprint' }}
+        onOpenSprint={vi.fn()} onCloseSprint={vi.fn()} onSelectedRevisionChange={vi.fn()}
+        onDetailLocationChange={vi.fn()} onBack={vi.fn()}
+      />,
+    );
+    const settled = screen.getByRole('region', { name: 'Epic settlement' });
+    expect(settled).toHaveTextContent('Settlement was recorded');
+    expect(settled).not.toHaveTextContent('private-settlement-id');
+    expect(settled).not.toHaveTextContent('publication');
+
+    rerender(
+      <EpicDetail
+        epic={{ ...base, epicSettlement: {
+          kind: 'unresolved', reasonCode: 'needs_authority',
+          resumptionFact: 'Restore the exact settlement authority.', recordedAt: '2026-08-05T00:00:00Z',
+        } }}
+        artifactAccessController={undefined as never}
+        selectedSprintId={null} selectedRevisionId={null} detailLocation={{ kind: 'sprint' }}
+        onOpenSprint={vi.fn()} onCloseSprint={vi.fn()} onSelectedRevisionChange={vi.fn()}
+        onDetailLocationChange={vi.fn()} onBack={vi.fn()}
+      />,
+    );
+    const unresolved = screen.getByRole('region', { name: 'Epic settlement' });
+    expect(unresolved).toHaveTextContent('Epic settlement remains unresolved');
+    expect(unresolved).toHaveTextContent('Resume by: Restore the exact settlement authority.');
+  });
 });

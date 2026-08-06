@@ -29,6 +29,24 @@ export type ProductEpicMovementV1 =
   | { readonly kind: 'reevaluating_direction' };
 export type ProductEpicStateV1 =
   'running' | 'ready_to_continue' | 'paused' | 'blocked' | 'completed';
+
+export type ProductEpicSettlementV1 =
+  | {
+      readonly kind: 'settled';
+      readonly settlementId: string;
+      readonly persistedAt: string;
+    }
+  | {
+      readonly kind: 'unresolved';
+      readonly reasonCode: string;
+      readonly resumptionFact: string;
+      readonly recordedAt: string;
+    };
+
+export interface ProductEpicSettlementProjectionV1 {
+  readonly epicId: string;
+  readonly state: ProductEpicSettlementV1;
+}
 export type ProductSourcedReadValueV1<T> =
   | {
       readonly source: Extract<ReadSourceAuthorityV1, { readonly status: 'available' }>;
@@ -286,6 +304,7 @@ export interface ProductReadCompositionInputV1 {
     }[];
   }>;
   readonly sprintResultProjections?: readonly ProductSprintResultProjectionV1[];
+  readonly epicSettlementStates?: readonly ProductEpicSettlementProjectionV1[];
   readonly selection?: ProductReadSelectionV1;
   readonly bootstrapTransition?: Readonly<{
     readonly query: import('./epicBootstrapTransition').EpicBootstrapTransitionQueryV2;
@@ -965,6 +984,7 @@ export interface ProductEpicReadModelV1 {
   readonly sprints: readonly ProductSprintReadModelV1[];
   readonly epicEscalationReceivers?: readonly ProductEpicEscalationReceiverV1[];
   readonly sprintResultProjections?: readonly ProductSprintResultProjectionV1[];
+  readonly epicSettlement?: ProductEpicSettlementV1;
   readonly agentSessionReferences: readonly ProductAgentSessionReferenceReadModelV1[];
   readonly continuation: ProductContinuationReadModelV1;
   readonly bootstrapTransition?: import('./epicBootstrapTransition').ProductBootstrapTransitionStatusV2;

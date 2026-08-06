@@ -1178,6 +1178,12 @@ impl SqliteOrchestrationRepository {
             &initiated_sprints,
             &sprint_upward_results,
         )?;
+        let initiated_epic_ids = initiated_epics
+            .iter()
+            .map(|epic| epic.epic_id.clone())
+            .collect::<Vec<_>>();
+        let epic_settlement_states =
+            crate::orchestration::epic_settlement::native_projection(&connection, &initiated_epic_ids)?;
         let action_continuations = activation_rows(&connection, "work_unit_handler_action_continuations", "attempt_id,handler_session_id,original_handler_invocation_id,action_invocation_id,action_harness_revision_id,action_harness_configuration_digest,action_harness_repository_commit_ref,requested_at,authorized_at,invocation_prepared_at,harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,action_ready_at,blocked_reason,failure_reason", |row| Ok(WorkUnitHandlerActionContinuationDto { attempt_id:row.get(1)?, handler_session_id:row.get(2)?, original_handler_invocation_id:row.get(3)?, action_invocation_id:row.get(4)?, action_harness_revision_id:row.get(5)?, action_harness_configuration_digest:row.get(6)?, action_harness_repository_commit_ref:row.get(7)?, requested_at:row.get(8)?, authorized_at:row.get(9)?, invocation_prepared_at:row.get(10)?, harness_bound_at:row.get(11)?, launch_requested_at:row.get(12)?, launch_accepted_at:row.get(13)?, provider_activation_observed_at:row.get(14)?, action_ready_at:row.get(15)?, blocked_reason:row.get(16)?, failure_reason:row.get(17)? }))?;
         let implementer_activations = activation_rows(&connection, "work_unit_implementer_activations", "attempt_id,handler_invocation_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at,authorized_at,execution_support_granted_at,isolated_worktree_ready_at,implementer_session_created_at,implementer_invocation_prepared_at,implementer_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,implementer_ready_at,failure_reason", map_implementer_activation)?;
         let mut implementer_outcomes = implementer_outcome_rows(&connection)?;
@@ -1254,6 +1260,7 @@ impl SqliteOrchestrationRepository {
             sprint_continuation_current_decisions,
             sprint_upward_results,
             sprint_result_projections,
+            epic_settlement_states,
         })
     }
 
@@ -3582,6 +3589,8 @@ pub(crate) struct NativeQueryV2 {
     sprint_upward_results: Vec<SprintUpwardResultDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sprint_result_projections: Option<Vec<SprintResultProjectionDto>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    epic_settlement_states: Option<Vec<super::epic_settlement::EpicSettlementProjection>>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]

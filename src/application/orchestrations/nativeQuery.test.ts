@@ -26,6 +26,76 @@ type MutableFixture = {
 };
 
 describe('orchestration native query v1', () => {
+  it('projects strict Epic settlement state into the product read model without private identity fields', () => {
+    const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
+    value.epicSettlementStates = [
+      {
+        epicId: 'epic-fixture',
+        state: {
+          kind: 'settled',
+          settlementId: 'settlement-fixture',
+          persistedAt: '2026-08-05T00:00:00Z',
+        },
+      },
+    ];
+    const query = decodeOrchestrationNativeQueryV2(value);
+    const read = composeProductOrchestrationReadModels(nativeQueryProductCompositionInputV2(query));
+    expect(read.epics[0]?.epicSettlement).toEqual({
+      kind: 'settled',
+      settlementId: 'settlement-fixture',
+      persistedAt: '2026-08-05T00:00:00Z',
+    });
+    expect(JSON.stringify(read.epics[0]?.epicSettlement)).not.toContain('session');
+    expect(JSON.stringify(read.epics[0]?.epicSettlement)).not.toContain('provider');
+
+    const recorded = nativeQueryProductCompositionInputV2(query);
+    const recordedState = recorded.epicSettlementStates![0]!.state as unknown as Record<
+      string,
+      unknown
+    >;
+    recordedState.privateSessionId = 'must-not-project';
+    expect(() => composeProductOrchestrationReadModels(recorded)).toThrow('unknown field');
+  });
+
+  it('fails closed on malformed variants, foreign correlation, and contradictory settlement shapes', () => {
+    const base = fixture('valid-initiated-epic.json') as Record<string, unknown>;
+    const malformed = structuredClone(base) as Record<string, unknown>;
+    malformed.epicSettlementStates = [
+      {
+        epicId: 'epic-fixture',
+        state: {
+          kind: 'settled',
+          settlementId: 'settlement-fixture',
+          persistedAt: '2026-08-05T00:00:00Z',
+          reasonCode: 'contradictory',
+        },
+      },
+    ];
+    expect(() => decodeOrchestrationNativeQueryV2(malformed)).toThrow(
+      'contains unresolved facts',
+    );
+
+    const foreign = structuredClone(base) as Record<string, unknown>;
+    foreign.epicSettlementStates = [
+      {
+        epicId: 'foreign-epic',
+        state: {
+          kind: 'unresolved',
+          reasonCode: 'needs_attention',
+          resumptionFact: 'Restore the exact authority.',
+          recordedAt: '2026-08-05T00:00:00Z',
+        },
+      },
+    ];
+    expect(() => decodeOrchestrationNativeQueryV2(foreign)).toThrow('foreign Epic');
+
+    const partial = structuredClone(base) as Record<string, unknown>;
+    partial.epicSettlementStates = [
+      { epicId: 'epic-fixture', state: { kind: 'unresolved', reasonCode: 'missing_resume' } },
+    ];
+    expect(() => decodeOrchestrationNativeQueryV2(partial)).toThrow('resumptionFact');
+  });
+
   it('decodes the Rust canonical proposal fixture and projects only its proposal', () => {
     const query = decodeOrchestrationNativeQueryV2(fixture('valid-proposal.json'));
     expect(projectEpicPlanProposal(query, 'epic-planning-draft-fixture')).toEqual({

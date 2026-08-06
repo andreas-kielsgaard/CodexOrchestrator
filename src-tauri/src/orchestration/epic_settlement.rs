@@ -1,6 +1,7 @@
 //! Durable Epic settlement. Terminal readiness is an input, not a settlement fact.
 
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 pub(crate) const EPIC_SETTLEMENT_SCHEMA: &str = r#"
@@ -54,6 +55,27 @@ pub(crate) enum EpicSettlementStatus {
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EpicSettlementProjection {
+    pub(crate) epic_id: String,
+    pub(crate) state: EpicSettlementProjectionState,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub(crate) enum EpicSettlementProjectionState {
+    Settled {
+        settlement_id: String,
+        persisted_at: String,
+    },
+    Unresolved {
+        reason_code: String,
+        resumption_fact: String,
+        recorded_at: String,
+    },
+}
+
 pub(crate) fn initialize(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(EPIC_SETTLEMENT_SCHEMA)
@@ -96,6 +118,180 @@ pub(crate) fn statuses(
         .map_err(|error| error.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())
+}
+
+/// Returns only current, privacy-safe settlement facts. An absent complete schema is an absent
+/// legacy capability; a partial schema or malformed durable chain is an unavailable query.
+pub(crate) fn native_projection(
+    connection: &Connection,
+    initiated_epic_ids: &[String],
+) -> Result<Option<Vec<EpicSettlementProjection>>, String> {
+    const TABLES: [&str; 6] = [
+        "epic_settlement_requests",
+        "epic_settlement_authorizations",
+        "epic_settlement_evidence",
+        "epic_settlements",
+        "epic_settlement_unresolved",
+        "epic_settlement_current_states",
+    ];
+    let table_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('epic_settlement_requests','epic_settlement_authorizations','epic_settlement_evidence','epic_settlements','epic_settlement_unresolved','epic_settlement_current_states')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if table_count == 0 {
+        return Ok(None);
+    }
+    if table_count != TABLES.len() as i64 {
+        return Err("Productive Epic settlement projection tables are incomplete".into());
+    }
+    let initiated: std::collections::HashSet<&str> =
+        initiated_epic_ids.iter().map(String::as_str).collect();
+    let mut current = connection
+        .prepare("SELECT epic_id,state_kind,settlement_id,unresolved_id,source_fingerprint,updated_at FROM epic_settlement_current_states ORDER BY epic_id")
+        .map_err(|error| error.to_string())?;
+    let rows = current
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })
+        .map_err(|error| error.to_string())?;
+    let mut projection = Vec::new();
+    for row in rows {
+        let (epic_id, state_kind, settlement_id, unresolved_id, source_fingerprint, updated_at) =
+            row.map_err(|error| error.to_string())?;
+        if epic_id.is_empty()
+            || source_fingerprint.is_empty()
+            || updated_at.is_empty()
+            || !initiated.contains(epic_id.as_str())
+        {
+            return Err("Epic settlement current state correlation is invalid".into());
+        }
+        let state = match state_kind.as_str() {
+            "settled" => {
+                let settlement_id = settlement_id
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "Epic settlement settled state is incomplete".to_string())?;
+                if unresolved_id.is_some() {
+                    return Err("Epic settlement current state contradicts settled shape".into());
+                }
+                let chain: Option<(
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                )> = connection
+                    .query_row(
+                        "SELECT s.epic_id,s.request_id,s.authorization_id,s.evidence_id,s.settlement_fingerprint,s.persisted_at,r.approved_plan_fingerprint,r.terminal_readiness_id,r.eligibility_fingerprint,a.authorization_fingerprint,e.evidence_id,e.evidence_fingerprint FROM epic_settlements s JOIN epic_settlement_requests r ON r.epic_id=s.epic_id AND r.request_id=s.request_id JOIN epic_settlement_authorizations a ON a.request_id=s.request_id AND a.authorization_id=s.authorization_id JOIN epic_settlement_evidence e ON e.epic_id=s.epic_id AND e.request_id=s.request_id AND e.authorization_id=s.authorization_id AND e.evidence_id=s.evidence_id WHERE s.settlement_id=?1",
+                        [settlement_id.as_str()],
+                        |row| {
+                            Ok((
+                                row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?,
+                                row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?,
+                                row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?,
+                            ))
+                        },
+                    )
+                    .optional()
+                    .map_err(|error| error.to_string())?;
+                let Some((
+                    settled_epic,
+                    request_id,
+                    authorization_id,
+                    evidence_id,
+                    settlement_fingerprint,
+                    persisted_at,
+                    approved_plan_fingerprint,
+                    terminal_readiness_id,
+                    eligibility_fingerprint,
+                    authorization_fingerprint,
+                    evidence_id_again,
+                    evidence_fingerprint,
+                )) = chain
+                else {
+                    return Err("Epic settlement durable chain is incomplete".into());
+                };
+                if settled_epic != epic_id
+                    || request_id.is_empty()
+                    || authorization_id.is_empty()
+                    || evidence_id.is_empty()
+                    || evidence_id != evidence_id_again
+                    || settlement_fingerprint.is_empty()
+                    || persisted_at.is_empty()
+                    || approved_plan_fingerprint.is_empty()
+                    || terminal_readiness_id.is_empty()
+                    || eligibility_fingerprint.is_empty()
+                    || authorization_fingerprint.is_empty()
+                    || evidence_fingerprint.is_empty()
+                {
+                    return Err("Epic settlement durable chain is contradictory".into());
+                }
+                EpicSettlementProjectionState::Settled {
+                    settlement_id,
+                    persisted_at,
+                }
+            }
+            "unresolved" => {
+                let unresolved_id = unresolved_id
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "Epic settlement unresolved state is incomplete".to_string())?;
+                if settlement_id.is_some() {
+                    return Err("Epic settlement current state contradicts unresolved shape".into());
+                }
+                let unresolved: Option<(String, String, String, String, String)> = connection
+                    .query_row(
+                        "SELECT epic_id,reason_code,resumption_fact,snapshot_fingerprint,recorded_at FROM epic_settlement_unresolved WHERE unresolved_id=?1",
+                        [unresolved_id.as_str()],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                    )
+                    .optional()
+                    .map_err(|error| error.to_string())?;
+                let Some((
+                    unresolved_epic,
+                    reason_code,
+                    resumption_fact,
+                    snapshot_fingerprint,
+                    recorded_at,
+                )) = unresolved
+                else {
+                    return Err("Epic settlement unresolved chain is incomplete".into());
+                };
+                if unresolved_epic != epic_id
+                    || reason_code.trim().is_empty()
+                    || resumption_fact.trim().is_empty()
+                    || snapshot_fingerprint.is_empty()
+                    || snapshot_fingerprint != source_fingerprint
+                    || recorded_at.is_empty()
+                {
+                    return Err("Epic settlement unresolved chain is contradictory".into());
+                }
+                EpicSettlementProjectionState::Unresolved {
+                    reason_code,
+                    resumption_fact,
+                    recorded_at,
+                }
+            }
+            _ => return Err("Epic settlement current state has an unknown variant".into()),
+        };
+        projection.push(EpicSettlementProjection { epic_id, state });
+    }
+    Ok(Some(projection))
 }
 
 fn reconcile_one(connection: &mut Connection, epic: &str) -> Result<(), String> {
@@ -488,6 +684,61 @@ mod tests {
             statuses(&connection).unwrap().pop().unwrap().1,
             EpicSettlementStatus::Settled { .. }
         ));
+    }
+
+    #[test]
+    fn native_projection_exposes_only_the_current_settlement_variant() {
+        let mut connection = fixture();
+        reconcile(&mut connection).unwrap();
+        let projection = native_projection(&connection, &["epic".into()])
+            .unwrap()
+            .unwrap();
+        assert_eq!(projection.len(), 1);
+        assert_eq!(projection[0].epic_id, "epic");
+        assert!(matches!(
+            projection[0].state,
+            EpicSettlementProjectionState::Settled { .. }
+        ));
+    }
+
+    #[test]
+    fn native_projection_returns_none_for_legacy_databases_without_settlement_tables() {
+        let connection = Connection::open_in_memory().unwrap();
+        assert_eq!(
+            native_projection(&connection, &["epic".into()]).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn native_projection_fails_closed_on_partial_chain_and_foreign_current_state() {
+        let partial_schema = Connection::open_in_memory().unwrap();
+        partial_schema
+            .execute_batch("CREATE TABLE epic_settlement_requests (epic_id TEXT PRIMARY KEY);")
+            .unwrap();
+        assert_eq!(
+            native_projection(&partial_schema, &["epic".into()]).unwrap_err(),
+            "Productive Epic settlement projection tables are incomplete"
+        );
+
+        let mut connection = fixture();
+        reconcile(&mut connection).unwrap();
+        connection
+            .execute_batch("PRAGMA foreign_keys=OFF;DELETE FROM epic_settlement_evidence;PRAGMA foreign_keys=ON;")
+            .unwrap();
+        assert_eq!(
+            native_projection(&connection, &["epic".into()]).unwrap_err(),
+            "Epic settlement durable chain is incomplete"
+        );
+
+        let connection = fixture();
+        connection
+            .execute_batch("INSERT INTO epic_settlement_unresolved VALUES ('foreign-epic','foreign-unresolved','foreign_reason','resume','snapshot','recorded');INSERT INTO epic_settlement_current_states VALUES ('foreign-epic','unresolved',NULL,'foreign-unresolved','snapshot','updated');")
+            .unwrap();
+        assert_eq!(
+            native_projection(&connection, &["epic".into()]).unwrap_err(),
+            "Epic settlement current state correlation is invalid"
+        );
     }
 
     #[test]

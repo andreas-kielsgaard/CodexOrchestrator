@@ -127,6 +127,7 @@ export interface EpicPresentation {
   readonly plan: EpicPlanPresentation;
   readonly epicEscalationReceivers?: readonly import('../../application/orchestrations').ProductEpicEscalationReceiverV1[];
   readonly sprintResultProjections?: readonly import('../../application/orchestrations').ProductSprintResultProjectionV1[];
+  readonly epicSettlement?: import('../../application/orchestrations').ProductEpicSettlementV1;
   /** Supplied by the later embedded Agent Session controller when a product session is available. */
   readonly epicRunnerSession?: EpicRunnerSessionPresentation;
   readonly continuation?: ContinuationPresentation;

@@ -37,6 +37,7 @@ export function composeProductOrchestrationReadModels(
   );
   validateSprintRunnerTransitions(input, events);
   validateSprintResultProjections(input, events);
+  validateEpicSettlementStates(input, events);
 
   const index = indexReferenceData(input.referenceIndex);
   const sessions = events.agentSessionReferences.map((reference) => ({
@@ -85,6 +86,13 @@ export function composeProductOrchestrationReadModels(
             sprintResultProjections: input.sprintResultProjections.filter(
               (projection) => projection.epicId === epic.epicId,
             ),
+          }
+        : {}),
+      ...(input.epicSettlementStates
+        ? {
+            epicSettlement: input.epicSettlementStates.find(
+              (projection) => projection.epicId === epic.epicId,
+            )?.state,
           }
         : {}),
       ...(input.bootstrapTransition
@@ -239,6 +247,56 @@ function validateSprintResultProjections(
         );
     }
   });
+}
+
+function validateEpicSettlementStates(
+  input: ProductReadCompositionInputV1,
+  events: ReturnType<typeof decodeOrchestrationEventsV1>,
+) {
+  const states = input.epicSettlementStates;
+  if (!states) return;
+  const epicIds = new Set(events.epics.map((epic) => epic.epicId));
+  if (new Set(states.map((state) => state.epicId)).size !== states.length)
+    fail('Epic settlement projections cannot repeat an Epic');
+  for (const projection of states) {
+    if (Object.keys(projection).some((key) => !['epicId', 'state'].includes(key)))
+      fail('Epic settlement projection contains an unknown field');
+    if (!epicIds.has(projection.epicId))
+      fail('Epic settlement projection references a foreign Epic');
+    const state = projection.state;
+    if (
+      !state ||
+      typeof state !== 'object' ||
+      Object.keys(state).some((key) =>
+        !['kind', 'settlementId', 'persistedAt', 'reasonCode', 'resumptionFact', 'recordedAt'].includes(
+          key,
+        ),
+      )
+    )
+      fail('Epic settlement state contains an unknown field');
+    if (state.kind === 'settled') {
+      if (
+        !boundedSettlementText(state.settlementId, 240) ||
+        !state.persistedAt.trim() ||
+        !isIsoTimestamp(state.persistedAt) ||
+        'reasonCode' in state ||
+        'resumptionFact' in state ||
+        'recordedAt' in state
+      )
+        fail('Epic settlement settled state is malformed or contradictory');
+    } else if (state.kind === 'unresolved') {
+      if (
+        !boundedSettlementText(state.reasonCode, 96) ||
+        !/^[A-Za-z0-9_.-]+$/.test(state.reasonCode) ||
+        !boundedSettlementText(state.resumptionFact, 4000) ||
+        !state.recordedAt.trim() ||
+        !isIsoTimestamp(state.recordedAt) ||
+        'settlementId' in state ||
+        'persistedAt' in state
+      )
+        fail('Epic settlement unresolved state is malformed or contradictory');
+    } else fail('Epic settlement state has an unknown variant');
+  }
 }
 
 function validateBootstrapTransitions(
@@ -1547,6 +1605,12 @@ function validateAvailableSource(
 }
 function sameMembers(left: readonly string[], right: readonly string[]) {
   return left.length === right.length && left.every((item) => right.includes(item));
+}
+function isIsoTimestamp(value: string) {
+  return /^\d{4}-\d{2}-\d{2}T/.test(value) && !Number.isNaN(Date.parse(value));
+}
+function boundedSettlementText(value: string, maxBytes: number) {
+  return value.trim().length > 0 && new TextEncoder().encode(value).length <= maxBytes;
 }
 function fail(message: string): never {
   throw new Error(`Invalid product read-model composition: ${message}`);

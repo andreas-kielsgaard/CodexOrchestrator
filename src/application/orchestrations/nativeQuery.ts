@@ -53,6 +53,18 @@ export interface OrchestrationNativeQueryV2 {
   readonly sprintContinuationCurrentDecisions: readonly NativeSprintContinuationCurrentDecisionV1[];
   readonly sprintUpwardResults: readonly NativeSprintUpwardResultV1[];
   readonly sprintResultProjections?: readonly NativeSprintResultProjectionV1[];
+  readonly epicSettlementStates?: readonly NativeEpicSettlementProjectionV1[];
+}
+export interface NativeEpicSettlementProjectionV1 {
+  readonly epicId: string;
+  readonly state:
+    | { readonly kind: 'settled'; readonly settlementId: string; readonly persistedAt: string }
+    | {
+        readonly kind: 'unresolved';
+        readonly reasonCode: string;
+        readonly resumptionFact: string;
+        readonly recordedAt: string;
+      };
 }
 export interface NativeWorkUnitExecutionStateV1 {
   readonly workUnitId: string;
@@ -458,6 +470,7 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
       'sprintContinuationCurrentDecisions',
       'sprintUpwardResults',
       'sprintResultProjections',
+      'epicSettlementStates',
     ],
     'native query',
   );
@@ -582,6 +595,14 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
             root.sprintResultProjections,
             'sprintResultProjections',
           ).map(sprintResultProjection),
+        }),
+    ...(root.epicSettlementStates === undefined
+      ? {}
+      : {
+          epicSettlementStates: array(
+            root.epicSettlementStates,
+            'epicSettlementStates',
+          ).map(epicSettlementProjection),
         }),
   };
   validate(query);
@@ -959,6 +980,9 @@ export function nativeQueryProductCompositionInputV2(
       : {}),
     ...(query.sprintResultProjections
       ? { sprintResultProjections: query.sprintResultProjections }
+      : {}),
+    ...(query.epicSettlementStates
+      ? { epicSettlementStates: query.epicSettlementStates }
       : {}),
     ...(transitionQuery
       ? {
@@ -3936,7 +3960,64 @@ const fileReviewDocument = (value: unknown): NativeFileReviewDocumentV1 => {
     }),
   };
 };
+const epicSettlementProjection = (value: unknown): NativeEpicSettlementProjectionV1 => {
+  const x = object(value, 'Epic settlement projection');
+  keys(x, ['epicId', 'state'], 'Epic settlement projection');
+  const state = object(x.state, 'Epic settlement state');
+  keys(
+    state,
+    ['kind', 'settlementId', 'persistedAt', 'reasonCode', 'resumptionFact', 'recordedAt'],
+    'Epic settlement state',
+  );
+  const epicId = string(x.epicId, 'Epic settlement Epic ID');
+  switch (state.kind) {
+    case 'settled':
+      if (
+        state.reasonCode !== undefined ||
+        state.resumptionFact !== undefined ||
+        state.recordedAt !== undefined
+      )
+        fail('Epic settlement settled state contains unresolved facts');
+      return {
+        epicId,
+        state: {
+          kind: 'settled',
+          settlementId: boundedString(state.settlementId, 240, 'settlementId'),
+          persistedAt: timestamp(state.persistedAt, 'settlement persistedAt'),
+        },
+      };
+    case 'unresolved': {
+      if (state.settlementId !== undefined || state.persistedAt !== undefined)
+        fail('Epic settlement unresolved state contains settled facts');
+      const reasonCode = boundedString(state.reasonCode, 96, 'settlement reasonCode');
+      if (!/^[A-Za-z0-9_.-]+$/.test(reasonCode)) fail('invalid Epic settlement reasonCode');
+      return {
+        epicId,
+        state: {
+          kind: 'unresolved',
+          reasonCode,
+          resumptionFact: boundedString(state.resumptionFact, 4000, 'settlement resumptionFact'),
+          recordedAt: timestamp(state.recordedAt, 'settlement recordedAt'),
+        },
+      };
+    }
+    default:
+      fail('invalid Epic settlement state kind');
+  }
+};
+
+function validateEpicSettlementProjection(query: OrchestrationNativeQueryV2) {
+  const states = query.epicSettlementStates;
+  if (states === undefined) return;
+  unique(states, (state) => state.epicId, 'Epic settlement Epic ID');
+  const epicIds = new Set(query.initiatedEpics.map((epic) => epic.epicId));
+  for (const state of states) {
+    if (!epicIds.has(state.epicId)) fail('Epic settlement projection references a foreign Epic');
+  }
+}
+
 function validate(query: OrchestrationNativeQueryV2) {
+  validateEpicSettlementProjection(query);
   unique(query.planningDrafts, (x) => x.epicPlanningDraftId, 'planning draft ID');
   unique(query.agentSessionAssociations, (x) => x.agentSessionAssociationId, 'association ID');
   unique(query.proposalRevisions, (x) => x.proposalRevisionId, 'proposal revision ID');

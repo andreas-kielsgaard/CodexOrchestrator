@@ -2047,7 +2047,7 @@ fn canonical_populated_query() -> NativeQueryV2 {
         work_unit_relationships: vec![],
         dependency_activation_intents: vec![],
         work_unit_execution_states: vec![], work_slice_execution_graph_completions: vec![], work_slice_execution_settlements: vec![], work_slice_planning_point_execution_settlements: vec![], work_slice_execution_attentions: vec![],
-        sprint_continuation_decisions: vec![], sprint_continuation_current_decisions: vec![], sprint_upward_results: vec![], sprint_result_projections: None,
+        sprint_continuation_decisions: vec![], sprint_continuation_current_decisions: vec![], sprint_upward_results: vec![], sprint_result_projections: None, epic_settlement_states: None,
     }
 }
 

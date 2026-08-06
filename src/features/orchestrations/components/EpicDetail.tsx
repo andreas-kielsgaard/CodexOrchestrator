@@ -195,6 +195,24 @@ export function EpicDetail({
                 })}
               </section>
             )}
+            {epic.epicSettlement && (
+              <section aria-label="Epic settlement" className="orchestration-reassessment">
+                <p className="eyebrow">Epic settlement</p>
+                {epic.epicSettlement.kind === 'settled' ? (
+                  <p>
+                    Settlement was recorded at {epic.epicSettlement.persistedAt}. This records the
+                    Epic settlement only; other downstream outcomes are not established here.
+                  </p>
+                ) : (
+                  <>
+                    <p>Epic settlement remains unresolved.</p>
+                    <p>Reason recorded: {epic.epicSettlement.reasonCode}.</p>
+                    <p>Resume by: {epic.epicSettlement.resumptionFact}</p>
+                    <p>Unresolved state recorded at {epic.epicSettlement.recordedAt}.</p>
+                  </>
+                )}
+              </section>
+            )}
             <SprintPlan
               items={epic.plan.items}
               onOpen={(sprint, opener) => {
