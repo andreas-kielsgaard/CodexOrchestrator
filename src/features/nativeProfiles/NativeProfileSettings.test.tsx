@@ -102,6 +102,16 @@ describe('NativeProfileSettings', () => {
     expect(within(card).queryByText('Native setup process ended unsuccessfully.')).not.toBeInTheDocument();
   });
 
+  it('reports an unsupported semantic policy without implying a child launch or UAC interaction', async () => {
+    const unsupportedProfiles = profiles.map((profile) => profile.id === 'p1' ? { ...profile, setupAttempt: { ...setupAttempt, phase: 'sandbox_initialization' as const, disposition: 'policy_unsupported' as const, terminalClassification: 'policy_unsupported' as const, workspaceSandboxSupported: false, executable: 'C:/application-owned/codex.exe', version: 'codex-cli test', correlationId: 'native-setup-correlation', requestedAt: '2026-08-07T12:00:00Z', deadlineAt: '2026-08-07T12:02:00Z', settledAt: '2026-08-07T12:00:00Z' } } : profile);
+    render(<NativeProfileSettings client={client({ load: async () => ({ contract: 'native-codex-profile-query/v1' as const, profiles: unsupportedProfiles }) })} />);
+    const card = await screen.findByRole('article', { name: 'Codex home p1' });
+    expect(within(card).getByText('The installed Codex CLI cannot establish the required application-owned Workspace Write and disabled-network policy without opaque state. No setup process was launched.')).toBeInTheDocument();
+    expect(within(card).queryByText('Native setup process was not launched.')).not.toBeInTheDocument();
+    expect(within(card).queryByText('Native setup process ended unsuccessfully.')).not.toBeInTheDocument();
+    expect(within(card).getByText('Workspace sandbox capability')).toBeInTheDocument();
+  });
+
   it('contains the reported short viewport in an internal scroll region with narrow wrapping', async () => {
     render(<NativeProfileSettings client={client()} />);
     const settings = await screen.findByRole('main', { name: 'Technical Codex settings' });

@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_setup_attempts (
   profile_id TEXT NOT NULL,
   filesystem_identity TEXT NOT NULL,
   phase TEXT NOT NULL CHECK (phase IN ('sandbox_initialization','workspace_write_canary')),
-  state TEXT NOT NULL CHECK (state IN ('pending','launch_failed','terminal_succeeded','terminal_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed')),
+  state TEXT NOT NULL CHECK (state IN ('pending','launch_failed','terminal_succeeded','terminal_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed','policy_unsupported')),
   executable TEXT,
   version TEXT,
   workspace_sandbox_supported INTEGER,
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_setup_attempts (
   launch_accepted_at TEXT,
   deadline_at TEXT NOT NULL,
   settled_at TEXT,
-  terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','launch_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed')),
+  terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','launch_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed','policy_unsupported')),
   terminal_exit_code INTEGER,
   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
 );
@@ -265,7 +265,7 @@ CREATE TABLE native_codex_profile_setup_attempts (
   profile_id TEXT NOT NULL,
   filesystem_identity TEXT NOT NULL,
   phase TEXT NOT NULL CHECK (phase IN ('sandbox_initialization','workspace_write_canary')),
-  state TEXT NOT NULL CHECK (state IN ('pending','launch_failed','terminal_succeeded','terminal_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed')),
+  state TEXT NOT NULL CHECK (state IN ('pending','launch_failed','terminal_succeeded','terminal_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed','policy_unsupported')),
   executable TEXT,
   version TEXT,
   workspace_sandbox_supported INTEGER,
@@ -274,7 +274,7 @@ CREATE TABLE native_codex_profile_setup_attempts (
   launch_accepted_at TEXT,
   deadline_at TEXT NOT NULL,
   settled_at TEXT,
-  terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','launch_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed')),
+  terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','launch_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed','policy_unsupported')),
   terminal_exit_code INTEGER,
   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
 );
@@ -304,6 +304,34 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_setup_attempt_pending
 ON native_codex_profile_setup_attempts(profile_id,phase) WHERE state='pending';
 "#;
 
+pub(crate) const NATIVE_PROFILE_V29_MIGRATION: &str = r#"
+ALTER TABLE native_codex_profile_setup_attempts RENAME TO native_codex_profile_setup_attempts_v28;
+CREATE TABLE native_codex_profile_setup_attempts (
+  attempt_id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  filesystem_identity TEXT NOT NULL,
+  phase TEXT NOT NULL CHECK (phase IN ('sandbox_initialization','workspace_write_canary')),
+  state TEXT NOT NULL CHECK (state IN ('pending','launch_failed','terminal_succeeded','terminal_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed','policy_unsupported')),
+  executable TEXT,
+  version TEXT,
+  workspace_sandbox_supported INTEGER,
+  correlation_id TEXT NOT NULL UNIQUE,
+  requested_at TEXT NOT NULL,
+  launch_accepted_at TEXT,
+  deadline_at TEXT NOT NULL,
+  settled_at TEXT,
+  terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','launch_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed','policy_unsupported')),
+  terminal_exit_code INTEGER,
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+INSERT INTO native_codex_profile_setup_attempts (attempt_id,profile_id,filesystem_identity,phase,state,executable,version,workspace_sandbox_supported,correlation_id,requested_at,launch_accepted_at,deadline_at,settled_at,terminal_classification,terminal_exit_code)
+SELECT attempt_id,profile_id,filesystem_identity,phase,state,executable,version,workspace_sandbox_supported,correlation_id,requested_at,launch_accepted_at,deadline_at,settled_at,terminal_classification,terminal_exit_code
+FROM native_codex_profile_setup_attempts_v28;
+DROP TABLE native_codex_profile_setup_attempts_v28;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_setup_attempt_pending
+ON native_codex_profile_setup_attempts(profile_id,phase) WHERE state='pending';
+"#;
+
 const MARKER_FILE: &str = ".codex-orchestrator-profile.json";
 const PROFILE_QUERY_CONTRACT: &str = "native-codex-profile-query/v1";
 const MCP_REPORTING_CAPABILITY: &str = "native-codex-profile-reporting/v1";
@@ -311,8 +339,6 @@ const MCP_REPORTING_SERVER: &str = "codex-orchestrator-reporting";
 const MCP_REPORTING_TOOL: &str = "report_native_profile_readiness";
 const SETUP_ATTEMPT_TIMEOUT_SECONDS: i64 = 120;
 const MCP_PROBE_TIMEOUT_SECONDS: i64 = 300;
-const WORKSPACE_SANDBOX_STATE_JSON: &str = r#"{"permissionProfile":"workspace-write"}"#;
-
 static NATIVE_PROFILE_OPEN_GATE: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -470,14 +496,12 @@ impl NativeCliPort for SystemNativeCliPort {
             .map_err(|_| "Codex CLI is unavailable for this profile".to_string())?;
         let version = native_cli_stdout(program, &["--version"])?;
         let exec_help = native_cli_stdout(program, &["exec", "--help"])?;
-        let sandbox_help = native_cli_stdout(program, &["sandbox", "--help"])?;
-        let workspace_sandbox_supported = sandbox_help.contains("--sandbox-state-json")
-            && sandbox_help.contains("--sandbox-state-readable-root")
-            && sandbox_help.contains("--sandbox-state-disable-network");
+        // This CLI exposes `sandbox --permission-profile`, but that resolves from the active
+        // configuration stack. It cannot express an application-owned workspace/root/network
+        // policy without importing opaque configuration or sandbox state, so it is unsupported.
+        let workspace_sandbox_supported = false;
         let danger_full_access_supported = exec_help.contains("danger-full-access");
-        let danger_network_enforcement_supported = exec_help.contains("--sandbox-state-json")
-            && exec_help.contains("--sandbox-state-readable-root")
-            && exec_help.contains("--sandbox-state-disable-network");
+        let danger_network_enforcement_supported = false;
         let non_interactive_approval_supported = exec_help.contains("--dangerously-bypass-approvals-and-sandbox");
         Ok(NativeCliSurface {
             provenance: NativeCliProvenance {
@@ -1424,11 +1448,6 @@ impl NativeProfileService {
             ]
             .into_iter()
             .chain((mode == ExecutionMode::DangerFullAccess).then_some("--dangerously-bypass-approvals-and-sandbox".into()))
-            .chain((mode == ExecutionMode::DangerFullAccess).then_some("--sandbox-state-json".into()))
-            .chain((mode == ExecutionMode::DangerFullAccess).then_some(WORKSPACE_SANDBOX_STATE_JSON.into()))
-            .chain((mode == ExecutionMode::DangerFullAccess).then_some("--sandbox-state-disable-network".into()))
-            .chain((mode == ExecutionMode::DangerFullAccess).then_some("--sandbox-state-readable-root".into()))
-            .chain((mode == ExecutionMode::DangerFullAccess).then_some(target.working_root.to_string_lossy().into_owned()))
             .collect(),
             working_root: target.working_root.to_string_lossy().into_owned(),
             requested_network_disabled: target.network_disabled,
@@ -1654,24 +1673,45 @@ impl NativeProfileService {
             }
             return Err("Native Codex home is not currently validated".into());
         }
-        let root = self.probe_root(id);
         let surface = self.cli.surface().map_err(|_| {
             self.set_attention(id, "cli", Some("codex_cli_surface_unsupported"), false)
                 .ok();
             "The resolved Codex CLI surface is unsupported for native sandbox setup".to_string()
         })?;
+        let now = Utc::now();
+        let attempt = PendingSetupAttempt {
+            attempt_id: format!("native-setup-attempt-{}", Uuid::new_v4()),
+            profile_id: id.clone(),
+            filesystem_identity: current.identity.clone(),
+            phase,
+            deadline_at: now + Duration::seconds(SETUP_ATTEMPT_TIMEOUT_SECONDS),
+        };
         if !surface.provenance.workspace_sandbox_supported {
+            self.persist_setup_attempt(
+                &attempt,
+                &surface.provenance,
+                "policy_unsupported",
+                "policy_unsupported",
+            )?;
             self.set_attention(
                 id,
                 "cli",
-                Some("codex_cli_workspace_sandbox_unsupported"),
+                Some("codex_cli_workspace_semantic_policy_unsupported"),
                 false,
             )?;
-            return Err(
-                "The resolved Codex CLI does not support the required workspace sandbox state"
-                    .into(),
+            return self.update_readiness(
+                id,
+                None,
+                (phase == SetupPhase::SandboxInitialization).then_some("attention_required"),
+                (phase == SetupPhase::WorkspaceWriteCanary).then_some("blocked"),
+                None,
+                Some((
+                    phase.attention_concern(),
+                    Some("native_sandbox_semantic_policy_unsupported"),
+                )),
             );
         }
+        let root = self.probe_root(id);
         fs::create_dir_all(&root).map_err(|error| {
             format!("Unable to create application-owned sandbox probe root: {error}")
         })?;
@@ -1685,19 +1725,7 @@ impl NativeProfileService {
                 format!("echo native-codex-profile-canary>\"{}\"", output.display())
             }
         };
-        let now = Utc::now();
-        let attempt = PendingSetupAttempt {
-            attempt_id: format!("native-setup-attempt-{}", Uuid::new_v4()),
-            profile_id: id.clone(),
-            filesystem_identity: current.identity.clone(),
-            phase,
-            deadline_at: now + Duration::seconds(SETUP_ATTEMPT_TIMEOUT_SECONDS),
-        };
-        let connection = self.connection()?;
-        let inserted = connection.execute(
-            "INSERT OR IGNORE INTO native_codex_profile_setup_attempts (attempt_id,profile_id,filesystem_identity,phase,state,executable,version,workspace_sandbox_supported,correlation_id,requested_at,deadline_at,terminal_classification) VALUES (?1,?2,?3,?4,'pending',?5,?6,?7,?8,?9,?10,'not_observed')",
-            params![attempt.attempt_id, attempt.profile_id, attempt.filesystem_identity, attempt.phase.database(), surface.provenance.executable, surface.provenance.version, surface.provenance.workspace_sandbox_supported, format!("native-setup-{}", Uuid::new_v4()), now.to_rfc3339(), attempt.deadline_at.to_rfc3339()],
-        ).map_err(|error| format!("Unable to persist native sandbox attempt: {error}"))?;
+        let inserted = self.persist_setup_attempt(&attempt, &surface.provenance, "pending", "not_observed")?;
         if inserted == 0 {
             return self.set_attention(
                 id,
@@ -1712,11 +1740,6 @@ impl NativeProfileService {
             "sandbox".into(),
         ];
         args.extend([
-            "--sandbox-state-json".into(),
-            WORKSPACE_SANDBOX_STATE_JSON.into(),
-            "--sandbox-state-disable-network".into(),
-            "--sandbox-state-readable-root".into(),
-            root.to_string_lossy().into_owned(),
             "--".into(),
             "cmd.exe".into(),
             "/d".into(),
@@ -1909,6 +1932,19 @@ impl NativeProfileService {
             params![attempt_id, Utc::now().to_rfc3339()],
         ).map_err(|error| error.to_string())?;
         Ok(())
+    }
+
+    fn persist_setup_attempt(
+        &self,
+        attempt: &PendingSetupAttempt,
+        provenance: &NativeCliProvenance,
+        state: &str,
+        terminal_classification: &str,
+    ) -> Result<usize, String> {
+        self.connection()?.execute(
+            "INSERT OR IGNORE INTO native_codex_profile_setup_attempts (attempt_id,profile_id,filesystem_identity,phase,state,executable,version,workspace_sandbox_supported,correlation_id,requested_at,deadline_at,settled_at,terminal_classification) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,CASE WHEN ?5='pending' THEN NULL ELSE ?10 END,?12)",
+            params![attempt.attempt_id, attempt.profile_id, attempt.filesystem_identity, attempt.phase.database(), state, provenance.executable, provenance.version, provenance.workspace_sandbox_supported, format!("native-setup-{}", Uuid::new_v4()), Utc::now().to_rfc3339(), attempt.deadline_at.to_rfc3339(), terminal_classification],
+        ).map_err(|error| format!("Unable to persist native sandbox attempt: {error}"))
     }
 
     fn set_setup_attempt_state(
@@ -2673,6 +2709,7 @@ mod tests {
         next_child_result: Mutex<Option<NativeCliReceipt>>,
         start_error: bool,
         surface_supported: bool,
+        workspace_sandbox_supported: bool,
         danger_network_enforcement_supported: bool,
     }
     impl FakeCli {
@@ -2689,6 +2726,7 @@ mod tests {
                 next_child_result: Mutex::new(None),
                 start_error: false,
                 surface_supported: true,
+                workspace_sandbox_supported: true,
                 danger_network_enforcement_supported: false,
             }
         }
@@ -2700,7 +2738,14 @@ mod tests {
             }
         }
 
-        fn enforcing_danger_network() -> Self {
+        fn unsupported_workspace_policy() -> Self {
+            Self {
+                workspace_sandbox_supported: false,
+                ..Self::succeeding()
+            }
+        }
+
+        fn enforcing_application_network_policy() -> Self {
             Self {
                 danger_network_enforcement_supported: true,
                 ..Self::succeeding()
@@ -2741,7 +2786,7 @@ mod tests {
                 provenance: NativeCliProvenance {
                     executable: "C:/application-owned/codex.exe".into(),
                     version: "codex-cli test".into(),
-                    workspace_sandbox_supported: true,
+                    workspace_sandbox_supported: self.workspace_sandbox_supported,
                     danger_full_access_supported: true,
                     danger_network_enforcement_supported: self.danger_network_enforcement_supported,
                     non_interactive_approval_supported: true,
@@ -2951,18 +2996,10 @@ mod tests {
                 .iter()
                 .map(String::as_str)
                 .eq(["--cd", call.cwd.to_string_lossy().as_ref()])));
-            assert!(call.args.windows(2).any(|window| {
-                window.iter().map(String::as_str).eq([
-                    "--sandbox-state-disable-network",
-                    "--sandbox-state-readable-root",
-                ])
-            }));
-            assert!(call.args.windows(2).any(|window| {
-                window
-                    .iter()
-                    .map(String::as_str)
-                    .eq(["--sandbox-state-json", WORKSPACE_SANDBOX_STATE_JSON])
-            }));
+            assert!(!call
+                .args
+                .iter()
+                .any(|argument| argument.contains("state-json")));
             assert!(!call
                 .args
                 .iter()
@@ -2970,6 +3007,41 @@ mod tests {
         }
         assert!(calls[0].sandbox_receipt.is_none());
         assert!(calls[1].sandbox_receipt.is_some());
+    }
+
+    #[test]
+    fn unsupported_workspace_policy_is_durable_and_blocks_children_and_uac() {
+        let (directory, mut service) = service();
+        let fake = Arc::new(FakeCli::unsupported_workspace_policy());
+        service.cli = fake.clone();
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+
+        let requested = service.request_sandbox_initialization(&profile.id).unwrap();
+        assert_eq!(requested.setup_attempt.disposition, "policy_unsupported");
+        assert_eq!(
+            requested.setup_attempt.terminal_classification,
+            "policy_unsupported"
+        );
+        assert_eq!(requested.setup_attempt.workspace_sandbox_supported, Some(false));
+        assert!(requested.setup_attempt.launch_accepted_at.is_none());
+        assert!(requested.setup_attempt.settled_at.is_some());
+        assert_eq!(*fake.starts.lock().unwrap(), 0);
+        assert_eq!(
+            requested.readiness.attentions.sandbox,
+            Some("native_sandbox_semantic_policy_unsupported".into())
+        );
+        assert!(service.confirm_sandbox_initialization(&profile.id).is_err());
+        assert_eq!(
+            service
+                .run_workspace_write_canary(&profile.id)
+                .unwrap()
+                .readiness
+                .workspace_write_canary,
+            "blocked"
+        );
+        assert_eq!(*fake.starts.lock().unwrap(), 0);
+        assert!(!directory.path().join("app").join("probes").exists());
     }
 
     #[test]
@@ -3481,7 +3553,7 @@ mod tests {
             .project_launch(&profile.id, &workspace_target)
             .is_err());
         service.authorize_danger_full_access(&profile.id).unwrap();
-        service.cli = Arc::new(FakeCli::enforcing_danger_network());
+        service.cli = Arc::new(FakeCli::enforcing_application_network_policy());
         let danger = service
             .project_launch(&profile.id, &workspace_target)
             .unwrap();
@@ -3493,14 +3565,10 @@ mod tests {
             .arguments
             .iter()
             .any(|argument| argument == "--dangerously-bypass-approvals-and-sandbox"));
-        assert!(danger
-            .arguments
-            .windows(2)
-            .any(|pair| pair == ["--sandbox-state-json", WORKSPACE_SANDBOX_STATE_JSON]));
-        assert!(danger
+        assert!(!danger
             .arguments
             .iter()
-            .any(|argument| argument == "--sandbox-state-disable-network"));
+            .any(|argument| argument.contains("state-json")));
         assert!(danger.non_interactive_approval);
         assert!(danger.requested_network_disabled);
         assert!(danger.effective_network_enforced);
@@ -3536,7 +3604,7 @@ mod tests {
     #[test]
     fn full_access_canary_persists_then_settles_only_the_owned_sentinel_receipt() {
         let (directory, mut service) = service();
-        let fake = Arc::new(FakeCli::enforcing_danger_network());
+        let fake = Arc::new(FakeCli::enforcing_application_network_policy());
         *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
             succeeded: true,
             exit_code: Some(0),
@@ -3721,6 +3789,38 @@ mod tests {
             ("timed_out".into(), "timed_out".into(), "timed_out".into(), None, None, None, None, None),
             ("cancelled".into(), "cancelled".into(), "cancelled".into(), None, None, None, None, None),
         ]);
+    }
+
+    #[test]
+    fn v29_policy_migration_preserves_existing_v28_attempt_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("active.sqlite");
+        let connection = Connection::open(&database).unwrap();
+        connection.execute_batch(NATIVE_PROFILE_SCHEMA).unwrap();
+        connection.execute_batch("DROP INDEX ux_native_codex_profile_setup_attempt_pending; DROP TABLE native_codex_profile_setup_attempts; CREATE TABLE native_codex_profile_setup_attempts (attempt_id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, filesystem_identity TEXT NOT NULL, phase TEXT NOT NULL CHECK (phase IN ('sandbox_initialization','workspace_write_canary')), state TEXT NOT NULL CHECK (state IN ('pending','launch_failed','terminal_succeeded','terminal_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed')), executable TEXT, version TEXT, workspace_sandbox_supported INTEGER, correlation_id TEXT NOT NULL UNIQUE, requested_at TEXT NOT NULL, launch_accepted_at TEXT, deadline_at TEXT NOT NULL, settled_at TEXT, terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','launch_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed')), terminal_exit_code INTEGER, FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT); INSERT INTO native_codex_profiles (id,canonical_home_path,filesystem_identity,ownership,lifecycle,created_at,updated_at) VALUES ('profile','C:\\profile','identity','registered_existing','active','t','t'); INSERT INTO native_codex_profile_setup_attempts VALUES ('attempt','profile','identity','sandbox_initialization','terminal_failed','C:/application-owned/codex.exe','codex-cli test',1,'correlation','2026-08-07T12:00:00Z','2026-08-07T12:00:01Z','2026-08-07T12:02:00Z','2026-08-07T12:00:02Z','exit_code',1); PRAGMA user_version=28;").unwrap();
+
+        crate::storage::initialize_active_database(&connection).unwrap();
+
+        let row: (String, String, String, String, Option<i32>) = connection
+            .query_row(
+                "SELECT state,executable,version,terminal_classification,terminal_exit_code FROM native_codex_profile_setup_attempts WHERE attempt_id='attempt'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            (
+                "terminal_failed".into(),
+                "C:/application-owned/codex.exe".into(),
+                "codex-cli test".into(),
+                "exit_code".into(),
+                Some(1),
+            )
+        );
+        connection
+            .execute("INSERT INTO native_codex_profile_setup_attempts (attempt_id,profile_id,filesystem_identity,phase,state,correlation_id,requested_at,deadline_at,settled_at,terminal_classification) VALUES ('unsupported','profile','identity','sandbox_initialization','policy_unsupported','correlation-unsupported','2026-08-07T12:03:00Z','2026-08-07T12:05:00Z','2026-08-07T12:03:00Z','policy_unsupported')", [])
+            .unwrap();
     }
 
     #[test]

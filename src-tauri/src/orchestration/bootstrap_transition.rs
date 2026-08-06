@@ -8403,13 +8403,6 @@ mod tests {
             .output()
             .expect("run installed Codex sandbox help");
         let sandbox_help_text = String::from_utf8_lossy(&sandbox_help.stdout);
-        let sandbox_state_application_options_present = [
-            "--sandbox-state-json",
-            "--sandbox-state-readable-root",
-            "--sandbox-state-disable-network",
-        ]
-        .iter()
-        .all(|option| sandbox_help_text.contains(option));
         let sandbox_initialization_option_present = sandbox_help_text.contains("--init")
             || sandbox_help_text.contains("initialize");
         let diagnostic = serde_json::from_slice::<serde_json::Value>(&output.stdout).ok();
@@ -8421,7 +8414,6 @@ mod tests {
             "jsonParsed": diagnostic.is_some(),
             "sandboxHelp": {
                 "exitCode": sandbox_help.status.code(),
-                "stateApplicationOptionsPresent": sandbox_state_application_options_present,
                 "initializationOptionPresent": sandbox_initialization_option_present,
             },
             "allowedStatusOrCode": diagnostic
