@@ -196,15 +196,29 @@ pub(crate) fn native_projection(
                     String,
                     String,
                     String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
                 )> = connection
                     .query_row(
-                        "SELECT s.epic_id,s.request_id,s.authorization_id,s.evidence_id,s.settlement_fingerprint,s.persisted_at,r.approved_plan_fingerprint,r.terminal_readiness_id,r.eligibility_fingerprint,a.authorization_fingerprint,e.evidence_id,e.evidence_fingerprint FROM epic_settlements s JOIN epic_settlement_requests r ON r.epic_id=s.epic_id AND r.request_id=s.request_id JOIN epic_settlement_authorizations a ON a.request_id=s.request_id AND a.authorization_id=s.authorization_id JOIN epic_settlement_evidence e ON e.epic_id=s.epic_id AND e.request_id=s.request_id AND e.authorization_id=s.authorization_id AND e.evidence_id=s.evidence_id WHERE s.settlement_id=?1",
+                        "SELECT s.epic_id,s.settlement_id,s.request_id,s.authorization_id,s.evidence_id,s.settlement_fingerprint,s.persisted_at,r.epic_id,r.request_id,r.approved_plan_fingerprint,r.terminal_readiness_id,r.eligibility_fingerprint,r.requested_at,a.request_id,a.authorization_id,a.authorization_fingerprint,a.authorized_at,e.epic_id,e.evidence_id,e.request_id,e.authorization_id,e.evidence_fingerprint,e.recorded_at FROM epic_settlements s JOIN epic_settlement_requests r ON r.epic_id=s.epic_id AND r.request_id=s.request_id JOIN epic_settlement_authorizations a ON a.request_id=s.request_id AND a.authorization_id=s.authorization_id JOIN epic_settlement_evidence e ON e.epic_id=s.epic_id AND e.request_id=s.request_id AND e.authorization_id=s.authorization_id AND e.evidence_id=s.evidence_id WHERE s.settlement_id=?1",
                         [settlement_id.as_str()],
                         |row| {
                             Ok((
                                 row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?,
                                 row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?,
                                 row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?,
+                                row.get(12)?, row.get(13)?, row.get(14)?, row.get(15)?,
+                                row.get(16)?, row.get(17)?, row.get(18)?, row.get(19)?,
+                                row.get(20)?, row.get(21)?, row.get(22)?,
                             ))
                         },
                     )
@@ -212,33 +226,77 @@ pub(crate) fn native_projection(
                     .map_err(|error| error.to_string())?;
                 let Some((
                     settled_epic,
+                    settled_id,
                     request_id,
                     authorization_id,
                     evidence_id,
                     settlement_fingerprint,
                     persisted_at,
+                    request_epic,
+                    request_id_again,
                     approved_plan_fingerprint,
                     terminal_readiness_id,
                     eligibility_fingerprint,
+                    requested_at,
+                    authorization_request_id,
+                    authorization_id_again,
                     authorization_fingerprint,
+                    authorized_at,
+                    evidence_epic,
                     evidence_id_again,
+                    evidence_request_id,
+                    evidence_authorization_id,
                     evidence_fingerprint,
+                    recorded_at,
                 )) = chain
                 else {
                     return Err("Epic settlement durable chain is incomplete".into());
                 };
+                let expected_request_id = digest(&format!(
+                    "epic-settlement-request:{epic_id}:{eligibility_fingerprint}"
+                ));
+                let expected_authorization_id = digest(&format!(
+                    "epic-settlement-authorization:{expected_request_id}"
+                ));
+                let expected_authorization_fingerprint =
+                    digest(&format!("{expected_request_id}:{eligibility_fingerprint}"));
+                let expected_evidence_id = digest(&format!(
+                    "epic-settlement-evidence:{expected_authorization_id}"
+                ));
+                let expected_evidence_fingerprint = digest(&format!(
+                    "{epic_id}:{expected_request_id}:{expected_authorization_id}:{eligibility_fingerprint}"
+                ));
+                let expected_settlement_id =
+                    digest(&format!("epic-settlement:{expected_evidence_id}"));
+                let expected_settlement_fingerprint = digest(&format!(
+                    "{epic_id}:{expected_evidence_id}:{eligibility_fingerprint}"
+                ));
                 if settled_epic != epic_id
-                    || request_id.is_empty()
-                    || authorization_id.is_empty()
-                    || evidence_id.is_empty()
+                    || request_epic != epic_id
+                    || evidence_epic != epic_id
+                    || source_fingerprint != eligibility_fingerprint
+                    || settled_id != settlement_id
+                    || settled_id != expected_settlement_id
+                    || request_id != expected_request_id
+                    || request_id_again != expected_request_id
+                    || authorization_request_id != expected_request_id
+                    || evidence_request_id != expected_request_id
+                    || authorization_id != expected_authorization_id
+                    || authorization_id_again != expected_authorization_id
+                    || evidence_authorization_id != expected_authorization_id
+                    || evidence_id != expected_evidence_id
                     || evidence_id != evidence_id_again
-                    || settlement_fingerprint.is_empty()
-                    || persisted_at.is_empty()
+                    || settlement_fingerprint != expected_settlement_fingerprint
+                    || authorization_fingerprint != expected_authorization_fingerprint
+                    || evidence_fingerprint != expected_evidence_fingerprint
                     || approved_plan_fingerprint.is_empty()
                     || terminal_readiness_id.is_empty()
                     || eligibility_fingerprint.is_empty()
-                    || authorization_fingerprint.is_empty()
-                    || evidence_fingerprint.is_empty()
+                    || requested_at.is_empty()
+                    || authorized_at.is_empty()
+                    || recorded_at.is_empty()
+                    || persisted_at.is_empty()
+                    || updated_at != persisted_at
                 {
                     return Err("Epic settlement durable chain is contradictory".into());
                 }
@@ -699,6 +757,77 @@ mod tests {
             projection[0].state,
             EpicSettlementProjectionState::Settled { .. }
         ));
+    }
+
+    #[test]
+    fn native_projection_rejects_contradictory_settled_authority_and_timestamps() {
+        let cases = [
+            (
+                "current source",
+                "UPDATE epic_settlement_current_states SET source_fingerprint='altered-source'",
+            ),
+            (
+                "request identity",
+                "PRAGMA foreign_keys=OFF; UPDATE epic_settlement_requests SET request_id='altered-request'; UPDATE epic_settlement_authorizations SET request_id='altered-request'; UPDATE epic_settlement_evidence SET request_id='altered-request'; UPDATE epic_settlements SET request_id='altered-request'; PRAGMA foreign_keys=ON;",
+            ),
+            (
+                "authorization identity",
+                "PRAGMA foreign_keys=OFF; UPDATE epic_settlement_authorizations SET authorization_id='altered-authorization'; UPDATE epic_settlement_evidence SET authorization_id='altered-authorization'; UPDATE epic_settlements SET authorization_id='altered-authorization'; PRAGMA foreign_keys=ON;",
+            ),
+            (
+                "evidence identity",
+                "PRAGMA foreign_keys=OFF; UPDATE epic_settlement_evidence SET evidence_id='altered-evidence'; UPDATE epic_settlements SET evidence_id='altered-evidence'; PRAGMA foreign_keys=ON;",
+            ),
+            (
+                "settlement identity",
+                "PRAGMA foreign_keys=OFF; UPDATE epic_settlements SET settlement_id='altered-settlement'; UPDATE epic_settlement_current_states SET settlement_id='altered-settlement'; PRAGMA foreign_keys=ON;",
+            ),
+            (
+                "request fingerprint",
+                "UPDATE epic_settlement_requests SET eligibility_fingerprint='altered-request-fingerprint'",
+            ),
+            (
+                "authorization fingerprint",
+                "UPDATE epic_settlement_authorizations SET authorization_fingerprint='altered-authorization-fingerprint'",
+            ),
+            (
+                "evidence fingerprint",
+                "UPDATE epic_settlement_evidence SET evidence_fingerprint='altered-evidence-fingerprint'",
+            ),
+            (
+                "settlement fingerprint",
+                "UPDATE epic_settlements SET settlement_fingerprint='altered-settlement-fingerprint'",
+            ),
+            (
+                "request timestamp",
+                "UPDATE epic_settlement_requests SET requested_at=''",
+            ),
+            (
+                "authorization timestamp",
+                "UPDATE epic_settlement_authorizations SET authorized_at=''",
+            ),
+            (
+                "evidence timestamp",
+                "UPDATE epic_settlement_evidence SET recorded_at=''",
+            ),
+            (
+                "settlement timestamp",
+                "UPDATE epic_settlements SET persisted_at=''",
+            ),
+            (
+                "current timestamp",
+                "UPDATE epic_settlement_current_states SET updated_at=''",
+            ),
+        ];
+        for (label, mutation) in cases {
+            let mut connection = fixture();
+            reconcile(&mut connection).unwrap();
+            connection.execute_batch(mutation).unwrap();
+            assert!(
+                native_projection(&connection, &["epic".into()]).is_err(),
+                "projection accepted altered {label}"
+            );
+        }
     }
 
     #[test]
