@@ -23,6 +23,10 @@ describe('App application surfaces', () => {
     );
 
     const commands = screen.getByRole('navigation', { name: 'Product commands' });
+    expect(commands.parentElement).toBe(
+      screen.getByRole('navigation', { name: 'Application surfaces' }),
+    );
+    expect(commands.previousElementSibling).toHaveClass('surface-switcher__surfaces');
     expect(within(commands).getByRole('button', { name: 'Back' })).toBeDisabled();
     expect(within(commands).queryByRole('button', { name: /Return to/ })).toBeNull();
 

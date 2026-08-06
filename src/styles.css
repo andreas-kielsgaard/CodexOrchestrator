@@ -817,19 +817,28 @@ h3 {
   display: flex;
   grid-auto-flow: unset;
   align-items: center;
-  gap: 4px;
   height: 48px;
   padding: 6px 12px;
   border-bottom: 1px solid #d8ddd5;
   background: #fffdf8;
 }
 
+.surface-switcher__surfaces {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
 .application-command-bar {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-width: 0;
-  margin-left: auto;
+  flex: 0 0 auto;
+  margin-left: 6px;
 }
 
 .application-command-bar button {
@@ -910,7 +919,7 @@ h3 {
   inset: var(--app-top-offset) 0 0;
 }
 
-.surface-switcher > button {
+.surface-switcher__surfaces > button {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -988,18 +997,12 @@ h3 {
     grid-template-columns: 1fr;
   }
 
-  .surface-switcher {
-    overflow-x: auto;
-    scrollbar-width: thin;
-  }
-
-  .surface-switcher > button {
+  .surface-switcher__surfaces > button {
     flex: 0 0 auto;
   }
 
   .application-command-bar {
     gap: 6px;
-    flex: 0 0 auto;
   }
 
   .application-command-bar__context {

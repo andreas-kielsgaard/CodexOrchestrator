@@ -730,89 +730,91 @@ export function App({
       )}
       <EpicInitiationConfirmationModal confirmation={confirmation} />
       <div className="surface-switcher" role="navigation" aria-label="Application surfaces">
-        <button
-          className={surface === 'epics' ? 'active' : undefined}
-          type="button"
-          aria-current={surface === 'epics' ? 'page' : undefined}
-          onClick={() => {
-            productNavigationEpoch.current += 1;
-            dispatchProductNavigation({
-              type: 'navigate',
-              intent: 'push',
-              destination: { kind: 'orchestration', location: null },
-            });
-            setSurface('epics');
-          }}
-        >
-          Orchestration
-        </button>
-        <button
-          className={surface === 'agent-sessions' ? 'active' : undefined}
-          type="button"
-          aria-current={surface === 'agent-sessions' ? 'page' : undefined}
-          onClick={() => {
-            productNavigationEpoch.current += 1;
-            dispatchProductNavigation({ type: 'enter_agent_sessions_directly' });
-            setSurface('agent-sessions');
-          }}
-        >
-          Agent Sessions
-        </button>
-        {harnessManagementPreviewSurface && (
+        <div className="surface-switcher__surfaces">
           <button
-            className={surface === 'harness-inspector' ? 'active' : undefined}
+            className={surface === 'epics' ? 'active' : undefined}
             type="button"
-            aria-current={surface === 'harness-inspector' ? 'page' : undefined}
+            aria-current={surface === 'epics' ? 'page' : undefined}
             onClick={() => {
               productNavigationEpoch.current += 1;
               dispatchProductNavigation({
                 type: 'navigate',
                 intent: 'push',
-                destination: { kind: 'harness_inspector' },
+                destination: { kind: 'orchestration', location: null },
               });
-              setSurface('harness-inspector');
+              setSurface('epics');
             }}
           >
-            Harness Management
+            Orchestration
           </button>
-        )}
-        {humanReviewLauncherView && (
           <button
-            className={surface === 'worktree-review' ? 'active' : undefined}
+            className={surface === 'agent-sessions' ? 'active' : undefined}
             type="button"
-            aria-current={surface === 'worktree-review' ? 'page' : undefined}
+            aria-current={surface === 'agent-sessions' ? 'page' : undefined}
             onClick={() => {
               productNavigationEpoch.current += 1;
-              dispatchProductNavigation({
-                type: 'navigate',
-                intent: 'push',
-                destination: { kind: 'worktree_review' },
-              });
-              setSurface('worktree-review');
+              dispatchProductNavigation({ type: 'enter_agent_sessions_directly' });
+              setSurface('agent-sessions');
             }}
           >
-            Worktree Review <small>Dev</small>
+            Agent Sessions
           </button>
-        )}
-        {fileReviewSource ? (
-          <button
-            className={surface === 'file-review' ? 'active' : undefined}
-            type="button"
-            aria-current={surface === 'file-review' ? 'page' : undefined}
-            onClick={() => {
-              productNavigationEpoch.current += 1;
-              fileReviewRequestSequence.current += 1;
-              dispatchProductNavigation({
-                type: 'navigate',
-                intent: 'push',
-                destination: { kind: 'file_review', target: { kind: 'direct' } },
-              });
-              setSurface('file-review');
-            }}
-          >
-            Files &amp; diffs
-          </button>
-        ) : null}
+          {harnessManagementPreviewSurface && (
+            <button
+              className={surface === 'harness-inspector' ? 'active' : undefined}
+              type="button"
+              aria-current={surface === 'harness-inspector' ? 'page' : undefined}
+              onClick={() => {
+                productNavigationEpoch.current += 1;
+                dispatchProductNavigation({
+                  type: 'navigate',
+                  intent: 'push',
+                  destination: { kind: 'harness_inspector' },
+                });
+                setSurface('harness-inspector');
+              }}
+            >
+              Harness Management
+            </button>
+          )}
+          {humanReviewLauncherView && (
+            <button
+              className={surface === 'worktree-review' ? 'active' : undefined}
+              type="button"
+              aria-current={surface === 'worktree-review' ? 'page' : undefined}
+              onClick={() => {
+                productNavigationEpoch.current += 1;
+                dispatchProductNavigation({
+                  type: 'navigate',
+                  intent: 'push',
+                  destination: { kind: 'worktree_review' },
+                });
+                setSurface('worktree-review');
+              }}
+            >
+              Worktree Review <small>Dev</small>
+            </button>
+          )}
+          {fileReviewSource ? (
+            <button
+              className={surface === 'file-review' ? 'active' : undefined}
+              type="button"
+              aria-current={surface === 'file-review' ? 'page' : undefined}
+              onClick={() => {
+                productNavigationEpoch.current += 1;
+                fileReviewRequestSequence.current += 1;
+                dispatchProductNavigation({
+                  type: 'navigate',
+                  intent: 'push',
+                  destination: { kind: 'file_review', target: { kind: 'direct' } },
+                });
+                setSurface('file-review');
+              }}
+            >
+              Files &amp; diffs
+            </button>
+          ) : null}
+        </div>
         <ProductCommandBar
           canGoBack={canGoBack}
           onBack={() => {
