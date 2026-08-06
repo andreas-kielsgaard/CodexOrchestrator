@@ -29,6 +29,7 @@ use std::{
     env,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
+    process::Command,
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -97,6 +98,7 @@ impl LiveSmokeEnvironment {
             .map_err(|error| format!("create smoke workspace: {error}"))?;
         validate_owned_path(root.path(), &database_path)?;
         validate_owned_path(root.path(), &workspace_path)?;
+        initialize_git_workspace(root.path(), &workspace_path)?;
         Ok(Self {
             root,
             database_path,
@@ -107,6 +109,26 @@ impl LiveSmokeEnvironment {
     pub(crate) fn root(&self) -> &Path {
         self.root.path()
     }
+}
+
+/// The installed Codex CLI requires a trusted Git working directory unless its caller explicitly
+/// opts out. The smoke owns this disposable repository, so production launch arguments stay
+/// unchanged.
+fn initialize_git_workspace(root: &Path, workspace: &Path) -> Result<(), String> {
+    let status = Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(workspace)
+        .status()
+        .map_err(|error| format!("initialize owned smoke Git workspace: {error}"))?;
+    if !status.success() {
+        return Err("initialize owned smoke Git workspace failed".into());
+    }
+    let marker = workspace.join(".git");
+    validate_owned_path(root, &marker)?;
+    if !marker.is_dir() {
+        return Err("owned smoke Git workspace has no .git directory".into());
+    }
+    Ok(())
 }
 
 fn validate_owned_path(root: &Path, candidate: &Path) -> Result<(), String> {
@@ -993,6 +1015,7 @@ mod tests {
         let environment = LiveSmokeEnvironment::create().expect("environment");
         assert!(environment.database_path.starts_with(environment.root()));
         assert!(environment.workspace_path.starts_with(environment.root()));
+        assert!(environment.workspace_path.join(".git").is_dir());
         assert!(validate_owned_path(environment.root(), Path::new("C:/normal/app.db")).is_err());
     }
 
