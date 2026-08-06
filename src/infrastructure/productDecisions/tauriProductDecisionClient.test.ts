@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
+import type {
+  ProductDecisionConversationPassageReference,
+  ProductDecisionEvidenceDestination,
+} from '../../application/productDecisions';
 import { createTauriProductDecisionClient } from './tauriProductDecisionClient';
 
 describe('durable Product Decision transport', () => {
+  const finalResponse: ProductDecisionConversationPassageReference = {
+    kind: 'agent_session_passage',
+    sessionId: 'session',
+    invocationId: 'invocation',
+    passage: { kind: 'final_response', runtimeEventId: 'event' },
+  };
+  const destination: ProductDecisionEvidenceDestination = finalResponse;
+
   it('uses only the productive current/history/explicit-acceptance commands', async () => {
     const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
     const client = createTauriProductDecisionClient(async <T>(command: string, args) => {
@@ -21,6 +33,13 @@ describe('durable Product Decision transport', () => {
         kind: 'manual_human_application',
         humanInteractionOrigin: { kind: 'human_interaction', opaqueId: 'human-1' },
       },
+      currentActionableEvidence: [
+        {
+          evidenceId: 'evidence',
+          originReference: { kind: 'agent_session_completed', opaqueId: 'agent-origin' },
+          destination,
+        },
+      ],
     });
     expect(calls).toEqual([
       { command: 'load_product_decision_current_query', args: { input: { epicId: 'epic' } } },

@@ -47,9 +47,16 @@ CREATE TABLE IF NOT EXISTS product_decision_acceptance_commands (
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentPassage {
+    kind: AgentPassageReferenceKind,
     session_id: String,
     invocation_id: String,
     passage: AgentPassageKind,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AgentPassageReferenceKind {
+    AgentSessionPassage,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -540,7 +547,10 @@ fn validate_passage(
     connection: &rusqlite::Transaction<'_>,
     passage: &AgentPassage,
 ) -> Result<(), ProductDecisionError> {
-    if passage.session_id.trim().is_empty() || passage.invocation_id.trim().is_empty() {
+    if passage.kind != AgentPassageReferenceKind::AgentSessionPassage
+        || passage.session_id.trim().is_empty()
+        || passage.invocation_id.trim().is_empty()
+    {
         return Err(ProductDecisionError::InvalidInput);
     }
     let exists: Option<()> = connection
@@ -560,15 +570,42 @@ fn validate_passage(
         if runtime_event_id.trim().is_empty() {
             return Err(ProductDecisionError::InvalidInput);
         }
-        let event: Option<()> = connection
+        let normalized_json: Option<String> = connection
             .query_row(
-                "SELECT 1 FROM agent_session_runtime_events WHERE id=?1 AND invocation_id=?2",
+                "SELECT normalized_json FROM agent_session_runtime_events WHERE id=?1 AND invocation_id=?2 AND normalized_json IS NOT NULL",
                 params![runtime_event_id, passage.invocation_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| ProductDecisionError::Unavailable)?;
+        let normalized: serde_json::Value = normalized_json
+            .as_deref()
+            .and_then(|value| serde_json::from_str(value).ok())
+            .ok_or(ProductDecisionError::InvalidInput)?;
+        let supported = match &passage.passage {
+            AgentPassageKind::Activity { .. } => {
+                normalized["kind"] == "tool_activity" && normalized["toolActivity"].is_object()
+            }
+            AgentPassageKind::FinalResponse { .. } => {
+                normalized["kind"] == "agent_message"
+                    && normalized["details"]["role"] == "assistant"
+            }
+            _ => unreachable!("only event-backed passage kinds enter this branch"),
+        };
+        if !supported {
+            return Err(ProductDecisionError::InvalidInput);
+        }
+    }
+    if matches!(passage.passage, AgentPassageKind::Outcome) {
+        let terminal: Option<()> = connection
+            .query_row(
+                "SELECT 1 FROM agent_session_invocations WHERE id=?1 AND session_id=?2 AND status IN ('completed','failed','canceled','interrupted') AND completed_at IS NOT NULL",
+                params![passage.invocation_id, passage.session_id],
                 |_| Ok(()),
             )
             .optional()
             .map_err(|_| ProductDecisionError::Unavailable)?;
-        if event.is_none() {
+        if terminal.is_none() {
             return Err(ProductDecisionError::InvalidInput);
         }
     }
@@ -585,7 +622,7 @@ mod tests {
         let connection = crate::storage::open_active_database(&path).unwrap();
         connection.execute("INSERT INTO agent_sessions(id,title,availability,requested_options_json,created_at,updated_at) VALUES('session','s','available','{}','t','t')",[]).unwrap();
         connection.execute("INSERT INTO agent_session_invocations(id,session_id,submitted_text,input_provenance,status,requested_options_json,started_at,completed_at,created_at,updated_at) VALUES('invocation','session','text','user','completed','{}','t','t','t','t')",[]).unwrap();
-        connection.execute("INSERT INTO agent_session_runtime_events(id,invocation_id,sequence,source,raw_payload_json,recorded_at) VALUES('event','invocation',0,'runtime','{}','t')",[]).unwrap();
+        connection.execute("INSERT INTO agent_session_runtime_events(id,invocation_id,sequence,source,raw_payload_json,normalized_json,recorded_at) VALUES('event','invocation',0,'runtime','{}',?1,'t'),('activity','invocation',1,'runtime','{}',?2,'t')", [r#"{"kind":"agent_message","text":"done","details":{"role":"assistant"},"toolActivity":null}"#, r#"{"kind":"tool_activity","text":"tool","details":{"itemType":"mcp_tool_call"},"toolActivity":{"phase":"completed","itemId":"item","server":"server","tool":"tool","status":null,"resultClassification":"succeeded"}}"#]).unwrap();
         drop(connection);
         (dir, ProductDecisionRepository::open(path).unwrap())
     }
@@ -604,6 +641,7 @@ mod tests {
                         opaque_id: "human-acceptance".into(),
                     },
                 proposal_passage: AgentPassage {
+                    kind: AgentPassageReferenceKind::AgentSessionPassage,
                     session_id: "session".into(),
                     invocation_id: "invocation".into(),
                     passage: AgentPassageKind::FinalResponse {
@@ -617,6 +655,7 @@ mod tests {
                     opaque_id: "agent-record".into(),
                 },
                 destination: AgentPassage {
+                    kind: AgentPassageReferenceKind::AgentSessionPassage,
                     session_id: "session".into(),
                     invocation_id: "invocation".into(),
                     passage: AgentPassageKind::SubmittedInput,
@@ -703,6 +742,7 @@ mod tests {
                 opaque_id: "human-acceptance".into(),
             },
             proposal_passage: AgentPassage {
+                kind: AgentPassageReferenceKind::AgentSessionPassage,
                 session_id: "foreign".into(),
                 invocation_id: "invocation".into(),
                 passage: AgentPassageKind::SubmittedInput,
@@ -764,6 +804,10 @@ mod tests {
     fn wire_contract_uses_exact_navigation_destinations_and_rejects_unsupported_origins() {
         let value = serde_json::to_value(input("wire", None)).unwrap();
         assert_eq!(
+            value["acceptanceProvenance"]["proposalPassage"]["kind"],
+            "agent_session_passage"
+        );
+        assert_eq!(
             value["acceptanceProvenance"]["humanInteractionOrigin"]["opaqueId"],
             "human-acceptance"
         );
@@ -790,5 +834,42 @@ mod tests {
             repo.accept(invalid_manual),
             Err(ProductDecisionError::InvalidInput)
         );
+    }
+    #[test]
+    fn persisted_normalized_event_kind_must_match_its_requested_passage_anchor() {
+        let (_dir, repo) = repo();
+        let mut activity_as_final = input("activity-as-final", None);
+        activity_as_final.acceptance_provenance = AcceptanceProvenance::AgentAssisted {
+            human_interaction_origin: ProductDecisionEvidenceOriginReference::HumanInteraction {
+                opaque_id: "human".into(),
+            },
+            proposal_passage: AgentPassage {
+                kind: AgentPassageReferenceKind::AgentSessionPassage,
+                session_id: "session".into(),
+                invocation_id: "invocation".into(),
+                passage: AgentPassageKind::FinalResponse {
+                    runtime_event_id: "activity".into(),
+                },
+            },
+        };
+        assert_eq!(
+            repo.accept(activity_as_final),
+            Err(ProductDecisionError::InvalidInput)
+        );
+        let mut final_as_activity = input("final-as-activity", None);
+        final_as_activity.current_actionable_evidence[0]
+            .destination
+            .passage = AgentPassageKind::Activity {
+            runtime_event_id: "event".into(),
+        };
+        assert_eq!(
+            repo.accept(final_as_activity),
+            Err(ProductDecisionError::InvalidInput)
+        );
+        let mut activity = input("activity", None);
+        activity.current_actionable_evidence[0].destination.passage = AgentPassageKind::Activity {
+            runtime_event_id: "activity".into(),
+        };
+        assert!(repo.accept(activity).is_ok());
     }
 }

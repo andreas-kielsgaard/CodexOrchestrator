@@ -1,25 +1,14 @@
-/** Product-owned durable boundary. Recorded development decisions use a separate read contract. */
-export type ProductDecisionAgentPassage = Readonly<{
-  sessionId: string;
-  invocationId: string;
-  passage:
-    | Readonly<{ kind: 'submitted_input' }>
-    | Readonly<{ kind: 'outcome' }>
-    | Readonly<{ kind: 'activity'; runtimeEventId: string }>
-    | Readonly<{ kind: 'final_response'; runtimeEventId: string }>;
-}>;
+import type {
+  ProductDecisionConversationPassageReference,
+  ProductDecisionEvidenceDestination,
+  ProductDecisionEvidenceOriginReference,
+} from './epicProductDecisions';
 
-export type ProductDecisionEvidenceOriginReference =
-  | Readonly<{ kind: 'human_interaction'; opaqueId: string }>
-  | Readonly<{ kind: 'agent_session_completed'; opaqueId: string }>
-  | Readonly<{ kind: 'work_unit_approved'; opaqueId: string }>
-  | Readonly<{ kind: 'sprint_completed'; opaqueId: string }>
-  | Readonly<{ kind: 'epic_completed'; opaqueId: string }>;
-
-export type ProductDecisionHumanAcceptanceOrigin = Readonly<{
-  kind: 'human_interaction';
-  opaqueId: string;
-}>;
+/** Product-owned durable boundary. Recorded development decisions use the same typed origins and destinations. */
+type ProductDecisionHumanAcceptanceOrigin = Extract<
+  ProductDecisionEvidenceOriginReference,
+  { readonly kind: 'human_interaction' }
+>;
 
 export type ProductDecisionAcceptanceProvenance =
   | Readonly<{
@@ -29,14 +18,14 @@ export type ProductDecisionAcceptanceProvenance =
   | Readonly<{
       kind: 'agent_assisted';
       humanInteractionOrigin: ProductDecisionHumanAcceptanceOrigin;
-      proposalPassage: ProductDecisionAgentPassage;
+      proposalPassage: ProductDecisionConversationPassageReference;
     }>;
 
 export type ProductDecisionCurrentActionableEvidence = Readonly<{
   evidenceId: string;
   originReference: ProductDecisionEvidenceOriginReference;
   /** Exact, application-recognized destination for the established Product Decision navigation seam. */
-  destination: ProductDecisionAgentPassage;
+  destination: ProductDecisionEvidenceDestination;
 }>;
 
 /** Retained audit context only: it has no current actionable destination until relinked. */
