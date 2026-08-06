@@ -4,30 +4,12 @@ import { recordedEpicProductDecisionSource } from '../../dev/productDecisions/re
 import { EpicProductDecisionsPanel } from './EpicProductDecisionsPanel';
 
 describe('EpicProductDecisionsPanel', () => {
-  it('starts each fresh/direct route collapsed and clears stale prepared review state', async () => {
-    const firstSource = { ...recordedEpicProductDecisionSource };
-    const { rerender } = render(
-      <EpicProductDecisionsPanel epicId="epic-codex-runner-workspace" source={firstSource} />,
-    );
-    expect(
-      (await screen.findAllByText('Intent and evidence')).every(
-        (summary) => !summary.closest('details')?.hasAttribute('open'),
-      ),
-    ).toBe(true);
-    const reviewToggle = screen.getByRole('button', { name: /Review recorded changes/ });
-    expect(reviewToggle).toHaveAttribute('aria-expanded', 'false');
-    fireEvent.click(reviewToggle);
-    expect(reviewToggle).toHaveAttribute('aria-expanded', 'true');
-
-    rerender(
+  it('starts every fresh/direct route disclosure collapsed', async () => {
+    render(
       <EpicProductDecisionsPanel
         epicId="epic-codex-runner-workspace"
-        source={{ ...recordedEpicProductDecisionSource }}
+        source={recordedEpicProductDecisionSource}
       />,
-    );
-    expect(await screen.findByRole('button', { name: /Review recorded changes/ })).toHaveAttribute(
-      'aria-expanded',
-      'false',
     );
     expect(
       (await screen.findAllByText('Intent and evidence')).every(

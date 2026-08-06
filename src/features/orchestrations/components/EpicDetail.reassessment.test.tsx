@@ -64,6 +64,22 @@ describe('Epic reassessment presentation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Back to Epics' }));
     expect(onBack).toHaveBeenCalledTimes(1);
   });
+
+  it('reinitializes every disclosure collapsed after leaving and re-entering Product Decisions', async () => {
+    renderProductDecisions(false);
+    const firstSummary = (await screen.findAllByText('Intent and evidence'))[0]!;
+    fireEvent.click(firstSummary);
+    expect(firstSummary.closest('details')).toHaveAttribute('open');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Plan' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Product decisions' }));
+
+    expect(
+      (await screen.findAllByText('Intent and evidence')).every(
+        (summary) => !summary.closest('details')?.hasAttribute('open'),
+      ),
+    ).toBe(true);
+  });
 });
 
 function renderProductDecisions(globalBackAvailable: boolean) {
