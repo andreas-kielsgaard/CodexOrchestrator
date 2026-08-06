@@ -242,6 +242,7 @@ struct NativeCliProvenance {
     version: String,
     workspace_sandbox_supported: bool,
     danger_full_access_supported: bool,
+    danger_network_enforcement_supported: bool,
     non_interactive_approval_supported: bool,
 }
 
@@ -382,6 +383,9 @@ impl NativeCliPort for SystemNativeCliPort {
             && sandbox_help.contains("--sandbox-state-readable-root")
             && sandbox_help.contains("--sandbox-state-disable-network");
         let danger_full_access_supported = exec_help.contains("danger-full-access");
+        let danger_network_enforcement_supported = exec_help.contains("--sandbox-state-json")
+            && exec_help.contains("--sandbox-state-readable-root")
+            && exec_help.contains("--sandbox-state-disable-network");
         let non_interactive_approval_supported = exec_help.contains("--dangerously-bypass-approvals-and-sandbox");
         Ok(NativeCliSurface {
             provenance: NativeCliProvenance {
@@ -389,6 +393,7 @@ impl NativeCliPort for SystemNativeCliPort {
                 version: version.trim().to_string(),
                 workspace_sandbox_supported,
                 danger_full_access_supported,
+                danger_network_enforcement_supported,
                 non_interactive_approval_supported,
             },
         })
@@ -558,7 +563,8 @@ pub(crate) struct NativeLaunchProjectionDto {
     version: String,
     arguments: Vec<String>,
     working_root: String,
-    network_disabled: bool,
+    requested_network_disabled: bool,
+    effective_network_enforced: bool,
     non_interactive_approval: bool,
     windows_uac_authority: &'static str,
 }
@@ -1231,6 +1237,17 @@ impl NativeProfileService {
                         "Danger full access launch authority is not currently established".into(),
                     );
                 }
+                if !surface.provenance.danger_network_enforcement_supported {
+                    self.set_attention(
+                        id,
+                        "cli",
+                        Some("codex_cli_danger_network_enforcement_unsupported"),
+                        false,
+                    )?;
+                    return Err(
+                        "The resolved Codex CLI cannot enforce the application-required network policy for danger full access".into(),
+                    );
+                }
             }
         }
         Ok(NativeLaunchProjectionDto {
@@ -1249,11 +1266,15 @@ impl NativeProfileService {
             ]
             .into_iter()
             .chain((mode == ExecutionMode::DangerFullAccess).then_some("--dangerously-bypass-approvals-and-sandbox".into()))
+            .chain((mode == ExecutionMode::DangerFullAccess).then_some("--sandbox-state-json".into()))
+            .chain((mode == ExecutionMode::DangerFullAccess).then_some(WORKSPACE_SANDBOX_STATE_JSON.into()))
+            .chain((mode == ExecutionMode::DangerFullAccess).then_some("--sandbox-state-disable-network".into()))
+            .chain((mode == ExecutionMode::DangerFullAccess).then_some("--sandbox-state-readable-root".into()))
+            .chain((mode == ExecutionMode::DangerFullAccess).then_some(target.working_root.to_string_lossy().into_owned()))
             .collect(),
             working_root: target.working_root.to_string_lossy().into_owned(),
-            // `danger-full-access` bypasses Codex sandboxing. The separate target requirement is
-            // retained, but it is not evidence that this invocation enforces network denial.
-            network_disabled: mode == ExecutionMode::WorkspaceWrite && target.network_disabled,
+            requested_network_disabled: target.network_disabled,
+            effective_network_enforced: true,
             non_interactive_approval: mode == ExecutionMode::DangerFullAccess,
             windows_uac_authority: "not_granted",
         })
@@ -2272,6 +2293,7 @@ mod tests {
         terminated: Arc<Mutex<usize>>,
         next_child_result: Mutex<Option<NativeCliReceipt>>,
         surface_supported: bool,
+        danger_network_enforcement_supported: bool,
     }
     impl FakeCli {
         fn succeeding() -> Self {
@@ -2285,12 +2307,20 @@ mod tests {
                 terminated: Arc::new(Mutex::new(0)),
                 next_child_result: Mutex::new(None),
                 surface_supported: true,
+                danger_network_enforcement_supported: false,
             }
         }
 
         fn unsupported_surface() -> Self {
             Self {
                 surface_supported: false,
+                ..Self::succeeding()
+            }
+        }
+
+        fn enforcing_danger_network() -> Self {
+            Self {
+                danger_network_enforcement_supported: true,
                 ..Self::succeeding()
             }
         }
@@ -2321,6 +2351,7 @@ mod tests {
                     version: "codex-cli test".into(),
                     workspace_sandbox_supported: true,
                     danger_full_access_supported: true,
+                    danger_network_enforcement_supported: self.danger_network_enforcement_supported,
                     non_interactive_approval_supported: true,
                 },
             })
@@ -2788,7 +2819,7 @@ mod tests {
 
     #[test]
     fn mode_specific_launch_projections_are_bounded_and_do_not_claim_uac() {
-        let (directory, service) = service();
+        let (directory, mut service) = service();
         let profile = service.create_dedicated().unwrap();
         service.select(&profile.id).unwrap();
         let root = directory.path().join("assigned-application-root");
@@ -2816,7 +2847,8 @@ mod tests {
             .any(|pair| pair == ["--sandbox", "workspace-write"]));
         assert_eq!(workspace.executable, "C:/application-owned/codex.exe");
         assert_eq!(workspace.version, "codex-cli test");
-        assert!(workspace.network_disabled);
+        assert!(workspace.requested_network_disabled);
+        assert!(workspace.effective_network_enforced);
         assert_eq!(workspace.windows_uac_authority, "not_granted");
         service
             .select_execution_mode(&profile.id, ExecutionMode::DangerFullAccess)
@@ -2825,6 +2857,7 @@ mod tests {
             .project_launch(&profile.id, &workspace_target)
             .is_err());
         service.authorize_danger_full_access(&profile.id).unwrap();
+        service.cli = Arc::new(FakeCli::enforcing_danger_network());
         let danger = service
             .project_launch(&profile.id, &workspace_target)
             .unwrap();
@@ -2836,8 +2869,17 @@ mod tests {
             .arguments
             .iter()
             .any(|argument| argument == "--dangerously-bypass-approvals-and-sandbox"));
+        assert!(danger
+            .arguments
+            .windows(2)
+            .any(|pair| pair == ["--sandbox-state-json", WORKSPACE_SANDBOX_STATE_JSON]));
+        assert!(danger
+            .arguments
+            .iter()
+            .any(|argument| argument == "--sandbox-state-disable-network"));
         assert!(danger.non_interactive_approval);
-        assert!(!danger.network_disabled);
+        assert!(danger.requested_network_disabled);
+        assert!(danger.effective_network_enforced);
         assert_eq!(danger.windows_uac_authority, "not_granted");
         let canary = service.project_full_access_canary(&profile.id).unwrap();
         assert_eq!(canary.evidence_state, "not_run");
@@ -2870,7 +2912,7 @@ mod tests {
     #[test]
     fn full_access_canary_persists_then_settles_only_the_owned_sentinel_receipt() {
         let (directory, mut service) = service();
-        let fake = Arc::new(FakeCli::succeeding());
+        let fake = Arc::new(FakeCli::enforcing_danger_network());
         *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
             succeeded: true,
             sandbox_receipt_observed: true,
@@ -2898,6 +2940,25 @@ mod tests {
         ).unwrap();
         assert_eq!(persisted, "passed");
         assert!(directory.path().join("app").exists());
+    }
+
+    #[test]
+    fn unsupported_danger_network_policy_blocks_canary_before_a_child_starts() {
+        let (_directory, mut service) = service();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake.clone();
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        service
+            .select_execution_mode(&profile.id, ExecutionMode::DangerFullAccess)
+            .unwrap();
+        service.authorize_danger_full_access(&profile.id).unwrap();
+        assert!(service.run_danger_full_access_canary(&profile.id).is_err());
+        assert_eq!(*fake.starts.lock().unwrap(), 0);
+        assert_eq!(
+            service.profile(&profile.id).unwrap().readiness.attentions.cli,
+            Some("codex_cli_danger_network_enforcement_unsupported".into())
+        );
     }
 
     #[test]
