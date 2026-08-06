@@ -16,7 +16,10 @@ describe('durable Product Decision transport', () => {
 
   it('uses only the productive current/history/explicit-acceptance commands', async () => {
     const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
-    const client = createTauriProductDecisionClient(async <T>(command: string, args) => {
+    const client = createTauriProductDecisionClient(async <T>(
+      command: string,
+      args?: Record<string, unknown>,
+    ) => {
       calls.push({ command, args });
       return (command === 'load_product_decision_current_query' ? { decisions: [] } : []) as T;
     });
