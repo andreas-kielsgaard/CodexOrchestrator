@@ -2153,6 +2153,43 @@ mod tests {
         }
     }
 
+    struct SynchronousProvenanceRuntime {
+        inner: Arc<CodexCliRuntime>,
+        starts: AtomicUsize,
+    }
+
+    impl AgentRuntime for SynchronousProvenanceRuntime {
+        fn preflight_invocation(&self, mode: RuntimeInvocationMode, requested_options: &AgentRuntimeOptions) -> Result<RuntimeInvocationPreflight, RuntimePortError> {
+            self.inner.preflight_invocation(mode, requested_options)
+        }
+
+        fn start_invocation(&self, request: RuntimeInvocationRequest, sink: Arc<dyn AgentRuntimeUpdateSink>) -> Result<(), RuntimePortError> {
+            self.starts.fetch_add(1, Ordering::SeqCst);
+            sink.emit_update(&request.invocation_id, RuntimeUpdate::Event(RuntimeEventDraft {
+                source: AgentRuntimeEventSource::Runtime,
+                raw_payload: serde_json::json!({
+                    "kind": "codex_launch_provenance",
+                    "executable": "codex.exe",
+                    "invocationMode": "start",
+                    "configurationKeys": ["approval_policy"],
+                    "environmentKeys": []
+                }),
+                normalized: None,
+            }))?;
+            self.inner.start_invocation(request, sink)
+        }
+
+        fn resume_invocation(&self, request: RuntimeInvocationRequest, context: crate::agent_sessions::domain::ExternalRuntimeContextId, sink: Arc<dyn AgentRuntimeUpdateSink>) -> Result<(), RuntimePortError> {
+            self.inner.resume_invocation(request, context, sink)
+        }
+
+        fn cancel_invocation(&self, invocation_id: &AgentInvocationId) -> Result<(), RuntimePortError> {
+            self.inner.cancel_invocation(invocation_id)
+        }
+
+        fn shutdown(&self) -> Result<(), RuntimePortError> { self.inner.shutdown() }
+    }
+
     impl AgentRuntime for RecordedRuntime {
         fn preflight_invocation(
             &self,
@@ -7845,6 +7882,103 @@ mod tests {
                 |row| row.get(0),
             ).unwrap()
         }
+    }
+
+    #[test]
+    #[ignore = "requires CODEX_PIP01H_HANDLER_LIVE=true and launches one real Codex Handler invocation"]
+    fn installed_codex_handler_reentrant_launch_preserves_the_initial_boundary() {
+        assert_eq!(std::env::var("CODEX_PIP01H_HANDLER_LIVE").as_deref(), Ok("true"), "refusing live Handler proof without explicit opt-in");
+        let fixture = Fixture::unstarted();
+        let runtime = Arc::new(CodexCliRuntime::system("codex", None));
+        let controlled_runtime = Arc::new(SynchronousProvenanceRuntime { inner: runtime.clone(), starts: AtomicUsize::new(0) });
+        let notifier = Arc::new(TransitionNotifier::default());
+        let sessions = Arc::new(AgentSessionApplication::new(
+            Arc::new(SqliteAgentSessionRepository::new(Connection::open(&fixture.database_path).expect("open owned live database")).expect("compose owned live repository")),
+            controlled_runtime.clone(), notifier.clone(), Arc::new(SystemAgentSessionProviders), Arc::new(SystemAgentSessionProviders), Some("pip01h-installed-codex".into()),
+        ));
+        let (sprint_id, epic_id): (String, String) = Connection::open(&fixture.database_path).expect("open owned live database").query_row(
+            "SELECT id,epic_id FROM initiated_sprints ORDER BY ordinal LIMIT 1", [], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).expect("load owned Sprint route");
+        let repository_root = fixture._directory.path().join("pip01h-live-repository");
+        let sprint_root = fixture._directory.path().join("pip01h-live-sprint");
+        fs::create_dir_all(&repository_root).expect("create owned live repository");
+        let git = |root: &Path, arguments: &[&str]| -> String {
+            let output = std::process::Command::new("git").args(arguments).current_dir(root).output().expect("run owned Git command");
+            assert!(output.status.success(), "owned Git command failed");
+            String::from_utf8(output.stdout).expect("decode owned Git output").trim().into()
+        };
+        git(&repository_root, &["init"]);
+        git(&repository_root, &["config", "user.email", "pip01h@example.test"]);
+        git(&repository_root, &["config", "user.name", "PIP-01H Test"]);
+        fs::write(repository_root.join("README.md"), "owned Handler proof\n").expect("write owned live workspace");
+        git(&repository_root, &["add", "README.md"]);
+        git(&repository_root, &["commit", "-m", "owned Handler proof"]);
+        let baseline = git(&repository_root, &["rev-parse", "HEAD"]);
+        git(&repository_root, &["worktree", "add", "-b", "pip01h-live-sprint", sprint_root.to_string_lossy().as_ref(), &baseline]);
+        fs::write(sprint_root.join("README.md"), "owned Handler proof Sprint state\n").expect("advance owned live Sprint workspace");
+        git(&sprint_root, &["add", "README.md"]);
+        git(&sprint_root, &["commit", "-m", "owned Handler proof Sprint state"]);
+        let current = git(&sprint_root, &["rev-parse", "HEAD"]);
+        let repository_root = repository_root.canonicalize().expect("canonicalize owned repository");
+        let sprint_root = sprint_root.canonicalize().expect("canonicalize owned Sprint worktree");
+        let authority_repository = Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).expect("open owned authority repository"));
+        let authority_id = match authority_repository.store_initiated_sprint_git_authority(InitiatedSprintGitAuthorityWrite {
+            sprint_id: sprint_id.clone(), idempotency_key: "pip01h-live-authority".into(), repository_id: "pip01h-live-repository".into(),
+            repository_root: repository_root.to_string_lossy().into_owned(), repository_common_dir: repository_root.join(".git").canonicalize().expect("canonicalize owned Git metadata").to_string_lossy().into_owned(),
+            worktree_id: "pip01h-live-sprint-worktree".into(), worktree_root: sprint_root.to_string_lossy().into_owned(), baseline_object_id: baseline.clone(),
+            current_object_id: current.clone(), runtime_instance_ref: "pip01h-live-runtime".into(), runtime_source_ref: "pip01h-live-source".into(), source_fingerprint: "f".repeat(64),
+        }).expect("store owned Handler authority") {
+            crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::Stored { authority_id }
+            | crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::IdempotentReplay { authority_id } => authority_id,
+        };
+        let transition = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            sessions.clone(),
+        )
+        .expect("compose owned Handler transition");
+        let planner_harness = conversation_harness::profile(ConversationHarnessRole::WorkSlicePlanner)
+            .expect("load configured Planner Harness");
+        let now = "2026-08-06T00:00:00Z";
+        let connection = Connection::open(&fixture.database_path).expect("open owned live database");
+        connection.execute("INSERT INTO sprint_runner_transitions (sprint_id,epic_id,request_id,epic_runner_session_id,epic_runner_invocation_id,epic_runner_harness_key,epic_runner_harness_version,sprint_runner_harness_key,sprint_runner_harness_version,sprint_runner_session_id,sprint_runner_invocation_id,requested_at,authorized_at) VALUES (?1,?2,'pip01h-request','pip01h-epic-session','pip01h-epic-invocation','epic_runner',1,'sprint_runner',1,'pip01h-sprint-session','pip01h-sprint-invocation',?3,?3)", params![sprint_id,epic_id,now]).expect("seed owned Sprint route");
+        connection.execute("INSERT INTO work_slice_planning_requests (planning_point_id,sprint_id,planning_episode,is_current,request_fact_id,parent_sprint_runner_session_id,parent_planning_control_invocation_id,authority_id,authority_epic_id,authority_provenance_id,authority_repository_id,authority_worktree_id,authority_baseline_object_id,authority_current_object_id,authority_source_fingerprint,repository_worktree_route,requested_at,authorized_at,planner_harness_key,planner_harness_version,planner_session_id,planner_invocation_id) VALUES ('pip01h-point',?1,1,1,'pip01h-request-fact','pip01h-sprint-session','pip01h-control',?2,?3,'pip01h-provenance','pip01h-live-repository','pip01h-live-sprint-worktree',?4,?5,?6,'owned-route',?7,?7,'work_slice_planner',?8,'pip01h-planner-session','pip01h-planner-invocation')", params![sprint_id,authority_id,epic_id,baseline,current,"f".repeat(64),now,planner_harness.version]).expect("seed owned planning request");
+        connection.execute("INSERT INTO work_slice_planning_episodes (planning_point_id,sprint_id,authority_id,planner_session_id,planner_invocation_id,harness_json,repository_worktree_route,created_at) VALUES ('pip01h-point',?1,?2,'pip01h-planner-session','pip01h-planner-invocation','{}','owned-route',?3)", params![sprint_id,authority_id,now]).expect("seed owned planning episode");
+        connection.execute("INSERT INTO work_slice_proposal_revisions (revision_id,planning_point_id,revision_number,is_current,idempotency_key,content_fingerprint,proposal_json,submitted_at,validation_at,validation_result) VALUES ('pip01h-revision','pip01h-point',1,1,'pip01h-revision-key','pip01h-fingerprint','{}',?1,?1,'valid')", [now]).expect("seed owned preaccepted revision");
+        connection.execute("INSERT INTO work_unit_materializations (materialization_id,planning_point_id,accepted_revision_id,epic_id,sprint_id,work_slice_id,authorization_recorded_at,attempt_recorded_at,work_units_created_at,relationships_completed_at,settled_at) VALUES ('pip01h-materialization','pip01h-point','pip01h-revision',?1,?2,'pip01h-slice',?3,?3,?3,?3,?3)", params![epic_id,sprint_id,now]).expect("seed owned materialization");
+        connection.execute("INSERT INTO work_units (work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification) VALUES ('pip01h-handler-unit','pip01h-materialization','pip01h-slice','pip01h-revision',0,'Handler proof','Bounded initial Handler proof.')", []).expect("seed owned Work Unit");
+        drop(connection);
+        let handler_repository = Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).expect("open owned Handler repository"));
+        let handler = Arc::new(WorkUnitExecutionHarnessService::new(
+            ProductExecutionSupportState::new(&fixture.database_path, fixture._directory.path().join("pip01h-live-workspaces"), handler_repository.clone()).expect("compose owned execution support").service(),
+            sessions.clone(), Arc::new(OrchestrationApplication::new(handler_repository)),
+        ));
+        notifier.set_sprint(&transition);
+        transition.attach_work_unit_handler_activation(handler.clone()).expect("launch owned initial Handler");
+        let (session_id, invocation_id): (String, String) = Connection::open(&fixture.database_path).expect("open owned live database").query_row("SELECT handler_session_id,handler_invocation_id FROM work_unit_handler_activations WHERE work_unit_id='pip01h-handler-unit'", [], |row| Ok((row.get(0)?,row.get(1)?))).expect("load owned Handler identity");
+        let session = AgentSessionId::new(session_id).expect("parse owned Handler session");
+        let invocation = AgentInvocationId::new(invocation_id.clone()).expect("parse owned Handler invocation");
+        transition.attach_work_unit_handler_activation(handler).expect("reconcile owned active Handler");
+        assert_eq!(controlled_runtime.starts.load(Ordering::SeqCst), 1, "Handler reconciliation launched more than one initial runtime");
+        let deadline = Instant::now() + Duration::from_secs(180);
+        let completed = loop {
+            let history = sessions.load_session(&session).expect("load owned Handler history");
+            let entry = history.invocations.iter().find(|entry| entry.invocation.id == invocation).expect("retain owned Handler invocation");
+            if entry.invocation.status.is_terminal() {
+                break (history.session.runtime_binding.external_context_id.is_some(), entry.invocation.clone());
+            }
+            assert!(Instant::now() < deadline, "installed Handler did not reach a terminal state");
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        assert!(completed.0, "installed Handler did not persist external context");
+        assert_eq!(completed.1.status, AgentInvocationStatus::Completed, "installed Handler terminal was not completed");
+        assert_eq!(completed.1.exit_code, Some(0), "installed Handler terminal did not report exit 0");
+        let connection = Connection::open(&fixture.database_path).expect("open owned live database");
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id='pip01h-handler-unit' AND launch_accepted_at IS NOT NULL AND handler_ready_at IS NOT NULL", [], |row| row.get(0)).expect("read Handler readiness"), 1);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_session_runtime_events WHERE invocation_id=?1 AND sequence=0 AND json_extract(raw_payload_json,'$.kind')='codex_launch_provenance'", [&invocation_id], |row| row.get(0)).expect("read safe sequence-zero provenance"), 1);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM execution_support_attempt_authorizations WHERE role_kind='implementer'", [], |row| row.get(0)).expect("read Implementer authority count"), 0);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_slice_execution_settlements", [], |row| row.get(0)).expect("read Sprint settlement count"), 0);
+        drop(connection);
+        runtime.shutdown().expect("shut down owned live runtime");
     }
 
     #[test]
