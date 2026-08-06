@@ -599,6 +599,11 @@
   background: #f7fbfc;
 }
 
+.work-unit-activity__list > li:focus-visible {
+  outline: 2px solid #587f93;
+  outline-offset: 2px;
+}
+
 .work-unit-lifecycle li.is-highlighted button {
   border-color: #7295a6;
   background: #eef6f9;

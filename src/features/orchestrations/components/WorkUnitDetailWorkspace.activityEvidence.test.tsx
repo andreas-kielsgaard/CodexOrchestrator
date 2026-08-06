@@ -53,6 +53,34 @@ describe('WorkUnitDetailWorkspace Activity and Evidence', () => {
     expect(screen.getByLabelText('Agent Session turn: invocation-2')).toBeInTheDocument();
   });
 
+  it('selects from the primary card surface with pointer and keyboard input', async () => {
+    const user = userEvent.setup();
+    render(<Workspace />);
+
+    const card = screen
+      .getByRole('button', { name: /Review delivery recorded invocation-1/ })
+      .closest('li')!;
+    expect(card).toHaveAttribute('role', 'group');
+    expect(card).toHaveAttribute('tabindex', '0');
+
+    fireEvent.click(card);
+    expect(screen.getByLabelText('Agent Session turn: invocation-1')).toBeInTheDocument();
+
+    card.focus();
+    await user.keyboard('{Space}');
+    expect(
+      screen.getByRole('button', { name: /Review delivery recorded invocation-1/ }),
+    ).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('does not let nested application detail toggle the owning card', async () => {
+    const user = userEvent.setup();
+    render(<Workspace />);
+
+    await user.click(screen.getByLabelText('Application summary'));
+    expect(screen.queryByLabelText('Agent Session turn: invocation-1')).toBeNull();
+  });
+
   it('fails closed when an activity points at a missing Session', async () => {
     const user = userEvent.setup();
     render(<Workspace missingSession />);

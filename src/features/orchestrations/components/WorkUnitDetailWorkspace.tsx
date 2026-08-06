@@ -424,48 +424,72 @@ function WorkUnitActivityView({
   const selectedActivity = allActivities.find(
     (activity) => activity.activityId === selectedActivityId,
   );
-  const renderActivity = (activity: ProductWorkUnitInspectionActivityV1) => (
-    <li
-      key={activity.activityId}
-      className={[
-        selectedActivityId === activity.activityId ? 'is-selected' : undefined,
-        highlightedActivityId === activity.activityId ? 'is-highlighted' : undefined,
-      ]
-        .filter(Boolean)
-        .join(' ')}
-      data-activity-id={activity.activityId}
-      onMouseEnter={() => onHighlightActivity(activity.activityId)}
-      onMouseLeave={() => onHighlightActivity(null)}
-    >
-      <button
-        type="button"
-        aria-pressed={selectedActivityId === activity.activityId}
-        onClick={() => onSelectActivity(activity.activityId)}
-        onFocus={() => onHighlightActivity(activity.activityId)}
-        onBlur={() => onHighlightActivity(null)}
+  const renderActivity = (activity: ProductWorkUnitInspectionActivityV1) => {
+    const label = activityLabels.get(activity.activityId) ?? activityLabel(activity);
+    const isNestedActivityTarget = (target: EventTarget | null) =>
+      target instanceof Element &&
+      Boolean(
+        target.closest(
+          '[data-activity-nested], button, a, input, select, textarea, summary, [role="button"], [role="link"], [contenteditable="true"]',
+        ),
+      );
+
+    return (
+      <li
+        key={activity.activityId}
+        className={[
+          selectedActivityId === activity.activityId ? 'is-selected' : undefined,
+          highlightedActivityId === activity.activityId ? 'is-highlighted' : undefined,
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        data-activity-id={activity.activityId}
+        role="group"
+        aria-label={`Select activity ${label}`}
+        tabIndex={0}
+        onClick={(event) => {
+          if (!isNestedActivityTarget(event.target)) onSelectActivity(activity.activityId);
+        }}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onSelectActivity(activity.activityId);
+          }
+        }}
+        onMouseEnter={() => onHighlightActivity(activity.activityId)}
+        onMouseLeave={() => onHighlightActivity(null)}
       >
-        <span className="work-unit-activity__role">{roleLabel(activity.role)}</span>
-        <strong>{activityLabels.get(activity.activityId) ?? activityLabel(activity)}</strong>
-        <small>{activity.invocationId}</small>
-      </button>
-      {activity.applicationSummary && (
-        <ApplicationActivitySummary
-          activity={activity}
-          activities={allActivities}
-          activityLabels={activityLabels}
-          onSelectActivity={onSelectActivity}
-        />
-      )}
-      {selectedActivityId === activity.activityId ? (
-        <SelectedActivityTurn
-          activity={activity}
-          activityLabel={activityLabels.get(activity.activityId) ?? activityLabel(activity)}
-          session={sessions.find((session) => session.sessionId === activity.agentSessionId)}
-          onOpenActivitySession={onOpenActivitySession}
-        />
-      ) : null}
-    </li>
-  );
+        <button
+          type="button"
+          aria-pressed={selectedActivityId === activity.activityId}
+          onClick={() => onSelectActivity(activity.activityId)}
+          onFocus={() => onHighlightActivity(activity.activityId)}
+          onBlur={() => onHighlightActivity(null)}
+        >
+          <span className="work-unit-activity__role">{roleLabel(activity.role)}</span>
+          <strong>{label}</strong>
+          <small>{activity.invocationId}</small>
+        </button>
+        {activity.applicationSummary && (
+          <ApplicationActivitySummary
+            activity={activity}
+            activities={allActivities}
+            activityLabels={activityLabels}
+            onSelectActivity={onSelectActivity}
+          />
+        )}
+        {selectedActivityId === activity.activityId ? (
+          <SelectedActivityTurn
+            activity={activity}
+            activityLabel={activityLabels.get(activity.activityId) ?? activityLabel(activity)}
+            session={sessions.find((session) => session.sessionId === activity.agentSessionId)}
+            onOpenActivitySession={onOpenActivitySession}
+          />
+        ) : null}
+      </li>
+    );
+  };
 
   return (
     <section className="work-unit-activity" aria-label="Work Unit Activity">
@@ -526,7 +550,11 @@ function SelectedActivityTurn({
       ? session?.transcript?.invocations[invocationIndex - 1]
       : undefined;
   return (
-    <section className="work-unit-activity__inspection" aria-label="Selected activity turn">
+    <section
+      className="work-unit-activity__inspection"
+      aria-label="Selected activity turn"
+      data-activity-nested
+    >
       <header>
         <div>
           <span>Recorded review detail</span>
@@ -593,7 +621,11 @@ function ApplicationActivitySummary({
 }) {
   const summary = activity.applicationSummary!;
   return (
-    <section className="work-unit-activity__application" aria-label="Application summary">
+    <section
+      className="work-unit-activity__application"
+      aria-label="Application summary"
+      data-activity-nested
+    >
       <h4>Application summary</h4>
       <ul>
         {summary.applicationEvents.map((event) => (
