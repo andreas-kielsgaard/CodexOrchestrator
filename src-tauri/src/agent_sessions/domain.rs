@@ -238,6 +238,36 @@ impl AgentInvocation {
         validate_invocation(&next)?;
         Ok(next)
     }
+
+    /// A restart may prove that no in-process runtime owner survived, while the durable launch
+    /// acceptance marker is still absent. Only that classified interruption can return to the
+    /// pre-launch state for an application-owned recovery of this exact invocation.
+    pub(crate) fn recover_pre_acceptance_interruption(
+        &self,
+        updated_at: DateTime<Utc>,
+    ) -> Result<Self, ContractViolation> {
+        let recoverable = self.status == AgentInvocationStatus::Interrupted
+            && self.runtime_error.as_ref().is_some_and(|error| {
+                error.code == "runtime_startup_without_launch_acceptance"
+            });
+        if !recoverable {
+            return Err(ContractViolation::InvalidInvocationTransition {
+                from: self.status,
+                to: AgentInvocationStatus::Pending,
+            });
+        }
+        let mut next = self.clone();
+        next.status = AgentInvocationStatus::Pending;
+        next.effective_options = None;
+        next.started_at = None;
+        next.completed_at = None;
+        next.exit_code = None;
+        next.signal = None;
+        next.runtime_error = None;
+        next.updated_at = updated_at;
+        validate_invocation(&next)?;
+        Ok(next)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

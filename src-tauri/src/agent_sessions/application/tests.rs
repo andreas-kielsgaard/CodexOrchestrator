@@ -437,26 +437,26 @@ fn launch_acceptance_persistence_failure_does_not_invent_durable_acceptance() {
         })
         .expect("session");
     let invocation_id = application.allocate_application_invocation_id();
-    let error = match application.send_idempotent_application_message_with_launch_observation(
+    let result = application
+        .send_idempotent_application_message_with_launch_observation(
         SendIdempotentApplicationAgentSessionMessageCommand {
             invocation_id: invocation_id.clone(),
             message: message(&session.id, "Accepted externally, marker fails"),
         },
         None,
-    ) {
-        Ok(_) => panic!("marker persistence must fail truthfully"),
-        Err(error) => error,
-    };
+    )
+        .expect("marker persistence failure is terminalized truthfully");
 
-    assert!(error
-        .to_string()
-        .contains("deterministic launch acceptance persistence failure"));
-    assert!(inner
+    assert!(!result.launch_accepted);
+    let invocation = inner
         .get_invocation(&invocation_id)
         .expect("invocation")
-        .expect("persisted")
-        .started_at
-        .is_some());
+        .expect("persisted");
+    assert_eq!(invocation.status, AgentInvocationStatus::Failed);
+    assert_eq!(
+        invocation.runtime_error.as_ref().map(|error| error.code.as_str()),
+        Some("runtime_launch_acceptance_persistence_failed")
+    );
     assert_eq!(
         inner
             .invocation_launch_accepted_at(&invocation_id)
@@ -472,6 +472,9 @@ fn launch_acceptance_persistence_failure_does_not_invent_durable_acceptance() {
             .expect("conservative launch evidence"),
         ApplicationInvocationLaunchEvidence::PersistedNotAccepted
     );
+    assert!(runtime.calls.lock().expect("runtime calls").iter().any(
+        |call| matches!(call, RuntimeCall::Cancel(id) if id == &invocation_id)
+    ));
 }
 
 #[test]
@@ -613,6 +616,85 @@ fn startup_reconciliation_interrupts_pending_and_running_once() {
             AgentInvocationStatus::Interrupted
         );
     }
+}
+
+#[test]
+fn classified_pre_acceptance_interruption_recovers_the_exact_application_invocation_once() {
+    let harness = Harness::new(RuntimeBehavior::StayRunning);
+    let session = harness.create_session();
+    let invocation_id = harness.application.allocate_application_invocation_id();
+    let mut prepared_message = message(&session.id, "Recover exact invocation");
+    prepared_message.working_directory = session.working_directory.clone();
+    let command = SendIdempotentApplicationAgentSessionMessageCommand {
+        invocation_id: invocation_id.clone(),
+        message: prepared_message,
+    };
+    harness
+        .application
+        .prepare_idempotent_application_invocation(command.clone())
+        .expect("prepare exact invocation");
+    let started_at = harness
+        .repository
+        .get_invocation(&invocation_id)
+        .expect("read prepared invocation")
+        .expect("prepared invocation")
+        .created_at
+        + Duration::milliseconds(1);
+    harness
+        .repository
+        .mark_invocation_running(
+            &invocation_id,
+            started_at,
+            AgentRuntimeOptions::default(),
+            started_at,
+        )
+        .expect("simulate crash after running persistence");
+
+    assert_eq!(harness.application.reconcile_startup().expect("classify gap"), 1);
+    let interrupted = harness
+        .repository
+        .get_invocation(&invocation_id)
+        .expect("read interruption")
+        .expect("persisted interruption");
+    assert_eq!(interrupted.status, AgentInvocationStatus::Interrupted);
+    assert_eq!(
+        interrupted.runtime_error.as_ref().map(|error| error.code.as_str()),
+        Some("runtime_startup_without_launch_acceptance")
+    );
+
+    harness
+        .application
+        .recover_pre_acceptance_application_invocation(&invocation_id, &session.id)
+        .expect("recover exact invocation");
+    let first = harness
+        .application
+        .launch_prepared_application_invocation_with_launch_observation(command.clone(), None)
+        .expect("launch recovered invocation");
+    let second = harness
+        .application
+        .launch_prepared_application_invocation_with_launch_observation(command, None)
+        .expect("replay accepted launch");
+
+    assert!(first.launch_accepted && second.launch_accepted);
+    assert_eq!(
+        harness
+            .repository
+            .list_invocations(&session.id)
+            .expect("exact invocation count")
+            .len(),
+        1
+    );
+    assert_eq!(
+        harness
+            .runtime
+            .calls
+            .lock()
+            .expect("runtime calls")
+            .iter()
+            .filter(|call| matches!(call, RuntimeCall::Start(request) if request.invocation_id == invocation_id))
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -1313,6 +1395,15 @@ impl AgentSessionRepository for FaultInjectingRepository {
         invocation_id: &AgentInvocationId,
     ) -> Result<Option<DateTime<Utc>>, RepositoryError> {
         self.inner.invocation_launch_accepted_at(invocation_id)
+    }
+
+    fn recover_pre_acceptance_interruption(
+        &self,
+        invocation_id: &AgentInvocationId,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentInvocation, RepositoryError> {
+        self.inner
+            .recover_pre_acceptance_interruption(invocation_id, updated_at)
     }
 
     fn finish_invocation(

@@ -120,6 +120,14 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
         invocation_id: &AgentInvocationId,
     ) -> Result<Option<DateTime<Utc>>, RepositoryError>;
 
+    /// Returns only a classified restart interruption to pending. This never reattaches a
+    /// process and never accepts a launch marker by inference.
+    fn recover_pre_acceptance_interruption(
+        &self,
+        invocation_id: &AgentInvocationId,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentInvocation, RepositoryError>;
+
     fn finish_invocation(
         &self,
         invocation_id: &AgentInvocationId,

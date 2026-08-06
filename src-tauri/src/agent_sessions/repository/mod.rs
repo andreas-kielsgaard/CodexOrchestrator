@@ -342,6 +342,33 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         invocation_launch_accepted_at_from(&connection, invocation_id)
     }
 
+    fn recover_pre_acceptance_interruption(
+        &self,
+        invocation_id: &AgentInvocationId,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentInvocation, RepositoryError> {
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction()
+            .map_err(sql_unavailable("begin pre-acceptance invocation recovery"))?;
+        if invocation_launch_accepted_at_from(&transaction, invocation_id)?.is_some() {
+            return Err(RepositoryError::new(
+                RepositoryErrorKind::Conflict,
+                "launch-accepted invocation cannot return to pre-acceptance state",
+            ));
+        }
+        let current = required_invocation(&transaction, invocation_id)?;
+        let updated = current
+            .recover_pre_acceptance_interruption(updated_at)
+            .map_err(contract_error)?;
+        update_invocation(&transaction, &updated)?;
+        touch_session(&transaction, &updated.session_id, updated_at)?;
+        transaction
+            .commit()
+            .map_err(sql_unavailable("commit pre-acceptance invocation recovery"))?;
+        Ok(updated)
+    }
+
     fn finish_invocation(
         &self,
         invocation_id: &AgentInvocationId,

@@ -1485,8 +1485,8 @@ impl PostConfirmationTransitionService {
                 .map_err(|error| TransitionError::Unavailable(error.to_string()))?
             {
                 ApplicationInvocationLaunchEvidence::LaunchAccepted => true,
-                ApplicationInvocationLaunchEvidence::PersistedNotAccepted => false,
-                ApplicationInvocationLaunchEvidence::NeverPersisted => {
+                evidence @ (ApplicationInvocationLaunchEvidence::PersistedNotAccepted
+                | ApplicationInvocationLaunchEvidence::NeverPersisted) => {
                     let sprint_runners = self
                         .sprint_runners
                         .lock()
@@ -1513,6 +1513,35 @@ impl PostConfirmationTransitionService {
                         &harness.key,
                         harness.version,
                     )?;
+                    let command = SendIdempotentApplicationAgentSessionMessageCommand {
+                        invocation_id: invocation_id.clone(),
+                        message: SendAgentSessionMessageCommand {
+                            session_id: Some(session_id.clone()),
+                            submitted_text: self
+                                .runner_prompt(&refreshed, accepted_attempt_id, &authorized_sprint_id)?,
+                            title: None,
+                            working_directory: Some(discovery_root),
+                            requested_options: Some(harness.runtime_options()),
+                        },
+                    };
+                    match evidence {
+                        ApplicationInvocationLaunchEvidence::NeverPersisted => {
+                            self.sessions
+                                .prepare_idempotent_application_invocation(command.clone())
+                                .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
+                        }
+                        ApplicationInvocationLaunchEvidence::PersistedNotAccepted => {
+                            self.sessions
+                                .recover_pre_acceptance_application_invocation(
+                                    &invocation_id,
+                                    &session_id,
+                                )
+                                .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
+                        }
+                        ApplicationInvocationLaunchEvidence::LaunchAccepted => unreachable!(),
+                    }
+                    self.repository
+                        .record_stage(&record.initiation_id, "runner_harness_applied_at")?;
                     let mut additional_args = harness.runtime_configuration_args();
                     additional_args.extend(injection.configuration_args);
                     let extension = RuntimeLaunchExtension {
@@ -1522,23 +1551,11 @@ impl PostConfirmationTransitionService {
                     };
                     let launch = self
                         .sessions
-                        .send_idempotent_application_message_with_launch_observation(
-                            SendIdempotentApplicationAgentSessionMessageCommand {
-                                invocation_id,
-                                message: SendAgentSessionMessageCommand {
-                                    session_id: Some(session_id),
-                                    submitted_text: self
-                                        .runner_prompt(&refreshed, accepted_attempt_id, &authorized_sprint_id)?,
-                                    title: None,
-                                    working_directory: Some(discovery_root),
-                                    requested_options: Some(harness.runtime_options()),
-                                },
-                            },
+                        .launch_prepared_application_invocation_with_launch_observation(
+                            command,
                             Some(extension),
                         )
                         .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
-                    self.repository
-                        .record_stage(&record.initiation_id, "runner_harness_applied_at")?;
                     launch.launch_accepted
                 }
             };
@@ -3676,7 +3693,7 @@ mod tests {
     }
 
     #[test]
-    fn runner_launch_stage_requires_durable_launch_acceptance() {
+    fn reopened_unaccepted_runner_recovers_the_exact_prepared_invocation_once() {
         let mut runner = Fixture::new();
         let bootstrap_status = runner.status();
         runner
@@ -3705,17 +3722,47 @@ mod tests {
                 params![runner.initiation_id],
             )
             .unwrap();
+        let before_authorized_sprint_id: String = connection
+            .query_row(
+                "SELECT runner_authorized_sprint_id FROM epic_bootstrap_transitions WHERE initiation_id=?1",
+                [&runner.initiation_id],
+                |row| row.get(0),
+            )
+            .unwrap();
         drop(connection);
 
-        runner.reopen_service();
-        let unaccepted = runner.status();
-        assert!(unaccepted.material_accepted_at.is_some());
-        assert!(unaccepted.runner_session_created_at.is_some());
-        assert!(unaccepted.runner_launched_at.is_none());
-        assert_eq!(runner.runtime.requests().len(), 2);
+        let before_restart = runner.status();
+        assert_eq!(runner.restart_application(), 1);
+        let recovered = runner.status();
+        assert_eq!(recovered.runner_session_id, before_restart.runner_session_id);
+        assert_eq!(recovered.runner_invocation_id, before_restart.runner_invocation_id);
+        assert!(recovered.material_accepted_at.is_some());
+        assert!(recovered.runner_session_created_at.is_some());
+        assert!(recovered.runner_launched_at.is_some());
+        assert_eq!(runner.all_requests().len(), 3);
         runner.service.reconcile_startup().unwrap();
-        assert_eq!(runner.runtime.requests().len(), 2);
-        assert!(runner.status().runner_launched_at.is_none());
+        assert_eq!(runner.all_requests().len(), 3);
+        let connection = Connection::open(&runner.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM agent_sessions WHERE id=?1",
+            [&recovered.runner_session_id],
+            |row| row.get(0),
+        ).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1 AND session_id=?2 AND input_provenance='application'",
+            params![&recovered.runner_invocation_id, &recovered.runner_session_id],
+            |row| row.get(0),
+        ).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1",
+            [&recovered.runner_invocation_id],
+            |row| row.get(0),
+        ).unwrap(), 1);
+        assert_eq!(connection.query_row::<String, _, _>(
+            "SELECT runner_authorized_sprint_id FROM epic_bootstrap_transitions WHERE initiation_id=?1",
+            [&runner.initiation_id],
+            |row| row.get(0),
+        ).unwrap(), before_authorized_sprint_id);
     }
 
     #[test]

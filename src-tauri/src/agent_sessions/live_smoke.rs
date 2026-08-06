@@ -7,7 +7,8 @@ use crate::{
     agent_sessions::{
         application::{
             AgentSessionApplication, AgentSessionNotification, AgentSessionNotifier,
-            CancelAgentInvocationCommand, SendAgentSessionMessageCommand,
+            ApplicationInvocationLaunchEvidence, CancelAgentInvocationCommand,
+            SendAgentSessionMessageCommand, SendIdempotentApplicationAgentSessionMessageCommand,
             SystemAgentSessionProviders,
         },
         domain::{
@@ -596,6 +597,84 @@ impl LiveSmokeDriver {
         Ok(())
     }
 
+    fn execute_launch_acceptance_only(&mut self) -> Result<(), String> {
+        self.compose_fresh_application()?;
+        let invocation_id = self.application()?.allocate_application_invocation_id();
+        let launch = self
+            .application()?
+            .send_idempotent_application_message_with_launch_observation(
+                SendIdempotentApplicationAgentSessionMessageCommand {
+                    invocation_id: invocation_id.clone(),
+                    message: SendAgentSessionMessageCommand {
+                        session_id: None,
+                        submitted_text: "Reply with only PIP01D_LAUNCH_ACCEPTANCE.".into(),
+                        title: Some("PIP-01D launch acceptance smoke".into()),
+                        working_directory: Some(
+                            self.environment.workspace_path.to_string_lossy().into_owned(),
+                        ),
+                        requested_options: None,
+                    },
+                },
+                None,
+            )
+            .map_err(|error| format!("send application launch-acceptance prompt: {error}"))?;
+        self.evidence.invocations_launched += 1;
+        self.known_invocations.push(invocation_id.clone());
+        let session_id = launch.acknowledgement.session_id;
+        let launch = self
+            .application()?
+            .application_invocation_launch_evidence(&invocation_id, &session_id)
+            .map_err(|error| format!("load launch acceptance evidence: {error}"))?;
+        if launch != ApplicationInvocationLaunchEvidence::LaunchAccepted {
+            return Err("real runtime did not durably accept the invocation launch".into());
+        }
+        let terminal = self.wait_for_terminal(&session_id, &invocation_id)?;
+        let history = self
+            .application()?
+            .load_session(&session_id)
+            .map_err(|error| format!("load launch-acceptance history: {error}"))?;
+        self.record_phase(
+            "launch_acceptance",
+            "accepted",
+            &session_id,
+            &invocation_id,
+            None,
+            None,
+            None,
+        );
+        let external_context = history.session.runtime_binding.external_context_id.ok_or_else(|| {
+            self.record_phase(
+                "external_context",
+                "absent",
+                &session_id,
+                &invocation_id,
+                None,
+                None,
+                None,
+            );
+            "launch-accepted invocation completed without persisted external Codex context".to_string()
+        })?;
+        self.record_phase(
+            "launch_acceptance_and_external_context",
+            if terminal.status == AgentInvocationStatus::Completed {
+                "completed"
+            } else {
+                "failed"
+            },
+            &session_id,
+            &invocation_id,
+            Some(external_context.as_str()),
+            None,
+            None,
+        );
+        if terminal.status != AgentInvocationStatus::Completed {
+            return Err(classify_terminal_failure("launch-acceptance turn", &terminal));
+        }
+        self.close_current_runtime()?;
+        self.evidence.outcome = "passed".into();
+        Ok(())
+    }
+
     fn cleanup_after_failure(&mut self) {
         if self.close_current_runtime().is_err() {
             self.evidence.cleanup.shutdown_completed = false;
@@ -739,6 +818,37 @@ fn agent_session_live_smoke_driver() {
         .write_evidence()
         .expect("write redacted live smoke evidence");
     result.expect("Agent Session live smoke lifecycle proof")
+}
+
+#[test]
+#[ignore = "requires CODEX_AGENT_SESSION_LIVE_SMOKE=true and launches one real Codex invocation"]
+fn agent_session_launch_acceptance_live_smoke_driver() {
+    let config = LiveSmokeConfig::from_environment().expect("valid live smoke environment");
+    assert!(
+        config.enabled,
+        "refusing live smoke: set {LIVE_SMOKE_OPT_IN_ENV}=true explicitly"
+    );
+    let mut driver = LiveSmokeDriver::new(config).expect("create live smoke driver");
+    let result = driver.execute_launch_acceptance_only();
+    if let Err(error) = &result {
+        driver.evidence.outcome = "failed".into();
+        driver.cleanup_after_failure();
+        driver.evidence.phases.push(PhaseEvidence {
+            name: "failure".into(),
+            status: "failed".into(),
+            session_id_hash: None,
+            invocation_id_hash: None,
+            external_context_id_hash: None,
+            resume_target_matches_persisted_context: None,
+            resume_target_differs_from_local_ids: None,
+        });
+        eprintln!("Agent Session launch-acceptance live smoke failed: {error}");
+    }
+    driver.capture_final_durable_state();
+    driver
+        .write_evidence()
+        .expect("write redacted launch-acceptance live smoke evidence");
+    result.expect("Agent Session launch-acceptance live smoke proof")
 }
 
 #[cfg(test)]

@@ -406,6 +406,44 @@ impl AgentSessionApplication {
         )
     }
 
+    /// Reopens only the classified restart gap before durable launch acceptance. The caller must
+    /// still launch through the prepared-invocation seam with the same identity and semantics.
+    pub(crate) fn recover_pre_acceptance_application_invocation(
+        &self,
+        invocation_id: &AgentInvocationId,
+        expected_session_id: &AgentSessionId,
+    ) -> Result<(), AgentSessionApplicationError> {
+        let invocation = self
+            .repository
+            .get_invocation(invocation_id)
+            .map_err(AgentSessionApplicationError::repository)?
+            .ok_or_else(|| AgentSessionApplicationError::not_found("Agent invocation not found"))?;
+        if invocation.session_id != *expected_session_id
+            || invocation.input_provenance != AgentInvocationInputProvenance::Application
+        {
+            return Err(AgentSessionApplicationError::conflict(
+                "pre-acceptance recovery does not match the expected application Session",
+            ));
+        }
+        if self
+            .repository
+            .invocation_launch_accepted_at(invocation_id)
+            .map_err(AgentSessionApplicationError::repository)?
+            .is_some()
+        {
+            return Err(AgentSessionApplicationError::conflict(
+                "launch-accepted invocation cannot return to pre-acceptance state",
+            ));
+        }
+        if invocation.status == AgentInvocationStatus::Pending {
+            return Ok(());
+        }
+        self.repository
+            .recover_pre_acceptance_interruption(invocation_id, self.clock.now())
+            .map_err(AgentSessionApplicationError::repository)?;
+        Ok(())
+    }
+
     pub(crate) fn user_invocation_launch_evidence(
         &self,
         invocation_id: &AgentInvocationId,
@@ -627,12 +665,16 @@ impl AgentSessionApplication {
             None => self.runtime.start_invocation(request, sink),
         };
         let launch_accepted = match launch {
-            Ok(()) => {
-                self.repository
-                    .record_invocation_launch_accepted(&invocation.id, self.clock.now())
-                    .map_err(AgentSessionApplicationError::repository)?;
-                true
-            }
+            Ok(()) => match self
+                .repository
+                .record_invocation_launch_accepted(&invocation.id, self.clock.now())
+            {
+                Ok(()) => true,
+                Err(error) => {
+                    self.handle_launch_acceptance_persistence_failure(&invocation.id, error)?;
+                    false
+                }
+            },
             Err(error) => {
                 self.handle_launch_error(&invocation.id, error)?;
                 false
@@ -717,6 +759,20 @@ impl AgentSessionApplication {
                     continue;
                 }
                 let completed_at = self.clock.now();
+                let runtime_error = if self
+                    .repository
+                    .invocation_launch_accepted_at(&invocation.id)
+                    .map_err(AgentSessionApplicationError::repository)?
+                    .is_none()
+                {
+                    Some(AgentRuntimeFailure {
+                        code: "runtime_startup_without_launch_acceptance".to_string(),
+                        message: "application restarted without durable launch acceptance".to_string(),
+                        details: None,
+                    })
+                } else {
+                    None
+                };
                 let updated = self
                     .repository
                     .finish_invocation(
@@ -726,7 +782,7 @@ impl AgentSessionApplication {
                             completed_at,
                             exit_code: None,
                             signal: None,
-                            runtime_error: None,
+                            runtime_error,
                         },
                         completed_at,
                     )
@@ -826,6 +882,66 @@ impl AgentSessionApplication {
             "runtime_launch_returned_error",
             error.message.clone(),
             serde_json::to_value(&error).ok(),
+        );
+        Ok(())
+    }
+
+    fn handle_launch_acceptance_persistence_failure(
+        &self,
+        invocation_id: &AgentInvocationId,
+        error: RepositoryError,
+    ) -> Result<(), AgentSessionApplicationError> {
+        let invocation = self
+            .repository
+            .get_invocation(invocation_id)
+            .map_err(AgentSessionApplicationError::repository)?
+            .ok_or_else(|| AgentSessionApplicationError::not_found("Agent invocation not found"))?;
+        let terminal = if invocation.status.is_active() {
+            let completed_at = self.clock.now();
+            let updated = self
+                .repository
+                .finish_invocation(
+                    invocation_id,
+                    InvocationCompletion {
+                        status: AgentInvocationTerminalStatus::Failed,
+                        completed_at,
+                        exit_code: None,
+                        signal: None,
+                        runtime_error: Some(AgentRuntimeFailure {
+                            code: "runtime_launch_acceptance_persistence_failed".to_string(),
+                            message: error.message.clone(),
+                            details: Some(json!({"repositoryError": error.message.clone()})),
+                        }),
+                    },
+                    completed_at,
+                )
+                .map_err(AgentSessionApplicationError::repository)?;
+            self.update_lanes.remove_invocation(invocation_id);
+            Some(updated)
+        } else {
+            None
+        };
+        if let Err(cancel_error) = self.runtime.cancel_invocation(invocation_id) {
+            self.record_diagnostic(
+                invocation_id,
+                AgentDiagnosticSource::Runtime,
+                "runtime_cancellation_after_launch_acceptance_persistence_failure",
+                cancel_error.message.clone(),
+                serde_json::to_value(&cancel_error).ok(),
+            );
+        }
+        if let Some(updated) = terminal {
+            self.notify_or_record(AgentSessionNotification::InvocationTerminal {
+                session_id: updated.session_id.clone(),
+                invocation: updated,
+            });
+        }
+        self.record_diagnostic(
+            invocation_id,
+            AgentDiagnosticSource::Repository,
+            "runtime_launch_acceptance_persistence_failed",
+            error.message.clone(),
+            Some(json!({"repositoryError": error.message.clone()})),
         );
         Ok(())
     }

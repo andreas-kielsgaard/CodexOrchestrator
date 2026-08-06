@@ -643,6 +643,28 @@ impl AgentSessionRepository for FakeRepository {
             .copied())
     }
 
+    fn recover_pre_acceptance_interruption(
+        &self,
+        invocation_id: &AgentInvocationId,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentInvocation, RepositoryError> {
+        let mut state = self.state.lock().expect("fake repository");
+        if state.launch_acceptances.contains_key(invocation_id) {
+            return Err(repository_error(
+                RepositoryErrorKind::Conflict,
+                "launch-accepted invocation cannot return to pre-acceptance state",
+            ));
+        }
+        let invocation = state.invocations.get_mut(invocation_id).ok_or_else(|| {
+            repository_error(RepositoryErrorKind::NotFound, "invocation not found")
+        })?;
+        let updated = invocation
+            .recover_pre_acceptance_interruption(updated_at)
+            .map_err(|error| repository_error(RepositoryErrorKind::InvalidState, error.to_string()))?;
+        *invocation = updated.clone();
+        Ok(updated)
+    }
+
     fn finish_invocation(
         &self,
         invocation_id: &AgentInvocationId,
