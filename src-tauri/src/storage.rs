@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 27;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 28;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
@@ -45,7 +45,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| format!("Unable to commit active v22 schema evolution: {error}"))?;
         return Ok(());
     }
-    if (1..=26).contains(&current_version) {
+    if (1..=27).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -181,6 +181,23 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 .map_err(|error| {
                     format!("Unable to migrate native login-attempt schema: {error}")
                 })?;
+        }
+        if current_version <= 27 {
+            let legacy_setup_attempts = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('native_codex_profile_setup_attempts') WHERE name='started_at')",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|error| format!("Unable to inspect native setup-attempt schema: {error}"))?
+                != 0;
+            if legacy_setup_attempts {
+                transaction
+                    .execute_batch(crate::native_profiles::NATIVE_PROFILE_V28_MIGRATION)
+                    .map_err(|error| {
+                        format!("Unable to migrate native setup-attempt evidence schema: {error}")
+                    })?;
+            }
         }
         if current_version == 14 {
             transaction

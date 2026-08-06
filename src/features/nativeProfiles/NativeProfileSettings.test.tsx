@@ -9,9 +9,10 @@ import type { NativeProfile, NativeProfileClient } from '../../infrastructure/na
 const readiness = { authentication: 'unknown' as const, sandboxInitialization: 'unknown' as const, workspaceWriteCanary: 'not_run' as const, dangerFullAccessCanary: 'not_run' as const, mcpReporting: 'not_assessed' as const, attentions: { authentication: null, sandbox: null, canary: null, mcpReporting: null, continuity: null, cli: null } };
 const execution = { selectedMode: 'workspace_write' as const, dangerFullAccessAuthorized: false };
 const loginAttempt = { disposition: 'not_requested' as const, browserHandoff: 'unobserved' as const, requestedAt: null, launchAcceptedAt: null, settledAt: null };
+const setupAttempt = { phase: 'not_requested' as const, disposition: 'not_requested' as const, executable: null, version: null, workspaceSandboxSupported: null, correlationId: null, requestedAt: null, launchAcceptedAt: null, deadlineAt: null, settledAt: null, terminalClassification: 'not_observed' as const, terminalExitCode: null };
 const profiles: readonly NativeProfile[] = [
-  { id: 'p1', homePath: 'C:/one', ownership: 'registered_existing', lifecycle: 'active', selected: true, execution, loginAttempt, readiness },
-  { id: 'p2', homePath: 'C:/two', ownership: 'application_dedicated', lifecycle: 'active', selected: false, execution, loginAttempt, readiness },
+  { id: 'p1', homePath: 'C:/one', ownership: 'registered_existing', lifecycle: 'active', selected: true, execution, loginAttempt, setupAttempt, readiness },
+  { id: 'p2', homePath: 'C:/two', ownership: 'application_dedicated', lifecycle: 'active', selected: false, execution, loginAttempt, setupAttempt, readiness },
 ];
 
 function client(overrides: Partial<NativeProfileClient> = {}): NativeProfileClient {
@@ -76,6 +77,20 @@ describe('NativeProfileSettings', () => {
     expect(within(card).getByText('Login process launch was accepted; browser handoff is unobserved.')).toBeInTheDocument();
     expect(within(card).getByText('Process activity, browser handoff, and authentication are separate facts.')).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('Browser login request returned; review the durable login-attempt state.');
+  });
+
+  it('shows durable setup evidence without treating a request return as launch, UAC, or readiness proof', async () => {
+    const user = userEvent.setup();
+    const requestedProfiles = profiles.map((profile) => profile.id === 'p1' ? { ...profile, setupAttempt: { phase: 'sandbox_initialization' as const, disposition: 'terminal_failed' as const, executable: 'C:/application-owned/codex.exe', version: 'codex-cli test', workspaceSandboxSupported: true, correlationId: 'native-setup-correlation', requestedAt: '2026-08-07T12:00:00Z', launchAcceptedAt: '2026-08-07T12:00:01Z', deadlineAt: '2026-08-07T12:02:00Z', settledAt: '2026-08-07T12:00:02Z', terminalClassification: 'exit_code' as const, terminalExitCode: 7 } } : profile);
+    const initializeSandbox = vi.fn(async () => ({ contract: 'native-codex-profile-query/v1' as const, profiles: requestedProfiles }));
+    render(<NativeProfileSettings client={client({ initializeSandbox })} />);
+    const card = await screen.findByRole('article', { name: 'Codex home p1' });
+    await user.click(within(card).getByRole('button', { name: 'Request sandbox initialization' }));
+    await waitFor(() => expect(initializeSandbox).toHaveBeenCalledWith('p1'));
+    expect(within(card).getByText('Native setup process ended unsuccessfully.')).toBeInTheDocument();
+    expect(within(card).getByText('Terminal classification')).toBeInTheDocument();
+    expect(within(card).getByText('Request return, child launch, terminal outcome, UAC confirmation, sandbox initialization, and canary readiness are separate facts.')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Sandbox initialization request returned; review the durable setup-attempt facts.');
   });
 
   it('contains the reported short viewport in an internal scroll region with narrow wrapping', async () => {

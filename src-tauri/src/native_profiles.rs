@@ -51,11 +51,19 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_attentions (
 CREATE TABLE IF NOT EXISTS native_codex_profile_setup_attempts (
   attempt_id TEXT PRIMARY KEY,
   profile_id TEXT NOT NULL,
+  filesystem_identity TEXT NOT NULL,
   phase TEXT NOT NULL CHECK (phase IN ('sandbox_initialization','workspace_write_canary')),
-  state TEXT NOT NULL CHECK (state IN ('pending','completed','failed','timed_out','cancelled')),
-  started_at TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('pending','launch_failed','terminal_succeeded','terminal_failed','timed_out','cancelled','recovered_unobserved')),
+  executable TEXT,
+  version TEXT,
+  workspace_sandbox_supported INTEGER,
+  correlation_id TEXT NOT NULL UNIQUE,
+  requested_at TEXT NOT NULL,
+  launch_accepted_at TEXT,
   deadline_at TEXT NOT NULL,
-  completed_at TEXT,
+  settled_at TEXT,
+  terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','launch_failed','timed_out','cancelled','recovered_unobserved')),
+  terminal_exit_code INTEGER,
   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_setup_attempt_pending
@@ -250,6 +258,47 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_login_attempt_pending
 ON native_codex_profile_login_attempts(profile_id) WHERE state='pending';
 "#;
 
+pub(crate) const NATIVE_PROFILE_V28_MIGRATION: &str = r#"
+ALTER TABLE native_codex_profile_setup_attempts RENAME TO native_codex_profile_setup_attempts_v27;
+CREATE TABLE native_codex_profile_setup_attempts (
+  attempt_id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  filesystem_identity TEXT NOT NULL,
+  phase TEXT NOT NULL CHECK (phase IN ('sandbox_initialization','workspace_write_canary')),
+  state TEXT NOT NULL CHECK (state IN ('pending','launch_failed','terminal_succeeded','terminal_failed','timed_out','cancelled','recovered_unobserved')),
+  executable TEXT,
+  version TEXT,
+  workspace_sandbox_supported INTEGER,
+  correlation_id TEXT NOT NULL UNIQUE,
+  requested_at TEXT NOT NULL,
+  launch_accepted_at TEXT,
+  deadline_at TEXT NOT NULL,
+  settled_at TEXT,
+  terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','launch_failed','timed_out','cancelled','recovered_unobserved')),
+  terminal_exit_code INTEGER,
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+INSERT INTO native_codex_profile_setup_attempts (attempt_id,profile_id,filesystem_identity,phase,state,executable,version,workspace_sandbox_supported,correlation_id,requested_at,launch_accepted_at,deadline_at,settled_at,terminal_classification,terminal_exit_code)
+SELECT attempt_id,profile_id,'',phase,
+  CASE state
+    WHEN 'completed' THEN 'terminal_succeeded'
+    WHEN 'timed_out' THEN 'timed_out'
+    WHEN 'cancelled' THEN 'cancelled'
+    ELSE 'recovered_unobserved'
+  END,
+  NULL,NULL,NULL,'legacy-' || attempt_id,started_at,NULL,deadline_at,completed_at,
+  CASE state
+    WHEN 'timed_out' THEN 'timed_out'
+    WHEN 'cancelled' THEN 'cancelled'
+    ELSE 'recovered_unobserved'
+  END,
+  NULL
+FROM native_codex_profile_setup_attempts_v27;
+DROP TABLE native_codex_profile_setup_attempts_v27;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_setup_attempt_pending
+ON native_codex_profile_setup_attempts(profile_id,phase) WHERE state='pending';
+"#;
+
 const MARKER_FILE: &str = ".codex-orchestrator-profile.json";
 const PROFILE_QUERY_CONTRACT: &str = "native-codex-profile-query/v1";
 const MCP_REPORTING_CAPABILITY: &str = "native-codex-profile-reporting/v1";
@@ -289,6 +338,7 @@ struct NativeCliSurface {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct NativeCliReceipt {
     succeeded: bool,
+    exit_code: Option<i32>,
     sandbox_receipt_observed: bool,
 }
 
@@ -328,6 +378,7 @@ impl NativeCliChild for SystemNativeCliChild {
             .map(|status| {
                 status.map(|status| NativeCliReceipt {
                     succeeded: status.success(),
+                    exit_code: status.code(),
                     sandbox_receipt_observed: self.sandbox_receipt.as_ref().is_some_and(|path| {
                         fs::read_to_string(path)
                             .map(|value| value.trim() == "native-codex-profile-canary")
@@ -378,6 +429,7 @@ impl NativeCliPort for SystemNativeCliPort {
         });
         Ok(NativeCliReceipt {
             succeeded: status.success(),
+            exit_code: status.code(),
             sandbox_receipt_observed,
         })
     }
@@ -566,6 +618,23 @@ pub(crate) struct NativeProfileLoginAttempt {
     settled_at: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NativeProfileSetupAttempt {
+    phase: String,
+    disposition: String,
+    executable: Option<String>,
+    version: Option<String>,
+    workspace_sandbox_supported: Option<bool>,
+    correlation_id: Option<String>,
+    requested_at: Option<String>,
+    launch_accepted_at: Option<String>,
+    deadline_at: Option<String>,
+    settled_at: Option<String>,
+    terminal_classification: String,
+    terminal_exit_code: Option<i32>,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NativeProfileAttentions {
@@ -587,6 +656,7 @@ pub(crate) struct NativeProfileDto {
     selected: bool,
     execution: NativeProfileExecution,
     login_attempt: NativeProfileLoginAttempt,
+    setup_attempt: NativeProfileSetupAttempt,
     readiness: NativeProfileReadiness,
 }
 
@@ -704,6 +774,7 @@ impl SetupPhase {
 struct PendingSetupAttempt {
     attempt_id: String,
     profile_id: String,
+    filesystem_identity: String,
     phase: SetupPhase,
     deadline_at: DateTime<Utc>,
 }
@@ -725,6 +796,7 @@ struct StoredProfile {
     selected: bool,
     execution: NativeProfileExecution,
     login_attempt: NativeProfileLoginAttempt,
+    setup_attempt: NativeProfileSetupAttempt,
     readiness: NativeProfileReadiness,
 }
 
@@ -738,6 +810,7 @@ impl From<StoredProfile> for NativeProfileDto {
             selected: value.selected,
             execution: value.execution,
             login_attempt: value.login_attempt,
+            setup_attempt: value.setup_attempt,
             readiness: value.readiness,
         }
     }
@@ -1005,7 +1078,7 @@ impl NativeProfileService {
             args: vec!["login".into()],
             cwd: root,
             codex_home: profile.home.clone(),
-            environment: native_login_environment(&profile.home),
+            environment: native_windows_cli_environment(&profile.home),
             sandbox_receipt: None,
         }) {
             Ok(child) => child,
@@ -1054,7 +1127,7 @@ impl NativeProfileService {
                 args: vec!["login".into(), "status".into()],
                 cwd: root,
                 codex_home: profile.home.clone(),
-                environment: native_login_environment(&profile.home),
+                environment: native_windows_cli_environment(&profile.home),
                 sandbox_receipt: None,
             })
             .map_err(|_| {
@@ -1100,13 +1173,13 @@ impl NativeProfileService {
         let connection = self.connection()?;
         let latest_state = connection
             .query_row(
-                "SELECT state FROM native_codex_profile_setup_attempts WHERE profile_id=?1 AND phase='sandbox_initialization' ORDER BY started_at DESC,attempt_id DESC LIMIT 1",
+                "SELECT state FROM native_codex_profile_setup_attempts WHERE profile_id=?1 AND phase='sandbox_initialization' ORDER BY requested_at DESC,attempt_id DESC LIMIT 1",
                 params![id],
                 |row| row.get::<_, String>(0),
             )
             .optional()
             .map_err(|error| error.to_string())?;
-        if latest_state.as_deref() != Some("completed") {
+        if latest_state.as_deref() != Some("terminal_succeeded") {
             return Err("A completed application-owned sandbox setup request is required before confirmation".into());
         }
         self.update_readiness(
@@ -1611,13 +1684,14 @@ impl NativeProfileService {
         let attempt = PendingSetupAttempt {
             attempt_id: format!("native-setup-attempt-{}", Uuid::new_v4()),
             profile_id: id.clone(),
+            filesystem_identity: current.identity.clone(),
             phase,
             deadline_at: now + Duration::seconds(SETUP_ATTEMPT_TIMEOUT_SECONDS),
         };
         let connection = self.connection()?;
         let inserted = connection.execute(
-            "INSERT OR IGNORE INTO native_codex_profile_setup_attempts (attempt_id,profile_id,phase,state,started_at,deadline_at) VALUES (?1,?2,?3,'pending',?4,?5)",
-            params![attempt.attempt_id, attempt.profile_id, attempt.phase.database(), now.to_rfc3339(), attempt.deadline_at.to_rfc3339()],
+            "INSERT OR IGNORE INTO native_codex_profile_setup_attempts (attempt_id,profile_id,filesystem_identity,phase,state,executable,version,workspace_sandbox_supported,correlation_id,requested_at,deadline_at,terminal_classification) VALUES (?1,?2,?3,?4,'pending',?5,?6,?7,?8,?9,?10,'not_observed')",
+            params![attempt.attempt_id, attempt.profile_id, attempt.filesystem_identity, attempt.phase.database(), surface.provenance.executable, surface.provenance.version, surface.provenance.workspace_sandbox_supported, format!("native-setup-{}", Uuid::new_v4()), now.to_rfc3339(), attempt.deadline_at.to_rfc3339()],
         ).map_err(|error| format!("Unable to persist native sandbox attempt: {error}"))?;
         if inserted == 0 {
             return self.set_attention(
@@ -1649,7 +1723,7 @@ impl NativeProfileService {
             args,
             cwd: root.clone(),
             codex_home: profile.home.clone(),
-            environment: native_profile_environment(&profile.home),
+            environment: native_windows_cli_environment(&profile.home),
             sandbox_receipt: (phase == SetupPhase::WorkspaceWriteCanary).then_some(output),
         };
         match self.cli.start(&invocation) {
@@ -1660,10 +1734,16 @@ impl NativeProfileService {
                     }
                     Err(_) => {
                         let _ = child.terminate();
-                        self.set_setup_attempt_state(&attempt.attempt_id, "cancelled")?;
+                        self.set_setup_attempt_state(
+                            &attempt.attempt_id,
+                            "cancelled",
+                            "cancelled",
+                            None,
+                        )?;
                         return Err("Native sandbox child supervision is unavailable".into());
                     }
                 }
+                self.mark_setup_attempt_launch_accepted(&attempt.attempt_id)?;
                 self.set_attention(
                     id,
                     phase.attention_concern(),
@@ -1672,7 +1752,12 @@ impl NativeProfileService {
                 )
             }
             Err(_) => {
-                self.set_setup_attempt_state(&attempt.attempt_id, "failed")?;
+                self.set_setup_attempt_state(
+                    &attempt.attempt_id,
+                    "launch_failed",
+                    "launch_failed",
+                    None,
+                )?;
                 self.set_attention(id, "cli", Some("codex_cli_unavailable"), false)?;
                 self.update_readiness(
                     id,
@@ -1691,6 +1776,22 @@ impl NativeProfileService {
 
     fn reconcile_setup_attempts(&self, id: &str) -> Result<(), String> {
         for attempt in load_pending_setup_attempts(&self.connection()?, id)? {
+            let profile = self.profile(id)?;
+            let authority_valid = profile.lifecycle == Lifecycle::Active
+                && validate_profile(&profile) == Lifecycle::Active
+                && profile.identity == attempt.filesystem_identity;
+            if !authority_valid {
+                if let Some(mut child) = self
+                    .setup_children
+                    .lock()
+                    .map_err(|_| "Native sandbox child supervision is unavailable")?
+                    .remove(&attempt.attempt_id)
+                {
+                    let _ = child.terminate();
+                }
+                self.settle_failed_setup_attempt(&attempt, "cancelled", "cancelled", None)?;
+                continue;
+            }
             let outcome = {
                 let mut children = self
                     .setup_children
@@ -1710,7 +1811,7 @@ impl NativeProfileService {
                         None => None,
                     },
                     None if Utc::now() >= attempt.deadline_at => Some(Err("timed_out")),
-                    None => Some(Err("cancelled")),
+                    None => Some(Err("recovered_unobserved")),
                 }
             };
             let Some(outcome) = outcome else { continue };
@@ -1720,7 +1821,12 @@ impl NativeProfileService {
                         && (attempt.phase == SetupPhase::SandboxInitialization
                             || receipt.sandbox_receipt_observed) =>
                 {
-                    self.set_setup_attempt_state(&attempt.attempt_id, "completed")?;
+                    self.set_setup_attempt_state(
+                        &attempt.attempt_id,
+                        "terminal_succeeded",
+                        if receipt.exit_code.is_some() { "exit_code" } else { "not_observed" },
+                        receipt.exit_code,
+                    )?;
                     if attempt.phase == SetupPhase::SandboxInitialization {
                         self.update_readiness(
                             id,
@@ -1744,8 +1850,18 @@ impl NativeProfileService {
                         )?;
                     }
                 }
-                Ok(_) => self.settle_failed_setup_attempt(&attempt, "failed")?,
-                Err(state) => self.settle_failed_setup_attempt(&attempt, state)?,
+                Ok(receipt) => self.settle_failed_setup_attempt(
+                    &attempt,
+                    "terminal_failed",
+                    if receipt.exit_code.is_some() { "exit_code" } else { "not_observed" },
+                    receipt.exit_code,
+                )?,
+                Err(state) => self.settle_failed_setup_attempt(
+                    &attempt,
+                    state,
+                    state,
+                    None,
+                )?,
             }
         }
         Ok(())
@@ -1755,8 +1871,15 @@ impl NativeProfileService {
         &self,
         attempt: &PendingSetupAttempt,
         state: &str,
+        terminal_classification: &str,
+        terminal_exit_code: Option<i32>,
     ) -> Result<(), String> {
-        self.set_setup_attempt_state(&attempt.attempt_id, state)?;
+        self.set_setup_attempt_state(
+            &attempt.attempt_id,
+            state,
+            terminal_classification,
+            terminal_exit_code,
+        )?;
         self.update_readiness(
             &attempt.profile_id,
             None,
@@ -1768,16 +1891,31 @@ impl NativeProfileService {
                 Some(match state {
                     "timed_out" => "native_sandbox_attempt_timed_out_human_or_uac_attention",
                     "cancelled" => "native_sandbox_attempt_cancelled_before_observation",
+                    "recovered_unobserved" => "native_sandbox_attempt_recovered_without_owned_process",
                     _ => "native_sandbox_attempt_failed",
                 }),
             )),
         )
     }
 
-    fn set_setup_attempt_state(&self, attempt_id: &str, state: &str) -> Result<(), String> {
+    fn mark_setup_attempt_launch_accepted(&self, attempt_id: &str) -> Result<(), String> {
         self.connection()?.execute(
-            "UPDATE native_codex_profile_setup_attempts SET state=?2,completed_at=?3 WHERE attempt_id=?1 AND state='pending'",
-            params![attempt_id, state, Utc::now().to_rfc3339()],
+            "UPDATE native_codex_profile_setup_attempts SET launch_accepted_at=?2 WHERE attempt_id=?1 AND state='pending'",
+            params![attempt_id, Utc::now().to_rfc3339()],
+        ).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn set_setup_attempt_state(
+        &self,
+        attempt_id: &str,
+        state: &str,
+        terminal_classification: &str,
+        terminal_exit_code: Option<i32>,
+    ) -> Result<(), String> {
+        self.connection()?.execute(
+            "UPDATE native_codex_profile_setup_attempts SET state=?2,settled_at=?3,terminal_classification=?4,terminal_exit_code=?5 WHERE attempt_id=?1 AND state='pending'",
+            params![attempt_id, state, Utc::now().to_rfc3339(), terminal_classification, terminal_exit_code],
         ).map_err(|error| error.to_string())?;
         Ok(())
     }
@@ -1937,7 +2075,7 @@ impl NativeProfileService {
         connection.execute("UPDATE native_codex_profiles SET lifecycle=?2,selected_at=NULL,updated_at=?3 WHERE id=?1", params![id, lifecycle.database(), Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_mode_authorizations SET revoked_at=COALESCE(revoked_at,?2) WHERE profile_id=?1 AND mode='danger_full_access'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',danger_full_access_canary='blocked',mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
-        connection.execute("UPDATE native_codex_profile_setup_attempts SET state='cancelled',completed_at=?2 WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+        connection.execute("UPDATE native_codex_profile_setup_attempts SET state='cancelled',settled_at=?2,terminal_classification='cancelled' WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state='pending'", params![id]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_full_access_canaries SET state='cancelled',completed_at=?2 WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_login_attempts SET state='cancelled',settled_at=?2 WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
@@ -2061,14 +2199,14 @@ fn native_profile_environment(home: &Path) -> Vec<(String, String)> {
     vec![("CODEX_HOME".into(), home.to_string_lossy().into_owned())]
 }
 
-/// Browser login retains only the Windows process variables the supported CLI needs to locate
-/// system launch facilities and the launching user's standard directories. `CODEX_HOME` remains
-/// product-selected; no inherited Codex home, credentials, or provider state is admitted.
-fn native_login_environment(home: &Path) -> Vec<(String, String)> {
-    native_login_environment_from(home, &|key| std::env::var(key).ok())
+/// Windows CLI work retains only the system launch facilities and launching user's standard
+/// directories. `CODEX_HOME` remains product-selected; no inherited Codex home, credentials,
+/// or provider state is admitted.
+fn native_windows_cli_environment(home: &Path) -> Vec<(String, String)> {
+    native_windows_cli_environment_from(home, &|key| std::env::var(key).ok())
 }
 
-fn native_login_environment_from(
+fn native_windows_cli_environment_from(
     home: &Path,
     lookup: &dyn Fn(&str) -> Option<String>,
 ) -> Vec<(String, String)> {
@@ -2210,16 +2348,17 @@ fn load_pending_setup_attempts(
 ) -> Result<Vec<PendingSetupAttempt>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT attempt_id,profile_id,phase,deadline_at FROM native_codex_profile_setup_attempts WHERE profile_id=?1 AND state='pending' ORDER BY started_at",
+            "SELECT attempt_id,profile_id,filesystem_identity,phase,deadline_at FROM native_codex_profile_setup_attempts WHERE profile_id=?1 AND state='pending' ORDER BY requested_at",
         )
         .map_err(|error| error.to_string())?;
     let attempts = statement
         .query_map(params![profile_id], |row| {
-            let deadline: String = row.get(3)?;
+            let deadline: String = row.get(4)?;
             Ok(PendingSetupAttempt {
                 attempt_id: row.get(0)?,
                 profile_id: row.get(1)?,
-                phase: SetupPhase::from_database(&row.get::<_, String>(2)?)
+                filesystem_identity: row.get(2)?,
+                phase: SetupPhase::from_database(&row.get::<_, String>(3)?)
                     .map_err(|_| rusqlite::Error::InvalidQuery)?,
                 deadline_at: DateTime::parse_from_rfc3339(&deadline)
                     .map_err(|_| rusqlite::Error::InvalidQuery)?
@@ -2290,7 +2429,7 @@ fn load_pending_mcp_probe(
 }
 
 fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, String> {
-    let mut statement = connection.prepare("SELECT p.id,p.canonical_home_path,p.filesystem_identity,p.ownership,p.lifecycle,p.selected_at,r.authentication,r.sandbox_initialization,r.workspace_write_canary,r.danger_full_access_canary,r.mcp_reporting,e.selected_mode,a.filesystem_identity,a.revoked_at,(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='authentication'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='sandbox'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='canary'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='mcp_reporting'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='continuity'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='cli'),(SELECT state FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT browser_handoff FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT requested_at FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT launch_accepted_at FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT settled_at FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1) FROM native_codex_profiles p JOIN native_codex_profile_readiness r ON r.profile_id=p.id JOIN native_codex_profile_execution_modes e ON e.profile_id=p.id LEFT JOIN native_codex_profile_mode_authorizations a ON a.profile_id=p.id AND a.mode='danger_full_access' ORDER BY p.created_at").map_err(|error| error.to_string())?;
+    let mut statement = connection.prepare("SELECT p.id,p.canonical_home_path,p.filesystem_identity,p.ownership,p.lifecycle,p.selected_at,r.authentication,r.sandbox_initialization,r.workspace_write_canary,r.danger_full_access_canary,r.mcp_reporting,e.selected_mode,a.filesystem_identity,a.revoked_at,(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='authentication'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='sandbox'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='canary'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='mcp_reporting'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='continuity'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='cli'),(SELECT state FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT browser_handoff FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT requested_at FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT launch_accepted_at FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT settled_at FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT phase FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT state FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT executable FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT version FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT workspace_sandbox_supported FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT correlation_id FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT requested_at FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT launch_accepted_at FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT deadline_at FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT settled_at FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT terminal_classification FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT terminal_exit_code FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1) FROM native_codex_profiles p JOIN native_codex_profile_readiness r ON r.profile_id=p.id JOIN native_codex_profile_execution_modes e ON e.profile_id=p.id LEFT JOIN native_codex_profile_mode_authorizations a ON a.profile_id=p.id AND a.mode='danger_full_access' ORDER BY p.created_at").map_err(|error| error.to_string())?;
     let rows = statement
         .query_map([], |row| {
             let identity: String = row.get(2)?;
@@ -2321,6 +2460,28 @@ fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, Stri
                     requested_at: row.get(22)?,
                     launch_accepted_at: row.get(23)?,
                     settled_at: row.get(24)?,
+                },
+                setup_attempt: NativeProfileSetupAttempt {
+                    phase: row
+                        .get::<_, Option<String>>(25)?
+                        .unwrap_or_else(|| "not_requested".into()),
+                    disposition: row
+                        .get::<_, Option<String>>(26)?
+                        .unwrap_or_else(|| "not_requested".into()),
+                    executable: row.get(27)?,
+                    version: row.get(28)?,
+                    workspace_sandbox_supported: row
+                        .get::<_, Option<i64>>(29)?
+                        .map(|value| value != 0),
+                    correlation_id: row.get(30)?,
+                    requested_at: row.get(31)?,
+                    launch_accepted_at: row.get(32)?,
+                    deadline_at: row.get(33)?,
+                    settled_at: row.get(34)?,
+                    terminal_classification: row
+                        .get::<_, Option<String>>(35)?
+                        .unwrap_or_else(|| "not_observed".into()),
+                    terminal_exit_code: row.get(36)?,
                 },
                 readiness: NativeProfileReadiness {
                     authentication: row.get(6)?,
@@ -2492,6 +2653,7 @@ mod tests {
         fn terminate(&mut self) -> Result<(), String> {
             self.result = Some(NativeCliReceipt {
                 succeeded: false,
+                exit_code: None,
                 sandbox_receipt_observed: false,
             });
             *self.terminated.lock().unwrap() += 1;
@@ -2513,6 +2675,7 @@ mod tests {
             Self {
                 receipt: NativeCliReceipt {
                     succeeded: true,
+                    exit_code: Some(0),
                     sandbox_receipt_observed: true,
                 },
                 calls: Mutex::new(vec![]),
@@ -2726,6 +2889,7 @@ mod tests {
         let profile = service.create_dedicated().unwrap();
         *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
             succeeded: true,
+            exit_code: Some(0),
             sandbox_receipt_observed: false,
         });
         service.request_sandbox_initialization(&profile.id).unwrap();
@@ -2750,12 +2914,16 @@ mod tests {
         service.confirm_sandbox_initialization(&profile.id).unwrap();
         *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
             succeeded: true,
+            exit_code: Some(0),
             sandbox_receipt_observed: true,
         });
         service.run_workspace_write_canary(&profile.id).unwrap();
         let mut query = service.query().unwrap();
         let canaried = query.profiles.remove(0);
         assert_eq!(canaried.readiness.workspace_write_canary, "passed");
+        assert_eq!(canaried.setup_attempt.phase, "workspace_write_canary");
+        assert_eq!(canaried.setup_attempt.disposition, "terminal_succeeded");
+        assert_eq!(canaried.setup_attempt.terminal_exit_code, Some(0));
 
         let calls = fake.calls.lock().unwrap();
         assert_eq!(calls.len(), 2);
@@ -2772,7 +2940,7 @@ mod tests {
             assert_eq!(call.cwd, service.probe_root(&profile.id));
             assert_eq!(
                 call.environment,
-                native_profile_environment(Path::new(&profile.home_path))
+                native_windows_cli_environment(Path::new(&profile.home_path))
             );
             assert!(call.args.windows(2).any(|window| window
                 .iter()
@@ -2797,6 +2965,66 @@ mod tests {
         }
         assert!(calls[0].sandbox_receipt.is_none());
         assert!(calls[1].sandbox_receipt.is_some());
+    }
+
+    #[test]
+    fn setup_attempt_persists_safe_provenance_then_classifies_terminal_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        let fake = Arc::new(FakeCli::succeeding());
+        *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
+            succeeded: false,
+            exit_code: Some(7),
+            sandbox_receipt_observed: false,
+        });
+        service.cli = fake;
+        let profile = service.create_dedicated().unwrap();
+        let requested = service.request_sandbox_initialization(&profile.id).unwrap();
+        assert_eq!(requested.setup_attempt.phase, "sandbox_initialization");
+        assert_eq!(requested.setup_attempt.disposition, "pending");
+        assert_eq!(
+            requested.setup_attempt.executable.as_deref(),
+            Some("C:/application-owned/codex.exe")
+        );
+        assert_eq!(requested.setup_attempt.version.as_deref(), Some("codex-cli test"));
+        assert_eq!(requested.setup_attempt.workspace_sandbox_supported, Some(true));
+        assert!(requested.setup_attempt.correlation_id.is_some());
+        assert!(requested.setup_attempt.requested_at.is_some());
+        assert!(requested.setup_attempt.launch_accepted_at.is_some());
+        assert!(requested.setup_attempt.settled_at.is_none());
+
+        let settled = service.query().unwrap().profiles.remove(0);
+        assert_eq!(settled.setup_attempt.disposition, "terminal_failed");
+        assert_eq!(settled.setup_attempt.terminal_classification, "exit_code");
+        assert_eq!(settled.setup_attempt.terminal_exit_code, Some(7));
+        assert_eq!(settled.readiness.sandbox_initialization, "attention_required");
+        assert!(service.confirm_sandbox_initialization(&profile.id).is_err());
+    }
+
+    #[test]
+    fn setup_launch_failure_is_durable_without_uac_or_initialization_claims() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        service.cli = Arc::new(FakeCli::failing_start());
+        let profile = service.create_dedicated().unwrap();
+        let result = service.request_sandbox_initialization(&profile.id).unwrap();
+        assert_eq!(result.setup_attempt.disposition, "launch_failed");
+        assert_eq!(result.setup_attempt.terminal_classification, "launch_failed");
+        assert!(result.setup_attempt.launch_accepted_at.is_none());
+        assert_eq!(result.readiness.sandbox_initialization, "attention_required");
+        assert_ne!(
+            result.readiness.attentions.sandbox.as_deref(),
+            Some("native_sandbox_setup_completed_explicit_uac_confirmation_required")
+        );
+        assert!(service.confirm_sandbox_initialization(&profile.id).is_err());
     }
 
     #[test]
@@ -2830,10 +3058,12 @@ mod tests {
             Some("native_sandbox_attempt_timed_out_human_or_uac_attention".into())
         );
         assert_eq!(*fake.terminated.lock().unwrap(), 1);
+        assert_eq!(result.profiles[0].setup_attempt.disposition, "timed_out");
+        assert_eq!(result.profiles[0].setup_attempt.terminal_classification, "timed_out");
     }
 
     #[test]
-    fn reopened_pending_setup_is_cancelled_without_an_owned_child_to_observe() {
+    fn reopened_pending_setup_is_recovered_without_an_owned_child_to_observe() {
         let directory = tempfile::tempdir().unwrap();
         let database = directory.path().join("active.sqlite");
         let mut service =
@@ -2850,7 +3080,11 @@ mod tests {
         );
         assert_eq!(
             query.profiles[0].readiness.attentions.sandbox,
-            Some("native_sandbox_attempt_cancelled_before_observation".into())
+            Some("native_sandbox_attempt_recovered_without_owned_process".into())
+        );
+        assert_eq!(
+            query.profiles[0].setup_attempt.disposition,
+            "recovered_unobserved"
         );
     }
 
@@ -2905,7 +3139,7 @@ mod tests {
 
     #[test]
     fn windows_login_environment_is_allowlisted_and_keeps_the_product_selected_home() {
-        let environment = native_login_environment_from(Path::new("C:/product-owned-home"), &|key| {
+        let environment = native_windows_cli_environment_from(Path::new("C:/product-owned-home"), &|key| {
             match key {
                 "PATH" => Some("C:/Windows/System32;C:/Windows".into()),
                 "SYSTEMROOT" => Some("C:/Windows".into()),
@@ -2939,7 +3173,7 @@ mod tests {
         service.refresh_readiness(&profile.id).unwrap();
         let calls = fake.calls.lock().unwrap();
         for call in calls.iter().filter(|call| call.args.first().is_some_and(|arg| arg == "login")) {
-            assert_eq!(call.environment, native_login_environment(Path::new(&profile.home_path)));
+            assert_eq!(call.environment, native_windows_cli_environment(Path::new(&profile.home_path)));
             assert!(call.environment.iter().any(|(key, _)| key == "CODEX_HOME"));
         }
     }
@@ -2955,6 +3189,7 @@ mod tests {
         let fake = Arc::new(FakeCli::succeeding());
         *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
             succeeded: true,
+            exit_code: Some(0),
             sandbox_receipt_observed: false,
         });
         service.cli = fake;
@@ -3007,6 +3242,7 @@ mod tests {
         let fake = Arc::new(FakeCli::succeeding());
         *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
             succeeded: false,
+            exit_code: Some(1),
             sandbox_receipt_observed: false,
         });
         service.cli = fake;
@@ -3298,6 +3534,7 @@ mod tests {
         let fake = Arc::new(FakeCli::enforcing_danger_network());
         *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
             succeeded: true,
+            exit_code: Some(0),
             sandbox_receipt_observed: true,
         });
         service.cli = fake;
@@ -3369,6 +3606,10 @@ mod tests {
         );
         assert_eq!(
             service.profile(&profile.id).unwrap().login_attempt.disposition,
+            "cancelled"
+        );
+        assert_eq!(
+            service.profile(&profile.id).unwrap().setup_attempt.disposition,
             "cancelled"
         );
     }
@@ -3456,6 +3697,22 @@ mod tests {
             )
             .unwrap();
         assert_eq!(attention, "legacy");
+    }
+
+    #[test]
+    fn v28_setup_attempt_migration_preserves_legacy_rows_without_fabricating_provenance() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("active.sqlite");
+        let connection = Connection::open(&database).unwrap();
+        connection.execute_batch(NATIVE_PROFILE_SCHEMA).unwrap();
+        connection.execute_batch("DROP INDEX ux_native_codex_profile_setup_attempt_pending; DROP TABLE native_codex_profile_setup_attempts; CREATE TABLE native_codex_profile_setup_attempts (attempt_id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, phase TEXT NOT NULL, state TEXT NOT NULL, started_at TEXT NOT NULL, deadline_at TEXT NOT NULL, completed_at TEXT); INSERT INTO native_codex_profiles (id,canonical_home_path,filesystem_identity,ownership,lifecycle,created_at,updated_at) VALUES ('profile','C:\\profile','identity','registered_existing','active','t','t'); INSERT INTO native_codex_profile_setup_attempts VALUES ('native-setup-attempt-legacy','profile','sandbox_initialization','failed','2026-08-06T22:41:12Z','2026-08-06T22:43:12Z','2026-08-06T22:41:13Z'); PRAGMA user_version=27;").unwrap();
+        crate::storage::initialize_active_database(&connection).unwrap();
+        let row: (String, Option<String>, Option<String>, String) = connection.query_row(
+            "SELECT state,executable,version,terminal_classification FROM native_codex_profile_setup_attempts WHERE attempt_id='native-setup-attempt-legacy'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).unwrap();
+        assert_eq!(row, ("recovered_unobserved".into(), None, None, "recovered_unobserved".into()));
     }
 
     #[test]

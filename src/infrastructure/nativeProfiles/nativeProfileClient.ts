@@ -14,6 +14,9 @@ export type NativeProfileMcp = 'not_assessed' | 'ready' | 'probe_failed';
 export type NativeExecutionMode = 'workspace_write' | 'danger_full_access';
 export type NativeProfileLoginDisposition = 'not_requested' | 'pending' | 'launch_failed' | 'terminal_succeeded' | 'terminal_failed' | 'cancelled' | 'recovered_unobserved';
 export type NativeProfileBrowserHandoff = 'unobserved';
+export type NativeProfileSetupPhase = 'not_requested' | 'sandbox_initialization' | 'workspace_write_canary';
+export type NativeProfileSetupDisposition = 'not_requested' | 'pending' | 'launch_failed' | 'terminal_succeeded' | 'terminal_failed' | 'timed_out' | 'cancelled' | 'recovered_unobserved';
+export type NativeProfileSetupTerminalClassification = 'not_observed' | 'exit_code' | 'launch_failed' | 'timed_out' | 'cancelled' | 'recovered_unobserved';
 
 export interface NativeProfileAttentions {
   readonly authentication: string | null;
@@ -46,6 +49,21 @@ export interface NativeProfileLoginAttempt {
   readonly settledAt: string | null;
 }
 
+export interface NativeProfileSetupAttempt {
+  readonly phase: NativeProfileSetupPhase;
+  readonly disposition: NativeProfileSetupDisposition;
+  readonly executable: string | null;
+  readonly version: string | null;
+  readonly workspaceSandboxSupported: boolean | null;
+  readonly correlationId: string | null;
+  readonly requestedAt: string | null;
+  readonly launchAcceptedAt: string | null;
+  readonly deadlineAt: string | null;
+  readonly settledAt: string | null;
+  readonly terminalClassification: NativeProfileSetupTerminalClassification;
+  readonly terminalExitCode: number | null;
+}
+
 export interface NativeProfile {
   readonly id: string;
   readonly homePath: string;
@@ -54,6 +72,7 @@ export interface NativeProfile {
   readonly selected: boolean;
   readonly execution: NativeProfileExecution;
   readonly loginAttempt: NativeProfileLoginAttempt;
+  readonly setupAttempt: NativeProfileSetupAttempt;
   readonly readiness: NativeProfileReadiness;
 }
 
@@ -82,6 +101,14 @@ function stringValue(value: unknown, label: string): string {
 function enumValue<T extends string>(value: unknown, values: readonly T[], label: string): T {
   if (typeof value !== 'string' || !values.includes(value as T)) throw new Error(`${label} is invalid`);
   return value as T;
+}
+function booleanValue(value: unknown, label: string): boolean {
+  if (typeof value !== 'boolean') throw new Error(`${label} must be boolean`);
+  return value;
+}
+function integerValue(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isInteger(value)) throw new Error(`${label} must be an integer`);
+  return value;
 }
 function nullableString(value: unknown, label: string): string | null {
   if (value !== null && (typeof value !== 'string' || value.length === 0 || value.trim() !== value))
@@ -113,14 +140,16 @@ export function decodeNativeProfileQuery(value: unknown): NativeProfileQuery {
 
 export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
   const profile = object(value, `native profile ${index}`);
-  keys(profile, ['id', 'homePath', 'ownership', 'lifecycle', 'selected', 'execution', 'loginAttempt', 'readiness'], `native profile ${index}`);
+  keys(profile, ['id', 'homePath', 'ownership', 'lifecycle', 'selected', 'execution', 'loginAttempt', 'setupAttempt', 'readiness'], `native profile ${index}`);
   if (typeof profile.selected !== 'boolean') throw new Error(`native profile ${index} selected must be boolean`);
   const readiness = object(profile.readiness, `native profile ${index} readiness`);
   keys(readiness, ['authentication', 'sandboxInitialization', 'workspaceWriteCanary', 'dangerFullAccessCanary', 'mcpReporting', 'attentions'], 'readiness');
   const execution = object(profile.execution, `native profile ${index} execution`);
   const loginAttempt = object(profile.loginAttempt, `native profile ${index} login attempt`);
+  const setupAttempt = object(profile.setupAttempt, `native profile ${index} setup attempt`);
   keys(execution, ['selectedMode', 'dangerFullAccessAuthorized'], `native profile ${index} execution`);
   keys(loginAttempt, ['disposition', 'browserHandoff', 'requestedAt', 'launchAcceptedAt', 'settledAt'], `native profile ${index} login attempt`);
+  keys(setupAttempt, ['phase', 'disposition', 'executable', 'version', 'workspaceSandboxSupported', 'correlationId', 'requestedAt', 'launchAcceptedAt', 'deadlineAt', 'settledAt', 'terminalClassification', 'terminalExitCode'], `native profile ${index} setup attempt`);
   if (typeof execution.dangerFullAccessAuthorized !== 'boolean') throw new Error(`native profile ${index} danger authorization must be boolean`);
   const attentions = object(readiness.attentions, 'attentions');
   keys(attentions, ['authentication', 'sandbox', 'canary', 'mcpReporting', 'continuity', 'cli'], 'attentions');
@@ -140,6 +169,20 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
       requestedAt: nullableString(loginAttempt.requestedAt, 'login request timestamp'),
       launchAcceptedAt: nullableString(loginAttempt.launchAcceptedAt, 'login launch timestamp'),
       settledAt: nullableString(loginAttempt.settledAt, 'login settlement timestamp'),
+    },
+    setupAttempt: {
+      phase: enumValue(setupAttempt.phase, ['not_requested', 'sandbox_initialization', 'workspace_write_canary'], 'setup attempt phase'),
+      disposition: enumValue(setupAttempt.disposition, ['not_requested', 'pending', 'launch_failed', 'terminal_succeeded', 'terminal_failed', 'timed_out', 'cancelled', 'recovered_unobserved'], 'setup attempt disposition'),
+      executable: nullableString(setupAttempt.executable, 'setup executable'),
+      version: nullableString(setupAttempt.version, 'setup executable version'),
+      workspaceSandboxSupported: setupAttempt.workspaceSandboxSupported === null ? null : booleanValue(setupAttempt.workspaceSandboxSupported, 'workspace sandbox capability'),
+      correlationId: nullableString(setupAttempt.correlationId, 'setup attempt correlation'),
+      requestedAt: nullableString(setupAttempt.requestedAt, 'setup request timestamp'),
+      launchAcceptedAt: nullableString(setupAttempt.launchAcceptedAt, 'setup launch timestamp'),
+      deadlineAt: nullableString(setupAttempt.deadlineAt, 'setup deadline timestamp'),
+      settledAt: nullableString(setupAttempt.settledAt, 'setup settlement timestamp'),
+      terminalClassification: enumValue(setupAttempt.terminalClassification, ['not_observed', 'exit_code', 'launch_failed', 'timed_out', 'cancelled', 'recovered_unobserved'], 'setup terminal classification'),
+      terminalExitCode: setupAttempt.terminalExitCode === null ? null : integerValue(setupAttempt.terminalExitCode, 'setup terminal exit code'),
     },
     readiness: {
       authentication: enumValue(readiness.authentication, ['unknown', 'authenticated', 'unauthenticated'], 'authentication'),
