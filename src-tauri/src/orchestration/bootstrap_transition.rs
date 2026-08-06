@@ -2024,8 +2024,8 @@ mod tests {
     use super::*;
     use crate::{
         agent_sessions::{
-            application::{AgentSessionNotifier, SystemAgentSessionProviders},
-            domain::{AgentInvocation, AgentInvocationTerminalStatus, AgentRuntimeOptions},
+            application::{AgentSessionApplication, AgentSessionNotifier, SystemAgentSessionProviders},
+            domain::{AgentInvocation, AgentInvocationId, AgentInvocationTerminalStatus, AgentRuntimeOptions, AgentSessionId, ToolActivityPhase},
             ports::{
                 AgentRuntime, AgentRuntimeUpdateSink, RuntimeInvocationMode,
                 RuntimeInvocationOutcome, RuntimeInvocationPreflight, RuntimeInvocationRequest,
@@ -2052,12 +2052,14 @@ mod tests {
                 reconcile_work_slice_execution_settlement, reconcile_work_unit_dependency_wave,
             },
         },
+        runtime::codex::CodexCliRuntime,
     };
     use sha2::{Digest, Sha256};
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Barrier, Weak,
     };
+    use std::time::{Duration, Instant};
 
     #[derive(Default)]
     struct RecordedRuntime {
@@ -7621,6 +7623,164 @@ mod tests {
                 |row| row.get(0),
             ).unwrap()
         }
+    }
+
+    #[test]
+    #[ignore = "requires CODEX_PIP01W_REPORTING_LIVE=true and launches real Codex start and resume invocations"]
+    fn installed_cli_resumes_the_product_implementer_reporting_mcp() {
+        assert_eq!(
+            std::env::var("CODEX_PIP01W_REPORTING_LIVE").as_deref(),
+            Ok("true"),
+            "refusing live reporting probe without explicit opt-in"
+        );
+        let fixture = ReportingFixture::new();
+        let runtime = Arc::new(CodexCliRuntime::system("codex", None));
+        let notifier = Arc::new(TransitionNotifier::default());
+        let sessions = Arc::new(AgentSessionApplication::new(
+            Arc::new(SqliteAgentSessionRepository::new(Connection::open(&fixture.base.database_path).unwrap()).unwrap()),
+            runtime.clone(),
+            notifier.clone(),
+            Arc::new(SystemAgentSessionProviders),
+            Arc::new(SystemAgentSessionProviders),
+            Some("pip01w-live-reporting".into()),
+        ));
+        let transition = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.base.database_path,
+            sessions.clone(),
+        ).unwrap();
+        notifier.set_sprint(&transition);
+        transition.attach_reporting_test_harness(fixture.handler.clone());
+
+        let work_unit_id = "live-reporting-work-unit";
+        let attempt_id = "live-reporting-attempt";
+        fixture.handler.authorize_implementer_attempt(attempt_id, work_unit_id, &fixture.authority_id).unwrap();
+        let original = fixture.handler.current_implementer_revision().unwrap();
+        let package = fixture.handler.construct_for_pinned_profile(
+            attempt_id,
+            WorkUnitHarnessRole::Implementer,
+            original.profile.clone(),
+        ).unwrap();
+        let session_id = AgentSessionId::new("live-reporting-session").unwrap();
+        let original_invocation = AgentInvocationId::new("live-reporting-original").unwrap();
+        let launch = package.runtime_launch_configuration();
+        sessions.create_application_session(CreateApplicationAgentSessionCommand {
+            session_id: session_id.clone(),
+            session: CreateAgentSessionCommand {
+                title: Some("Live Implementer reporting probe".into()),
+                working_directory: Some(package.working_directory().into()),
+                requested_options: launch.requested_options.clone(),
+            },
+        }).unwrap();
+        sessions.send_idempotent_application_message_with_launch_observation(
+            SendIdempotentApplicationAgentSessionMessageCommand {
+                invocation_id: original_invocation.clone(),
+                message: SendAgentSessionMessageCommand {
+                    session_id: Some(session_id.clone()),
+                    submitted_text: "Use only the file-editing tool to append exactly PIP01W_REPORTING_LIVE followed by a newline to README.md in the current workspace. Do not use shell or command tools. Stop after the edit.".into(),
+                    title: None,
+                    working_directory: Some(package.working_directory().into()),
+                    requested_options: Some(launch.requested_options),
+                },
+            },
+            Some(launch.extension),
+        ).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(180);
+        while runtime.active_direct_child_count().unwrap() != 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(runtime.active_direct_child_count().unwrap(), 0, "original provider did not finish");
+        let original_history = sessions.load_session(&session_id).unwrap();
+        assert!(original_history.invocations.iter().any(|entry| entry.invocation.id == original_invocation && entry.invocation.status == AgentInvocationStatus::Completed));
+
+        let now = "2026-08-06T00:00:00Z";
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        connection.execute(
+            "UPDATE work_unit_implementer_activations SET implementer_ready_at=NULL WHERE work_unit_id=?1",
+            [&fixture.work_unit_id],
+        ).unwrap();
+        connection.pragma_update(None, "foreign_keys", false).unwrap();
+        connection.execute(
+            "INSERT INTO work_units (work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification) VALUES (?1,'live-reporting-materialization','live-reporting-slice','live-reporting-revision',0,'Live reporting','Bounded live reporting probe')",
+            [work_unit_id],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO work_unit_implementer_activations (work_unit_id,handler_attempt_id,handler_invocation_id,attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at,authorized_at,execution_support_granted_at,isolated_worktree_ready_at,implementer_session_created_at,implementer_invocation_prepared_at,implementer_harness_bound_at,launch_requested_at,launch_accepted_at,implementer_ready_at) VALUES (?1,'live-handler-attempt','live-handler-action',?2,?3,?4,?5,?6,?7,?8,?8,?8,?8,?8,?8,?8,?8,?8,?8)",
+            params![work_unit_id,attempt_id,session_id.as_str(),original_invocation.as_str(),original.revision_id,original.configuration_digest,original.repository_commit_ref,now],
+        ).unwrap();
+        connection.pragma_update(None, "foreign_keys", true).unwrap();
+        drop(connection);
+
+        transition.prepare_later_attempt_reporting_for_test().unwrap();
+        while runtime.active_direct_child_count().unwrap() != 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(runtime.active_direct_child_count().unwrap(), 0, "reporting provider did not finish");
+        let history = sessions.load_session(&session_id).unwrap();
+        let reporting_id = AgentInvocationId::new(format!("work-unit-implementer-reporting-invocation-{:x}", {
+            let mut hash = Sha256::new();
+            hash.update(b"work-unit-implementer-reporting-invocation");
+            hash.update([0]);
+            hash.update(attempt_id.as_bytes());
+            hash.finalize()
+        })).unwrap();
+        let original_entry = history.invocations.iter().find(|entry| entry.invocation.id == original_invocation).unwrap();
+        let reporting_entry = history.invocations.iter().find(|entry| entry.invocation.id == reporting_id).unwrap();
+        let provenance = |entry: &crate::agent_sessions::ports::AgentInvocationHistory| entry.events.iter()
+            .find(|event| event.raw_payload["kind"] == "codex_launch_provenance")
+            .map(|event| event.raw_payload.clone())
+            .expect("sanitized Codex launch provenance");
+        let start_provenance = provenance(original_entry);
+        let resume_provenance = provenance(reporting_entry);
+        assert_eq!(start_provenance["invocationMode"], "start");
+        assert_eq!(resume_provenance["invocationMode"], "resume");
+        assert_eq!(start_provenance["sandbox"], "workspace-write");
+        assert_eq!(resume_provenance["sandbox"], "workspace-write");
+        assert_eq!(start_provenance["workingDirectory"]["absolute"], true);
+        assert_eq!(start_provenance["workingDirectory"]["extendedLengthPrefix"], false);
+        assert!(start_provenance["configurationKeys"].as_array().unwrap().iter().all(|key| {
+            !key.as_str().unwrap_or_default().starts_with("mcp_servers.")
+                && key != "sandbox_workspace_write.network_access"
+                && key != "features.network_proxy"
+        }));
+        assert!(start_provenance["environmentKeys"].as_array().unwrap().is_empty());
+        assert!(resume_provenance["configurationKeys"].as_array().unwrap().iter().any(|key| {
+            key.as_str().unwrap_or_default().starts_with("mcp_servers.work_unit_implementer_reporting_")
+        }));
+        assert!(resume_provenance["configurationKeys"].as_array().unwrap().iter().any(|key| key == "sandbox_workspace_write.network_access"));
+        assert!(resume_provenance["configurationKeys"].as_array().unwrap().iter().any(|key| key == "features.network_proxy"));
+        assert_eq!(resume_provenance["environmentKeys"].as_array().unwrap().len(), 1);
+        assert!(resume_provenance["environmentKeys"][0].as_str().unwrap_or_default().starts_with("CODEX_ORCHESTRATOR_MCP_"));
+        let tools = reporting_entry.events.iter()
+            .filter_map(|event| event.normalized.as_ref())
+            .filter_map(|event| event.tool_activity.as_ref())
+            .filter(|activity| activity.phase == ToolActivityPhase::Completed)
+            .filter_map(|activity| activity.tool.as_deref())
+            .collect::<Vec<_>>();
+        assert!(
+            tools.iter().all(|tool| {
+                matches!(
+                    *tool,
+                    "submit_implementation_outcome" | "complete_implementation_outcome"
+                )
+            }),
+            "reporting continuation invoked a tool outside its two-action boundary: {tools:?}"
+        );
+        let distinct_tools = tools.iter().copied().fold(Vec::new(), |mut distinct, tool| {
+            if !distinct.contains(&tool) {
+                distinct.push(tool);
+            }
+            distinct
+        });
+        assert_eq!(distinct_tools, ["submit_implementation_outcome", "complete_implementation_outcome"]);
+        let facts = Connection::open(&fixture.base.database_path).unwrap().query_row(
+            "SELECT outcome_variant,submitted_at,evidence_manifest_json,file_review_capture_authorization_id,evidence_ready_at,semantic_completed_at FROM work_unit_implementer_outcomes WHERE attempt_id=?1",
+            [attempt_id],
+            |row| Ok((row.get::<_, Option<String>>(0)?,row.get::<_, Option<String>>(1)?,row.get::<_, Option<String>>(2)?,row.get::<_, Option<String>>(3)?,row.get::<_, Option<String>>(4)?,row.get::<_, Option<String>>(5)?)),
+        ).unwrap();
+        assert_eq!(facts.0.as_deref(), Some("review_pending"));
+        assert!(facts.1.is_some() && facts.4.is_some() && facts.5.is_some());
+        assert_ne!(facts.2.as_deref(), Some("[]"));
+        assert!(facts.3.is_some());
     }
 
     #[test]
