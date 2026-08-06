@@ -65,6 +65,7 @@ export function ProductiveProductDecisionsPanel({
   const contextEpochRef = useRef(0);
   const requestTokenRef = useRef(0);
   const operationTokenRef = useRef(0);
+  const agentOperationLeaseRef = useRef<number | null>(null);
   const loadRef = useRef<ProductiveLoad>({ kind: 'loading' });
   const editRef = useRef<EditState | null>(null);
   const savingRef = useRef(false);
@@ -113,6 +114,7 @@ export function ProductiveProductDecisionsPanel({
     const requestToken = ++requestTokenRef.current;
     const requestClient = client;
     const requestEpicId = epicId;
+    agentOperationLeaseRef.current = null;
     setCurrentSaving(false);
     setCurrentEdit(null);
     setMessage(null);
@@ -153,6 +155,19 @@ export function ProductiveProductDecisionsPanel({
   };
 
   const reload = () => startCurrentLoad(false);
+
+  const startAgentOperation = () => {
+    const lease = ++operationTokenRef.current;
+    agentOperationLeaseRef.current = lease;
+    setCurrentSaving(true);
+    return lease;
+  };
+
+  const finishAgentOperation = (lease: number) => {
+    if (agentOperationLeaseRef.current !== lease) return;
+    agentOperationLeaseRef.current = null;
+    setCurrentSaving(false);
+  };
 
   const isCurrentHistoryRequest = (current: HistoryRequest | undefined, expected: HistoryRequest) =>
     mountedRef.current &&
@@ -361,7 +376,8 @@ export function ProductiveProductDecisionsPanel({
               onPublish={onPublish}
               correctionClient={correctionClient}
               agentSessionClient={agentSessionClient}
-              onAgentBusyChange={setCurrentSaving}
+              onAgentOperationStart={startAgentOperation}
+              onAgentOperationFinish={finishAgentOperation}
               contextEpoch={contextEpochRef.current}
               onAgentAccepted={(accepted, operationEpoch) => {
                 const currentLoad = loadRef.current;
@@ -416,7 +432,8 @@ function ProductiveDecisionCard({
   correctionClient,
   agentSessionClient,
   onAgentAccepted,
-  onAgentBusyChange,
+  onAgentOperationStart,
+  onAgentOperationFinish,
   contextEpoch,
 }: {
   readonly decision: ProductDecisionCurrent;
@@ -434,7 +451,8 @@ function ProductiveDecisionCard({
   readonly correctionClient?: ProductDecisionCorrectionClient;
   readonly agentSessionClient?: AgentSessionClient;
   readonly onAgentAccepted: (version: ProductDecisionVersion, operationEpoch: number) => void;
-  readonly onAgentBusyChange: (busy: boolean) => void;
+  readonly onAgentOperationStart: () => number;
+  readonly onAgentOperationFinish: (lease: number) => void;
   readonly contextEpoch: number;
 }) {
   const version = decision.currentVersion;
@@ -512,7 +530,8 @@ function ProductiveDecisionCard({
                   agentSessionClient={agentSessionClient}
                   disabled={saving}
                   onAccepted={onAgentAccepted}
-                  onBusyChange={onAgentBusyChange}
+                  onOperationStart={onAgentOperationStart}
+                  onOperationFinish={onAgentOperationFinish}
                   contextEpoch={contextEpoch}
                 />
               )}
@@ -561,7 +580,8 @@ function AgentAssistedCorrection({
   agentSessionClient,
   disabled,
   onAccepted,
-  onBusyChange,
+  onOperationStart,
+  onOperationFinish,
   contextEpoch,
 }: {
   readonly decision: ProductDecisionCurrent;
@@ -569,7 +589,8 @@ function AgentAssistedCorrection({
   readonly agentSessionClient: AgentSessionClient;
   readonly disabled: boolean;
   readonly onAccepted: (version: ProductDecisionVersion, operationEpoch: number) => void;
-  readonly onBusyChange: (busy: boolean) => void;
+  readonly onOperationStart: () => number;
+  readonly onOperationFinish: (lease: number) => void;
   readonly contextEpoch: number;
 }) {
   const boundary = {
@@ -582,6 +603,7 @@ function AgentAssistedCorrection({
   };
   const activeBoundaryRef = useRef(boundary);
   activeBoundaryRef.current = boundary;
+  const mountedRef = useRef(false);
   const [conversation, setConversation] = useState<Awaited<
     ReturnType<typeof client.startConversation>
   > | null>(null);
@@ -599,6 +621,7 @@ function AgentAssistedCorrection({
   const isCurrentBoundary = (expected: typeof boundary) => {
     const current = activeBoundaryRef.current;
     return (
+      mountedRef.current &&
       current.contextEpoch === expected.contextEpoch &&
       current.client === expected.client &&
       current.epicId === expected.epicId &&
@@ -609,6 +632,7 @@ function AgentAssistedCorrection({
   };
 
   useEffect(() => {
+    mountedRef.current = true;
     setConversation(null);
     setProposal(null);
     setDraft({
@@ -619,6 +643,9 @@ function AgentAssistedCorrection({
     setMessage(null);
     setOpening(false);
     setAccepting(false);
+    return () => {
+      mountedRef.current = false;
+    };
   }, [
     contextEpoch,
     decision.currentVersion.intent,
@@ -631,8 +658,8 @@ function AgentAssistedCorrection({
   const open = async () => {
     if (opening || disabled) return;
     const operationBoundary = boundary;
+    const lease = onOperationStart();
     setOpening(true);
-    onBusyChange(true);
     setMessage(null);
     try {
       const opened = await client.startConversation({
@@ -651,9 +678,8 @@ function AgentAssistedCorrection({
           : 'The decision-bound correction conversation could not be opened.',
       );
     } finally {
-      if (!isCurrentBoundary(operationBoundary)) return;
-      setOpening(false);
-      onBusyChange(false);
+      if (isCurrentBoundary(operationBoundary)) setOpening(false);
+      onOperationFinish(lease);
     }
   };
   if (!conversation) {
@@ -681,7 +707,8 @@ function AgentAssistedCorrection({
         onSavedProposal={setProposal}
         disabled={disabled || accepting}
         onMessage={setMessage}
-        onBusyChange={onBusyChange}
+        onOperationStart={onOperationStart}
+        onOperationFinish={onOperationFinish}
         boundary={boundary}
         isCurrentBoundary={isCurrentBoundary}
       />
@@ -701,8 +728,8 @@ function AgentAssistedCorrection({
             onClick={() =>
               void (async () => {
                 const operationBoundary = boundary;
+                const lease = onOperationStart();
                 setAccepting(true);
-                onBusyChange(true);
                 setMessage(null);
                 try {
                   const accepted = await client.acceptProposal({
@@ -719,9 +746,8 @@ function AgentAssistedCorrection({
                       : 'The proposal was not accepted. It remains available for explicit review.',
                   );
                 } finally {
-                  if (!isCurrentBoundary(operationBoundary)) return;
-                  setAccepting(false);
-                  onBusyChange(false);
+                  if (isCurrentBoundary(operationBoundary)) setAccepting(false);
+                  onOperationFinish(lease);
                 }
               })()
             }
@@ -744,7 +770,8 @@ function CorrectionConversation({
   onSavedProposal,
   disabled,
   onMessage,
-  onBusyChange,
+  onOperationStart,
+  onOperationFinish,
   boundary,
   isCurrentBoundary,
 }: {
@@ -758,7 +785,8 @@ function CorrectionConversation({
   ) => void;
   readonly disabled: boolean;
   readonly onMessage: (message: string | null) => void;
-  readonly onBusyChange: (busy: boolean) => void;
+  readonly onOperationStart: () => number;
+  readonly onOperationFinish: (lease: number) => void;
   readonly boundary: {
     readonly contextEpoch: number;
     readonly client: ProductDecisionCorrectionClient;
@@ -798,7 +826,7 @@ function CorrectionConversation({
     }
     const operationBoundary = boundary;
     const isCurrentSave = () => isCurrentBoundary(operationBoundary);
-    onBusyChange(true);
+    const lease = onOperationStart();
     try {
       const saved = await correctionClient.saveProposal({
         correctionId: conversation.correctionId,
@@ -817,7 +845,7 @@ function CorrectionConversation({
       if (!isCurrentSave()) return;
       onMessage('The proposal could not be retained. No Product Decision version was created.');
     } finally {
-      if (isCurrentSave()) onBusyChange(false);
+      onOperationFinish(lease);
     }
   };
   return (

@@ -395,6 +395,13 @@ pub(crate) fn send_product_decision_correction_message(
     state: State<'_, ProductDecisionTauriState>,
     input: SendProductDecisionCorrectionMessageInput,
 ) -> Result<ProductDecisionCorrectionMessageResult, ProductDecisionTransportError> {
+    send_product_decision_correction(&state, input)
+}
+
+fn send_product_decision_correction(
+    state: &ProductDecisionTauriState,
+    input: SendProductDecisionCorrectionMessageInput,
+) -> Result<ProductDecisionCorrectionMessageResult, ProductDecisionTransportError> {
     let correction = state.repository.load_correction(&input.correction_id)?;
     ensure_correction_initialization(&state, &correction)?;
     let session_id = correction.session_id;
@@ -422,6 +429,13 @@ pub(crate) fn send_product_decision_correction_message(
 #[tauri::command]
 pub(crate) fn save_product_decision_correction_proposal(
     state: State<'_, ProductDecisionTauriState>,
+    input: SaveProductDecisionCorrectionProposalInput,
+) -> Result<ProductDecisionCorrectionProposal, ProductDecisionTransportError> {
+    retain_product_decision_correction_proposal(&state, input)
+}
+
+fn retain_product_decision_correction_proposal(
+    state: &ProductDecisionTauriState,
     input: SaveProductDecisionCorrectionProposalInput,
 ) -> Result<ProductDecisionCorrectionProposal, ProductDecisionTransportError> {
     state
@@ -1242,8 +1256,7 @@ fn validate_passage(
                 normalized["kind"] == "tool_activity" && normalized["toolActivity"].is_object()
             }
             AgentPassageKind::FinalResponse { .. } => {
-                normalized["kind"] == "agent_message"
-                    && normalized["details"]["role"] == "assistant"
+                normalized["kind"] == "agent_message" && normalized["details"]["role"] == "final"
             }
             _ => unreachable!("only event-backed passage kinds enter this branch"),
         };
@@ -1280,6 +1293,9 @@ mod tests {
         },
         repository::SqliteAgentSessionRepository,
     };
+    use crate::runtime::codex::CodexCliRuntime;
+    use crate::runtime::processes::ProcessLaunchSpec;
+    use std::time::{Duration, Instant};
     use tempfile::tempdir;
 
     struct NoopNotifier;
@@ -1344,6 +1360,67 @@ mod tests {
         )
     }
 
+    fn live_command_state(
+        path: &Path,
+        launches: Arc<Mutex<Vec<ProcessLaunchSpec>>>,
+    ) -> ProductDecisionTauriState {
+        let connection = crate::storage::open_active_database(path).unwrap();
+        let session_repository = Arc::new(SqliteAgentSessionRepository::new(connection).unwrap());
+        let providers = Arc::new(SystemAgentSessionProviders);
+        let runtime = Arc::new(CodexCliRuntime::system("codex", None).with_launch_observer(
+            Arc::new(move |spec| {
+                launches.lock().unwrap().push(spec.clone());
+            }),
+        ));
+        let sessions = Arc::new(AgentSessionApplication::new(
+            session_repository,
+            runtime,
+            Arc::new(NoopNotifier),
+            providers.clone(),
+            providers,
+            None,
+        ));
+        ProductDecisionTauriState::new(
+            Arc::new(ProductDecisionRepository::open(path).unwrap()),
+            sessions,
+        )
+    }
+
+    fn wait_for_terminal_invocation(
+        state: &ProductDecisionTauriState,
+        session_id: &AgentSessionId,
+        invocation_id: &AgentInvocationId,
+    ) -> Result<crate::agent_sessions::ports::AgentSessionHistory, String> {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            let history = state
+                .sessions
+                .load_session(session_id)
+                .map_err(|error| error.to_string())?;
+            let invocation = history
+                .invocations
+                .iter()
+                .find(|item| item.invocation.id == *invocation_id)
+                .ok_or_else(|| "live Product Decision invocation disappeared".to_string())?;
+            if invocation.invocation.status.is_terminal() {
+                return if invocation.invocation.status
+                    == crate::agent_sessions::domain::AgentInvocationStatus::Completed
+                {
+                    Ok(history)
+                } else {
+                    Err(format!(
+                        "live Product Decision invocation terminal failure: status={:?}, error={:?}",
+                        invocation.invocation.status, invocation.invocation.runtime_error
+                    ))
+                };
+            }
+            if Instant::now() >= deadline {
+                return Err("timed out waiting for a live Product Decision invocation".into());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
     fn seed_command_decision(repository: &ProductDecisionRepository) -> ProductDecisionVersion {
         let mut seeded = input("command-seed", None);
         seeded.acceptance_provenance = AcceptanceProvenance::ManualHumanApplication {
@@ -1361,7 +1438,7 @@ mod tests {
         let connection = crate::storage::open_active_database(&path).unwrap();
         connection.execute("INSERT INTO agent_sessions(id,title,availability,requested_options_json,created_at,updated_at) VALUES('session','s','available','{}','t','t')",[]).unwrap();
         connection.execute("INSERT INTO agent_session_invocations(id,session_id,submitted_text,input_provenance,status,requested_options_json,started_at,completed_at,created_at,updated_at) VALUES('invocation','session','text','user','completed','{}','t','t','t','t')",[]).unwrap();
-        connection.execute("INSERT INTO agent_session_runtime_events(id,invocation_id,sequence,source,raw_payload_json,normalized_json,recorded_at) VALUES('event','invocation',0,'runtime','{}',?1,'t'),('activity','invocation',1,'runtime','{}',?2,'t')", [r#"{"kind":"agent_message","text":"done","details":{"role":"assistant"},"toolActivity":null}"#, r#"{"kind":"tool_activity","text":"tool","details":{"itemType":"mcp_tool_call"},"toolActivity":{"phase":"completed","itemId":"item","server":"server","tool":"tool","status":null,"resultClassification":"succeeded"}}"#]).unwrap();
+        connection.execute("INSERT INTO agent_session_runtime_events(id,invocation_id,sequence,source,raw_payload_json,normalized_json,recorded_at) VALUES('event','invocation',0,'runtime','{}',?1,'t'),('activity','invocation',1,'runtime','{}',?2,'t')", [r#"{"kind":"agent_message","text":"done","details":{"role":"final"},"toolActivity":null}"#, r#"{"kind":"tool_activity","text":"tool","details":{"itemType":"mcp_tool_call"},"toolActivity":{"phase":"completed","itemId":"item","server":"server","tool":"tool","status":null,"resultClassification":"succeeded"}}"#]).unwrap();
         drop(connection);
         (dir, ProductDecisionRepository::open(path).unwrap())
     }
@@ -1789,5 +1866,78 @@ mod tests {
                 .unwrap(),
             ApplicationInvocationLaunchEvidence::LaunchAccepted
         );
+    }
+
+    #[test]
+    #[ignore = "requires CODEX_PRODUCT_DECISION_LIVE_SMOKE=true and launches a real decision-bound Codex Session"]
+    fn product_decision_live_correction_retains_exact_final_response() {
+        assert!(matches!(
+            std::env::var("CODEX_PRODUCT_DECISION_LIVE_SMOKE").as_deref(),
+            Ok("true") | Ok("1") | Ok("yes")
+        ));
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("active.sqlite");
+        let launches = Arc::new(Mutex::new(Vec::new()));
+        let state = live_command_state(&path, launches.clone());
+        let current = seed_command_decision(&state.repository);
+        let result = (|| -> Result<serde_json::Value, String> {
+            let correction = start_product_decision_correction(
+                &state,
+                StartProductDecisionCorrectionInput {
+                    epic_id: "epic".into(),
+                    decision_id: "decision".into(),
+                    base_version: current.version,
+                },
+            )
+            .map_err(|error| format!("start: {error:?}"))?;
+            let initialization = state
+                .repository
+                .correction_initialization(&correction.correction_id)
+                .map_err(|error| format!("initialization: {error:?}"))?;
+            let session_id = AgentSessionId::new(correction.session_id.clone())
+                .map_err(|error| error.to_string())?;
+            let initial_id = AgentInvocationId::new(initialization.initial_invocation_id)
+                .map_err(|error| error.to_string())?;
+            wait_for_terminal_invocation(&state, &session_id, &initial_id)?;
+            let continuation = send_product_decision_correction(&state, SendProductDecisionCorrectionMessageInput { correction_id: correction.correction_id.clone(), submitted_text: "Return one concise correction proposal for review: title, statement, and intent. Do not accept or apply it.".into() }).map_err(|error| format!("continuation: {error:?}"))?;
+            let continuation_id = AgentInvocationId::new(continuation.invocation_id)
+                .map_err(|error| error.to_string())?;
+            let history = wait_for_terminal_invocation(&state, &session_id, &continuation_id)?;
+            let response = history.invocations.iter().find(|item| item.invocation.id == continuation_id).and_then(|item| item.events.iter().rev().find(|event| event.normalized.as_ref().is_some_and(|normalized| normalized.kind == crate::agent_sessions::domain::NormalizedRuntimeEventKind::AgentMessage && normalized.details.as_ref().and_then(|details| details["role"].as_str()) == Some("final")))).ok_or_else(|| "no persisted final response".to_string())?;
+            let proposal = retain_product_decision_correction_proposal(
+                &state,
+                SaveProductDecisionCorrectionProposalInput {
+                    correction_id: correction.correction_id.clone(),
+                    title: "Live correction proposal".into(),
+                    statement: "Test-owned proposal retained from the exact final response.".into(),
+                    intent: "Prove proposal-only passage retention without acceptance.".into(),
+                    proposal_passage: AgentPassage {
+                        kind: AgentPassageReferenceKind::AgentSessionPassage,
+                        session_id: correction.session_id.clone(),
+                        invocation_id: continuation_id.as_str().into(),
+                        passage: AgentPassageKind::FinalResponse {
+                            runtime_event_id: response.id.as_str().into(),
+                        },
+                    },
+                },
+            )
+            .map_err(|error| format!("save proposal: {error:?}"))?;
+            Ok(
+                serde_json::json!({"observed":{"isolatedTestOwnedDatabase":true,"startReopen":true,"initialPrompt":"completed","userContinuation":"completed","exactFinalResponseRetained":proposal.proposal_passage.passage == AgentPassageKind::FinalResponse { runtime_event_id: response.id.as_str().into() },"explicitAcceptance":false},"unobserved":{"explicitAcceptance":true,"publicationOrApplication":true},"launches":launches.lock().unwrap().iter().map(|launch| serde_json::json!({"program":launch.program,"args":launch.args,"workingDirectory":launch.working_directory})).collect::<Vec<_>>() }),
+            )
+        })();
+        let shutdown = state.sessions.shutdown_runtime();
+        let evidence = match result {
+            Ok(value) => value,
+            Err(error) => serde_json::json!({"observed":{},"unobserved":{"reason":error}}),
+        };
+        println!("PRODUCT_DECISION_LIVE_EVIDENCE={evidence}");
+        if let Ok(output) = std::env::var("CODEX_PRODUCT_DECISION_LIVE_EVIDENCE_PATH") {
+            std::fs::write(output, evidence.to_string()).expect("write live evidence");
+        }
+        shutdown.expect("shutdown live runtime");
+        if let Some(error) = evidence["unobserved"]["reason"].as_str() {
+            panic!("Product Decision live correction proof: {error}");
+        }
     }
 }

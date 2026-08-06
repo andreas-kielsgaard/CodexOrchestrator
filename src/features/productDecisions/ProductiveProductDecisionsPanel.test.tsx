@@ -438,4 +438,74 @@ describe('ProductiveProductDecisionsPanel', () => {
     expect(screen.queryByText('Old accepted agent result')).toBeNull();
     expect(screen.queryByText(/Accepted Product Decision version 2/)).toBeNull();
   });
+
+  it('does not let an unmounted correction open release a newer Epic operation lease', async () => {
+    const oldOpen = deferred<Awaited<ReturnType<ProductDecisionCorrectionClient['startConversation']>>>();
+    const newOpen = deferred<Awaited<ReturnType<ProductDecisionCorrectionClient['startConversation']>>>();
+    const correctionClient: ProductDecisionCorrectionClient = {
+      startConversation: vi
+        .fn()
+        .mockImplementationOnce(() => oldOpen.promise)
+        .mockImplementationOnce(() => newOpen.promise),
+      sendMessage: vi.fn(),
+      saveProposal: vi.fn(),
+      acceptProposal: vi.fn(),
+    };
+    const agentSessionClient: AgentSessionClient = {
+      createSession: vi.fn(),
+      listSessions: vi.fn().mockResolvedValue([]),
+      loadSession: vi.fn(),
+      reloadSession: vi.fn(),
+      subscribeUpdates: vi.fn().mockResolvedValue(() => undefined),
+      sendMessage: vi.fn(),
+      cancelInvocation: vi.fn(),
+      disconnectUpdates: vi.fn(),
+    };
+    const replacement = current(
+      version(1, 'New Epic statement', { epicId: 'epic-2', title: 'New Epic title' }),
+      { epicId: 'epic-2' },
+    );
+    const view = render(
+      <ProductiveProductDecisionsPanel
+        epicId="epic-1"
+        client={clientFor()}
+        correctionClient={correctionClient}
+        agentSessionClient={agentSessionClient}
+      />,
+    );
+    await screen.findByText('Title 1');
+    fireEvent.click(screen.getByRole('button', { name: 'Discuss correction with agent' }));
+
+    view.rerender(
+      <ProductiveProductDecisionsPanel
+        epicId="epic-2"
+        client={clientFor({ loadCurrent: vi.fn().mockResolvedValue([replacement]) })}
+        correctionClient={correctionClient}
+        agentSessionClient={agentSessionClient}
+      />,
+    );
+    await screen.findByText('New Epic title');
+    fireEvent.click(screen.getByRole('button', { name: 'Discuss correction with agent' }));
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeDisabled();
+
+    oldOpen.resolve({
+      correctionId: 'old-correction',
+      epicId: 'epic-1',
+      decisionId: 'decision-1',
+      baseVersion: 1,
+      sessionId: 'old-session',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeDisabled();
+
+    newOpen.resolve({
+      correctionId: 'new-correction',
+      epicId: 'epic-2',
+      decisionId: 'decision-1',
+      baseVersion: 1,
+      sessionId: 'new-session',
+    });
+    await screen.findByText(/This discussion is bound to the displayed decision/);
+    expect(screen.getByRole('button', { name: 'Reload' })).not.toBeDisabled();
+  });
 });
