@@ -2176,7 +2176,11 @@ impl NativeProfileService {
         &self,
         id: &str,
     ) -> Result<NativeMcpReportingProbeAuthority, String> {
-        self.require_selected_active(id)?;
+        let gate = self
+            .operation_gate
+            .lock()
+            .map_err(|_| "Native profile operation supervision is unavailable")?;
+        self.require_selected_active_while_gated(id)?;
         let root = self.probe_root(id);
         let mut connection = self.connection()?;
         let transaction = connection
@@ -2220,6 +2224,7 @@ impl NativeProfileService {
             Some("mcp_reporting_probe_pending_application_receipt"),
         )?;
         transaction.commit().map_err(|error| error.to_string())?;
+        drop(gate);
         Ok(authority)
     }
 
@@ -7851,6 +7856,52 @@ mod tests {
                 .unwrap()
                 .query_row(
                     "SELECT COUNT(*) FROM native_codex_profile_mcp_probes WHERE profile_id=?1",
+                    params![first.id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn selection_move_prevents_a_competing_unselected_mcp_probe_creation() {
+        let (_directory, service) = service();
+        let service = Arc::new(service);
+        let first = service.create_dedicated().unwrap();
+        service.select(&first.id).unwrap();
+        let second = service.create_dedicated().unwrap();
+        let (begin_started, selection_start) = std::sync::mpsc::sync_channel(0);
+        let (selection_finished, begin_continue) = std::sync::mpsc::sync_channel(0);
+
+        let selecting = {
+            let service = service.clone();
+            let second_id = second.id.clone();
+            thread::spawn(move || {
+                selection_start.recv().unwrap();
+                let result = service.select(&second_id);
+                selection_finished.send(()).unwrap();
+                result
+            })
+        };
+        let creating = {
+            let service = service.clone();
+            let first_id = first.id.clone();
+            thread::spawn(move || {
+                begin_started.send(()).unwrap();
+                begin_continue.recv().unwrap();
+                service.begin_mcp_reporting_probe(&first_id)
+            })
+        };
+
+        selecting.join().unwrap().unwrap();
+        assert!(creating.join().unwrap().is_err());
+        assert_eq!(
+            service
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM native_codex_profile_mcp_probes WHERE profile_id=?1 AND state IN ('pending','dispatching')",
                     params![first.id],
                     |row| row.get::<_, i64>(0),
                 )
