@@ -2385,6 +2385,7 @@ fn valid_work_unit_activation_projection() -> WorkUnitDto {
             launch_accepted_at: timestamp(),
             provider_activation_observed_at: timestamp(),
             handler_ready_at: timestamp(),
+            failure_reason: None,
         }),
         action_continuation: Some(WorkUnitHandlerActionContinuationDto {
             attempt_id: "attempt".into(),

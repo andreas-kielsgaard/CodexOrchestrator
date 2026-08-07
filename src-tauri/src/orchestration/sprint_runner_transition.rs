@@ -266,6 +266,7 @@ CREATE TABLE IF NOT EXISTS work_unit_handler_activations (
   launch_accepted_at TEXT,
   provider_activation_observed_at TEXT,
   handler_ready_at TEXT,
+  failure_reason TEXT,
   CHECK ((eligibility_state = 'eligible' AND blocked_reason IS NULL) OR (eligibility_state = 'blocked' AND blocked_reason IS NOT NULL)),
   CHECK ((handler_ready_at IS NULL) OR (launch_accepted_at IS NOT NULL))
 );
@@ -667,6 +668,17 @@ fn ensure_handler_action_failure_reason(connection: &Connection) -> Result<(), S
     if !columns.iter().any(|column| column == "failure_reason") {
         connection.execute_batch("ALTER TABLE work_unit_handler_action_continuations ADD COLUMN failure_reason TEXT")
             .map_err(|error| format!("add Handler action continuation failure reason: {error}"))?;
+    }
+    Ok(())
+}
+
+fn ensure_handler_activation_failure_reason(connection: &Connection) -> Result<(), String> {
+    let columns = connection.prepare("PRAGMA table_info(work_unit_handler_activations)")
+        .and_then(|mut statement| statement.query_map([], |row| row.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>())
+        .map_err(|error| format!("inspect Handler activation schema: {error}"))?;
+    if !columns.iter().any(|column| column == "failure_reason") {
+        connection.execute_batch("ALTER TABLE work_unit_handler_activations ADD COLUMN failure_reason TEXT")
+            .map_err(|error| format!("add Handler activation failure reason: {error}"))?;
     }
     Ok(())
 }
@@ -1310,6 +1322,8 @@ impl SprintRunnerTransitionService {
                 .map_err(|e| SprintRunnerTransitionError::Unavailable(format!("migrate Handler activation schema: {e}")))?; }
         }
         migrate_legacy_implementer_activations(&connection)
+            .map_err(SprintRunnerTransitionError::Unavailable)?;
+        ensure_handler_activation_failure_reason(&connection)
             .map_err(SprintRunnerTransitionError::Unavailable)?;
         ensure_handler_action_failure_reason(&connection)
             .map_err(SprintRunnerTransitionError::Unavailable)?;
@@ -3294,10 +3308,22 @@ impl SprintRunnerTransitionService {
         let authority = authority.expect("eligible activation has authority");
         self.mark_handler(work_unit_id, "authorized_at")?;
         self.mark_handler(work_unit_id, "attempt_created_at")?;
-        handler.authorize_handler_attempt(&attempt_id, work_unit_id, &authority)
-            .map_err(|_| SprintRunnerTransitionError::Unavailable("execution-support authorization failed".into()))?;
-        let package = handler.construct_for_pinned_profile(&attempt_id, WorkUnitHarnessRole::Handler, harness.profile)
-            .map_err(|error| SprintRunnerTransitionError::Unavailable(format!("Handler Harness package construction failed: {error:?}")))?;
+        if handler.authorize_handler_attempt(&attempt_id, work_unit_id, &authority).is_err() {
+            self.fail_handler_recovery(work_unit_id, "handler_execution_support_authorization_failed")?;
+            return Ok(());
+        }
+        let package = match handler.construct_for_pinned_profile(
+            &attempt_id,
+            WorkUnitHarnessRole::Handler,
+            harness.profile,
+        ) {
+            Ok(package) => package,
+            Err(_) => {
+                self.fail_handler_recovery(work_unit_id, "handler_execution_support_grant_failed")?;
+                return Ok(());
+            }
+        };
+        self.clear_handler_recovery_failure(work_unit_id)?;
         self.mark_handler(work_unit_id, "execution_support_granted_at")?;
         self.mark_handler(work_unit_id, "isolated_worktree_ready_at")?;
         let session = AgentSessionId::new(session_id).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
@@ -3680,6 +3706,20 @@ impl SprintRunnerTransitionService {
     }
     fn clear_handler_action_failure(&self, work_unit: &str) -> Result<(), SprintRunnerTransitionError> {
         self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.execute("UPDATE work_unit_handler_action_continuations SET failure_reason=NULL WHERE work_unit_id=?1", [work_unit]).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        Ok(())
+    }
+
+    fn fail_handler_recovery(&self, work_unit: &str, reason: &str) -> Result<(), SprintRunnerTransitionError> {
+        self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?
+            .execute("UPDATE work_unit_handler_activations SET failure_reason=?2 WHERE work_unit_id=?1 AND handler_ready_at IS NULL", params![work_unit, reason])
+            .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        Ok(())
+    }
+
+    fn clear_handler_recovery_failure(&self, work_unit: &str) -> Result<(), SprintRunnerTransitionError> {
+        self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?
+            .execute("UPDATE work_unit_handler_activations SET failure_reason=NULL WHERE work_unit_id=?1", [work_unit])
+            .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         Ok(())
     }
 
@@ -4513,7 +4553,7 @@ fn start_epic_runner_server(
 
 #[cfg(test)]
 mod implementer_activation_migration_tests {
-    use super::{ensure_handler_action_failure_reason, migrate_legacy_implementer_activations};
+    use super::{ensure_handler_action_failure_reason, ensure_handler_activation_failure_reason, migrate_legacy_implementer_activations};
     use rusqlite::{params, Connection};
 
     fn legacy_connection() -> Connection {
@@ -4599,6 +4639,22 @@ mod implementer_activation_migration_tests {
         ensure_handler_action_failure_reason(&connection).unwrap();
         assert_eq!(connection.query_row::<i64, _, _>(
             "SELECT COUNT(*) FROM pragma_table_info('work_unit_handler_action_continuations')
+             WHERE name='failure_reason'", [], |row| row.get(0),
+        ).unwrap(), 1);
+    }
+
+    #[test]
+    fn handler_activation_failure_reason_migrates_idempotently() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(
+            "CREATE TABLE work_unit_handler_activations (
+               work_unit_id TEXT PRIMARY KEY, handler_ready_at TEXT
+             );",
+        ).unwrap();
+        ensure_handler_activation_failure_reason(&connection).unwrap();
+        ensure_handler_activation_failure_reason(&connection).unwrap();
+        assert_eq!(connection.query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM pragma_table_info('work_unit_handler_activations')
              WHERE name='failure_reason'", [], |row| row.get(0),
         ).unwrap(), 1);
     }
