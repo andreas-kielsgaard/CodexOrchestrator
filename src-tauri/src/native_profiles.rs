@@ -2037,7 +2037,9 @@ impl NativeProfileService {
         id: &str,
     ) -> Result<NativeProfileDto, String> {
         self.require_selected_active(id)?;
-        self.begin_mcp_reporting_probe(id)?;
+        if !self.has_mcp_reporting_probe(id)? {
+            self.begin_mcp_reporting_probe(id)?;
+        }
         self.reconcile_pending_mcp_reporting(id)
     }
 
@@ -2115,22 +2117,16 @@ impl NativeProfileService {
             drop(gate);
             return result;
         }
+        let attention = if outcome.is_err() {
+            "mcp_reporting_dispatch_unavailable"
+        } else {
+            "mcp_reporting_dispatch_completed_without_receipt"
+        };
+        self.cancel_pending_mcp_reporting_probe(id, &authority, attention)?;
         drop(gate);
         if outcome.is_err() {
-            self.set_attention(
-                id,
-                "mcp_reporting",
-                Some("mcp_reporting_dispatch_unavailable"),
-                false,
-            )?;
             return Err("The application-owned MCP reporting exchange is unavailable".into());
         }
-        self.set_attention(
-            id,
-            "mcp_reporting",
-            Some("mcp_reporting_dispatch_completed_without_receipt"),
-            false,
-        )?;
         Err("The MCP reporting exchange completed without a correlated receipt".into())
     }
 
@@ -2225,6 +2221,49 @@ impl NativeProfileService {
         self.write_attention(&transaction, id, "mcp_reporting", None)?;
         transaction.commit().map_err(|error| error.to_string())?;
         self.profile(id).map(Into::into)
+    }
+
+    fn has_mcp_reporting_probe(&self, id: &str) -> Result<bool, String> {
+        self.connection()?
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM native_codex_profile_mcp_probes WHERE profile_id=?1)",
+                params![id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count != 0)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Terminalizes an attempted bridge that supplied no receipt. A later invocation observes
+    /// this durable cancellation rather than starting another exchange or replacement request.
+    fn cancel_pending_mcp_reporting_probe(
+        &self,
+        id: &str,
+        authority: &NativeMcpReportingProbeAuthority,
+        attention: &'static str,
+    ) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| format!("Unable to terminalize native MCP reporting probe: {error}"))?;
+        let now = Utc::now().to_rfc3339();
+        let transitioned = transaction
+            .execute(
+                "UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state='pending' AND correlation_id=?2 AND expected_capability=?3 AND expected_server=?4 AND expected_tool=?5 AND expected_probe_root=?6",
+                params![id, authority.correlation_id, authority.capability, authority.server, authority.tool, authority.probe_root.to_string_lossy()],
+            )
+            .map_err(|error| error.to_string())?;
+        if transitioned != 1 {
+            return Err("The application-owned MCP reporting probe could not be terminalized".into());
+        }
+        transaction
+            .execute(
+                "UPDATE native_codex_profile_readiness SET mcp_reporting='probe_failed',observed_at=?2 WHERE profile_id=?1",
+                params![id, now],
+            )
+            .map_err(|error| error.to_string())?;
+        self.write_attention(&transaction, id, "mcp_reporting", Some(attention))?;
+        transaction.commit().map_err(|error| error.to_string())
     }
 
     pub(crate) fn resolve_selected_home(&self) -> Result<ResolvedNativeCodexHome, String> {
@@ -6872,14 +6911,8 @@ mod tests {
         let query = reopened.query().unwrap();
         let invalidated = &query.profiles[0];
 
-        assert_eq!(
-            invalidated.full_access_canary_attempt.disposition,
-            "cancelled"
-        );
-        assert_eq!(
-            invalidated.full_access_canary_attempt.cleanup_disposition,
-            "removed"
-        );
+        assert_eq!(invalidated.full_access_canary_attempt.disposition, "cancelled");
+        assert_eq!(invalidated.full_access_canary_attempt.cleanup_disposition, "removed");
         assert!(!invalidated.full_access_canary_attempt.receipt_observed);
         assert_eq!(invalidated.readiness.danger_full_access_canary, "blocked");
         assert!(!receipt.exists());
@@ -6929,14 +6962,8 @@ mod tests {
         let query = reopened.query().unwrap();
         let invalidated = &query.profiles[0];
 
-        assert_eq!(
-            invalidated.full_access_canary_attempt.disposition,
-            "cancelled"
-        );
-        assert_eq!(
-            invalidated.full_access_canary_attempt.cleanup_disposition,
-            "failed"
-        );
+        assert_eq!(invalidated.full_access_canary_attempt.disposition, "cancelled");
+        assert_eq!(invalidated.full_access_canary_attempt.cleanup_disposition, "failed");
         assert_eq!(invalidated.readiness.danger_full_access_canary, "blocked");
         assert!(receipt.is_dir());
     }
@@ -7212,7 +7239,7 @@ mod tests {
     }
 
     #[test]
-    fn reporting_dispatch_is_idempotent_for_duplicate_and_reopened_pending_requests() {
+    fn reporting_dispatch_terminalizes_no_receipt_without_reopen_or_duplicate_retry() {
         let (directory, service) = service();
         let profile = selected_profile_ready_except_mcp(&service);
         service.begin_mcp_reporting_probe(&profile.id).unwrap();
@@ -7220,10 +7247,22 @@ mod tests {
             .reconcile_pending_mcp_reporting(&profile.id)
             .is_err());
         let incomplete = service.profile(&profile.id).unwrap();
-        assert_eq!(incomplete.readiness.mcp_reporting, "not_assessed");
+        assert_eq!(incomplete.readiness.mcp_reporting, "probe_failed");
         assert_eq!(
             incomplete.readiness.attentions.mcp_reporting.as_deref(),
             Some("mcp_reporting_dispatch_completed_without_receipt")
+        );
+        assert_eq!(
+            service
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT state FROM native_codex_profile_mcp_probes WHERE profile_id=?1",
+                    params![profile.id],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "cancelled"
         );
         drop(service);
 
@@ -7238,10 +7277,10 @@ mod tests {
             .reconcile_pending_mcp_reporting(&profile.id)
             .unwrap();
         reopened
-            .reconcile_pending_mcp_reporting(&profile.id)
+            .request_and_reconcile_mcp_reporting(&profile.id)
             .unwrap();
-        assert_eq!(reporting.calls.lock().unwrap().len(), 1);
-        assert!(reopened.resolve_selected_home().is_ok());
+        assert!(reporting.calls.lock().unwrap().is_empty());
+        assert!(reopened.resolve_selected_home().is_err());
     }
 
     #[test]
