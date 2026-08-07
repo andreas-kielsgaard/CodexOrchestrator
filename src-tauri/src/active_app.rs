@@ -92,10 +92,10 @@ pub(crate) fn run() {
                 .map_err(|error| format!("Unable to create app data directory: {error}"))?;
             let database_path = crate::storage::active_database_path(&app_data_dir);
             let connection = crate::storage::open_active_database(&database_path)?;
-            let native_profiles = crate::native_profiles::NativeProfileService::open(
+            let native_profiles = Arc::new(crate::native_profiles::NativeProfileService::open(
                 database_path.clone(),
                 app_data_dir.clone(),
-            )?;
+            )?);
             let repository = Arc::new(
                 crate::agent_sessions::repository::SqliteAgentSessionRepository::new(connection)
                     .map_err(|error| error.to_string())?,
@@ -145,7 +145,8 @@ pub(crate) fn run() {
                     providers.clone(),
                     providers,
                     None,
-                ),
+                )
+                .with_native_profile_launch_authority(native_profiles.clone()),
             );
             application
                 .reconcile_startup()

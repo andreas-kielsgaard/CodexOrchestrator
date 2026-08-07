@@ -47,6 +47,23 @@ CREATE TABLE IF NOT EXISTS native_codex_profiles (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profiles_selected
 ON native_codex_profiles((1)) WHERE selected_at IS NOT NULL;
+CREATE TABLE IF NOT EXISTS agent_session_native_profile_bindings (
+  session_id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  filesystem_identity TEXT NOT NULL,
+  bound_at TEXT NOT NULL,
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS agent_session_native_profile_launch_provenance (
+  invocation_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  profile_id TEXT NOT NULL,
+  filesystem_identity TEXT NOT NULL,
+  environment_key TEXT NOT NULL CHECK(environment_key='CODEX_HOME'),
+  invocation_mode TEXT NOT NULL CHECK(invocation_mode IN ('start','resume')),
+  prepared_at TEXT NOT NULL,
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
 CREATE TABLE IF NOT EXISTS native_codex_profile_readiness (
   profile_id TEXT PRIMARY KEY,
   authentication TEXT NOT NULL CHECK (authentication IN ('unknown','authenticated','unauthenticated')),
@@ -2403,9 +2420,82 @@ impl NativeProfileService {
             );
         }
         Ok(ResolvedNativeCodexHome {
+            profile_id: profile.id,
+            filesystem_identity: profile.identity,
             home: profile.home,
             readiness: readiness.clone(),
         })
+    }
+
+    fn prepare_managed_agent_session_launch(
+        &self,
+        session_id: &str,
+        invocation_id: &str,
+        resuming: bool,
+        extension: Option<crate::agent_sessions::ports::RuntimeLaunchExtension>,
+    ) -> Result<crate::agent_sessions::ports::RuntimeLaunchExtension, String> {
+        let mut extension = extension.unwrap_or_default();
+        if extension
+            .environment
+            .iter()
+            .any(|(key, _)| key.eq_ignore_ascii_case("CODEX_HOME"))
+        {
+            return Err("Only the application-selected native profile may supply CODEX_HOME".into());
+        }
+        let resolved = self.resolve_selected_home()?;
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| format!("Unable to bind managed Agent Session native profile: {error}"))?;
+        let binding = transaction
+            .query_row(
+                "SELECT profile_id,filesystem_identity FROM agent_session_native_profile_bindings WHERE session_id=?1",
+                params![session_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(|error| format!("Unable to load managed Agent Session native profile binding: {error}"))?;
+        match binding {
+            Some((profile_id, identity)) => {
+                if profile_id != resolved.profile_id || identity != resolved.filesystem_identity {
+                    return Err("Managed Agent Session native profile continuity no longer matches the selected ready profile".into());
+                }
+            }
+            None => {
+                if resuming {
+                    return Err("Managed Agent Session resume requires a durable native profile binding".into());
+                }
+                transaction.execute(
+                    "INSERT INTO agent_session_native_profile_bindings (session_id,profile_id,filesystem_identity,bound_at) VALUES (?1,?2,?3,?4)",
+                    params![session_id, resolved.profile_id, resolved.filesystem_identity, Utc::now().to_rfc3339()],
+                ).map_err(|error| format!("Unable to persist managed Agent Session native profile binding: {error}"))?;
+            }
+        }
+        let mode = if resuming { "resume" } else { "start" };
+        let provenance = transaction
+            .query_row(
+                "SELECT session_id,profile_id,filesystem_identity,environment_key,invocation_mode FROM agent_session_native_profile_launch_provenance WHERE invocation_id=?1",
+                params![invocation_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?)),
+            )
+            .optional()
+            .map_err(|error| format!("Unable to load managed Agent Session native launch provenance: {error}"))?;
+        match provenance {
+            Some((bound_session, profile_id, identity, key, bound_mode)) => {
+                if bound_session != session_id || profile_id != resolved.profile_id || identity != resolved.filesystem_identity || key != "CODEX_HOME" || bound_mode != mode {
+                    return Err("Managed Agent Session native launch provenance conflicts with its durable profile binding".into());
+                }
+            }
+            None => {
+                transaction.execute(
+                    "INSERT INTO agent_session_native_profile_launch_provenance (invocation_id,session_id,profile_id,filesystem_identity,environment_key,invocation_mode,prepared_at) VALUES (?1,?2,?3,?4,'CODEX_HOME',?5,?6)",
+                    params![invocation_id, session_id, resolved.profile_id, resolved.filesystem_identity, mode, Utc::now().to_rfc3339()],
+                ).map_err(|error| format!("Unable to persist managed Agent Session native launch provenance: {error}"))?;
+            }
+        }
+        transaction.commit().map_err(|error| format!("Unable to commit managed Agent Session native profile binding: {error}"))?;
+        extension.environment.push(("CODEX_HOME".into(), resolved.home.to_string_lossy().into_owned()));
+        Ok(extension)
     }
 
     /// Produces a command only after all mode-specific authority is independently valid. It does
@@ -3705,8 +3795,27 @@ impl Drop for NativeProfileService {
 /// at which selected identity and all independently observed readiness facts are consumed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ResolvedNativeCodexHome {
+    pub(crate) profile_id: String,
+    pub(crate) filesystem_identity: String,
     pub(crate) home: PathBuf,
     pub(crate) readiness: NativeProfileReadiness,
+}
+
+impl crate::agent_sessions::application::NativeProfileLaunchAuthority for NativeProfileService {
+    fn prepare_launch(
+        &self,
+        session_id: &crate::agent_sessions::domain::AgentSessionId,
+        invocation_id: &crate::agent_sessions::domain::AgentInvocationId,
+        resuming: bool,
+        extension: Option<crate::agent_sessions::ports::RuntimeLaunchExtension>,
+    ) -> Result<crate::agent_sessions::ports::RuntimeLaunchExtension, String> {
+        self.prepare_managed_agent_session_launch(
+            session_id.as_str(),
+            invocation_id.as_str(),
+            resuming,
+            extension,
+        )
+    }
 }
 
 fn validated_absolute_directory(supplied: &str) -> Result<PathBuf, String> {
@@ -4625,10 +4734,10 @@ fn validate_setup_attempt(attempt: &NativeProfileSetupAttempt) -> Result<(), Str
 }
 
 pub(crate) struct NativeProfileTauriState {
-    service: NativeProfileService,
+    service: Arc<NativeProfileService>,
 }
 impl NativeProfileTauriState {
-    pub(crate) fn new(service: NativeProfileService) -> Self {
+    pub(crate) fn new(service: Arc<NativeProfileService>) -> Self {
         Self { service }
     }
 }
@@ -5056,6 +5165,13 @@ mod tests {
         profile
     }
 
+    fn mark_mcp_ready(service: &NativeProfileService, profile_id: &str) {
+        service.connection().unwrap().execute(
+            "UPDATE native_codex_profile_readiness SET mcp_reporting='ready' WHERE profile_id=?1",
+            params![profile_id],
+        ).unwrap();
+    }
+
     fn claim_mcp_reporting_for_current_reconciliation(
         service: &NativeProfileService,
         id: &str,
@@ -5090,6 +5206,56 @@ mod tests {
         assert_eq!(query.profiles.len(), 1);
         assert!(query.profiles[0].selected);
         assert!(reopened.resolve_selected_home().is_err());
+    }
+
+    #[test]
+    fn managed_agent_session_binding_revalidates_selection_and_records_no_raw_home() {
+        let (directory, service) = service();
+        let first = selected_profile_ready_except_mcp(&service);
+        mark_mcp_ready(&service, &first.id);
+        let first_home = first.home_path.clone();
+        let prepared = service.prepare_managed_agent_session_launch(
+            "session-1", "invocation-1", false,
+            Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
+                additional_args: vec!["--role-config".into()],
+                environment: vec![("ROLE_ENV".into(), "preserved".into())],
+                initial_prompt_prefix: None,
+            }),
+        ).expect("fresh launch binding");
+        assert!(prepared.environment.iter().any(|(key, value)| key == "CODEX_HOME" && value == &first_home));
+        assert!(prepared.environment.iter().any(|(key, value)| key == "ROLE_ENV" && value == "preserved"));
+        let provenance: String = service.connection().unwrap().query_row(
+            "SELECT printf('%s:%s:%s',profile_id,environment_key,invocation_mode) FROM agent_session_native_profile_launch_provenance WHERE invocation_id='invocation-1'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(provenance, format!("{}:CODEX_HOME:start", first.id));
+        let stored_path_count: i64 = service.connection().unwrap().query_row(
+            "SELECT COUNT(*) FROM agent_session_native_profile_launch_provenance WHERE profile_id=?1 AND filesystem_identity=?2 AND instr(profile_id,?3)=0",
+            params![first.id, service.resolve_selected_home().unwrap().filesystem_identity, first_home], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(stored_path_count, 1);
+        assert!(service
+            .prepare_managed_agent_session_launch("session-1", "invocation-1", false, None)
+            .is_ok());
+
+        drop(service);
+        let reopened = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        ).expect("reopen profile service");
+        assert!(reopened.prepare_managed_agent_session_launch("session-1", "invocation-2", true, None).is_ok());
+
+        let second = selected_profile_ready_except_mcp(&reopened);
+        mark_mcp_ready(&reopened, &second.id);
+        assert!(reopened.prepare_managed_agent_session_launch("session-1", "invocation-3", true, None).is_err());
+        assert!(reopened.prepare_managed_agent_session_launch(
+            "session-2", "invocation-4", false,
+            Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
+                additional_args: vec![],
+                environment: vec![("CODEX_HOME".into(), "foreign".into())],
+                initial_prompt_prefix: None,
+            }),
+        ).is_err());
     }
 
     #[test]

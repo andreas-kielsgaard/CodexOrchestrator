@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 35;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 36;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
@@ -45,7 +45,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| format!("Unable to commit active v22 schema evolution: {error}"))?;
         return Ok(());
     }
-    if (1..=34).contains(&current_version) {
+    if (1..=35).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -463,6 +463,8 @@ mod tests {
                 "agent_session_invocation_diagnostics",
                 "agent_session_invocation_launch_acceptances",
                 "agent_session_invocations",
+                "agent_session_native_profile_bindings",
+                "agent_session_native_profile_launch_provenance",
                 "agent_session_runtime_events",
                 "agent_sessions",
                 "capability_profiles",
@@ -496,7 +498,16 @@ mod tests {
                 "initiated_planning_drafts",
                 "initiated_sprint_git_authorities",
                 "initiated_sprints",
+                "native_codex_profile_attentions",
+                "native_codex_profile_execution_modes",
+                "native_codex_profile_full_access_canaries",
+                "native_codex_profile_login_attempts",
+                "native_codex_profile_mcp_probes",
+                "native_codex_profile_mode_authorizations",
                 "native_codex_profile_readiness",
+                "native_codex_profile_sandbox_adoption_confirmations",
+                "native_codex_profile_sandbox_adoptions",
+                "native_codex_profile_setup_attempts",
                 "native_codex_profiles",
                 "plan_builder_context_deliveries",
                 "planning_draft_agent_session_associations",
@@ -1478,7 +1489,7 @@ mod tests {
             .expect("seed real v33 native-profile predecessor");
 
         initialize_active_database(&connection).expect("migrate v33 through dispatch claim");
-        assert_eq!(pragma_i64(&connection, "user_version"), 35);
+        assert_eq!(pragma_i64(&connection, "user_version"), 36);
         assert_eq!(
             connection
                 .query_row(
@@ -1554,7 +1565,7 @@ mod tests {
         drop(connection);
 
         let reopened = open_active_database(&path).expect("idempotent v35 reopen");
-        assert_eq!(pragma_i64(&reopened, "user_version"), 35);
+        assert_eq!(pragma_i64(&reopened, "user_version"), 36);
         assert_eq!(
             reopened
                 .query_row(

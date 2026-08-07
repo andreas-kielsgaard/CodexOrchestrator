@@ -11,7 +11,7 @@ use crate::agent_sessions::{
         AgentRuntime, AgentRuntimeUpdateSink, AgentSessionHistory, AgentSessionRepository,
         AgentSessionSummary, ListAgentSessionsQuery, RepositoryError, RuntimeInvocationMode,
         RuntimeInvocationOutcome, RuntimeInvocationRequest, RuntimeLaunchExtension,
-        RuntimePortError, RuntimeUpdate,
+        RuntimePortError, RuntimePortErrorKind, RuntimeUpdate,
     },
 };
 use chrono::{DateTime, Utc};
@@ -92,6 +92,18 @@ pub(crate) trait AgentSessionNotifier: Send + Sync {
     fn notify(&self, notification: AgentSessionNotification) -> Result<(), String>;
 }
 
+/// Application-owned authority for deriving the one native home used by a managed provider
+/// launch. Callers can supply role-specific extensions, but never profile authority.
+pub(crate) trait NativeProfileLaunchAuthority: Send + Sync {
+    fn prepare_launch(
+        &self,
+        session_id: &AgentSessionId,
+        invocation_id: &AgentInvocationId,
+        resuming: bool,
+        extension: Option<RuntimeLaunchExtension>,
+    ) -> Result<RuntimeLaunchExtension, String>;
+}
+
 pub(crate) trait AgentSessionClock: Send + Sync {
     fn now(&self) -> DateTime<Utc>;
 }
@@ -132,6 +144,7 @@ pub(crate) struct AgentSessionApplication {
     clock: Arc<dyn AgentSessionClock>,
     ids: Arc<dyn AgentSessionIdProvider>,
     runtime_version: Option<String>,
+    native_profile_launch_authority: Option<Arc<dyn NativeProfileLaunchAuthority>>,
     update_lanes: Arc<InvocationUpdateLanes>,
 }
 
@@ -151,8 +164,17 @@ impl AgentSessionApplication {
             clock,
             ids,
             runtime_version,
+            native_profile_launch_authority: None,
             update_lanes: Arc::new(InvocationUpdateLanes::default()),
         }
+    }
+
+    pub(crate) fn with_native_profile_launch_authority(
+        mut self,
+        authority: Arc<dyn NativeProfileLaunchAuthority>,
+    ) -> Self {
+        self.native_profile_launch_authority = Some(authority);
+        self
     }
 
     pub(crate) fn create_session(
@@ -604,6 +626,28 @@ impl AgentSessionApplication {
         let acknowledgement = SendAgentSessionMessageResult {
             session_id: session.id.clone(),
             invocation_id: invocation.id.clone(),
+        };
+
+        let launch_extension = match self.native_profile_launch_authority.as_ref() {
+            Some(authority) => match authority.prepare_launch(
+                &session.id,
+                &invocation.id,
+                session.runtime_binding.external_context_id.is_some(),
+                launch_extension,
+            ) {
+                Ok(extension) => Some(extension),
+                Err(message) => {
+                    self.finish_preflight_failure(
+                        &invocation,
+                        RuntimePortError::new(RuntimePortErrorKind::Unavailable, message),
+                    )?;
+                    return Ok(SendAgentSessionMessageLaunchResult {
+                        acknowledgement,
+                        launch_accepted: false,
+                    });
+                }
+            },
+            None => launch_extension,
         };
 
         let mode = if session.runtime_binding.external_context_id.is_some() {

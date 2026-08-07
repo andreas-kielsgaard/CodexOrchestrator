@@ -1,7 +1,7 @@
 use super::lifecycle::{
     AgentSessionApplication, AgentSessionClock, AgentSessionIdProvider, AgentSessionNotification,
     AgentSessionNotifier, ApplicationInvocationLaunchEvidence, CancelAgentInvocationCommand,
-    CreateAgentSessionCommand, SendAgentSessionMessageCommand,
+    CreateAgentSessionCommand, NativeProfileLaunchAuthority, SendAgentSessionMessageCommand,
     SendIdempotentApplicationAgentSessionMessageCommand,
 };
 use crate::agent_sessions::{
@@ -17,8 +17,8 @@ use crate::agent_sessions::{
         AgentRuntime, AgentRuntimeUpdateSink, AgentSessionHistory, AgentSessionRepository,
         AgentSessionSummary, ListAgentSessionsQuery, RepositoryError, RepositoryErrorKind,
         RuntimeEventDraft, RuntimeInvocationMode, RuntimeInvocationOutcome,
-        RuntimeInvocationPreflight, RuntimeInvocationRequest, RuntimePortError,
-        RuntimePortErrorKind, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
+        RuntimeInvocationPreflight, RuntimeInvocationRequest, RuntimeLaunchExtension,
+        RuntimePortError, RuntimePortErrorKind, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
     },
     repository::{SqliteAgentSessionRepository, AGENT_SESSION_SCHEMA},
 };
@@ -29,6 +29,104 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
+
+#[test]
+fn managed_profile_authority_prepares_fresh_and_resume_launches_without_replacing_role_environment()
+{
+    let connection = Connection::open_in_memory().expect("memory database");
+    connection
+        .execute_batch(AGENT_SESSION_SCHEMA)
+        .expect("schema");
+    let repository = Arc::new(SqliteAgentSessionRepository::new(connection).expect("repository"));
+    let runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::CompleteWithBinding));
+    let notifier = Arc::new(RecordingNotifier::new(repository.clone()));
+    let providers = Arc::new(DeterministicProviders::default());
+    let authority = Arc::new(RecordingProfileAuthority::default());
+    let application = AgentSessionApplication::new(
+        repository,
+        runtime.clone(),
+        notifier,
+        providers.clone(),
+        providers,
+        Some("codex-test".into()),
+    )
+    .with_native_profile_launch_authority(authority.clone());
+    let session = application
+        .create_session(CreateAgentSessionCommand {
+            title: None,
+            working_directory: None,
+            requested_options: AgentRuntimeOptions::default(),
+        })
+        .expect("session");
+
+    application
+        .send_message_with_launch_extension(
+            message(&session.id, "fresh"),
+            Some(RuntimeLaunchExtension {
+                additional_args: vec![],
+                environment: vec![("ROLE_CONFIG".into(), "present".into())],
+                initial_prompt_prefix: None,
+            }),
+        )
+        .expect("fresh launch");
+    application
+        .send_message(message(&session.id, "resume"))
+        .expect("resume launch");
+
+    assert_eq!(
+        *authority.calls.lock().expect("authority calls"),
+        vec![false, true]
+    );
+    let requests = runtime
+        .calls
+        .lock()
+        .expect("runtime calls")
+        .iter()
+        .filter_map(|call| match call {
+            RuntimeCall::Start(request) | RuntimeCall::Resume(request, _) => Some(request.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(requests.len(), 2);
+    assert!(requests
+        .iter()
+        .all(|request| request
+            .launch_extension
+            .as_ref()
+            .is_some_and(|extension| extension
+                .environment
+                .iter()
+                .any(|(key, value)| key == "CODEX_HOME" && value == "native-home"))));
+    assert!(requests[0]
+        .launch_extension
+        .as_ref()
+        .unwrap()
+        .environment
+        .iter()
+        .any(|(key, value)| key == "ROLE_CONFIG" && value == "present"));
+}
+
+#[test]
+fn managed_profile_authority_failure_is_durable_and_prevents_provider_preflight_and_spawn() {
+    let connection = Connection::open_in_memory().expect("memory database");
+    connection.execute_batch(AGENT_SESSION_SCHEMA).expect("schema");
+    let repository = Arc::new(SqliteAgentSessionRepository::new(connection).expect("repository"));
+    let runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::StayRunning));
+    let notifier = Arc::new(RecordingNotifier::new(repository.clone()));
+    let providers = Arc::new(DeterministicProviders::default());
+    let application = AgentSessionApplication::new(
+        repository.clone(), runtime.clone(), notifier, providers.clone(), providers, None,
+    ).with_native_profile_launch_authority(Arc::new(RejectingProfileAuthority));
+    let session = application.create_session(CreateAgentSessionCommand {
+        title: None, working_directory: None, requested_options: AgentRuntimeOptions::default(),
+    }).expect("session");
+
+    let result = application.send_message(message(&session.id, "must not launch")).expect("durable failure");
+    let invocation = repository.get_invocation(&result.invocation_id).expect("read invocation").expect("invocation");
+    assert_eq!(invocation.status, AgentInvocationStatus::Failed);
+    assert_eq!(invocation.runtime_error.as_ref().map(|error| error.code.as_str()), Some("runtime_preflight_failed"));
+    assert!(runtime.calls.lock().expect("runtime calls").is_empty());
+}
 
 #[test]
 fn first_turn_captures_binding_and_second_turn_resumes_with_effective_options() {
@@ -936,6 +1034,42 @@ enum RuntimeCall {
     Start(RuntimeInvocationRequest),
     Resume(RuntimeInvocationRequest, String),
     Cancel(AgentInvocationId),
+}
+
+#[derive(Default)]
+struct RecordingProfileAuthority {
+    calls: Mutex<Vec<bool>>,
+}
+
+impl NativeProfileLaunchAuthority for RecordingProfileAuthority {
+    fn prepare_launch(
+        &self,
+        _: &AgentSessionId,
+        _: &AgentInvocationId,
+        resuming: bool,
+        extension: Option<RuntimeLaunchExtension>,
+    ) -> Result<RuntimeLaunchExtension, String> {
+        self.calls.lock().expect("authority calls").push(resuming);
+        let mut extension = extension.unwrap_or_default();
+        extension
+            .environment
+            .push(("CODEX_HOME".into(), "native-home".into()));
+        Ok(extension)
+    }
+}
+
+struct RejectingProfileAuthority;
+
+impl NativeProfileLaunchAuthority for RejectingProfileAuthority {
+    fn prepare_launch(
+        &self,
+        _: &AgentSessionId,
+        _: &AgentInvocationId,
+        _: bool,
+        _: Option<RuntimeLaunchExtension>,
+    ) -> Result<RuntimeLaunchExtension, String> {
+        Err("selected native profile is not ready".into())
+    }
 }
 
 struct FakeRuntime {
