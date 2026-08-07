@@ -2176,7 +2176,7 @@ impl NativeProfileService {
         &self,
         id: &str,
     ) -> Result<NativeMcpReportingProbeAuthority, String> {
-        self.require_active(id)?;
+        self.require_selected_active(id)?;
         let root = self.probe_root(id);
         let mut connection = self.connection()?;
         let transaction = connection
@@ -2191,9 +2191,11 @@ impl NativeProfileService {
             transaction.commit().map_err(|error| error.to_string())?;
             return Ok(authority);
         }
-        if self.has_any_mcp_reporting_probe(&transaction, id)? {
+        if self.has_current_mcp_reporting_probe(&transaction, id)? {
             transaction.commit().map_err(|error| error.to_string())?;
-            return Err("The application-owned MCP reporting probe is already terminal or claimed".into());
+            return Err(
+                "The application-owned MCP reporting probe is already pending or claimed".into(),
+            );
         }
         let authority = NativeMcpReportingProbeAuthority {
             profile_id: id.into(),
@@ -2312,14 +2314,14 @@ impl NativeProfileService {
         }))
     }
 
-    fn has_any_mcp_reporting_probe(
+    fn has_current_mcp_reporting_probe(
         &self,
         connection: &Connection,
         id: &str,
     ) -> Result<bool, String> {
         connection
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM native_codex_profile_mcp_probes WHERE profile_id=?1)",
+                "SELECT EXISTS(SELECT 1 FROM native_codex_profile_mcp_probes WHERE profile_id=?1 AND state IN ('pending','dispatching'))",
                 params![id],
                 |row| row.get::<_, i64>(0),
             )
@@ -7306,6 +7308,7 @@ mod tests {
     fn mcp_reporting_probe_changes_only_its_own_readiness_fact() {
         let (_directory, service) = service();
         let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
         let result = service.probe_mcp_reporting(&profile.id).unwrap();
         assert_eq!(result.readiness.authentication, "unknown");
         assert_eq!(result.readiness.sandbox_initialization, "unknown");
@@ -7396,7 +7399,10 @@ mod tests {
     fn reporting_dispatch_requires_the_current_selected_profile_before_mcp_exposure() {
         let (_directory, mut service) = service();
         let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
         service.begin_mcp_reporting_probe(&profile.id).unwrap();
+        let other = service.create_dedicated().unwrap();
+        service.select(&other.id).unwrap();
         let reporting = Arc::new(ReportingCli::new());
         service.cli = reporting.clone();
 
@@ -7765,12 +7771,111 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_begin_reuses_the_one_durable_mcp_authority() {
+    fn terminal_mcp_probe_history_allows_one_fresh_pending_request_without_mutation() {
+        for (terminal_state, received_at) in [
+            ("expired", None),
+            ("received", Some("2026-08-07T12:01:00Z")),
+            ("cancelled", None),
+        ] {
+            let (_directory, service) = service();
+            let profile = service.create_dedicated().unwrap();
+            service.select(&profile.id).unwrap();
+            let historical = service.begin_mcp_reporting_probe(&profile.id).unwrap();
+            service
+                .connection()
+                .unwrap()
+                .execute(
+                    "UPDATE native_codex_profile_mcp_probes SET state=?1,received_at=?2 WHERE profile_id=?3 AND correlation_id=?4",
+                    params![terminal_state, received_at, profile.id, historical.correlation_id],
+                )
+                .unwrap();
+            let connection = service.connection().unwrap();
+            let before = connection
+                .query_row(
+                    "SELECT request_id,correlation_id,state,requested_at,deadline_at,received_at FROM native_codex_profile_mcp_probes WHERE profile_id=?1 AND correlation_id=?2",
+                    params![profile.id, historical.correlation_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?, row.get::<_, Option<String>>(5)?)),
+                )
+                .unwrap();
+
+            let fresh = service.begin_mcp_reporting_probe(&profile.id).unwrap();
+
+            let after = connection
+                .query_row(
+                    "SELECT request_id,correlation_id,state,requested_at,deadline_at,received_at FROM native_codex_profile_mcp_probes WHERE profile_id=?1 AND correlation_id=?2",
+                    params![profile.id, historical.correlation_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?, row.get::<_, Option<String>>(5)?)),
+                )
+                .unwrap();
+            assert_eq!(after, before, "{terminal_state} history changed");
+            assert_ne!(fresh.correlation_id, historical.correlation_id);
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM native_codex_profile_mcp_probes WHERE profile_id=?1 AND state='pending'",
+                        params![profile.id],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap(),
+                1,
+                "{terminal_state} history did not leave exactly one current pending request"
+            );
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM native_codex_profile_mcp_probes WHERE profile_id=?1",
+                        params![profile.id],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap(),
+                2
+            );
+        }
+    }
+
+    #[test]
+    fn mcp_probe_creation_requires_the_current_selected_active_profile() {
+        let (_directory, service) = service();
+        let first = service.create_dedicated().unwrap();
+        let second = service.create_dedicated().unwrap();
+        assert_eq!(
+            service.profile(&second.id).unwrap().lifecycle,
+            Lifecycle::Active
+        );
+        assert!(!service.profile(&first.id).unwrap().selected);
+
+        assert!(service.begin_mcp_reporting_probe(&first.id).is_err());
+        assert_eq!(
+            service
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM native_codex_profile_mcp_probes WHERE profile_id=?1",
+                    params![first.id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn concurrent_terminal_history_replacement_converges_on_one_current_request() {
         let directory = tempfile::tempdir().unwrap();
         let database = directory.path().join("active.sqlite");
         let app = directory.path().join("app");
         let service = NativeProfileService::open(database.clone(), app.clone()).unwrap();
         let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        let historical = service.begin_mcp_reporting_probe(&profile.id).unwrap();
+        service
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE native_codex_profile_mcp_probes SET state='expired' WHERE profile_id=?1 AND correlation_id=?2",
+                params![profile.id, historical.correlation_id],
+            )
+            .unwrap();
         drop(service);
         let barrier = Arc::new(Barrier::new(2));
         let mut joins = vec![];
@@ -7788,6 +7893,28 @@ mod tests {
         let first = joins.remove(0).join().unwrap().unwrap();
         let second = joins.remove(0).join().unwrap().unwrap();
         assert_eq!(first, second);
+        let reopened = NativeProfileService::open(database, app).unwrap();
+        let connection = reopened.connection().unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*),COUNT(CASE WHEN state IN ('pending','dispatching') THEN 1 END),COUNT(CASE WHEN state='pending' THEN 1 END) FROM native_codex_profile_mcp_probes WHERE profile_id=?1",
+                    params![profile.id],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
+                )
+                .unwrap(),
+            (2, 1, 1)
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT state FROM native_codex_profile_mcp_probes WHERE profile_id=?1 AND correlation_id=?2",
+                    params![profile.id, historical.correlation_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "expired"
+        );
     }
 
     #[test]
