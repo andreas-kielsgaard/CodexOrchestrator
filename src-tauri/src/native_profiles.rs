@@ -396,6 +396,7 @@ struct NativeCliProvenance {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct NativeCliSurface {
     provenance: NativeCliProvenance,
+    windows_sandbox_setup_supported: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -528,10 +529,14 @@ impl NativeCliPort for SystemNativeCliPort {
             .map_err(|_| "Codex CLI is unavailable for this profile".to_string())?;
         let version = native_cli_stdout(program, &["--version"])?;
         let exec_help = native_cli_stdout(program, &["exec", "--help"])?;
-        // This CLI exposes `sandbox --permission-profile`, but that resolves from the active
-        // configuration stack. It cannot express an application-owned workspace/root/network
-        // policy without importing opaque configuration or sandbox state, so it is unsupported.
-        let workspace_sandbox_supported = false;
+        let sandbox_help = native_cli_help_output(program, &["sandbox", "--help"])?;
+        // The setup parser prints its help to stderr and exits non-zero before its required
+        // `--current-user` argument is supplied. Its combined help output is the capability
+        // evidence; a successful process exit would incorrectly reject this supported route.
+        let sandbox_setup_help =
+            native_cli_help_output(program, &["sandbox", "setup", "--help"])?;
+        let (workspace_sandbox_supported, windows_sandbox_setup_supported) =
+            windows_semantic_sandbox_capabilities(&sandbox_help, &sandbox_setup_help);
         let danger_full_access_supported = exec_help.contains("danger-full-access");
         let danger_network_enforcement_supported = false;
         let non_interactive_approval_supported = exec_help.contains("--dangerously-bypass-approvals-and-sandbox");
@@ -544,8 +549,22 @@ impl NativeCliPort for SystemNativeCliPort {
                 danger_network_enforcement_supported,
                 non_interactive_approval_supported,
             },
+            windows_sandbox_setup_supported,
         })
     }
+}
+
+fn windows_semantic_sandbox_capabilities(
+    sandbox_help: &str,
+    sandbox_setup_help: &str,
+) -> (bool, bool) {
+    let workspace_profile = ["--permission-profile", "--cd"]
+        .iter()
+        .all(|token| sandbox_help.contains(token));
+    let elevated_setup = ["--elevated", "--current-user", "--codex-home"]
+        .iter()
+        .all(|token| sandbox_setup_help.contains(token));
+    (workspace_profile, elevated_setup)
 }
 
 fn native_cli_stdout(program: &str, args: &[&str]) -> Result<String, String> {
@@ -558,6 +577,18 @@ fn native_cli_stdout(program: &str, args: &[&str]) -> Result<String, String> {
     if !output.status.success() {
         return Err("The resolved Codex CLI surface is unsupported".into());
     }
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    Ok(text)
+}
+
+fn native_cli_help_output(program: &str, args: &[&str]) -> Result<String, String> {
+    let output = Command::new(program)
+        .args(args)
+        .env_clear()
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|_| "Unable to inspect the resolved Codex CLI surface".to_string())?;
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
     Ok(text)
@@ -1479,6 +1510,16 @@ impl NativeProfileService {
                 "--skip-git-repo-check".into(),
             ]
             .into_iter()
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--ignore-user-config".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--ignore-rules".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("sandbox_workspace_write.network_access=false".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("sandbox_workspace_write.writable_roots=[]".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("sandbox_workspace_write.exclude_tmpdir_env_var=true".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("sandbox_workspace_write.exclude_slash_tmp=true".into()))
             .chain((mode == ExecutionMode::DangerFullAccess).then_some("--dangerously-bypass-approvals-and-sandbox".into()))
             .collect(),
             working_root: target.working_root.to_string_lossy().into_owned(),
@@ -1718,10 +1759,14 @@ impl NativeProfileService {
             phase,
             deadline_at: now + Duration::seconds(SETUP_ATTEMPT_TIMEOUT_SECONDS),
         };
-        if !surface.provenance.workspace_sandbox_supported {
+        if !surface.provenance.workspace_sandbox_supported
+            || !surface.windows_sandbox_setup_supported
+        {
+            let mut unsupported_provenance = surface.provenance.clone();
+            unsupported_provenance.workspace_sandbox_supported = false;
             self.persist_setup_attempt(
                 &attempt,
-                &surface.provenance,
+                &unsupported_provenance,
                 "policy_unsupported",
                 "policy_unsupported",
             )?;
@@ -1743,20 +1788,6 @@ impl NativeProfileService {
                 )),
             );
         }
-        let root = self.probe_root(id);
-        fs::create_dir_all(&root).map_err(|error| {
-            format!("Unable to create application-owned sandbox probe root: {error}")
-        })?;
-        let output = root.join(format!("{}.txt", phase.database()));
-        let command = match phase {
-            // `codex sandbox` is the supported Windows restricted-token executor. This benign
-            // exercise establishes only that the application-owned request completed; UAC and
-            // readiness still require the distinct human confirmation below.
-            SetupPhase::SandboxInitialization => "exit /b 0".into(),
-            SetupPhase::WorkspaceWriteCanary => {
-                format!("echo native-codex-profile-canary>\"{}\"", output.display())
-            }
-        };
         let inserted = self.persist_setup_attempt(&attempt, &surface.provenance, "pending", "not_observed")?;
         if inserted == 0 {
             return self.set_attention(
@@ -1766,25 +1797,52 @@ impl NativeProfileService {
                 false,
             );
         }
-        let mut args = vec![
-            "--cd".into(),
-            root.to_string_lossy().into_owned(),
-            "sandbox".into(),
-        ];
-        args.extend([
-            "--".into(),
-            "cmd.exe".into(),
-            "/d".into(),
-            "/s".into(),
-            "/c".into(),
-            command,
-        ]);
+        let (cwd, args, sandbox_receipt) = match phase {
+            // This is the supported Windows provisioning command. Its launch acceptance and
+            // terminal outcome do not observe a UAC interaction or confirm initialization.
+            SetupPhase::SandboxInitialization => (
+                profile.home.clone(),
+                vec![
+                    "sandbox".into(),
+                    "setup".into(),
+                    "--elevated".into(),
+                    "--current-user".into(),
+                    "--codex-home".into(),
+                    profile.home.to_string_lossy().into_owned(),
+                ],
+                None,
+            ),
+            SetupPhase::WorkspaceWriteCanary => {
+                let root = self.probe_root(id);
+                fs::create_dir_all(&root).map_err(|error| {
+                    format!("Unable to create application-owned sandbox probe root: {error}")
+                })?;
+                let output = root.join(format!("{}.txt", phase.database()));
+                (
+                    root.clone(),
+                    vec![
+                        "sandbox".into(),
+                        "-P".into(),
+                        ":workspace".into(),
+                        "-C".into(),
+                        root.to_string_lossy().into_owned(),
+                        "--".into(),
+                        "cmd.exe".into(),
+                        "/d".into(),
+                        "/s".into(),
+                        "/c".into(),
+                        format!("echo native-codex-profile-canary>\"{}\"", output.display()),
+                    ],
+                    Some(output),
+                )
+            }
+        };
         let invocation = NativeCliInvocation {
             args,
-            cwd: root.clone(),
+            cwd,
             codex_home: profile.home.clone(),
             environment: native_windows_cli_environment(&profile.home),
-            sandbox_receipt: (phase == SetupPhase::WorkspaceWriteCanary).then_some(output),
+            sandbox_receipt,
         };
         match self.cli.start(&invocation) {
             Ok(mut child) => {
@@ -2784,6 +2842,7 @@ mod tests {
         start_error: bool,
         surface_supported: bool,
         workspace_sandbox_supported: bool,
+        windows_sandbox_setup_supported: bool,
         danger_network_enforcement_supported: bool,
     }
     impl FakeCli {
@@ -2801,6 +2860,7 @@ mod tests {
                 start_error: false,
                 surface_supported: true,
                 workspace_sandbox_supported: true,
+                windows_sandbox_setup_supported: true,
                 danger_network_enforcement_supported: false,
             }
         }
@@ -2815,6 +2875,13 @@ mod tests {
         fn unsupported_workspace_policy() -> Self {
             Self {
                 workspace_sandbox_supported: false,
+                ..Self::succeeding()
+            }
+        }
+
+        fn unsupported_windows_sandbox_setup() -> Self {
+            Self {
+                windows_sandbox_setup_supported: false,
                 ..Self::succeeding()
             }
         }
@@ -2865,6 +2932,7 @@ mod tests {
                     danger_network_enforcement_supported: self.danger_network_enforcement_supported,
                     non_interactive_approval_supported: true,
                 },
+                windows_sandbox_setup_supported: self.windows_sandbox_setup_supported,
             })
         }
     }
@@ -3017,6 +3085,7 @@ mod tests {
             sandbox_receipt_observed: false,
         });
         service.request_sandbox_initialization(&profile.id).unwrap();
+        assert!(!service.probe_root(&profile.id).exists());
         let mut query = service.query().unwrap();
         let awaiting_confirmation = query.profiles.remove(0);
         assert_eq!(
@@ -3051,25 +3120,33 @@ mod tests {
 
         let calls = fake.calls.lock().unwrap();
         assert_eq!(calls.len(), 2);
-        assert_eq!(calls[0].args[2], "sandbox");
-        assert!(!calls[0].args.iter().any(|argument| argument == "--init"));
-        assert_eq!(calls[0].args.last().map(String::as_str), Some("exit /b 0"));
-        assert_eq!(calls[1].args[2], "sandbox");
-        assert!(!calls[1].args.iter().any(|argument| argument == "--init"));
+        assert_eq!(
+            calls[0].args,
+            vec![
+                "sandbox",
+                "setup",
+                "--elevated",
+                "--current-user",
+                "--codex-home",
+                profile.home_path.as_str(),
+            ]
+        );
+        assert_eq!(calls[0].cwd, PathBuf::from(&profile.home_path));
+        assert_eq!(calls[1].args[0], "sandbox");
+        assert_eq!(calls[1].args[1], "-P");
+        assert_eq!(calls[1].args[2], ":workspace");
+        assert_eq!(calls[1].args[3], "-C");
+        assert_eq!(calls[1].args[4], service.probe_root(&profile.id).to_string_lossy());
         assert!(calls[1]
             .args
             .last()
             .is_some_and(|argument| argument.starts_with("echo native-codex-profile-canary>")));
+        assert_eq!(calls[1].cwd, service.probe_root(&profile.id));
         for call in calls.iter() {
-            assert_eq!(call.cwd, service.probe_root(&profile.id));
             assert_eq!(
                 call.environment,
                 native_windows_cli_environment(Path::new(&profile.home_path))
             );
-            assert!(call.args.windows(2).any(|window| window
-                .iter()
-                .map(String::as_str)
-                .eq(["--cd", call.cwd.to_string_lossy().as_ref()])));
             assert!(!call
                 .args
                 .iter()
@@ -3077,10 +3154,39 @@ mod tests {
             assert!(!call
                 .args
                 .iter()
+                .any(|argument| argument == "--include-managed-config" || argument == "--add-dir"));
+            assert!(!call
+                .args
+                .iter()
                 .any(|argument| argument.contains("dangerously")));
         }
         assert!(calls[0].sandbox_receipt.is_none());
         assert!(calls[1].sandbox_receipt.is_some());
+    }
+
+    #[test]
+    fn windows_semantic_capability_detection_accepts_combined_setup_help_and_rejects_drift() {
+        assert_eq!(
+            windows_semantic_sandbox_capabilities(
+                "Options: --permission-profile <NAME> --cd <DIR>",
+                "Error: --current-user required\nOptions: --elevated --current-user --codex-home <DIR>",
+            ),
+            (true, true)
+        );
+        assert_eq!(
+            windows_semantic_sandbox_capabilities(
+                "Options: --permission-profile <NAME>",
+                "Options: --elevated --current-user --codex-home <DIR>",
+            ),
+            (false, true)
+        );
+        assert_eq!(
+            windows_semantic_sandbox_capabilities(
+                "Options: --permission-profile <NAME> --cd <DIR>",
+                "Options: --elevated --current-user",
+            ),
+            (true, false)
+        );
     }
 
     #[test]
@@ -3123,6 +3229,21 @@ mod tests {
                 .workspace_write_canary,
             "blocked"
         );
+        assert_eq!(*fake.starts.lock().unwrap(), 0);
+        assert!(!directory.path().join("app").join("probes").exists());
+    }
+
+    #[test]
+    fn missing_windows_setup_capability_fails_closed_before_a_child_or_probe_root() {
+        let (directory, mut service) = service();
+        let fake = Arc::new(FakeCli::unsupported_windows_sandbox_setup());
+        service.cli = fake.clone();
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+
+        let requested = service.request_sandbox_initialization(&profile.id).unwrap();
+        assert_eq!(requested.setup_attempt.disposition, "policy_unsupported");
+        assert_eq!(requested.setup_attempt.workspace_sandbox_supported, Some(false));
         assert_eq!(*fake.starts.lock().unwrap(), 0);
         assert!(!directory.path().join("app").join("probes").exists());
     }
@@ -3670,6 +3791,25 @@ mod tests {
             .arguments
             .windows(2)
             .any(|pair| pair == ["--sandbox", "workspace-write"]));
+        for override_value in [
+            "sandbox_workspace_write.network_access=false",
+            "sandbox_workspace_write.writable_roots=[]",
+            "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+            "sandbox_workspace_write.exclude_slash_tmp=true",
+        ] {
+            assert!(workspace
+                .arguments
+                .windows(2)
+                .any(|pair| pair == ["--config", override_value]));
+        }
+        assert!(workspace
+            .arguments
+            .iter()
+            .any(|argument| argument == "--ignore-user-config"));
+        assert!(workspace
+            .arguments
+            .iter()
+            .any(|argument| argument == "--ignore-rules"));
         assert_eq!(workspace.executable, "C:/application-owned/codex.exe");
         assert_eq!(workspace.version, "codex-cli test");
         assert!(workspace.requested_network_disabled);
