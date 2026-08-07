@@ -2226,18 +2226,19 @@ impl NativeProfileService {
         id: &str,
         receipt: &NativeMcpReportingReceipt,
     ) -> Result<NativeProfileDto, String> {
-        self.require_active(id)?;
-        let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| format!("Unable to begin native MCP receipt settlement: {error}"))?;
-        let now = Utc::now();
+        self.require_selected_active(id)?;
         let dispatch_claim_id = self
             .mcp_dispatch_claims
             .lock()
             .map_err(|_| "Native MCP reporting receipt supervision is unavailable")?
             .get(id)
-            .cloned();
+            .cloned()
+            .ok_or("The application-owned MCP reporting receipt has no current dispatch claim")?;
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| format!("Unable to begin native MCP receipt settlement: {error}"))?;
+        let now = Utc::now();
         let expired = transaction.execute(
             "UPDATE native_codex_profile_mcp_probes SET state='expired' WHERE profile_id=?1 AND state IN ('pending','dispatching') AND deadline_at <= ?2",
             params![id, now.to_rfc3339()],
@@ -2257,7 +2258,7 @@ impl NativeProfileService {
             return Err("The application-owned MCP reporting probe has expired".into());
         }
         let transitioned = transaction.execute(
-            "UPDATE native_codex_profile_mcp_probes SET state='received',received_at=?2 WHERE profile_id=?1 AND (state='pending' OR (state='dispatching' AND dispatch_claim_id=?8)) AND correlation_id=?3 AND expected_capability=?4 AND expected_server=?5 AND expected_tool=?6 AND expected_probe_root=?7 AND deadline_at > ?2",
+            "UPDATE native_codex_profile_mcp_probes SET state='received',received_at=?2 WHERE profile_id=?1 AND state='dispatching' AND dispatch_claim_id=?8 AND correlation_id=?3 AND expected_capability=?4 AND expected_server=?5 AND expected_tool=?6 AND expected_probe_root=?7 AND deadline_at > ?2",
             params![id, now.to_rfc3339(), receipt.correlation_id, receipt.capability, receipt.server, receipt.tool, receipt.probe_root.to_string_lossy(), dispatch_claim_id],
         ).map_err(|error| error.to_string())?;
         if transitioned != 1 {
@@ -5048,6 +5049,22 @@ mod tests {
         profile
     }
 
+    fn claim_mcp_reporting_for_current_reconciliation(
+        service: &NativeProfileService,
+        id: &str,
+    ) -> NativeMcpReportingProbeAuthority {
+        let claimed = service
+            .claim_pending_mcp_reporting_probe(id)
+            .unwrap()
+            .expect("pending reporting request is claimed");
+        service
+            .mcp_dispatch_claims
+            .lock()
+            .unwrap()
+            .insert(id.into(), claimed.claim_id);
+        claimed.authority
+    }
+
     #[test]
     fn creates_selects_and_reopens_a_dedicated_profile_without_provider_state() {
         let (directory, service) = service();
@@ -7547,10 +7564,47 @@ mod tests {
     }
 
     #[test]
-    fn mcp_receipts_require_one_pending_application_owned_correlation() {
+    fn mcp_receipts_require_a_current_dispatch_claim_and_matching_authority() {
         let (_directory, service) = service();
-        let profile = service.create_dedicated().unwrap();
+        let profile = selected_profile_ready_except_mcp(&service);
         let authority = service.begin_mcp_reporting_probe(&profile.id).unwrap();
+        assert!(service
+            .record_mcp_reporting_receipt(
+                &profile.id,
+                &NativeMcpReportingReceipt {
+                    capability: authority.capability.clone(),
+                    server: authority.server.clone(),
+                    tool: authority.tool.clone(),
+                    correlation_id: String::new(),
+                    probe_root: authority.probe_root.clone(),
+                },
+            )
+            .is_err());
+        assert!(service
+            .record_mcp_reporting_receipt(
+                &profile.id,
+                &NativeMcpReportingReceipt {
+                    capability: authority.capability.clone(),
+                    server: authority.server.clone(),
+                    tool: authority.tool.clone(),
+                    correlation_id: authority.correlation_id.clone(),
+                    probe_root: authority.probe_root.clone(),
+                },
+            )
+            .is_err());
+        assert_eq!(
+            service
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT state FROM native_codex_profile_mcp_probes WHERE profile_id=?1",
+                    params![profile.id],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "pending"
+        );
+        let authority = claim_mcp_reporting_for_current_reconciliation(&service, &profile.id);
         assert!(service
             .record_mcp_reporting_receipt(
                 &profile.id,
@@ -7591,12 +7645,12 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_mcp_receipts_transition_exactly_one_pending_probe() {
+    fn direct_mcp_receipts_cannot_settle_a_pending_probe_across_service_instances() {
         let directory = tempfile::tempdir().unwrap();
         let database = directory.path().join("active.sqlite");
         let app = directory.path().join("app");
         let service = NativeProfileService::open(database.clone(), app.clone()).unwrap();
-        let profile = service.create_dedicated().unwrap();
+        let profile = selected_profile_ready_except_mcp(&service);
         let authority = service.begin_mcp_reporting_probe(&profile.id).unwrap();
         drop(service);
         let receipt = NativeMcpReportingReceipt {
@@ -7624,7 +7678,7 @@ mod tests {
             .into_iter()
             .map(|join| join.join().unwrap().is_ok())
             .collect::<Vec<_>>();
-        assert_eq!(outcomes.into_iter().filter(|success| *success).count(), 1);
+        assert_eq!(outcomes.into_iter().filter(|success| *success).count(), 0);
         let reopened = NativeProfileService::open(database, app).unwrap();
         assert_eq!(
             reopened
@@ -7632,20 +7686,59 @@ mod tests {
                 .unwrap()
                 .readiness
                 .mcp_reporting,
-            "ready"
+            "not_assessed"
         );
+    }
+
+    #[test]
+    fn mcp_receipt_settlement_requires_a_currently_selected_active_profile() {
+        let (_directory, service) = service();
+        let profile = selected_profile_ready_except_mcp(&service);
+        service.begin_mcp_reporting_probe(&profile.id).unwrap();
+        let authority = claim_mcp_reporting_for_current_reconciliation(&service, &profile.id);
+        let other = service.create_dedicated().unwrap();
+        service.select(&other.id).unwrap();
+
+        assert!(service
+            .record_mcp_reporting_receipt(
+                &profile.id,
+                &NativeMcpReportingReceipt {
+                    capability: authority.capability.clone(),
+                    server: authority.server.clone(),
+                    tool: authority.tool.clone(),
+                    correlation_id: authority.correlation_id.clone(),
+                    probe_root: authority.probe_root.clone(),
+                },
+            )
+            .is_err());
+
+        service.select(&profile.id).unwrap();
+        fs::remove_dir_all(&profile.home_path).unwrap();
+        assert!(service
+            .record_mcp_reporting_receipt(
+                &profile.id,
+                &NativeMcpReportingReceipt {
+                    capability: authority.capability,
+                    server: authority.server,
+                    tool: authority.tool,
+                    correlation_id: authority.correlation_id,
+                    probe_root: authority.probe_root,
+                },
+            )
+            .is_err());
     }
 
     #[test]
     fn cancelled_or_expired_probe_cannot_set_mcp_ready() {
         let (_directory, service) = service();
-        let profile = service.create_dedicated().unwrap();
-        let authority = service.begin_mcp_reporting_probe(&profile.id).unwrap();
+        let profile = selected_profile_ready_except_mcp(&service);
+        service.begin_mcp_reporting_probe(&profile.id).unwrap();
+        let authority = claim_mcp_reporting_for_current_reconciliation(&service, &profile.id);
         service
             .connection()
             .unwrap()
             .execute(
-                "UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state='pending'",
+                "UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state='dispatching'",
                 params![profile.id],
             )
             .unwrap();
@@ -7700,9 +7793,10 @@ mod tests {
     #[test]
     fn foreign_and_stale_mcp_probe_receipts_are_rejected_without_readiness_success() {
         let (_directory, service) = service();
-        let first = service.create_dedicated().unwrap();
+        let first = selected_profile_ready_except_mcp(&service);
         let second = service.create_dedicated().unwrap();
-        let authority = service.begin_mcp_reporting_probe(&first.id).unwrap();
+        service.begin_mcp_reporting_probe(&first.id).unwrap();
+        let authority = claim_mcp_reporting_for_current_reconciliation(&service, &first.id);
         assert!(service
             .record_mcp_reporting_receipt(
                 &second.id,
@@ -7747,21 +7841,23 @@ mod tests {
         let database = directory.path().join("active.sqlite");
         let service =
             NativeProfileService::open(database.clone(), directory.path().join("app")).unwrap();
-        let profile = service.create_dedicated().unwrap();
+        let profile = selected_profile_ready_except_mcp(&service);
         let authority = service.begin_mcp_reporting_probe(&profile.id).unwrap();
         drop(service);
         let reopened = NativeProfileService::open(database, directory.path().join("app")).unwrap();
         let retained = reopened.begin_mcp_reporting_probe(&profile.id).unwrap();
         assert_eq!(retained, authority);
+        let claimed = claim_mcp_reporting_for_current_reconciliation(&reopened, &profile.id);
+        assert_eq!(claimed, retained);
         let ready = reopened
             .record_mcp_reporting_receipt(
                 &profile.id,
                 &NativeMcpReportingReceipt {
-                    capability: retained.capability,
-                    server: retained.server,
-                    tool: retained.tool,
-                    correlation_id: retained.correlation_id,
-                    probe_root: retained.probe_root,
+                    capability: claimed.capability,
+                    server: claimed.server,
+                    tool: claimed.tool,
+                    correlation_id: claimed.correlation_id,
+                    probe_root: claimed.probe_root,
                 },
             )
             .unwrap();
