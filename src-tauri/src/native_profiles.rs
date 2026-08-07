@@ -1223,7 +1223,7 @@ impl NativeProfileService {
         }
         let lifecycle = validate_profile(&profile);
         if lifecycle != Lifecycle::Active {
-            self.record_lifecycle(id, lifecycle)?;
+            self.record_lifecycle_while_gated(id, lifecycle)?;
             return Err("Only a currently validated native profile can be selected".into());
         }
         let now = Utc::now().to_rfc3339();
@@ -2427,6 +2427,12 @@ impl NativeProfileService {
             .operation_gate
             .lock()
             .map_err(|_| "Native profile operation supervision is unavailable")?;
+        self.record_lifecycle_while_gated(id, lifecycle)
+    }
+
+    /// Caller owns `operation_gate`; preserves lifecycle transition and child cancellation as
+    /// one serialized operation without recursively locking the non-reentrant mutex.
+    fn record_lifecycle_while_gated(&self, id: &str, lifecycle: Lifecycle) -> Result<(), String> {
         if let Some(mut child) = self
             .login_children
             .lock()
@@ -3430,6 +3436,30 @@ mod tests {
     fn replacement_and_malformed_marker_fail_closed() {
         let (_directory, service) = service();
         let dedicated = service.create_dedicated().unwrap();
+        service.select(&dedicated.id).unwrap();
+        let before = service.profile(&dedicated.id).unwrap();
+        service.update_readiness(
+            &dedicated.id,
+            Some("authenticated"),
+            Some("initialized"),
+            Some("passed"),
+            Some("ready"),
+            None,
+        ).unwrap();
+        let now = Utc::now().to_rfc3339();
+        let connection = service.connection().unwrap();
+        connection.execute(
+            "INSERT INTO native_codex_profile_mode_authorizations (profile_id,mode,filesystem_identity,authorized_at) VALUES (?1,'danger_full_access',?2,?3)",
+            params![dedicated.id, before.identity, now],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO native_codex_profile_sandbox_adoptions (profile_id,filesystem_identity,executable,version,workspace_sandbox_supported,windows_sandbox_setup_supported,correlation_id,observed_at,state,elevated_mode_observed) VALUES (?1,?2,'C:/codex.exe','codex-cli test',1,1,'native-adoption-observation',?3,'verified',1)",
+            params![dedicated.id, before.identity, now],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO native_codex_profile_sandbox_adoption_confirmations (profile_id,filesystem_identity,adoption_correlation_id,confirmation_correlation_id,confirmed_at,state,invalidated_at) VALUES (?1,?2,'native-adoption-observation','native-adoption-confirmation',?3,'confirmed',NULL)",
+            params![dedicated.id, before.identity, now],
+        ).unwrap();
         fs::write(
             Path::new(&dedicated.home_path).join(MARKER_FILE),
             b"malformed",
@@ -3437,7 +3467,15 @@ mod tests {
         .unwrap();
         assert!(service.select(&dedicated.id).is_err());
         let query = service.query().unwrap();
-        assert_eq!(query.profiles[0].lifecycle, Lifecycle::Malformed);
+        let profile = &query.profiles[0];
+        assert_eq!(profile.lifecycle, Lifecycle::Malformed);
+        assert!(!profile.selected);
+        assert!(!profile.execution.danger_full_access_authorized);
+        assert_eq!(profile.readiness.authentication, "unknown");
+        assert_eq!(profile.readiness.sandbox_initialization, "unknown");
+        assert_eq!(profile.readiness.workspace_write_canary, "not_run");
+        assert_eq!(profile.sandbox_adoption.disposition, "invalidated");
+        assert_eq!(profile.sandbox_adoption_confirmation.disposition, "invalidated");
     }
 
     #[test]
