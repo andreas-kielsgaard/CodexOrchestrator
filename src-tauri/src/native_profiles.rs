@@ -397,6 +397,8 @@ struct NativeCliProvenance {
 struct NativeCliSurface {
     provenance: NativeCliProvenance,
     windows_sandbox_setup_supported: bool,
+    workspace_launch_flags_supported: bool,
+    workspace_launch_project_config_isolated: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -537,6 +539,8 @@ impl NativeCliPort for SystemNativeCliPort {
             native_cli_help_output(program, &["sandbox", "setup", "--help"])?;
         let (workspace_sandbox_supported, windows_sandbox_setup_supported) =
             windows_semantic_sandbox_capabilities(&sandbox_help, &sandbox_setup_help);
+        let (workspace_launch_flags_supported, workspace_launch_project_config_isolated) =
+            workspace_launch_semantic_capabilities(&exec_help);
         let danger_full_access_supported = exec_help.contains("danger-full-access");
         let danger_network_enforcement_supported = false;
         let non_interactive_approval_supported = exec_help.contains("--dangerously-bypass-approvals-and-sandbox");
@@ -550,6 +554,8 @@ impl NativeCliPort for SystemNativeCliPort {
                 non_interactive_approval_supported,
             },
             windows_sandbox_setup_supported,
+            workspace_launch_flags_supported,
+            workspace_launch_project_config_isolated,
         })
     }
 }
@@ -565,6 +571,25 @@ fn windows_semantic_sandbox_capabilities(
         .iter()
         .all(|token| sandbox_setup_help.contains(token));
     (workspace_profile, elevated_setup)
+}
+
+fn workspace_launch_semantic_capabilities(exec_help: &str) -> (bool, bool) {
+    let launch_flags_supported = [
+        "--json",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--config",
+        "--sandbox",
+        "--cd",
+        "--skip-git-repo-check",
+        "workspace-write",
+    ]
+    .iter()
+    .all(|token| exec_help.contains(token));
+    // The documented switches above only suppress the selected CODEX_HOME config and
+    // execpolicy rules. They do not establish that a project .codex/config.toml, hooks, or
+    // MCP configuration is excluded, so this product has no safe launch authority yet.
+    (launch_flags_supported, false)
 }
 
 fn native_cli_stdout(program: &str, args: &[&str]) -> Result<String, String> {
@@ -1069,6 +1094,10 @@ impl NativeProfileService {
     }
 
     pub(crate) fn select(&self, id: &str) -> Result<NativeProfileDto, String> {
+        let _gate = self
+            .operation_gate
+            .lock()
+            .map_err(|_| "Native profile operation supervision is unavailable")?;
         let profile = self.profile(id)?;
         if profile.lifecycle != Lifecycle::Active {
             return Err("Native Codex home lost continuity and must be registered again".into());
@@ -1079,7 +1108,8 @@ impl NativeProfileService {
             return Err("Only a currently validated native profile can be selected".into());
         }
         let now = Utc::now().to_rfc3339();
-        let connection = self.connection()?;
+        let mut connection = self.connection()?;
+        let profiles = load_profiles(&mut connection)?;
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| error.to_string())?;
@@ -1093,6 +1123,9 @@ impl NativeProfileService {
             )
             .map_err(|error| error.to_string())?;
         transaction.commit().map_err(|error| error.to_string())?;
+        for unselected in profiles.into_iter().filter(|candidate| candidate.id != id) {
+            self.reconcile_setup_attempts(&unselected.id)?;
+        }
         self.profile(id).map(Into::into)
     }
 
@@ -1248,8 +1281,9 @@ impl NativeProfileService {
         &self,
         id: &str,
     ) -> Result<NativeProfileDto, String> {
-        let profile = self.require_active(id)?;
+        self.require_selected_active(id)?;
         self.reconcile_setup_attempts(id)?;
+        let profile = self.require_selected_active(id)?;
         self.start_setup_attempt(&profile, SetupPhase::SandboxInitialization)?;
         self.profile(id).map(Into::into)
     }
@@ -1260,8 +1294,9 @@ impl NativeProfileService {
         &self,
         id: &str,
     ) -> Result<NativeProfileDto, String> {
-        self.require_active(id)?;
+        self.require_selected_active(id)?;
         self.reconcile_setup_attempts(id)?;
+        self.require_selected_active(id)?;
         let connection = self.connection()?;
         let latest_state = connection
             .query_row(
@@ -1286,8 +1321,9 @@ impl NativeProfileService {
     }
 
     pub(crate) fn run_workspace_write_canary(&self, id: &str) -> Result<NativeProfileDto, String> {
-        let profile = self.require_active(id)?;
+        self.require_selected_active(id)?;
         self.reconcile_setup_attempts(id)?;
+        let profile = self.require_selected_active(id)?;
         if self.profile(id)?.readiness.sandbox_initialization != "initialized" {
             self.update_readiness(
                 id,
@@ -1464,6 +1500,28 @@ impl NativeProfileService {
         let mode = profile.execution.selected_mode;
         match mode {
             ExecutionMode::WorkspaceWrite => {
+                if !surface.workspace_launch_flags_supported {
+                    self.set_attention(
+                        id,
+                        "cli",
+                        Some("codex_cli_workspace_launch_surface_unsupported"),
+                        false,
+                    )?;
+                    return Err(
+                        "The resolved Codex CLI is missing the required workspace-write launch surface".into(),
+                    );
+                }
+                if !surface.workspace_launch_project_config_isolated {
+                    self.set_attention(
+                        id,
+                        "cli",
+                        Some("codex_cli_workspace_launch_project_config_unsupported"),
+                        false,
+                    )?;
+                    return Err(
+                        "The resolved Codex CLI cannot exclude project configuration from a workspace-write launch".into(),
+                    );
+                }
                 if !surface.provenance.workspace_sandbox_supported
                     || profile.readiness.sandbox_initialization != "initialized"
                     || profile.readiness.workspace_write_canary != "passed"
@@ -1739,12 +1797,12 @@ impl NativeProfileService {
             .map_err(|_| "Native profile operation supervision is unavailable")?;
         let current = self.profile(id)?;
         let lifecycle = validate_profile(&current);
-        if current.lifecycle != Lifecycle::Active || lifecycle != Lifecycle::Active {
+        if current.lifecycle != Lifecycle::Active || lifecycle != Lifecycle::Active || !current.selected {
             drop(gate);
             if lifecycle != Lifecycle::Active {
                 self.record_lifecycle(id, lifecycle)?;
             }
-            return Err("Native Codex home is not currently validated".into());
+            return Err("Only the selected, currently validated native Codex profile can start setup or canary work".into());
         }
         let surface = self.cli.surface().map_err(|_| {
             self.set_attention(id, "cli", Some("codex_cli_surface_unsupported"), false)
@@ -1897,6 +1955,7 @@ impl NativeProfileService {
             let profile = self.profile(id)?;
             let authority_valid = profile.lifecycle == Lifecycle::Active
                 && validate_profile(&profile) == Lifecycle::Active
+                && profile.selected
                 && profile.identity == attempt.filesystem_identity;
             if !authority_valid {
                 if let Some(mut child) = self
@@ -2843,6 +2902,8 @@ mod tests {
         surface_supported: bool,
         workspace_sandbox_supported: bool,
         windows_sandbox_setup_supported: bool,
+        workspace_launch_flags_supported: bool,
+        workspace_launch_project_config_isolated: bool,
         danger_network_enforcement_supported: bool,
     }
     impl FakeCli {
@@ -2861,6 +2922,8 @@ mod tests {
                 surface_supported: true,
                 workspace_sandbox_supported: true,
                 windows_sandbox_setup_supported: true,
+                workspace_launch_flags_supported: true,
+                workspace_launch_project_config_isolated: false,
                 danger_network_enforcement_supported: false,
             }
         }
@@ -2933,6 +2996,9 @@ mod tests {
                     non_interactive_approval_supported: true,
                 },
                 windows_sandbox_setup_supported: self.windows_sandbox_setup_supported,
+                workspace_launch_flags_supported: self.workspace_launch_flags_supported,
+                workspace_launch_project_config_isolated: self
+                    .workspace_launch_project_config_isolated,
             })
         }
     }
@@ -3036,6 +3102,7 @@ mod tests {
     fn setup_retries_are_idempotent_and_migration_adds_the_profile_tables() {
         let (directory, service) = service();
         let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
         let first = service.request_sandbox_initialization(&profile.id).unwrap();
         let second = service.request_sandbox_initialization(&profile.id).unwrap();
         assert_eq!(first.readiness, second.readiness);
@@ -3079,6 +3146,7 @@ mod tests {
         let fake = Arc::new(FakeCli::succeeding());
         service.cli = fake.clone();
         let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
         *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
             succeeded: true,
             exit_code: Some(0),
@@ -3186,6 +3254,22 @@ mod tests {
                 "Options: --elevated --current-user",
             ),
             (true, false)
+        );
+    }
+
+    #[test]
+    fn workspace_launch_capability_requires_every_known_flag_but_stays_unavailable_without_project_isolation() {
+        assert_eq!(
+            workspace_launch_semantic_capabilities(
+                "--json --ignore-user-config --ignore-rules --config <KEY=VALUE> --sandbox <MODE> --cd <DIR> --skip-git-repo-check workspace-write",
+            ),
+            (true, false)
+        );
+        assert_eq!(
+            workspace_launch_semantic_capabilities(
+                "--json --ignore-user-config --ignore-rules --config <KEY=VALUE> --sandbox <MODE> --skip-git-repo-check workspace-write",
+            ),
+            (false, false)
         );
     }
 
@@ -3310,6 +3394,7 @@ mod tests {
         });
         service.cli = fake;
         let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
         let requested = service.request_sandbox_initialization(&profile.id).unwrap();
         assert_eq!(requested.setup_attempt.phase, "sandbox_initialization");
         assert_eq!(requested.setup_attempt.disposition, "pending");
@@ -3342,6 +3427,7 @@ mod tests {
         .unwrap();
         service.cli = Arc::new(FakeCli::failing_start());
         let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
         let result = service.request_sandbox_initialization(&profile.id).unwrap();
         assert_eq!(result.setup_attempt.disposition, "launch_failed");
         assert_eq!(result.setup_attempt.terminal_classification, "launch_failed");
@@ -3365,6 +3451,7 @@ mod tests {
         let fake = Arc::new(FakeCli::succeeding());
         service.cli = fake.clone();
         let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
         service.request_sandbox_initialization(&profile.id).unwrap();
         service.request_sandbox_initialization(&profile.id).unwrap();
         assert_eq!(*fake.starts.lock().unwrap(), 1);
@@ -3397,6 +3484,7 @@ mod tests {
             NativeProfileService::open(database.clone(), directory.path().join("app")).unwrap();
         service.cli = Arc::new(FakeCli::succeeding());
         let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
         service.request_sandbox_initialization(&profile.id).unwrap();
         drop(service);
         let reopened = NativeProfileService::open(database, directory.path().join("app")).unwrap();
@@ -3426,6 +3514,7 @@ mod tests {
         let fake = Arc::new(FakeCli::succeeding());
         service.cli = fake.clone();
         let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
         assert!(service.confirm_sandbox_initialization(&profile.id).is_err());
         let blocked = service.run_workspace_write_canary(&profile.id).unwrap();
         assert_eq!(blocked.readiness.workspace_write_canary, "blocked");
@@ -3433,6 +3522,78 @@ mod tests {
         assert_eq!(
             blocked.readiness.attentions.canary,
             Some("workspace_write_canary_requires_observed_sandbox_initialization".into())
+        );
+    }
+
+    #[test]
+    fn setup_confirmation_and_canary_require_the_currently_selected_profile() {
+        let (directory, mut service) = service();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake.clone();
+        let selected = service.create_dedicated().unwrap();
+        let unselected = service.create_dedicated().unwrap();
+        service.select(&selected.id).unwrap();
+
+        assert!(service.request_sandbox_initialization(&unselected.id).is_err());
+        assert!(service.confirm_sandbox_initialization(&unselected.id).is_err());
+        assert!(service.run_workspace_write_canary(&unselected.id).is_err());
+        assert_eq!(*fake.starts.lock().unwrap(), 0);
+        assert!(!service.probe_root(&unselected.id).exists());
+        assert!(!directory.path().join("app").join("probes").exists());
+    }
+
+    #[test]
+    fn switching_selection_cancels_only_the_previous_profile_owned_setup_attempt() {
+        let (_directory, mut service) = service();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake.clone();
+        let first = service.create_dedicated().unwrap();
+        let second = service.create_dedicated().unwrap();
+        service.select(&first.id).unwrap();
+        service.request_sandbox_initialization(&first.id).unwrap();
+
+        service.select(&second.id).unwrap();
+        assert_eq!(*fake.terminated.lock().unwrap(), 1);
+        assert_eq!(
+            service.profile(&first.id).unwrap().setup_attempt.disposition,
+            "cancelled"
+        );
+        assert!(service.confirm_sandbox_initialization(&first.id).is_err());
+
+        service.select(&first.id).unwrap();
+        assert!(service.confirm_sandbox_initialization(&first.id).is_err());
+        assert_eq!(
+            service.profile(&first.id).unwrap().setup_attempt.disposition,
+            "cancelled"
+        );
+    }
+
+    #[test]
+    fn switching_selection_cancels_the_previous_profile_owned_workspace_canary() {
+        let (_directory, mut service) = service();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake.clone();
+        let first = service.create_dedicated().unwrap();
+        let second = service.create_dedicated().unwrap();
+        service.select(&first.id).unwrap();
+        service
+            .update_readiness(&first.id, None, Some("initialized"), None, None, None)
+            .unwrap();
+        service.run_workspace_write_canary(&first.id).unwrap();
+
+        service.select(&second.id).unwrap();
+        assert_eq!(*fake.terminated.lock().unwrap(), 1);
+        assert_eq!(
+            service.profile(&first.id).unwrap().setup_attempt.disposition,
+            "cancelled"
+        );
+        assert_eq!(
+            service
+                .profile(&first.id)
+                .unwrap()
+                .readiness
+                .workspace_write_canary,
+            "blocked"
         );
     }
 
@@ -3764,7 +3925,7 @@ mod tests {
     }
 
     #[test]
-    fn mode_specific_launch_projections_are_bounded_and_do_not_claim_uac() {
+    fn workspace_launch_stays_action_incapable_without_project_config_isolation() {
         let (directory, mut service) = service();
         let profile = service.create_dedicated().unwrap();
         service.select(&profile.id).unwrap();
@@ -3784,37 +3945,11 @@ mod tests {
                 None,
             )
             .unwrap();
-        let workspace = service
-            .project_launch(&profile.id, &workspace_target)
-            .unwrap();
-        assert!(workspace
-            .arguments
-            .windows(2)
-            .any(|pair| pair == ["--sandbox", "workspace-write"]));
-        for override_value in [
-            "sandbox_workspace_write.network_access=false",
-            "sandbox_workspace_write.writable_roots=[]",
-            "sandbox_workspace_write.exclude_tmpdir_env_var=true",
-            "sandbox_workspace_write.exclude_slash_tmp=true",
-        ] {
-            assert!(workspace
-                .arguments
-                .windows(2)
-                .any(|pair| pair == ["--config", override_value]));
-        }
-        assert!(workspace
-            .arguments
-            .iter()
-            .any(|argument| argument == "--ignore-user-config"));
-        assert!(workspace
-            .arguments
-            .iter()
-            .any(|argument| argument == "--ignore-rules"));
-        assert_eq!(workspace.executable, "C:/application-owned/codex.exe");
-        assert_eq!(workspace.version, "codex-cli test");
-        assert!(workspace.requested_network_disabled);
-        assert!(workspace.effective_network_enforced);
-        assert_eq!(workspace.windows_uac_authority, "not_granted");
+        assert!(service.project_launch(&profile.id, &workspace_target).is_err());
+        assert_eq!(
+            service.profile(&profile.id).unwrap().readiness.attentions.cli,
+            Some("codex_cli_workspace_launch_project_config_unsupported".into())
+        );
         service
             .select_execution_mode(&profile.id, ExecutionMode::DangerFullAccess)
             .unwrap();
@@ -3847,7 +3982,7 @@ mod tests {
         assert!(canary
             .sentinel_path
             .contains("native-full-access-canary.txt"));
-        assert_ne!(canary.launch.working_root, workspace.working_root);
+        assert_ne!(canary.launch.working_root, root.to_string_lossy());
     }
 
     #[test]
