@@ -2031,6 +2031,25 @@ fn work_unit_activation_projection_fails_closed_for_foreign_or_incoherent_state(
     let mut failed_and_ready = valid_work_unit_activation_projection();
     failed_and_ready.implementer_activation.as_mut().unwrap().failure_reason = Some("failed".into());
     assert!(validate_work_unit_activation_projection(&failed_and_ready).is_err());
+
+    let mut handler_grant_failed = valid_work_unit_activation_projection();
+    let handler = handler_grant_failed.handler_activation.as_mut().unwrap();
+    handler.execution_support_granted_at = None;
+    handler.isolated_worktree_ready_at = None;
+    handler.handler_session_created_at = None;
+    handler.handler_invocation_prepared_at = None;
+    handler.handler_harness_bound_at = None;
+    handler.launch_requested_at = None;
+    handler.launch_accepted_at = None;
+    handler.provider_activation_observed_at = None;
+    handler.handler_ready_at = None;
+    handler.failure_reason = Some("handler_execution_support_grant_failed".into());
+    handler_grant_failed.action_continuation = None;
+    handler_grant_failed.implementer_activation = None;
+    assert!(validate_work_unit_activation_projection(&handler_grant_failed).is_ok());
+
+    handler_grant_failed.handler_activation.as_mut().unwrap().failure_reason = Some(" ".into());
+    assert!(validate_work_unit_activation_projection(&handler_grant_failed).is_err());
 }
 
 #[test]

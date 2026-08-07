@@ -268,8 +268,11 @@ impl ProductExecutionWorkspaceResolver {
             .canonicalize()
             .map_err(|_| ExecutionSupportError::Unavailable)?;
         let authority_root = canonical_authorized_root(&attempt.authority.worktree_root)?;
-        let parent = if configured_parent.starts_with(&authority_root) {
-            let container = authority_root
+        let repository_root = canonical_authorized_root(&attempt.authority.repository_root)?;
+        let parent = if let Some(containing_worktree) =
+            registered_worktree_containing(&repository_root, &configured_parent)?
+        {
+            let container = containing_worktree
                 .parent()
                 .ok_or(ExecutionSupportError::Unavailable)?;
             let scope = stable_id(
@@ -298,7 +301,7 @@ impl ProductExecutionWorkspaceResolver {
             let parent = parent
                 .canonicalize()
                 .map_err(|_| ExecutionSupportError::Unavailable)?;
-            if parent.starts_with(&authority_root) {
+            if parent.starts_with(&authority_root) || parent.starts_with(&containing_worktree) {
                 return Err(ExecutionSupportError::CorrelationMismatch);
             }
             parent
@@ -1115,6 +1118,18 @@ fn registered_worktree(repository_root: &Path, root: &Path) -> Result<bool, Exec
                 .unwrap_or(false)
         }))
 }
+fn registered_worktree_containing(
+    repository_root: &Path,
+    path: &Path,
+) -> Result<Option<PathBuf>, ExecutionSupportError> {
+    let listing = git_text(repository_root, &["worktree", "list", "--porcelain"])?;
+    Ok(listing
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .filter_map(|value| PathBuf::from(value).canonicalize().ok())
+        .filter(|candidate| path.starts_with(candidate))
+        .max_by_key(|candidate| candidate.components().count()))
+}
 fn bounded_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
@@ -1467,6 +1482,70 @@ mod tests {
                 )
                 .unwrap(),
             1
+        );
+    }
+
+    #[test]
+    fn handler_grant_recovers_from_a_parent_nested_in_another_registered_worktree() {
+        let mut fixture = fixture();
+        let application_root = fixture._temp.path().join("application-worktree");
+        fixture.git(
+            &fixture.repository_root,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "application-data",
+                application_root.to_string_lossy().as_ref(),
+                &fixture.baseline,
+            ],
+        );
+        let application_root = application_root.canonicalize().unwrap();
+        fixture.workspace_parent = application_root
+            .join("app-data")
+            .join("execution-workspaces");
+        let service = fixture.service();
+        assert!(matches!(
+            service.authorize_existing_attempt(AuthorizeExistingWorkUnitExecutionAttempt {
+                attempt_id: "handler-cross-worktree-attempt".into(),
+                work_unit_id: "work-unit-1".into(),
+                role: WorkUnitExecutionRole::Handler,
+                sprint_git_authority_id: fixture.authority_id.clone(),
+                execution_seed_object_id: None,
+            }),
+            Ok(AuthorizeExistingWorkUnitExecutionAttemptResult::Authorized { .. })
+        ));
+        let reference = service
+            .grant_for_role(
+                "handler-cross-worktree-attempt",
+                WorkUnitExecutionRole::Handler,
+            )
+            .unwrap();
+        let root = PathBuf::from(&reference.working_directory);
+        assert!(root.is_dir());
+        assert!(!root.starts_with(&fixture.sprint_root));
+        assert!(!root.starts_with(&application_root));
+        assert_eq!(fixture.git(&root, &["rev-parse", "HEAD"]), fixture.baseline);
+        assert!(registered_worktree(&fixture.repository_root, &root.canonicalize().unwrap()).unwrap());
+        assert_eq!(
+            service
+                .grant_for_role(
+                    "handler-cross-worktree-attempt",
+                    WorkUnitExecutionRole::Handler,
+                )
+                .unwrap(),
+            reference
+        );
+        drop(service);
+        assert_eq!(
+            fixture
+                .service()
+                .grant_for_role(
+                    "handler-cross-worktree-attempt",
+                    WorkUnitExecutionRole::Handler,
+                )
+                .unwrap(),
+            reference
         );
     }
 

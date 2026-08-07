@@ -6078,6 +6078,7 @@ mod tests {
         // ready fact; the dependent remains blocked even after the root is ready.
         let handler_repository_root = fixture._directory.path().join("handler-repository");
         let handler_sprint_root = fixture._directory.path().join("handler-sprint-worktree");
+        let handler_application_root = fixture._directory.path().join("handler-application-worktree");
         fs::create_dir_all(&handler_repository_root).unwrap();
         for arguments in [&["init"][..], &["config", "user.email", "handler@example.test"][..], &["config", "user.name", "Handler Test"][..]] {
             assert!(std::process::Command::new("git").args(arguments).current_dir(&handler_repository_root).status().unwrap().success());
@@ -6091,16 +6092,18 @@ mod tests {
         assert!(std::process::Command::new("git").args(["add", "README.md"]).current_dir(&handler_sprint_root).status().unwrap().success());
         assert!(std::process::Command::new("git").args(["commit", "-m", "handler sprint fixture"]).current_dir(&handler_sprint_root).status().unwrap().success());
         let handler_head = String::from_utf8(std::process::Command::new("git").args(["rev-parse", "HEAD"]).current_dir(&handler_sprint_root).output().unwrap().stdout).unwrap().trim().to_owned();
+        assert!(std::process::Command::new("git").args(["worktree", "add", "--detach", handler_application_root.to_string_lossy().as_ref(), &handler_initial]).current_dir(&handler_repository_root).status().unwrap().success());
         let handler_repository_root = handler_repository_root.canonicalize().unwrap();
         let handler_sprint_root = handler_sprint_root.canonicalize().unwrap();
+        let handler_workspace_parent = handler_application_root.canonicalize().unwrap()
+            .join("app-data")
+            .join("execution-workspaces");
         let handler_common = handler_repository_root.join(".git").canonicalize().unwrap();
         let handler_repository = Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap());
         let handler_orchestration = Arc::new(OrchestrationApplication::new(handler_repository.clone()));
         let handler_support = ProductExecutionSupportState::new(
             &fixture.database_path,
-            handler_sprint_root
-                .join(".isolated-product-data")
-                .join("execution-workspaces"),
+            handler_workspace_parent.clone(),
             handler_repository,
         ).unwrap();
         let handler = Arc::new(WorkUnitExecutionHarnessService::new(
@@ -6162,6 +6165,26 @@ mod tests {
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_sessions WHERE id=?1", [&failed_handler.2], |row| row.get(0)).unwrap(), 0);
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1", [&failed_handler.3], |row| row.get(0)).unwrap(), 0);
         assert_eq!(fixture.runtime.requests().len(), handler_launches_before);
+        let failure_projection = serde_json::to_value(
+            SqliteOrchestrationRepository::open(&fixture.database_path)
+                .unwrap()
+                .native_query()
+                .unwrap(),
+        )
+        .unwrap();
+        let failure_unit = failure_projection["workUnits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|unit| unit["workUnitId"] == failed_handler.0)
+            .unwrap();
+        assert_eq!(
+            failure_unit["handlerActivation"]["failureReason"],
+            "handler_execution_support_grant_failed"
+        );
+        assert!(failure_unit["handlerActivation"]["executionSupportGrantedAt"].is_null());
+        assert!(failure_unit["handlerActivation"]["handlerSessionCreatedAt"].is_null());
+        assert!(failure_unit["handlerActivation"]["handlerInvocationPreparedAt"].is_null());
         assert_eq!(
             String::from_utf8(
                 Command::new("git")
@@ -6737,9 +6760,7 @@ mod tests {
         let partial_handler = Arc::new(WorkUnitExecutionHarnessService::new(
             ProductExecutionSupportState::new(
                 &fixture.database_path,
-                handler_sprint_root
-                    .join(".isolated-product-data")
-                    .join("execution-workspaces"),
+                handler_workspace_parent.clone(),
                 partial_repository.clone(),
             )
             .unwrap()
@@ -6773,9 +6794,7 @@ mod tests {
             let handler_orchestration = Arc::new(OrchestrationApplication::new(handler_repository.clone()));
             let support = ProductExecutionSupportState::new(
                 &path,
-                handler_sprint_root
-                    .join(".isolated-product-data")
-                    .join("execution-workspaces"),
+                handler_workspace_parent.clone(),
                 handler_repository,
             ).unwrap();
             let handler = Arc::new(WorkUnitExecutionHarnessService::new(support.service(), sessions.clone(), handler_orchestration));
