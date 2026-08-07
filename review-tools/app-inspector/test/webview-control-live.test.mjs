@@ -60,6 +60,10 @@ test('dispatches trusted input only to the selected isolated Chromium target', a
       `http://127.0.0.1:${serverPort}/foreign`,
     );
     await activateTarget(`http://127.0.0.1:${debugPort}`, targetUrl);
+    assert.equal(
+      await evaluateTarget(`http://127.0.0.1:${debugPort}`, targetUrl, 'window.scrollY'),
+      0,
+    );
     const text = 'test-owned-text-is-redacted';
     const typedReceipt = path.join(receipts, 'type.json');
     const clickedReceipt = path.join(receipts, 'click.json');
@@ -104,6 +108,17 @@ test('dispatches trusted input only to the selected isolated Chromium target', a
       trustedClick: true,
       status: 'trusted click',
     });
+    assert.ok(
+      await evaluateTarget(`http://127.0.0.1:${debugPort}`, targetUrl, 'window.scrollY'),
+      'the trusted click scrolls the below-fold target into view first',
+    );
+    assert.deepEqual(
+      await evaluateTargetState(
+        `http://127.0.0.1:${debugPort}`,
+        `http://127.0.0.1:${serverPort}/foreign`,
+      ),
+      { trustedInput: false, trustedClick: false, status: 'idle' },
+    );
     assert.deepEqual(records, [
       { target: 'target', kind: 'input' },
       { target: 'target', kind: 'click' },
@@ -148,7 +163,7 @@ async function findChromiumDebugHost() {
 }
 
 function fixtureHtml(target) {
-  return `<!doctype html><html><body><label>${target}<input id="${target}-input"></label><input type="checkbox" id="${target}-button"><output id="status">idle</output><script>window.trustedInput=false;window.trustedClick=false;const report=(kind)=>fetch('/record?target=${target}&kind='+kind);document.querySelector('#${target}-input').addEventListener('input',(event)=>{if(event.isTrusted){window.trustedInput=true;document.querySelector('#status').textContent='trusted input';report('input')}});document.querySelector('#${target}-button').addEventListener('click',(event)=>{if(event.isTrusted){window.trustedClick=true;document.querySelector('#status').textContent='trusted click';report('click')}});</script></body></html>`;
+  return `<!doctype html><html><body><label>${target}<input id="${target}-input"></label><div style="height: 2400px"></div><button id="${target}-button" type="button">below fold</button><output id="status">idle</output><script>window.trustedInput=false;window.trustedClick=false;const report=(kind)=>fetch('/record?target=${target}&kind='+kind);document.querySelector('#${target}-input').addEventListener('input',(event)=>{if(event.isTrusted){window.trustedInput=true;document.querySelector('#status').textContent='trusted input';report('input')}});document.querySelector('#${target}-button').addEventListener('click',(event)=>{if(event.isTrusted){window.trustedClick=true;document.querySelector('#status').textContent='trusted click';report('click')}});</script></body></html>`;
 }
 
 async function createForeignTarget(debugUrl, foreignUrl) {
@@ -199,6 +214,14 @@ async function waitForRecords(records, count) {
 }
 
 async function evaluateTargetState(debugUrl, targetUrl) {
+  return evaluateTarget(
+    debugUrl,
+    targetUrl,
+    '({ trustedInput: window.trustedInput, trustedClick: window.trustedClick, status: document.querySelector("#status").textContent })',
+  );
+}
+
+async function evaluateTarget(debugUrl, targetUrl, expression) {
   const targets = await (await fetch(new URL('/json/list', debugUrl))).json();
   const target = targets.find(
     (candidate) => candidate.type === 'page' && candidate.url === targetUrl,
@@ -211,8 +234,7 @@ async function evaluateTargetState(debugUrl, targetUrl) {
       id: 1,
       method: 'Runtime.evaluate',
       params: {
-        expression:
-          '({ trustedInput: window.trustedInput, trustedClick: window.trustedClick, status: document.querySelector("#status").textContent })',
+        expression,
         returnByValue: true,
       },
     });

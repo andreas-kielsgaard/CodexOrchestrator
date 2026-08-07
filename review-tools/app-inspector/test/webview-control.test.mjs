@@ -8,6 +8,7 @@ import {
   loopbackUrl,
   parseOwnershipOutput,
   resolveSelector,
+  scrollAndMeasureActionablePoint,
   validateWebSocketDebuggerUrl,
 } from '../webview-control.mjs';
 
@@ -32,6 +33,36 @@ test('fails closed when selector lookup is missing, ambiguous, or stale', async 
     resolveSelector({ request: async () => Promise.reject(new Error('stale target')) }, '#target'),
     /stale target/u,
   );
+});
+
+test('scrolls an offscreen control before remeasuring one actionable point', async () => {
+  const calls = [];
+  const point = await scrollAndMeasureActionablePoint(
+    geometryProtocol(calls, { ...usableGeometry(), top: 900, bottom: 940, y: 420 }),
+    7,
+  );
+  assert.deepEqual(point, { x: 100, y: 420 });
+  assert.deepEqual(calls, [
+    'DOM.scrollIntoViewIfNeeded',
+    'DOM.resolveNode',
+    'Runtime.callFunctionOn',
+    'Runtime.releaseObject',
+  ]);
+});
+
+test('fails closed for hidden, detached, disabled, covered, or still-offscreen controls', async () => {
+  for (const geometry of [
+    { ...usableGeometry(), connected: false },
+    { ...usableGeometry(), disabled: true },
+    { ...usableGeometry(), display: 'none' },
+    { ...usableGeometry(), covered: true },
+    { ...usableGeometry(), y: 600 },
+  ]) {
+    await assert.rejects(
+      scrollAndMeasureActionablePoint(geometryProtocol([], geometry), 7),
+      /not an actionable visible control/u,
+    );
+  }
 });
 
 test('accepts only explicit HTTP loopback debugger URLs', () => {
@@ -79,5 +110,40 @@ function selectorProtocol(nodeIds) {
       if (method === 'DOM.querySelectorAll') return { nodeIds };
       throw new Error(`unexpected method ${method}`);
     },
+  };
+}
+
+function geometryProtocol(calls, geometry) {
+  return {
+    async request(method) {
+      calls.push(method);
+      if (method === 'DOM.scrollIntoViewIfNeeded') return {};
+      if (method === 'DOM.resolveNode') return { object: { objectId: 'node-7' } };
+      if (method === 'Runtime.callFunctionOn') return { result: { value: geometry } };
+      if (method === 'Runtime.releaseObject') return {};
+      throw new Error(`unexpected method ${method}`);
+    },
+  };
+}
+
+function usableGeometry() {
+  return {
+    connected: true,
+    disabled: false,
+    readOnly: false,
+    display: 'block',
+    visibility: 'visible',
+    opacity: '1',
+    pointerEvents: 'auto',
+    clientRects: 1,
+    left: 80,
+    right: 120,
+    top: 400,
+    bottom: 440,
+    viewportWidth: 800,
+    viewportHeight: 600,
+    x: 100,
+    y: 420,
+    covered: false,
   };
 }

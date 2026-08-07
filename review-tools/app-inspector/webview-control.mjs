@@ -240,14 +240,14 @@ export async function resolveSelector(protocol, selector) {
 
 async function dispatchClick(protocol, target) {
   assertClickable(target.node);
-  const point = await controlPoint(protocol, target.nodeId);
+  const point = await scrollAndMeasureActionablePoint(protocol, target.nodeId, false);
   dispatchPointerClick(protocol, point);
   return dispatchedReceipt(target.node, ['mouseMoved', 'mousePressed', 'mouseReleased']);
 }
 
 async function dispatchType(protocol, target, text) {
   assertTextEntry(target.node);
-  const point = await controlPoint(protocol, target.nodeId);
+  const point = await scrollAndMeasureActionablePoint(protocol, target.nodeId, true);
   dispatchPointerClick(protocol, point);
   await new Promise((resolve) => setTimeout(resolve, 100));
   protocol.dispatch('Input.dispatchKeyEvent', {
@@ -314,7 +314,8 @@ function dispatchPointerClick(protocol, point) {
   });
 }
 
-async function controlPoint(protocol, nodeId) {
+export async function scrollAndMeasureActionablePoint(protocol, nodeId, textEntry = false) {
+  await protocol.request('DOM.scrollIntoViewIfNeeded', { nodeId, centerIfNeeded: true });
   const resolved = await protocol.request('DOM.resolveNode', { nodeId });
   const objectId = resolved.object?.objectId;
   if (!objectId) throw new Error('Selector target cannot be resolved for geometry.');
@@ -322,25 +323,49 @@ async function controlPoint(protocol, nodeId) {
     const measured = await protocol.request('Runtime.callFunctionOn', {
       objectId,
       functionDeclaration:
-        'function() { const rect = this.getBoundingClientRect(); return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }; }',
+        'function() { const rect = this.getBoundingClientRect(); const style = getComputedStyle(this); const left = Math.max(0, rect.left); const right = Math.min(window.innerWidth, rect.right); const top = Math.max(0, rect.top); const bottom = Math.min(window.innerHeight, rect.bottom); const x = (left + right) / 2; const y = (top + bottom) / 2; const hit = Number.isFinite(x) && Number.isFinite(y) ? document.elementFromPoint(x, y) : null; return { connected: this.isConnected, disabled: Boolean(this.disabled), readOnly: Boolean(this.readOnly), display: style.display, visibility: style.visibility, opacity: style.opacity, pointerEvents: style.pointerEvents, clientRects: this.getClientRects().length, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight, x, y, covered: !(hit === this || this.contains(hit)) }; }',
       returnByValue: true,
       silent: true,
     });
     const rect = measured.result?.value;
-    if (!rect || ![rect.left, rect.right, rect.top, rect.bottom].every(Number.isFinite)) {
+    if (
+      !rect ||
+      ![
+        rect.left,
+        rect.right,
+        rect.top,
+        rect.bottom,
+        rect.viewportWidth,
+        rect.viewportHeight,
+        rect.x,
+        rect.y,
+      ].every(Number.isFinite)
+    ) {
       throw new Error('Selector target has no usable visible geometry.');
     }
-    const x = (rect.left + rect.right) / 2;
-    const y = (rect.top + rect.bottom) / 2;
     if (
-      !Number.isFinite(x) ||
-      !Number.isFinite(y) ||
+      !rect.connected ||
+      rect.disabled ||
+      (textEntry && rect.readOnly) ||
+      rect.display === 'none' ||
+      rect.visibility === 'hidden' ||
+      rect.visibility === 'collapse' ||
+      rect.pointerEvents === 'none' ||
+      Number(rect.opacity) <= 0 ||
+      rect.clientRects < 1 ||
       rect.right <= rect.left ||
-      rect.bottom <= rect.top
+      rect.bottom <= rect.top ||
+      rect.viewportWidth <= 0 ||
+      rect.viewportHeight <= 0 ||
+      rect.x < 0 ||
+      rect.x >= rect.viewportWidth ||
+      rect.y < 0 ||
+      rect.y >= rect.viewportHeight ||
+      rect.covered
     ) {
-      throw new Error('Selector target has empty or invalid geometry.');
+      throw new Error('Selector target is not an actionable visible control.');
     }
-    return { x, y };
+    return { x: rect.x, y: rect.y };
   } finally {
     await protocol.request('Runtime.releaseObject', { objectId }).catch(() => {});
   }
