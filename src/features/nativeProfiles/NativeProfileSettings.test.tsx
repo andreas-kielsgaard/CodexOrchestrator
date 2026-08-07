@@ -11,9 +11,10 @@ const execution = { selectedMode: 'workspace_write' as const, dangerFullAccessAu
 const loginAttempt = { disposition: 'not_requested' as const, browserHandoff: 'unobserved' as const, requestedAt: null, launchAcceptedAt: null, settledAt: null };
 const setupAttempt = { phase: 'not_requested' as const, disposition: 'not_requested' as const, executable: null, version: null, workspaceSandboxSupported: null, correlationId: null, requestedAt: null, launchAcceptedAt: null, deadlineAt: null, settledAt: null, terminalClassification: 'not_observed' as const, terminalExitCode: null };
 const sandboxAdoption = { disposition: 'not_verified' as const, executable: null, version: null, workspaceSandboxSupported: null, windowsSandboxSetupSupported: null, correlationId: null, observedAt: null, elevatedModeObserved: null };
+const sandboxAdoptionConfirmation = { disposition: 'not_confirmed' as const, correlationId: null, confirmedAt: null };
 const profiles: readonly NativeProfile[] = [
-  { id: 'p1', homePath: 'C:/one', ownership: 'registered_existing', lifecycle: 'active', selected: true, execution, loginAttempt, setupAttempt, sandboxAdoption, readiness },
-  { id: 'p2', homePath: 'C:/two', ownership: 'application_dedicated', lifecycle: 'active', selected: false, execution, loginAttempt, setupAttempt, sandboxAdoption, readiness },
+  { id: 'p1', homePath: 'C:/one', ownership: 'registered_existing', lifecycle: 'active', selected: true, execution, loginAttempt, setupAttempt, sandboxAdoption, sandboxAdoptionConfirmation, readiness },
+  { id: 'p2', homePath: 'C:/two', ownership: 'application_dedicated', lifecycle: 'active', selected: false, execution, loginAttempt, setupAttempt, sandboxAdoption, sandboxAdoptionConfirmation, readiness },
 ];
 
 function client(overrides: Partial<NativeProfileClient> = {}): NativeProfileClient {
@@ -111,6 +112,20 @@ describe('NativeProfileSettings', () => {
     expect(within(card).queryByText('Native setup process was not launched.')).not.toBeInTheDocument();
     expect(within(card).queryByText('Native setup process ended unsuccessfully.')).not.toBeInTheDocument();
     expect(within(card).getByText('Workspace sandbox capability')).toBeInTheDocument();
+  });
+
+  it('shows external observation and durable product adoption confirmation as distinct facts', async () => {
+    const adoptionProfiles = profiles.map((profile) => profile.id === 'p1' ? {
+      ...profile,
+      sandboxAdoption: { disposition: 'verified' as const, executable: 'C:/application-owned/codex.exe', version: 'codex-cli test', workspaceSandboxSupported: true, windowsSandboxSetupSupported: true, correlationId: 'native-adoption-observation', observedAt: '2026-08-07T12:00:00Z', elevatedModeObserved: true },
+      sandboxAdoptionConfirmation: { disposition: 'confirmed' as const, correlationId: 'native-adoption-confirmation', confirmedAt: '2026-08-07T12:01:00Z' },
+    } : profile);
+    render(<NativeProfileSettings client={client({ load: async () => ({ contract: 'native-codex-profile-query/v1' as const, profiles: adoptionProfiles }) })} />);
+    const card = await screen.findByRole('article', { name: 'Codex home p1' });
+    expect(within(card).getByText('External observation: verified')).toBeInTheDocument();
+    expect(within(card).getByText('Product adoption confirmation')).toBeInTheDocument();
+    expect(within(card).getByText('External configuration observation and explicit product adoption are separate receipts. Neither means this product requested setup, accepted a child launch, observed UAC, or completed a canary.')).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Confirm external sandbox adoption' })).toBeDisabled();
   });
 
   it('contains the reported short viewport in an internal scroll region with narrow wrapping', async () => {

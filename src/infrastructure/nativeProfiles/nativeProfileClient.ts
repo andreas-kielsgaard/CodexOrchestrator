@@ -75,6 +75,12 @@ export interface NativeProfileSandboxAdoption {
   readonly elevatedModeObserved: boolean | null;
 }
 
+export interface NativeProfileSandboxAdoptionConfirmation {
+  readonly disposition: 'not_confirmed' | 'confirmed' | 'invalidated';
+  readonly correlationId: string | null;
+  readonly confirmedAt: string | null;
+}
+
 export interface NativeProfile {
   readonly id: string;
   readonly homePath: string;
@@ -85,6 +91,7 @@ export interface NativeProfile {
   readonly loginAttempt: NativeProfileLoginAttempt;
   readonly setupAttempt: NativeProfileSetupAttempt;
   readonly sandboxAdoption: NativeProfileSandboxAdoption;
+  readonly sandboxAdoptionConfirmation: NativeProfileSandboxAdoptionConfirmation;
   readonly readiness: NativeProfileReadiness;
 }
 
@@ -168,6 +175,14 @@ function validateSandboxAdoption(adoption: NativeProfileSandboxAdoption) {
     && (!adoption.workspaceSandboxSupported || !adoption.windowsSandboxSetupSupported || !adoption.elevatedModeObserved))
     throw new Error('verified sandbox adoption violates its invariant');
 }
+function validateSandboxAdoptionConfirmation(confirmation: NativeProfileSandboxAdoptionConfirmation) {
+  if (confirmation.disposition === 'not_confirmed'
+    && confirmation.correlationId === null
+    && confirmation.confirmedAt === null) return;
+  if (confirmation.correlationId === null || confirmation.confirmedAt === null)
+    throw new Error('sandbox adoption confirmation evidence is incomplete');
+  requiredRfc3339(confirmation.confirmedAt, 'sandbox adoption confirmation timestamp');
+}
 
 function absolutePath(value: unknown, label: string): string {
   const path = stringValue(value, label);
@@ -193,7 +208,7 @@ export function decodeNativeProfileQuery(value: unknown): NativeProfileQuery {
 
 export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
   const profile = object(value, `native profile ${index}`);
-  keys(profile, ['id', 'homePath', 'ownership', 'lifecycle', 'selected', 'execution', 'loginAttempt', 'setupAttempt', 'sandboxAdoption', 'readiness'], `native profile ${index}`);
+  keys(profile, ['id', 'homePath', 'ownership', 'lifecycle', 'selected', 'execution', 'loginAttempt', 'setupAttempt', 'sandboxAdoption', 'sandboxAdoptionConfirmation', 'readiness'], `native profile ${index}`);
   if (typeof profile.selected !== 'boolean') throw new Error(`native profile ${index} selected must be boolean`);
   const readiness = object(profile.readiness, `native profile ${index} readiness`);
   keys(readiness, ['authentication', 'sandboxInitialization', 'workspaceWriteCanary', 'dangerFullAccessCanary', 'mcpReporting', 'attentions'], 'readiness');
@@ -201,10 +216,12 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
   const loginAttempt = object(profile.loginAttempt, `native profile ${index} login attempt`);
   const setupAttempt = object(profile.setupAttempt, `native profile ${index} setup attempt`);
   const sandboxAdoption = object(profile.sandboxAdoption, `native profile ${index} sandbox adoption`);
+  const sandboxAdoptionConfirmation = object(profile.sandboxAdoptionConfirmation, `native profile ${index} sandbox adoption confirmation`);
   keys(execution, ['selectedMode', 'dangerFullAccessAuthorized'], `native profile ${index} execution`);
   keys(loginAttempt, ['disposition', 'browserHandoff', 'requestedAt', 'launchAcceptedAt', 'settledAt'], `native profile ${index} login attempt`);
   keys(setupAttempt, ['phase', 'disposition', 'executable', 'version', 'workspaceSandboxSupported', 'correlationId', 'requestedAt', 'launchAcceptedAt', 'deadlineAt', 'settledAt', 'terminalClassification', 'terminalExitCode'], `native profile ${index} setup attempt`);
   keys(sandboxAdoption, ['disposition', 'executable', 'version', 'workspaceSandboxSupported', 'windowsSandboxSetupSupported', 'correlationId', 'observedAt', 'elevatedModeObserved'], `native profile ${index} sandbox adoption`);
+  keys(sandboxAdoptionConfirmation, ['disposition', 'correlationId', 'confirmedAt'], `native profile ${index} sandbox adoption confirmation`);
   if (typeof execution.dangerFullAccessAuthorized !== 'boolean') throw new Error(`native profile ${index} danger authorization must be boolean`);
   const attentions = object(readiness.attentions, 'attentions');
   keys(attentions, ['authentication', 'sandbox', 'canary', 'mcpReporting', 'continuity', 'cli'], 'attentions');
@@ -234,6 +251,12 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
     elevatedModeObserved: sandboxAdoption.elevatedModeObserved === null ? null : booleanValue(sandboxAdoption.elevatedModeObserved, 'sandbox adoption elevated mode observation'),
   };
   validateSandboxAdoption(decodedSandboxAdoption);
+  const decodedSandboxAdoptionConfirmation: NativeProfileSandboxAdoptionConfirmation = {
+    disposition: enumValue(sandboxAdoptionConfirmation.disposition, ['not_confirmed', 'confirmed', 'invalidated'], 'sandbox adoption confirmation disposition'),
+    correlationId: nullableString(sandboxAdoptionConfirmation.correlationId, 'sandbox adoption confirmation correlation'),
+    confirmedAt: nullableString(sandboxAdoptionConfirmation.confirmedAt, 'sandbox adoption confirmation timestamp'),
+  };
+  validateSandboxAdoptionConfirmation(decodedSandboxAdoptionConfirmation);
   return {
     id: stringValue(profile.id, 'profile id'),
     homePath: absolutePath(profile.homePath, 'profile home path'),
@@ -253,6 +276,7 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
     },
     setupAttempt: decodedSetupAttempt,
     sandboxAdoption: decodedSandboxAdoption,
+    sandboxAdoptionConfirmation: decodedSandboxAdoptionConfirmation,
     readiness: {
       authentication: enumValue(readiness.authentication, ['unknown', 'authenticated', 'unauthenticated'], 'authentication'),
       sandboxInitialization: enumValue(readiness.sandboxInitialization, ['unknown', 'initialized', 'failed', 'attention_required'], 'sandbox initialization'),

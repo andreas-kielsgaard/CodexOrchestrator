@@ -7,6 +7,7 @@ const profile = {
   loginAttempt: { disposition: 'not_requested', browserHandoff: 'unobserved', requestedAt: null, launchAcceptedAt: null, settledAt: null },
   setupAttempt: { phase: 'not_requested', disposition: 'not_requested', executable: null, version: null, workspaceSandboxSupported: null, correlationId: null, requestedAt: null, launchAcceptedAt: null, deadlineAt: null, settledAt: null, terminalClassification: 'not_observed', terminalExitCode: null },
   sandboxAdoption: { disposition: 'not_verified', executable: null, version: null, workspaceSandboxSupported: null, windowsSandboxSetupSupported: null, correlationId: null, observedAt: null, elevatedModeObserved: null },
+  sandboxAdoptionConfirmation: { disposition: 'not_confirmed', correlationId: null, confirmedAt: null },
   readiness: { authentication: 'unknown', sandboxInitialization: 'unknown', workspaceWriteCanary: 'not_run', dangerFullAccessCanary: 'not_run', mcpReporting: 'not_assessed', attentions: { authentication: null, sandbox: null, canary: null, mcpReporting: null, continuity: null, cli: null } },
 };
 const query = () => ({ contract: 'native-codex-profile-query/v1', profiles: [profile] });
@@ -26,6 +27,7 @@ describe('native profile client', () => {
     expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, setupAttempt: { ...profile.setupAttempt, workspaceSandboxSupported: 'yes' } }] })).toThrow(/workspace sandbox capability/);
     expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, setupAttempt: { ...profile.setupAttempt, opaqueSandboxState: 'private' } }] })).toThrow(/setup attempt.*unknown field/);
     expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, sandboxAdoption: { ...profile.sandboxAdoption, opaqueSandboxState: 'private' } }] })).toThrow(/sandbox adoption.*unknown field/);
+    expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, sandboxAdoptionConfirmation: { ...profile.sandboxAdoptionConfirmation, opaqueState: 'private' } }] })).toThrow(/confirmation.*unknown field/);
     const verifiedAdoption = { disposition: 'verified', executable: 'C:/application-owned/codex.exe', version: 'codex-cli test', workspaceSandboxSupported: true, windowsSandboxSetupSupported: true, correlationId: 'native-adoption-correlation', observedAt: '2026-08-07T12:00:00Z', elevatedModeObserved: true };
     expect(decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, sandboxAdoption: verifiedAdoption }] }).profiles[0].sandboxAdoption).toMatchObject({ disposition: 'verified', elevatedModeObserved: true });
     for (const contradiction of [
@@ -35,6 +37,10 @@ describe('native profile client', () => {
       { observedAt: 'not-a-timestamp' },
       { executable: null },
     ]) expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, sandboxAdoption: { ...verifiedAdoption, ...contradiction } }] })).toThrow(/sandbox adoption/);
+    const confirmedAdoption = { disposition: 'confirmed', correlationId: 'native-adoption-confirmation', confirmedAt: '2026-08-07T12:01:00Z' };
+    expect(decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, sandboxAdoptionConfirmation: confirmedAdoption }] }).profiles[0].sandboxAdoptionConfirmation).toMatchObject({ disposition: 'confirmed' });
+    for (const contradiction of [{ correlationId: null }, { confirmedAt: null }, { confirmedAt: 'not-a-timestamp' }])
+      expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, sandboxAdoptionConfirmation: { ...confirmedAdoption, ...contradiction } }] })).toThrow(/confirmation/);
     expect(decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, setupAttempt: { ...profile.setupAttempt, disposition: 'legacy_unclassified_failed', terminalClassification: 'legacy_unclassified_failed' } }] }).profiles[0].setupAttempt).toMatchObject({ disposition: 'legacy_unclassified_failed', terminalClassification: 'legacy_unclassified_failed' });
     const policyUnsupported = { ...profile.setupAttempt, phase: 'sandbox_initialization', disposition: 'policy_unsupported', executable: 'C:/application-owned/codex.exe', version: 'codex-cli test', workspaceSandboxSupported: false, correlationId: 'native-setup-correlation', requestedAt: '2026-08-07T12:00:00Z', deadlineAt: '2026-08-07T12:02:00Z', settledAt: '2026-08-07T12:00:00Z', terminalClassification: 'policy_unsupported', terminalExitCode: null };
     expect(decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, setupAttempt: policyUnsupported }] }).profiles[0].setupAttempt).toMatchObject({ disposition: 'policy_unsupported', terminalClassification: 'policy_unsupported', workspaceSandboxSupported: false });
