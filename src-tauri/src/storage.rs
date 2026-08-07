@@ -45,7 +45,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| format!("Unable to commit active v22 schema evolution: {error}"))?;
         return Ok(());
     }
-    if (1..=32).contains(&current_version) {
+    if (1..=33).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -1418,6 +1418,136 @@ mod tests {
                 "missing {table}"
             );
         }
+    }
+
+    #[test]
+    fn migrates_a_real_v33_native_profile_predecessor_and_reopens_idempotently() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("active-v33.sqlite");
+        let connection = open_active_database(&path).expect("current database");
+        connection
+            .execute_batch(
+                "DROP INDEX ux_native_codex_profile_full_access_canary_pending;
+                 DROP TABLE native_codex_profile_full_access_canaries;
+                 DROP TABLE native_codex_profile_mode_authorizations;
+                 CREATE TABLE native_codex_profile_mode_authorizations (
+                   profile_id TEXT NOT NULL,
+                   mode TEXT NOT NULL CHECK (mode='danger_full_access'),
+                   filesystem_identity TEXT NOT NULL,
+                   authorized_at TEXT NOT NULL,
+                   revoked_at TEXT,
+                   PRIMARY KEY(profile_id, mode),
+                   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+                 );
+                 CREATE TABLE native_codex_profile_full_access_canaries (
+                   attempt_id TEXT PRIMARY KEY,
+                   profile_id TEXT NOT NULL,
+                   filesystem_identity TEXT NOT NULL,
+                   mode TEXT NOT NULL CHECK (mode='danger_full_access'),
+                   executable TEXT NOT NULL,
+                   version TEXT NOT NULL,
+                   sentinel_path TEXT NOT NULL,
+                   state TEXT NOT NULL CHECK (state IN ('pending','passed','blocked','cancelled')),
+                   started_at TEXT NOT NULL,
+                   completed_at TEXT,
+                   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+                 );
+                 CREATE UNIQUE INDEX ux_native_codex_profile_full_access_canary_pending
+                 ON native_codex_profile_full_access_canaries(profile_id) WHERE state='pending';
+                 INSERT INTO native_codex_profiles (id,canonical_home_path,filesystem_identity,ownership,lifecycle,selected_at,created_at,updated_at)
+                 VALUES ('v33-profile','C:/application-owned/v33-home','v33-identity','application_dedicated','active','2026-08-07T12:00:00Z','2026-08-07T12:00:00Z','2026-08-07T12:00:00Z');
+                 INSERT INTO native_codex_profile_readiness (profile_id,authentication,sandbox_initialization,workspace_write_canary,danger_full_access_canary,mcp_reporting,attention,login_requested_at,observed_at)
+                 VALUES ('v33-profile','authenticated','initialized','passed','passed','ready',NULL,NULL,'2026-08-07T12:00:00Z');
+                 INSERT INTO native_codex_profile_execution_modes (profile_id,selected_mode,updated_at)
+                 VALUES ('v33-profile','danger_full_access','2026-08-07T12:00:00Z');
+                 INSERT INTO native_codex_profile_mode_authorizations (profile_id,mode,filesystem_identity,authorized_at,revoked_at)
+                 VALUES ('v33-profile','danger_full_access','v33-identity','2026-08-07T12:00:00Z',NULL);
+                 INSERT INTO native_codex_profile_full_access_canaries (attempt_id,profile_id,filesystem_identity,mode,executable,version,sentinel_path,state,started_at,completed_at)
+                 VALUES ('v33-canary','v33-profile','v33-identity','danger_full_access','C:/application-owned/codex.exe','codex-cli 0.144.0','C:/application-owned/receipt.txt','passed','2026-08-07T12:00:00Z','2026-08-07T12:00:01Z');
+                 INSERT INTO native_codex_profile_sandbox_adoptions (profile_id,filesystem_identity,executable,version,workspace_sandbox_supported,windows_sandbox_setup_supported,correlation_id,observed_at,state,elevated_mode_observed)
+                 VALUES ('v33-profile','v33-identity','C:/application-owned/codex.exe','codex-cli 0.144.0',1,1,'v33-adoption','2026-08-07T12:00:00Z','verified',1);
+                 PRAGMA user_version=33;",
+            )
+            .expect("seed real v33 native-profile predecessor");
+
+        initialize_active_database(&connection).expect("migrate v33 through dispatcher");
+        assert_eq!(pragma_i64(&connection, "user_version"), 34);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT authority_scope,authority_version,authorization_correlation_id,authorized_at FROM native_codex_profile_mode_authorizations WHERE profile_id='v33-profile'",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?, row.get::<_, String>(3)?)),
+                )
+                .expect("migrated authorization"),
+            (
+                "filesystem_only".into(),
+                "danger-full-access/filesystem-only/v1".into(),
+                None,
+                "2026-08-07T12:00:00Z".into(),
+            )
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT state,terminal_classification,cleanup_disposition FROM native_codex_profile_full_access_canaries WHERE attempt_id='v33-canary'",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+                )
+                .expect("downgraded historical canary"),
+            (
+                "legacy_unverified".into(),
+                "legacy_unverified".into(),
+                "not_observed".into(),
+            )
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT authentication,sandbox_initialization,workspace_write_canary,danger_full_access_canary,mcp_reporting FROM native_codex_profile_readiness WHERE profile_id='v33-profile'",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?)),
+                )
+                .expect("preserved readiness"),
+            (
+                "authenticated".into(),
+                "initialized".into(),
+                "passed".into(),
+                "blocked".into(),
+                "ready".into(),
+            )
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT filesystem_identity,executable,version,workspace_sandbox_supported,windows_sandbox_setup_supported,elevated_mode_observed FROM native_codex_profile_sandbox_adoptions WHERE profile_id='v33-profile'",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, i64>(5)?)),
+                )
+                .expect("preserved adoption"),
+            (
+                "v33-identity".into(),
+                "C:/application-owned/codex.exe".into(),
+                "codex-cli 0.144.0".into(),
+                1,
+                1,
+                1,
+            )
+        );
+        drop(connection);
+
+        let reopened = open_active_database(&path).expect("idempotent v34 reopen");
+        assert_eq!(pragma_i64(&reopened, "user_version"), 34);
+        assert_eq!(
+            reopened
+                .query_row(
+                    "SELECT count(*) FROM native_codex_profile_full_access_canaries WHERE attempt_id='v33-canary' AND state='legacy_unverified'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("retained historical canary"),
+            1
+        );
     }
 
     fn pragma_i64(connection: &Connection, name: &str) -> i64 {
