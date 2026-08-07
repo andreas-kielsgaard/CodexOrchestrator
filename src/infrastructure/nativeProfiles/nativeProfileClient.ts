@@ -499,7 +499,7 @@ export function createNativeProfileClient(invokeCommand: Invoke = invoke): Nativ
     confirmPreprovisionedSandboxAdoption: (profileId) => action('confirm_native_profile_preprovisioned_sandbox_adoption', id(profileId)),
     runCanary: (profileId) => action('run_native_profile_workspace_write_canary', id(profileId)),
     runDangerFullAccessCanary: (profileId) => action('run_native_profile_danger_full_access_canary', id(profileId)),
-    probeMcp: (profileId) => action('probe_native_profile_mcp_reporting', id(profileId)),
+    probeMcp: (profileId) => action('reconcile_native_profile_mcp_reporting', id(profileId)),
   };
 }
 

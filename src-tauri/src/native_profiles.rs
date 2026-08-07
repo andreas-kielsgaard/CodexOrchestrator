@@ -1,18 +1,33 @@
 //! Product-owned Codex home profiles. This module deliberately records only filesystem identity
 //! and bounded setup observations; it never reads authentication, sandbox, or provider payloads.
 
+use axum::http::{header, StatusCode};
+use bytes::Bytes;
 use chrono::{DateTime, Duration, Utc};
+use http_body_util::Empty;
+use hyper::{server::conn::http1, service::service_fn, Response};
+use hyper_util::rt::TokioIo;
+use rmcp::{
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
+    model::{CallToolResult, ContentBlock, ServerCapabilities, ServerInfo},
+    tool, tool_handler, tool_router, ServerHandler,
+};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs::{self, OpenOptions},
     io::{BufRead, BufReader, Read, Write},
+    net::SocketAddr,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{mpsc, Arc, Mutex, OnceLock},
+    thread,
 };
 use tauri::State;
+use tokio_util::sync::CancellationToken;
+use tower::ServiceExt;
 use uuid::Uuid;
 
 const FULL_ACCESS_CANARY_RECEIPT: &str = "native-codex-profile-canary";
@@ -1197,6 +1212,213 @@ pub(crate) struct NativeMcpReportingProbeAuthority {
     pub(crate) probe_root: PathBuf,
 }
 
+/// A loopback-only MCP server for one already-durable reporting request. It accepts no caller
+/// supplied identity or correlation; those stay bound to the pending application authority.
+#[derive(Clone)]
+struct NativeMcpReportingMcp {
+    authority: NativeMcpReportingProbeAuthority,
+    receipt: mpsc::SyncSender<NativeMcpReportingReceipt>,
+    tool_router: ToolRouter<Self>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct NativeMcpReportingInput {}
+
+impl NativeMcpReportingMcp {
+    fn new(
+        authority: NativeMcpReportingProbeAuthority,
+        receipt: mpsc::SyncSender<NativeMcpReportingReceipt>,
+    ) -> Self {
+        Self {
+            authority,
+            receipt,
+            tool_router: Self::tool_router(),
+        }
+    }
+}
+
+#[tool_router]
+impl NativeMcpReportingMcp {
+    #[tool(
+        description = "Record the one application-bound native-profile reporting receipt. Input is ONLY {}. It reports MCP exposure and this exact tool call only; readiness, provider activity, and application-consumer resolution remain separate facts."
+    )]
+    fn report_native_profile_readiness(
+        &self,
+        Parameters(_): Parameters<NativeMcpReportingInput>,
+    ) -> CallToolResult {
+        let receipt = NativeMcpReportingReceipt {
+            capability: self.authority.capability.clone(),
+            server: self.authority.server.clone(),
+            tool: self.authority.tool.clone(),
+            correlation_id: self.authority.correlation_id.clone(),
+            probe_root: self.authority.probe_root.clone(),
+        };
+        match self.receipt.try_send(receipt) {
+            Ok(()) => CallToolResult::success(vec![ContentBlock::text(
+                "{\"status\":\"mcp_reporting_receipt_reported\",\"ready\":false}",
+            )]),
+            Err(mpsc::TrySendError::Full(_)) => CallToolResult::success(vec![ContentBlock::text(
+                "{\"status\":\"mcp_reporting_receipt_already_reported\",\"ready\":false}",
+            )]),
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                CallToolResult::error(vec![ContentBlock::text("{\"code\":\"unavailable\"}")])
+            }
+        }
+    }
+}
+
+#[tool_handler(router = self.tool_router)]
+impl ServerHandler for NativeMcpReportingMcp {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
+            "Call report_native_profile_readiness exactly once with {}. The application validates and settles the correlated receipt separately.",
+        )
+    }
+}
+
+struct NativeMcpReportingServer {
+    address: SocketAddr,
+    bearer: String,
+    receipt: mpsc::Receiver<NativeMcpReportingReceipt>,
+    cancellation: CancellationToken,
+    join: Option<thread::JoinHandle<()>>,
+}
+
+impl NativeMcpReportingServer {
+    fn start(authority: NativeMcpReportingProbeAuthority) -> Result<Self, String> {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|_| {
+            "Unable to expose the application-owned MCP reporting server".to_string()
+        })?;
+        listener.set_nonblocking(true).map_err(|_| {
+            "Unable to expose the application-owned MCP reporting server".to_string()
+        })?;
+        let address = listener.local_addr().map_err(|_| {
+            "Unable to expose the application-owned MCP reporting server".to_string()
+        })?;
+        let bearer = uuid::Uuid::new_v4().simple().to_string();
+        let (receipt_tx, receipt) = mpsc::sync_channel(1);
+        let cancellation = CancellationToken::new();
+        let server_cancel = cancellation.clone();
+        let expected_bearer = bearer.clone();
+        let join = thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_io()
+                .enable_time()
+                .build()
+                .expect("native MCP reporting runtime");
+            runtime.block_on(async move {
+                let allowed_host = format!("127.0.0.1:{}", address.port());
+                let config =
+                    rmcp::transport::streamable_http_server::StreamableHttpServerConfig::default()
+                        .with_allowed_hosts([allowed_host.clone()])
+                        .with_cancellation_token(server_cancel.clone());
+                let service: rmcp::transport::streamable_http_server::StreamableHttpService<
+                    NativeMcpReportingMcp,
+                    rmcp::transport::streamable_http_server::session::local::LocalSessionManager,
+                > = rmcp::transport::streamable_http_server::StreamableHttpService::new(
+                    move || {
+                        Ok(NativeMcpReportingMcp::new(
+                            authority.clone(),
+                            receipt_tx.clone(),
+                        ))
+                    },
+                    Default::default(),
+                    config,
+                );
+                let expected_bearer = Arc::new(expected_bearer);
+                let listener = tokio::net::TcpListener::from_std(listener)
+                    .expect("native MCP reporting listener");
+                loop {
+                    let accepted = tokio::select! {
+                        _ = server_cancel.cancelled() => break,
+                        accepted = listener.accept() => accepted,
+                    };
+                    let Ok((stream, _)) = accepted else { continue };
+                    let service = service.clone();
+                    let expected_bearer = expected_bearer.clone();
+                    let allowed_host = allowed_host.clone();
+                    tokio::spawn(async move {
+                        let guard = service_fn(move |request| {
+                            let service = service.clone();
+                            let expected_bearer = expected_bearer.clone();
+                            let allowed_host = allowed_host.clone();
+                            async move {
+                                if let Some(status) = native_mcp_transport_denial(
+                                    &expected_bearer,
+                                    &allowed_host,
+                                    &request,
+                                ) {
+                                    return Ok::<_, std::convert::Infallible>(
+                                        Response::builder()
+                                            .status(status)
+                                            .body(Empty::<Bytes>::new())
+                                            .expect("native MCP denial response")
+                                            .map(axum::body::Body::new),
+                                    );
+                                }
+                                let response = service
+                                    .oneshot(request)
+                                    .await
+                                    .expect("native MCP service response");
+                                Ok::<_, std::convert::Infallible>(
+                                    response.map(axum::body::Body::new),
+                                )
+                            }
+                        });
+                        let _ = http1::Builder::new()
+                            .serve_connection(TokioIo::new(stream), guard)
+                            .await;
+                    });
+                }
+            });
+        });
+        Ok(Self {
+            address,
+            bearer,
+            receipt,
+            cancellation,
+            join: Some(join),
+        })
+    }
+
+    fn url(&self) -> String {
+        format!("http://{}/mcp", self.address)
+    }
+
+    fn take_receipt(&self) -> Option<NativeMcpReportingReceipt> {
+        self.receipt.try_recv().ok()
+    }
+
+    fn stop(mut self) {
+        self.cancellation.cancel();
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
+fn native_mcp_transport_denial<B>(
+    expected_bearer: &str,
+    allowed_host: &str,
+    request: &hyper::Request<B>,
+) -> Option<StatusCode> {
+    let authorized = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.strip_prefix("Bearer ") == Some(expected_bearer));
+    if !authorized {
+        return Some(StatusCode::UNAUTHORIZED);
+    }
+    (request
+        .headers()
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        != Some(allowed_host))
+    .then_some(StatusCode::FORBIDDEN)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SetupPhase {
     SandboxInitialization,
@@ -1810,6 +2032,108 @@ impl NativeProfileService {
         self.profile(id).map(Into::into)
     }
 
+    pub(crate) fn request_and_reconcile_mcp_reporting(
+        &self,
+        id: &str,
+    ) -> Result<NativeProfileDto, String> {
+        self.require_selected_active(id)?;
+        self.begin_mcp_reporting_probe(id)?;
+        self.reconcile_pending_mcp_reporting(id)
+    }
+
+    /// Performs one scoped reporting exchange only for an already-durable pending request. It
+    /// never creates a request, retries a failed exchange, or infers a receipt from process exit.
+    pub(crate) fn reconcile_pending_mcp_reporting(
+        &self,
+        id: &str,
+    ) -> Result<NativeProfileDto, String> {
+        let gate = self
+            .operation_gate
+            .lock()
+            .map_err(|_| "Native profile operation supervision is unavailable")?;
+        let profile = self.require_selected_active_while_gated(id)?;
+        self.expire_mcp_probe(id)?;
+        let Some(authority) = load_pending_mcp_probe(&self.connection()?, id)? else {
+            return self.profile(id).map(Into::into);
+        };
+        if authority.profile_id != profile.id {
+            return Err("The application-owned MCP reporting request has invalid authority".into());
+        }
+        let server = NativeMcpReportingServer::start(authority.clone())?;
+        let variable = format!(
+            "CODEX_ORCHESTRATOR_NATIVE_MCP_REPORTING_{}",
+            Uuid::new_v4().simple()
+        );
+        let mut args = vec![
+            "exec".into(),
+            "--json".into(),
+            "--strict-config".into(),
+            "--ignore-user-config".into(),
+            "--ignore-rules".into(),
+            "--sandbox".into(),
+            "workspace-write".into(),
+            "--cd".into(),
+            authority.probe_root.to_string_lossy().into_owned(),
+            "--skip-git-repo-check".into(),
+        ];
+        let configuration = [
+            format!("mcp_servers.{MCP_REPORTING_SERVER}.url={:?}", server.url()),
+            format!("mcp_servers.{MCP_REPORTING_SERVER}.bearer_token_env_var={variable:?}"),
+            format!("mcp_servers.{MCP_REPORTING_SERVER}.enabled_tools=[{MCP_REPORTING_TOOL:?}]"),
+            format!("mcp_servers.{MCP_REPORTING_SERVER}.required=true"),
+            format!("mcp_servers.{MCP_REPORTING_SERVER}.default_tools_approval_mode=\"approve\""),
+            format!("mcp_servers.{MCP_REPORTING_SERVER}.startup_timeout_sec=10"),
+            format!("mcp_servers.{MCP_REPORTING_SERVER}.tool_timeout_sec=300"),
+            "sandbox_workspace_write.network_access=true".into(),
+            "features.network_proxy=true".into(),
+        ];
+        for value in configuration {
+            args.push("-c".into());
+            args.push(value);
+        }
+        args.push(format!(
+            "Use only the {MCP_REPORTING_CAPABILITY} MCP capability. Call {MCP_REPORTING_SERVER}.{MCP_REPORTING_TOOL} exactly once with {{}}. Do not read or write files, report profile content, or perform any other work."
+        ));
+        let outcome = self.cli.run(&NativeCliInvocation {
+            args,
+            cwd: authority.probe_root.clone(),
+            codex_home: profile.home.clone(),
+            environment: {
+                let mut environment = native_windows_cli_environment(&profile.home);
+                environment.push((variable, server.bearer.clone()));
+                environment
+            },
+            sandbox_receipt: None,
+            sandbox_command_file: None,
+        });
+        let receipt = server.take_receipt();
+        server.stop();
+
+        if let Some(receipt) = receipt {
+            self.require_selected_active_while_gated(id)?;
+            let result = self.record_mcp_reporting_receipt(id, &receipt);
+            drop(gate);
+            return result;
+        }
+        drop(gate);
+        if outcome.is_err() {
+            self.set_attention(
+                id,
+                "mcp_reporting",
+                Some("mcp_reporting_dispatch_unavailable"),
+                false,
+            )?;
+            return Err("The application-owned MCP reporting exchange is unavailable".into());
+        }
+        self.set_attention(
+            id,
+            "mcp_reporting",
+            Some("mcp_reporting_dispatch_completed_without_receipt"),
+            false,
+        )?;
+        Err("The MCP reporting exchange completed without a correlated receipt".into())
+    }
+
     pub(crate) fn begin_mcp_reporting_probe(
         &self,
         id: &str,
@@ -2364,6 +2688,25 @@ impl NativeProfileService {
 
     fn require_selected_active(&self, id: &str) -> Result<StoredProfile, String> {
         let profile = self.require_active(id)?;
+        if !profile.selected {
+            return Err("Only the selected native Codex profile can perform this operation".into());
+        }
+        Ok(profile)
+    }
+
+    /// Caller owns `operation_gate`; avoid recursively acquiring it if continuity must be
+    /// recorded while adopting a pending reporting request.
+    fn require_selected_active_while_gated(&self, id: &str) -> Result<StoredProfile, String> {
+        let profile = self.profile(id)?;
+        let lifecycle = validate_profile(&profile);
+        if profile.lifecycle != Lifecycle::Active || lifecycle != Lifecycle::Active {
+            if lifecycle != Lifecycle::Active {
+                self.record_lifecycle_while_gated(id, lifecycle)?;
+            }
+            return Err(
+                "Only a currently validated native profile can perform this operation".into(),
+            );
+        }
         if !profile.selected {
             return Err("Only the selected native Codex profile can perform this operation".into());
         }
@@ -4286,6 +4629,16 @@ pub(crate) fn probe_native_profile_mcp_reporting(
     state.service.probe_mcp_reporting(&input.profile_id)
 }
 
+#[tauri::command]
+pub(crate) fn reconcile_native_profile_mcp_reporting(
+    state: State<'_, NativeProfileTauriState>,
+    input: NativeProfileIdInput,
+) -> Result<NativeProfileDto, String> {
+    state
+        .service
+        .request_and_reconcile_mcp_reporting(&input.profile_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4431,6 +4784,130 @@ mod tests {
         .unwrap();
         service.cli = Arc::new(FakeCli::succeeding());
         (directory, service)
+    }
+
+    struct ReportingCli {
+        calls: Mutex<Vec<NativeCliInvocation>>,
+    }
+
+    impl ReportingCli {
+        fn new() -> Self {
+            Self {
+                calls: Mutex::new(vec![]),
+            }
+        }
+
+        fn call_reporting_tool(invocation: &NativeCliInvocation) -> Result<(), String> {
+            let configured = |suffix: &str| {
+                invocation.args.windows(2).find_map(|pair| {
+                    (pair[0] == "-c")
+                        .then(|| pair[1].strip_prefix(suffix).map(str::to_owned))
+                        .flatten()
+                })
+            };
+            let endpoint = configured(&format!("mcp_servers.{MCP_REPORTING_SERVER}.url="))
+                .and_then(|value| serde_json::from_str::<String>(&value).ok())
+                .ok_or("missing MCP endpoint")?;
+            let variable = configured(&format!(
+                "mcp_servers.{MCP_REPORTING_SERVER}.bearer_token_env_var="
+            ))
+            .and_then(|value| serde_json::from_str::<String>(&value).ok())
+            .ok_or("missing MCP bearer variable")?;
+            let bearer = invocation
+                .environment
+                .iter()
+                .find_map(|(key, value)| (key == &variable).then_some(value.clone()))
+                .ok_or("missing MCP bearer")?;
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_io()
+                .enable_time()
+                .build()
+                .map_err(|_| "test MCP runtime unavailable")?;
+            runtime.block_on(async move {
+                let client = reqwest::Client::new();
+                let initialize = client
+                    .post(&endpoint)
+                    .header("content-type", "application/json")
+                    .header("accept", "application/json, text/event-stream")
+                    .header("authorization", format!("Bearer {bearer}"))
+                    .body(serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"native-profile-test","version":"1"}}}).to_string())
+                    .send()
+                    .await
+                    .map_err(|_| "test MCP initialize unavailable")?;
+                let session = initialize
+                    .headers()
+                    .get("mcp-session-id")
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_owned)
+                    .ok_or("test MCP session missing")?;
+                if !initialize.status().is_success() {
+                    return Err("test MCP initialize rejected".into());
+                }
+                let notification = client
+                    .post(&endpoint)
+                    .header("content-type", "application/json")
+                    .header("accept", "application/json, text/event-stream")
+                    .header("authorization", format!("Bearer {bearer}"))
+                    .header("mcp-session-id", &session)
+                    .body("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}")
+                    .send()
+                    .await
+                    .map_err(|_| "test MCP notification unavailable")?;
+                if !notification.status().is_success() {
+                    return Err("test MCP notification rejected".into());
+                }
+                let call = client
+                    .post(&endpoint)
+                    .header("content-type", "application/json")
+                    .header("accept", "application/json, text/event-stream")
+                    .header("authorization", format!("Bearer {bearer}"))
+                    .header("mcp-session-id", session)
+                    .body(serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":MCP_REPORTING_TOOL,"arguments":{}}}).to_string())
+                    .send()
+                    .await
+                    .map_err(|_| "test MCP tool unavailable")?;
+                call.status()
+                    .is_success()
+                    .then_some(())
+                    .ok_or_else(|| "test MCP tool rejected".into())
+            })
+        }
+    }
+
+    impl NativeCliPort for ReportingCli {
+        fn run(&self, invocation: &NativeCliInvocation) -> Result<NativeCliReceipt, String> {
+            self.calls.lock().unwrap().push(invocation.clone());
+            Self::call_reporting_tool(invocation)?;
+            Ok(NativeCliReceipt {
+                succeeded: true,
+                exit_code: Some(0),
+                sandbox_receipt_observed: false,
+            })
+        }
+
+        fn start(&self, _: &NativeCliInvocation) -> Result<Box<dyn NativeCliChild>, String> {
+            Err("not used by MCP reporting".into())
+        }
+
+        fn surface(&self) -> Result<NativeCliSurface, String> {
+            FakeCli::succeeding().surface()
+        }
+    }
+
+    fn selected_profile_ready_except_mcp(service: &NativeProfileService) -> NativeProfileDto {
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        service
+            .update_readiness(
+                &profile.id,
+                Some("authenticated"),
+                Some("initialized"),
+                Some("passed"),
+                Some("not_assessed"),
+                None,
+            )
+            .unwrap();
+        profile
     }
 
     #[test]
@@ -5573,7 +6050,9 @@ mod tests {
     fn system_cli_port_observes_the_allowlisted_full_access_receipt_value() {
         let directory = tempfile::tempdir().unwrap();
         let home = directory.path().join("selected-home");
-        let parent = directory.path().join("application-owned-full-access-canary");
+        let parent = directory
+            .path()
+            .join("application-owned-full-access-canary");
         let work = parent.join("work");
         let receipt_root = parent.join("receipt");
         fs::create_dir_all(&home).unwrap();
@@ -5593,7 +6072,11 @@ mod tests {
         };
         let settled = port
             .run(&NativeCliInvocation {
-                args: vec!["/d".into(), "/c".into(), ".\\write-full-access-receipt.cmd".into()],
+                args: vec![
+                    "/d".into(),
+                    "/c".into(),
+                    ".\\write-full-access-receipt.cmd".into(),
+                ],
                 cwd: work.clone(),
                 codex_home: home.clone(),
                 environment: native_windows_cli_environment(&home),
@@ -6389,8 +6872,14 @@ mod tests {
         let query = reopened.query().unwrap();
         let invalidated = &query.profiles[0];
 
-        assert_eq!(invalidated.full_access_canary_attempt.disposition, "cancelled");
-        assert_eq!(invalidated.full_access_canary_attempt.cleanup_disposition, "removed");
+        assert_eq!(
+            invalidated.full_access_canary_attempt.disposition,
+            "cancelled"
+        );
+        assert_eq!(
+            invalidated.full_access_canary_attempt.cleanup_disposition,
+            "removed"
+        );
         assert!(!invalidated.full_access_canary_attempt.receipt_observed);
         assert_eq!(invalidated.readiness.danger_full_access_canary, "blocked");
         assert!(!receipt.exists());
@@ -6407,7 +6896,8 @@ mod tests {
     }
 
     #[test]
-    fn continuity_cancellation_records_full_access_receipt_cleanup_failure_without_deleting_broadly() {
+    fn continuity_cancellation_records_full_access_receipt_cleanup_failure_without_deleting_broadly(
+    ) {
         let directory = tempfile::tempdir().unwrap();
         let mut service = NativeProfileService::open(
             directory.path().join("active.sqlite"),
@@ -6439,8 +6929,14 @@ mod tests {
         let query = reopened.query().unwrap();
         let invalidated = &query.profiles[0];
 
-        assert_eq!(invalidated.full_access_canary_attempt.disposition, "cancelled");
-        assert_eq!(invalidated.full_access_canary_attempt.cleanup_disposition, "failed");
+        assert_eq!(
+            invalidated.full_access_canary_attempt.disposition,
+            "cancelled"
+        );
+        assert_eq!(
+            invalidated.full_access_canary_attempt.cleanup_disposition,
+            "failed"
+        );
         assert_eq!(invalidated.readiness.danger_full_access_canary, "blocked");
         assert!(receipt.is_dir());
     }
@@ -6682,6 +7178,119 @@ mod tests {
         assert_eq!(
             result.readiness.attentions.mcp_reporting,
             Some("mcp_reporting_probe_pending_application_receipt".into())
+        );
+    }
+
+    #[test]
+    fn reporting_dispatch_calls_the_exact_mcp_tool_then_settles_the_real_receipt() {
+        let (_directory, mut service) = service();
+        let profile = selected_profile_ready_except_mcp(&service);
+        service.begin_mcp_reporting_probe(&profile.id).unwrap();
+        let reporting = Arc::new(ReportingCli::new());
+        service.cli = reporting.clone();
+
+        let ready = service
+            .reconcile_pending_mcp_reporting(&profile.id)
+            .unwrap();
+
+        assert_eq!(ready.readiness.mcp_reporting, "ready");
+        assert!(service.resolve_selected_home().is_ok());
+        let calls = reporting.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        let call = &calls[0];
+        assert_eq!(call.codex_home, PathBuf::from(&profile.home_path));
+        assert!(call.args.iter().any(|argument| {
+            argument
+                == &format!(
+                    "mcp_servers.{MCP_REPORTING_SERVER}.enabled_tools=[{MCP_REPORTING_TOOL:?}]"
+                )
+        }));
+        assert!(call
+            .args
+            .last()
+            .is_some_and(|prompt| prompt.contains(MCP_REPORTING_CAPABILITY)));
+    }
+
+    #[test]
+    fn reporting_dispatch_is_idempotent_for_duplicate_and_reopened_pending_requests() {
+        let (directory, service) = service();
+        let profile = selected_profile_ready_except_mcp(&service);
+        service.begin_mcp_reporting_probe(&profile.id).unwrap();
+        assert!(service
+            .reconcile_pending_mcp_reporting(&profile.id)
+            .is_err());
+        let incomplete = service.profile(&profile.id).unwrap();
+        assert_eq!(incomplete.readiness.mcp_reporting, "not_assessed");
+        assert_eq!(
+            incomplete.readiness.attentions.mcp_reporting.as_deref(),
+            Some("mcp_reporting_dispatch_completed_without_receipt")
+        );
+        drop(service);
+
+        let mut reopened = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        let reporting = Arc::new(ReportingCli::new());
+        reopened.cli = reporting.clone();
+        reopened
+            .reconcile_pending_mcp_reporting(&profile.id)
+            .unwrap();
+        reopened
+            .reconcile_pending_mcp_reporting(&profile.id)
+            .unwrap();
+        assert_eq!(reporting.calls.lock().unwrap().len(), 1);
+        assert!(reopened.resolve_selected_home().is_ok());
+    }
+
+    #[test]
+    fn reporting_dispatch_requires_the_current_selected_profile_before_mcp_exposure() {
+        let (_directory, mut service) = service();
+        let profile = service.create_dedicated().unwrap();
+        service.begin_mcp_reporting_probe(&profile.id).unwrap();
+        let reporting = Arc::new(ReportingCli::new());
+        service.cli = reporting.clone();
+
+        assert!(service
+            .reconcile_pending_mcp_reporting(&profile.id)
+            .is_err());
+        assert!(reporting.calls.lock().unwrap().is_empty());
+        assert_eq!(
+            service.profile(&profile.id).unwrap().readiness.mcp_reporting,
+            "not_assessed"
+        );
+    }
+
+    #[test]
+    fn concurrent_reporting_dispatches_adopt_one_pending_request() {
+        let (_directory, mut service) = service();
+        let profile = selected_profile_ready_except_mcp(&service);
+        service.begin_mcp_reporting_probe(&profile.id).unwrap();
+        let reporting = Arc::new(ReportingCli::new());
+        service.cli = reporting.clone();
+        let service = Arc::new(service);
+        let barrier = Arc::new(Barrier::new(2));
+        let joins = (0..2)
+            .map(|_| {
+                let service = service.clone();
+                let profile_id = profile.id.clone();
+                let barrier = barrier.clone();
+                thread::spawn(move || {
+                    barrier.wait();
+                    service.reconcile_pending_mcp_reporting(&profile_id)
+                })
+            })
+            .collect::<Vec<_>>();
+        assert!(joins.into_iter().all(|join| join.join().unwrap().is_ok()));
+        assert_eq!(reporting.calls.lock().unwrap().len(), 1);
+        assert_eq!(
+            service
+                .profile(&profile.id)
+                .unwrap()
+                .readiness
+                .mcp_reporting,
+            "ready"
         );
     }
 

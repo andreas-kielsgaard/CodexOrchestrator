@@ -334,6 +334,7 @@ pub(crate) fn run() {
             crate::native_profiles::run_native_profile_workspace_write_canary,
             crate::native_profiles::run_native_profile_danger_full_access_canary,
             crate::native_profiles::probe_native_profile_mcp_reporting,
+            crate::native_profiles::reconcile_native_profile_mcp_reporting,
             crate::orchestration::transport::send_managed_plan_builder_message,
             crate::orchestration::transport::request_managed_plan_builder_action,
             crate::orchestration::transport::reconcile_managed_plan_builder_session,
