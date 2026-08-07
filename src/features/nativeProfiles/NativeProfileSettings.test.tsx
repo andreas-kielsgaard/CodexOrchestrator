@@ -95,6 +95,15 @@ describe('NativeProfileSettings', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Sandbox initialization request returned; review the durable setup-attempt facts.');
   });
 
+  it('reports an absent owned Workspace Write receipt separately from terminal exit evidence', async () => {
+    const canaryProfiles = profiles.map((profile) => profile.id === 'p1' ? { ...profile, setupAttempt: { phase: 'workspace_write_canary' as const, disposition: 'terminal_failed' as const, executable: 'C:/application-owned/codex.exe', version: 'codex-cli test', workspaceSandboxSupported: true, correlationId: 'native-canary-correlation', requestedAt: '2026-08-07T12:00:00Z', launchAcceptedAt: '2026-08-07T12:00:01Z', deadlineAt: '2026-08-07T12:02:00Z', settledAt: '2026-08-07T12:00:02Z', terminalClassification: 'receipt_missing' as const, terminalExitCode: 1 } } : profile);
+    render(<NativeProfileSettings client={client({ load: async () => ({ contract: 'native-codex-profile-query/v1' as const, profiles: canaryProfiles }) })} />);
+    const card = await screen.findByRole('article', { name: 'Codex home p1' });
+    expect(within(card).getByText('The owned Workspace Write receipt was not observed.')).toBeInTheDocument();
+    expect(within(card).getByText('1')).toBeInTheDocument();
+    expect(within(card).queryByText('exit_code')).not.toBeInTheDocument();
+  });
+
   it('describes an old generic failure without inventing launch or terminal evidence', async () => {
     const legacyProfiles = profiles.map((profile) => profile.id === 'p1' ? { ...profile, setupAttempt: { ...setupAttempt, phase: 'sandbox_initialization' as const, disposition: 'legacy_unclassified_failed' as const, terminalClassification: 'legacy_unclassified_failed' as const, requestedAt: '2026-08-06T22:41:12Z', deadlineAt: '2026-08-06T22:43:12Z', settledAt: '2026-08-06T22:41:13Z' } } : profile);
     render(<NativeProfileSettings client={client({ load: async () => ({ contract: 'native-codex-profile-query/v1' as const, profiles: legacyProfiles }) })} />);

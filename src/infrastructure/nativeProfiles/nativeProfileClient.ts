@@ -16,7 +16,7 @@ export type NativeProfileLoginDisposition = 'not_requested' | 'pending' | 'launc
 export type NativeProfileBrowserHandoff = 'unobserved';
 export type NativeProfileSetupPhase = 'not_requested' | 'sandbox_initialization' | 'workspace_write_canary';
 export type NativeProfileSetupDisposition = 'not_requested' | 'pending' | 'launch_failed' | 'terminal_succeeded' | 'terminal_failed' | 'timed_out' | 'cancelled' | 'recovered_unobserved' | 'legacy_unclassified_failed' | 'policy_unsupported';
-export type NativeProfileSetupTerminalClassification = 'not_observed' | 'exit_code' | 'launch_failed' | 'timed_out' | 'cancelled' | 'recovered_unobserved' | 'legacy_unclassified_failed' | 'policy_unsupported';
+export type NativeProfileSetupTerminalClassification = 'not_observed' | 'exit_code' | 'receipt_missing' | 'launch_failed' | 'timed_out' | 'cancelled' | 'recovered_unobserved' | 'legacy_unclassified_failed' | 'policy_unsupported';
 
 export interface NativeProfileAttentions {
   readonly authentication: string | null;
@@ -157,6 +157,23 @@ function validatePolicyUnsupportedSetupAttempt(attempt: NativeProfileSetupAttemp
     throw new Error('policy_unsupported setup attempt has contradictory timestamps');
 }
 
+function validateReceiptMissingSetupAttempt(attempt: NativeProfileSetupAttempt) {
+  if (attempt.terminalClassification !== 'receipt_missing') return;
+  if (attempt.disposition !== 'terminal_failed'
+    || attempt.phase !== 'workspace_write_canary'
+    || attempt.workspaceSandboxSupported !== true
+    || attempt.executable === null
+    || attempt.version === null
+    || attempt.correlationId === null)
+    throw new Error('receipt_missing setup attempt violates its invariant');
+  const requested = requiredRfc3339(attempt.requestedAt, 'receipt_missing request timestamp');
+  const accepted = requiredRfc3339(attempt.launchAcceptedAt, 'receipt_missing launch timestamp');
+  const deadline = requiredRfc3339(attempt.deadlineAt, 'receipt_missing deadline timestamp');
+  const settled = requiredRfc3339(attempt.settledAt, 'receipt_missing settlement timestamp');
+  if (Date.parse(accepted) < Date.parse(requested) || Date.parse(deadline) < Date.parse(requested) || Date.parse(settled) < Date.parse(accepted))
+    throw new Error('receipt_missing setup attempt has contradictory timestamps');
+}
+
 function validateSandboxAdoption(adoption: NativeProfileSandboxAdoption) {
   if (adoption.disposition === 'not_verified'
     && adoption.executable === null
@@ -236,10 +253,11 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
     launchAcceptedAt: nullableString(setupAttempt.launchAcceptedAt, 'setup launch timestamp'),
     deadlineAt: nullableString(setupAttempt.deadlineAt, 'setup deadline timestamp'),
     settledAt: nullableString(setupAttempt.settledAt, 'setup settlement timestamp'),
-    terminalClassification: enumValue(setupAttempt.terminalClassification, ['not_observed', 'exit_code', 'launch_failed', 'timed_out', 'cancelled', 'recovered_unobserved', 'legacy_unclassified_failed', 'policy_unsupported'], 'setup terminal classification'),
+    terminalClassification: enumValue(setupAttempt.terminalClassification, ['not_observed', 'exit_code', 'receipt_missing', 'launch_failed', 'timed_out', 'cancelled', 'recovered_unobserved', 'legacy_unclassified_failed', 'policy_unsupported'], 'setup terminal classification'),
     terminalExitCode: setupAttempt.terminalExitCode === null ? null : integerValue(setupAttempt.terminalExitCode, 'setup terminal exit code'),
   };
   validatePolicyUnsupportedSetupAttempt(decodedSetupAttempt);
+  validateReceiptMissingSetupAttempt(decodedSetupAttempt);
   const decodedSandboxAdoption: NativeProfileSandboxAdoption = {
     disposition: enumValue(sandboxAdoption.disposition, ['not_verified', 'verified', 'invalidated'], 'sandbox adoption disposition'),
     executable: nullableString(sandboxAdoption.executable, 'sandbox adoption executable'),

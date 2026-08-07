@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs::{self, OpenOptions},
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex, OnceLock},
@@ -62,9 +62,10 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_setup_attempts (
   launch_accepted_at TEXT,
   deadline_at TEXT NOT NULL,
   settled_at TEXT,
-  terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','launch_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed','policy_unsupported')),
+  terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','receipt_missing','launch_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed','policy_unsupported')),
   terminal_exit_code INTEGER,
   CHECK (state <> 'policy_unsupported' OR (phase IN ('sandbox_initialization','workspace_write_canary') AND terminal_classification='policy_unsupported' AND workspace_sandbox_supported=0 AND executable IS NOT NULL AND length(trim(executable))>0 AND version IS NOT NULL AND length(trim(version))>0 AND length(trim(correlation_id))>0 AND length(trim(requested_at))>0 AND length(trim(deadline_at))>0 AND settled_at IS NOT NULL AND length(trim(settled_at))>0 AND launch_accepted_at IS NULL AND terminal_exit_code IS NULL)),
+  CHECK (terminal_classification <> 'receipt_missing' OR (phase='workspace_write_canary' AND state='terminal_failed' AND workspace_sandbox_supported=1 AND executable IS NOT NULL AND length(trim(executable))>0 AND version IS NOT NULL AND length(trim(version))>0 AND length(trim(correlation_id))>0 AND length(trim(requested_at))>0 AND launch_accepted_at IS NOT NULL AND length(trim(launch_accepted_at))>0 AND length(trim(deadline_at))>0 AND settled_at IS NOT NULL AND length(trim(settled_at))>0)),
   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_setup_attempt_pending
@@ -420,6 +421,36 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_sandbox_adoption_confirmations (
 );
 "#;
 
+pub(crate) const NATIVE_PROFILE_V33_MIGRATION: &str = r#"
+ALTER TABLE native_codex_profile_setup_attempts RENAME TO native_codex_profile_setup_attempts_v32;
+CREATE TABLE native_codex_profile_setup_attempts (
+  attempt_id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  filesystem_identity TEXT NOT NULL,
+  phase TEXT NOT NULL CHECK (phase IN ('sandbox_initialization','workspace_write_canary')),
+  state TEXT NOT NULL CHECK (state IN ('pending','launch_failed','terminal_succeeded','terminal_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed','policy_unsupported')),
+  executable TEXT,
+  version TEXT,
+  workspace_sandbox_supported INTEGER,
+  correlation_id TEXT NOT NULL UNIQUE,
+  requested_at TEXT NOT NULL,
+  launch_accepted_at TEXT,
+  deadline_at TEXT NOT NULL,
+  settled_at TEXT,
+  terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','receipt_missing','launch_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed','policy_unsupported')),
+  terminal_exit_code INTEGER,
+  CHECK (state <> 'policy_unsupported' OR (phase IN ('sandbox_initialization','workspace_write_canary') AND terminal_classification='policy_unsupported' AND workspace_sandbox_supported=0 AND executable IS NOT NULL AND length(trim(executable))>0 AND version IS NOT NULL AND length(trim(version))>0 AND length(trim(correlation_id))>0 AND length(trim(requested_at))>0 AND length(trim(deadline_at))>0 AND settled_at IS NOT NULL AND length(trim(settled_at))>0 AND launch_accepted_at IS NULL AND terminal_exit_code IS NULL)),
+  CHECK (terminal_classification <> 'receipt_missing' OR (phase='workspace_write_canary' AND state='terminal_failed' AND workspace_sandbox_supported=1 AND executable IS NOT NULL AND length(trim(executable))>0 AND version IS NOT NULL AND length(trim(version))>0 AND length(trim(correlation_id))>0 AND length(trim(requested_at))>0 AND launch_accepted_at IS NOT NULL AND length(trim(launch_accepted_at))>0 AND length(trim(deadline_at))>0 AND settled_at IS NOT NULL AND length(trim(settled_at))>0)),
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+INSERT INTO native_codex_profile_setup_attempts (attempt_id,profile_id,filesystem_identity,phase,state,executable,version,workspace_sandbox_supported,correlation_id,requested_at,launch_accepted_at,deadline_at,settled_at,terminal_classification,terminal_exit_code)
+SELECT attempt_id,profile_id,filesystem_identity,phase,state,executable,version,workspace_sandbox_supported,correlation_id,requested_at,launch_accepted_at,deadline_at,settled_at,terminal_classification,terminal_exit_code
+FROM native_codex_profile_setup_attempts_v32;
+DROP TABLE native_codex_profile_setup_attempts_v32;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_setup_attempt_pending
+ON native_codex_profile_setup_attempts(profile_id,phase) WHERE state='pending';
+"#;
+
 const MARKER_FILE: &str = ".codex-orchestrator-profile.json";
 const PROFILE_QUERY_CONTRACT: &str = "native-codex-profile-query/v1";
 const MCP_REPORTING_CAPABILITY: &str = "native-codex-profile-reporting/v1";
@@ -491,23 +522,15 @@ struct SystemNativeCliPort {
 struct SystemNativeCliChild {
     child: Child,
     sandbox_receipt: Option<PathBuf>,
+    stdout_drain: Option<std::thread::JoinHandle<()>>,
+    stderr_drain: Option<std::thread::JoinHandle<()>>,
 }
 
 impl NativeCliChild for SystemNativeCliChild {
     fn try_wait(&mut self) -> Result<Option<NativeCliReceipt>, String> {
         self.child
             .try_wait()
-            .map(|status| {
-                status.map(|status| NativeCliReceipt {
-                    succeeded: status.success(),
-                    exit_code: status.code(),
-                    sandbox_receipt_observed: self.sandbox_receipt.as_ref().is_some_and(|path| {
-                        fs::read_to_string(path)
-                            .map(|value| value.trim() == "native-codex-profile-canary")
-                            .unwrap_or(false)
-                    }),
-                })
-            })
+            .map(|status| status.map(|status| self.settled_receipt(status)))
             .map_err(|error| error.to_string())
     }
     fn terminate(&mut self) -> Result<(), String> {
@@ -517,10 +540,70 @@ impl NativeCliChild for SystemNativeCliChild {
             .and_then(|_| {
                 self.child
                     .wait()
-                    .map(|_| ())
+                    .map(|_| {
+                        self.release_drains();
+                    })
                     .map_err(|error| error.to_string())
             })
     }
+}
+
+impl SystemNativeCliChild {
+    fn settled_receipt(&mut self, status: std::process::ExitStatus) -> NativeCliReceipt {
+        self.release_drains();
+        NativeCliReceipt {
+            succeeded: status.success(),
+            exit_code: status.code(),
+            sandbox_receipt_observed: self.sandbox_receipt.as_ref().is_some_and(|path| {
+                fs::read_to_string(path)
+                    .map(|value| value.trim() == "native-codex-profile-canary")
+                    .unwrap_or(false)
+            }),
+        }
+    }
+
+    fn release_drains(&mut self) {
+        // A Windows sandbox helper can retain an inherited stream after the owned outer process
+        // has settled. Detach the sink-only drains rather than making durable settlement wait on
+        // that helper. The drains retain no output and end when their streams close.
+        self.stdout_drain.take();
+        self.stderr_drain.take();
+    }
+}
+
+fn discard_native_cli_stream(mut stream: impl Read + Send + 'static) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let _ = std::io::copy(&mut stream, &mut std::io::sink());
+    })
+}
+
+fn spawn_system_native_cli_child(
+    program: &str,
+    invocation: &NativeCliInvocation,
+) -> Result<SystemNativeCliChild, String> {
+    let mut child = Command::new(program)
+        .args(&invocation.args)
+        .current_dir(&invocation.cwd)
+        .env_clear()
+        .envs(
+            invocation
+                .environment
+                .iter()
+                .map(|(key, value)| (key, value)),
+        )
+        .stdin(Stdio::null())
+        // The Windows sandbox forwards its session stdio. Give it valid streams, but drain them
+        // immediately so raw CLI output is neither retained nor exposed by this product.
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    Ok(SystemNativeCliChild {
+        stdout_drain: child.stdout.take().map(discard_native_cli_stream),
+        stderr_drain: child.stderr.take().map(discard_native_cli_stream),
+        child,
+        sandbox_receipt: invocation.sandbox_receipt.clone(),
+    })
 }
 
 impl NativeCliPort for SystemNativeCliPort {
@@ -529,56 +612,16 @@ impl NativeCliPort for SystemNativeCliPort {
             .program
             .as_ref()
             .map_err(|_| "Codex CLI is unavailable for this profile".to_string())?;
-        let status = Command::new(program)
-            .args(&invocation.args)
-            .current_dir(&invocation.cwd)
-            .env_clear()
-            .envs(
-                invocation
-                    .environment
-                    .iter()
-                    .map(|(key, value)| (key, value)),
-            )
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|error| error.to_string())?;
-        let sandbox_receipt_observed = invocation.sandbox_receipt.as_ref().is_some_and(|path| {
-            fs::read_to_string(path)
-                .map(|value| value.trim() == "native-codex-profile-canary")
-                .unwrap_or(false)
-        });
-        Ok(NativeCliReceipt {
-            succeeded: status.success(),
-            exit_code: status.code(),
-            sandbox_receipt_observed,
-        })
+        let mut child = spawn_system_native_cli_child(program, invocation)?;
+        let status = child.child.wait().map_err(|error| error.to_string())?;
+        Ok(child.settled_receipt(status))
     }
     fn start(&self, invocation: &NativeCliInvocation) -> Result<Box<dyn NativeCliChild>, String> {
         let program = self
             .program
             .as_ref()
             .map_err(|_| "Codex CLI is unavailable for this profile".to_string())?;
-        let child = Command::new(program)
-            .args(&invocation.args)
-            .current_dir(&invocation.cwd)
-            .env_clear()
-            .envs(
-                invocation
-                    .environment
-                    .iter()
-                    .map(|(key, value)| (key, value)),
-            )
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| error.to_string())?;
-        Ok(Box::new(SystemNativeCliChild {
-            child,
-            sandbox_receipt: invocation.sandbox_receipt.clone(),
-        }))
+        Ok(Box::new(spawn_system_native_cli_child(program, invocation)?))
     }
     fn surface(&self) -> Result<NativeCliSurface, String> {
         let program = self
@@ -2068,6 +2111,28 @@ impl NativeProfileService {
                     format!("Unable to create application-owned sandbox probe root: {error}")
                 })?;
                 let output = root.join(format!("{}.txt", phase.database()));
+                if let Err(error) = fs::remove_file(&output) {
+                    if error.kind() != std::io::ErrorKind::NotFound {
+                        self.set_setup_attempt_state(
+                            &attempt.attempt_id,
+                            "launch_failed",
+                            "launch_failed",
+                            None,
+                        )?;
+                        self.update_readiness(
+                            id,
+                            None,
+                            None,
+                            Some("blocked"),
+                            None,
+                            Some((
+                                "canary",
+                                Some("native_sandbox_canary_receipt_cleanup_failed"),
+                            )),
+                        )?;
+                        return Ok(());
+                    }
+                }
                 (
                     root.clone(),
                     vec![
@@ -2219,12 +2284,25 @@ impl NativeProfileService {
                         )?;
                     }
                 }
-                Ok(receipt) => self.settle_failed_setup_attempt(
-                    &attempt,
-                    "terminal_failed",
-                    if receipt.exit_code.is_some() { "exit_code" } else { "not_observed" },
-                    receipt.exit_code,
-                )?,
+                Ok(receipt) => {
+                    let terminal_classification = if attempt.phase == SetupPhase::WorkspaceWriteCanary
+                        && !receipt.sandbox_receipt_observed
+                    {
+                        // This says only that the one owned sentinel was absent; the separately
+                        // persisted exit code remains available without retaining raw CLI output.
+                        "receipt_missing"
+                    } else if receipt.exit_code.is_some() {
+                        "exit_code"
+                    } else {
+                        "not_observed"
+                    };
+                    self.settle_failed_setup_attempt(
+                        &attempt,
+                        "terminal_failed",
+                        terminal_classification,
+                        receipt.exit_code,
+                    )?
+                }
                 Err(state) => self.settle_failed_setup_attempt(
                     &attempt,
                     state,
@@ -3075,38 +3153,63 @@ fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, Stri
 }
 
 fn validate_setup_attempt(attempt: &NativeProfileSetupAttempt) -> Result<(), String> {
-    if attempt.disposition != "policy_unsupported" {
-        return Ok(());
-    }
     let required = |value: &Option<String>| {
         value
             .as_deref()
             .is_some_and(|value| !value.is_empty() && value.trim() == value)
     };
-    if !matches!(
-        attempt.phase.as_str(),
-        "sandbox_initialization" | "workspace_write_canary"
-    ) || attempt.terminal_classification != "policy_unsupported"
-        || attempt.workspace_sandbox_supported != Some(false)
-        || !required(&attempt.executable)
-        || !required(&attempt.version)
-        || !required(&attempt.correlation_id)
-        || !required(&attempt.requested_at)
-        || !required(&attempt.deadline_at)
-        || !required(&attempt.settled_at)
-        || attempt.launch_accepted_at.is_some()
-        || attempt.terminal_exit_code.is_some()
-    {
-        return Err("Native policy-unsupported setup attempt violates its durable invariant".into());
+    match attempt.terminal_classification.as_str() {
+        "policy_unsupported" => {
+            if attempt.disposition != "policy_unsupported"
+                || !matches!(
+                    attempt.phase.as_str(),
+                    "sandbox_initialization" | "workspace_write_canary"
+                )
+                || attempt.workspace_sandbox_supported != Some(false)
+                || !required(&attempt.executable)
+                || !required(&attempt.version)
+                || !required(&attempt.correlation_id)
+                || !required(&attempt.requested_at)
+                || !required(&attempt.deadline_at)
+                || !required(&attempt.settled_at)
+                || attempt.launch_accepted_at.is_some()
+                || attempt.terminal_exit_code.is_some()
+            {
+                return Err("Native policy-unsupported setup attempt violates its durable invariant".into());
+            }
+        }
+        "receipt_missing" => {
+            if attempt.disposition != "terminal_failed"
+                || attempt.phase != "workspace_write_canary"
+                || attempt.workspace_sandbox_supported != Some(true)
+                || !required(&attempt.executable)
+                || !required(&attempt.version)
+                || !required(&attempt.correlation_id)
+                || !required(&attempt.requested_at)
+                || !required(&attempt.launch_accepted_at)
+                || !required(&attempt.deadline_at)
+                || !required(&attempt.settled_at)
+            {
+                return Err("Native receipt-missing setup attempt violates its durable invariant".into());
+            }
+        }
+        _ => return Ok(()),
     }
     let requested = DateTime::parse_from_rfc3339(attempt.requested_at.as_deref().unwrap())
-        .map_err(|_| "Native policy-unsupported setup attempt has an invalid request timestamp")?;
+        .map_err(|_| "Native setup attempt has an invalid request timestamp")?;
     let deadline = DateTime::parse_from_rfc3339(attempt.deadline_at.as_deref().unwrap())
-        .map_err(|_| "Native policy-unsupported setup attempt has an invalid deadline timestamp")?;
+        .map_err(|_| "Native setup attempt has an invalid deadline timestamp")?;
     let settled = DateTime::parse_from_rfc3339(attempt.settled_at.as_deref().unwrap())
-        .map_err(|_| "Native policy-unsupported setup attempt has an invalid settlement timestamp")?;
+        .map_err(|_| "Native setup attempt has an invalid settlement timestamp")?;
     if deadline < requested || settled < requested {
-        return Err("Native policy-unsupported setup attempt has contradictory timestamps".into());
+        return Err("Native setup attempt has contradictory timestamps".into());
+    }
+    if let Some(accepted_at) = attempt.launch_accepted_at.as_deref() {
+        let accepted = DateTime::parse_from_rfc3339(accepted_at)
+            .map_err(|_| "Native setup attempt has an invalid launch timestamp")?;
+        if accepted < requested || settled < accepted {
+            return Err("Native setup attempt has contradictory launch timestamps".into());
+        }
     }
     Ok(())
 }
@@ -3655,6 +3758,101 @@ mod tests {
     }
 
     #[test]
+    fn workspace_canary_receipt_absence_is_durable_and_separate_from_exit_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake.clone();
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        service
+            .update_readiness(
+                &profile.id,
+                None,
+                Some("initialized"),
+                Some("not_run"),
+                None,
+                None,
+            )
+            .unwrap();
+        *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
+            succeeded: false,
+            exit_code: Some(1),
+            sandbox_receipt_observed: false,
+        });
+        let stale_receipt = service
+            .probe_root(&profile.id)
+            .join("workspace_write_canary.txt");
+        fs::create_dir_all(stale_receipt.parent().unwrap()).unwrap();
+        fs::write(&stale_receipt, "native-codex-profile-canary").unwrap();
+
+        service.run_workspace_write_canary(&profile.id).unwrap();
+
+        let profile = service.query().unwrap().profiles.remove(0);
+        assert_eq!(profile.readiness.workspace_write_canary, "blocked");
+        assert_eq!(profile.setup_attempt.phase, "workspace_write_canary");
+        assert_eq!(profile.setup_attempt.disposition, "terminal_failed");
+        assert_eq!(profile.setup_attempt.terminal_classification, "receipt_missing");
+        assert_eq!(profile.setup_attempt.terminal_exit_code, Some(1));
+        assert!(!stale_receipt.exists());
+    }
+
+    #[test]
+    fn contradictory_receipt_missing_attempt_fails_closed_before_profile_reconciliation() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake.clone();
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        service
+            .update_readiness(
+                &profile.id,
+                None,
+                Some("initialized"),
+                Some("not_run"),
+                None,
+                None,
+            )
+            .unwrap();
+        *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
+            succeeded: false,
+            exit_code: Some(1),
+            sandbox_receipt_observed: false,
+        });
+        service.run_workspace_write_canary(&profile.id).unwrap();
+        assert_eq!(
+            service.query().unwrap().profiles[0].setup_attempt.terminal_classification,
+            "receipt_missing"
+        );
+        let connection = service.connection().unwrap();
+        connection
+            .execute_batch("PRAGMA ignore_check_constraints=ON;")
+            .unwrap();
+        assert_eq!(
+            connection
+                .execute(
+                    "UPDATE native_codex_profile_setup_attempts SET phase='sandbox_initialization' WHERE profile_id=?1",
+                    params![profile.id],
+                )
+                .unwrap(),
+            1
+        );
+        connection
+            .execute_batch("PRAGMA ignore_check_constraints=OFF;")
+            .unwrap();
+        assert!(load_profiles(&mut service.connection().unwrap()).is_err());
+    }
+
+    #[test]
     fn windows_semantic_capability_detection_accepts_combined_setup_help_and_rejects_drift() {
         assert_eq!(
             windows_semantic_sandbox_capabilities(
@@ -4167,6 +4365,73 @@ mod tests {
         assert!(environment.contains(&("USERPROFILE".into(), "C:/Users/launching-user".into())));
         assert!(!environment.iter().any(|(key, _)| key == "UNRELATED_SECRET"));
         assert!(!environment.iter().any(|(_, value)| value == "C:/foreign-home"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn system_cli_port_drains_windows_stdio_and_observes_only_its_bound_receipt() {
+        let directory = tempfile::tempdir().unwrap();
+        let home = directory.path().join("selected-home");
+        let root = directory.path().join("application-owned-probe-root");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        let receipt = root.join("workspace_write_canary.txt");
+        let other = root.join("not-the-designated-receipt.txt");
+        let script = root.join("bound-system-cli-port.cmd");
+        let other_script = root.join("unbound-system-cli-port.cmd");
+        fs::write(
+            &script,
+            format!(
+                "@echo off\r\nif /i not \"%CODEX_HOME%\"==\"{}\" exit /b 2\r\nif /i not \"%CD%\"==\"{}\" exit /b 3\r\necho native-codex-profile-canary>\"{}\"\r\necho discarded-stderr>&2\r\n",
+                home.to_string_lossy(),
+                root.to_string_lossy(),
+                receipt.to_string_lossy(),
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &other_script,
+            format!(
+                "@echo off\r\necho native-codex-profile-canary>\"{}\"\r\nexit /b 0\r\n",
+                other.to_string_lossy(),
+            ),
+        )
+        .unwrap();
+        let command = std::env::var("COMSPEC").unwrap();
+        let port = SystemNativeCliPort {
+            program: Ok(command),
+        };
+        let invocation = NativeCliInvocation {
+            args: vec![
+                "/d".into(),
+                "/s".into(),
+                "/c".into(),
+                script.to_string_lossy().into_owned(),
+            ],
+            cwd: root.clone(),
+            codex_home: home.clone(),
+            environment: native_windows_cli_environment(&home),
+            sandbox_receipt: Some(receipt.clone()),
+        };
+        let settled = port.run(&invocation).unwrap();
+        assert_eq!(settled.exit_code, Some(0));
+        assert!(settled.succeeded);
+        assert!(settled.sandbox_receipt_observed);
+
+        let unbound = NativeCliInvocation {
+            args: vec![
+                "/d".into(),
+                "/s".into(),
+                "/c".into(),
+                other_script.to_string_lossy().into_owned(),
+            ],
+            sandbox_receipt: Some(root.join("different-designated-receipt.txt")),
+            ..invocation
+        };
+        let settled = port.run(&unbound).unwrap();
+        assert!(settled.succeeded);
+        assert!(!settled.sandbox_receipt_observed);
+        assert!(other.exists());
     }
 
     #[test]
@@ -4748,6 +5013,32 @@ mod tests {
         );
         connection
             .execute("INSERT INTO native_codex_profile_setup_attempts (attempt_id,profile_id,filesystem_identity,phase,state,executable,version,workspace_sandbox_supported,correlation_id,requested_at,deadline_at,settled_at,terminal_classification) VALUES ('unsupported','profile','identity','sandbox_initialization','policy_unsupported','C:/application-owned/codex.exe','codex-cli test',0,'correlation-unsupported','2026-08-07T12:03:00Z','2026-08-07T12:05:00Z','2026-08-07T12:03:00Z','policy_unsupported')", [])
+            .unwrap();
+    }
+
+    #[test]
+    fn v33_canary_receipt_classification_migration_preserves_existing_terminal_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("active.sqlite");
+        let connection = Connection::open(&database).unwrap();
+        connection.execute_batch(NATIVE_PROFILE_SCHEMA).unwrap();
+        connection.execute_batch("DROP INDEX ux_native_codex_profile_setup_attempt_pending; DROP TABLE native_codex_profile_setup_attempts; CREATE TABLE native_codex_profile_setup_attempts (attempt_id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, filesystem_identity TEXT NOT NULL, phase TEXT NOT NULL CHECK (phase IN ('sandbox_initialization','workspace_write_canary')), state TEXT NOT NULL CHECK (state IN ('pending','launch_failed','terminal_succeeded','terminal_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed','policy_unsupported')), executable TEXT, version TEXT, workspace_sandbox_supported INTEGER, correlation_id TEXT NOT NULL UNIQUE, requested_at TEXT NOT NULL, launch_accepted_at TEXT, deadline_at TEXT NOT NULL, settled_at TEXT, terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','launch_failed','timed_out','cancelled','recovered_unobserved','legacy_unclassified_failed','policy_unsupported')), terminal_exit_code INTEGER, CHECK (state <> 'policy_unsupported' OR (phase IN ('sandbox_initialization','workspace_write_canary') AND terminal_classification='policy_unsupported' AND workspace_sandbox_supported=0 AND executable IS NOT NULL AND length(trim(executable))>0 AND version IS NOT NULL AND length(trim(version))>0 AND length(trim(correlation_id))>0 AND length(trim(requested_at))>0 AND length(trim(deadline_at))>0 AND settled_at IS NOT NULL AND length(trim(settled_at))>0 AND launch_accepted_at IS NULL AND terminal_exit_code IS NULL)), FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT); INSERT INTO native_codex_profiles (id,canonical_home_path,filesystem_identity,ownership,lifecycle,created_at,updated_at) VALUES ('profile','C:\\profile','identity','registered_existing','active','t','t'); INSERT INTO native_codex_profile_setup_attempts VALUES ('attempt','profile','identity','workspace_write_canary','terminal_failed','C:/application-owned/codex.exe','codex-cli test',1,'correlation','2026-08-07T12:00:00Z','2026-08-07T12:00:01Z','2026-08-07T12:02:00Z','2026-08-07T12:00:02Z','exit_code',1); PRAGMA user_version=32;").unwrap();
+
+        crate::storage::initialize_active_database(&connection).unwrap();
+
+        let row: (String, String, Option<i32>) = connection
+            .query_row(
+                "SELECT state,terminal_classification,terminal_exit_code FROM native_codex_profile_setup_attempts WHERE attempt_id='attempt'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("terminal_failed".into(), "exit_code".into(), Some(1)));
+        connection
+            .execute(
+                "INSERT INTO native_codex_profile_setup_attempts (attempt_id,profile_id,filesystem_identity,phase,state,executable,version,workspace_sandbox_supported,correlation_id,requested_at,launch_accepted_at,deadline_at,settled_at,terminal_classification,terminal_exit_code) VALUES ('receipt-missing','profile','identity','workspace_write_canary','terminal_failed','C:/application-owned/codex.exe','codex-cli test',1,'correlation-receipt','2026-08-07T12:03:00Z','2026-08-07T12:03:01Z','2026-08-07T12:05:00Z','2026-08-07T12:03:02Z','receipt_missing',1)",
+                [],
+            )
             .unwrap();
     }
 
