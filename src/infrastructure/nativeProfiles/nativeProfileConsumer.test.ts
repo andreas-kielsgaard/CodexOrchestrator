@@ -9,6 +9,7 @@ const query: NativeProfileQuery = {
     execution: { selectedMode: 'workspace_write', dangerFullAccessAuthorized: false },
     loginAttempt: { disposition: 'not_requested', browserHandoff: 'unobserved', requestedAt: null, launchAcceptedAt: null, settledAt: null },
     setupAttempt: { phase: 'not_requested', disposition: 'not_requested', executable: null, version: null, workspaceSandboxSupported: null, correlationId: null, requestedAt: null, launchAcceptedAt: null, deadlineAt: null, settledAt: null, terminalClassification: 'not_observed', terminalExitCode: null },
+    sandboxAdoption: { disposition: 'not_verified', executable: null, version: null, workspaceSandboxSupported: null, windowsSandboxSetupSupported: null, correlationId: null, observedAt: null, elevatedModeObserved: null },
     readiness: { authentication: 'unknown', sandboxInitialization: 'unknown', workspaceWriteCanary: 'not_run', dangerFullAccessCanary: 'not_run', mcpReporting: 'not_assessed', attentions: { authentication: null, sandbox: null, canary: null, mcpReporting: null, continuity: null, cli: null } },
   }],
 };

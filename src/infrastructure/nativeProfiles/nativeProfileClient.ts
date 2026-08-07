@@ -64,6 +64,17 @@ export interface NativeProfileSetupAttempt {
   readonly terminalExitCode: number | null;
 }
 
+export interface NativeProfileSandboxAdoption {
+  readonly disposition: 'not_verified' | 'verified' | 'invalidated';
+  readonly executable: string | null;
+  readonly version: string | null;
+  readonly workspaceSandboxSupported: boolean | null;
+  readonly windowsSandboxSetupSupported: boolean | null;
+  readonly correlationId: string | null;
+  readonly observedAt: string | null;
+  readonly elevatedModeObserved: boolean | null;
+}
+
 export interface NativeProfile {
   readonly id: string;
   readonly homePath: string;
@@ -73,6 +84,7 @@ export interface NativeProfile {
   readonly execution: NativeProfileExecution;
   readonly loginAttempt: NativeProfileLoginAttempt;
   readonly setupAttempt: NativeProfileSetupAttempt;
+  readonly sandboxAdoption: NativeProfileSandboxAdoption;
   readonly readiness: NativeProfileReadiness;
 }
 
@@ -138,6 +150,25 @@ function validatePolicyUnsupportedSetupAttempt(attempt: NativeProfileSetupAttemp
     throw new Error('policy_unsupported setup attempt has contradictory timestamps');
 }
 
+function validateSandboxAdoption(adoption: NativeProfileSandboxAdoption) {
+  if (adoption.disposition === 'not_verified'
+    && adoption.executable === null
+    && adoption.version === null
+    && adoption.workspaceSandboxSupported === null
+    && adoption.windowsSandboxSetupSupported === null
+    && adoption.correlationId === null
+    && adoption.observedAt === null
+    && adoption.elevatedModeObserved === null) return;
+  if (adoption.executable === null || adoption.version === null || adoption.correlationId === null
+    || adoption.observedAt === null || adoption.workspaceSandboxSupported === null
+    || adoption.windowsSandboxSetupSupported === null || adoption.elevatedModeObserved === null)
+    throw new Error('sandbox adoption evidence is incomplete');
+  requiredRfc3339(adoption.observedAt, 'sandbox adoption observation timestamp');
+  if (adoption.disposition === 'verified'
+    && (!adoption.workspaceSandboxSupported || !adoption.windowsSandboxSetupSupported || !adoption.elevatedModeObserved))
+    throw new Error('verified sandbox adoption violates its invariant');
+}
+
 function absolutePath(value: unknown, label: string): string {
   const path = stringValue(value, label);
   if (!/^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+|\/)/.test(path))
@@ -162,16 +193,18 @@ export function decodeNativeProfileQuery(value: unknown): NativeProfileQuery {
 
 export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
   const profile = object(value, `native profile ${index}`);
-  keys(profile, ['id', 'homePath', 'ownership', 'lifecycle', 'selected', 'execution', 'loginAttempt', 'setupAttempt', 'readiness'], `native profile ${index}`);
+  keys(profile, ['id', 'homePath', 'ownership', 'lifecycle', 'selected', 'execution', 'loginAttempt', 'setupAttempt', 'sandboxAdoption', 'readiness'], `native profile ${index}`);
   if (typeof profile.selected !== 'boolean') throw new Error(`native profile ${index} selected must be boolean`);
   const readiness = object(profile.readiness, `native profile ${index} readiness`);
   keys(readiness, ['authentication', 'sandboxInitialization', 'workspaceWriteCanary', 'dangerFullAccessCanary', 'mcpReporting', 'attentions'], 'readiness');
   const execution = object(profile.execution, `native profile ${index} execution`);
   const loginAttempt = object(profile.loginAttempt, `native profile ${index} login attempt`);
   const setupAttempt = object(profile.setupAttempt, `native profile ${index} setup attempt`);
+  const sandboxAdoption = object(profile.sandboxAdoption, `native profile ${index} sandbox adoption`);
   keys(execution, ['selectedMode', 'dangerFullAccessAuthorized'], `native profile ${index} execution`);
   keys(loginAttempt, ['disposition', 'browserHandoff', 'requestedAt', 'launchAcceptedAt', 'settledAt'], `native profile ${index} login attempt`);
   keys(setupAttempt, ['phase', 'disposition', 'executable', 'version', 'workspaceSandboxSupported', 'correlationId', 'requestedAt', 'launchAcceptedAt', 'deadlineAt', 'settledAt', 'terminalClassification', 'terminalExitCode'], `native profile ${index} setup attempt`);
+  keys(sandboxAdoption, ['disposition', 'executable', 'version', 'workspaceSandboxSupported', 'windowsSandboxSetupSupported', 'correlationId', 'observedAt', 'elevatedModeObserved'], `native profile ${index} sandbox adoption`);
   if (typeof execution.dangerFullAccessAuthorized !== 'boolean') throw new Error(`native profile ${index} danger authorization must be boolean`);
   const attentions = object(readiness.attentions, 'attentions');
   keys(attentions, ['authentication', 'sandbox', 'canary', 'mcpReporting', 'continuity', 'cli'], 'attentions');
@@ -190,6 +223,17 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
     terminalExitCode: setupAttempt.terminalExitCode === null ? null : integerValue(setupAttempt.terminalExitCode, 'setup terminal exit code'),
   };
   validatePolicyUnsupportedSetupAttempt(decodedSetupAttempt);
+  const decodedSandboxAdoption: NativeProfileSandboxAdoption = {
+    disposition: enumValue(sandboxAdoption.disposition, ['not_verified', 'verified', 'invalidated'], 'sandbox adoption disposition'),
+    executable: nullableString(sandboxAdoption.executable, 'sandbox adoption executable'),
+    version: nullableString(sandboxAdoption.version, 'sandbox adoption version'),
+    workspaceSandboxSupported: sandboxAdoption.workspaceSandboxSupported === null ? null : booleanValue(sandboxAdoption.workspaceSandboxSupported, 'sandbox adoption workspace capability'),
+    windowsSandboxSetupSupported: sandboxAdoption.windowsSandboxSetupSupported === null ? null : booleanValue(sandboxAdoption.windowsSandboxSetupSupported, 'sandbox adoption setup capability'),
+    correlationId: nullableString(sandboxAdoption.correlationId, 'sandbox adoption correlation'),
+    observedAt: nullableString(sandboxAdoption.observedAt, 'sandbox adoption observation timestamp'),
+    elevatedModeObserved: sandboxAdoption.elevatedModeObserved === null ? null : booleanValue(sandboxAdoption.elevatedModeObserved, 'sandbox adoption elevated mode observation'),
+  };
+  validateSandboxAdoption(decodedSandboxAdoption);
   return {
     id: stringValue(profile.id, 'profile id'),
     homePath: absolutePath(profile.homePath, 'profile home path'),
@@ -208,6 +252,7 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
       settledAt: nullableString(loginAttempt.settledAt, 'login settlement timestamp'),
     },
     setupAttempt: decodedSetupAttempt,
+    sandboxAdoption: decodedSandboxAdoption,
     readiness: {
       authentication: enumValue(readiness.authentication, ['unknown', 'authenticated', 'unauthenticated'], 'authentication'),
       sandboxInitialization: enumValue(readiness.sandboxInitialization, ['unknown', 'initialized', 'failed', 'attention_required'], 'sandbox initialization'),
@@ -238,6 +283,8 @@ export interface NativeProfileClient {
   refreshReadiness(profileId: string): Promise<NativeProfileQuery>;
   initializeSandbox(profileId: string): Promise<NativeProfileQuery>;
   confirmSandboxInitialization(profileId: string): Promise<NativeProfileQuery>;
+  verifyPreprovisionedSandbox(profileId: string): Promise<NativeProfileQuery>;
+  confirmPreprovisionedSandboxAdoption(profileId: string): Promise<NativeProfileQuery>;
   runCanary(profileId: string): Promise<NativeProfileQuery>;
   runDangerFullAccessCanary(profileId: string): Promise<NativeProfileQuery>;
   probeMcp(profileId: string): Promise<NativeProfileQuery>;
@@ -274,6 +321,8 @@ export function createNativeProfileClient(invokeCommand: Invoke = invoke): Nativ
     refreshReadiness: (profileId) => action('refresh_native_profile_readiness', id(profileId)),
     initializeSandbox: (profileId) => action('request_native_profile_sandbox_initialization', id(profileId)),
     confirmSandboxInitialization: (profileId) => action('confirm_native_profile_sandbox_initialization', id(profileId)),
+    verifyPreprovisionedSandbox: (profileId) => action('verify_native_profile_preprovisioned_sandbox', id(profileId)),
+    confirmPreprovisionedSandboxAdoption: (profileId) => action('confirm_native_profile_preprovisioned_sandbox_adoption', id(profileId)),
     runCanary: (profileId) => action('run_native_profile_workspace_write_canary', id(profileId)),
     runDangerFullAccessCanary: (profileId) => action('run_native_profile_danger_full_access_canary', id(profileId)),
     probeMcp: (profileId) => action('probe_native_profile_mcp_reporting', id(profileId)),

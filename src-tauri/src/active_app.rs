@@ -329,6 +329,8 @@ pub(crate) fn run() {
             crate::native_profiles::refresh_native_profile_readiness,
             crate::native_profiles::request_native_profile_sandbox_initialization,
             crate::native_profiles::confirm_native_profile_sandbox_initialization,
+            crate::native_profiles::verify_native_profile_preprovisioned_sandbox,
+            crate::native_profiles::confirm_native_profile_preprovisioned_sandbox_adoption,
             crate::native_profiles::run_native_profile_workspace_write_canary,
             crate::native_profiles::run_native_profile_danger_full_access_canary,
             crate::native_profiles::probe_native_profile_mcp_reporting,

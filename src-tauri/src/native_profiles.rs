@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs::{self, OpenOptions},
-    io::Write,
+    io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex, OnceLock},
@@ -131,6 +131,20 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_login_attempts (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_login_attempt_pending
 ON native_codex_profile_login_attempts(profile_id) WHERE state='pending';
+CREATE TABLE IF NOT EXISTS native_codex_profile_sandbox_adoptions (
+  profile_id TEXT PRIMARY KEY,
+  filesystem_identity TEXT NOT NULL,
+  executable TEXT NOT NULL,
+  version TEXT NOT NULL,
+  workspace_sandbox_supported INTEGER NOT NULL CHECK (workspace_sandbox_supported IN (0,1)),
+  windows_sandbox_setup_supported INTEGER NOT NULL CHECK (windows_sandbox_setup_supported IN (0,1)),
+  correlation_id TEXT NOT NULL UNIQUE,
+  observed_at TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('verified','not_verified','invalidated')),
+  elevated_mode_observed INTEGER NOT NULL CHECK (elevated_mode_observed IN (0,1)),
+  CHECK (state <> 'verified' OR (workspace_sandbox_supported=1 AND windows_sandbox_setup_supported=1 AND elevated_mode_observed=1)),
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
 "#;
 
 pub(crate) const NATIVE_PROFILE_V22_MIGRATION: &str = r#"
@@ -364,6 +378,23 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_setup_attempt_pending
 ON native_codex_profile_setup_attempts(profile_id,phase) WHERE state='pending';
 "#;
 
+pub(crate) const NATIVE_PROFILE_V31_MIGRATION: &str = r#"
+CREATE TABLE IF NOT EXISTS native_codex_profile_sandbox_adoptions (
+  profile_id TEXT PRIMARY KEY,
+  filesystem_identity TEXT NOT NULL,
+  executable TEXT NOT NULL,
+  version TEXT NOT NULL,
+  workspace_sandbox_supported INTEGER NOT NULL CHECK (workspace_sandbox_supported IN (0,1)),
+  windows_sandbox_setup_supported INTEGER NOT NULL CHECK (windows_sandbox_setup_supported IN (0,1)),
+  correlation_id TEXT NOT NULL UNIQUE,
+  observed_at TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('verified','not_verified','invalidated')),
+  elevated_mode_observed INTEGER NOT NULL CHECK (elevated_mode_observed IN (0,1)),
+  CHECK (state <> 'verified' OR (workspace_sandbox_supported=1 AND windows_sandbox_setup_supported=1 AND elevated_mode_observed=1)),
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+"#;
+
 const MARKER_FILE: &str = ".codex-orchestrator-profile.json";
 const PROFILE_QUERY_CONTRACT: &str = "native-codex-profile-query/v1";
 const MCP_REPORTING_CAPABILITY: &str = "native-codex-profile-reporting/v1";
@@ -592,6 +623,25 @@ fn workspace_launch_semantic_capabilities(exec_help: &str) -> (bool, bool) {
     (launch_flags_supported, false)
 }
 
+fn observe_elevated_windows_sandbox_mode(home: &Path) -> Result<bool, String> {
+    let file = fs::File::open(home.join("config.toml"))
+        .map_err(|_| "The selected profile has no readable external sandbox configuration".to_string())?;
+    let mut in_windows = false;
+    for line in BufReader::new(file).lines() {
+        let line = line.map_err(|_| "The selected profile sandbox configuration cannot be read".to_string())?;
+        if line.len() > 1024 {
+            return Err("The selected profile sandbox configuration is not safely observable".into());
+        }
+        let value = line.trim();
+        if value.starts_with('[') && value.ends_with(']') {
+            in_windows = value == "[windows]";
+        } else if in_windows && value == "sandbox = \"elevated\"" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn native_cli_stdout(program: &str, args: &[&str]) -> Result<String, String> {
     let output = Command::new(program)
         .args(args)
@@ -752,6 +802,19 @@ pub(crate) struct NativeProfileSetupAttempt {
     terminal_exit_code: Option<i32>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NativeProfileSandboxAdoption {
+    disposition: String,
+    executable: Option<String>,
+    version: Option<String>,
+    workspace_sandbox_supported: Option<bool>,
+    windows_sandbox_setup_supported: Option<bool>,
+    correlation_id: Option<String>,
+    observed_at: Option<String>,
+    elevated_mode_observed: Option<bool>,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NativeProfileAttentions {
@@ -774,6 +837,7 @@ pub(crate) struct NativeProfileDto {
     execution: NativeProfileExecution,
     login_attempt: NativeProfileLoginAttempt,
     setup_attempt: NativeProfileSetupAttempt,
+    sandbox_adoption: NativeProfileSandboxAdoption,
     readiness: NativeProfileReadiness,
 }
 
@@ -914,6 +978,7 @@ struct StoredProfile {
     execution: NativeProfileExecution,
     login_attempt: NativeProfileLoginAttempt,
     setup_attempt: NativeProfileSetupAttempt,
+    sandbox_adoption: NativeProfileSandboxAdoption,
     readiness: NativeProfileReadiness,
 }
 
@@ -928,6 +993,7 @@ impl From<StoredProfile> for NativeProfileDto {
             execution: value.execution,
             login_attempt: value.login_attempt,
             setup_attempt: value.setup_attempt,
+            sandbox_adoption: value.sandbox_adoption,
             readiness: value.readiness,
         }
     }
@@ -1316,6 +1382,63 @@ impl NativeProfileService {
             None,
             None,
             Some(("sandbox", None)),
+        )?;
+        self.profile(id).map(Into::into)
+    }
+
+    /// Records an observed external Windows sandbox postcondition. It never creates or rewrites
+    /// that configuration and never stands in for a product-owned setup request or UAC event.
+    pub(crate) fn verify_preprovisioned_sandbox(&self, id: &str) -> Result<NativeProfileDto, String> {
+        let profile = self.require_selected_active(id)?;
+        let surface = self.cli.surface().map_err(|_| {
+            self.set_attention(id, "cli", Some("codex_cli_surface_unsupported"), false).ok();
+            "The resolved Codex CLI surface is unsupported for external sandbox verification".to_string()
+        })?;
+        let elevated_mode_observed = observe_elevated_windows_sandbox_mode(&profile.home)?;
+        let verified = surface.provenance.workspace_sandbox_supported
+            && surface.windows_sandbox_setup_supported
+            && elevated_mode_observed;
+        self.connection()?.execute(
+            "INSERT INTO native_codex_profile_sandbox_adoptions (profile_id,filesystem_identity,executable,version,workspace_sandbox_supported,windows_sandbox_setup_supported,correlation_id,observed_at,state,elevated_mode_observed) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(profile_id) DO UPDATE SET filesystem_identity=excluded.filesystem_identity,executable=excluded.executable,version=excluded.version,workspace_sandbox_supported=excluded.workspace_sandbox_supported,windows_sandbox_setup_supported=excluded.windows_sandbox_setup_supported,correlation_id=excluded.correlation_id,observed_at=excluded.observed_at,state=excluded.state,elevated_mode_observed=excluded.elevated_mode_observed",
+            params![id, profile.identity, surface.provenance.executable, surface.provenance.version, surface.provenance.workspace_sandbox_supported as i64, surface.windows_sandbox_setup_supported as i64, format!("native-sandbox-adoption-{}", Uuid::new_v4()), Utc::now().to_rfc3339(), if verified { "verified" } else { "not_verified" }, elevated_mode_observed as i64],
+        ).map_err(|error| format!("Unable to persist external sandbox verification: {error}"))?;
+        self.update_readiness(
+            id,
+            None,
+            Some("attention_required"),
+            Some("blocked"),
+            None,
+            Some(("sandbox", Some(if verified { "external_sandbox_provisioning_verified_explicit_adoption_confirmation_required" } else { "external_sandbox_provisioning_not_verified" }))),
+        )?;
+        self.profile(id).map(Into::into)
+    }
+
+    /// This is an explicit product acknowledgment of a verified external postcondition. It does
+    /// not claim that this product requested setup or observed a UAC interaction.
+    pub(crate) fn confirm_preprovisioned_sandbox_adoption(&self, id: &str) -> Result<NativeProfileDto, String> {
+        let profile = self.require_selected_active(id)?;
+        let adoption = load_sandbox_adoption(&self.connection()?, id, &profile.identity)?;
+        let surface = self.cli.surface().map_err(|_| "The resolved Codex CLI surface is unsupported for external sandbox adoption".to_string())?;
+        let still_observed = observe_elevated_windows_sandbox_mode(&profile.home)?;
+        let valid = adoption.disposition == "verified"
+            && adoption.executable.as_deref() == Some(surface.provenance.executable.as_str())
+            && adoption.version.as_deref() == Some(surface.provenance.version.as_str())
+            && adoption.workspace_sandbox_supported == Some(true)
+            && adoption.windows_sandbox_setup_supported == Some(true)
+            && surface.provenance.workspace_sandbox_supported
+            && surface.windows_sandbox_setup_supported
+            && still_observed;
+        if !valid {
+            self.invalidate_sandbox_adoption(id)?;
+            return Err("The externally provisioned sandbox evidence no longer matches this selected profile".into());
+        }
+        self.update_readiness(
+            id,
+            None,
+            Some("initialized"),
+            None,
+            None,
+            Some(("sandbox", Some("external_sandbox_adoption_confirmed_product_uac_unobserved"))),
         )?;
         self.profile(id).map(Into::into)
     }
@@ -2269,6 +2392,7 @@ impl NativeProfileService {
         connection.execute("UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state='pending'", params![id]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_full_access_canaries SET state='cancelled',completed_at=?2 WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_login_attempts SET state='cancelled',settled_at=?2 WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+        connection.execute("UPDATE native_codex_profile_sandbox_adoptions SET state='invalidated' WHERE profile_id=?1", params![id]).map_err(|error| error.to_string())?;
         self.write_attention(
             &connection,
             id,
@@ -2276,6 +2400,21 @@ impl NativeProfileService {
             Some("profile_continuity_lost"),
         )?;
         Ok(())
+    }
+
+    fn invalidate_sandbox_adoption(&self, id: &str) -> Result<(), String> {
+        self.connection()?.execute(
+            "UPDATE native_codex_profile_sandbox_adoptions SET state='invalidated' WHERE profile_id=?1",
+            params![id],
+        ).map_err(|error| error.to_string())?;
+        self.update_readiness(
+            id,
+            None,
+            Some("attention_required"),
+            Some("blocked"),
+            None,
+            Some(("sandbox", Some("external_sandbox_adoption_evidence_invalidated"))),
+        )
     }
 
     fn update_readiness(
@@ -2561,6 +2700,47 @@ fn load_pending_setup_attempts(
     Ok(attempts)
 }
 
+fn load_sandbox_adoption(
+    connection: &Connection,
+    profile_id: &str,
+    identity: &str,
+) -> Result<NativeProfileSandboxAdoption, String> {
+    let adoption = connection
+        .query_row(
+            "SELECT filesystem_identity,executable,version,workspace_sandbox_supported,windows_sandbox_setup_supported,correlation_id,observed_at,state,elevated_mode_observed FROM native_codex_profile_sandbox_adoptions WHERE profile_id=?1",
+            params![profile_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, String>(5)?, row.get::<_, String>(6)?, row.get::<_, String>(7)?, row.get::<_, i64>(8)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some((stored_identity, executable, version, workspace, setup, correlation, observed_at, state, elevated)) = adoption else {
+        return Ok(NativeProfileSandboxAdoption { disposition: "not_verified".into(), executable: None, version: None, workspace_sandbox_supported: None, windows_sandbox_setup_supported: None, correlation_id: None, observed_at: None, elevated_mode_observed: None });
+    };
+    if stored_identity != identity || state == "invalidated" {
+        return Ok(NativeProfileSandboxAdoption { disposition: "invalidated".into(), executable: Some(executable), version: Some(version), workspace_sandbox_supported: Some(workspace != 0), windows_sandbox_setup_supported: Some(setup != 0), correlation_id: Some(correlation), observed_at: Some(observed_at), elevated_mode_observed: Some(elevated != 0) });
+    }
+    let adoption = NativeProfileSandboxAdoption { disposition: state, executable: Some(executable), version: Some(version), workspace_sandbox_supported: Some(workspace != 0), windows_sandbox_setup_supported: Some(setup != 0), correlation_id: Some(correlation), observed_at: Some(observed_at), elevated_mode_observed: Some(elevated != 0) };
+    validate_sandbox_adoption(&adoption)?;
+    Ok(adoption)
+}
+
+fn validate_sandbox_adoption(adoption: &NativeProfileSandboxAdoption) -> Result<(), String> {
+    let required = |value: &Option<String>| value.as_deref().is_some_and(|value| !value.is_empty() && value.trim() == value);
+    if !matches!(adoption.disposition.as_str(), "verified" | "not_verified" | "invalidated")
+        || !required(&adoption.executable)
+        || !required(&adoption.version)
+        || !required(&adoption.correlation_id)
+        || adoption.observed_at.as_deref().is_none_or(|value| DateTime::parse_from_rfc3339(value).is_err())
+        || adoption.workspace_sandbox_supported.is_none()
+        || adoption.windows_sandbox_setup_supported.is_none()
+        || adoption.elevated_mode_observed.is_none()
+        || (adoption.disposition == "verified" && (!adoption.workspace_sandbox_supported.unwrap() || !adoption.windows_sandbox_setup_supported.unwrap() || !adoption.elevated_mode_observed.unwrap()))
+    {
+        return Err("Native sandbox adoption evidence violates its durable invariant".into());
+    }
+    Ok(())
+}
+
 fn load_pending_full_access_canary(
     connection: &Connection,
     profile_id: &str,
@@ -2673,6 +2853,16 @@ fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, Stri
                         .unwrap_or_else(|| "not_observed".into()),
                     terminal_exit_code: row.get(36)?,
                 },
+                sandbox_adoption: NativeProfileSandboxAdoption {
+                    disposition: "not_verified".into(),
+                    executable: None,
+                    version: None,
+                    workspace_sandbox_supported: None,
+                    windows_sandbox_setup_supported: None,
+                    correlation_id: None,
+                    observed_at: None,
+                    elevated_mode_observed: None,
+                },
                 readiness: NativeProfileReadiness {
                     authentication: row.get(6)?,
                     sandbox_initialization: row.get(7)?,
@@ -2691,11 +2881,12 @@ fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, Stri
             })
         })
         .map_err(|error| error.to_string())?;
-    let profiles = rows
+    let mut profiles = rows
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?;
-    for profile in &profiles {
+    for profile in &mut profiles {
         validate_setup_attempt(&profile.setup_attempt)?;
+        profile.sandbox_adoption = load_sandbox_adoption(connection, &profile.id, &profile.identity)?;
     }
     Ok(profiles)
 }
@@ -2845,6 +3036,22 @@ pub(crate) fn confirm_native_profile_sandbox_initialization(
     state
         .service
         .confirm_sandbox_initialization(&input.profile_id)
+}
+#[tauri::command]
+pub(crate) fn verify_native_profile_preprovisioned_sandbox(
+    state: State<'_, NativeProfileTauriState>,
+    input: NativeProfileIdInput,
+) -> Result<NativeProfileDto, String> {
+    state.service.verify_preprovisioned_sandbox(&input.profile_id)
+}
+#[tauri::command]
+pub(crate) fn confirm_native_profile_preprovisioned_sandbox_adoption(
+    state: State<'_, NativeProfileTauriState>,
+    input: NativeProfileIdInput,
+) -> Result<NativeProfileDto, String> {
+    state
+        .service
+        .confirm_preprovisioned_sandbox_adoption(&input.profile_id)
 }
 #[tauri::command]
 pub(crate) fn run_native_profile_workspace_write_canary(
@@ -3595,6 +3802,62 @@ mod tests {
                 .workspace_write_canary,
             "blocked"
         );
+    }
+
+    #[test]
+    fn externally_provisioned_sandbox_is_adopted_without_a_setup_attempt_or_uac_claim() {
+        let (directory, mut service) = service();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake.clone();
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        fs::write(Path::new(&profile.home_path).join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+
+        let verified = service.verify_preprovisioned_sandbox(&profile.id).unwrap();
+        assert_eq!(verified.sandbox_adoption.disposition, "verified");
+        assert_eq!(verified.setup_attempt.disposition, "not_requested");
+        assert!(verified.sandbox_adoption.observed_at.is_some());
+        assert!(verified.sandbox_adoption.correlation_id.is_some());
+        assert_eq!(verified.readiness.sandbox_initialization, "attention_required");
+        assert_eq!(*fake.starts.lock().unwrap(), 0);
+        assert!(service.connection().unwrap().execute(
+            "UPDATE native_codex_profile_sandbox_adoptions SET elevated_mode_observed=0 WHERE profile_id=?1",
+            params![profile.id],
+        ).is_err());
+
+        let confirmed = service.confirm_preprovisioned_sandbox_adoption(&profile.id).unwrap();
+        assert_eq!(confirmed.readiness.sandbox_initialization, "initialized");
+        assert_eq!(confirmed.readiness.attentions.sandbox, Some("external_sandbox_adoption_confirmed_product_uac_unobserved".into()));
+        assert_eq!(*fake.starts.lock().unwrap(), 0);
+        drop(service);
+        let reopened = NativeProfileService::open(directory.path().join("active.sqlite"), directory.path().join("app")).unwrap();
+        assert_eq!(reopened.query().unwrap().profiles[0].sandbox_adoption.disposition, "verified");
+    }
+
+    #[test]
+    fn v31_migration_adds_external_sandbox_adoption_storage_without_setup_backfill() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("active.sqlite");
+        let connection = crate::storage::open_active_database(&database).unwrap();
+        connection.execute_batch("DROP TABLE native_codex_profile_sandbox_adoptions; PRAGMA user_version=30;").unwrap();
+        crate::storage::initialize_active_database(&connection).unwrap();
+        assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), crate::storage::ACTIVE_SCHEMA_VERSION);
+        assert_eq!(connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='native_codex_profile_sandbox_adoptions')", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    }
+
+    #[test]
+    fn external_sandbox_adoption_rejects_unselected_and_invalidates_on_continuity_loss() {
+        let (_directory, mut service) = service();
+        service.cli = Arc::new(FakeCli::succeeding());
+        let first = service.create_dedicated().unwrap();
+        let second = service.create_dedicated().unwrap();
+        service.select(&first.id).unwrap();
+        fs::write(Path::new(&first.home_path).join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        assert!(service.verify_preprovisioned_sandbox(&second.id).is_err());
+        service.verify_preprovisioned_sandbox(&first.id).unwrap();
+        fs::remove_file(Path::new(&first.home_path).join(MARKER_FILE)).unwrap();
+        service.query().unwrap();
+        assert_eq!(service.profile(&first.id).unwrap().sandbox_adoption.disposition, "invalidated");
     }
 
     #[test]

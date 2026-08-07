@@ -10,14 +10,15 @@ const readiness = { authentication: 'unknown' as const, sandboxInitialization: '
 const execution = { selectedMode: 'workspace_write' as const, dangerFullAccessAuthorized: false };
 const loginAttempt = { disposition: 'not_requested' as const, browserHandoff: 'unobserved' as const, requestedAt: null, launchAcceptedAt: null, settledAt: null };
 const setupAttempt = { phase: 'not_requested' as const, disposition: 'not_requested' as const, executable: null, version: null, workspaceSandboxSupported: null, correlationId: null, requestedAt: null, launchAcceptedAt: null, deadlineAt: null, settledAt: null, terminalClassification: 'not_observed' as const, terminalExitCode: null };
+const sandboxAdoption = { disposition: 'not_verified' as const, executable: null, version: null, workspaceSandboxSupported: null, windowsSandboxSetupSupported: null, correlationId: null, observedAt: null, elevatedModeObserved: null };
 const profiles: readonly NativeProfile[] = [
-  { id: 'p1', homePath: 'C:/one', ownership: 'registered_existing', lifecycle: 'active', selected: true, execution, loginAttempt, setupAttempt, readiness },
-  { id: 'p2', homePath: 'C:/two', ownership: 'application_dedicated', lifecycle: 'active', selected: false, execution, loginAttempt, setupAttempt, readiness },
+  { id: 'p1', homePath: 'C:/one', ownership: 'registered_existing', lifecycle: 'active', selected: true, execution, loginAttempt, setupAttempt, sandboxAdoption, readiness },
+  { id: 'p2', homePath: 'C:/two', ownership: 'application_dedicated', lifecycle: 'active', selected: false, execution, loginAttempt, setupAttempt, sandboxAdoption, readiness },
 ];
 
 function client(overrides: Partial<NativeProfileClient> = {}): NativeProfileClient {
   const query = async () => ({ contract: 'native-codex-profile-query/v1' as const, profiles });
-  return { load: query, registerExisting: query, createDedicated: query, select: query, selectExecutionMode: query, authorizeDangerFullAccess: query, revokeDangerFullAccess: query, requestLogin: query, refreshReadiness: query, initializeSandbox: query, confirmSandboxInitialization: query, runCanary: query, runDangerFullAccessCanary: query, probeMcp: query, ...overrides };
+  return { load: query, registerExisting: query, createDedicated: query, select: query, selectExecutionMode: query, authorizeDangerFullAccess: query, revokeDangerFullAccess: query, requestLogin: query, refreshReadiness: query, initializeSandbox: query, confirmSandboxInitialization: query, verifyPreprovisionedSandbox: query, confirmPreprovisionedSandboxAdoption: query, runCanary: query, runDangerFullAccessCanary: query, probeMcp: query, ...overrides };
 }
 
 describe('NativeProfileSettings', () => {
