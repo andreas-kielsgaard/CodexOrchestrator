@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 34;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 35;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
@@ -45,7 +45,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| format!("Unable to commit active v22 schema evolution: {error}"))?;
         return Ok(());
     }
-    if (1..=33).contains(&current_version) {
+    if (1..=34).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -263,6 +263,13 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                     .execute_batch(crate::native_profiles::NATIVE_PROFILE_V34_FULL_ACCESS_CANARY_MIGRATION)
                     .map_err(|error| format!("Unable to migrate native full-access canary evidence: {error}"))?;
             }
+        }
+        if current_version <= 34 {
+            transaction
+                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V35_MCP_DISPATCH_CLAIM_MIGRATION)
+                .map_err(|error| {
+                    format!("Unable to migrate native MCP reporting dispatch claims: {error}")
+                })?;
         }
         if current_version == 14 {
             transaction
@@ -1470,8 +1477,18 @@ mod tests {
             )
             .expect("seed real v33 native-profile predecessor");
 
-        initialize_active_database(&connection).expect("migrate v33 through dispatcher");
-        assert_eq!(pragma_i64(&connection, "user_version"), 34);
+        initialize_active_database(&connection).expect("migrate v33 through dispatch claim");
+        assert_eq!(pragma_i64(&connection, "user_version"), 35);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM pragma_table_info('native_codex_profile_mcp_probes') WHERE name IN ('dispatch_claim_id','dispatch_claimed_at')",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("dispatch claim columns"),
+            2
+        );
         assert_eq!(
             connection
                 .query_row(
@@ -1536,8 +1553,8 @@ mod tests {
         );
         drop(connection);
 
-        let reopened = open_active_database(&path).expect("idempotent v34 reopen");
-        assert_eq!(pragma_i64(&reopened, "user_version"), 34);
+        let reopened = open_active_database(&path).expect("idempotent v35 reopen");
+        assert_eq!(pragma_i64(&reopened, "user_version"), 35);
         assert_eq!(
             reopened
                 .query_row(

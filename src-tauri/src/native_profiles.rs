@@ -97,9 +97,11 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_mcp_probes (
   expected_server TEXT NOT NULL,
   expected_tool TEXT NOT NULL,
   expected_probe_root TEXT NOT NULL,
-  state TEXT NOT NULL CHECK (state IN ('pending','received','expired','cancelled')),
+  state TEXT NOT NULL CHECK (state IN ('pending','dispatching','received','expired','cancelled')),
   requested_at TEXT NOT NULL,
   deadline_at TEXT NOT NULL,
+  dispatch_claim_id TEXT,
+  dispatch_claimed_at TEXT,
   received_at TEXT,
   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
 );
@@ -552,6 +554,33 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_full_access_canary_pen
 ON native_codex_profile_full_access_canaries(profile_id) WHERE state='pending';
 UPDATE native_codex_profile_readiness SET danger_full_access_canary='blocked'
 WHERE danger_full_access_canary='passed';
+"#;
+
+pub(crate) const NATIVE_PROFILE_V35_MCP_DISPATCH_CLAIM_MIGRATION: &str = r#"
+DROP INDEX ux_native_codex_profile_mcp_probe_pending;
+ALTER TABLE native_codex_profile_mcp_probes RENAME TO native_codex_profile_mcp_probes_v34;
+CREATE TABLE native_codex_profile_mcp_probes (
+  request_id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  correlation_id TEXT NOT NULL UNIQUE,
+  expected_capability TEXT NOT NULL,
+  expected_server TEXT NOT NULL,
+  expected_tool TEXT NOT NULL,
+  expected_probe_root TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('pending','dispatching','received','expired','cancelled')),
+  requested_at TEXT NOT NULL,
+  deadline_at TEXT NOT NULL,
+  dispatch_claim_id TEXT,
+  dispatch_claimed_at TEXT,
+  received_at TEXT,
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+INSERT INTO native_codex_profile_mcp_probes (request_id,profile_id,correlation_id,expected_capability,expected_server,expected_tool,expected_probe_root,state,requested_at,deadline_at,dispatch_claim_id,dispatch_claimed_at,received_at)
+SELECT request_id,profile_id,correlation_id,expected_capability,expected_server,expected_tool,expected_probe_root,state,requested_at,deadline_at,NULL,NULL,received_at
+FROM native_codex_profile_mcp_probes_v34;
+DROP TABLE native_codex_profile_mcp_probes_v34;
+CREATE UNIQUE INDEX ux_native_codex_profile_mcp_probe_pending
+ON native_codex_profile_mcp_probes(profile_id) WHERE state='pending';
 "#;
 
 const MARKER_FILE: &str = ".codex-orchestrator-profile.json";
@@ -1212,7 +1241,12 @@ pub(crate) struct NativeMcpReportingProbeAuthority {
     pub(crate) probe_root: PathBuf,
 }
 
-/// A loopback-only MCP server for one already-durable reporting request. It accepts no caller
+struct ClaimedNativeMcpReportingProbe {
+    authority: NativeMcpReportingProbeAuthority,
+    claim_id: String,
+}
+
+/// An application-owned MCP server for one already-durable reporting request. It accepts no caller
 /// supplied identity or correlation; those stay bound to the pending application authority.
 #[derive(Clone)]
 struct NativeMcpReportingMcp {
@@ -1522,6 +1556,7 @@ pub(crate) struct NativeProfileService {
     login_children: Mutex<HashMap<String, Box<dyn NativeCliChild>>>,
     setup_children: Mutex<HashMap<String, Box<dyn NativeCliChild>>>,
     full_access_canary_children: Mutex<HashMap<String, Box<dyn NativeCliChild>>>,
+    mcp_dispatch_claims: Mutex<HashMap<String, String>>,
     operation_gate: Mutex<()>,
 }
 
@@ -1544,6 +1579,7 @@ impl NativeProfileService {
             login_children: Mutex::new(HashMap::new()),
             setup_children: Mutex::new(HashMap::new()),
             full_access_canary_children: Mutex::new(HashMap::new()),
+            mcp_dispatch_claims: Mutex::new(HashMap::new()),
             operation_gate: Mutex::new(()),
         })
     }
@@ -2032,17 +2068,6 @@ impl NativeProfileService {
         self.profile(id).map(Into::into)
     }
 
-    pub(crate) fn request_and_reconcile_mcp_reporting(
-        &self,
-        id: &str,
-    ) -> Result<NativeProfileDto, String> {
-        self.require_selected_active(id)?;
-        if !self.has_mcp_reporting_probe(id)? {
-            self.begin_mcp_reporting_probe(id)?;
-        }
-        self.reconcile_pending_mcp_reporting(id)
-    }
-
     /// Performs one scoped reporting exchange only for an already-durable pending request. It
     /// never creates a request, retries a failed exchange, or infers a receipt from process exit.
     pub(crate) fn reconcile_pending_mcp_reporting(
@@ -2055,13 +2080,30 @@ impl NativeProfileService {
             .map_err(|_| "Native profile operation supervision is unavailable")?;
         let profile = self.require_selected_active_while_gated(id)?;
         self.expire_mcp_probe(id)?;
-        let Some(authority) = load_pending_mcp_probe(&self.connection()?, id)? else {
+        let Some(claimed) = self.claim_pending_mcp_reporting_probe(id)? else {
             return self.profile(id).map(Into::into);
         };
+        let authority = claimed.authority;
         if authority.profile_id != profile.id {
             return Err("The application-owned MCP reporting request has invalid authority".into());
         }
-        let server = NativeMcpReportingServer::start(authority.clone())?;
+        self.mcp_dispatch_claims
+            .lock()
+            .map_err(|_| "Native MCP reporting receipt supervision is unavailable")?
+            .insert(id.into(), claimed.claim_id.clone());
+        let server = match NativeMcpReportingServer::start(authority.clone()) {
+            Ok(server) => server,
+            Err(error) => {
+                self.release_mcp_dispatch_claim(id);
+                self.cancel_pending_mcp_reporting_probe(
+                    id,
+                    &authority,
+                    &claimed.claim_id,
+                    "mcp_reporting_dispatch_unavailable",
+                )?;
+                return Err(error);
+            }
+        };
         let variable = format!(
             "CODEX_ORCHESTRATOR_NATIVE_MCP_REPORTING_{}",
             Uuid::new_v4().simple()
@@ -2086,8 +2128,6 @@ impl NativeProfileService {
             format!("mcp_servers.{MCP_REPORTING_SERVER}.default_tools_approval_mode=\"approve\""),
             format!("mcp_servers.{MCP_REPORTING_SERVER}.startup_timeout_sec=10"),
             format!("mcp_servers.{MCP_REPORTING_SERVER}.tool_timeout_sec=300"),
-            "sandbox_workspace_write.network_access=true".into(),
-            "features.network_proxy=true".into(),
         ];
         for value in configuration {
             args.push("-c".into());
@@ -2114,6 +2154,7 @@ impl NativeProfileService {
         if let Some(receipt) = receipt {
             self.require_selected_active_while_gated(id)?;
             let result = self.record_mcp_reporting_receipt(id, &receipt);
+            self.release_mcp_dispatch_claim(id);
             drop(gate);
             return result;
         }
@@ -2122,7 +2163,8 @@ impl NativeProfileService {
         } else {
             "mcp_reporting_dispatch_completed_without_receipt"
         };
-        self.cancel_pending_mcp_reporting_probe(id, &authority, attention)?;
+        self.release_mcp_dispatch_claim(id);
+        self.cancel_pending_mcp_reporting_probe(id, &authority, &claimed.claim_id, attention)?;
         drop(gate);
         if outcome.is_err() {
             return Err("The application-owned MCP reporting exchange is unavailable".into());
@@ -2142,12 +2184,16 @@ impl NativeProfileService {
             .map_err(|error| format!("Unable to begin native MCP reporting probe: {error}"))?;
         let now = Utc::now();
         transaction.execute(
-            "UPDATE native_codex_profile_mcp_probes SET state='expired' WHERE profile_id=?1 AND state='pending' AND deadline_at <= ?2",
+            "UPDATE native_codex_profile_mcp_probes SET state='expired' WHERE profile_id=?1 AND state IN ('pending','dispatching') AND deadline_at <= ?2",
             params![id, now.to_rfc3339()],
         ).map_err(|error| error.to_string())?;
         if let Some(authority) = load_pending_mcp_probe(&transaction, id)? {
             transaction.commit().map_err(|error| error.to_string())?;
             return Ok(authority);
+        }
+        if self.has_any_mcp_reporting_probe(&transaction, id)? {
+            transaction.commit().map_err(|error| error.to_string())?;
+            return Err("The application-owned MCP reporting probe is already terminal or claimed".into());
         }
         let authority = NativeMcpReportingProbeAuthority {
             profile_id: id.into(),
@@ -2186,8 +2232,14 @@ impl NativeProfileService {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("Unable to begin native MCP receipt settlement: {error}"))?;
         let now = Utc::now();
+        let dispatch_claim_id = self
+            .mcp_dispatch_claims
+            .lock()
+            .map_err(|_| "Native MCP reporting receipt supervision is unavailable")?
+            .get(id)
+            .cloned();
         let expired = transaction.execute(
-            "UPDATE native_codex_profile_mcp_probes SET state='expired' WHERE profile_id=?1 AND state='pending' AND deadline_at <= ?2",
+            "UPDATE native_codex_profile_mcp_probes SET state='expired' WHERE profile_id=?1 AND state IN ('pending','dispatching') AND deadline_at <= ?2",
             params![id, now.to_rfc3339()],
         ).map_err(|error| error.to_string())?;
         if expired != 0 {
@@ -2205,12 +2257,12 @@ impl NativeProfileService {
             return Err("The application-owned MCP reporting probe has expired".into());
         }
         let transitioned = transaction.execute(
-            "UPDATE native_codex_profile_mcp_probes SET state='received',received_at=?2 WHERE profile_id=?1 AND state='pending' AND correlation_id=?3 AND expected_capability=?4 AND expected_server=?5 AND expected_tool=?6 AND expected_probe_root=?7 AND deadline_at > ?2",
-            params![id, now.to_rfc3339(), receipt.correlation_id, receipt.capability, receipt.server, receipt.tool, receipt.probe_root.to_string_lossy()],
+            "UPDATE native_codex_profile_mcp_probes SET state='received',received_at=?2 WHERE profile_id=?1 AND (state='pending' OR (state='dispatching' AND dispatch_claim_id=?8)) AND correlation_id=?3 AND expected_capability=?4 AND expected_server=?5 AND expected_tool=?6 AND expected_probe_root=?7 AND deadline_at > ?2",
+            params![id, now.to_rfc3339(), receipt.correlation_id, receipt.capability, receipt.server, receipt.tool, receipt.probe_root.to_string_lossy(), dispatch_claim_id],
         ).map_err(|error| error.to_string())?;
         if transitioned != 1 {
             return Err(
-                "MCP reporting receipt does not match one current application-owned pending probe"
+                "MCP reporting receipt does not match one current application-owned probe"
                     .into(),
             );
         }
@@ -2223,15 +2275,61 @@ impl NativeProfileService {
         self.profile(id).map(Into::into)
     }
 
-    fn has_mcp_reporting_probe(&self, id: &str) -> Result<bool, String> {
-        self.connection()?
+    fn claim_pending_mcp_reporting_probe(
+        &self,
+        id: &str,
+    ) -> Result<Option<ClaimedNativeMcpReportingProbe>, String> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| format!("Unable to claim native MCP reporting probe: {error}"))?;
+        let Some(authority) = load_pending_mcp_probe(&transaction, id)? else {
+            transaction.commit().map_err(|error| error.to_string())?;
+            return Ok(None);
+        };
+        let claim_id = format!("native-mcp-dispatch-{}", Uuid::new_v4());
+        let now = Utc::now().to_rfc3339();
+        let claimed = transaction
+            .execute(
+                "UPDATE native_codex_profile_mcp_probes SET state='dispatching',dispatch_claim_id=?2,dispatch_claimed_at=?3 WHERE profile_id=?1 AND state='pending' AND correlation_id=?4 AND expected_capability=?5 AND expected_server=?6 AND expected_tool=?7 AND expected_probe_root=?8",
+                params![id, claim_id, now, authority.correlation_id, authority.capability, authority.server, authority.tool, authority.probe_root.to_string_lossy()],
+            )
+            .map_err(|error| error.to_string())?;
+        if claimed != 1 {
+            return Err("The application-owned MCP reporting probe could not be claimed".into());
+        }
+        self.write_attention(
+            &transaction,
+            id,
+            "mcp_reporting",
+            Some("mcp_reporting_dispatch_claimed_receipt_pending"),
+        )?;
+        transaction.commit().map_err(|error| error.to_string())?;
+        Ok(Some(ClaimedNativeMcpReportingProbe {
+            authority,
+            claim_id,
+        }))
+    }
+
+    fn has_any_mcp_reporting_probe(
+        &self,
+        connection: &Connection,
+        id: &str,
+    ) -> Result<bool, String> {
+        connection
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM native_codex_profile_mcp_probes WHERE profile_id=?1)",
                 params![id],
                 |row| row.get::<_, i64>(0),
             )
-            .map(|count| count != 0)
+            .map(|value| value != 0)
             .map_err(|error| error.to_string())
+    }
+
+    fn release_mcp_dispatch_claim(&self, id: &str) {
+        if let Ok(mut claims) = self.mcp_dispatch_claims.lock() {
+            claims.remove(id);
+        }
     }
 
     /// Terminalizes an attempted bridge that supplied no receipt. A later invocation observes
@@ -2240,6 +2338,7 @@ impl NativeProfileService {
         &self,
         id: &str,
         authority: &NativeMcpReportingProbeAuthority,
+        claim_id: &str,
         attention: &'static str,
     ) -> Result<(), String> {
         let mut connection = self.connection()?;
@@ -2249,8 +2348,8 @@ impl NativeProfileService {
         let now = Utc::now().to_rfc3339();
         let transitioned = transaction
             .execute(
-                "UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state='pending' AND correlation_id=?2 AND expected_capability=?3 AND expected_server=?4 AND expected_tool=?5 AND expected_probe_root=?6",
-                params![id, authority.correlation_id, authority.capability, authority.server, authority.tool, authority.probe_root.to_string_lossy()],
+                "UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state='dispatching' AND dispatch_claim_id=?2 AND correlation_id=?3 AND expected_capability=?4 AND expected_server=?5 AND expected_tool=?6 AND expected_probe_root=?7",
+                params![id, claim_id, authority.correlation_id, authority.capability, authority.server, authority.tool, authority.probe_root.to_string_lossy()],
             )
             .map_err(|error| error.to_string())?;
         if transitioned != 1 {
@@ -3250,7 +3349,7 @@ impl NativeProfileService {
         let connection = self.connection()?;
         let expired = connection
             .execute(
-                "UPDATE native_codex_profile_mcp_probes SET state='expired' WHERE profile_id=?1 AND state='pending' AND deadline_at <= ?2",
+                "UPDATE native_codex_profile_mcp_probes SET state='expired' WHERE profile_id=?1 AND state IN ('pending','dispatching') AND deadline_at <= ?2",
                 params![id, Utc::now().to_rfc3339()],
             )
             .map_err(|error| error.to_string())?;
@@ -3418,7 +3517,7 @@ impl NativeProfileService {
         connection.execute("UPDATE native_codex_profile_mode_authorizations SET revoked_at=COALESCE(revoked_at,?2) WHERE profile_id=?1 AND mode='danger_full_access'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',danger_full_access_canary='blocked',mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_setup_attempts SET state='cancelled',settled_at=?2,terminal_classification='cancelled' WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
-        connection.execute("UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state='pending'", params![id]).map_err(|error| error.to_string())?;
+        connection.execute("UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state IN ('pending','dispatching')", params![id]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_login_attempts SET state='cancelled',settled_at=?2 WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_sandbox_adoptions SET state='invalidated' WHERE profile_id=?1", params![id]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_sandbox_adoption_confirmations SET state='invalidated',invalidated_at=COALESCE(invalidated_at,?2) WHERE profile_id=?1 AND state='confirmed'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
@@ -4675,7 +4774,7 @@ pub(crate) fn reconcile_native_profile_mcp_reporting(
 ) -> Result<NativeProfileDto, String> {
     state
         .service
-        .request_and_reconcile_mcp_reporting(&input.profile_id)
+        .reconcile_pending_mcp_reporting(&input.profile_id)
 }
 
 #[cfg(test)]
@@ -7270,7 +7369,7 @@ mod tests {
             .reconcile_pending_mcp_reporting(&profile.id)
             .unwrap();
         reopened
-            .request_and_reconcile_mcp_reporting(&profile.id)
+            .reconcile_pending_mcp_reporting(&profile.id)
             .unwrap();
         assert!(reporting.calls.lock().unwrap().is_empty());
         assert!(reopened.resolve_selected_home().is_err());
@@ -7291,6 +7390,32 @@ mod tests {
         assert_eq!(
             service.profile(&profile.id).unwrap().readiness.mcp_reporting,
             "not_assessed"
+        );
+    }
+
+    #[test]
+    fn reporting_reconciliation_without_a_request_is_a_noop() {
+        let (_directory, mut service) = service();
+        let profile = selected_profile_ready_except_mcp(&service);
+        let reporting = Arc::new(ReportingCli::new());
+        service.cli = reporting.clone();
+
+        service
+            .reconcile_pending_mcp_reporting(&profile.id)
+            .unwrap();
+
+        assert!(reporting.calls.lock().unwrap().is_empty());
+        assert_eq!(
+            service
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM native_codex_profile_mcp_probes WHERE profile_id=?1",
+                    params![profile.id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
         );
     }
 
@@ -7318,6 +7443,101 @@ mod tests {
         assert_eq!(reporting.calls.lock().unwrap().len(), 1);
         assert_eq!(
             service
+                .profile(&profile.id)
+                .unwrap()
+                .readiness
+                .mcp_reporting,
+            "ready"
+        );
+    }
+
+    #[test]
+    fn claimed_reporting_dispatch_reopens_without_a_second_exchange() {
+        let (directory, service) = service();
+        let profile = selected_profile_ready_except_mcp(&service);
+        service.begin_mcp_reporting_probe(&profile.id).unwrap();
+        let claimed = service
+            .claim_pending_mcp_reporting_probe(&profile.id)
+            .unwrap()
+            .expect("pending request is claimed");
+        assert!(!claimed.claim_id.is_empty());
+        drop(service);
+
+        let mut reopened = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        let reporting = Arc::new(ReportingCli::new());
+        reopened.cli = reporting.clone();
+        reopened
+            .reconcile_pending_mcp_reporting(&profile.id)
+            .unwrap();
+
+        assert!(reporting.calls.lock().unwrap().is_empty());
+        assert_eq!(
+            reopened
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT state FROM native_codex_profile_mcp_probes WHERE profile_id=?1",
+                    params![profile.id],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "dispatching"
+        );
+        assert_eq!(
+            reopened
+                .profile(&profile.id)
+                .unwrap()
+                .readiness
+                .attentions
+                .mcp_reporting
+                .as_deref(),
+            Some("mcp_reporting_dispatch_claimed_receipt_pending")
+        );
+    }
+
+    #[test]
+    fn two_services_claim_one_reporting_exchange() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("active.sqlite");
+        let app = directory.path().join("app");
+        let mut seed = NativeProfileService::open(database.clone(), app.clone()).unwrap();
+        seed.cli = Arc::new(FakeCli::succeeding());
+        let profile = selected_profile_ready_except_mcp(&seed);
+        seed.begin_mcp_reporting_probe(&profile.id).unwrap();
+        drop(seed);
+
+        let mut first = NativeProfileService::open(database.clone(), app.clone()).unwrap();
+        let first_reporting = Arc::new(ReportingCli::new());
+        first.cli = first_reporting.clone();
+        let mut second = NativeProfileService::open(database.clone(), app.clone()).unwrap();
+        let second_reporting = Arc::new(ReportingCli::new());
+        second.cli = second_reporting.clone();
+        let barrier = Arc::new(Barrier::new(2));
+        let joins = [first, second]
+            .into_iter()
+            .map(|service| {
+                let barrier = barrier.clone();
+                let profile_id = profile.id.clone();
+                thread::spawn(move || {
+                    barrier.wait();
+                    service.reconcile_pending_mcp_reporting(&profile_id)
+                })
+            })
+            .collect::<Vec<_>>();
+
+        assert!(joins.into_iter().all(|join| join.join().unwrap().is_ok()));
+        assert_eq!(
+            first_reporting.calls.lock().unwrap().len()
+                + second_reporting.calls.lock().unwrap().len(),
+            1
+        );
+        let reopened = NativeProfileService::open(database, app).unwrap();
+        assert_eq!(
+            reopened
                 .profile(&profile.id)
                 .unwrap()
                 .readiness
