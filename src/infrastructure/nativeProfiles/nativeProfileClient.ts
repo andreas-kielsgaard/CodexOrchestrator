@@ -232,13 +232,45 @@ function validateFullAccessCanaryAttempt(attempt: NativeProfileFullAccessCanaryA
       throw new Error('empty full-access canary has durable facts');
     return;
   }
-  requiredRfc3339(attempt.requestedAt, 'full-access canary request timestamp');
+  const requestedAt = requiredRfc3339(attempt.requestedAt, 'full-access canary request timestamp');
   if (attempt.launchAcceptedAt !== null) requiredRfc3339(attempt.launchAcceptedAt, 'full-access canary launch timestamp');
   if (attempt.deadlineAt !== null) requiredRfc3339(attempt.deadlineAt, 'full-access canary deadline timestamp');
   if (attempt.settledAt !== null) requiredRfc3339(attempt.settledAt, 'full-access canary settlement timestamp');
-  if (attempt.disposition === 'pending' && (attempt.settledAt !== null || attempt.cleanupDisposition !== 'pending')) throw new Error('pending full-access canary is contradictory');
-  if (attempt.disposition === 'passed' && (attempt.authorizationVersion !== 'danger-full-access/unrestricted-network/v1' || attempt.authorizationCorrelationId === null || attempt.correlationId === null || attempt.launchAcceptedAt === null || attempt.settledAt === null || attempt.processActivity !== 'terminal_observed' || !attempt.receiptObserved || attempt.cleanupDisposition !== 'removed'))
+  const requested = Date.parse(requestedAt);
+  const launch = attempt.launchAcceptedAt === null ? null : Date.parse(attempt.launchAcceptedAt);
+  const deadline = attempt.deadlineAt === null ? null : Date.parse(attempt.deadlineAt);
+  const settled = attempt.settledAt === null ? null : Date.parse(attempt.settledAt);
+  if ((launch !== null && launch < requested) || (deadline !== null && deadline < requested) || (settled !== null && (settled < requested || (launch !== null && settled < launch))))
+    throw new Error('full-access canary timestamps are contradictory');
+  const currentAuthority = attempt.authorizationVersion === 'danger-full-access/unrestricted-network/v1' && attempt.authorizationCorrelationId !== null && attempt.correlationId !== null;
+  const acceptedOrUnobserved = attempt.launchAcceptedAt === null
+    ? attempt.processActivity === 'unobserved'
+    : attempt.processActivity === 'launch_accepted' || attempt.processActivity === 'terminal_observed';
+  const interruptedProcess = attempt.launchAcceptedAt === null
+    ? attempt.processActivity === 'unobserved'
+    : attempt.processActivity === 'launch_accepted';
+  const cleanupSettled = attempt.cleanupDisposition === 'removed' || attempt.cleanupDisposition === 'failed';
+  if (!['legacy_unverified', 'recovered_unobserved'].includes(attempt.disposition) && !currentAuthority)
+    throw new Error('full-access canary lacks current durable authorization facts');
+  if (!['legacy_unverified', 'recovered_unobserved'].includes(attempt.disposition) && attempt.deadlineAt === null)
+    throw new Error('current full-access canary lacks a deadline');
+  if (attempt.disposition === 'pending' && (attempt.settledAt !== null || attempt.cleanupDisposition !== 'pending' || attempt.terminalClassification !== 'not_observed' || attempt.terminalExitCode !== null || attempt.receiptObserved || !acceptedOrUnobserved))
+    throw new Error('pending full-access canary is contradictory');
+  if (attempt.disposition === 'passed' && (!currentAuthority || attempt.launchAcceptedAt === null || attempt.settledAt === null || attempt.processActivity !== 'terminal_observed' || !attempt.receiptObserved || attempt.cleanupDisposition !== 'removed' || !((attempt.terminalClassification === 'exit_code' && attempt.terminalExitCode !== null) || (attempt.terminalClassification === 'not_observed' && attempt.terminalExitCode === null))))
     throw new Error('passed full-access canary violates its receipt and cleanup invariant');
+  if (attempt.disposition === 'launch_failed' && (attempt.launchAcceptedAt !== null || attempt.settledAt === null || attempt.processActivity !== 'unobserved' || attempt.terminalClassification !== 'launch_failed' || attempt.terminalExitCode !== null || attempt.receiptObserved || !cleanupSettled))
+    throw new Error('launch-failed full-access canary is contradictory');
+  if (attempt.disposition === 'terminal_failed' && (attempt.launchAcceptedAt === null || attempt.settledAt === null || attempt.processActivity !== 'terminal_observed' || !cleanupSettled || !((attempt.terminalClassification === 'receipt_missing' && !attempt.receiptObserved) || (attempt.terminalClassification === 'exit_code' && attempt.terminalExitCode !== null) || (attempt.terminalClassification === 'not_observed' && attempt.terminalExitCode === null))))
+    throw new Error('terminal-failed full-access canary is contradictory');
+  if (['timed_out', 'cancelled'].includes(attempt.disposition) && (attempt.settledAt === null || !cleanupSettled || attempt.terminalClassification !== attempt.disposition || attempt.terminalExitCode !== null || attempt.receiptObserved || !interruptedProcess))
+    throw new Error('interrupted full-access canary is contradictory');
+  const legacyRecovered = attempt.authorizationVersion === null && attempt.authorizationCorrelationId === null && attempt.correlationId === null && attempt.launchAcceptedAt === null && attempt.deadlineAt === null && attempt.processActivity === 'unobserved' && attempt.terminalClassification === 'recovered_unobserved' && attempt.terminalExitCode === null && !attempt.receiptObserved && attempt.cleanupDisposition === 'not_observed';
+  if (attempt.disposition === 'recovered_unobserved' && !legacyRecovered && (attempt.settledAt === null || !cleanupSettled || attempt.terminalClassification !== 'recovered_unobserved' || attempt.terminalExitCode !== null || attempt.receiptObserved || !interruptedProcess))
+    throw new Error('recovered full-access canary is contradictory');
+  if (attempt.disposition === 'cleanup_failed' && (attempt.launchAcceptedAt === null || attempt.settledAt === null || attempt.processActivity !== 'terminal_observed' || attempt.terminalClassification !== 'cleanup_failed' || !attempt.receiptObserved || attempt.cleanupDisposition !== 'failed'))
+    throw new Error('cleanup-failed full-access canary is contradictory');
+  if (attempt.disposition === 'legacy_unverified' && (attempt.authorizationVersion !== null || attempt.authorizationCorrelationId !== null || attempt.correlationId !== null || attempt.launchAcceptedAt !== null || attempt.deadlineAt !== null || attempt.settledAt === null || attempt.processActivity !== 'unobserved' || attempt.providerActivity !== 'unobserved' || attempt.terminalClassification !== 'legacy_unverified' || attempt.terminalExitCode !== null || attempt.receiptObserved || attempt.cleanupDisposition !== 'not_observed'))
+    throw new Error('legacy full-access canary is contradictory');
   if (attempt.providerActivity !== 'unobserved') throw new Error('full-access canary provider activity must remain unobserved');
 }
 

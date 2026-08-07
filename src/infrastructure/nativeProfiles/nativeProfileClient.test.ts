@@ -35,6 +35,21 @@ describe('native profile client', () => {
     const passedFullAccessCanary = { disposition: 'passed', authorizationVersion: 'danger-full-access/unrestricted-network/v1', authorizationCorrelationId: 'native-danger-authorization', correlationId: 'native-full-access-canary', requestedAt: '2026-08-07T12:00:00Z', launchAcceptedAt: '2026-08-07T12:00:01Z', deadlineAt: '2026-08-07T12:02:00Z', settledAt: '2026-08-07T12:00:02Z', processActivity: 'terminal_observed', providerActivity: 'unobserved', terminalClassification: 'exit_code', terminalExitCode: 0, receiptObserved: true, cleanupDisposition: 'removed' };
     expect(decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, fullAccessCanaryAttempt: passedFullAccessCanary }] }).profiles[0].fullAccessCanaryAttempt).toMatchObject({ disposition: 'passed', cleanupDisposition: 'removed' });
     expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, fullAccessCanaryAttempt: { ...passedFullAccessCanary, cleanupDisposition: 'failed' } }] })).toThrow(/passed full-access canary/);
+    for (const contradiction of [
+      { launchAcceptedAt: '2026-08-07T11:59:59Z' },
+      { deadlineAt: null },
+      { settledAt: '2026-08-07T12:00:00Z' },
+      { terminalClassification: 'receipt_missing' },
+      { terminalExitCode: null },
+      { terminalClassification: 'not_observed' },
+      { disposition: 'terminal_failed', receiptObserved: true, terminalClassification: 'receipt_missing' },
+      { disposition: 'cancelled', processActivity: 'terminal_observed', terminalClassification: 'cancelled', terminalExitCode: null, receiptObserved: false, cleanupDisposition: 'removed' },
+      { disposition: 'cleanup_failed', terminalClassification: 'cleanup_failed', cleanupDisposition: 'failed', receiptObserved: false },
+    ]) expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, fullAccessCanaryAttempt: { ...passedFullAccessCanary, ...contradiction } }] })).toThrow(/full-access canary/);
+    const legacyFullAccessCanary = { disposition: 'legacy_unverified', authorizationVersion: null, authorizationCorrelationId: null, correlationId: null, requestedAt: '2026-08-07T12:00:00Z', launchAcceptedAt: null, deadlineAt: null, settledAt: '2026-08-07T12:00:02Z', processActivity: 'unobserved', providerActivity: 'unobserved', terminalClassification: 'legacy_unverified', terminalExitCode: null, receiptObserved: false, cleanupDisposition: 'not_observed' };
+    expect(decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, fullAccessCanaryAttempt: legacyFullAccessCanary }] }).profiles[0].fullAccessCanaryAttempt).toMatchObject({ disposition: 'legacy_unverified' });
+    for (const contradiction of [{ deadlineAt: '2026-08-07T12:02:00Z' }, { correlationId: 'invented' }, { processActivity: 'launch_accepted' }, { terminalExitCode: 1 }, { receiptObserved: true }])
+      expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, fullAccessCanaryAttempt: { ...legacyFullAccessCanary, ...contradiction } }] })).toThrow(/legacy full-access canary/);
     const verifiedAdoption = { disposition: 'verified', executable: 'C:/application-owned/codex.exe', version: 'codex-cli test', workspaceSandboxSupported: true, windowsSandboxSetupSupported: true, correlationId: 'native-adoption-correlation', observedAt: '2026-08-07T12:00:00Z', elevatedModeObserved: true };
     expect(decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, sandboxAdoption: verifiedAdoption }] }).profiles[0].sandboxAdoption).toMatchObject({ disposition: 'verified', elevatedModeObserved: true });
     for (const contradiction of [

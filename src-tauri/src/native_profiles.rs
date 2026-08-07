@@ -15,6 +15,10 @@ use std::{
 use tauri::State;
 use uuid::Uuid;
 
+const FULL_ACCESS_CANARY_RECEIPT: &str = "native-codex-profile-canary";
+const FULL_ACCESS_CANARY_RECEIPT_FILE: &str = "native-full-access-canary.txt";
+const FULL_ACCESS_CANARY_RECEIPT_RELATIVE_PATH: &str = "..\\receipt\\native-full-access-canary.txt";
+
 pub(crate) const NATIVE_PROFILE_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS native_codex_profiles (
   id TEXT PRIMARY KEY,
@@ -669,7 +673,7 @@ impl SystemNativeCliChild {
             exit_code: status.code(),
             sandbox_receipt_observed: self.sandbox_receipt.as_ref().is_some_and(|path| {
                 fs::read_to_string(path)
-                    .map(|value| value.trim() == "native-codex-profile-canary")
+                    .map(|value| value.trim() == FULL_ACCESS_CANARY_RECEIPT)
                     .unwrap_or(false)
             }),
         };
@@ -2025,65 +2029,49 @@ impl NativeProfileService {
         }
         let workspace_project_trust_override =
             workspace_project_trust_override(&target.working_root)?;
+        let mut arguments = vec![
+            "exec".into(),
+            "--json".into(),
+            "--strict-config".into(),
+            "--sandbox".into(),
+            mode.codex_sandbox().into(),
+            "--cd".into(),
+            target.working_root.to_string_lossy().into_owned(),
+            "--skip-git-repo-check".into(),
+            "--ignore-user-config".into(),
+            "--ignore-rules".into(),
+        ];
+        for value in [
+            workspace_project_trust_override,
+            "project_root_markers=[]".into(),
+            "project_doc_max_bytes=0".into(),
+            "mcp_servers={}".into(),
+            "features.hooks=false".into(),
+            "features.plugins=false".into(),
+            "features.apps=false".into(),
+        ] {
+            arguments.push("--config".into());
+            arguments.push(value);
+        }
+        if mode == ExecutionMode::WorkspaceWrite {
+            for value in [
+                "sandbox_workspace_write.network_access=false",
+                "sandbox_workspace_write.writable_roots=[]",
+                "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+                "sandbox_workspace_write.exclude_slash_tmp=true",
+            ] {
+                arguments.push("--config".into());
+                arguments.push(value.into());
+            }
+        } else {
+            arguments.push("--dangerously-bypass-approvals-and-sandbox".into());
+        }
         Ok(NativeLaunchProjectionDto {
             profile_id: profile.id,
             mode,
             executable: surface.provenance.executable,
             version: surface.provenance.version,
-            arguments: vec![
-                "exec".into(),
-                "--json".into(),
-                "--strict-config".into(),
-                "--sandbox".into(),
-                mode.codex_sandbox().into(),
-                "--cd".into(),
-                target.working_root.to_string_lossy().into_owned(),
-                "--skip-git-repo-check".into(),
-            ]
-            .into_iter()
-            .chain([
-                "--ignore-user-config".into(),
-                "--ignore-rules".into(),
-                "--config".into(),
-                workspace_project_trust_override,
-                "--config".into(),
-                "project_root_markers=[]".into(),
-                "--config".into(),
-                "project_doc_max_bytes=0".into(),
-                "--config".into(),
-                "mcp_servers={}".into(),
-                "--config".into(),
-                "features.hooks=false".into(),
-                "--config".into(),
-                "features.plugins=false".into(),
-                "--config".into(),
-                "features.apps=false".into(),
-                "--config".into(),
-            ])
-            .chain(
-                (mode == ExecutionMode::WorkspaceWrite)
-                    .then_some("sandbox_workspace_write.network_access=false".into()),
-            )
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
-            .chain(
-                (mode == ExecutionMode::WorkspaceWrite)
-                    .then_some("sandbox_workspace_write.writable_roots=[]".into()),
-            )
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
-            .chain(
-                (mode == ExecutionMode::WorkspaceWrite)
-                    .then_some("sandbox_workspace_write.exclude_tmpdir_env_var=true".into()),
-            )
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
-            .chain(
-                (mode == ExecutionMode::WorkspaceWrite)
-                    .then_some("sandbox_workspace_write.exclude_slash_tmp=true".into()),
-            )
-            .chain(
-                (mode == ExecutionMode::DangerFullAccess)
-                    .then_some("--dangerously-bypass-approvals-and-sandbox".into()),
-            )
-            .collect(),
+            arguments,
             working_root: target.working_root.to_string_lossy().into_owned(),
             requested_network_disabled: target.network_disabled,
             effective_network_enforced: mode == ExecutionMode::WorkspaceWrite,
@@ -2096,8 +2084,7 @@ impl NativeProfileService {
         &self,
         id: &str,
     ) -> Result<NativeFullAccessCanaryProjectionDto, String> {
-        let target =
-            NativeLaunchTarget::application_owned(self.full_access_canary_root(id)?, false)?;
+        let target = NativeLaunchTarget::application_owned(self.full_access_canary_work_root(id)?, false)?;
         let launch = self.project_launch(id, &target)?;
         if launch.mode != ExecutionMode::DangerFullAccess {
             return Err(
@@ -2105,8 +2092,8 @@ impl NativeProfileService {
             );
         }
         let sentinel_path = self
-            .full_access_canary_root(id)?
-            .join("native-full-access-canary.txt");
+            .full_access_canary_receipt_root(id)?
+            .join(FULL_ACCESS_CANARY_RECEIPT_FILE);
         Ok(NativeFullAccessCanaryProjectionDto {
             launch,
             sentinel_path: sentinel_path.to_string_lossy().into_owned(),
@@ -2146,8 +2133,7 @@ impl NativeProfileService {
             );
         }
         let prompt = format!(
-            "Create only the application-owned sentinel file at {} with the exact contents native-codex-profile-full-access-canary, then stop.",
-            sentinel.display()
+            "Create only the application-owned sentinel file at {FULL_ACCESS_CANARY_RECEIPT_RELATIVE_PATH} with the exact contents {FULL_ACCESS_CANARY_RECEIPT}, then stop."
         );
         let now = Utc::now();
         let attempt = PendingFullAccessCanary {
@@ -2172,7 +2158,7 @@ impl NativeProfileService {
             args,
             cwd: PathBuf::from(&projection.launch.working_root),
             codex_home: profile.home.clone(),
-            environment: native_profile_environment(&profile.home),
+            environment: native_windows_cli_environment(&profile.home),
             sandbox_receipt: Some(sentinel),
             sandbox_command_file: None,
         };
@@ -2269,7 +2255,11 @@ impl NativeProfileService {
                 self.settle_full_access_canary(
                     &attempt,
                     "passed",
-                    "exit_code",
+                    if receipt.exit_code.is_some() {
+                        "exit_code"
+                    } else {
+                        "not_observed"
+                    },
                     receipt.exit_code,
                     true,
                 )?;
@@ -2347,9 +2337,10 @@ impl NativeProfileService {
         } else {
             classification
         };
+        let terminal_observed = matches!(state, "passed" | "terminal_failed" | "cleanup_failed");
         self.connection()?.execute(
-            "UPDATE native_codex_profile_full_access_canaries SET state=?2,settled_at=?3,process_activity=CASE WHEN launch_accepted_at IS NULL THEN process_activity ELSE 'terminal_observed' END,terminal_classification=?4,terminal_exit_code=?5,receipt_observed=?6,cleanup_disposition=?7 WHERE attempt_id=?1 AND state='pending'",
-            params![attempt.attempt_id, state, Utc::now().to_rfc3339(), classification, exit_code, receipt_observed as i64, cleanup_disposition],
+            "UPDATE native_codex_profile_full_access_canaries SET state=?2,settled_at=?3,process_activity=CASE WHEN ?8 THEN 'terminal_observed' ELSE process_activity END,terminal_classification=?4,terminal_exit_code=?5,receipt_observed=?6,cleanup_disposition=?7 WHERE attempt_id=?1 AND state='pending'",
+            params![attempt.attempt_id, state, Utc::now().to_rfc3339(), classification, exit_code, receipt_observed as i64, cleanup_disposition, terminal_observed],
         ).map_err(|error| error.to_string())?;
         self.connection()?.execute(
             "UPDATE native_codex_profile_readiness SET danger_full_access_canary=?2,observed_at=?3 WHERE profile_id=?1",
@@ -2404,13 +2395,30 @@ impl NativeProfileService {
             .map_err(|_| "Unable to validate application-owned native profile probe root".into())
     }
 
-    fn full_access_canary_root(&self, id: &str) -> Result<PathBuf, String> {
+    fn full_access_canary_parent(&self, id: &str) -> Result<PathBuf, String> {
         let root = self
             .dedicated_root
             .parent()
             .unwrap_or(&self.dedicated_root)
             .join("native-codex-full-access-canaries")
             .join(id);
+        fs::create_dir_all(&root).map_err(|error| {
+            format!("Unable to create application-owned full-access canary root: {error}")
+        })?;
+        fs::canonicalize(root)
+            .map_err(|_| "Unable to validate application-owned full-access canary root".into())
+    }
+
+    fn full_access_canary_work_root(&self, id: &str) -> Result<PathBuf, String> {
+        self.ensure_full_access_canary_child(id, "work")
+    }
+
+    fn full_access_canary_receipt_root(&self, id: &str) -> Result<PathBuf, String> {
+        self.ensure_full_access_canary_child(id, "receipt")
+    }
+
+    fn ensure_full_access_canary_child(&self, id: &str, child: &str) -> Result<PathBuf, String> {
+        let root = self.full_access_canary_parent(id)?.join(child);
         fs::create_dir_all(&root).map_err(|error| {
             format!("Unable to create application-owned full-access canary root: {error}")
         })?;
@@ -3018,9 +3026,10 @@ impl NativeProfileService {
                     let _ = child.terminate();
                 }
             }
-            // This cleanup is independent of supervision: cold reopen or a lost child cannot
-            // leave the one application-owned full-access receipt behind.
-            let _ = fs::remove_file(&attempt.sentinel_path);
+            // Cold reopen or a lost child cannot leave the one bounded receipt behind. Settling
+            // owns both exact-file cleanup and its durable outcome; it never claims removal on
+            // an I/O failure.
+            self.settle_full_access_canary(&attempt, "cancelled", "cancelled", None, false)?;
         }
         let connection = self.connection()?;
         connection.execute("UPDATE native_codex_profiles SET lifecycle=?2,selected_at=NULL,updated_at=?3 WHERE id=?1", params![id, lifecycle.database(), Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
@@ -3028,7 +3037,6 @@ impl NativeProfileService {
         connection.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',danger_full_access_canary='blocked',mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_setup_attempts SET state='cancelled',settled_at=?2,terminal_classification='cancelled' WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state='pending'", params![id]).map_err(|error| error.to_string())?;
-        connection.execute("UPDATE native_codex_profile_full_access_canaries SET state='cancelled',settled_at=?2,terminal_classification='cancelled',cleanup_disposition=CASE WHEN cleanup_disposition='pending' THEN 'removed' ELSE cleanup_disposition END WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_login_attempts SET state='cancelled',settled_at=?2 WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_sandbox_adoptions SET state='invalidated' WHERE profile_id=?1", params![id]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_sandbox_adoption_confirmations SET state='invalidated',invalidated_at=COALESCE(invalidated_at,?2) WHERE profile_id=?1 AND state='confirmed'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
@@ -3725,7 +3733,85 @@ fn load_full_access_canary_attempt(
         && correlation_id
             .as_deref()
             .is_some_and(|value| !value.is_empty() && value.trim() == value);
-    let settled_required = disposition != "pending";
+    let requested = DateTime::parse_from_rfc3339(&requested_at)
+        .map_err(|_| "Native full-access canary violates its durable invariant")?;
+    let launch = launch_accepted_at
+        .as_deref()
+        .map(DateTime::parse_from_rfc3339)
+        .transpose()
+        .map_err(|_| "Native full-access canary violates its durable invariant")?;
+    let deadline = deadline_at
+        .as_deref()
+        .map(DateTime::parse_from_rfc3339)
+        .transpose()
+        .map_err(|_| "Native full-access canary violates its durable invariant")?;
+    let settled = settled_at
+        .as_deref()
+        .map(DateTime::parse_from_rfc3339)
+        .transpose()
+        .map_err(|_| "Native full-access canary violates its durable invariant")?;
+    let timestamps_ordered = launch.as_ref().is_none_or(|launch| launch >= &requested)
+        && deadline.as_ref().is_none_or(|deadline| deadline >= &requested)
+        && settled.as_ref().is_none_or(|settled| {
+            settled >= &requested && launch.as_ref().is_none_or(|launch| settled >= launch)
+        });
+    let accepted_or_unobserved = match launch_accepted_at.is_some() {
+        true => process_activity == "launch_accepted" || process_activity == "terminal_observed",
+        false => process_activity == "unobserved",
+    };
+    let interrupted_process = match launch_accepted_at.is_some() {
+        true => process_activity == "launch_accepted",
+        false => process_activity == "unobserved",
+    };
+    let cleanup_settled = cleanup_disposition == "removed" || cleanup_disposition == "failed";
+    let pending_shape = settled_at.is_none()
+        && cleanup_disposition == "pending"
+        && terminal_classification == "not_observed"
+        && terminal_exit_code.is_none()
+        && receipt_observed == 0
+        && accepted_or_unobserved;
+    let terminal_failed_shape = launch_accepted_at.is_some()
+        && process_activity == "terminal_observed"
+        && settled_at.is_some()
+        && cleanup_settled
+        && ((terminal_classification == "receipt_missing" && receipt_observed == 0)
+            || (terminal_classification == "exit_code" && terminal_exit_code.is_some())
+            || (terminal_classification == "not_observed" && terminal_exit_code.is_none()));
+    let cancelled_shape = settled_at.is_some()
+        && cleanup_settled
+        && terminal_classification == disposition
+        && terminal_exit_code.is_none()
+        && receipt_observed == 0
+        && interrupted_process;
+    let cleanup_failed_shape = launch_accepted_at.is_some()
+        && process_activity == "terminal_observed"
+        && settled_at.is_some()
+        && terminal_classification == "cleanup_failed"
+        && receipt_observed == 1
+        && cleanup_disposition == "failed";
+    let legacy_shape = disposition == "legacy_unverified"
+        && terminal_classification == "legacy_unverified"
+        && process_activity == "unobserved"
+        && authorization_version.is_none()
+        && authorization_correlation_id.is_none()
+        && correlation_id.is_none()
+        && launch_accepted_at.is_none()
+        && deadline_at.is_none()
+        && settled_at.is_some()
+        && terminal_exit_code.is_none()
+        && receipt_observed == 0
+        && cleanup_disposition == "not_observed";
+    let legacy_recovered_shape = disposition == "recovered_unobserved"
+        && authorization_version.is_none()
+        && authorization_correlation_id.is_none()
+        && correlation_id.is_none()
+        && launch_accepted_at.is_none()
+        && deadline_at.is_none()
+        && process_activity == "unobserved"
+        && terminal_classification == "recovered_unobserved"
+        && terminal_exit_code.is_none()
+        && receipt_observed == 0
+        && cleanup_disposition == "not_observed";
     if !valid_state
         || !valid_process
         || provider_activity != "unobserved"
@@ -3736,22 +3822,38 @@ fn load_full_access_canary_attempt(
         || !valid_optional_timestamp(&deadline_at)
         || !valid_optional_timestamp(&settled_at)
         || receipt_observed != 0 && receipt_observed != 1
+        || !timestamps_ordered
+        || (!matches!(disposition.as_str(), "legacy_unverified" | "recovered_unobserved")
+            && deadline_at.is_none())
         || (!matches!(
             disposition.as_str(),
             "legacy_unverified" | "recovered_unobserved"
         ) && !current_authority)
-        || (settled_required && settled_at.is_none())
-        || (disposition == "pending" && (settled_at.is_some() || cleanup_disposition != "pending"))
+        || (disposition == "pending" && !pending_shape)
         || (disposition == "passed"
             && (launch_accepted_at.is_none()
                 || process_activity != "terminal_observed"
+                || settled_at.is_none()
                 || receipt_observed != 1
-                || cleanup_disposition != "removed"))
+                || cleanup_disposition != "removed"
+                || !((terminal_classification == "exit_code" && terminal_exit_code.is_some())
+                    || (terminal_classification == "not_observed"
+                        && terminal_exit_code.is_none()))))
         || (disposition == "launch_failed"
             && (launch_accepted_at.is_some()
+                || settled_at.is_none()
+                || process_activity != "unobserved"
                 || terminal_classification != "launch_failed"
                 || terminal_exit_code.is_some()
-                || receipt_observed != 0))
+                || receipt_observed != 0
+                || !cleanup_settled))
+        || (disposition == "terminal_failed" && !terminal_failed_shape)
+        || (matches!(disposition.as_str(), "timed_out" | "cancelled")
+            && !cancelled_shape)
+        || (disposition == "recovered_unobserved"
+            && !(cancelled_shape || legacy_recovered_shape))
+        || (disposition == "cleanup_failed" && !cleanup_failed_shape)
+        || (disposition == "legacy_unverified" && !legacy_shape)
     {
         return Err("Native full-access canary violates its durable invariant".into());
     }
@@ -5468,6 +5570,46 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn system_cli_port_observes_the_allowlisted_full_access_receipt_value() {
+        let directory = tempfile::tempdir().unwrap();
+        let home = directory.path().join("selected-home");
+        let parent = directory.path().join("application-owned-full-access-canary");
+        let work = parent.join("work");
+        let receipt_root = parent.join("receipt");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&work).unwrap();
+        fs::create_dir_all(&receipt_root).unwrap();
+        let receipt = receipt_root.join(FULL_ACCESS_CANARY_RECEIPT_FILE);
+        let command = work.join("write-full-access-receipt.cmd");
+        fs::write(
+            &command,
+            format!(
+                "@echo off\r\necho {FULL_ACCESS_CANARY_RECEIPT}>{FULL_ACCESS_CANARY_RECEIPT_RELATIVE_PATH}\r\n"
+            ),
+        )
+        .unwrap();
+        let port = SystemNativeCliPort {
+            program: Ok(std::env::var("COMSPEC").unwrap()),
+        };
+        let settled = port
+            .run(&NativeCliInvocation {
+                args: vec!["/d".into(), "/c".into(), ".\\write-full-access-receipt.cmd".into()],
+                cwd: work.clone(),
+                codex_home: home.clone(),
+                environment: native_windows_cli_environment(&home),
+                sandbox_receipt: Some(receipt.clone()),
+                sandbox_command_file: None,
+            })
+            .unwrap();
+
+        assert!(settled.succeeded);
+        assert!(settled.sandbox_receipt_observed);
+        assert!(!receipt.starts_with(&work));
+        assert!(receipt.starts_with(&parent));
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn system_cli_port_quote_bearing_workspace_payload_fails_when_the_probe_path_has_spaces() {
         let directory = tempfile::tempdir().unwrap();
         let home = directory.path().join("selected-home");
@@ -5916,6 +6058,18 @@ mod tests {
             .arguments
             .iter()
             .any(|argument| argument == "--dangerously-bypass-approvals-and-sandbox"));
+        for (index, argument) in danger.arguments.iter().enumerate() {
+            if argument == "--config" {
+                let value = danger.arguments.get(index + 1).unwrap();
+                assert!(!value.starts_with('-'));
+            }
+        }
+        let bypass = danger
+            .arguments
+            .iter()
+            .position(|argument| argument == "--dangerously-bypass-approvals-and-sandbox")
+            .unwrap();
+        assert!(bypass == 0 || danger.arguments[bypass - 1] != "--config");
         assert!(!danger
             .arguments
             .iter()
@@ -5930,6 +6084,11 @@ mod tests {
             .sentinel_path
             .contains("native-full-access-canary.txt"));
         assert_ne!(canary.launch.working_root, root.to_string_lossy());
+        let work_root = PathBuf::from(&canary.launch.working_root);
+        let receipt = PathBuf::from(&canary.sentinel_path);
+        let canary_parent = service.full_access_canary_parent(&profile.id).unwrap();
+        assert!(!receipt.starts_with(&work_root));
+        assert!(receipt.starts_with(&canary_parent));
     }
 
     #[test]
@@ -5966,7 +6125,7 @@ mod tests {
             exit_code: Some(0),
             sandbox_receipt_observed: true,
         });
-        service.cli = fake;
+        service.cli = fake.clone();
         let profile = service.create_dedicated().unwrap();
         service.select(&profile.id).unwrap();
         service
@@ -5974,6 +6133,20 @@ mod tests {
             .unwrap();
         service.authorize_danger_full_access(&profile.id).unwrap();
         service.run_danger_full_access_canary(&profile.id).unwrap();
+        let call = fake.calls.lock().unwrap()[0].clone();
+        assert_eq!(
+            call.environment,
+            native_windows_cli_environment(Path::new(&profile.home_path))
+        );
+        assert!(call.args.last().is_some_and(|prompt| {
+            prompt.contains(FULL_ACCESS_CANARY_RECEIPT_RELATIVE_PATH)
+                && prompt.contains(FULL_ACCESS_CANARY_RECEIPT)
+                && !prompt.contains(&profile.home_path)
+        }));
+        let work_root = PathBuf::from(&call.cwd);
+        let receipt = call.sandbox_receipt.unwrap();
+        assert!(!receipt.starts_with(&work_root));
+        assert!(receipt.starts_with(service.full_access_canary_parent(&profile.id).unwrap()));
         assert_eq!(
             service
                 .profile(&profile.id)
@@ -6039,6 +6212,52 @@ mod tests {
                 .cli,
             Some("codex_cli_danger_launch_surface_unsupported".into())
         );
+    }
+
+    #[test]
+    fn malformed_full_access_canary_timestamps_and_terminal_shapes_fail_closed() {
+        let (_directory, mut service) = service();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake;
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        service
+            .select_execution_mode(&profile.id, ExecutionMode::DangerFullAccess)
+            .unwrap();
+        service.authorize_danger_full_access(&profile.id).unwrap();
+        service.run_danger_full_access_canary(&profile.id).unwrap();
+        service
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE native_codex_profile_full_access_canaries SET launch_accepted_at='2000-01-01T00:00:00Z' WHERE profile_id=?1",
+                params![profile.id],
+            )
+            .unwrap();
+        assert!(service.query().is_err());
+    }
+
+    #[test]
+    fn current_full_access_canary_without_a_deadline_fails_closed() {
+        let (_directory, mut service) = service();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake;
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        service
+            .select_execution_mode(&profile.id, ExecutionMode::DangerFullAccess)
+            .unwrap();
+        service.authorize_danger_full_access(&profile.id).unwrap();
+        service.run_danger_full_access_canary(&profile.id).unwrap();
+        service
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE native_codex_profile_full_access_canaries SET deadline_at=NULL WHERE profile_id=?1",
+                params![profile.id],
+            )
+            .unwrap();
+        assert!(service.query().is_err());
     }
 
     #[test]
@@ -6135,6 +6354,95 @@ mod tests {
                 .disposition,
             "cancelled"
         );
+    }
+
+    #[test]
+    fn continuity_cancellation_cleans_a_reopened_full_access_receipt_without_an_owned_child() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake.clone();
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        service
+            .select_execution_mode(&profile.id, ExecutionMode::DangerFullAccess)
+            .unwrap();
+        service.authorize_danger_full_access(&profile.id).unwrap();
+        service.run_danger_full_access_canary(&profile.id).unwrap();
+        let receipt = fake.calls.lock().unwrap()[0]
+            .sandbox_receipt
+            .clone()
+            .unwrap();
+        fs::write(&receipt, FULL_ACCESS_CANARY_RECEIPT).unwrap();
+
+        drop(service);
+        let reopened = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        fs::remove_file(Path::new(&profile.home_path).join(MARKER_FILE)).unwrap();
+        let query = reopened.query().unwrap();
+        let invalidated = &query.profiles[0];
+
+        assert_eq!(invalidated.full_access_canary_attempt.disposition, "cancelled");
+        assert_eq!(invalidated.full_access_canary_attempt.cleanup_disposition, "removed");
+        assert!(!invalidated.full_access_canary_attempt.receipt_observed);
+        assert_eq!(invalidated.readiness.danger_full_access_canary, "blocked");
+        assert!(!receipt.exists());
+        write_marker(Path::new(&profile.home_path), &profile.id).unwrap();
+        assert!(reopened.select(&profile.id).is_err());
+        assert_eq!(
+            reopened
+                .profile(&profile.id)
+                .unwrap()
+                .full_access_canary_attempt
+                .disposition,
+            "cancelled"
+        );
+    }
+
+    #[test]
+    fn continuity_cancellation_records_full_access_receipt_cleanup_failure_without_deleting_broadly() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake.clone();
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        service
+            .select_execution_mode(&profile.id, ExecutionMode::DangerFullAccess)
+            .unwrap();
+        service.authorize_danger_full_access(&profile.id).unwrap();
+        service.run_danger_full_access_canary(&profile.id).unwrap();
+        let receipt = fake.calls.lock().unwrap()[0]
+            .sandbox_receipt
+            .clone()
+            .unwrap();
+        fs::create_dir(&receipt).unwrap();
+
+        drop(service);
+        let reopened = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        fs::remove_file(Path::new(&profile.home_path).join(MARKER_FILE)).unwrap();
+        let query = reopened.query().unwrap();
+        let invalidated = &query.profiles[0];
+
+        assert_eq!(invalidated.full_access_canary_attempt.disposition, "cancelled");
+        assert_eq!(invalidated.full_access_canary_attempt.cleanup_disposition, "failed");
+        assert_eq!(invalidated.readiness.danger_full_access_canary, "blocked");
+        assert!(receipt.is_dir());
     }
 
     #[test]
