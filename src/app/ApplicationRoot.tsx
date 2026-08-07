@@ -5,7 +5,9 @@ import type { WorktreeBuildClient } from '../application/worktreeBuild';
 
 /** The optional recorded review composition is development-only and never enters product boot. */
 export function ApplicationRoot() {
-  const [composition, setComposition] = useState<AppProps | null>(null);
+  const [composition, setComposition] = useState<AppProps>(() =>
+    createProductApplicationComposition(),
+  );
   const [worktreeBuild, setWorktreeBuild] = useState<{
     client: WorktreeBuildClient;
     Shell: (typeof import('../features/worktreeBuild'))['WorktreeBuildShell'];
@@ -16,7 +18,6 @@ export function ApplicationRoot() {
     const developmentRoute = new URLSearchParams(window.location.search);
     const harnessInspectorRequested = developmentRoute.has('harness-inspector');
     if (humanReviewInstance()) {
-      setComposition(createProductApplicationComposition());
       void Promise.all([
         import('../infrastructure/tauriWorktreeBuild'),
         import('../features/worktreeBuild'),
@@ -53,18 +54,15 @@ export function ApplicationRoot() {
         },
       );
     } else if (viteDevelopmentMode()) {
-      void loadDevelopmentReviewComposition(createProductApplicationComposition()).then((value) => {
+      void loadDevelopmentReviewComposition(composition).then((value) => {
         if (active) setComposition(value);
       });
-    } else {
-      setComposition(createProductApplicationComposition());
     }
     return () => {
       active = false;
     };
   }, []);
 
-  if (!composition) return null;
   if (worktreeBuild) {
     const { client, Shell } = worktreeBuild;
     return (

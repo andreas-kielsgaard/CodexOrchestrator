@@ -6697,6 +6697,10 @@ mod tests {
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
         ));
         assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        // Full startup re-entry reaches the same terminal Handler-action route without
+        // recreating any Handler, action, or Implementer launch.
+        terminal_action_reopen.reconcile_startup().unwrap();
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
         // A cold re-entry consumes the exact durable action route as a no-op. A replacement
         // original Handler correlation remains a routing conflict rather than a recovery route.
         Connection::open(&fixture.database_path).unwrap().execute(
