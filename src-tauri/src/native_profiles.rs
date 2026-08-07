@@ -458,6 +458,7 @@ const MCP_REPORTING_SERVER: &str = "codex-orchestrator-reporting";
 const MCP_REPORTING_TOOL: &str = "report_native_profile_readiness";
 const SETUP_ATTEMPT_TIMEOUT_SECONDS: i64 = 120;
 const MCP_PROBE_TIMEOUT_SECONDS: i64 = 300;
+const WORKSPACE_WRITE_CANARY_COMMAND_FILE: &str = "native-codex-profile-canary.cmd";
 static NATIVE_PROFILE_OPEN_GATE: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -467,6 +468,7 @@ struct NativeCliInvocation {
     codex_home: PathBuf,
     environment: Vec<(String, String)>,
     sandbox_receipt: Option<PathBuf>,
+    sandbox_command_file: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -522,6 +524,7 @@ struct SystemNativeCliPort {
 struct SystemNativeCliChild {
     child: Child,
     sandbox_receipt: Option<PathBuf>,
+    sandbox_command_file: Option<PathBuf>,
     stdout_drain: Option<std::thread::JoinHandle<()>>,
     stderr_drain: Option<std::thread::JoinHandle<()>>,
 }
@@ -542,6 +545,7 @@ impl NativeCliChild for SystemNativeCliChild {
                     .wait()
                     .map(|_| {
                         self.release_drains();
+                        self.remove_sandbox_command_file();
                     })
                     .map_err(|error| error.to_string())
             })
@@ -551,7 +555,7 @@ impl NativeCliChild for SystemNativeCliChild {
 impl SystemNativeCliChild {
     fn settled_receipt(&mut self, status: std::process::ExitStatus) -> NativeCliReceipt {
         self.release_drains();
-        NativeCliReceipt {
+        let receipt = NativeCliReceipt {
             succeeded: status.success(),
             exit_code: status.code(),
             sandbox_receipt_observed: self.sandbox_receipt.as_ref().is_some_and(|path| {
@@ -559,7 +563,9 @@ impl SystemNativeCliChild {
                     .map(|value| value.trim() == "native-codex-profile-canary")
                     .unwrap_or(false)
             }),
-        }
+        };
+        self.remove_sandbox_command_file();
+        receipt
     }
 
     fn release_drains(&mut self) {
@@ -568,6 +574,12 @@ impl SystemNativeCliChild {
         // that helper. The drains retain no output and end when their streams close.
         self.stdout_drain.take();
         self.stderr_drain.take();
+    }
+
+    fn remove_sandbox_command_file(&mut self) {
+        if let Some(path) = self.sandbox_command_file.take() {
+            let _ = fs::remove_file(path);
+        }
     }
 }
 
@@ -603,6 +615,7 @@ fn spawn_system_native_cli_child(
         stderr_drain: child.stderr.take().map(discard_native_cli_stream),
         child,
         sandbox_receipt: invocation.sandbox_receipt.clone(),
+        sandbox_command_file: invocation.sandbox_command_file.clone(),
     })
 }
 
@@ -1370,6 +1383,7 @@ impl NativeProfileService {
             codex_home: profile.home.clone(),
             environment: native_windows_cli_environment(&profile.home),
             sandbox_receipt: None,
+            sandbox_command_file: None,
         }) {
             Ok(child) => child,
             Err(_) => {
@@ -1419,6 +1433,7 @@ impl NativeProfileService {
                 codex_home: profile.home.clone(),
                 environment: native_windows_cli_environment(&profile.home),
                 sandbox_receipt: None,
+                sandbox_command_file: None,
             })
             .map_err(|_| {
                 self.set_attention(id, "cli", Some("codex_cli_unavailable"), false)
@@ -1882,6 +1897,7 @@ impl NativeProfileService {
             codex_home: profile.home.clone(),
             environment: native_profile_environment(&profile.home),
             sandbox_receipt: Some(sentinel),
+            sandbox_command_file: None,
         };
         match self.cli.start(&invocation) {
             Ok(mut child) => match self.full_access_canary_children.lock() {
@@ -2090,7 +2106,7 @@ impl NativeProfileService {
                 false,
             );
         }
-        let (cwd, args, sandbox_receipt) = match phase {
+        let (cwd, args, sandbox_receipt, sandbox_command_file) = match phase {
             // This is the supported Windows provisioning command. Its launch acceptance and
             // terminal outcome do not observe a UAC interaction or confirm initialization.
             SetupPhase::SandboxInitialization => (
@@ -2103,6 +2119,7 @@ impl NativeProfileService {
                     "--codex-home".into(),
                     profile.home.to_string_lossy().into_owned(),
                 ],
+                None,
                 None,
             ),
             SetupPhase::WorkspaceWriteCanary => {
@@ -2133,6 +2150,53 @@ impl NativeProfileService {
                         return Ok(());
                     }
                 }
+                let command_file = root.join(WORKSPACE_WRITE_CANARY_COMMAND_FILE);
+                if let Err(error) = fs::remove_file(&command_file) {
+                    if error.kind() != std::io::ErrorKind::NotFound {
+                        self.set_setup_attempt_state(
+                            &attempt.attempt_id,
+                            "launch_failed",
+                            "launch_failed",
+                            None,
+                        )?;
+                        self.update_readiness(
+                            id,
+                            None,
+                            None,
+                            Some("blocked"),
+                            None,
+                            Some((
+                                "canary",
+                                Some("native_sandbox_canary_command_cleanup_failed"),
+                            )),
+                        )?;
+                        return Err(format!(
+                            "Unable to clear the application-owned sandbox canary command: {error}"
+                        ));
+                    }
+                }
+                if let Err(error) = fs::write(
+                    &command_file,
+                    "@echo off\r\necho native-codex-profile-canary>workspace_write_canary.txt\r\n",
+                ) {
+                    self.set_setup_attempt_state(
+                        &attempt.attempt_id,
+                        "launch_failed",
+                        "launch_failed",
+                        None,
+                    )?;
+                    self.update_readiness(
+                        id,
+                        None,
+                        None,
+                        Some("blocked"),
+                        None,
+                        Some(("canary", Some("native_sandbox_canary_command_prepare_failed"))),
+                    )?;
+                    return Err(format!(
+                        "Unable to prepare the application-owned sandbox canary command: {error}"
+                    ));
+                }
                 (
                     root.clone(),
                     vec![
@@ -2144,11 +2208,15 @@ impl NativeProfileService {
                         "--".into(),
                         "cmd.exe".into(),
                         "/d".into(),
-                        "/s".into(),
                         "/c".into(),
-                        format!("echo native-codex-profile-canary>\"{}\"", output.display()),
+                        // Do not send a quote-bearing redirection expression through the
+                        // sandbox's CreateProcess command-vector boundary. The command file is
+                        // application-authored, relative to the exact probe root, and removed
+                        // after the owned child settles.
+                        format!(".\\{WORKSPACE_WRITE_CANARY_COMMAND_FILE}"),
                     ],
                     Some(output),
+                    Some(command_file),
                 )
             }
         };
@@ -2158,6 +2226,7 @@ impl NativeProfileService {
             codex_home: profile.home.clone(),
             environment: native_windows_cli_environment(&profile.home),
             sandbox_receipt,
+            sandbox_command_file: sandbox_command_file.clone(),
         };
         match self.cli.start(&invocation) {
             Ok(mut child) => {
@@ -2167,6 +2236,9 @@ impl NativeProfileService {
                     }
                     Err(_) => {
                         let _ = child.terminate();
+                        if let Some(path) = sandbox_command_file.as_ref() {
+                            let _ = fs::remove_file(path);
+                        }
                         self.set_setup_attempt_state(
                             &attempt.attempt_id,
                             "cancelled",
@@ -2185,6 +2257,9 @@ impl NativeProfileService {
                 )
             }
             Err(_) => {
+                if let Some(path) = sandbox_command_file.as_ref() {
+                    let _ = fs::remove_file(path);
+                }
                 self.set_setup_attempt_state(
                     &attempt.attempt_id,
                     "launch_failed",
@@ -2282,6 +2357,7 @@ impl NativeProfileService {
                             None,
                             Some((attempt.phase.attention_concern(), None)),
                         )?;
+                        self.remove_workspace_write_canary_command(&attempt.profile_id);
                     }
                 }
                 Ok(receipt) => {
@@ -2342,7 +2418,18 @@ impl NativeProfileService {
                     _ => "native_sandbox_attempt_failed",
                 }),
             )),
-        )
+        )?;
+        if attempt.phase == SetupPhase::WorkspaceWriteCanary {
+            self.remove_workspace_write_canary_command(&attempt.profile_id);
+        }
+        Ok(())
+    }
+
+    fn remove_workspace_write_canary_command(&self, profile_id: &str) {
+        let _ = fs::remove_file(
+            self.probe_root(profile_id)
+                .join(WORKSPACE_WRITE_CANARY_COMMAND_FILE),
+        );
     }
 
     fn mark_setup_attempt_launch_accepted(&self, attempt_id: &str) -> Result<(), String> {
@@ -3730,10 +3817,21 @@ mod tests {
         assert_eq!(calls[1].args[2], ":workspace");
         assert_eq!(calls[1].args[3], "-C");
         assert_eq!(calls[1].args[4], service.probe_root(&profile.id).to_string_lossy());
-        assert!(calls[1]
-            .args
-            .last()
-            .is_some_and(|argument| argument.starts_with("echo native-codex-profile-canary>")));
+        assert_eq!(
+            calls[1].args,
+            vec![
+                "sandbox".into(),
+                "-P".into(),
+                ":workspace".into(),
+                "-C".into(),
+                service.probe_root(&profile.id).to_string_lossy().into_owned(),
+                "--".into(),
+                "cmd.exe".into(),
+                "/d".into(),
+                "/c".into(),
+                ".\\native-codex-profile-canary.cmd".into(),
+            ]
+        );
         assert_eq!(calls[1].cwd, service.probe_root(&profile.id));
         for call in calls.iter() {
             assert_eq!(
@@ -3755,6 +3853,10 @@ mod tests {
         }
         assert!(calls[0].sandbox_receipt.is_none());
         assert!(calls[1].sandbox_receipt.is_some());
+        assert!(!service
+            .probe_root(&profile.id)
+            .join(WORKSPACE_WRITE_CANARY_COMMAND_FILE)
+            .exists());
     }
 
     #[test]
@@ -4412,6 +4514,7 @@ mod tests {
             codex_home: home.clone(),
             environment: native_windows_cli_environment(&home),
             sandbox_receipt: Some(receipt.clone()),
+            sandbox_command_file: None,
         };
         let settled = port.run(&invocation).unwrap();
         assert_eq!(settled.exit_code, Some(0));
@@ -4432,6 +4535,77 @@ mod tests {
         assert!(settled.succeeded);
         assert!(!settled.sandbox_receipt_observed);
         assert!(other.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn system_cli_port_forwards_a_workspace_command_file_without_receipt_path_quoting() {
+        let directory = tempfile::tempdir().unwrap();
+        let home = directory.path().join("selected-home");
+        let root = directory.path().join("application owned probe root");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        let receipt = root.join("workspace_write_canary.txt");
+        let command = root.join("native-codex-profile-canary.cmd");
+        fs::write(
+            &command,
+            "@echo off\r\necho native-codex-profile-canary>workspace_write_canary.txt\r\n",
+        )
+        .unwrap();
+        let port = SystemNativeCliPort {
+            program: Ok(std::env::var("COMSPEC").unwrap()),
+        };
+        let settled = port
+            .run(&NativeCliInvocation {
+                args: vec![
+                    "/d".into(),
+                    "/c".into(),
+                    ".\\native-codex-profile-canary.cmd".into(),
+                ],
+                cwd: root,
+                codex_home: home.clone(),
+                environment: native_windows_cli_environment(&home),
+                sandbox_receipt: Some(receipt),
+                sandbox_command_file: Some(command.clone()),
+            })
+            .unwrap();
+
+        assert!(settled.succeeded);
+        assert!(settled.sandbox_receipt_observed);
+        assert!(!command.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn system_cli_port_quote_bearing_workspace_payload_fails_when_the_probe_path_has_spaces() {
+        let directory = tempfile::tempdir().unwrap();
+        let home = directory.path().join("selected-home");
+        let root = directory.path().join("application owned probe root");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        let receipt = root.join("workspace_write_canary.txt");
+        let port = SystemNativeCliPort {
+            program: Ok(std::env::var("COMSPEC").unwrap()),
+        };
+
+        let settled = port
+            .run(&NativeCliInvocation {
+                args: vec![
+                    "/d".into(),
+                    "/s".into(),
+                    "/c".into(),
+                    format!("echo native-codex-profile-canary>\"{}\"", receipt.display()),
+                ],
+                cwd: root,
+                codex_home: home.clone(),
+                environment: native_windows_cli_environment(&home),
+                sandbox_receipt: Some(receipt),
+                sandbox_command_file: None,
+            })
+            .unwrap();
+
+        assert!(!settled.succeeded);
+        assert!(!settled.sandbox_receipt_observed);
     }
 
     #[test]
