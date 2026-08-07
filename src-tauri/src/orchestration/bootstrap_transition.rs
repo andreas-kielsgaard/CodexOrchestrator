@@ -6697,6 +6697,28 @@ mod tests {
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
         ));
         assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        // A cold re-entry consumes the exact durable action route as a no-op. A replacement
+        // original Handler correlation remains a routing conflict rather than a recovery route.
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "UPDATE work_unit_handler_action_continuations
+             SET original_handler_invocation_id='foreign-original-handler'
+             WHERE work_unit_id=?1",
+            [&root.0],
+        ).unwrap();
+        let divergent_terminal_action = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path, fixture.sessions.clone(),
+        ).unwrap();
+        assert!(matches!(
+            divergent_terminal_action.attach_work_unit_handler_activation(handler.clone()),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)
+        ));
+        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "UPDATE work_unit_handler_action_continuations
+             SET original_handler_invocation_id=?2
+             WHERE work_unit_id=?1",
+            params![root.0, continuation.2],
+        ).unwrap();
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE agent_session_invocations SET status='running',completed_at=NULL WHERE id=?1",
             [&continuation.3],

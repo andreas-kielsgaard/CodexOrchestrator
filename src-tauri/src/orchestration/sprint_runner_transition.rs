@@ -3385,6 +3385,58 @@ impl SprintRunnerTransitionService {
         };
         let terminal = matches!(status.as_str(), "completed" | "failed" | "canceled" | "interrupted");
         let action_invocation_id = stable_id("work-unit-handler-action-invocation", &attempt_id);
+        let completed: Option<(String, String, String, String, String, String, String)> = self.connection.lock()
+            .map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?
+            .query_row(
+                "SELECT attempt_id,handler_session_id,original_handler_invocation_id,action_invocation_id,
+                        action_harness_revision_id,action_harness_configuration_digest,
+                        action_harness_repository_commit_ref
+                 FROM work_unit_handler_action_continuations
+                 WHERE work_unit_id=?1
+                   AND blocked_reason IS NULL
+                   AND failure_reason IS NULL
+                   AND authorized_at IS NOT NULL
+                   AND invocation_prepared_at IS NOT NULL
+                   AND harness_bound_at IS NOT NULL
+                   AND launch_requested_at IS NOT NULL
+                   AND launch_accepted_at IS NOT NULL
+                   AND action_ready_at IS NOT NULL",
+                [work_unit_id],
+                |row| Ok((
+                    row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?,
+                    row.get(5)?, row.get(6)?,
+                )),
+            )
+            .optional()
+            .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        if let Some((stored_attempt, stored_session, stored_original, stored_action, revision, digest, commit)) = completed {
+            if stored_attempt != attempt_id
+                || stored_session != session_id
+                || stored_original != original_invocation_id
+                || stored_action != action_invocation_id
+            {
+                return Err(SprintRunnerTransitionError::Conflict);
+            }
+            let pinned = handler
+                .load_pinned_handler_revision(&revision, &digest, &commit)
+                .map_err(|_| SprintRunnerTransitionError::Conflict)?;
+            if !pinned.profile.mcp.required
+                || pinned.profile.mcp.enabled_tools != ["request_work_unit_implementer"]
+            {
+                return Err(SprintRunnerTransitionError::Conflict);
+            }
+            let session = AgentSessionId::new(session_id)
+                .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+            let invocation = AgentInvocationId::new(action_invocation_id)
+                .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+            return match self.sessions.application_invocation_launch_evidence(&invocation, &session)
+                .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?
+            {
+                ApplicationInvocationLaunchEvidence::LaunchAccepted => Ok(()),
+                ApplicationInvocationLaunchEvidence::PersistedNotAccepted
+                | ApplicationInvocationLaunchEvidence::NeverPersisted => Err(SprintRunnerTransitionError::Conflict),
+            };
+        }
         let existing: bool = self.connection.lock()
             .map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?
             .query_row("SELECT EXISTS(SELECT 1 FROM work_unit_handler_action_continuations WHERE work_unit_id=?1)", [work_unit_id], |row| row.get(0))
