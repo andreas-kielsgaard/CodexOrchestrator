@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 33;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 34;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
@@ -233,6 +233,36 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 .map_err(|error| {
                     format!("Unable to migrate native canary receipt classification: {error}")
                 })?;
+        }
+        if current_version <= 33 {
+            let versioned_danger_authorization = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('native_codex_profile_mode_authorizations') WHERE name='authority_scope')",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|error| format!("Unable to inspect native danger authorization schema: {error}"))?
+                != 0;
+            if !versioned_danger_authorization {
+                transaction
+                    .execute_batch(crate::native_profiles::NATIVE_PROFILE_V34_MIGRATION)
+                    .map_err(|error| {
+                        format!("Unable to migrate native danger authorization evidence: {error}")
+                    })?;
+            }
+            let legacy_full_access_canary = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('native_codex_profile_full_access_canaries') WHERE name='started_at')",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|error| format!("Unable to inspect native full-access canary schema: {error}"))?
+                != 0;
+            if legacy_full_access_canary {
+                transaction
+                    .execute_batch(crate::native_profiles::NATIVE_PROFILE_V34_FULL_ACCESS_CANARY_MIGRATION)
+                    .map_err(|error| format!("Unable to migrate native full-access canary evidence: {error}"))?;
+            }
         }
         if current_version == 14 {
             transaction

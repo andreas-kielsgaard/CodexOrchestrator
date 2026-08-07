@@ -96,8 +96,12 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_mode_authorizations (
   profile_id TEXT NOT NULL,
   mode TEXT NOT NULL CHECK (mode='danger_full_access'),
   filesystem_identity TEXT NOT NULL,
+  authority_scope TEXT NOT NULL CHECK (authority_scope IN ('filesystem_only','full_machine_filesystem_and_unrestricted_network')),
+  authority_version TEXT NOT NULL CHECK (authority_version IN ('danger-full-access/filesystem-only/v1','danger-full-access/unrestricted-network/v1')),
+  authorization_correlation_id TEXT,
   authorized_at TEXT NOT NULL,
   revoked_at TEXT,
+  CHECK ((authority_scope='filesystem_only' AND authority_version='danger-full-access/filesystem-only/v1' AND authorization_correlation_id IS NULL) OR (authority_scope='full_machine_filesystem_and_unrestricted_network' AND authority_version='danger-full-access/unrestricted-network/v1' AND authorization_correlation_id IS NOT NULL AND length(trim(authorization_correlation_id))>0)),
   PRIMARY KEY(profile_id, mode),
   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
 );
@@ -109,9 +113,23 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_full_access_canaries (
   executable TEXT NOT NULL,
   version TEXT NOT NULL,
   sentinel_path TEXT NOT NULL,
-  state TEXT NOT NULL CHECK (state IN ('pending','passed','blocked','cancelled')),
-  started_at TEXT NOT NULL,
-  completed_at TEXT,
+  authorization_correlation_id TEXT,
+  authorization_version TEXT,
+  correlation_id TEXT,
+  state TEXT NOT NULL CHECK (state IN ('pending','passed','launch_failed','terminal_failed','timed_out','cancelled','recovered_unobserved','cleanup_failed','legacy_unverified')),
+  requested_at TEXT NOT NULL,
+  launch_accepted_at TEXT,
+  deadline_at TEXT,
+  settled_at TEXT,
+  process_activity TEXT NOT NULL CHECK (process_activity IN ('unobserved','launch_accepted','terminal_observed')),
+  provider_activity TEXT NOT NULL CHECK (provider_activity='unobserved'),
+  terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','receipt_missing','launch_failed','timed_out','cancelled','recovered_unobserved','cleanup_failed','legacy_unverified')),
+  terminal_exit_code INTEGER,
+  receipt_observed INTEGER NOT NULL CHECK (receipt_observed IN (0,1)),
+  cleanup_disposition TEXT NOT NULL CHECK (cleanup_disposition IN ('pending','removed','failed','not_observed')),
+  CHECK (state <> 'pending' OR (launch_accepted_at IS NULL OR process_activity='launch_accepted')),
+  CHECK (state <> 'passed' OR (launch_accepted_at IS NOT NULL AND settled_at IS NOT NULL AND process_activity='terminal_observed' AND receipt_observed=1 AND cleanup_disposition='removed')),
+  CHECK (state <> 'launch_failed' OR (launch_accepted_at IS NULL AND settled_at IS NOT NULL AND terminal_classification='launch_failed' AND terminal_exit_code IS NULL AND receipt_observed=0)),
   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_full_access_canary_pending
@@ -451,6 +469,72 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_setup_attempt_pending
 ON native_codex_profile_setup_attempts(profile_id,phase) WHERE state='pending';
 "#;
 
+/// Existing danger approval rows covered only filesystem authority. Preserve their durable
+/// identity and timestamp, but do not reinterpret them as approval for unrestricted networking.
+pub(crate) const NATIVE_PROFILE_V34_MIGRATION: &str = r#"
+ALTER TABLE native_codex_profile_mode_authorizations RENAME TO native_codex_profile_mode_authorizations_v33;
+CREATE TABLE native_codex_profile_mode_authorizations (
+  profile_id TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode='danger_full_access'),
+  filesystem_identity TEXT NOT NULL,
+  authority_scope TEXT NOT NULL CHECK (authority_scope IN ('filesystem_only','full_machine_filesystem_and_unrestricted_network')),
+  authority_version TEXT NOT NULL CHECK (authority_version IN ('danger-full-access/filesystem-only/v1','danger-full-access/unrestricted-network/v1')),
+  authorization_correlation_id TEXT,
+  authorized_at TEXT NOT NULL,
+  revoked_at TEXT,
+  CHECK ((authority_scope='filesystem_only' AND authority_version='danger-full-access/filesystem-only/v1' AND authorization_correlation_id IS NULL) OR (authority_scope='full_machine_filesystem_and_unrestricted_network' AND authority_version='danger-full-access/unrestricted-network/v1' AND authorization_correlation_id IS NOT NULL AND length(trim(authorization_correlation_id))>0)),
+  PRIMARY KEY(profile_id, mode),
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+INSERT INTO native_codex_profile_mode_authorizations (profile_id,mode,filesystem_identity,authority_scope,authority_version,authorization_correlation_id,authorized_at,revoked_at)
+SELECT profile_id,mode,filesystem_identity,'filesystem_only','danger-full-access/filesystem-only/v1',NULL,authorized_at,revoked_at
+FROM native_codex_profile_mode_authorizations_v33;
+DROP TABLE native_codex_profile_mode_authorizations_v33;
+"#;
+
+pub(crate) const NATIVE_PROFILE_V34_FULL_ACCESS_CANARY_MIGRATION: &str = r#"
+ALTER TABLE native_codex_profile_full_access_canaries RENAME TO native_codex_profile_full_access_canaries_v33;
+CREATE TABLE native_codex_profile_full_access_canaries (
+  attempt_id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  filesystem_identity TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode='danger_full_access'),
+  executable TEXT NOT NULL,
+  version TEXT NOT NULL,
+  sentinel_path TEXT NOT NULL,
+  authorization_correlation_id TEXT,
+  authorization_version TEXT,
+  correlation_id TEXT,
+  state TEXT NOT NULL CHECK (state IN ('pending','passed','launch_failed','terminal_failed','timed_out','cancelled','recovered_unobserved','cleanup_failed','legacy_unverified')),
+  requested_at TEXT NOT NULL,
+  launch_accepted_at TEXT,
+  deadline_at TEXT,
+  settled_at TEXT,
+  process_activity TEXT NOT NULL CHECK (process_activity IN ('unobserved','launch_accepted','terminal_observed')),
+  provider_activity TEXT NOT NULL CHECK (provider_activity='unobserved'),
+  terminal_classification TEXT NOT NULL CHECK (terminal_classification IN ('not_observed','exit_code','receipt_missing','launch_failed','timed_out','cancelled','recovered_unobserved','cleanup_failed','legacy_unverified')),
+  terminal_exit_code INTEGER,
+  receipt_observed INTEGER NOT NULL CHECK (receipt_observed IN (0,1)),
+  cleanup_disposition TEXT NOT NULL CHECK (cleanup_disposition IN ('pending','removed','failed','not_observed')),
+  CHECK (state <> 'passed' OR (launch_accepted_at IS NOT NULL AND settled_at IS NOT NULL AND process_activity='terminal_observed' AND receipt_observed=1 AND cleanup_disposition='removed')),
+  CHECK (state <> 'launch_failed' OR (launch_accepted_at IS NULL AND settled_at IS NOT NULL AND terminal_classification='launch_failed' AND terminal_exit_code IS NULL AND receipt_observed=0)),
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+);
+INSERT INTO native_codex_profile_full_access_canaries (attempt_id,profile_id,filesystem_identity,mode,executable,version,sentinel_path,authorization_correlation_id,authorization_version,correlation_id,state,requested_at,launch_accepted_at,deadline_at,settled_at,process_activity,provider_activity,terminal_classification,terminal_exit_code,receipt_observed,cleanup_disposition)
+SELECT attempt_id,profile_id,filesystem_identity,mode,executable,version,sentinel_path,NULL,NULL,NULL,
+  CASE state WHEN 'pending' THEN 'recovered_unobserved' ELSE 'legacy_unverified' END,
+  started_at,NULL,NULL,completed_at,
+  'unobserved','unobserved',
+  CASE state WHEN 'pending' THEN 'recovered_unobserved' ELSE 'legacy_unverified' END,
+  NULL,0,'not_observed'
+FROM native_codex_profile_full_access_canaries_v33;
+DROP TABLE native_codex_profile_full_access_canaries_v33;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_full_access_canary_pending
+ON native_codex_profile_full_access_canaries(profile_id) WHERE state='pending';
+UPDATE native_codex_profile_readiness SET danger_full_access_canary='blocked'
+WHERE danger_full_access_canary='passed';
+"#;
+
 const MARKER_FILE: &str = ".codex-orchestrator-profile.json";
 const PROFILE_QUERY_CONTRACT: &str = "native-codex-profile-query/v1";
 const MCP_REPORTING_CAPABILITY: &str = "native-codex-profile-reporting/v1";
@@ -459,6 +543,9 @@ const MCP_REPORTING_TOOL: &str = "report_native_profile_readiness";
 const SETUP_ATTEMPT_TIMEOUT_SECONDS: i64 = 120;
 const MCP_PROBE_TIMEOUT_SECONDS: i64 = 300;
 const WORKSPACE_WRITE_CANARY_COMMAND_FILE: &str = "native-codex-profile-canary.cmd";
+const FULL_ACCESS_CANARY_TIMEOUT_SECONDS: i64 = 120;
+const DANGER_AUTHORITY_SCOPE: &str = "full_machine_filesystem_and_unrestricted_network";
+const DANGER_AUTHORITY_VERSION: &str = "danger-full-access/unrestricted-network/v1";
 static NATIVE_PROFILE_OPEN_GATE: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -478,7 +565,7 @@ struct NativeCliProvenance {
     version: String,
     workspace_sandbox_supported: bool,
     danger_full_access_supported: bool,
-    danger_network_enforcement_supported: bool,
+    danger_unrestricted_network_supported: bool,
     non_interactive_approval_supported: bool,
 }
 
@@ -488,6 +575,24 @@ struct NativeCliSurface {
     windows_sandbox_setup_supported: bool,
     workspace_launch_flags_supported: bool,
     workspace_launch_project_config_isolated: bool,
+}
+
+fn danger_launch_semantic_capability(version: &str, exec_help: &str) -> bool {
+    version == "codex-cli 0.144.0"
+        && [
+            "--json",
+            "--strict-config",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--config",
+            "--sandbox",
+            "--cd",
+            "--skip-git-repo-check",
+            "danger-full-access",
+            "--dangerously-bypass-approvals-and-sandbox",
+        ]
+        .iter()
+        .all(|token| exec_help.contains(token))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -505,6 +610,10 @@ struct PendingFullAccessCanary {
     executable: String,
     version: String,
     sentinel_path: PathBuf,
+    authorization_correlation_id: String,
+    authorization_version: String,
+    correlation_id: String,
+    deadline_at: DateTime<Utc>,
 }
 
 trait NativeCliChild: Send {
@@ -583,7 +692,9 @@ impl SystemNativeCliChild {
     }
 }
 
-fn discard_native_cli_stream(mut stream: impl Read + Send + 'static) -> std::thread::JoinHandle<()> {
+fn discard_native_cli_stream(
+    mut stream: impl Read + Send + 'static,
+) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let _ = std::io::copy(&mut stream, &mut std::io::sink());
     })
@@ -634,7 +745,9 @@ impl NativeCliPort for SystemNativeCliPort {
             .program
             .as_ref()
             .map_err(|_| "Codex CLI is unavailable for this profile".to_string())?;
-        Ok(Box::new(spawn_system_native_cli_child(program, invocation)?))
+        Ok(Box::new(spawn_system_native_cli_child(
+            program, invocation,
+        )?))
     }
     fn surface(&self) -> Result<NativeCliSurface, String> {
         let program = self
@@ -647,22 +760,22 @@ impl NativeCliPort for SystemNativeCliPort {
         // The setup parser prints its help to stderr and exits non-zero before its required
         // `--current-user` argument is supplied. Its combined help output is the capability
         // evidence; a successful process exit would incorrectly reject this supported route.
-        let sandbox_setup_help =
-            native_cli_help_output(program, &["sandbox", "setup", "--help"])?;
+        let sandbox_setup_help = native_cli_help_output(program, &["sandbox", "setup", "--help"])?;
         let (workspace_sandbox_supported, windows_sandbox_setup_supported) =
             windows_semantic_sandbox_capabilities(&sandbox_help, &sandbox_setup_help);
         let (workspace_launch_flags_supported, workspace_launch_project_config_isolated) =
             workspace_launch_semantic_capabilities(version.trim(), &exec_help);
-        let danger_full_access_supported = exec_help.contains("danger-full-access");
-        let danger_network_enforcement_supported = false;
-        let non_interactive_approval_supported = exec_help.contains("--dangerously-bypass-approvals-and-sandbox");
+        let danger_full_access_supported =
+            danger_launch_semantic_capability(version.trim(), &exec_help);
+        let danger_unrestricted_network_supported = danger_full_access_supported;
+        let non_interactive_approval_supported = danger_full_access_supported;
         Ok(NativeCliSurface {
             provenance: NativeCliProvenance {
                 executable: program.clone(),
                 version: version.trim().to_string(),
                 workspace_sandbox_supported,
                 danger_full_access_supported,
-                danger_network_enforcement_supported,
+                danger_unrestricted_network_supported,
                 non_interactive_approval_supported,
             },
             windows_sandbox_setup_supported,
@@ -707,9 +820,9 @@ fn workspace_launch_semantic_capabilities(version: &str, exec_help: &str) -> (bo
 }
 
 fn workspace_project_trust_override(working_root: &Path) -> Result<String, String> {
-    let working_root = working_root
-        .to_str()
-        .ok_or_else(|| "The application-owned working root is not safely representable".to_string())?;
+    let working_root = working_root.to_str().ok_or_else(|| {
+        "The application-owned working root is not safely representable".to_string()
+    })?;
     if working_root.chars().any(char::is_control) {
         return Err("The application-owned working root is not safely representable".into());
     }
@@ -722,16 +835,20 @@ fn workspace_project_trust_override(working_root: &Path) -> Result<String, Strin
 }
 
 fn observe_elevated_windows_sandbox_mode(home: &Path) -> Result<bool, String> {
-    let file = fs::File::open(home.join("config.toml"))
-        .map_err(|_| "The selected profile has no readable external sandbox configuration".to_string())?;
+    let file = fs::File::open(home.join("config.toml")).map_err(|_| {
+        "The selected profile has no readable external sandbox configuration".to_string()
+    })?;
     let mut in_windows = false;
     let mut windows_table_count = 0;
     let mut elevated_assignments = 0;
     let mut non_elevated_assignments = 0;
     for line in BufReader::new(file).lines() {
-        let line = line.map_err(|_| "The selected profile sandbox configuration cannot be read".to_string())?;
+        let line = line
+            .map_err(|_| "The selected profile sandbox configuration cannot be read".to_string())?;
         if line.len() > 1024 {
-            return Err("The selected profile sandbox configuration is not safely observable".into());
+            return Err(
+                "The selected profile sandbox configuration is not safely observable".into(),
+            );
         }
         let value = line.trim();
         if value.starts_with('[') && value.ends_with(']') {
@@ -887,6 +1004,18 @@ pub(crate) struct NativeProfileReadiness {
 pub(crate) struct NativeProfileExecution {
     selected_mode: ExecutionMode,
     danger_full_access_authorized: bool,
+    danger_authorization: NativeProfileDangerAuthorization,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NativeProfileDangerAuthorization {
+    disposition: String,
+    authority_scope: Option<String>,
+    authority_version: Option<String>,
+    correlation_id: Option<String>,
+    authorized_at: Option<String>,
+    revoked_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -937,6 +1066,25 @@ pub(crate) struct NativeProfileSandboxAdoptionConfirmation {
     confirmed_at: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NativeProfileFullAccessCanaryAttempt {
+    disposition: String,
+    authorization_version: Option<String>,
+    authorization_correlation_id: Option<String>,
+    correlation_id: Option<String>,
+    requested_at: Option<String>,
+    launch_accepted_at: Option<String>,
+    deadline_at: Option<String>,
+    settled_at: Option<String>,
+    process_activity: String,
+    provider_activity: String,
+    terminal_classification: String,
+    terminal_exit_code: Option<i32>,
+    receipt_observed: bool,
+    cleanup_disposition: String,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NativeProfileAttentions {
@@ -961,6 +1109,7 @@ pub(crate) struct NativeProfileDto {
     setup_attempt: NativeProfileSetupAttempt,
     sandbox_adoption: NativeProfileSandboxAdoption,
     sandbox_adoption_confirmation: NativeProfileSandboxAdoptionConfirmation,
+    full_access_canary_attempt: NativeProfileFullAccessCanaryAttempt,
     readiness: NativeProfileReadiness,
 }
 
@@ -1103,6 +1252,7 @@ struct StoredProfile {
     setup_attempt: NativeProfileSetupAttempt,
     sandbox_adoption: NativeProfileSandboxAdoption,
     sandbox_adoption_confirmation: NativeProfileSandboxAdoptionConfirmation,
+    full_access_canary_attempt: NativeProfileFullAccessCanaryAttempt,
     readiness: NativeProfileReadiness,
 }
 
@@ -1119,6 +1269,7 @@ impl From<StoredProfile> for NativeProfileDto {
             setup_attempt: value.setup_attempt,
             sandbox_adoption: value.sandbox_adoption,
             sandbox_adoption_confirmation: value.sandbox_adoption_confirmation,
+            full_access_canary_attempt: value.full_access_canary_attempt,
             readiness: value.readiness,
         }
     }
@@ -1345,21 +1496,41 @@ impl NativeProfileService {
         &self,
         id: &str,
     ) -> Result<NativeProfileDto, String> {
-        let profile = self.require_active(id)?;
+        let profile = self.require_selected_active(id)?;
         if profile.execution.selected_mode != ExecutionMode::DangerFullAccess {
             return Err("Danger full access must be selected before it can be authorized".into());
         }
+        let surface = self.cli.surface().map_err(|_| {
+            self.set_attention(id, "cli", Some("codex_cli_surface_unsupported"), false)
+                .ok();
+            "The resolved Codex CLI surface is unsupported for danger authorization".to_string()
+        })?;
+        if !surface.provenance.danger_full_access_supported
+            || !surface.provenance.danger_unrestricted_network_supported
+            || !surface.provenance.non_interactive_approval_supported
+        {
+            self.set_attention(
+                id,
+                "cli",
+                Some("codex_cli_danger_launch_surface_unsupported"),
+                false,
+            )?;
+            return Err(
+                "The resolved Codex CLI cannot establish the authorized danger launch contract"
+                    .into(),
+            );
+        }
         self.connection()?
             .execute(
-                "INSERT INTO native_codex_profile_mode_authorizations (profile_id,mode,filesystem_identity,authorized_at,revoked_at) VALUES (?1,'danger_full_access',?2,?3,NULL) ON CONFLICT(profile_id,mode) DO UPDATE SET filesystem_identity=excluded.filesystem_identity,authorized_at=excluded.authorized_at,revoked_at=NULL",
-                params![id, profile.identity, Utc::now().to_rfc3339()],
+                "INSERT INTO native_codex_profile_mode_authorizations (profile_id,mode,filesystem_identity,authority_scope,authority_version,authorization_correlation_id,authorized_at,revoked_at) VALUES (?1,'danger_full_access',?2,?3,?4,?5,?6,NULL) ON CONFLICT(profile_id,mode) DO UPDATE SET filesystem_identity=excluded.filesystem_identity,authority_scope=excluded.authority_scope,authority_version=excluded.authority_version,authorization_correlation_id=excluded.authorization_correlation_id,authorized_at=excluded.authorized_at,revoked_at=NULL",
+                params![id, profile.identity, DANGER_AUTHORITY_SCOPE, DANGER_AUTHORITY_VERSION, format!("native-danger-authorization-{}", Uuid::new_v4()), Utc::now().to_rfc3339()],
             )
             .map_err(|error| format!("Unable to record danger full access authorization: {error}"))?;
         self.profile(id).map(Into::into)
     }
 
     pub(crate) fn revoke_danger_full_access(&self, id: &str) -> Result<NativeProfileDto, String> {
-        self.require_active(id)?;
+        self.require_selected_active(id)?;
         self.connection()?
             .execute(
                 "UPDATE native_codex_profile_mode_authorizations SET revoked_at=?2 WHERE profile_id=?1 AND mode='danger_full_access' AND revoked_at IS NULL",
@@ -1519,11 +1690,16 @@ impl NativeProfileService {
 
     /// Records an observed external Windows sandbox postcondition. It never creates or rewrites
     /// that configuration and never stands in for a product-owned setup request or UAC event.
-    pub(crate) fn verify_preprovisioned_sandbox(&self, id: &str) -> Result<NativeProfileDto, String> {
+    pub(crate) fn verify_preprovisioned_sandbox(
+        &self,
+        id: &str,
+    ) -> Result<NativeProfileDto, String> {
         let profile = self.require_selected_active(id)?;
         let surface = self.cli.surface().map_err(|_| {
-            self.set_attention(id, "cli", Some("codex_cli_surface_unsupported"), false).ok();
-            "The resolved Codex CLI surface is unsupported for external sandbox verification".to_string()
+            self.set_attention(id, "cli", Some("codex_cli_surface_unsupported"), false)
+                .ok();
+            "The resolved Codex CLI surface is unsupported for external sandbox verification"
+                .to_string()
         })?;
         let elevated_mode_observed = observe_elevated_windows_sandbox_mode(&profile.home)?;
         let verified = surface.provenance.workspace_sandbox_supported
@@ -1543,17 +1719,30 @@ impl NativeProfileService {
             Some("attention_required"),
             Some("blocked"),
             None,
-            Some(("sandbox", Some(if verified { "external_sandbox_provisioning_verified_explicit_adoption_confirmation_required" } else { "external_sandbox_provisioning_not_verified" }))),
+            Some((
+                "sandbox",
+                Some(if verified {
+                    "external_sandbox_provisioning_verified_explicit_adoption_confirmation_required"
+                } else {
+                    "external_sandbox_provisioning_not_verified"
+                }),
+            )),
         )?;
         self.profile(id).map(Into::into)
     }
 
     /// This is an explicit product acknowledgment of a verified external postcondition. It does
     /// not claim that this product requested setup or observed a UAC interaction.
-    pub(crate) fn confirm_preprovisioned_sandbox_adoption(&self, id: &str) -> Result<NativeProfileDto, String> {
+    pub(crate) fn confirm_preprovisioned_sandbox_adoption(
+        &self,
+        id: &str,
+    ) -> Result<NativeProfileDto, String> {
         let profile = self.require_selected_active(id)?;
         let adoption = load_sandbox_adoption(&self.connection()?, id, &profile.identity)?;
-        let surface = self.cli.surface().map_err(|_| "The resolved Codex CLI surface is unsupported for external sandbox adoption".to_string())?;
+        let surface = self.cli.surface().map_err(|_| {
+            "The resolved Codex CLI surface is unsupported for external sandbox adoption"
+                .to_string()
+        })?;
         let still_observed = observe_elevated_windows_sandbox_mode(&profile.home)?;
         let valid = adoption.disposition == "verified"
             && adoption.executable.as_deref() == Some(surface.provenance.executable.as_str())
@@ -1567,7 +1756,9 @@ impl NativeProfileService {
             self.invalidate_sandbox_adoption(id)?;
             return Err("The externally provisioned sandbox evidence no longer matches this selected profile".into());
         }
-        let adoption_correlation = adoption.correlation_id.ok_or("The external sandbox observation has no durable correlation")?;
+        let adoption_correlation = adoption
+            .correlation_id
+            .ok_or("The external sandbox observation has no durable correlation")?;
         let now = Utc::now().to_rfc3339();
         self.connection()?.execute(
             "INSERT INTO native_codex_profile_sandbox_adoption_confirmations (profile_id,filesystem_identity,adoption_correlation_id,confirmation_correlation_id,confirmed_at,state,invalidated_at) VALUES (?1,?2,?3,?4,?5,'confirmed',NULL) ON CONFLICT(profile_id) DO UPDATE SET filesystem_identity=excluded.filesystem_identity,adoption_correlation_id=excluded.adoption_correlation_id,confirmation_correlation_id=excluded.confirmation_correlation_id,confirmed_at=excluded.confirmed_at,state='confirmed',invalidated_at=NULL",
@@ -1579,7 +1770,10 @@ impl NativeProfileService {
             Some("initialized"),
             None,
             None,
-            Some(("sandbox", Some("external_sandbox_adoption_confirmed_product_uac_unobserved"))),
+            Some((
+                "sandbox",
+                Some("external_sandbox_adoption_confirmed_product_uac_unobserved"),
+            )),
         )?;
         self.profile(id).map(Into::into)
     }
@@ -1753,12 +1947,6 @@ impl NativeProfileService {
                 "Only the currently selected native profile can receive a launch projection".into(),
             );
         }
-        if !target.network_disabled {
-            return Err(
-                "Native execution requires an application-owned target with network disabled"
-                    .into(),
-            );
-        }
         let surface = self.cli.surface().map_err(|_| {
             self.set_attention(id, "cli", Some("codex_cli_surface_unsupported"), false)
                 .ok();
@@ -1767,6 +1955,9 @@ impl NativeProfileService {
         let mode = profile.execution.selected_mode;
         match mode {
             ExecutionMode::WorkspaceWrite => {
+                if !target.network_disabled {
+                    return Err("Workspace-write execution requires an application-owned target with network disabled".into());
+                }
                 if !surface.workspace_launch_flags_supported {
                     self.set_attention(
                         id,
@@ -1799,33 +1990,41 @@ impl NativeProfileService {
                 }
             }
             ExecutionMode::DangerFullAccess => {
+                if target.network_disabled {
+                    return Err("Danger full access requires the explicitly authorized unrestricted-network target".into());
+                }
                 if !surface.provenance.danger_full_access_supported
+                    || !surface.provenance.danger_unrestricted_network_supported
                     || !surface.provenance.non_interactive_approval_supported
                     || !profile.execution.danger_full_access_authorized
                 {
+                    self.set_attention(
+                        id,
+                        "cli",
+                        Some("codex_cli_danger_launch_surface_unsupported"),
+                        false,
+                    )?;
                     return Err(
                         "Danger full access launch authority is not currently established".into(),
                     );
                 }
-                if !surface.provenance.danger_network_enforcement_supported {
+                if !surface.workspace_launch_flags_supported
+                    || !surface.workspace_launch_project_config_isolated
+                {
                     self.set_attention(
                         id,
                         "cli",
-                        Some("codex_cli_danger_network_enforcement_unsupported"),
+                        Some("codex_cli_danger_launch_project_config_unsupported"),
                         false,
                     )?;
                     return Err(
-                        "The resolved Codex CLI cannot enforce the application-required network policy for danger full access".into(),
+                        "The resolved Codex CLI cannot exclude application-unauthorized project configuration from a danger launch".into(),
                     );
                 }
             }
         }
-        let workspace_project_trust_override = match mode {
-            ExecutionMode::WorkspaceWrite => Some(workspace_project_trust_override(
-                &target.working_root,
-            )?),
-            ExecutionMode::DangerFullAccess => None,
-        };
+        let workspace_project_trust_override =
+            workspace_project_trust_override(&target.working_root)?;
         Ok(NativeLaunchProjectionDto {
             profile_id: profile.id,
             mode,
@@ -1842,35 +2041,52 @@ impl NativeProfileService {
                 "--skip-git-repo-check".into(),
             ]
             .into_iter()
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--ignore-user-config".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--ignore-rules".into()))
+            .chain([
+                "--ignore-user-config".into(),
+                "--ignore-rules".into(),
+                "--config".into(),
+                workspace_project_trust_override,
+                "--config".into(),
+                "project_root_markers=[]".into(),
+                "--config".into(),
+                "project_doc_max_bytes=0".into(),
+                "--config".into(),
+                "mcp_servers={}".into(),
+                "--config".into(),
+                "features.hooks=false".into(),
+                "--config".into(),
+                "features.plugins=false".into(),
+                "--config".into(),
+                "features.apps=false".into(),
+                "--config".into(),
+            ])
+            .chain(
+                (mode == ExecutionMode::WorkspaceWrite)
+                    .then_some("sandbox_workspace_write.network_access=false".into()),
+            )
             .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
-            .chain(workspace_project_trust_override)
+            .chain(
+                (mode == ExecutionMode::WorkspaceWrite)
+                    .then_some("sandbox_workspace_write.writable_roots=[]".into()),
+            )
             .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("project_root_markers=[]".into()))
+            .chain(
+                (mode == ExecutionMode::WorkspaceWrite)
+                    .then_some("sandbox_workspace_write.exclude_tmpdir_env_var=true".into()),
+            )
             .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("project_doc_max_bytes=0".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("mcp_servers={}".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("features.hooks=false".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("features.plugins=false".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("features.apps=false".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("sandbox_workspace_write.network_access=false".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("sandbox_workspace_write.writable_roots=[]".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("sandbox_workspace_write.exclude_tmpdir_env_var=true".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
-            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("sandbox_workspace_write.exclude_slash_tmp=true".into()))
-            .chain((mode == ExecutionMode::DangerFullAccess).then_some("--dangerously-bypass-approvals-and-sandbox".into()))
+            .chain(
+                (mode == ExecutionMode::WorkspaceWrite)
+                    .then_some("sandbox_workspace_write.exclude_slash_tmp=true".into()),
+            )
+            .chain(
+                (mode == ExecutionMode::DangerFullAccess)
+                    .then_some("--dangerously-bypass-approvals-and-sandbox".into()),
+            )
             .collect(),
             working_root: target.working_root.to_string_lossy().into_owned(),
             requested_network_disabled: target.network_disabled,
-            effective_network_enforced: true,
+            effective_network_enforced: mode == ExecutionMode::WorkspaceWrite,
             non_interactive_approval: mode == ExecutionMode::DangerFullAccess,
             windows_uac_authority: "not_granted",
         })
@@ -1881,7 +2097,7 @@ impl NativeProfileService {
         id: &str,
     ) -> Result<NativeFullAccessCanaryProjectionDto, String> {
         let target =
-            NativeLaunchTarget::application_owned(self.full_access_canary_root(id)?, true)?;
+            NativeLaunchTarget::application_owned(self.full_access_canary_root(id)?, false)?;
         let launch = self.project_launch(id, &target)?;
         if launch.mode != ExecutionMode::DangerFullAccess {
             return Err(
@@ -1908,13 +2124,32 @@ impl NativeProfileService {
         if load_pending_full_access_canary(&self.connection()?, id)?.is_some() {
             return self.profile(id).map(Into::into);
         }
-        let profile = self.require_active(id)?;
+        let profile = self.require_selected_active(id)?;
         let projection = self.project_full_access_canary(id)?;
         let sentinel = PathBuf::from(&projection.sentinel_path);
+        if let Err(error) = fs::remove_file(&sentinel) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                return Err("Unable to clear the owned full-access canary receipt".into());
+            }
+        }
+        let authorization = &profile.execution.danger_authorization;
+        let authorization_correlation_id = authorization
+            .correlation_id
+            .clone()
+            .ok_or("The current danger authorization has no durable correlation")?;
+        if authorization.disposition != "authorized"
+            || authorization.authority_scope.as_deref() != Some(DANGER_AUTHORITY_SCOPE)
+            || authorization.authority_version.as_deref() != Some(DANGER_AUTHORITY_VERSION)
+        {
+            return Err(
+                "A current explicit danger authorization is required before the canary".into(),
+            );
+        }
         let prompt = format!(
             "Create only the application-owned sentinel file at {} with the exact contents native-codex-profile-full-access-canary, then stop.",
             sentinel.display()
         );
+        let now = Utc::now();
         let attempt = PendingFullAccessCanary {
             attempt_id: format!("native-full-access-canary-{}", Uuid::new_v4()),
             profile_id: profile.id.clone(),
@@ -1922,10 +2157,14 @@ impl NativeProfileService {
             executable: projection.launch.executable.clone(),
             version: projection.launch.version.clone(),
             sentinel_path: sentinel.clone(),
+            authorization_correlation_id,
+            authorization_version: DANGER_AUTHORITY_VERSION.into(),
+            correlation_id: format!("native-full-access-canary-correlation-{}", Uuid::new_v4()),
+            deadline_at: now + Duration::seconds(FULL_ACCESS_CANARY_TIMEOUT_SECONDS),
         };
         self.connection()?.execute(
-            "INSERT INTO native_codex_profile_full_access_canaries (attempt_id,profile_id,filesystem_identity,mode,executable,version,sentinel_path,state,started_at) VALUES (?1,?2,?3,'danger_full_access',?4,?5,?6,'pending',?7)",
-            params![attempt.attempt_id, attempt.profile_id, attempt.filesystem_identity, attempt.executable, attempt.version, attempt.sentinel_path.to_string_lossy(), Utc::now().to_rfc3339()],
+            "INSERT INTO native_codex_profile_full_access_canaries (attempt_id,profile_id,filesystem_identity,mode,executable,version,sentinel_path,authorization_correlation_id,authorization_version,correlation_id,state,requested_at,deadline_at,process_activity,provider_activity,terminal_classification,receipt_observed,cleanup_disposition) VALUES (?1,?2,?3,'danger_full_access',?4,?5,?6,?7,?8,?9,'pending',?10,?11,'unobserved','unobserved','not_observed',0,'pending')",
+            params![attempt.attempt_id, attempt.profile_id, attempt.filesystem_identity, attempt.executable, attempt.version, attempt.sentinel_path.to_string_lossy(), attempt.authorization_correlation_id, attempt.authorization_version, attempt.correlation_id, now.to_rfc3339(), attempt.deadline_at.to_rfc3339()],
         ).map_err(|error| format!("Unable to persist full-access canary request: {error}"))?;
         let mut args = projection.launch.arguments;
         args.push(prompt);
@@ -1940,17 +2179,33 @@ impl NativeProfileService {
         match self.cli.start(&invocation) {
             Ok(mut child) => match self.full_access_canary_children.lock() {
                 Ok(mut children) => {
-                    children.insert(attempt.attempt_id, child);
+                    children.insert(attempt.attempt_id.clone(), child);
+                    self.connection()?.execute(
+                        "UPDATE native_codex_profile_full_access_canaries SET launch_accepted_at=?2,process_activity='launch_accepted' WHERE attempt_id=?1 AND state='pending'",
+                        params![attempt.attempt_id, Utc::now().to_rfc3339()],
+                    ).map_err(|error| error.to_string())?;
                     self.profile(id).map(Into::into)
                 }
                 Err(_) => {
                     let _ = child.terminate();
-                    self.set_full_access_canary_state(id, "blocked")?;
+                    self.settle_full_access_canary(
+                        &attempt,
+                        "cancelled",
+                        "cancelled",
+                        None,
+                        false,
+                    )?;
                     Err("Native full-access canary supervision is unavailable".into())
                 }
             },
             Err(_) => {
-                self.set_full_access_canary_state(id, "blocked")?;
+                self.settle_full_access_canary(
+                    &attempt,
+                    "launch_failed",
+                    "launch_failed",
+                    None,
+                    false,
+                )?;
                 Err("Unable to start the supported full-access canary".into())
             }
         }
@@ -1960,21 +2215,41 @@ impl NativeProfileService {
         let Some(attempt) = load_pending_full_access_canary(&self.connection()?, id)? else {
             return Ok(());
         };
-        let current = self.require_active(id);
+        let current = self.require_selected_active(id);
         let surface = self.cli.surface();
         let authority_valid = current.as_ref().is_ok_and(|profile| {
-            profile.selected
-                && profile.execution.selected_mode == ExecutionMode::DangerFullAccess
+            profile.execution.selected_mode == ExecutionMode::DangerFullAccess
                 && profile.execution.danger_full_access_authorized
                 && profile.identity == attempt.filesystem_identity
+                && profile
+                    .execution
+                    .danger_authorization
+                    .correlation_id
+                    .as_deref()
+                    == Some(attempt.authorization_correlation_id.as_str())
+                && profile
+                    .execution
+                    .danger_authorization
+                    .authority_version
+                    .as_deref()
+                    == Some(attempt.authorization_version.as_str())
         }) && surface.as_ref().is_ok_and(|surface| {
             surface.provenance.danger_full_access_supported
+                && surface.provenance.danger_unrestricted_network_supported
                 && surface.provenance.non_interactive_approval_supported
                 && surface.provenance.executable == attempt.executable
                 && surface.provenance.version == attempt.version
         });
         if !authority_valid {
-            self.set_full_access_canary_state(id, "blocked")?;
+            if let Some(mut child) = self
+                .full_access_canary_children
+                .lock()
+                .map_err(|_| "Native full-access canary supervision is unavailable")?
+                .remove(&attempt.attempt_id)
+            {
+                let _ = child.terminate();
+            }
+            self.settle_full_access_canary(&attempt, "cancelled", "cancelled", None, false)?;
             return Ok(());
         }
         let outcome = self
@@ -1987,29 +2262,98 @@ impl NativeProfileService {
             .flatten();
         match outcome {
             Some(receipt) if receipt.succeeded && receipt.sandbox_receipt_observed => {
-                self.full_access_canary_children.lock().ok().and_then(|mut children| children.remove(&attempt.attempt_id));
-                self.set_full_access_canary_state(id, "passed")?;
+                self.full_access_canary_children
+                    .lock()
+                    .ok()
+                    .and_then(|mut children| children.remove(&attempt.attempt_id));
+                self.settle_full_access_canary(
+                    &attempt,
+                    "passed",
+                    "exit_code",
+                    receipt.exit_code,
+                    true,
+                )?;
             }
-            Some(_) => {
-                self.full_access_canary_children.lock().ok().and_then(|mut children| children.remove(&attempt.attempt_id));
-                self.set_full_access_canary_state(id, "blocked")?;
+            Some(receipt) => {
+                self.full_access_canary_children
+                    .lock()
+                    .ok()
+                    .and_then(|mut children| children.remove(&attempt.attempt_id));
+                let classification = if !receipt.sandbox_receipt_observed {
+                    "receipt_missing"
+                } else if receipt.exit_code.is_some() {
+                    "exit_code"
+                } else {
+                    "not_observed"
+                };
+                self.settle_full_access_canary(
+                    &attempt,
+                    "terminal_failed",
+                    classification,
+                    receipt.exit_code,
+                    receipt.sandbox_receipt_observed,
+                )?;
             }
-            None if !self.full_access_canary_children.lock().map_err(|_| "Native full-access canary supervision is unavailable")?.contains_key(&attempt.attempt_id) => {
-                self.set_full_access_canary_state(id, "blocked")?;
+            None if Utc::now() >= attempt.deadline_at => {
+                if let Some(mut child) = self
+                    .full_access_canary_children
+                    .lock()
+                    .map_err(|_| "Native full-access canary supervision is unavailable")?
+                    .remove(&attempt.attempt_id)
+                {
+                    let _ = child.terminate();
+                }
+                self.settle_full_access_canary(&attempt, "timed_out", "timed_out", None, false)?;
+            }
+            None if !self
+                .full_access_canary_children
+                .lock()
+                .map_err(|_| "Native full-access canary supervision is unavailable")?
+                .contains_key(&attempt.attempt_id) =>
+            {
+                self.settle_full_access_canary(
+                    &attempt,
+                    "recovered_unobserved",
+                    "recovered_unobserved",
+                    None,
+                    false,
+                )?;
             }
             None => {}
         }
         Ok(())
     }
 
-    fn set_full_access_canary_state(&self, id: &str, state: &str) -> Result<(), String> {
+    fn settle_full_access_canary(
+        &self,
+        attempt: &PendingFullAccessCanary,
+        state: &str,
+        classification: &str,
+        exit_code: Option<i32>,
+        receipt_observed: bool,
+    ) -> Result<(), String> {
+        let cleanup_disposition = match fs::remove_file(&attempt.sentinel_path) {
+            Ok(()) => "removed",
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => "removed",
+            Err(_) => "failed",
+        };
+        let state = if state == "passed" && cleanup_disposition != "removed" {
+            "cleanup_failed"
+        } else {
+            state
+        };
+        let classification = if state == "cleanup_failed" {
+            "cleanup_failed"
+        } else {
+            classification
+        };
         self.connection()?.execute(
-            "UPDATE native_codex_profile_full_access_canaries SET state=?2,completed_at=?3 WHERE profile_id=?1 AND state='pending'",
-            params![id, state, Utc::now().to_rfc3339()],
+            "UPDATE native_codex_profile_full_access_canaries SET state=?2,settled_at=?3,process_activity=CASE WHEN launch_accepted_at IS NULL THEN process_activity ELSE 'terminal_observed' END,terminal_classification=?4,terminal_exit_code=?5,receipt_observed=?6,cleanup_disposition=?7 WHERE attempt_id=?1 AND state='pending'",
+            params![attempt.attempt_id, state, Utc::now().to_rfc3339(), classification, exit_code, receipt_observed as i64, cleanup_disposition],
         ).map_err(|error| error.to_string())?;
         self.connection()?.execute(
             "UPDATE native_codex_profile_readiness SET danger_full_access_canary=?2,observed_at=?3 WHERE profile_id=?1",
-            params![id, state, Utc::now().to_rfc3339()],
+            params![attempt.profile_id, if state == "passed" { "passed" } else { "blocked" }, Utc::now().to_rfc3339()],
         ).map_err(|error| error.to_string())?;
         Ok(())
     }
@@ -2086,7 +2430,10 @@ impl NativeProfileService {
             .map_err(|_| "Native profile operation supervision is unavailable")?;
         let current = self.profile(id)?;
         let lifecycle = validate_profile(&current);
-        if current.lifecycle != Lifecycle::Active || lifecycle != Lifecycle::Active || !current.selected {
+        if current.lifecycle != Lifecycle::Active
+            || lifecycle != Lifecycle::Active
+            || !current.selected
+        {
             drop(gate);
             if lifecycle != Lifecycle::Active {
                 self.record_lifecycle(id, lifecycle)?;
@@ -2135,7 +2482,8 @@ impl NativeProfileService {
                 )),
             );
         }
-        let inserted = self.persist_setup_attempt(&attempt, &surface.provenance, "pending", "not_observed")?;
+        let inserted =
+            self.persist_setup_attempt(&attempt, &surface.provenance, "pending", "not_observed")?;
         if inserted == 0 {
             return self.set_attention(
                 id,
@@ -2144,76 +2492,77 @@ impl NativeProfileService {
                 false,
             );
         }
-        let (cwd, args, sandbox_receipt, sandbox_command_file) = match phase {
-            // This is the supported Windows provisioning command. Its launch acceptance and
-            // terminal outcome do not observe a UAC interaction or confirm initialization.
-            SetupPhase::SandboxInitialization => (
-                profile.home.clone(),
-                vec![
-                    "sandbox".into(),
-                    "setup".into(),
-                    "--elevated".into(),
-                    "--current-user".into(),
-                    "--codex-home".into(),
-                    profile.home.to_string_lossy().into_owned(),
-                ],
-                None,
-                None,
-            ),
-            SetupPhase::WorkspaceWriteCanary => {
-                let root = self.probe_root(id);
-                fs::create_dir_all(&root).map_err(|error| {
-                    format!("Unable to create application-owned sandbox probe root: {error}")
-                })?;
-                let output = root.join(format!("{}.txt", phase.database()));
-                if let Err(error) = fs::remove_file(&output) {
-                    if error.kind() != std::io::ErrorKind::NotFound {
-                        self.set_setup_attempt_state(
-                            &attempt.attempt_id,
-                            "launch_failed",
-                            "launch_failed",
-                            None,
-                        )?;
-                        self.update_readiness(
-                            id,
-                            None,
-                            None,
-                            Some("blocked"),
-                            None,
-                            Some((
-                                "canary",
-                                Some("native_sandbox_canary_receipt_cleanup_failed"),
-                            )),
-                        )?;
-                        return Ok(());
+        let (cwd, args, sandbox_receipt, sandbox_command_file) =
+            match phase {
+                // This is the supported Windows provisioning command. Its launch acceptance and
+                // terminal outcome do not observe a UAC interaction or confirm initialization.
+                SetupPhase::SandboxInitialization => (
+                    profile.home.clone(),
+                    vec![
+                        "sandbox".into(),
+                        "setup".into(),
+                        "--elevated".into(),
+                        "--current-user".into(),
+                        "--codex-home".into(),
+                        profile.home.to_string_lossy().into_owned(),
+                    ],
+                    None,
+                    None,
+                ),
+                SetupPhase::WorkspaceWriteCanary => {
+                    let root = self.probe_root(id);
+                    fs::create_dir_all(&root).map_err(|error| {
+                        format!("Unable to create application-owned sandbox probe root: {error}")
+                    })?;
+                    let output = root.join(format!("{}.txt", phase.database()));
+                    if let Err(error) = fs::remove_file(&output) {
+                        if error.kind() != std::io::ErrorKind::NotFound {
+                            self.set_setup_attempt_state(
+                                &attempt.attempt_id,
+                                "launch_failed",
+                                "launch_failed",
+                                None,
+                            )?;
+                            self.update_readiness(
+                                id,
+                                None,
+                                None,
+                                Some("blocked"),
+                                None,
+                                Some((
+                                    "canary",
+                                    Some("native_sandbox_canary_receipt_cleanup_failed"),
+                                )),
+                            )?;
+                            return Ok(());
+                        }
                     }
-                }
-                let command_file = root.join(WORKSPACE_WRITE_CANARY_COMMAND_FILE);
-                if let Err(error) = fs::remove_file(&command_file) {
-                    if error.kind() != std::io::ErrorKind::NotFound {
-                        self.set_setup_attempt_state(
-                            &attempt.attempt_id,
-                            "launch_failed",
-                            "launch_failed",
-                            None,
-                        )?;
-                        self.update_readiness(
-                            id,
-                            None,
-                            None,
-                            Some("blocked"),
-                            None,
-                            Some((
-                                "canary",
-                                Some("native_sandbox_canary_command_cleanup_failed"),
-                            )),
-                        )?;
-                        return Err(format!(
+                    let command_file = root.join(WORKSPACE_WRITE_CANARY_COMMAND_FILE);
+                    if let Err(error) = fs::remove_file(&command_file) {
+                        if error.kind() != std::io::ErrorKind::NotFound {
+                            self.set_setup_attempt_state(
+                                &attempt.attempt_id,
+                                "launch_failed",
+                                "launch_failed",
+                                None,
+                            )?;
+                            self.update_readiness(
+                                id,
+                                None,
+                                None,
+                                Some("blocked"),
+                                None,
+                                Some((
+                                    "canary",
+                                    Some("native_sandbox_canary_command_cleanup_failed"),
+                                )),
+                            )?;
+                            return Err(format!(
                             "Unable to clear the application-owned sandbox canary command: {error}"
                         ));
+                        }
                     }
-                }
-                if let Err(error) = fs::write(
+                    if let Err(error) = fs::write(
                     &command_file,
                     "@echo off\r\necho native-codex-profile-canary>workspace_write_canary.txt\r\n",
                 ) {
@@ -2235,29 +2584,29 @@ impl NativeProfileService {
                         "Unable to prepare the application-owned sandbox canary command: {error}"
                     ));
                 }
-                (
-                    root.clone(),
-                    vec![
-                        "sandbox".into(),
-                        "-P".into(),
-                        ":workspace".into(),
-                        "-C".into(),
-                        root.to_string_lossy().into_owned(),
-                        "--".into(),
-                        "cmd.exe".into(),
-                        "/d".into(),
-                        "/c".into(),
-                        // Do not send a quote-bearing redirection expression through the
-                        // sandbox's CreateProcess command-vector boundary. The command file is
-                        // application-authored, relative to the exact probe root, and removed
-                        // after the owned child settles.
-                        format!(".\\{WORKSPACE_WRITE_CANARY_COMMAND_FILE}"),
-                    ],
-                    Some(output),
-                    Some(command_file),
-                )
-            }
-        };
+                    (
+                        root.clone(),
+                        vec![
+                            "sandbox".into(),
+                            "-P".into(),
+                            ":workspace".into(),
+                            "-C".into(),
+                            root.to_string_lossy().into_owned(),
+                            "--".into(),
+                            "cmd.exe".into(),
+                            "/d".into(),
+                            "/c".into(),
+                            // Do not send a quote-bearing redirection expression through the
+                            // sandbox's CreateProcess command-vector boundary. The command file is
+                            // application-authored, relative to the exact probe root, and removed
+                            // after the owned child settles.
+                            format!(".\\{WORKSPACE_WRITE_CANARY_COMMAND_FILE}"),
+                        ],
+                        Some(output),
+                        Some(command_file),
+                    )
+                }
+            };
         let invocation = NativeCliInvocation {
             args,
             cwd,
@@ -2371,7 +2720,11 @@ impl NativeProfileService {
                     self.set_setup_attempt_state(
                         &attempt.attempt_id,
                         "terminal_succeeded",
-                        if receipt.exit_code.is_some() { "exit_code" } else { "not_observed" },
+                        if receipt.exit_code.is_some() {
+                            "exit_code"
+                        } else {
+                            "not_observed"
+                        },
                         receipt.exit_code,
                     )?;
                     if attempt.phase == SetupPhase::SandboxInitialization {
@@ -2399,7 +2752,8 @@ impl NativeProfileService {
                     }
                 }
                 Ok(receipt) => {
-                    let terminal_classification = if attempt.phase == SetupPhase::WorkspaceWriteCanary
+                    let terminal_classification = if attempt.phase
+                        == SetupPhase::WorkspaceWriteCanary
                         && !receipt.sandbox_receipt_observed
                     {
                         // This says only that the one owned sentinel was absent; the separately
@@ -2417,12 +2771,7 @@ impl NativeProfileService {
                         receipt.exit_code,
                     )?
                 }
-                Err(state) => self.settle_failed_setup_attempt(
-                    &attempt,
-                    state,
-                    state,
-                    None,
-                )?,
+                Err(state) => self.settle_failed_setup_attempt(&attempt, state, state, None)?,
             }
         }
         Ok(())
@@ -2452,7 +2801,9 @@ impl NativeProfileService {
                 Some(match state {
                     "timed_out" => "native_sandbox_attempt_timed_out_human_or_uac_attention",
                     "cancelled" => "native_sandbox_attempt_cancelled_before_observation",
-                    "recovered_unobserved" => "native_sandbox_attempt_recovered_without_owned_process",
+                    "recovered_unobserved" => {
+                        "native_sandbox_attempt_recovered_without_owned_process"
+                    }
                     _ => "native_sandbox_attempt_failed",
                 }),
             )),
@@ -2661,12 +3012,15 @@ impl NativeProfileService {
             }
         }
         drop(children);
-        if let Ok(mut children) = self.full_access_canary_children.lock() {
-            if let Some(mut child) = load_pending_full_access_canary(&self.connection()?, id)?
-                .and_then(|attempt| children.remove(&attempt.attempt_id))
-            {
-                let _ = child.terminate();
+        if let Some(attempt) = load_pending_full_access_canary(&self.connection()?, id)? {
+            if let Ok(mut children) = self.full_access_canary_children.lock() {
+                if let Some(mut child) = children.remove(&attempt.attempt_id) {
+                    let _ = child.terminate();
+                }
             }
+            // This cleanup is independent of supervision: cold reopen or a lost child cannot
+            // leave the one application-owned full-access receipt behind.
+            let _ = fs::remove_file(&attempt.sentinel_path);
         }
         let connection = self.connection()?;
         connection.execute("UPDATE native_codex_profiles SET lifecycle=?2,selected_at=NULL,updated_at=?3 WHERE id=?1", params![id, lifecycle.database(), Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
@@ -2674,7 +3028,7 @@ impl NativeProfileService {
         connection.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',danger_full_access_canary='blocked',mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_setup_attempts SET state='cancelled',settled_at=?2,terminal_classification='cancelled' WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state='pending'", params![id]).map_err(|error| error.to_string())?;
-        connection.execute("UPDATE native_codex_profile_full_access_canaries SET state='cancelled',completed_at=?2 WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+        connection.execute("UPDATE native_codex_profile_full_access_canaries SET state='cancelled',settled_at=?2,terminal_classification='cancelled',cleanup_disposition=CASE WHEN cleanup_disposition='pending' THEN 'removed' ELSE cleanup_disposition END WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_login_attempts SET state='cancelled',settled_at=?2 WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_sandbox_adoptions SET state='invalidated' WHERE profile_id=?1", params![id]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_sandbox_adoption_confirmations SET state='invalidated',invalidated_at=COALESCE(invalidated_at,?2) WHERE profile_id=?1 AND state='confirmed'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
@@ -2703,7 +3057,10 @@ impl NativeProfileService {
             Some("attention_required"),
             Some("blocked"),
             None,
-            Some(("sandbox", Some("external_sandbox_adoption_evidence_invalidated"))),
+            Some((
+                "sandbox",
+                Some("external_sandbox_adoption_evidence_invalidated"),
+            )),
         )
     }
 
@@ -2725,7 +3082,10 @@ impl NativeProfileService {
         if confirmation.disposition == "invalidated" {
             return self.invalidate_sandbox_adoption(id);
         }
-        if !profile.selected || profile.lifecycle != Lifecycle::Active || adoption.disposition != "verified" {
+        if !profile.selected
+            || profile.lifecycle != Lifecycle::Active
+            || adoption.disposition != "verified"
+        {
             return self.invalidate_sandbox_adoption(id);
         }
         let surface = self.cli.surface();
@@ -2748,7 +3108,10 @@ impl NativeProfileService {
                 Some("attention_required"),
                 Some("blocked"),
                 None,
-                Some(("sandbox", Some("external_sandbox_adoption_evidence_invalidated"))),
+                Some((
+                    "sandbox",
+                    Some("external_sandbox_adoption_evidence_invalidated"),
+                )),
             )?;
         }
         Ok(())
@@ -3050,28 +3413,78 @@ fn load_sandbox_adoption(
         )
         .optional()
         .map_err(|error| error.to_string())?;
-    let Some((stored_identity, executable, version, workspace, setup, correlation, observed_at, state, elevated)) = adoption else {
-        return Ok(NativeProfileSandboxAdoption { disposition: "not_verified".into(), executable: None, version: None, workspace_sandbox_supported: None, windows_sandbox_setup_supported: None, correlation_id: None, observed_at: None, elevated_mode_observed: None });
+    let Some((
+        stored_identity,
+        executable,
+        version,
+        workspace,
+        setup,
+        correlation,
+        observed_at,
+        state,
+        elevated,
+    )) = adoption
+    else {
+        return Ok(NativeProfileSandboxAdoption {
+            disposition: "not_verified".into(),
+            executable: None,
+            version: None,
+            workspace_sandbox_supported: None,
+            windows_sandbox_setup_supported: None,
+            correlation_id: None,
+            observed_at: None,
+            elevated_mode_observed: None,
+        });
     };
     if stored_identity != identity || state == "invalidated" {
-        return Ok(NativeProfileSandboxAdoption { disposition: "invalidated".into(), executable: Some(executable), version: Some(version), workspace_sandbox_supported: Some(workspace != 0), windows_sandbox_setup_supported: Some(setup != 0), correlation_id: Some(correlation), observed_at: Some(observed_at), elevated_mode_observed: Some(elevated != 0) });
+        return Ok(NativeProfileSandboxAdoption {
+            disposition: "invalidated".into(),
+            executable: Some(executable),
+            version: Some(version),
+            workspace_sandbox_supported: Some(workspace != 0),
+            windows_sandbox_setup_supported: Some(setup != 0),
+            correlation_id: Some(correlation),
+            observed_at: Some(observed_at),
+            elevated_mode_observed: Some(elevated != 0),
+        });
     }
-    let adoption = NativeProfileSandboxAdoption { disposition: state, executable: Some(executable), version: Some(version), workspace_sandbox_supported: Some(workspace != 0), windows_sandbox_setup_supported: Some(setup != 0), correlation_id: Some(correlation), observed_at: Some(observed_at), elevated_mode_observed: Some(elevated != 0) };
+    let adoption = NativeProfileSandboxAdoption {
+        disposition: state,
+        executable: Some(executable),
+        version: Some(version),
+        workspace_sandbox_supported: Some(workspace != 0),
+        windows_sandbox_setup_supported: Some(setup != 0),
+        correlation_id: Some(correlation),
+        observed_at: Some(observed_at),
+        elevated_mode_observed: Some(elevated != 0),
+    };
     validate_sandbox_adoption(&adoption)?;
     Ok(adoption)
 }
 
 fn validate_sandbox_adoption(adoption: &NativeProfileSandboxAdoption) -> Result<(), String> {
-    let required = |value: &Option<String>| value.as_deref().is_some_and(|value| !value.is_empty() && value.trim() == value);
-    if !matches!(adoption.disposition.as_str(), "verified" | "not_verified" | "invalidated")
-        || !required(&adoption.executable)
+    let required = |value: &Option<String>| {
+        value
+            .as_deref()
+            .is_some_and(|value| !value.is_empty() && value.trim() == value)
+    };
+    if !matches!(
+        adoption.disposition.as_str(),
+        "verified" | "not_verified" | "invalidated"
+    ) || !required(&adoption.executable)
         || !required(&adoption.version)
         || !required(&adoption.correlation_id)
-        || adoption.observed_at.as_deref().is_none_or(|value| DateTime::parse_from_rfc3339(value).is_err())
+        || adoption
+            .observed_at
+            .as_deref()
+            .is_none_or(|value| DateTime::parse_from_rfc3339(value).is_err())
         || adoption.workspace_sandbox_supported.is_none()
         || adoption.windows_sandbox_setup_supported.is_none()
         || adoption.elevated_mode_observed.is_none()
-        || (adoption.disposition == "verified" && (!adoption.workspace_sandbox_supported.unwrap() || !adoption.windows_sandbox_setup_supported.unwrap() || !adoption.elevated_mode_observed.unwrap()))
+        || (adoption.disposition == "verified"
+            && (!adoption.workspace_sandbox_supported.unwrap()
+                || !adoption.windows_sandbox_setup_supported.unwrap()
+                || !adoption.elevated_mode_observed.unwrap()))
     {
         return Err("Native sandbox adoption evidence violates its durable invariant".into());
     }
@@ -3089,14 +3502,24 @@ fn load_sandbox_adoption_confirmation(
         params![profile_id],
         |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?)),
     ).optional().map_err(|error| error.to_string())?;
-    let Some((stored_identity, adoption_correlation, correlation, confirmed_at, state)) = confirmation else {
-        return Ok(NativeProfileSandboxAdoptionConfirmation { disposition: "not_confirmed".into(), correlation_id: None, confirmed_at: None });
+    let Some((stored_identity, adoption_correlation, correlation, confirmed_at, state)) =
+        confirmation
+    else {
+        return Ok(NativeProfileSandboxAdoptionConfirmation {
+            disposition: "not_confirmed".into(),
+            correlation_id: None,
+            confirmed_at: None,
+        });
     };
     let matches_observation = stored_identity == identity
         && adoption.disposition == "verified"
         && adoption.correlation_id.as_deref() == Some(adoption_correlation.as_str());
     let confirmation = NativeProfileSandboxAdoptionConfirmation {
-        disposition: if state == "confirmed" && matches_observation { "confirmed".into() } else { "invalidated".into() },
+        disposition: if state == "confirmed" && matches_observation {
+            "confirmed".into()
+        } else {
+            "invalidated".into()
+        },
         correlation_id: Some(correlation),
         confirmed_at: Some(confirmed_at),
     };
@@ -3113,9 +3536,17 @@ fn validate_sandbox_adoption_confirmation(
     {
         return Ok(());
     }
-    if !matches!(confirmation.disposition.as_str(), "confirmed" | "invalidated")
-        || confirmation.correlation_id.as_deref().is_none_or(|value| value.is_empty() || value.trim() != value)
-        || confirmation.confirmed_at.as_deref().is_none_or(|value| DateTime::parse_from_rfc3339(value).is_err())
+    if !matches!(
+        confirmation.disposition.as_str(),
+        "confirmed" | "invalidated"
+    ) || confirmation
+        .correlation_id
+        .as_deref()
+        .is_none_or(|value| value.is_empty() || value.trim() != value)
+        || confirmation
+            .confirmed_at
+            .as_deref()
+            .is_none_or(|value| DateTime::parse_from_rfc3339(value).is_err())
     {
         return Err("Native sandbox adoption confirmation violates its durable invariant".into());
     }
@@ -3128,7 +3559,7 @@ fn load_pending_full_access_canary(
 ) -> Result<Option<PendingFullAccessCanary>, String> {
     connection
         .query_row(
-            "SELECT attempt_id,profile_id,filesystem_identity,executable,version,sentinel_path FROM native_codex_profile_full_access_canaries WHERE profile_id=?1 AND state='pending'",
+            "SELECT attempt_id,profile_id,filesystem_identity,executable,version,sentinel_path,authorization_correlation_id,authorization_version,correlation_id,deadline_at FROM native_codex_profile_full_access_canaries WHERE profile_id=?1 AND state='pending'",
             params![profile_id],
             |row| Ok(PendingFullAccessCanary {
                 attempt_id: row.get(0)?,
@@ -3137,10 +3568,227 @@ fn load_pending_full_access_canary(
                 executable: row.get(3)?,
                 version: row.get(4)?,
                 sentinel_path: PathBuf::from(row.get::<_, String>(5)?),
+                authorization_correlation_id: row.get(6)?,
+                authorization_version: row.get(7)?,
+                correlation_id: row.get(8)?,
+                deadline_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(9)?)
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?
+                    .with_timezone(&Utc),
             }),
         )
         .optional()
         .map_err(|error| error.to_string())
+}
+
+fn valid_durable_timestamp(value: &str) -> bool {
+    !value.is_empty() && value.trim() == value && DateTime::parse_from_rfc3339(value).is_ok()
+}
+
+fn load_danger_authorization(
+    connection: &Connection,
+    profile_id: &str,
+    filesystem_identity: &str,
+) -> Result<NativeProfileDangerAuthorization, String> {
+    let row = connection
+        .query_row(
+            "SELECT filesystem_identity,authority_scope,authority_version,authorization_correlation_id,authorized_at,revoked_at FROM native_codex_profile_mode_authorizations WHERE profile_id=?1 AND mode='danger_full_access'",
+            params![profile_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, String>(4)?, row.get::<_, Option<String>>(5)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some((recorded_identity, scope, version, correlation_id, authorized_at, revoked_at)) = row
+    else {
+        return Ok(NativeProfileDangerAuthorization {
+            disposition: "not_authorized".into(),
+            authority_scope: None,
+            authority_version: None,
+            correlation_id: None,
+            authorized_at: None,
+            revoked_at: None,
+        });
+    };
+    let legacy = scope == "filesystem_only"
+        && version == "danger-full-access/filesystem-only/v1"
+        && correlation_id.is_none();
+    let current = scope == DANGER_AUTHORITY_SCOPE
+        && version == DANGER_AUTHORITY_VERSION
+        && correlation_id
+            .as_deref()
+            .is_some_and(|value| !value.is_empty() && value.trim() == value);
+    if (!legacy && !current)
+        || !valid_durable_timestamp(&authorized_at)
+        || revoked_at
+            .as_deref()
+            .is_some_and(|value| !valid_durable_timestamp(value))
+    {
+        return Err("Native danger authorization violates its durable invariant".into());
+    }
+    let disposition = if recorded_identity != filesystem_identity {
+        "foreign"
+    } else if revoked_at.is_some() {
+        "revoked"
+    } else if current {
+        "authorized"
+    } else {
+        "legacy_insufficient"
+    };
+    Ok(NativeProfileDangerAuthorization {
+        disposition: disposition.into(),
+        authority_scope: Some(scope),
+        authority_version: Some(version),
+        correlation_id,
+        authorized_at: Some(authorized_at),
+        revoked_at,
+    })
+}
+
+fn load_full_access_canary_attempt(
+    connection: &Connection,
+    profile_id: &str,
+    filesystem_identity: &str,
+) -> Result<NativeProfileFullAccessCanaryAttempt, String> {
+    let row = connection.query_row(
+        "SELECT filesystem_identity,state,authorization_version,authorization_correlation_id,correlation_id,requested_at,launch_accepted_at,deadline_at,settled_at,process_activity,provider_activity,terminal_classification,terminal_exit_code,receipt_observed,cleanup_disposition FROM native_codex_profile_full_access_canaries WHERE profile_id=?1 ORDER BY requested_at DESC,attempt_id DESC LIMIT 1",
+        params![profile_id],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?, row.get::<_, String>(5)?, row.get::<_, Option<String>>(6)?, row.get::<_, Option<String>>(7)?, row.get::<_, Option<String>>(8)?, row.get::<_, String>(9)?, row.get::<_, String>(10)?, row.get::<_, String>(11)?, row.get::<_, Option<i32>>(12)?, row.get::<_, i64>(13)?, row.get::<_, String>(14)?)),
+    ).optional().map_err(|error| error.to_string())?;
+    let Some((
+        recorded_identity,
+        disposition,
+        authorization_version,
+        authorization_correlation_id,
+        correlation_id,
+        requested_at,
+        launch_accepted_at,
+        deadline_at,
+        settled_at,
+        process_activity,
+        provider_activity,
+        terminal_classification,
+        terminal_exit_code,
+        receipt_observed,
+        cleanup_disposition,
+    )) = row
+    else {
+        return Ok(NativeProfileFullAccessCanaryAttempt {
+            disposition: "not_requested".into(),
+            authorization_version: None,
+            authorization_correlation_id: None,
+            correlation_id: None,
+            requested_at: None,
+            launch_accepted_at: None,
+            deadline_at: None,
+            settled_at: None,
+            process_activity: "unobserved".into(),
+            provider_activity: "unobserved".into(),
+            terminal_classification: "not_observed".into(),
+            terminal_exit_code: None,
+            receipt_observed: false,
+            cleanup_disposition: "not_observed".into(),
+        });
+    };
+    let valid_state = [
+        "pending",
+        "passed",
+        "launch_failed",
+        "terminal_failed",
+        "timed_out",
+        "cancelled",
+        "recovered_unobserved",
+        "cleanup_failed",
+        "legacy_unverified",
+    ]
+    .contains(&disposition.as_str());
+    let valid_process =
+        ["unobserved", "launch_accepted", "terminal_observed"].contains(&process_activity.as_str());
+    let valid_terminal = [
+        "not_observed",
+        "exit_code",
+        "receipt_missing",
+        "launch_failed",
+        "timed_out",
+        "cancelled",
+        "recovered_unobserved",
+        "cleanup_failed",
+        "legacy_unverified",
+    ]
+    .contains(&terminal_classification.as_str());
+    let valid_cleanup =
+        ["pending", "removed", "failed", "not_observed"].contains(&cleanup_disposition.as_str());
+    let valid_optional_timestamp =
+        |value: &Option<String>| value.as_deref().is_none_or(valid_durable_timestamp);
+    let current_authority = authorization_version.as_deref() == Some(DANGER_AUTHORITY_VERSION)
+        && authorization_correlation_id
+            .as_deref()
+            .is_some_and(|value| !value.is_empty() && value.trim() == value)
+        && correlation_id
+            .as_deref()
+            .is_some_and(|value| !value.is_empty() && value.trim() == value);
+    let settled_required = disposition != "pending";
+    if !valid_state
+        || !valid_process
+        || provider_activity != "unobserved"
+        || !valid_terminal
+        || !valid_cleanup
+        || !valid_durable_timestamp(&requested_at)
+        || !valid_optional_timestamp(&launch_accepted_at)
+        || !valid_optional_timestamp(&deadline_at)
+        || !valid_optional_timestamp(&settled_at)
+        || receipt_observed != 0 && receipt_observed != 1
+        || (!matches!(
+            disposition.as_str(),
+            "legacy_unverified" | "recovered_unobserved"
+        ) && !current_authority)
+        || (settled_required && settled_at.is_none())
+        || (disposition == "pending" && (settled_at.is_some() || cleanup_disposition != "pending"))
+        || (disposition == "passed"
+            && (launch_accepted_at.is_none()
+                || process_activity != "terminal_observed"
+                || receipt_observed != 1
+                || cleanup_disposition != "removed"))
+        || (disposition == "launch_failed"
+            && (launch_accepted_at.is_some()
+                || terminal_classification != "launch_failed"
+                || terminal_exit_code.is_some()
+                || receipt_observed != 0))
+    {
+        return Err("Native full-access canary violates its durable invariant".into());
+    }
+    if recorded_identity != filesystem_identity {
+        return Ok(NativeProfileFullAccessCanaryAttempt {
+            disposition: "recovered_unobserved".into(),
+            authorization_version: None,
+            authorization_correlation_id: None,
+            correlation_id: None,
+            requested_at: None,
+            launch_accepted_at: None,
+            deadline_at: None,
+            settled_at: None,
+            process_activity: "unobserved".into(),
+            provider_activity: "unobserved".into(),
+            terminal_classification: "recovered_unobserved".into(),
+            terminal_exit_code: None,
+            receipt_observed: false,
+            cleanup_disposition: "not_observed".into(),
+        });
+    }
+    Ok(NativeProfileFullAccessCanaryAttempt {
+        disposition,
+        authorization_version,
+        authorization_correlation_id,
+        correlation_id,
+        requested_at: Some(requested_at),
+        launch_accepted_at,
+        deadline_at,
+        settled_at,
+        process_activity,
+        provider_activity,
+        terminal_classification,
+        terminal_exit_code,
+        receipt_observed: receipt_observed != 0,
+        cleanup_disposition,
+    })
 }
 
 fn load_pending_login_attempt(
@@ -3198,8 +3846,21 @@ fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, Stri
                 execution: NativeProfileExecution {
                     selected_mode: ExecutionMode::parse(&row.get::<_, String>(11)?)
                         .map_err(|_| rusqlite::Error::InvalidQuery)?,
-                    danger_full_access_authorized: authorization_identity == Some(identity)
-                        && authorization_revoked.is_none(),
+                    danger_full_access_authorized: false,
+                    danger_authorization: NativeProfileDangerAuthorization {
+                        disposition: if authorization_identity == Some(identity)
+                            && authorization_revoked.is_none()
+                        {
+                            "not_authorized".into()
+                        } else {
+                            "not_authorized".into()
+                        },
+                        authority_scope: None,
+                        authority_version: None,
+                        correlation_id: None,
+                        authorized_at: None,
+                        revoked_at: None,
+                    },
                 },
                 login_attempt: NativeProfileLoginAttempt {
                     disposition: row
@@ -3249,6 +3910,22 @@ fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, Stri
                     correlation_id: None,
                     confirmed_at: None,
                 },
+                full_access_canary_attempt: NativeProfileFullAccessCanaryAttempt {
+                    disposition: "not_requested".into(),
+                    authorization_version: None,
+                    authorization_correlation_id: None,
+                    correlation_id: None,
+                    requested_at: None,
+                    launch_accepted_at: None,
+                    deadline_at: None,
+                    settled_at: None,
+                    process_activity: "unobserved".into(),
+                    provider_activity: "unobserved".into(),
+                    terminal_classification: "not_observed".into(),
+                    terminal_exit_code: None,
+                    receipt_observed: false,
+                    cleanup_disposition: "not_observed".into(),
+                },
                 readiness: NativeProfileReadiness {
                     authentication: row.get(6)?,
                     sandbox_initialization: row.get(7)?,
@@ -3272,7 +3949,14 @@ fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, Stri
         .map_err(|error| error.to_string())?;
     for profile in &mut profiles {
         validate_setup_attempt(&profile.setup_attempt)?;
-        profile.sandbox_adoption = load_sandbox_adoption(connection, &profile.id, &profile.identity)?;
+        profile.execution.danger_authorization =
+            load_danger_authorization(connection, &profile.id, &profile.identity)?;
+        profile.execution.danger_full_access_authorized =
+            profile.execution.danger_authorization.disposition == "authorized";
+        profile.sandbox_adoption =
+            load_sandbox_adoption(connection, &profile.id, &profile.identity)?;
+        profile.full_access_canary_attempt =
+            load_full_access_canary_attempt(connection, &profile.id, &profile.identity)?;
         profile.sandbox_adoption_confirmation = load_sandbox_adoption_confirmation(
             connection,
             &profile.id,
@@ -3306,7 +3990,9 @@ fn validate_setup_attempt(attempt: &NativeProfileSetupAttempt) -> Result<(), Str
                 || attempt.launch_accepted_at.is_some()
                 || attempt.terminal_exit_code.is_some()
             {
-                return Err("Native policy-unsupported setup attempt violates its durable invariant".into());
+                return Err(
+                    "Native policy-unsupported setup attempt violates its durable invariant".into(),
+                );
             }
         }
         "receipt_missing" => {
@@ -3321,7 +4007,9 @@ fn validate_setup_attempt(attempt: &NativeProfileSetupAttempt) -> Result<(), Str
                 || !required(&attempt.deadline_at)
                 || !required(&attempt.settled_at)
             {
-                return Err("Native receipt-missing setup attempt violates its durable invariant".into());
+                return Err(
+                    "Native receipt-missing setup attempt violates its durable invariant".into(),
+                );
             }
         }
         _ => return Ok(()),
@@ -3459,7 +4147,9 @@ pub(crate) fn verify_native_profile_preprovisioned_sandbox(
     state: State<'_, NativeProfileTauriState>,
     input: NativeProfileIdInput,
 ) -> Result<NativeProfileDto, String> {
-    state.service.verify_preprovisioned_sandbox(&input.profile_id)
+    state
+        .service
+        .verify_preprovisioned_sandbox(&input.profile_id)
 }
 #[tauri::command]
 pub(crate) fn confirm_native_profile_preprovisioned_sandbox_adoption(
@@ -3482,7 +4172,9 @@ pub(crate) fn run_native_profile_danger_full_access_canary(
     state: State<'_, NativeProfileTauriState>,
     input: NativeProfileIdInput,
 ) -> Result<NativeProfileDto, String> {
-    state.service.run_danger_full_access_canary(&input.profile_id)
+    state
+        .service
+        .run_danger_full_access_canary(&input.profile_id)
 }
 #[tauri::command]
 pub(crate) fn probe_native_profile_mcp_reporting(
@@ -3528,7 +4220,7 @@ mod tests {
         windows_sandbox_setup_supported: bool,
         workspace_launch_flags_supported: bool,
         workspace_launch_project_config_isolated: bool,
-        danger_network_enforcement_supported: bool,
+        danger_unrestricted_network_supported: bool,
     }
     impl FakeCli {
         fn succeeding() -> Self {
@@ -3548,7 +4240,7 @@ mod tests {
                 windows_sandbox_setup_supported: true,
                 workspace_launch_flags_supported: true,
                 workspace_launch_project_config_isolated: true,
-                danger_network_enforcement_supported: false,
+                danger_unrestricted_network_supported: true,
             }
         }
 
@@ -3573,9 +4265,9 @@ mod tests {
             }
         }
 
-        fn enforcing_application_network_policy() -> Self {
+        fn unsupported_danger_launch_surface() -> Self {
             Self {
-                danger_network_enforcement_supported: true,
+                danger_unrestricted_network_supported: false,
                 ..Self::succeeding()
             }
         }
@@ -3616,7 +4308,8 @@ mod tests {
                     version: "codex-cli test".into(),
                     workspace_sandbox_supported: self.workspace_sandbox_supported,
                     danger_full_access_supported: true,
-                    danger_network_enforcement_supported: self.danger_network_enforcement_supported,
+                    danger_unrestricted_network_supported: self
+                        .danger_unrestricted_network_supported,
                     non_interactive_approval_supported: true,
                 },
                 windows_sandbox_setup_supported: self.windows_sandbox_setup_supported,
@@ -3672,19 +4365,21 @@ mod tests {
         let dedicated = service.create_dedicated().unwrap();
         service.select(&dedicated.id).unwrap();
         let before = service.profile(&dedicated.id).unwrap();
-        service.update_readiness(
-            &dedicated.id,
-            Some("authenticated"),
-            Some("initialized"),
-            Some("passed"),
-            Some("ready"),
-            None,
-        ).unwrap();
+        service
+            .update_readiness(
+                &dedicated.id,
+                Some("authenticated"),
+                Some("initialized"),
+                Some("passed"),
+                Some("ready"),
+                None,
+            )
+            .unwrap();
         let now = Utc::now().to_rfc3339();
         let connection = service.connection().unwrap();
         connection.execute(
-            "INSERT INTO native_codex_profile_mode_authorizations (profile_id,mode,filesystem_identity,authorized_at) VALUES (?1,'danger_full_access',?2,?3)",
-            params![dedicated.id, before.identity, now],
+            "INSERT INTO native_codex_profile_mode_authorizations (profile_id,mode,filesystem_identity,authority_scope,authority_version,authorization_correlation_id,authorized_at) VALUES (?1,'danger_full_access',?2,?3,?4,?5,?6)",
+            params![dedicated.id, before.identity, DANGER_AUTHORITY_SCOPE, DANGER_AUTHORITY_VERSION, "native-danger-test", now],
         ).unwrap();
         connection.execute(
             "INSERT INTO native_codex_profile_sandbox_adoptions (profile_id,filesystem_identity,executable,version,workspace_sandbox_supported,windows_sandbox_setup_supported,correlation_id,observed_at,state,elevated_mode_observed) VALUES (?1,?2,'C:/codex.exe','codex-cli test',1,1,'native-adoption-observation',?3,'verified',1)",
@@ -3709,7 +4404,10 @@ mod tests {
         assert_eq!(profile.readiness.sandbox_initialization, "unknown");
         assert_eq!(profile.readiness.workspace_write_canary, "not_run");
         assert_eq!(profile.sandbox_adoption.disposition, "invalidated");
-        assert_eq!(profile.sandbox_adoption_confirmation.disposition, "invalidated");
+        assert_eq!(
+            profile.sandbox_adoption_confirmation.disposition,
+            "invalidated"
+        );
     }
 
     #[test]
@@ -3799,7 +4497,7 @@ mod tests {
             directory.path().join("app"),
         )
         .unwrap();
-        let fake = Arc::new(FakeCli::succeeding());
+        let fake = Arc::new(FakeCli::unsupported_danger_launch_surface());
         service.cli = fake.clone();
         let profile = service.create_dedicated().unwrap();
         service.select(&profile.id).unwrap();
@@ -3860,7 +4558,10 @@ mod tests {
         assert_eq!(calls[1].args[1], "-P");
         assert_eq!(calls[1].args[2], ":workspace");
         assert_eq!(calls[1].args[3], "-C");
-        assert_eq!(calls[1].args[4], service.probe_root(&profile.id).to_string_lossy());
+        assert_eq!(
+            calls[1].args[4],
+            service.probe_root(&profile.id).to_string_lossy()
+        );
         assert_eq!(
             calls[1].args,
             vec![
@@ -3868,7 +4569,10 @@ mod tests {
                 "-P".into(),
                 ":workspace".into(),
                 "-C".into(),
-                service.probe_root(&profile.id).to_string_lossy().into_owned(),
+                service
+                    .probe_root(&profile.id)
+                    .to_string_lossy()
+                    .into_owned(),
                 "--".into(),
                 "cmd.exe".into(),
                 "/d".into(),
@@ -3911,7 +4615,7 @@ mod tests {
             directory.path().join("app"),
         )
         .unwrap();
-        let fake = Arc::new(FakeCli::succeeding());
+        let fake = Arc::new(FakeCli::unsupported_danger_launch_surface());
         service.cli = fake.clone();
         let profile = service.create_dedicated().unwrap();
         service.select(&profile.id).unwrap();
@@ -3942,7 +4646,10 @@ mod tests {
         assert_eq!(profile.readiness.workspace_write_canary, "blocked");
         assert_eq!(profile.setup_attempt.phase, "workspace_write_canary");
         assert_eq!(profile.setup_attempt.disposition, "terminal_failed");
-        assert_eq!(profile.setup_attempt.terminal_classification, "receipt_missing");
+        assert_eq!(
+            profile.setup_attempt.terminal_classification,
+            "receipt_missing"
+        );
         assert_eq!(profile.setup_attempt.terminal_exit_code, Some(1));
         assert!(!stale_receipt.exists());
     }
@@ -3976,7 +4683,9 @@ mod tests {
         });
         service.run_workspace_write_canary(&profile.id).unwrap();
         assert_eq!(
-            service.query().unwrap().profiles[0].setup_attempt.terminal_classification,
+            service.query().unwrap().profiles[0]
+                .setup_attempt
+                .terminal_classification,
             "receipt_missing"
         );
         let connection = service.connection().unwrap();
@@ -4051,7 +4760,8 @@ mod tests {
     #[test]
     fn workspace_project_trust_override_is_one_toml_value_for_a_dot_bearing_windows_path() {
         assert_eq!(
-            workspace_project_trust_override(Path::new(r"C:\application\.runtime\assigned root")).unwrap(),
+            workspace_project_trust_override(Path::new(r"C:\application\.runtime\assigned root"))
+                .unwrap(),
             r#"projects={"C:\\application\\.runtime\\assigned root"={trust_level="untrusted"}}"#,
         );
     }
@@ -4070,12 +4780,18 @@ mod tests {
             requested.setup_attempt.terminal_classification,
             "policy_unsupported"
         );
-        assert_eq!(requested.setup_attempt.workspace_sandbox_supported, Some(false));
+        assert_eq!(
+            requested.setup_attempt.workspace_sandbox_supported,
+            Some(false)
+        );
         assert_eq!(
             requested.setup_attempt.executable.as_deref(),
             Some("C:/application-owned/codex.exe")
         );
-        assert_eq!(requested.setup_attempt.version.as_deref(), Some("codex-cli test"));
+        assert_eq!(
+            requested.setup_attempt.version.as_deref(),
+            Some("codex-cli test")
+        );
         assert!(requested.setup_attempt.correlation_id.is_some());
         assert!(requested.setup_attempt.requested_at.is_some());
         assert!(requested.setup_attempt.deadline_at.is_some());
@@ -4110,7 +4826,10 @@ mod tests {
 
         let requested = service.request_sandbox_initialization(&profile.id).unwrap();
         assert_eq!(requested.setup_attempt.disposition, "policy_unsupported");
-        assert_eq!(requested.setup_attempt.workspace_sandbox_supported, Some(false));
+        assert_eq!(
+            requested.setup_attempt.workspace_sandbox_supported,
+            Some(false)
+        );
         assert_eq!(*fake.starts.lock().unwrap(), 0);
         assert!(!directory.path().join("app").join("probes").exists());
     }
@@ -4185,8 +4904,14 @@ mod tests {
             requested.setup_attempt.executable.as_deref(),
             Some("C:/application-owned/codex.exe")
         );
-        assert_eq!(requested.setup_attempt.version.as_deref(), Some("codex-cli test"));
-        assert_eq!(requested.setup_attempt.workspace_sandbox_supported, Some(true));
+        assert_eq!(
+            requested.setup_attempt.version.as_deref(),
+            Some("codex-cli test")
+        );
+        assert_eq!(
+            requested.setup_attempt.workspace_sandbox_supported,
+            Some(true)
+        );
         assert!(requested.setup_attempt.correlation_id.is_some());
         assert!(requested.setup_attempt.requested_at.is_some());
         assert!(requested.setup_attempt.launch_accepted_at.is_some());
@@ -4196,7 +4921,10 @@ mod tests {
         assert_eq!(settled.setup_attempt.disposition, "terminal_failed");
         assert_eq!(settled.setup_attempt.terminal_classification, "exit_code");
         assert_eq!(settled.setup_attempt.terminal_exit_code, Some(7));
-        assert_eq!(settled.readiness.sandbox_initialization, "attention_required");
+        assert_eq!(
+            settled.readiness.sandbox_initialization,
+            "attention_required"
+        );
         assert!(service.confirm_sandbox_initialization(&profile.id).is_err());
     }
 
@@ -4213,9 +4941,15 @@ mod tests {
         service.select(&profile.id).unwrap();
         let result = service.request_sandbox_initialization(&profile.id).unwrap();
         assert_eq!(result.setup_attempt.disposition, "launch_failed");
-        assert_eq!(result.setup_attempt.terminal_classification, "launch_failed");
+        assert_eq!(
+            result.setup_attempt.terminal_classification,
+            "launch_failed"
+        );
         assert!(result.setup_attempt.launch_accepted_at.is_none());
-        assert_eq!(result.readiness.sandbox_initialization, "attention_required");
+        assert_eq!(
+            result.readiness.sandbox_initialization,
+            "attention_required"
+        );
         assert_ne!(
             result.readiness.attentions.sandbox.as_deref(),
             Some("native_sandbox_setup_completed_explicit_uac_confirmation_required")
@@ -4256,7 +4990,10 @@ mod tests {
         );
         assert_eq!(*fake.terminated.lock().unwrap(), 1);
         assert_eq!(result.profiles[0].setup_attempt.disposition, "timed_out");
-        assert_eq!(result.profiles[0].setup_attempt.terminal_classification, "timed_out");
+        assert_eq!(
+            result.profiles[0].setup_attempt.terminal_classification,
+            "timed_out"
+        );
     }
 
     #[test]
@@ -4317,8 +5054,12 @@ mod tests {
         let unselected = service.create_dedicated().unwrap();
         service.select(&selected.id).unwrap();
 
-        assert!(service.request_sandbox_initialization(&unselected.id).is_err());
-        assert!(service.confirm_sandbox_initialization(&unselected.id).is_err());
+        assert!(service
+            .request_sandbox_initialization(&unselected.id)
+            .is_err());
+        assert!(service
+            .confirm_sandbox_initialization(&unselected.id)
+            .is_err());
         assert!(service.run_workspace_write_canary(&unselected.id).is_err());
         assert_eq!(*fake.starts.lock().unwrap(), 0);
         assert!(!service.probe_root(&unselected.id).exists());
@@ -4338,7 +5079,11 @@ mod tests {
         service.select(&second.id).unwrap();
         assert_eq!(*fake.terminated.lock().unwrap(), 1);
         assert_eq!(
-            service.profile(&first.id).unwrap().setup_attempt.disposition,
+            service
+                .profile(&first.id)
+                .unwrap()
+                .setup_attempt
+                .disposition,
             "cancelled"
         );
         assert!(service.confirm_sandbox_initialization(&first.id).is_err());
@@ -4346,7 +5091,11 @@ mod tests {
         service.select(&first.id).unwrap();
         assert!(service.confirm_sandbox_initialization(&first.id).is_err());
         assert_eq!(
-            service.profile(&first.id).unwrap().setup_attempt.disposition,
+            service
+                .profile(&first.id)
+                .unwrap()
+                .setup_attempt
+                .disposition,
             "cancelled"
         );
     }
@@ -4367,7 +5116,11 @@ mod tests {
         service.select(&second.id).unwrap();
         assert_eq!(*fake.terminated.lock().unwrap(), 1);
         assert_eq!(
-            service.profile(&first.id).unwrap().setup_attempt.disposition,
+            service
+                .profile(&first.id)
+                .unwrap()
+                .setup_attempt
+                .disposition,
             "cancelled"
         );
         assert_eq!(
@@ -4387,34 +5140,62 @@ mod tests {
         service.cli = fake.clone();
         let profile = service.create_dedicated().unwrap();
         service.select(&profile.id).unwrap();
-        fs::write(Path::new(&profile.home_path).join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        fs::write(
+            Path::new(&profile.home_path).join("config.toml"),
+            "[windows]\nsandbox = \"elevated\"\n",
+        )
+        .unwrap();
 
         let verified = service.verify_preprovisioned_sandbox(&profile.id).unwrap();
         assert_eq!(verified.sandbox_adoption.disposition, "verified");
         assert_eq!(verified.setup_attempt.disposition, "not_requested");
         assert!(verified.sandbox_adoption.observed_at.is_some());
         assert!(verified.sandbox_adoption.correlation_id.is_some());
-        assert_eq!(verified.readiness.sandbox_initialization, "attention_required");
+        assert_eq!(
+            verified.readiness.sandbox_initialization,
+            "attention_required"
+        );
         assert_eq!(*fake.starts.lock().unwrap(), 0);
         assert!(service.connection().unwrap().execute(
             "UPDATE native_codex_profile_sandbox_adoptions SET elevated_mode_observed=0 WHERE profile_id=?1",
             params![profile.id],
         ).is_err());
 
-        let confirmed = service.confirm_preprovisioned_sandbox_adoption(&profile.id).unwrap();
-        assert_eq!(confirmed.sandbox_adoption_confirmation.disposition, "confirmed");
-        assert!(confirmed.sandbox_adoption_confirmation.confirmed_at.is_some());
-        assert!(confirmed.sandbox_adoption_confirmation.correlation_id.is_some());
+        let confirmed = service
+            .confirm_preprovisioned_sandbox_adoption(&profile.id)
+            .unwrap();
+        assert_eq!(
+            confirmed.sandbox_adoption_confirmation.disposition,
+            "confirmed"
+        );
+        assert!(confirmed
+            .sandbox_adoption_confirmation
+            .confirmed_at
+            .is_some());
+        assert!(confirmed
+            .sandbox_adoption_confirmation
+            .correlation_id
+            .is_some());
         assert_eq!(confirmed.readiness.sandbox_initialization, "initialized");
-        assert_eq!(confirmed.readiness.attentions.sandbox, Some("external_sandbox_adoption_confirmed_product_uac_unobserved".into()));
+        assert_eq!(
+            confirmed.readiness.attentions.sandbox,
+            Some("external_sandbox_adoption_confirmed_product_uac_unobserved".into())
+        );
         assert_eq!(*fake.starts.lock().unwrap(), 0);
         drop(service);
-        let mut reopened = NativeProfileService::open(directory.path().join("active.sqlite"), directory.path().join("app")).unwrap();
+        let mut reopened = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
         reopened.cli = fake;
         let mut reopened_query = reopened.query().unwrap();
         let reopened_profile = reopened_query.profiles.remove(0);
         assert_eq!(reopened_profile.sandbox_adoption.disposition, "verified");
-        assert_eq!(reopened_profile.sandbox_adoption_confirmation.disposition, "confirmed");
+        assert_eq!(
+            reopened_profile.sandbox_adoption_confirmation.disposition,
+            "confirmed"
+        );
     }
 
     #[test]
@@ -4424,7 +5205,12 @@ mod tests {
         let connection = crate::storage::open_active_database(&database).unwrap();
         connection.execute_batch("DROP TABLE native_codex_profile_sandbox_adoption_confirmations; DROP TABLE native_codex_profile_sandbox_adoptions; PRAGMA user_version=30;").unwrap();
         crate::storage::initialize_active_database(&connection).unwrap();
-        assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), crate::storage::ACTIVE_SCHEMA_VERSION);
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            crate::storage::ACTIVE_SCHEMA_VERSION
+        );
         assert_eq!(connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='native_codex_profile_sandbox_adoptions')", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
         assert_eq!(connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='native_codex_profile_sandbox_adoption_confirmations')", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
     }
@@ -4436,12 +5222,23 @@ mod tests {
         let first = service.create_dedicated().unwrap();
         let second = service.create_dedicated().unwrap();
         service.select(&first.id).unwrap();
-        fs::write(Path::new(&first.home_path).join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        fs::write(
+            Path::new(&first.home_path).join("config.toml"),
+            "[windows]\nsandbox = \"elevated\"\n",
+        )
+        .unwrap();
         assert!(service.verify_preprovisioned_sandbox(&second.id).is_err());
         service.verify_preprovisioned_sandbox(&first.id).unwrap();
         fs::remove_file(Path::new(&first.home_path).join(MARKER_FILE)).unwrap();
         service.query().unwrap();
-        assert_eq!(service.profile(&first.id).unwrap().sandbox_adoption.disposition, "invalidated");
+        assert_eq!(
+            service
+                .profile(&first.id)
+                .unwrap()
+                .sandbox_adoption
+                .disposition,
+            "invalidated"
+        );
     }
 
     #[test]
@@ -4454,31 +5251,61 @@ mod tests {
         let config = Path::new(&first.home_path).join("config.toml");
         fs::write(&config, "[windows]\nsandbox = \"elevated\"\n").unwrap();
         service.verify_preprovisioned_sandbox(&first.id).unwrap();
-        service.confirm_preprovisioned_sandbox_adoption(&first.id).unwrap();
+        service
+            .confirm_preprovisioned_sandbox_adoption(&first.id)
+            .unwrap();
 
         service.select(&second.id).unwrap();
         let invalidated = service.profile(&first.id).unwrap();
         assert_eq!(invalidated.sandbox_adoption.disposition, "invalidated");
-        assert_eq!(invalidated.sandbox_adoption_confirmation.disposition, "invalidated");
-        assert_eq!(invalidated.readiness.sandbox_initialization, "attention_required");
+        assert_eq!(
+            invalidated.sandbox_adoption_confirmation.disposition,
+            "invalidated"
+        );
+        assert_eq!(
+            invalidated.readiness.sandbox_initialization,
+            "attention_required"
+        );
         assert_eq!(invalidated.readiness.workspace_write_canary, "blocked");
 
         service.select(&first.id).unwrap();
         service.verify_preprovisioned_sandbox(&first.id).unwrap();
-        service.confirm_preprovisioned_sandbox_adoption(&first.id).unwrap();
+        service
+            .confirm_preprovisioned_sandbox_adoption(&first.id)
+            .unwrap();
         fs::remove_file(config).unwrap();
-        let drifted = service.query().unwrap().profiles.into_iter().find(|profile| profile.id == first.id).unwrap();
+        let drifted = service
+            .query()
+            .unwrap()
+            .profiles
+            .into_iter()
+            .find(|profile| profile.id == first.id)
+            .unwrap();
         assert_eq!(drifted.sandbox_adoption.disposition, "invalidated");
-        assert_eq!(drifted.sandbox_adoption_confirmation.disposition, "invalidated");
-        assert_eq!(drifted.readiness.sandbox_initialization, "attention_required");
+        assert_eq!(
+            drifted.sandbox_adoption_confirmation.disposition,
+            "invalidated"
+        );
+        assert_eq!(
+            drifted.readiness.sandbox_initialization,
+            "attention_required"
+        );
     }
 
     #[test]
     fn elevated_sandbox_observation_rejects_duplicate_windows_assignments() {
         let directory = tempfile::tempdir().unwrap();
-        fs::write(directory.path().join("config.toml"), "[windows]\nsandbox = \"elevated\"\nsandbox = \"elevated\"\n").unwrap();
+        fs::write(
+            directory.path().join("config.toml"),
+            "[windows]\nsandbox = \"elevated\"\nsandbox = \"elevated\"\n",
+        )
+        .unwrap();
         assert!(observe_elevated_windows_sandbox_mode(directory.path()).is_err());
-        fs::write(directory.path().join("config.toml"), "[windows]\nsandbox = \"elevated\"\n[windows]\n").unwrap();
+        fs::write(
+            directory.path().join("config.toml"),
+            "[windows]\nsandbox = \"elevated\"\n[windows]\n",
+        )
+        .unwrap();
         assert!(observe_elevated_windows_sandbox_mode(directory.path()).is_err());
     }
 
@@ -4512,22 +5339,25 @@ mod tests {
 
     #[test]
     fn windows_login_environment_is_allowlisted_and_keeps_the_product_selected_home() {
-        let environment = native_windows_cli_environment_from(Path::new("C:/product-owned-home"), &|key| {
-            match key {
+        let environment = native_windows_cli_environment_from(
+            Path::new("C:/product-owned-home"),
+            &|key| match key {
                 "PATH" => Some("C:/Windows/System32;C:/Windows".into()),
                 "SYSTEMROOT" => Some("C:/Windows".into()),
                 "USERPROFILE" => Some("C:/Users/launching-user".into()),
                 "CODEX_HOME" => Some("C:/foreign-home".into()),
                 "UNRELATED_SECRET" => Some("must-not-pass".into()),
                 _ => None,
-            }
-        });
+            },
+        );
         assert!(environment.contains(&("CODEX_HOME".into(), "C:/product-owned-home".into())));
         assert!(environment.contains(&("PATH".into(), "C:/Windows/System32;C:/Windows".into())));
         assert!(environment.contains(&("SYSTEMROOT".into(), "C:/Windows".into())));
         assert!(environment.contains(&("USERPROFILE".into(), "C:/Users/launching-user".into())));
         assert!(!environment.iter().any(|(key, _)| key == "UNRELATED_SECRET"));
-        assert!(!environment.iter().any(|(_, value)| value == "C:/foreign-home"));
+        assert!(!environment
+            .iter()
+            .any(|(_, value)| value == "C:/foreign-home"));
     }
 
     #[cfg(windows)]
@@ -4684,8 +5514,14 @@ mod tests {
         service.request_login(&profile.id).unwrap();
         service.refresh_readiness(&profile.id).unwrap();
         let calls = fake.calls.lock().unwrap();
-        for call in calls.iter().filter(|call| call.args.first().is_some_and(|arg| arg == "login")) {
-            assert_eq!(call.environment, native_windows_cli_environment(Path::new(&profile.home_path)));
+        for call in calls
+            .iter()
+            .filter(|call| call.args.first().is_some_and(|arg| arg == "login"))
+        {
+            assert_eq!(
+                call.environment,
+                native_windows_cli_environment(Path::new(&profile.home_path))
+            );
             assert!(call.environment.iter().any(|(key, _)| key == "CODEX_HOME"));
         }
     }
@@ -4949,6 +5785,64 @@ mod tests {
     }
 
     #[test]
+    fn v34_migration_preserves_old_danger_authorization_as_insufficient_and_rejects_old_canary_pass(
+    ) {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("CREATE TABLE native_codex_profiles (id TEXT PRIMARY KEY, updated_at TEXT NOT NULL);")
+            .unwrap();
+        connection
+            .execute("INSERT INTO native_codex_profiles (id,updated_at) VALUES ('p1','2026-08-07T12:00:00Z')", [])
+            .unwrap();
+        connection.execute_batch("CREATE TABLE native_codex_profile_readiness (profile_id TEXT PRIMARY KEY, danger_full_access_canary TEXT NOT NULL);").unwrap();
+        connection.execute("INSERT INTO native_codex_profile_readiness (profile_id,danger_full_access_canary) VALUES ('p1','passed')", []).unwrap();
+        connection
+            .execute_batch(NATIVE_PROFILE_V25_MIGRATION)
+            .unwrap();
+        connection
+            .execute_batch(NATIVE_PROFILE_V26_MIGRATION)
+            .unwrap();
+        connection.execute(
+            "INSERT INTO native_codex_profile_mode_authorizations (profile_id,mode,filesystem_identity,authorized_at) VALUES ('p1','danger_full_access','identity','2026-08-07T12:00:00Z')",
+            [],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO native_codex_profile_full_access_canaries (attempt_id,profile_id,filesystem_identity,mode,executable,version,sentinel_path,state,started_at,completed_at) VALUES ('a1','p1','identity','danger_full_access','C:/codex.exe','codex-cli 0.144.0','C:/owned.txt','passed','2026-08-07T12:00:00Z','2026-08-07T12:00:01Z')",
+            [],
+        ).unwrap();
+        connection
+            .execute_batch(NATIVE_PROFILE_V34_MIGRATION)
+            .unwrap();
+        connection
+            .execute_batch(NATIVE_PROFILE_V34_FULL_ACCESS_CANARY_MIGRATION)
+            .unwrap();
+        let authorization: (String, String, Option<String>) = connection.query_row(
+            "SELECT authority_scope,authority_version,authorization_correlation_id FROM native_codex_profile_mode_authorizations WHERE profile_id='p1'",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(
+            authorization,
+            (
+                "filesystem_only".into(),
+                "danger-full-access/filesystem-only/v1".into(),
+                None
+            )
+        );
+        let canary: (String, String, String) = connection.query_row(
+            "SELECT state,terminal_classification,cleanup_disposition FROM native_codex_profile_full_access_canaries WHERE attempt_id='a1'",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(
+            canary,
+            (
+                "legacy_unverified".into(),
+                "legacy_unverified".into(),
+                "not_observed".into()
+            )
+        );
+    }
+
+    #[test]
     fn workspace_launch_isolated_from_project_authority_after_readiness() {
         let (directory, mut service) = service();
         let profile = service.create_dedicated().unwrap();
@@ -4969,12 +5863,17 @@ mod tests {
                 None,
             )
             .unwrap();
-        let workspace = service.project_launch(&profile.id, &workspace_target).unwrap();
+        let workspace = service
+            .project_launch(&profile.id, &workspace_target)
+            .unwrap();
         assert!(workspace
             .arguments
             .windows(2)
             .any(|arguments| arguments == ["--sandbox", "workspace-write"]));
-        assert!(workspace.arguments.iter().any(|argument| argument == "--strict-config"));
+        assert!(workspace
+            .arguments
+            .iter()
+            .any(|argument| argument == "--strict-config"));
         assert!(workspace.arguments.windows(2).any(|arguments| {
             arguments[0] == "--config"
                 && arguments[1].starts_with("projects={\"")
@@ -4990,7 +5889,10 @@ mod tests {
             "sandbox_workspace_write.network_access=false",
             "sandbox_workspace_write.writable_roots=[]",
         ] {
-            assert!(workspace.arguments.iter().any(|argument| argument == expected));
+            assert!(workspace
+                .arguments
+                .iter()
+                .any(|argument| argument == expected));
         }
         assert!(!workspace
             .arguments
@@ -5003,10 +5905,9 @@ mod tests {
             .project_launch(&profile.id, &workspace_target)
             .is_err());
         service.authorize_danger_full_access(&profile.id).unwrap();
-        service.cli = Arc::new(FakeCli::enforcing_application_network_policy());
-        let danger = service
-            .project_launch(&profile.id, &workspace_target)
-            .unwrap();
+        service.cli = Arc::new(FakeCli::succeeding());
+        let danger_target = NativeLaunchTarget::application_owned(root.clone(), false).unwrap();
+        let danger = service.project_launch(&profile.id, &danger_target).unwrap();
         assert!(danger
             .arguments
             .windows(2)
@@ -5020,8 +5921,8 @@ mod tests {
             .iter()
             .any(|argument| argument.contains("state-json")));
         assert!(danger.non_interactive_approval);
-        assert!(danger.requested_network_disabled);
-        assert!(danger.effective_network_enforced);
+        assert!(!danger.requested_network_disabled);
+        assert!(!danger.effective_network_enforced);
         assert_eq!(danger.windows_uac_authority, "not_granted");
         let canary = service.project_full_access_canary(&profile.id).unwrap();
         assert_eq!(canary.evidence_state, "not_run");
@@ -5046,7 +5947,12 @@ mod tests {
         let target = NativeLaunchTarget::application_owned(root, true).unwrap();
         assert!(service.project_launch(&profile.id, &target).is_err());
         assert_eq!(
-            service.profile(&profile.id).unwrap().readiness.attentions.cli,
+            service
+                .profile(&profile.id)
+                .unwrap()
+                .readiness
+                .attentions
+                .cli,
             Some("codex_cli_surface_unsupported".into())
         );
     }
@@ -5054,7 +5960,7 @@ mod tests {
     #[test]
     fn full_access_canary_persists_then_settles_only_the_owned_sentinel_receipt() {
         let (directory, mut service) = service();
-        let fake = Arc::new(FakeCli::enforcing_application_network_policy());
+        let fake = Arc::new(FakeCli::succeeding());
         *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
             succeeded: true,
             exit_code: Some(0),
@@ -5069,38 +5975,69 @@ mod tests {
         service.authorize_danger_full_access(&profile.id).unwrap();
         service.run_danger_full_access_canary(&profile.id).unwrap();
         assert_eq!(
-            service.profile(&profile.id).unwrap().readiness.danger_full_access_canary,
+            service
+                .profile(&profile.id)
+                .unwrap()
+                .readiness
+                .danger_full_access_canary,
             "not_run"
         );
         service.query().unwrap();
         assert_eq!(
-            service.profile(&profile.id).unwrap().readiness.danger_full_access_canary,
+            service
+                .profile(&profile.id)
+                .unwrap()
+                .readiness
+                .danger_full_access_canary,
             "passed"
         );
-        let persisted: String = service.connection().unwrap().query_row(
-            "SELECT state FROM native_codex_profile_full_access_canaries WHERE profile_id=?1",
-            params![profile.id], |row| row.get(0),
-        ).unwrap();
+        let persisted: String = service
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT state FROM native_codex_profile_full_access_canaries WHERE profile_id=?1",
+                params![profile.id],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(persisted, "passed");
+        let durable = service
+            .profile(&profile.id)
+            .unwrap()
+            .full_access_canary_attempt;
+        assert_eq!(durable.process_activity, "terminal_observed");
+        assert_eq!(durable.provider_activity, "unobserved");
+        assert!(durable.receipt_observed);
+        assert_eq!(durable.cleanup_disposition, "removed");
+        assert_eq!(
+            durable.authorization_version.as_deref(),
+            Some(DANGER_AUTHORITY_VERSION)
+        );
         assert!(directory.path().join("app").exists());
     }
 
     #[test]
     fn unsupported_danger_network_policy_blocks_canary_before_a_child_starts() {
         let (_directory, mut service) = service();
-        let fake = Arc::new(FakeCli::succeeding());
-        service.cli = fake.clone();
+        let fake = Arc::new(FakeCli::unsupported_danger_launch_surface());
         let profile = service.create_dedicated().unwrap();
         service.select(&profile.id).unwrap();
         service
             .select_execution_mode(&profile.id, ExecutionMode::DangerFullAccess)
             .unwrap();
+        service.cli = Arc::new(FakeCli::succeeding());
         service.authorize_danger_full_access(&profile.id).unwrap();
+        service.cli = fake.clone();
         assert!(service.run_danger_full_access_canary(&profile.id).is_err());
         assert_eq!(*fake.starts.lock().unwrap(), 0);
         assert_eq!(
-            service.profile(&profile.id).unwrap().readiness.attentions.cli,
-            Some("codex_cli_danger_network_enforcement_unsupported".into())
+            service
+                .profile(&profile.id)
+                .unwrap()
+                .readiness
+                .attentions
+                .cli,
+            Some("codex_cli_danger_launch_surface_unsupported".into())
         );
     }
 
@@ -5128,11 +6065,19 @@ mod tests {
             Lifecycle::Malformed
         );
         assert_eq!(
-            service.profile(&profile.id).unwrap().login_attempt.disposition,
+            service
+                .profile(&profile.id)
+                .unwrap()
+                .login_attempt
+                .disposition,
             "cancelled"
         );
         assert_eq!(
-            service.profile(&profile.id).unwrap().setup_attempt.disposition,
+            service
+                .profile(&profile.id)
+                .unwrap()
+                .setup_attempt
+                .disposition,
             "cancelled"
         );
     }
@@ -5172,7 +6117,10 @@ mod tests {
         assert_eq!(invalidated.lifecycle, Lifecycle::Malformed);
         assert!(!invalidated.selected);
         assert_eq!(invalidated.setup_attempt.disposition, "cancelled");
-        assert_eq!(invalidated.setup_attempt.terminal_classification, "cancelled");
+        assert_eq!(
+            invalidated.setup_attempt.terminal_classification,
+            "cancelled"
+        );
         assert_eq!(invalidated.setup_attempt.terminal_exit_code, None);
         assert_eq!(invalidated.readiness.workspace_write_canary, "not_run");
         assert!(!command_file.exists());
@@ -5180,7 +6128,11 @@ mod tests {
         write_marker(Path::new(&profile.home_path), &profile.id).unwrap();
         assert!(reopened.select(&profile.id).is_err());
         assert_eq!(
-            reopened.profile(&profile.id).unwrap().setup_attempt.disposition,
+            reopened
+                .profile(&profile.id)
+                .unwrap()
+                .setup_attempt
+                .disposition,
             "cancelled"
         );
     }
@@ -5279,14 +6231,77 @@ mod tests {
         connection.execute_batch("DROP INDEX ux_native_codex_profile_setup_attempt_pending; DROP TABLE native_codex_profile_setup_attempts; CREATE TABLE native_codex_profile_setup_attempts (attempt_id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, phase TEXT NOT NULL, state TEXT NOT NULL, started_at TEXT NOT NULL, deadline_at TEXT NOT NULL, completed_at TEXT); INSERT INTO native_codex_profiles (id,canonical_home_path,filesystem_identity,ownership,lifecycle,created_at,updated_at) VALUES ('profile','C:\\profile','identity','registered_existing','active','t','t'); INSERT INTO native_codex_profile_setup_attempts VALUES ('failed','profile','sandbox_initialization','failed','2026-08-06T22:41:12Z','2026-08-06T22:43:12Z','2026-08-06T22:41:13Z'),('pending','profile','sandbox_initialization','pending','2026-08-06T22:42:12Z','2026-08-06T22:44:12Z',NULL),('completed','profile','sandbox_initialization','completed','2026-08-06T22:43:12Z','2026-08-06T22:45:12Z','2026-08-06T22:43:13Z'),('timed_out','profile','sandbox_initialization','timed_out','2026-08-06T22:44:12Z','2026-08-06T22:46:12Z','2026-08-06T22:46:12Z'),('cancelled','profile','sandbox_initialization','cancelled','2026-08-06T22:45:12Z','2026-08-06T22:47:12Z','2026-08-06T22:45:13Z'); PRAGMA user_version=27;").unwrap();
         crate::storage::initialize_active_database(&connection).unwrap();
         let mut statement = connection.prepare("SELECT attempt_id,state,terminal_classification,executable,version,workspace_sandbox_supported,launch_accepted_at,terminal_exit_code FROM native_codex_profile_setup_attempts ORDER BY requested_at").unwrap();
-        let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?, row.get::<_, Option<i64>>(5)?, row.get::<_, Option<String>>(6)?, row.get::<_, Option<i32>>(7)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_eq!(rows, vec![
-            ("failed".into(), "legacy_unclassified_failed".into(), "legacy_unclassified_failed".into(), None, None, None, None, None),
-            ("pending".into(), "recovered_unobserved".into(), "recovered_unobserved".into(), None, None, None, None, None),
-            ("completed".into(), "terminal_succeeded".into(), "not_observed".into(), None, None, None, None, None),
-            ("timed_out".into(), "timed_out".into(), "timed_out".into(), None, None, None, None, None),
-            ("cancelled".into(), "cancelled".into(), "cancelled".into(), None, None, None, None, None),
-        ]);
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<i64>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<i32>>(7)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "failed".into(),
+                    "legacy_unclassified_failed".into(),
+                    "legacy_unclassified_failed".into(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None
+                ),
+                (
+                    "pending".into(),
+                    "recovered_unobserved".into(),
+                    "recovered_unobserved".into(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None
+                ),
+                (
+                    "completed".into(),
+                    "terminal_succeeded".into(),
+                    "not_observed".into(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None
+                ),
+                (
+                    "timed_out".into(),
+                    "timed_out".into(),
+                    "timed_out".into(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None
+                ),
+                (
+                    "cancelled".into(),
+                    "cancelled".into(),
+                    "cancelled".into(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None
+                ),
+            ]
+        );
     }
 
     #[test]

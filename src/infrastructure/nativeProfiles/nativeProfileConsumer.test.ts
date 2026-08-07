@@ -6,11 +6,12 @@ const query: NativeProfileQuery = {
   contract: 'native-codex-profile-query/v1',
   profiles: [{
     id: 'p1', homePath: 'C:/codex', ownership: 'registered_existing', lifecycle: 'active', selected: true,
-    execution: { selectedMode: 'workspace_write', dangerFullAccessAuthorized: false },
+    execution: { selectedMode: 'workspace_write', dangerFullAccessAuthorized: false, dangerAuthorization: { disposition: 'not_authorized', authorityScope: null, authorityVersion: null, correlationId: null, authorizedAt: null, revokedAt: null } },
     loginAttempt: { disposition: 'not_requested', browserHandoff: 'unobserved', requestedAt: null, launchAcceptedAt: null, settledAt: null },
     setupAttempt: { phase: 'not_requested', disposition: 'not_requested', executable: null, version: null, workspaceSandboxSupported: null, correlationId: null, requestedAt: null, launchAcceptedAt: null, deadlineAt: null, settledAt: null, terminalClassification: 'not_observed', terminalExitCode: null },
     sandboxAdoption: { disposition: 'not_verified', executable: null, version: null, workspaceSandboxSupported: null, windowsSandboxSetupSupported: null, correlationId: null, observedAt: null, elevatedModeObserved: null },
     sandboxAdoptionConfirmation: { disposition: 'not_confirmed', correlationId: null, confirmedAt: null },
+    fullAccessCanaryAttempt: { disposition: 'not_requested', authorizationVersion: null, authorizationCorrelationId: null, correlationId: null, requestedAt: null, launchAcceptedAt: null, deadlineAt: null, settledAt: null, processActivity: 'unobserved', providerActivity: 'unobserved', terminalClassification: 'not_observed', terminalExitCode: null, receiptObserved: false, cleanupDisposition: 'not_observed' },
     readiness: { authentication: 'unknown', sandboxInitialization: 'unknown', workspaceWriteCanary: 'not_run', dangerFullAccessCanary: 'not_run', mcpReporting: 'not_assessed', attentions: { authentication: null, sandbox: null, canary: null, mcpReporting: null, continuity: null, cli: null } },
   }],
 };

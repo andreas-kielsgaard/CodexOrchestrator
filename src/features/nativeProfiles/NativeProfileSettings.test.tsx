@@ -7,14 +7,15 @@ import { NativeProfileSettings } from './NativeProfileSettings';
 import type { NativeProfile, NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
 
 const readiness = { authentication: 'unknown' as const, sandboxInitialization: 'unknown' as const, workspaceWriteCanary: 'not_run' as const, dangerFullAccessCanary: 'not_run' as const, mcpReporting: 'not_assessed' as const, attentions: { authentication: null, sandbox: null, canary: null, mcpReporting: null, continuity: null, cli: null } };
-const execution = { selectedMode: 'workspace_write' as const, dangerFullAccessAuthorized: false };
+const execution = { selectedMode: 'workspace_write' as const, dangerFullAccessAuthorized: false, dangerAuthorization: { disposition: 'not_authorized' as const, authorityScope: null, authorityVersion: null, correlationId: null, authorizedAt: null, revokedAt: null } };
 const loginAttempt = { disposition: 'not_requested' as const, browserHandoff: 'unobserved' as const, requestedAt: null, launchAcceptedAt: null, settledAt: null };
 const setupAttempt = { phase: 'not_requested' as const, disposition: 'not_requested' as const, executable: null, version: null, workspaceSandboxSupported: null, correlationId: null, requestedAt: null, launchAcceptedAt: null, deadlineAt: null, settledAt: null, terminalClassification: 'not_observed' as const, terminalExitCode: null };
 const sandboxAdoption = { disposition: 'not_verified' as const, executable: null, version: null, workspaceSandboxSupported: null, windowsSandboxSetupSupported: null, correlationId: null, observedAt: null, elevatedModeObserved: null };
 const sandboxAdoptionConfirmation = { disposition: 'not_confirmed' as const, correlationId: null, confirmedAt: null };
+const fullAccessCanaryAttempt = { disposition: 'not_requested' as const, authorizationVersion: null, authorizationCorrelationId: null, correlationId: null, requestedAt: null, launchAcceptedAt: null, deadlineAt: null, settledAt: null, processActivity: 'unobserved' as const, providerActivity: 'unobserved' as const, terminalClassification: 'not_observed' as const, terminalExitCode: null, receiptObserved: false, cleanupDisposition: 'not_observed' as const };
 const profiles: readonly NativeProfile[] = [
-  { id: 'p1', homePath: 'C:/one', ownership: 'registered_existing', lifecycle: 'active', selected: true, execution, loginAttempt, setupAttempt, sandboxAdoption, sandboxAdoptionConfirmation, readiness },
-  { id: 'p2', homePath: 'C:/two', ownership: 'application_dedicated', lifecycle: 'active', selected: false, execution, loginAttempt, setupAttempt, sandboxAdoption, sandboxAdoptionConfirmation, readiness },
+  { id: 'p1', homePath: 'C:/one', ownership: 'registered_existing', lifecycle: 'active', selected: true, execution, loginAttempt, setupAttempt, sandboxAdoption, sandboxAdoptionConfirmation, fullAccessCanaryAttempt, readiness },
+  { id: 'p2', homePath: 'C:/two', ownership: 'application_dedicated', lifecycle: 'active', selected: false, execution, loginAttempt, setupAttempt, sandboxAdoption, sandboxAdoptionConfirmation, fullAccessCanaryAttempt, readiness },
 ];
 
 function client(overrides: Partial<NativeProfileClient> = {}): NativeProfileClient {
@@ -48,10 +49,10 @@ describe('NativeProfileSettings', () => {
     const danger = within(card).getByRole('radio', { name: /Danger Full Access/ });
     await user.click(danger);
     await waitFor(() => expect(selectExecutionMode).toHaveBeenCalledWith('p1', 'danger_full_access'));
-    expect(within(card).getByRole('button', { name: 'Authorize Danger Full Access for this profile' })).toBeEnabled();
-    await user.click(within(card).getByRole('button', { name: 'Authorize Danger Full Access for this profile' }));
+    expect(within(card).getByRole('button', { name: 'Authorize full-machine access and unrestricted network for this profile' })).toBeEnabled();
+    await user.click(within(card).getByRole('button', { name: 'Authorize full-machine access and unrestricted network for this profile' }));
     await waitFor(() => expect(authorizeDangerFullAccess).toHaveBeenCalledWith('p1'));
-    expect(within(card).getByText('Authorization:')).toBeInTheDocument();
+    expect(within(card).getByText('Authorization')).toBeInTheDocument();
     const refreshedCard = await screen.findByRole('article', { name: 'Codex home p1' });
     expect(within(refreshedCard).getByRole('button', { name: 'Revoke Danger Full Access authorization' })).toBeInTheDocument();
   });
@@ -63,7 +64,7 @@ describe('NativeProfileSettings', () => {
     render(<NativeProfileSettings client={client({ selectExecutionMode, authorizeDangerFullAccess })} />);
     const card = await screen.findByRole('article', { name: 'Codex home p1' });
     await user.click(within(card).getByRole('radio', { name: /Danger Full Access/ }));
-    await user.click(within(card).getByRole('button', { name: 'Authorize Danger Full Access for this profile' }));
+    await user.click(within(card).getByRole('button', { name: 'Authorize full-machine access and unrestricted network for this profile' }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Danger Full Access authorization failed: Danger authorization was rejected.'));
     expect(within(card).getByText('not authorized')).toBeInTheDocument();
   });
@@ -90,7 +91,7 @@ describe('NativeProfileSettings', () => {
     await user.click(within(card).getByRole('button', { name: 'Request sandbox initialization' }));
     await waitFor(() => expect(initializeSandbox).toHaveBeenCalledWith('p1'));
     expect(within(card).getByText('Native setup process ended unsuccessfully.')).toBeInTheDocument();
-    expect(within(card).getByText('Terminal classification')).toBeInTheDocument();
+    expect(within(within(card).getByLabelText('Native setup attempt')).getByText('Terminal classification')).toBeInTheDocument();
     expect(within(card).getByText('Request return, child launch, terminal outcome, UAC confirmation, sandbox initialization, and canary readiness are separate facts.')).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('Sandbox initialization request returned; review the durable setup-attempt facts.');
   });

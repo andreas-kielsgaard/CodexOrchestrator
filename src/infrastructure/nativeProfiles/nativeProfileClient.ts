@@ -12,6 +12,9 @@ export type NativeProfileSandbox = 'unknown' | 'initialized' | 'failed' | 'atten
 export type NativeProfileCanary = 'not_run' | 'passed' | 'blocked';
 export type NativeProfileMcp = 'not_assessed' | 'ready' | 'probe_failed';
 export type NativeExecutionMode = 'workspace_write' | 'danger_full_access';
+export type NativeDangerAuthorizationDisposition = 'not_authorized' | 'legacy_insufficient' | 'authorized' | 'revoked' | 'foreign';
+export type NativeDangerAuthorizationScope = 'filesystem_only' | 'full_machine_filesystem_and_unrestricted_network';
+export type NativeFullAccessCanaryDisposition = 'not_requested' | 'pending' | 'passed' | 'launch_failed' | 'terminal_failed' | 'timed_out' | 'cancelled' | 'recovered_unobserved' | 'cleanup_failed' | 'legacy_unverified';
 export type NativeProfileLoginDisposition = 'not_requested' | 'pending' | 'launch_failed' | 'terminal_succeeded' | 'terminal_failed' | 'cancelled' | 'recovered_unobserved';
 export type NativeProfileBrowserHandoff = 'unobserved';
 export type NativeProfileSetupPhase = 'not_requested' | 'sandbox_initialization' | 'workspace_write_canary';
@@ -39,6 +42,16 @@ export interface NativeProfileReadiness {
 export interface NativeProfileExecution {
   readonly selectedMode: NativeExecutionMode;
   readonly dangerFullAccessAuthorized: boolean;
+  readonly dangerAuthorization: NativeProfileDangerAuthorization;
+}
+
+export interface NativeProfileDangerAuthorization {
+  readonly disposition: NativeDangerAuthorizationDisposition;
+  readonly authorityScope: NativeDangerAuthorizationScope | null;
+  readonly authorityVersion: string | null;
+  readonly correlationId: string | null;
+  readonly authorizedAt: string | null;
+  readonly revokedAt: string | null;
 }
 
 export interface NativeProfileLoginAttempt {
@@ -81,6 +94,23 @@ export interface NativeProfileSandboxAdoptionConfirmation {
   readonly confirmedAt: string | null;
 }
 
+export interface NativeProfileFullAccessCanaryAttempt {
+  readonly disposition: NativeFullAccessCanaryDisposition;
+  readonly authorizationVersion: string | null;
+  readonly authorizationCorrelationId: string | null;
+  readonly correlationId: string | null;
+  readonly requestedAt: string | null;
+  readonly launchAcceptedAt: string | null;
+  readonly deadlineAt: string | null;
+  readonly settledAt: string | null;
+  readonly processActivity: 'unobserved' | 'launch_accepted' | 'terminal_observed';
+  readonly providerActivity: 'unobserved';
+  readonly terminalClassification: 'not_observed' | 'exit_code' | 'receipt_missing' | 'launch_failed' | 'timed_out' | 'cancelled' | 'recovered_unobserved' | 'cleanup_failed' | 'legacy_unverified';
+  readonly terminalExitCode: number | null;
+  readonly receiptObserved: boolean;
+  readonly cleanupDisposition: 'pending' | 'removed' | 'failed' | 'not_observed';
+}
+
 export interface NativeProfile {
   readonly id: string;
   readonly homePath: string;
@@ -92,6 +122,7 @@ export interface NativeProfile {
   readonly setupAttempt: NativeProfileSetupAttempt;
   readonly sandboxAdoption: NativeProfileSandboxAdoption;
   readonly sandboxAdoptionConfirmation: NativeProfileSandboxAdoptionConfirmation;
+  readonly fullAccessCanaryAttempt: NativeProfileFullAccessCanaryAttempt;
   readonly readiness: NativeProfileReadiness;
 }
 
@@ -174,6 +205,43 @@ function validateReceiptMissingSetupAttempt(attempt: NativeProfileSetupAttempt) 
     throw new Error('receipt_missing setup attempt has contradictory timestamps');
 }
 
+function validateDangerAuthorization(authorization: NativeProfileDangerAuthorization, authorized: boolean) {
+  const current = authorization.disposition === 'authorized';
+  if (authorized !== current) throw new Error('danger authorization boolean contradicts its durable disposition');
+  if (authorization.disposition === 'not_authorized') {
+    if (authorization.authorityScope !== null || authorization.authorityVersion !== null || authorization.correlationId !== null || authorization.authorizedAt !== null || authorization.revokedAt !== null)
+      throw new Error('empty danger authorization has durable facts');
+    return;
+  }
+  if (authorization.authorityScope === null || authorization.authorityVersion === null || authorization.authorizedAt === null)
+    throw new Error('danger authorization is missing its durable scope, version, or timestamp');
+  requiredRfc3339(authorization.authorizedAt, 'danger authorization timestamp');
+  if (authorization.revokedAt !== null) requiredRfc3339(authorization.revokedAt, 'danger authorization revocation timestamp');
+  const legacy = authorization.authorityScope === 'filesystem_only' && authorization.authorityVersion === 'danger-full-access/filesystem-only/v1' && authorization.correlationId === null;
+  const currentContract = authorization.authorityScope === 'full_machine_filesystem_and_unrestricted_network' && authorization.authorityVersion === 'danger-full-access/unrestricted-network/v1' && authorization.correlationId !== null;
+  if (!legacy && !currentContract) throw new Error('danger authorization has an unknown or contradictory authority contract');
+  if (authorization.disposition === 'authorized' && (!currentContract || authorization.revokedAt !== null))
+    throw new Error('current danger authorization is contradictory');
+  if (authorization.disposition === 'legacy_insufficient' && !legacy) throw new Error('legacy danger authorization is contradictory');
+  if (authorization.disposition === 'revoked' && authorization.revokedAt === null) throw new Error('revoked danger authorization lacks revocation timestamp');
+}
+
+function validateFullAccessCanaryAttempt(attempt: NativeProfileFullAccessCanaryAttempt) {
+  if (attempt.disposition === 'not_requested') {
+    if (attempt.authorizationVersion !== null || attempt.authorizationCorrelationId !== null || attempt.correlationId !== null || attempt.requestedAt !== null || attempt.launchAcceptedAt !== null || attempt.deadlineAt !== null || attempt.settledAt !== null || attempt.processActivity !== 'unobserved' || attempt.providerActivity !== 'unobserved' || attempt.terminalClassification !== 'not_observed' || attempt.terminalExitCode !== null || attempt.receiptObserved || attempt.cleanupDisposition !== 'not_observed')
+      throw new Error('empty full-access canary has durable facts');
+    return;
+  }
+  requiredRfc3339(attempt.requestedAt, 'full-access canary request timestamp');
+  if (attempt.launchAcceptedAt !== null) requiredRfc3339(attempt.launchAcceptedAt, 'full-access canary launch timestamp');
+  if (attempt.deadlineAt !== null) requiredRfc3339(attempt.deadlineAt, 'full-access canary deadline timestamp');
+  if (attempt.settledAt !== null) requiredRfc3339(attempt.settledAt, 'full-access canary settlement timestamp');
+  if (attempt.disposition === 'pending' && (attempt.settledAt !== null || attempt.cleanupDisposition !== 'pending')) throw new Error('pending full-access canary is contradictory');
+  if (attempt.disposition === 'passed' && (attempt.authorizationVersion !== 'danger-full-access/unrestricted-network/v1' || attempt.authorizationCorrelationId === null || attempt.correlationId === null || attempt.launchAcceptedAt === null || attempt.settledAt === null || attempt.processActivity !== 'terminal_observed' || !attempt.receiptObserved || attempt.cleanupDisposition !== 'removed'))
+    throw new Error('passed full-access canary violates its receipt and cleanup invariant');
+  if (attempt.providerActivity !== 'unobserved') throw new Error('full-access canary provider activity must remain unobserved');
+}
+
 function validateSandboxAdoption(adoption: NativeProfileSandboxAdoption) {
   if (adoption.disposition === 'not_verified'
     && adoption.executable === null
@@ -225,7 +293,7 @@ export function decodeNativeProfileQuery(value: unknown): NativeProfileQuery {
 
 export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
   const profile = object(value, `native profile ${index}`);
-  keys(profile, ['id', 'homePath', 'ownership', 'lifecycle', 'selected', 'execution', 'loginAttempt', 'setupAttempt', 'sandboxAdoption', 'sandboxAdoptionConfirmation', 'readiness'], `native profile ${index}`);
+  keys(profile, ['id', 'homePath', 'ownership', 'lifecycle', 'selected', 'execution', 'loginAttempt', 'setupAttempt', 'sandboxAdoption', 'sandboxAdoptionConfirmation', 'fullAccessCanaryAttempt', 'readiness'], `native profile ${index}`);
   if (typeof profile.selected !== 'boolean') throw new Error(`native profile ${index} selected must be boolean`);
   const readiness = object(profile.readiness, `native profile ${index} readiness`);
   keys(readiness, ['authentication', 'sandboxInitialization', 'workspaceWriteCanary', 'dangerFullAccessCanary', 'mcpReporting', 'attentions'], 'readiness');
@@ -234,11 +302,15 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
   const setupAttempt = object(profile.setupAttempt, `native profile ${index} setup attempt`);
   const sandboxAdoption = object(profile.sandboxAdoption, `native profile ${index} sandbox adoption`);
   const sandboxAdoptionConfirmation = object(profile.sandboxAdoptionConfirmation, `native profile ${index} sandbox adoption confirmation`);
-  keys(execution, ['selectedMode', 'dangerFullAccessAuthorized'], `native profile ${index} execution`);
+  const fullAccessCanaryAttempt = object(profile.fullAccessCanaryAttempt, `native profile ${index} full access canary attempt`);
+  keys(execution, ['selectedMode', 'dangerFullAccessAuthorized', 'dangerAuthorization'], `native profile ${index} execution`);
   keys(loginAttempt, ['disposition', 'browserHandoff', 'requestedAt', 'launchAcceptedAt', 'settledAt'], `native profile ${index} login attempt`);
   keys(setupAttempt, ['phase', 'disposition', 'executable', 'version', 'workspaceSandboxSupported', 'correlationId', 'requestedAt', 'launchAcceptedAt', 'deadlineAt', 'settledAt', 'terminalClassification', 'terminalExitCode'], `native profile ${index} setup attempt`);
   keys(sandboxAdoption, ['disposition', 'executable', 'version', 'workspaceSandboxSupported', 'windowsSandboxSetupSupported', 'correlationId', 'observedAt', 'elevatedModeObserved'], `native profile ${index} sandbox adoption`);
   keys(sandboxAdoptionConfirmation, ['disposition', 'correlationId', 'confirmedAt'], `native profile ${index} sandbox adoption confirmation`);
+  const dangerAuthorization = object(execution.dangerAuthorization, `native profile ${index} danger authorization`);
+  keys(dangerAuthorization, ['disposition', 'authorityScope', 'authorityVersion', 'correlationId', 'authorizedAt', 'revokedAt'], `native profile ${index} danger authorization`);
+  keys(fullAccessCanaryAttempt, ['disposition', 'authorizationVersion', 'authorizationCorrelationId', 'correlationId', 'requestedAt', 'launchAcceptedAt', 'deadlineAt', 'settledAt', 'processActivity', 'providerActivity', 'terminalClassification', 'terminalExitCode', 'receiptObserved', 'cleanupDisposition'], `native profile ${index} full access canary attempt`);
   if (typeof execution.dangerFullAccessAuthorized !== 'boolean') throw new Error(`native profile ${index} danger authorization must be boolean`);
   const attentions = object(readiness.attentions, 'attentions');
   keys(attentions, ['authentication', 'sandbox', 'canary', 'mcpReporting', 'continuity', 'cli'], 'attentions');
@@ -275,6 +347,32 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
     confirmedAt: nullableString(sandboxAdoptionConfirmation.confirmedAt, 'sandbox adoption confirmation timestamp'),
   };
   validateSandboxAdoptionConfirmation(decodedSandboxAdoptionConfirmation);
+  const decodedDangerAuthorization: NativeProfileDangerAuthorization = {
+    disposition: enumValue(dangerAuthorization.disposition, ['not_authorized', 'legacy_insufficient', 'authorized', 'revoked', 'foreign'], 'danger authorization disposition'),
+    authorityScope: dangerAuthorization.authorityScope === null ? null : enumValue<NativeDangerAuthorizationScope>(dangerAuthorization.authorityScope, ['filesystem_only', 'full_machine_filesystem_and_unrestricted_network'], 'danger authorization scope'),
+    authorityVersion: nullableString(dangerAuthorization.authorityVersion, 'danger authorization version'),
+    correlationId: nullableString(dangerAuthorization.correlationId, 'danger authorization correlation'),
+    authorizedAt: nullableString(dangerAuthorization.authorizedAt, 'danger authorization timestamp'),
+    revokedAt: nullableString(dangerAuthorization.revokedAt, 'danger authorization revocation timestamp'),
+  };
+  validateDangerAuthorization(decodedDangerAuthorization, booleanValue(execution.dangerFullAccessAuthorized, `native profile ${index} danger authorization`));
+  const decodedFullAccessCanaryAttempt: NativeProfileFullAccessCanaryAttempt = {
+    disposition: enumValue(fullAccessCanaryAttempt.disposition, ['not_requested', 'pending', 'passed', 'launch_failed', 'terminal_failed', 'timed_out', 'cancelled', 'recovered_unobserved', 'cleanup_failed', 'legacy_unverified'], 'full access canary disposition'),
+    authorizationVersion: nullableString(fullAccessCanaryAttempt.authorizationVersion, 'full access canary authorization version'),
+    authorizationCorrelationId: nullableString(fullAccessCanaryAttempt.authorizationCorrelationId, 'full access canary authorization correlation'),
+    correlationId: nullableString(fullAccessCanaryAttempt.correlationId, 'full access canary correlation'),
+    requestedAt: nullableString(fullAccessCanaryAttempt.requestedAt, 'full access canary request timestamp'),
+    launchAcceptedAt: nullableString(fullAccessCanaryAttempt.launchAcceptedAt, 'full access canary launch timestamp'),
+    deadlineAt: nullableString(fullAccessCanaryAttempt.deadlineAt, 'full access canary deadline timestamp'),
+    settledAt: nullableString(fullAccessCanaryAttempt.settledAt, 'full access canary settlement timestamp'),
+    processActivity: enumValue(fullAccessCanaryAttempt.processActivity, ['unobserved', 'launch_accepted', 'terminal_observed'], 'full access canary process activity'),
+    providerActivity: enumValue(fullAccessCanaryAttempt.providerActivity, ['unobserved'], 'full access canary provider activity'),
+    terminalClassification: enumValue(fullAccessCanaryAttempt.terminalClassification, ['not_observed', 'exit_code', 'receipt_missing', 'launch_failed', 'timed_out', 'cancelled', 'recovered_unobserved', 'cleanup_failed', 'legacy_unverified'], 'full access canary terminal classification'),
+    terminalExitCode: fullAccessCanaryAttempt.terminalExitCode === null ? null : integerValue(fullAccessCanaryAttempt.terminalExitCode, 'full access canary terminal exit code'),
+    receiptObserved: booleanValue(fullAccessCanaryAttempt.receiptObserved, 'full access canary receipt observation'),
+    cleanupDisposition: enumValue(fullAccessCanaryAttempt.cleanupDisposition, ['pending', 'removed', 'failed', 'not_observed'], 'full access canary cleanup disposition'),
+  };
+  validateFullAccessCanaryAttempt(decodedFullAccessCanaryAttempt);
   return {
     id: stringValue(profile.id, 'profile id'),
     homePath: absolutePath(profile.homePath, 'profile home path'),
@@ -284,6 +382,7 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
     execution: {
       selectedMode: enumValue(execution.selectedMode, ['workspace_write', 'danger_full_access'], 'execution mode'),
       dangerFullAccessAuthorized: execution.dangerFullAccessAuthorized,
+      dangerAuthorization: decodedDangerAuthorization,
     },
     loginAttempt: {
       disposition: enumValue(loginAttempt.disposition, ['not_requested', 'pending', 'launch_failed', 'terminal_succeeded', 'terminal_failed', 'cancelled', 'recovered_unobserved'], 'login attempt disposition'),
@@ -295,6 +394,7 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
     setupAttempt: decodedSetupAttempt,
     sandboxAdoption: decodedSandboxAdoption,
     sandboxAdoptionConfirmation: decodedSandboxAdoptionConfirmation,
+    fullAccessCanaryAttempt: decodedFullAccessCanaryAttempt,
     readiness: {
       authentication: enumValue(readiness.authentication, ['unknown', 'authenticated', 'unauthenticated'], 'authentication'),
       sandboxInitialization: enumValue(readiness.sandboxInitialization, ['unknown', 'initialized', 'failed', 'attention_required'], 'sandbox initialization'),
