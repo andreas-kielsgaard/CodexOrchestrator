@@ -652,7 +652,7 @@ impl NativeCliPort for SystemNativeCliPort {
         let (workspace_sandbox_supported, windows_sandbox_setup_supported) =
             windows_semantic_sandbox_capabilities(&sandbox_help, &sandbox_setup_help);
         let (workspace_launch_flags_supported, workspace_launch_project_config_isolated) =
-            workspace_launch_semantic_capabilities(&exec_help);
+            workspace_launch_semantic_capabilities(version.trim(), &exec_help);
         let danger_full_access_supported = exec_help.contains("danger-full-access");
         let danger_network_enforcement_supported = false;
         let non_interactive_approval_supported = exec_help.contains("--dangerously-bypass-approvals-and-sandbox");
@@ -685,9 +685,10 @@ fn windows_semantic_sandbox_capabilities(
     (workspace_profile, elevated_setup)
 }
 
-fn workspace_launch_semantic_capabilities(exec_help: &str) -> (bool, bool) {
+fn workspace_launch_semantic_capabilities(version: &str, exec_help: &str) -> (bool, bool) {
     let launch_flags_supported = [
         "--json",
+        "--strict-config",
         "--ignore-user-config",
         "--ignore-rules",
         "--config",
@@ -698,10 +699,26 @@ fn workspace_launch_semantic_capabilities(exec_help: &str) -> (bool, bool) {
     ]
     .iter()
     .all(|token| exec_help.contains(token));
-    // The documented switches above only suppress the selected CODEX_HOME config and
-    // execpolicy rules. They do not establish that a project .codex/config.toml, hooks, or
-    // MCP configuration is excluded, so this product has no safe launch authority yet.
-    (launch_flags_supported, false)
+    // The v0.144 public source establishes the exact config-override ordering needed here:
+    // runtime overrides participate in project-trust selection before project layers load.
+    // Do not infer that contract from matching help text on another version.
+    let project_config_isolated = version == "codex-cli 0.144.0" && launch_flags_supported;
+    (launch_flags_supported, project_config_isolated)
+}
+
+fn workspace_project_trust_override(working_root: &Path) -> Result<String, String> {
+    let working_root = working_root
+        .to_str()
+        .ok_or_else(|| "The application-owned working root is not safely representable".to_string())?;
+    if working_root.chars().any(char::is_control) {
+        return Err("The application-owned working root is not safely representable".into());
+    }
+    // Keep the path inside one TOML inline-table value. CliConfigOverrides splits only the
+    // outer `projects` key on dots, so this remains safe for Windows paths containing dots.
+    let escaped_root = working_root.replace('\\', "\\\\").replace('"', "\\\"");
+    Ok(format!(
+        "projects={{\"{escaped_root}\"={{trust_level=\"untrusted\"}}}}"
+    ))
 }
 
 fn observe_elevated_windows_sandbox_mode(home: &Path) -> Result<bool, String> {
@@ -1803,6 +1820,12 @@ impl NativeProfileService {
                 }
             }
         }
+        let workspace_project_trust_override = match mode {
+            ExecutionMode::WorkspaceWrite => Some(workspace_project_trust_override(
+                &target.working_root,
+            )?),
+            ExecutionMode::DangerFullAccess => None,
+        };
         Ok(NativeLaunchProjectionDto {
             profile_id: profile.id,
             mode,
@@ -1811,6 +1834,7 @@ impl NativeProfileService {
             arguments: vec![
                 "exec".into(),
                 "--json".into(),
+                "--strict-config".into(),
                 "--sandbox".into(),
                 mode.codex_sandbox().into(),
                 "--cd".into(),
@@ -1820,6 +1844,20 @@ impl NativeProfileService {
             .into_iter()
             .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--ignore-user-config".into()))
             .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--ignore-rules".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
+            .chain(workspace_project_trust_override)
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("project_root_markers=[]".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("project_doc_max_bytes=0".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("mcp_servers={}".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("features.hooks=false".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("features.plugins=false".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
+            .chain((mode == ExecutionMode::WorkspaceWrite).then_some("features.apps=false".into()))
             .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
             .chain((mode == ExecutionMode::WorkspaceWrite).then_some("sandbox_workspace_write.network_access=false".into()))
             .chain((mode == ExecutionMode::WorkspaceWrite).then_some("--config".into()))
@@ -3509,7 +3547,7 @@ mod tests {
                 workspace_sandbox_supported: true,
                 windows_sandbox_setup_supported: true,
                 workspace_launch_flags_supported: true,
-                workspace_launch_project_config_isolated: false,
+                workspace_launch_project_config_isolated: true,
                 danger_network_enforcement_supported: false,
             }
         }
@@ -3986,18 +4024,35 @@ mod tests {
     }
 
     #[test]
-    fn workspace_launch_capability_requires_every_known_flag_but_stays_unavailable_without_project_isolation() {
+    fn workspace_launch_capability_requires_the_exact_version_and_every_known_flag() {
         assert_eq!(
             workspace_launch_semantic_capabilities(
-                "--json --ignore-user-config --ignore-rules --config <KEY=VALUE> --sandbox <MODE> --cd <DIR> --skip-git-repo-check workspace-write",
+                "codex-cli 0.144.0",
+                "--json --strict-config --ignore-user-config --ignore-rules --config <KEY=VALUE> --sandbox <MODE> --cd <DIR> --skip-git-repo-check workspace-write",
+            ),
+            (true, true)
+        );
+        assert_eq!(
+            workspace_launch_semantic_capabilities(
+                "codex-cli 0.147.0-alpha.1.2",
+                "--json --strict-config --ignore-user-config --ignore-rules --config <KEY=VALUE> --sandbox <MODE> --cd <DIR> --skip-git-repo-check workspace-write",
             ),
             (true, false)
         );
         assert_eq!(
             workspace_launch_semantic_capabilities(
-                "--json --ignore-user-config --ignore-rules --config <KEY=VALUE> --sandbox <MODE> --skip-git-repo-check workspace-write",
+                "codex-cli 0.144.0",
+                "--json --ignore-user-config --ignore-rules --config <KEY=VALUE> --sandbox <MODE> --cd <DIR> --skip-git-repo-check workspace-write",
             ),
             (false, false)
+        );
+    }
+
+    #[test]
+    fn workspace_project_trust_override_is_one_toml_value_for_a_dot_bearing_windows_path() {
+        assert_eq!(
+            workspace_project_trust_override(Path::new(r"C:\application\.runtime\assigned root")).unwrap(),
+            r#"projects={"C:\\application\\.runtime\\assigned root"={trust_level="untrusted"}}"#,
         );
     }
 
@@ -4894,7 +4949,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_launch_stays_action_incapable_without_project_config_isolation() {
+    fn workspace_launch_isolated_from_project_authority_after_readiness() {
         let (directory, mut service) = service();
         let profile = service.create_dedicated().unwrap();
         service.select(&profile.id).unwrap();
@@ -4914,11 +4969,33 @@ mod tests {
                 None,
             )
             .unwrap();
-        assert!(service.project_launch(&profile.id, &workspace_target).is_err());
-        assert_eq!(
-            service.profile(&profile.id).unwrap().readiness.attentions.cli,
-            Some("codex_cli_workspace_launch_project_config_unsupported".into())
-        );
+        let workspace = service.project_launch(&profile.id, &workspace_target).unwrap();
+        assert!(workspace
+            .arguments
+            .windows(2)
+            .any(|arguments| arguments == ["--sandbox", "workspace-write"]));
+        assert!(workspace.arguments.iter().any(|argument| argument == "--strict-config"));
+        assert!(workspace.arguments.windows(2).any(|arguments| {
+            arguments[0] == "--config"
+                && arguments[1].starts_with("projects={\"")
+                && arguments[1].ends_with("\"={trust_level=\"untrusted\"}}")
+        }));
+        for expected in [
+            "project_root_markers=[]",
+            "project_doc_max_bytes=0",
+            "mcp_servers={}",
+            "features.hooks=false",
+            "features.plugins=false",
+            "features.apps=false",
+            "sandbox_workspace_write.network_access=false",
+            "sandbox_workspace_write.writable_roots=[]",
+        ] {
+            assert!(workspace.arguments.iter().any(|argument| argument == expected));
+        }
+        assert!(!workspace
+            .arguments
+            .iter()
+            .any(|argument| argument.contains("state-json")));
         service
             .select_execution_mode(&profile.id, ExecutionMode::DangerFullAccess)
             .unwrap();
