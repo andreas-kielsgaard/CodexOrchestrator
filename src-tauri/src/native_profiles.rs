@@ -2615,6 +2615,12 @@ impl NativeProfileService {
             if let Some(mut child) = children.remove(&attempt.attempt_id) {
                 let _ = child.terminate();
             }
+            // This path may be reconciling a durable pending attempt after a cold reopen, when
+            // no child remains in memory. Clean the bounded command file independently of the
+            // child outcome before recording its durable cancellation.
+            if attempt.phase == SetupPhase::WorkspaceWriteCanary {
+                self.remove_workspace_write_canary_command(&attempt.profile_id);
+            }
         }
         drop(children);
         if let Ok(mut children) = self.full_access_canary_children.lock() {
@@ -5050,6 +5056,54 @@ mod tests {
         );
         assert_eq!(
             service.profile(&profile.id).unwrap().setup_attempt.disposition,
+            "cancelled"
+        );
+    }
+
+    #[test]
+    fn continuity_cancellation_cleans_a_reopened_workspace_canary_command_without_an_owned_child() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake;
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        service
+            .update_readiness(&profile.id, None, Some("initialized"), None, None, None)
+            .unwrap();
+        service.run_workspace_write_canary(&profile.id).unwrap();
+        let command_file = service
+            .probe_root(&profile.id)
+            .join(WORKSPACE_WRITE_CANARY_COMMAND_FILE);
+        assert!(command_file.exists());
+
+        // A cold reopen retains the durable pending attempt but not its in-memory child.
+        drop(service);
+        let reopened = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        fs::remove_file(Path::new(&profile.home_path).join(MARKER_FILE)).unwrap();
+        let query = reopened.query().unwrap();
+        let invalidated = &query.profiles[0];
+
+        assert_eq!(invalidated.lifecycle, Lifecycle::Malformed);
+        assert!(!invalidated.selected);
+        assert_eq!(invalidated.setup_attempt.disposition, "cancelled");
+        assert_eq!(invalidated.setup_attempt.terminal_classification, "cancelled");
+        assert_eq!(invalidated.setup_attempt.terminal_exit_code, None);
+        assert_eq!(invalidated.readiness.workspace_write_canary, "not_run");
+        assert!(!command_file.exists());
+
+        write_marker(Path::new(&profile.home_path), &profile.id).unwrap();
+        assert!(reopened.select(&profile.id).is_err());
+        assert_eq!(
+            reopened.profile(&profile.id).unwrap().setup_attempt.disposition,
             "cancelled"
         );
     }
