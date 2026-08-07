@@ -7871,16 +7871,20 @@ mod tests {
         let first = service.create_dedicated().unwrap();
         service.select(&first.id).unwrap();
         let second = service.create_dedicated().unwrap();
-        let (creation_ready, selection_start) = std::sync::mpsc::channel();
-        let (selection_committed, creation_continue) = std::sync::mpsc::channel();
+        let (creation_ready_sender, creation_ready_receiver) = std::sync::mpsc::channel();
+        let (selection_start_sender, selection_start_receiver) = std::sync::mpsc::channel();
+        let (selection_committed_sender, selection_committed_receiver) =
+            std::sync::mpsc::channel();
+        let (creation_continue_sender, creation_continue_receiver) =
+            std::sync::mpsc::channel();
 
         let selecting = {
             let service = service.clone();
             let second_id = second.id.clone();
             thread::spawn(move || {
-                selection_start.recv().unwrap();
+                selection_start_receiver.recv().unwrap();
                 let result = service.select(&second_id);
-                selection_committed.send(()).unwrap();
+                selection_committed_sender.send(()).unwrap();
                 result
             })
         };
@@ -7888,12 +7892,16 @@ mod tests {
             let service = service.clone();
             let first_id = first.id.clone();
             thread::spawn(move || {
-                creation_ready.send(()).unwrap();
-                creation_continue.recv().unwrap();
+                creation_ready_sender.send(()).unwrap();
+                creation_continue_receiver.recv().unwrap();
                 service.begin_mcp_reporting_probe(&first_id)
             })
         };
 
+        creation_ready_receiver.recv().unwrap();
+        selection_start_sender.send(()).unwrap();
+        selection_committed_receiver.recv().unwrap();
+        creation_continue_sender.send(()).unwrap();
         selecting.join().unwrap().unwrap();
         assert!(creating.join().unwrap().is_err());
         assert_eq!(
