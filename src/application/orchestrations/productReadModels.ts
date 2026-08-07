@@ -286,7 +286,9 @@ export type ProductWorkUnitHandlerActivationV1 =
         | 'invocation_prepared'
         | 'launch_requested'
         | 'launch_accepted'
-        | 'handler_ready';
+        | 'handler_ready'
+        | 'failed';
+      readonly failureReason?: string;
       /** Invocation-correlated observation, never provider compliance or lifecycle. */
       readonly providerActivityObserved: boolean;
     }>;

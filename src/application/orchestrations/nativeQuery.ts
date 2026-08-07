@@ -125,6 +125,7 @@ export interface NativeWorkUnitHandlerActivationV1 {
   readonly launchAcceptedAt?: string;
   readonly providerActivationObservedAt?: string;
   readonly handlerReadyAt?: string;
+  readonly failureReason?: string;
 }
 export interface NativeWorkUnitHandlerActionContinuationV1 {
   readonly attemptId: string;
@@ -765,6 +766,8 @@ function handlerActivationDetail(activation: NativeWorkUnitHandlerActivationV1 |
   const providerObservation = activation.providerActivationObservedAt
     ? ' Provider activity observed separately; no provider lifecycle, outcome, or acceptance is implied.'
     : ' Provider activity is unobserved.';
+  if (activation.failureReason)
+    return ` Handler activation recorded a durable failure before application readiness.${providerObservation}`;
   if (activation.handlerReadyAt)
     return ` Handler launch accepted and application Handler readiness recorded.${providerObservation}`;
   if (activation.launchAcceptedAt)
@@ -786,13 +789,16 @@ function handlerActivationPresentation(
     eligibilityState: 'eligible',
     stage: activation.handlerReadyAt
       ? 'handler_ready'
-      : activation.launchAcceptedAt
-        ? 'launch_accepted'
-        : activation.launchRequestedAt
-          ? 'launch_requested'
-          : activation.handlerInvocationPreparedAt
-            ? 'invocation_prepared'
-            : 'eligible_not_prepared',
+      : activation.failureReason
+        ? 'failed'
+        : activation.launchAcceptedAt
+          ? 'launch_accepted'
+          : activation.launchRequestedAt
+            ? 'launch_requested'
+            : activation.handlerInvocationPreparedAt
+              ? 'invocation_prepared'
+              : 'eligible_not_prepared',
+    ...(activation.failureReason ? { failureReason: activation.failureReason } : {}),
     providerActivityObserved: Boolean(activation.providerActivationObservedAt),
   };
 }
@@ -1489,6 +1495,7 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
       'launchAcceptedAt',
       'providerActivationObservedAt',
       'handlerReadyAt',
+      'failureReason',
     ],
     'Work Unit Handler activation',
   );
@@ -1499,6 +1506,10 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
       ? x.eligibilityState
       : fail('invalid Handler eligibility state');
   const blockedReason = optional('blockedReason');
+  const failureReason =
+    x.failureReason === undefined
+      ? undefined
+      : boundedString(x.failureReason, 4000, 'Handler activation failureReason');
   if (eligibilityState === 'blocked' && !blockedReason)
     fail('blocked Handler activation requires a reason');
   if (eligibilityState === 'eligible' && blockedReason)
@@ -1538,6 +1549,7 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
       ? { providerActivationObservedAt: optional('providerActivationObservedAt') }
       : {}),
     ...(optional('handlerReadyAt') ? { handlerReadyAt: optional('handlerReadyAt') } : {}),
+    ...(failureReason ? { failureReason } : {}),
   };
   if (!result.requestedAt) fail('Handler activation requires its request phase');
   phaseCoherence(
@@ -1561,6 +1573,8 @@ const workUnitHandlerActivation = (value: unknown): NativeWorkUnitHandlerActivat
     fail('Handler provider observation requires launch request');
   if (result.handlerReadyAt && !result.launchAcceptedAt)
     fail('Handler readiness requires launch acceptance');
+  if (result.failureReason && result.handlerReadyAt)
+    fail('failed Handler activation cannot be application-ready');
   if (
     result.eligibilityState === 'blocked' &&
     [

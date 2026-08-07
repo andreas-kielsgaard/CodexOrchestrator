@@ -347,6 +347,7 @@ function handlerActivity(
     launch_accepted:
       'Original Handler launch was accepted; application readiness is not yet recorded.',
     handler_ready: 'Original Handler is application-ready.',
+    failed: 'Original Handler activation recorded a durable failure before application readiness.',
   }[activation.stage];
   return activation.providerActivityObserved
     ? `${detail} Provider activity is observed separately.`

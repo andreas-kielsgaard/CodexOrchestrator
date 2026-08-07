@@ -491,6 +491,54 @@ describe('orchestration native query v1', () => {
       failureReason: 'handler_action_launch_not_accepted',
     });
 
+    const failedHandler = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    const failedHandlerActivation = (failedHandler.workUnits as Array<Record<string, unknown>>)[0]!
+      .handlerActivation as Record<string, unknown>;
+    for (const field of [
+      'executionSupportGrantedAt',
+      'isolatedWorktreeReadyAt',
+      'handlerSessionCreatedAt',
+      'handlerInvocationPreparedAt',
+      'handlerHarnessBoundAt',
+      'launchRequestedAt',
+      'launchAcceptedAt',
+      'providerActivationObservedAt',
+      'handlerReadyAt',
+    ])
+      delete failedHandlerActivation[field];
+    failedHandlerActivation.failureReason = 'handler_execution_support_grant_failed';
+    const failedHandlerInput = nativeQueryProductCompositionInputV2(
+      decodeOrchestrationNativeQueryV2(failedHandler),
+    );
+    expect(failedHandlerInput.referenceIndex.workUnits[0]!.handlerActivation).toMatchObject({
+      eligibilityState: 'eligible',
+      stage: 'failed',
+      failureReason: 'handler_execution_support_grant_failed',
+      providerActivityObserved: false,
+    });
+
+    const blankHandlerFailure = JSON.parse(JSON.stringify(failedHandler)) as Record<string, unknown>;
+    ((blankHandlerFailure.workUnits as Array<Record<string, unknown>>)[0]!
+      .handlerActivation as Record<string, unknown>).failureReason = ' ';
+    expect(() => decodeOrchestrationNativeQueryV2(blankHandlerFailure)).toThrow(
+      'Handler activation failureReason must be non-blank',
+    );
+
+    const readyFailedHandler = JSON.parse(JSON.stringify(failedHandler)) as Record<string, unknown>;
+    const readyFailedHandlerActivation = (readyFailedHandler.workUnits as Array<Record<string, unknown>>)[0]!
+      .handlerActivation as Record<string, unknown>;
+    readyFailedHandlerActivation.executionSupportGrantedAt = '2026-08-02T00:01:03Z';
+    readyFailedHandlerActivation.isolatedWorktreeReadyAt = '2026-08-02T00:01:04Z';
+    readyFailedHandlerActivation.handlerSessionCreatedAt = '2026-08-02T00:01:05Z';
+    readyFailedHandlerActivation.handlerInvocationPreparedAt = '2026-08-02T00:01:06Z';
+    readyFailedHandlerActivation.handlerHarnessBoundAt = '2026-08-02T00:01:07Z';
+    readyFailedHandlerActivation.launchRequestedAt = '2026-08-02T00:01:08Z';
+    readyFailedHandlerActivation.launchAcceptedAt = '2026-08-02T00:01:09Z';
+    readyFailedHandlerActivation.handlerReadyAt = '2026-08-02T00:01:10Z';
+    expect(() => decodeOrchestrationNativeQueryV2(readyFailedHandler)).toThrow(
+      'failed Handler activation cannot be application-ready',
+    );
+
     const failedReadyAction = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
     (
       (failedReadyAction.workUnits as Array<Record<string, unknown>>)[0]!

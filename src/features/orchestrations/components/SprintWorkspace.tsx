@@ -769,6 +769,7 @@ function handlerActivationActivityDetail(
     launch_requested: `Handler launch requested; acceptance is not yet recorded.${providerObservation}`,
     launch_accepted: `Handler launch accepted; application Handler readiness is not yet recorded.${providerObservation}`,
     handler_ready: `Handler launch accepted and application Handler readiness recorded.${providerObservation}`,
+    failed: `Handler activation recorded a durable failure before application readiness.${providerObservation}`,
   }[activation.stage];
 }
 
