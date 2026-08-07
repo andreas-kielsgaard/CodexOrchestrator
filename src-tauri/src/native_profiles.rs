@@ -6089,9 +6089,7 @@ mod tests {
     fn system_cli_port_observes_the_allowlisted_full_access_receipt_value() {
         let directory = tempfile::tempdir().unwrap();
         let home = directory.path().join("selected-home");
-        let parent = directory
-            .path()
-            .join("application-owned-full-access-canary");
+        let parent = directory.path().join("application-owned-full-access-canary");
         let work = parent.join("work");
         let receipt_root = parent.join("receipt");
         fs::create_dir_all(&home).unwrap();
@@ -6111,11 +6109,7 @@ mod tests {
         };
         let settled = port
             .run(&NativeCliInvocation {
-                args: vec![
-                    "/d".into(),
-                    "/c".into(),
-                    ".\\write-full-access-receipt.cmd".into(),
-                ],
+                args: vec!["/d".into(), "/c".into(), ".\\write-full-access-receipt.cmd".into()],
                 cwd: work.clone(),
                 codex_home: home.clone(),
                 environment: native_windows_cli_environment(&home),
@@ -6929,8 +6923,7 @@ mod tests {
     }
 
     #[test]
-    fn continuity_cancellation_records_full_access_receipt_cleanup_failure_without_deleting_broadly(
-    ) {
+    fn continuity_cancellation_records_full_access_receipt_cleanup_failure_without_deleting_broadly() {
         let directory = tempfile::tempdir().unwrap();
         let mut service = NativeProfileService::open(
             directory.path().join("active.sqlite"),
