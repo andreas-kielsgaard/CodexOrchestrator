@@ -7871,8 +7871,8 @@ mod tests {
         let first = service.create_dedicated().unwrap();
         service.select(&first.id).unwrap();
         let second = service.create_dedicated().unwrap();
-        let (begin_started, selection_start) = std::sync::mpsc::sync_channel(0);
-        let (selection_finished, begin_continue) = std::sync::mpsc::sync_channel(0);
+        let (creation_ready, selection_start) = std::sync::mpsc::channel();
+        let (selection_committed, creation_continue) = std::sync::mpsc::channel();
 
         let selecting = {
             let service = service.clone();
@@ -7880,7 +7880,7 @@ mod tests {
             thread::spawn(move || {
                 selection_start.recv().unwrap();
                 let result = service.select(&second_id);
-                selection_finished.send(()).unwrap();
+                selection_committed.send(()).unwrap();
                 result
             })
         };
@@ -7888,8 +7888,8 @@ mod tests {
             let service = service.clone();
             let first_id = first.id.clone();
             thread::spawn(move || {
-                begin_started.send(()).unwrap();
-                begin_continue.recv().unwrap();
+                creation_ready.send(()).unwrap();
+                creation_continue.recv().unwrap();
                 service.begin_mcp_reporting_probe(&first_id)
             })
         };
