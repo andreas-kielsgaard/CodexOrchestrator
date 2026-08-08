@@ -1,7 +1,7 @@
 # Saved checkout reconciliation manifest
 
 Source: saved checkout C:\Users\user\Documents\Code Projects\Codex Orchestrator at b86a8ac8f3e7483214b13e75b47397ca4df35074.
-Baseline: canonical checkpoint 5d8e8e069832ecf7b2f72544d857322ecc8d80d4.
+Canonical comparison checkpoints: PS-2 baseline 5d8e8e069832ecf7b2f72544d857322ecc8d80d4; PS-1 accepted integration b7f783ab51f530f32fa1efaabab01b7896f3ea7f.
 Census: 67 tracked dirty paths and 115 untracked file paths, 182 entries total. Each saved path appears exactly once below. The saved checkout was read-only throughout.
 
 Categories: integrated_exactly, integrated_semantically_from_newer_canonical_content, intentionally_superseded, intentionally_excluded_duplicate, retained_external_to_this_slice.
@@ -11,7 +11,8 @@ Categories: integrated_exactly, integrated_semantically_from_newer_canonical_con
 - integrated_exactly: 116
 - integrated_semantically_from_newer_canonical_content: 22
 - intentionally_superseded: 14
-- retained_external_to_this_slice: 30
+- intentionally_excluded_duplicate: 0
+- retained_external_to_this_slice: 8
 
 ## Path-by-path disposition
 
@@ -78,12 +79,12 @@ Categories: integrated_exactly, integrated_semantically_from_newer_canonical_con
 | .agents/skills/work-unit-review/agents/openai.yaml | integrated_exactly | Saved deletion is already present in canonical baseline; no path remains at checkpoint. |
 | .agents/skills/work-unit/SKILL.md | integrated_exactly | Saved deletion is already present in canonical baseline; no path remains at checkpoint. |
 | .agents/skills/work-unit/agents/openai.yaml | integrated_exactly | Saved deletion is already present in canonical baseline; no path remains at checkpoint. |
-| docs/agent-session/plan-builder-managed-session-boundary.md | retained_external_to_this_slice | Saved Rust, TypeScript, or product documentation change is outside the .agents/skills-only boundary. |
-| src-tauri/src/orchestration/application.rs | retained_external_to_this_slice | Saved Rust, TypeScript, or product documentation change is outside the .agents/skills-only boundary. |
-| src-tauri/src/orchestration/conversation_harness.rs | retained_external_to_this_slice | Saved Rust, TypeScript, or product documentation change is outside the .agents/skills-only boundary. |
-| src-tauri/src/orchestration/conversation_harness_catalog.json | retained_external_to_this_slice | Saved Rust, TypeScript, or product documentation change is outside the .agents/skills-only boundary. |
-| src-tauri/src/orchestration/conversation_harness_working_copy.rs | retained_external_to_this_slice | Saved Rust, TypeScript, or product documentation change is outside the .agents/skills-only boundary. |
-| src/infrastructure/conversationHarnesses/tauriConversationHarnessInspectorSource.test.ts | retained_external_to_this_slice | Saved Rust, TypeScript, or product documentation change is outside the .agents/skills-only boundary. |
+| docs/agent-session/plan-builder-managed-session-boundary.md | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a semantically integrates the saved documentation change; saved and PS-1 blobs differ. |
+| src-tauri/src/orchestration/application.rs | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a semantically integrates the saved Harness application change; saved and PS-1 blobs differ. |
+| src-tauri/src/orchestration/conversation_harness.rs | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a semantically integrates the saved Harness source change; saved and PS-1 blobs differ. |
+| src-tauri/src/orchestration/conversation_harness_catalog.json | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a semantically integrates the saved Harness catalogue change; saved and PS-1 blobs differ. |
+| src-tauri/src/orchestration/conversation_harness_working_copy.rs | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a semantically integrates the saved Harness working-copy change; saved and PS-1 blobs differ. |
+| src/infrastructure/conversationHarnesses/tauriConversationHarnessInspectorSource.test.ts | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a semantically integrates the saved Harness test change; saved and PS-1 blobs differ. |
 | .agents/skills/complete-plan-slice/SKILL.md | integrated_semantically_from_newer_canonical_content | Saved newer skill/report content was applied to the same canonical .agents/skills path. |
 | .agents/skills/complete-plan-slice/agents/openai.yaml | integrated_exactly | Saved bytes match the canonical path; retained as an exact canonical match. |
 | .agents/skills/evaluate-plan-slice/SKILL.md | integrated_semantically_from_newer_canonical_content | Saved newer skill/report content was applied to the same canonical .agents/skills path. |
@@ -183,19 +184,19 @@ Categories: integrated_exactly, integrated_semantically_from_newer_canonical_con
 | .agents/skills/start-plan-slice/agents/openai.yaml | integrated_exactly | Saved bytes match the canonical path; retained as an exact canonical match. |
 | .agents/skills/start-plan-steps/SKILL.md | integrated_semantically_from_newer_canonical_content | Saved newer skill/report content was applied to the same canonical .agents/skills path. |
 | .agents/skills/start-plan-steps/agents/openai.yaml | integrated_exactly | Saved bytes match the canonical path; retained as an exact canonical match. |
-| product/skills/epic-bootstrap-generator/SKILL.md | retained_external_to_this_slice | Product catalogue source is explicitly outside this slice; left only in saved checkout. |
-| product/skills/epic-bootstrap-generator/agents/openai.yaml | retained_external_to_this_slice | Product catalogue source is explicitly outside this slice; left only in saved checkout. |
-| product/skills/epic-plan-builder/SKILL.md | retained_external_to_this_slice | Product catalogue source is explicitly outside this slice; left only in saved checkout. |
-| product/skills/epic-plan-builder/agents/openai.yaml | retained_external_to_this_slice | Product catalogue source is explicitly outside this slice; left only in saved checkout. |
-| product/skills/epic-runner/SKILL.md | retained_external_to_this_slice | Product catalogue source is explicitly outside this slice; left only in saved checkout. |
-| product/skills/epic-runner/agents/openai.yaml | retained_external_to_this_slice | Product catalogue source is explicitly outside this slice; left only in saved checkout. |
-| product/skills/route-epic-feedback/SKILL.md | retained_external_to_this_slice | Product catalogue source is explicitly outside this slice; left only in saved checkout. |
-| product/skills/route-epic-feedback/agents/openai.yaml | retained_external_to_this_slice | Product catalogue source is explicitly outside this slice; left only in saved checkout. |
-| product/skills/sprint-runner/SKILL.md | retained_external_to_this_slice | Product catalogue source is explicitly outside this slice; left only in saved checkout. |
-| product/skills/sprint-runner/agents/openai.yaml | retained_external_to_this_slice | Product catalogue source is explicitly outside this slice; left only in saved checkout. |
-| product/skills/work-slice-planner/SKILL.md | retained_external_to_this_slice | Product catalogue source is explicitly outside this slice; left only in saved checkout. |
-| product/skills/work-slice-planner/agents/openai.yaml | retained_external_to_this_slice | Product catalogue source is explicitly outside this slice; left only in saved checkout. |
-| product/skills/work-unit-handler/SKILL.md | retained_external_to_this_slice | Product catalogue source is explicitly outside this slice; left only in saved checkout. |
-| product/skills/work-unit-handler/agents/openai.yaml | retained_external_to_this_slice | Product catalogue source is explicitly outside this slice; left only in saved checkout. |
-| product/skills/work-unit-implementer/SKILL.md | retained_external_to_this_slice | Product catalogue source is explicitly outside this slice; left only in saved checkout. |
-| product/skills/work-unit-implementer/agents/openai.yaml | retained_external_to_this_slice | Product catalogue source is explicitly outside this slice; left only in saved checkout. |
+| product/skills/epic-bootstrap-generator/SKILL.md | integrated_exactly | PS-1 commit b7f783a product/skills blob matches the saved file exactly. |
+| product/skills/epic-bootstrap-generator/agents/openai.yaml | integrated_exactly | PS-1 commit b7f783a product/skills blob matches the saved file exactly. |
+| product/skills/epic-plan-builder/SKILL.md | integrated_exactly | PS-1 commit b7f783a product/skills blob matches the saved file exactly. |
+| product/skills/epic-plan-builder/agents/openai.yaml | integrated_exactly | PS-1 commit b7f783a product/skills blob matches the saved file exactly. |
+| product/skills/epic-runner/SKILL.md | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a contains the same accepted seven-role path with semantically reconciled content; blobs differ. |
+| product/skills/epic-runner/agents/openai.yaml | integrated_exactly | PS-1 commit b7f783a product/skills blob matches the saved file exactly. |
+| product/skills/route-epic-feedback/SKILL.md | intentionally_superseded | PS-1 commit b7f783a omits this path from the accepted seven-role product/skills catalogue. |
+| product/skills/route-epic-feedback/agents/openai.yaml | intentionally_superseded | PS-1 commit b7f783a omits this path from the accepted seven-role product/skills catalogue. |
+| product/skills/sprint-runner/SKILL.md | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a contains the same accepted seven-role path with semantically reconciled content; blobs differ. |
+| product/skills/sprint-runner/agents/openai.yaml | integrated_exactly | PS-1 commit b7f783a product/skills blob matches the saved file exactly. |
+| product/skills/work-slice-planner/SKILL.md | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a contains the same accepted seven-role path with semantically reconciled content; blobs differ. |
+| product/skills/work-slice-planner/agents/openai.yaml | integrated_exactly | PS-1 commit b7f783a product/skills blob matches the saved file exactly. |
+| product/skills/work-unit-handler/SKILL.md | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a contains the same accepted seven-role path with semantically reconciled content; blobs differ. |
+| product/skills/work-unit-handler/agents/openai.yaml | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a contains the same accepted seven-role path with semantically reconciled content; blobs differ. |
+| product/skills/work-unit-implementer/SKILL.md | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a contains the same accepted seven-role path with semantically reconciled content; blobs differ. |
+| product/skills/work-unit-implementer/agents/openai.yaml | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a contains the same accepted seven-role path with semantically reconciled content; blobs differ. |
