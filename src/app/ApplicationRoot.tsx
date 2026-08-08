@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { createProductApplicationComposition } from '../bootstrap/productApplicationComposition';
 import { App, type AppProps } from './App';
 import type { WorktreeBuildClient } from '../application/worktreeBuild';
@@ -6,6 +6,7 @@ import type { WorktreeBuildClient } from '../application/worktreeBuild';
 /** The optional recorded review composition is development-only and never enters product boot. */
 export function ApplicationRoot() {
   const [composition, setComposition] = useState<AppProps | null>(null);
+  const [developmentReview, setDevelopmentReview] = useState<ReactNode | null>(null);
   const [worktreeBuild, setWorktreeBuild] = useState<{
     client: WorktreeBuildClient;
     Shell: (typeof import('../features/worktreeBuild'))['WorktreeBuildShell'];
@@ -15,6 +16,16 @@ export function ApplicationRoot() {
     let active = true;
     const developmentRoute = new URLSearchParams(window.location.search);
     const harnessInspectorRequested = developmentRoute.has('harness-inspector');
+    if (viteDevelopmentMode() && developmentRoute.has('integration-settlement-review')) {
+      void import('../dev/orchestrationSection/IntegrationSettlementReviewHarness').then(
+        ({ IntegrationSettlementReviewHarness }) => {
+          if (active) setDevelopmentReview(<IntegrationSettlementReviewHarness />);
+        },
+      );
+      return () => {
+        active = false;
+      };
+    }
     if (humanReviewInstance()) {
       setComposition(createProductApplicationComposition());
       void Promise.all([
@@ -64,6 +75,7 @@ export function ApplicationRoot() {
     };
   }, []);
 
+  if (developmentReview) return developmentReview;
   if (!composition) return null;
   if (worktreeBuild) {
     const { client, Shell } = worktreeBuild;

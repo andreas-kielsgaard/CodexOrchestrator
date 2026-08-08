@@ -1,45 +1,53 @@
-# Sprint 5 Plan Builder UI design QA
+# Design QA
 
-- Source visual truth: `C:\Users\user\AppData\Local\Temp\codex-clipboard-05269924-40a9-45ce-a2dd-0face68b82aa.png`
-- Focused source region: `C:\Users\user\AppData\Local\Temp\codex-clipboard-73a3b734-e8f3-40b7-94ee-35d479e0a234.png`
-- Implementation screenshot: unavailable; no controllable browser was exposed to this worker.
-- Intended viewport: 1920 x 1080 desktop.
-- Intended state: active pre-initiation Epic planning draft with a saved proposal.
+## Source
 
-## Full-view comparison evidence
+- Approved visual: `C:\Users\user\.codex\generated_images\019fa398-6f66-76d2-b7b9-38bb2b4898c9\exec-49659c02-277b-450d-bdcf-a182ef3ed623.png`
+- Implemented route: `http://127.0.0.1:43231/?integration-settlement-review`
 
-Blocked. Both source screenshots were opened, but the implementation could not be captured in a browser. Automated tests establish the three-column DOM, fixed proposal header, internal scroll owners, default-expanded Sprints, action gating, and responsive overflow rules; they are not visual evidence.
+## Current review state
 
-## Focused region comparison evidence
-
-Blocked for the same reason. The source proposal rail was inspected at original resolution. No implementation crop exists for a visual comparison.
-
-## Findings
-
-- [P1] Rendered layout remains visually unverified.
-  - Location: Epic Plan Builder.
-  - Evidence: source screenshots are available; implementation screenshot is unavailable.
-  - Impact: column proportions, density, and visible overflow cannot be accepted from code or tests alone.
-  - Fix: launch the Tauri app through `launch-dev.bat`, capture the same desktop state, and compare it with both source images before G3 acceptance.
+- Verified viewport: 1239 x 986 CSS pixels
+- Selected stage: Handler review
+- Default right-hand tab: Session stream
+- Parallel detail tab: Evidence
 
 ## Required fidelity surfaces
 
-- Fonts and typography: blocked pending rendered capture.
-- Spacing and layout rhythm: blocked pending rendered capture.
-- Colors and visual tokens: blocked pending rendered capture.
-- Image quality and asset fidelity: no product imagery is present; Lucide icons and existing product tokens are used, but rendered fidelity is unverified.
-- Copy and content: deterministic tests cover Plan/Rebuild labels, the exact plan prompt, disabled initiation explanation, copy feedback, and proposal heading.
+- Control bar remains above the Work Unit summary.
+- Work Unit title, purpose, status, and technical identity are a distinct top strip.
+- Chronological nested activity stages occupy the left column.
+- Handler and Worker passages share one chronological Session stream on the right.
+- Application events and relevant MCP calls are compact records nested under their owning Integration activity stage, not Session turns.
+- Application-owned stage summaries are themselves nested under the preceding Worker or Handler stage; only agent-owned stages remain primary.
+- Selecting an agent turn expands its full read-only output and steps inline in the Session stream without a composer.
+- Selecting an application or MCP record expands its application-owned detail inside Integration activity.
+- Hovering either side cross-highlights the related activity and passage.
+- Dates and processing duration appear in activity and Session metadata without a raw timestamp column.
+- Evidence is a peer tab that opens with no selection and reveals file-diff or test-execution detail only after a record click.
+- Hovering or focusing linked evidence reveals its Implementer-chain relationship and highlights that activity.
+- Unavailable evidence stays visible and disabled.
+- At narrow width, activity and Session panes stack and scroll independently.
 
 ## Comparison history
 
-- Initial pass: blocked because no browser surface was available. No visual fixes are claimed from this pass.
+1. Initial narrow comparison removed an unnecessary outer workspace scrollbar while preserving independently scrollable panes.
+2. Human review requested a full read-only turn view, dated timestamps, processing durations, and clearer evidence ownership.
+3. Continued review first placed application events and relevant MCP calls in the Session chronology, then corrected them into the owning Integration activity stages.
+4. Continued review promoted evidence to a peer tab and added inspectable file-diff and test-execution details.
+5. The current desktop check shows no horizontal overflow, browser warnings, or browser errors.
+6. Final human correction nested every Application-type summary; the user then authorized this review slice to be considered approved.
 
-## Implementation checklist
+## Validation
 
-1. Launch the combined development build with `launch-dev.bat`.
-2. Open an active Plan Builder draft at 1920 x 1080.
-3. Capture the full view and proposal rail.
-4. Compare column widths, fixed proposal heading, scroll bounds, density, and responsive overflow.
-5. Resolve any P0/P1/P2 differences before G3 acceptance.
+- Focused interaction suite: 5 tests passed.
+- Scoped ESLint: passed.
+- Vite production bundle: passed.
+- Fresh semantic browser interactions: inline Session inspection, system-record separation, blank Evidence entry, file diff, and test result detail passed.
+- Browser console warning/error check: zero entries.
+- `git diff --check`: passed.
+- Repository `npm run build` remains blocked by unrelated baseline TypeScript errors in `nativeQuery.ts` and `nativeQuery.test.ts`; the changed UI compiles in the successful Vite bundle.
 
-final result: blocked
+## Result
+
+Human review slice approved after the final nesting correction. This fixture remains demonstration support, not production implementation proof.
