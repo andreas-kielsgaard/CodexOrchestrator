@@ -44,10 +44,18 @@ CREATE TABLE agent_session_invocation_launch_acceptances (
   FOREIGN KEY (invocation_id) REFERENCES agent_session_invocations(id) ON DELETE CASCADE
 );
 
+CREATE TABLE agent_session_invocation_transport_reservations (
+  invocation_id TEXT PRIMARY KEY,
+  transport_kind TEXT NOT NULL CHECK (transport_kind IN ('work_unit_implementer_reporting', 'work_unit_handler_review')),
+  reserved_at TEXT NOT NULL,
+  FOREIGN KEY (invocation_id) REFERENCES agent_session_invocations(id) ON DELETE CASCADE
+);
+
 CREATE TABLE agent_session_invocation_transport_bindings (
   invocation_id TEXT PRIMARY KEY,
   transport_kind TEXT NOT NULL CHECK (transport_kind IN ('work_unit_implementer_reporting', 'work_unit_handler_review')),
   extension_fingerprint TEXT NOT NULL,
+  accepted_effective_extension_fingerprint TEXT,
   bound_at TEXT NOT NULL,
   FOREIGN KEY (invocation_id) REFERENCES agent_session_invocations(id) ON DELETE CASCADE
 );
@@ -84,10 +92,18 @@ CREATE TABLE IF NOT EXISTS agent_session_invocation_launch_acceptances (
   FOREIGN KEY (invocation_id) REFERENCES agent_session_invocations(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS agent_session_invocation_transport_reservations (
+  invocation_id TEXT PRIMARY KEY,
+  transport_kind TEXT NOT NULL CHECK (transport_kind IN ('work_unit_implementer_reporting', 'work_unit_handler_review')),
+  reserved_at TEXT NOT NULL,
+  FOREIGN KEY (invocation_id) REFERENCES agent_session_invocations(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS agent_session_invocation_transport_bindings (
   invocation_id TEXT PRIMARY KEY,
   transport_kind TEXT NOT NULL CHECK (transport_kind IN ('work_unit_implementer_reporting', 'work_unit_handler_review')),
   extension_fingerprint TEXT NOT NULL,
+  accepted_effective_extension_fingerprint TEXT,
   bound_at TEXT NOT NULL,
   FOREIGN KEY (invocation_id) REFERENCES agent_session_invocations(id) ON DELETE CASCADE
 );

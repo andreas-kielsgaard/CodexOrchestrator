@@ -247,13 +247,35 @@ fn concurrent_typed_and_generic_launch_claims_converge_on_the_bound_transport() 
     let binding = ApplicationInvocationTransportBinding {
         kind: ApplicationInvocationTransportKind::WorkUnitHandlerReview,
         extension_fingerprint: "exact-extension-fingerprint".into(),
+        accepted_effective_extension_fingerprint: None,
         bound_at: at(2),
     };
+    repository
+        .reserve_application_invocation_transport(
+            &invocation.id,
+            binding.kind,
+            binding.bound_at,
+        )
+        .expect("reserve exact transport");
+    let unbound_generic = repository
+        .mark_invocation_running(&invocation.id, at(2), options(), at(2))
+        .expect_err("reserved invocation rejects an unbound generic child");
+    assert_eq!(unbound_generic.kind, RepositoryErrorKind::Conflict);
+    let unbound_typed = repository
+        .mark_invocation_running_with_transport(
+            &invocation.id,
+            &binding,
+            at(2),
+            options(),
+            at(2),
+        )
+        .expect_err("reserved invocation rejects a child before exact binding");
+    assert_eq!(unbound_typed.kind, RepositoryErrorKind::Conflict);
     repository
         .bind_application_invocation_transport(&invocation.id, binding.clone())
         .expect("bind exact transport");
 
-    let barrier = Arc::new(Barrier::new(3));
+    let barrier = Arc::new(Barrier::new(4));
     let typed_repository = repository.clone();
     let typed_invocation = invocation.id.clone();
     let typed_binding = binding.clone();
@@ -280,6 +302,21 @@ fn concurrent_typed_and_generic_launch_claims_converge_on_the_bound_transport() 
             at(3),
         )
     });
+    let differently_bound_repository = repository.clone();
+    let differently_bound_invocation = invocation.id.clone();
+    let differently_bound_barrier = barrier.clone();
+    let mut different_binding = binding.clone();
+    different_binding.extension_fingerprint = "different-extension-fingerprint".into();
+    let differently_bound = std::thread::spawn(move || {
+        differently_bound_barrier.wait();
+        differently_bound_repository.mark_invocation_running_with_transport(
+            &differently_bound_invocation,
+            &different_binding,
+            at(3),
+            options(),
+            at(3),
+        )
+    });
     barrier.wait();
 
     typed
@@ -291,6 +328,11 @@ fn concurrent_typed_and_generic_launch_claims_converge_on_the_bound_transport() 
         .expect("generic caller thread")
         .expect_err("generic caller fails closed");
     assert_eq!(generic_error.kind, RepositoryErrorKind::Conflict);
+    let differently_bound_error = differently_bound
+        .join()
+        .expect("differently bound caller thread")
+        .expect_err("differently bound caller fails closed");
+    assert_eq!(differently_bound_error.kind, RepositoryErrorKind::Conflict);
     assert_eq!(
         repository
             .application_invocation_transport_binding(&invocation.id)
@@ -315,8 +357,16 @@ fn accepted_typed_transport_binding_survives_close_and_reopen() {
     let binding = ApplicationInvocationTransportBinding {
         kind: ApplicationInvocationTransportKind::WorkUnitImplementerReporting,
         extension_fingerprint: "persisted-extension-fingerprint".into(),
+        accepted_effective_extension_fingerprint: None,
         bound_at: at(2),
     };
+    repository
+        .reserve_application_invocation_transport(
+            &invocation.id,
+            binding.kind,
+            binding.bound_at,
+        )
+        .expect("reserve exact transport");
     repository
         .bind_application_invocation_transport(&invocation.id, binding.clone())
         .expect("bind exact transport");
@@ -329,9 +379,33 @@ fn accepted_typed_transport_binding_survives_close_and_reopen() {
             at(3),
         )
         .expect("start exact transport");
+    let mismatched_acceptance = repository
+        .record_invocation_launch_accepted_with_transport(
+            &invocation.id,
+            &binding,
+            "different-effective-extension",
+            at(4),
+        )
+        .expect_err("differently bound provider child cannot be accepted");
+    assert_eq!(mismatched_acceptance.kind, RepositoryErrorKind::Conflict);
+    assert_eq!(
+        repository
+            .invocation_launch_accepted_at(&invocation.id)
+            .expect("unaccepted mismatched child"),
+        None
+    );
     repository
-        .record_invocation_launch_accepted(&invocation.id, at(4))
+        .record_invocation_launch_accepted_with_transport(
+            &invocation.id,
+            &binding,
+            &binding.extension_fingerprint,
+            at(4),
+        )
         .expect("record exact acceptance");
+    let accepted_binding = ApplicationInvocationTransportBinding {
+        accepted_effective_extension_fingerprint: Some(binding.extension_fingerprint.clone()),
+        ..binding
+    };
     drop(repository);
 
     let reopened = SqliteAgentSessionRepository::open(&path).expect("reopen repository");
@@ -339,7 +413,7 @@ fn accepted_typed_transport_binding_survives_close_and_reopen() {
         reopened
             .application_invocation_transport_binding(&invocation.id)
             .expect("read reopened binding"),
-        Some(binding)
+        Some(accepted_binding)
     );
     assert_eq!(
         reopened

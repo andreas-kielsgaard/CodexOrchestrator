@@ -3170,7 +3170,7 @@ impl SprintRunnerTransitionService {
             package.bind_correlated_invocation(session.clone(),reporting_invocation.clone()).map_err(|_|SprintRunnerTransitionError::Conflict)?;
             self.mark_reporting(&attempt,"reporting_harness_bound_at")?;
             match self.sessions.application_invocation_transport_launch_evidence(&reporting_invocation,&session,ApplicationInvocationTransportKind::WorkUnitImplementerReporting).map_err(|error|SprintRunnerTransitionError::Unavailable(error.to_string()))? {
-                ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport => { self.complete_reporting_transport_acceptance(&attempt)?; }
+                ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport { .. } => { self.complete_reporting_transport_acceptance(&attempt)?; }
                 ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithoutTransport => { self.settle_reporting_transport_attention(&attempt)?; }
                 ApplicationInvocationTransportLaunchEvidence::PersistedNotAccepted => {
                     self.sessions.recover_pre_acceptance_application_invocation(&reporting_invocation,&session).map_err(|error|SprintRunnerTransitionError::Unavailable(error.to_string()))?;
@@ -3189,7 +3189,7 @@ impl SprintRunnerTransitionService {
                         Ok(launch) if launch.launch_accepted => { self.mark_reporting(&attempt,"reporting_launch_accepted_at")?; self.complete_reporting_transport_acceptance(&attempt)?; }
                         Ok(_) => return Err(SprintRunnerTransitionError::Unavailable("Implementer reporting launch was not accepted".into())),
                         Err(error) => match self.sessions.application_invocation_transport_launch_evidence(&reporting_invocation,&session,ApplicationInvocationTransportKind::WorkUnitImplementerReporting).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))? {
-                            ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport => { self.complete_reporting_transport_acceptance(&attempt)?; }
+                            ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport { .. } => { self.complete_reporting_transport_acceptance(&attempt)?; }
                             ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithoutTransport => { self.settle_reporting_transport_attention(&attempt)?; }
                             _ => return Err(SprintRunnerTransitionError::Unavailable(error.to_string())),
                         },
@@ -3332,7 +3332,7 @@ impl SprintRunnerTransitionService {
         package.bind_correlated_invocation(session.clone(), invocation.clone()).map_err(|_| SprintRunnerTransitionError::Conflict)?;
         self.mark_handler_review(&context.attempt_id, "harness_bound_at")?;
         match self.sessions.application_invocation_transport_launch_evidence(&invocation, &session, ApplicationInvocationTransportKind::WorkUnitHandlerReview).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))? {
-            ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport => { self.complete_handler_review_transport_acceptance(&context.attempt_id)?; }
+            ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport { .. } => { self.complete_handler_review_transport_acceptance(&context.attempt_id)?; }
             ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithoutTransport => { self.settle_handler_review_transport_attention(&context.attempt_id)?; }
             ApplicationInvocationTransportLaunchEvidence::PersistedNotAccepted => {
                 self.sessions.recover_pre_acceptance_application_invocation(&invocation,&session).map_err(|error|SprintRunnerTransitionError::Unavailable(error.to_string()))?;
@@ -3351,7 +3351,7 @@ impl SprintRunnerTransitionService {
                     Ok(launch) if launch.launch_accepted => { self.mark_handler_review(&context.attempt_id, "launch_accepted_at")?; self.complete_handler_review_transport_acceptance(&context.attempt_id)?; }
                     Ok(_) => return Err(SprintRunnerTransitionError::Unavailable("Handler review launch was not accepted".into())),
                     Err(error) => match self.sessions.application_invocation_transport_launch_evidence(&invocation, &session, ApplicationInvocationTransportKind::WorkUnitHandlerReview).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))? {
-                        ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport => { self.complete_handler_review_transport_acceptance(&context.attempt_id)?; }
+                        ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport { .. } => { self.complete_handler_review_transport_acceptance(&context.attempt_id)?; }
                         ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithoutTransport => { self.settle_handler_review_transport_attention(&context.attempt_id)?; }
                         _ => return Err(SprintRunnerTransitionError::Unavailable(error.to_string())),
                     },

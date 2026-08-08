@@ -65,6 +65,7 @@ impl ApplicationInvocationTransportKind {
 pub(crate) struct ApplicationInvocationTransportBinding {
     pub(crate) kind: ApplicationInvocationTransportKind,
     pub(crate) extension_fingerprint: String,
+    pub(crate) accepted_effective_extension_fingerprint: Option<String>,
     pub(crate) bound_at: DateTime<Utc>,
 }
 
@@ -138,8 +139,17 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
         updated_at: DateTime<Utc>,
     ) -> Result<AgentInvocation, RepositoryError>;
 
-    /// Binds one typed role transport before launch. A pending, unaccepted invocation may replace
-    /// a stale preacceptance binding, but an accepted invocation is immutable.
+    /// Reserves the immutable role before native-profile resolution so no generic launcher can
+    /// claim the prepared invocation in that gap.
+    fn reserve_application_invocation_transport(
+        &self,
+        invocation_id: &AgentInvocationId,
+        kind: ApplicationInvocationTransportKind,
+        reserved_at: DateTime<Utc>,
+    ) -> Result<(), RepositoryError>;
+
+    /// Binds the resolved exact extension before launch. A pending, unaccepted invocation may
+    /// replace a stale preacceptance binding, but an accepted invocation is immutable.
     fn bind_application_invocation_transport(
         &self,
         invocation_id: &AgentInvocationId,
@@ -165,6 +175,16 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
     fn record_invocation_launch_accepted(
         &self,
         invocation_id: &AgentInvocationId,
+        accepted_at: DateTime<Utc>,
+    ) -> Result<(), RepositoryError>;
+
+    /// Records acceptance only when the bound transport still matches the exact effective
+    /// extension passed to the runtime.
+    fn record_invocation_launch_accepted_with_transport(
+        &self,
+        invocation_id: &AgentInvocationId,
+        binding: &ApplicationInvocationTransportBinding,
+        effective_extension_fingerprint: &str,
         accepted_at: DateTime<Utc>,
     ) -> Result<(), RepositoryError>;
 

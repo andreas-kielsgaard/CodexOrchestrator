@@ -9160,14 +9160,14 @@ mod tests {
         assert_eq!(Connection::open(&fresh.base.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1", [&fresh.attempt_id], |row| row.get(0)).unwrap(), 1);
         let fresh_transport: (Option<String>, Option<String>, Option<String>, Option<String>) = Connection::open(&fresh.base.database_path).unwrap().query_row("SELECT reporting_action_exposed_at,reporting_launch_accepted_at,reporting_ready_at,failure_reason FROM work_unit_implementer_outcomes WHERE attempt_id=?1", [&fresh.attempt_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
         assert!(fresh_transport.0.is_some() && fresh_transport.1.is_some() && fresh_transport.2.is_some() && fresh_transport.3.is_none(), "unexpected reporting transport state: {fresh_transport:?}");
-        assert_eq!(
+        assert!(matches!(
             fresh.base.sessions.application_invocation_transport_launch_evidence(
                 &fresh.invocation(),
                 &AgentSessionId::new(fresh.session_id.clone()).unwrap(),
                 ApplicationInvocationTransportKind::WorkUnitImplementerReporting,
             ).unwrap(),
-            crate::agent_sessions::application::ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport,
-        );
+            crate::agent_sessions::application::ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport { .. }
+        ));
         fresh.assert_pinned_evidence_available();
         let fresh_launches = fresh.base.runtime.requests().len();
         fresh.reopened().prepare_later_attempt_reporting_for_test().unwrap();
@@ -9213,6 +9213,22 @@ mod tests {
     #[test]
     fn real_mcp_consumers_observe_only_the_exact_reporting_and_review_tools() {
         let reporting = ReportingFixture::new();
+        let reporting_fingerprint = match reporting
+            .base
+            .sessions
+            .application_invocation_transport_launch_evidence(
+                &reporting.invocation(),
+                &AgentSessionId::new(reporting.session_id.clone()).unwrap(),
+                ApplicationInvocationTransportKind::WorkUnitImplementerReporting,
+            )
+            .unwrap()
+        {
+            crate::agent_sessions::application::ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport {
+                effective_extension_fingerprint,
+            } => effective_extension_fingerprint,
+            evidence => panic!("reporting transport was not exact: {evidence:?}"),
+        };
+        assert_eq!(reporting_fingerprint.len(), 64);
         reporting.write_evidence("real MCP reporting evidence\n");
         let reporting_injection = reporting
             .transition
@@ -9288,6 +9304,23 @@ mod tests {
 
         let review = ReportingFixture::new();
         let review_invocation = review.ready_review();
+        let review_fingerprint = match review
+            .base
+            .sessions
+            .application_invocation_transport_launch_evidence(
+                &AgentInvocationId::new(review_invocation.clone()).unwrap(),
+                &AgentSessionId::new(review.handler_session_id.clone()).unwrap(),
+                ApplicationInvocationTransportKind::WorkUnitHandlerReview,
+            )
+            .unwrap()
+        {
+            crate::agent_sessions::application::ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport {
+                effective_extension_fingerprint,
+            } => effective_extension_fingerprint,
+            evidence => panic!("review transport was not exact: {evidence:?}"),
+        };
+        assert_eq!(review_fingerprint.len(), 64);
+        assert_ne!(review_fingerprint, reporting_fingerprint);
         let review_injection = review
             .transition
             .prepared_action_injection_for_test(&review_invocation)
@@ -10390,14 +10423,14 @@ mod tests {
         assert_eq!(review_facts.0, accepted.handler_session_id);
         assert_eq!(review_facts.1, review);
         assert!(review_facts.5.is_some() && review_facts.6.is_some() && review_facts.7.is_some() && review_facts.8.is_some() && review_facts.9.is_some() && review_facts.10.is_some());
-        assert_eq!(
+        assert!(matches!(
             accepted.base.sessions.application_invocation_transport_launch_evidence(
                 &AgentInvocationId::new(review.clone()).unwrap(),
                 &AgentSessionId::new(accepted.handler_session_id.clone()).unwrap(),
                 ApplicationInvocationTransportKind::WorkUnitHandlerReview,
             ).unwrap(),
-            crate::agent_sessions::application::ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport,
-        );
+            crate::agent_sessions::application::ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport { .. }
+        ));
         let pinned = accepted.handler.load_pinned_handler_revision(&review_facts.2, &review_facts.3, &review_facts.4).unwrap();
         assert_eq!(pinned.profile.runtime_options().sandbox, Some(crate::agent_sessions::domain::RuntimeSandboxMode::ReadOnly));
         assert!(pinned.profile.runtime_configuration_args().iter().any(|value| value == "approval_policy=\"never\""));
