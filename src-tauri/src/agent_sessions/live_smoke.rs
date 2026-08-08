@@ -7,12 +7,13 @@ use crate::{
     agent_sessions::{
         application::{
             AgentSessionApplication, AgentSessionNotification, AgentSessionNotifier,
-            CancelAgentInvocationCommand, SendAgentSessionMessageCommand,
+            ApplicationInvocationLaunchEvidence, CancelAgentInvocationCommand,
+            SendAgentSessionMessageCommand, SendIdempotentApplicationAgentSessionMessageCommand,
             SystemAgentSessionProviders,
         },
         domain::{
-            AgentInvocation, AgentInvocationId, AgentInvocationStatus, AgentSessionId,
-            NormalizedRuntimeEventKind,
+            AgentInvocation, AgentInvocationId, AgentInvocationStatus, AgentRuntimeEvent,
+            AgentSessionId, NormalizedRuntimeEventKind,
         },
         ports::{AgentSessionHistory, AgentSessionRepository},
         repository::{SqliteAgentSessionRepository, AGENT_SESSION_SCHEMA},
@@ -22,11 +23,13 @@ use crate::{
 };
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{
     collections::hash_map::DefaultHasher,
     env,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
+    process::Command,
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -35,7 +38,7 @@ use tempfile::{tempdir, TempDir};
 
 pub(crate) const LIVE_SMOKE_OPT_IN_ENV: &str = "CODEX_AGENT_SESSION_LIVE_SMOKE";
 pub(crate) const LIVE_SMOKE_TIMEOUT_ENV: &str = "CODEX_AGENT_SESSION_LIVE_SMOKE_TIMEOUT_SECS";
-pub(crate) const EVIDENCE_SCHEMA_VERSION: u32 = 1;
+pub(crate) const EVIDENCE_SCHEMA_VERSION: u32 = 2;
 const DEFAULT_TIMEOUT_SECS: u64 = 180;
 const MAX_TIMEOUT_SECS: u64 = 300;
 const LIVE_INVOCATION_BUDGET: u8 = 4;
@@ -95,6 +98,7 @@ impl LiveSmokeEnvironment {
             .map_err(|error| format!("create smoke workspace: {error}"))?;
         validate_owned_path(root.path(), &database_path)?;
         validate_owned_path(root.path(), &workspace_path)?;
+        initialize_git_workspace(root.path(), &workspace_path)?;
         Ok(Self {
             root,
             database_path,
@@ -105,6 +109,26 @@ impl LiveSmokeEnvironment {
     pub(crate) fn root(&self) -> &Path {
         self.root.path()
     }
+}
+
+/// The installed Codex CLI requires a trusted Git working directory unless its caller explicitly
+/// opts out. The smoke owns this disposable repository, so production launch arguments stay
+/// unchanged.
+fn initialize_git_workspace(root: &Path, workspace: &Path) -> Result<(), String> {
+    let status = Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(workspace)
+        .status()
+        .map_err(|error| format!("initialize owned smoke Git workspace: {error}"))?;
+    if !status.success() {
+        return Err("initialize owned smoke Git workspace failed".into());
+    }
+    let marker = workspace.join(".git");
+    validate_owned_path(root, &marker)?;
+    if !marker.is_dir() {
+        return Err("owned smoke Git workspace has no .git directory".into());
+    }
+    Ok(())
 }
 
 fn validate_owned_path(root: &Path, candidate: &Path) -> Result<(), String> {
@@ -167,6 +191,27 @@ pub(crate) struct CleanupEvidence {
 pub(crate) struct FinalInvocationEvidence {
     pub(crate) invocation_id_hash: String,
     pub(crate) durable_status: Option<String>,
+    pub(crate) launch_accepted: bool,
+    pub(crate) external_context_persisted: bool,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) runtime_error_code: Option<String>,
+    pub(crate) runtime_event_sources: Vec<String>,
+    pub(crate) normalized_event_kinds: Vec<String>,
+    pub(crate) launch_provenance: Option<LaunchProvenanceEvidence>,
+}
+
+/// Credential-free subset of the application-owned launch record. It intentionally omits every
+/// configuration/environment value, working-directory value, prompt, URL, and provider payload.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LaunchProvenanceEvidence {
+    pub(crate) executable: Option<String>,
+    pub(crate) invocation_mode: Option<String>,
+    pub(crate) configuration_keys: Vec<String>,
+    pub(crate) environment_keys: Vec<String>,
+    pub(crate) working_directory_provided: Option<bool>,
+    pub(crate) working_directory_absolute: Option<bool>,
+    pub(crate) working_directory_extended_length_prefix: Option<bool>,
 }
 
 impl EvidenceRecord {
@@ -596,6 +641,84 @@ impl LiveSmokeDriver {
         Ok(())
     }
 
+    fn execute_launch_acceptance_only(&mut self) -> Result<(), String> {
+        self.compose_fresh_application()?;
+        let invocation_id = self.application()?.allocate_application_invocation_id();
+        let launch = self
+            .application()?
+            .send_idempotent_application_message_with_launch_observation(
+                SendIdempotentApplicationAgentSessionMessageCommand {
+                    invocation_id: invocation_id.clone(),
+                    message: SendAgentSessionMessageCommand {
+                        session_id: None,
+                        submitted_text: "Reply with only PIP01D_LAUNCH_ACCEPTANCE.".into(),
+                        title: Some("PIP-01D launch acceptance smoke".into()),
+                        working_directory: Some(
+                            self.environment.workspace_path.to_string_lossy().into_owned(),
+                        ),
+                        requested_options: None,
+                    },
+                },
+                None,
+            )
+            .map_err(|error| format!("send application launch-acceptance prompt: {error}"))?;
+        self.evidence.invocations_launched += 1;
+        self.known_invocations.push(invocation_id.clone());
+        let session_id = launch.acknowledgement.session_id;
+        let launch = self
+            .application()?
+            .application_invocation_launch_evidence(&invocation_id, &session_id)
+            .map_err(|error| format!("load launch acceptance evidence: {error}"))?;
+        if launch != ApplicationInvocationLaunchEvidence::LaunchAccepted {
+            return Err("real runtime did not durably accept the invocation launch".into());
+        }
+        let terminal = self.wait_for_terminal(&session_id, &invocation_id)?;
+        let history = self
+            .application()?
+            .load_session(&session_id)
+            .map_err(|error| format!("load launch-acceptance history: {error}"))?;
+        self.record_phase(
+            "launch_acceptance",
+            "accepted",
+            &session_id,
+            &invocation_id,
+            None,
+            None,
+            None,
+        );
+        let external_context = history.session.runtime_binding.external_context_id.ok_or_else(|| {
+            self.record_phase(
+                "external_context",
+                "absent",
+                &session_id,
+                &invocation_id,
+                None,
+                None,
+                None,
+            );
+            "launch-accepted invocation completed without persisted external Codex context".to_string()
+        })?;
+        self.record_phase(
+            "launch_acceptance_and_external_context",
+            if terminal.status == AgentInvocationStatus::Completed {
+                "completed"
+            } else {
+                "failed"
+            },
+            &session_id,
+            &invocation_id,
+            Some(external_context.as_str()),
+            None,
+            None,
+        );
+        if terminal.status != AgentInvocationStatus::Completed {
+            return Err(classify_terminal_failure("launch-acceptance turn", &terminal));
+        }
+        self.close_current_runtime()?;
+        self.evidence.outcome = "passed".into();
+        Ok(())
+    }
+
     fn cleanup_after_failure(&mut self) {
         if self.close_current_runtime().is_err() {
             self.evidence.cleanup.shutdown_completed = false;
@@ -610,13 +733,37 @@ impl LiveSmokeDriver {
         self.evidence.final_invocations = self
             .known_invocations
             .iter()
-            .map(|invocation_id| FinalInvocationEvidence {
-                invocation_id_hash: redact_id(invocation_id.as_str()),
-                durable_status: repository
-                    .get_invocation(invocation_id)
-                    .ok()
+            .map(|invocation_id| {
+                let invocation = repository.get_invocation(invocation_id).ok().flatten();
+                let events = repository.list_events(invocation_id).unwrap_or_default();
+                let external_context_persisted = invocation
+                    .as_ref()
+                    .and_then(|invocation| repository.get_session(&invocation.session_id).ok())
                     .flatten()
-                    .map(|invocation| format!("{:?}", invocation.status).to_ascii_lowercase()),
+                    .and_then(|session| session.runtime_binding.external_context_id)
+                    .is_some();
+                FinalInvocationEvidence {
+                    invocation_id_hash: redact_id(invocation_id.as_str()),
+                    durable_status: invocation
+                        .as_ref()
+                        .map(|invocation| format!("{:?}", invocation.status).to_ascii_lowercase()),
+                    launch_accepted: repository
+                        .invocation_launch_accepted_at(invocation_id)
+                        .ok()
+                        .flatten()
+                        .is_some(),
+                    external_context_persisted,
+                    exit_code: invocation
+                        .as_ref()
+                        .and_then(|invocation| invocation.exit_code),
+                    runtime_error_code: invocation
+                        .as_ref()
+                        .and_then(|invocation| invocation.runtime_error.as_ref())
+                        .map(|failure| failure.code.clone()),
+                    runtime_event_sources: event_source_names(&events),
+                    normalized_event_kinds: normalized_event_kind_names(&events),
+                    launch_provenance: sanitized_launch_provenance(&events),
+                }
             })
             .collect();
     }
@@ -687,6 +834,76 @@ fn redact_id(value: &str) -> String {
     format!("hash:{:016x}", hasher.finish())
 }
 
+fn sanitized_launch_provenance(events: &[AgentRuntimeEvent]) -> Option<LaunchProvenanceEvidence> {
+    events.iter().find_map(|event| {
+        let payload = event.raw_payload.as_object()?;
+        (payload.get("kind")?.as_str()? == "codex_launch_provenance").then(|| {
+            let working_directory = payload.get("workingDirectory").and_then(Value::as_object);
+            LaunchProvenanceEvidence {
+                executable: payload
+                    .get("executable")
+                    .and_then(Value::as_str)
+                    .filter(|value| matches!(*value, "codex" | "codex.exe"))
+                    .map(str::to_owned),
+                invocation_mode: payload
+                    .get("invocationMode")
+                    .and_then(Value::as_str)
+                    .filter(|value| matches!(*value, "start" | "resume"))
+                    .map(str::to_owned),
+                configuration_keys: sanitized_key_names(payload.get("configurationKeys")),
+                environment_keys: sanitized_key_names(payload.get("environmentKeys")),
+                working_directory_provided: working_directory
+                    .and_then(|value| value.get("provided"))
+                    .and_then(Value::as_bool),
+                working_directory_absolute: working_directory
+                    .and_then(|value| value.get("absolute"))
+                    .and_then(Value::as_bool),
+                working_directory_extended_length_prefix: working_directory
+                    .and_then(|value| value.get("extendedLengthPrefix"))
+                    .and_then(Value::as_bool),
+            }
+        })
+    })
+}
+
+fn event_source_names(events: &[AgentRuntimeEvent]) -> Vec<String> {
+    let mut names = events
+        .iter()
+        .map(|event| format!("{:?}", event.source).to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn normalized_event_kind_names(events: &[AgentRuntimeEvent]) -> Vec<String> {
+    let mut names = events
+        .iter()
+        .filter_map(|event| event.normalized.as_ref())
+        .map(|normalized| format!("{:?}", normalized.kind).to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn sanitized_key_names(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|name| {
+            !name.is_empty()
+                && name.len() <= 128
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
 fn classify_terminal_failure(phase: &str, invocation: &AgentInvocation) -> String {
     let details = invocation
         .runtime_error
@@ -741,6 +958,37 @@ fn agent_session_live_smoke_driver() {
     result.expect("Agent Session live smoke lifecycle proof")
 }
 
+#[test]
+#[ignore = "requires CODEX_AGENT_SESSION_LIVE_SMOKE=true and launches one real Codex invocation"]
+fn agent_session_launch_acceptance_live_smoke_driver() {
+    let config = LiveSmokeConfig::from_environment().expect("valid live smoke environment");
+    assert!(
+        config.enabled,
+        "refusing live smoke: set {LIVE_SMOKE_OPT_IN_ENV}=true explicitly"
+    );
+    let mut driver = LiveSmokeDriver::new(config).expect("create live smoke driver");
+    let result = driver.execute_launch_acceptance_only();
+    if let Err(error) = &result {
+        driver.evidence.outcome = "failed".into();
+        driver.cleanup_after_failure();
+        driver.evidence.phases.push(PhaseEvidence {
+            name: "failure".into(),
+            status: "failed".into(),
+            session_id_hash: None,
+            invocation_id_hash: None,
+            external_context_id_hash: None,
+            resume_target_matches_persisted_context: None,
+            resume_target_differs_from_local_ids: None,
+        });
+        eprintln!("Agent Session launch-acceptance live smoke failed: {error}");
+    }
+    driver.capture_final_durable_state();
+    driver
+        .write_evidence()
+        .expect("write redacted launch-acceptance live smoke evidence");
+    result.expect("Agent Session launch-acceptance live smoke proof")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -767,6 +1015,7 @@ mod tests {
         let environment = LiveSmokeEnvironment::create().expect("environment");
         assert!(environment.database_path.starts_with(environment.root()));
         assert!(environment.workspace_path.starts_with(environment.root()));
+        assert!(environment.workspace_path.join(".git").is_dir());
         assert!(validate_owned_path(environment.root(), Path::new("C:/normal/app.db")).is_err());
     }
 
@@ -794,6 +1043,21 @@ mod tests {
             final_invocations: vec![FinalInvocationEvidence {
                 invocation_id_hash: redact_id("local-invocation"),
                 durable_status: Some("completed".into()),
+                launch_accepted: true,
+                external_context_persisted: true,
+                exit_code: Some(0),
+                runtime_error_code: None,
+                runtime_event_sources: vec!["runtime".into(), "stdout".into()],
+                normalized_event_kinds: vec!["runtimecontextestablished".into()],
+                launch_provenance: Some(LaunchProvenanceEvidence {
+                    executable: Some("codex".into()),
+                    invocation_mode: Some("start".into()),
+                    configuration_keys: vec!["mcp_servers.epic_runner.command".into()],
+                    environment_keys: vec!["CODEX_OPAQUE_ENVIRONMENT_KEY".into()],
+                    working_directory_provided: Some(true),
+                    working_directory_absolute: Some(true),
+                    working_directory_extended_length_prefix: Some(false),
+                }),
             }],
             limitations: vec!["direct children only".into()],
         };
@@ -803,8 +1067,76 @@ mod tests {
             serde_json::from_str::<EvidenceRecord>(&first).unwrap(),
             evidence
         );
-        assert!(first.starts_with(r#"{"schemaVersion":1,"outcome":"passed""#));
+        assert!(first.starts_with(r#"{"schemaVersion":2,"outcome":"passed""#));
         assert!(!first.contains("external-thread"));
+    }
+
+    #[test]
+    fn launch_provenance_evidence_keeps_only_safe_key_names_and_boolean_shape() {
+        let event = AgentRuntimeEvent {
+            id: crate::agent_sessions::domain::AgentRuntimeEventId::new("event-1").unwrap(),
+            invocation_id: AgentInvocationId::new("invocation-1").unwrap(),
+            sequence: 0,
+            source: crate::agent_sessions::domain::AgentRuntimeEventSource::Runtime,
+            raw_payload: serde_json::json!({
+                "kind": "codex_launch_provenance",
+                "executable": "codex",
+                "invocationMode": "start",
+                "configurationKeys": ["mcp_servers.epic_runner.command", "https://not-a-key"],
+                "environmentKeys": ["CODEX_OPAQUE_ENVIRONMENT_KEY", "OPENAI_API_KEY"],
+                "workingDirectory": {
+                    "provided": true,
+                    "absolute": true,
+                    "extendedLengthPrefix": false,
+                    "value": "C:/never-retained"
+                },
+                "sandbox": "read-only",
+                "secret": "never-retained"
+            }),
+            normalized: None,
+            recorded_at: chrono::Utc::now(),
+        };
+
+        let evidence = sanitized_launch_provenance(&[event]).expect("sanitized provenance");
+        assert_eq!(evidence.executable.as_deref(), Some("codex"));
+        assert_eq!(evidence.invocation_mode.as_deref(), Some("start"));
+        assert_eq!(
+            evidence.configuration_keys,
+            vec!["mcp_servers.epic_runner.command"]
+        );
+        assert_eq!(
+            evidence.environment_keys,
+            vec!["CODEX_OPAQUE_ENVIRONMENT_KEY", "OPENAI_API_KEY"]
+        );
+        let rendered = serde_json::to_string(&evidence).unwrap();
+        assert!(!rendered.contains("never-retained"));
+        assert!(!rendered.contains("https://"));
+        assert!(!rendered.contains("read-only"));
+    }
+
+    #[test]
+    fn event_evidence_retains_only_source_and_normalized_kind_names() {
+        let event = AgentRuntimeEvent {
+            id: crate::agent_sessions::domain::AgentRuntimeEventId::new("event-2").unwrap(),
+            invocation_id: AgentInvocationId::new("invocation-2").unwrap(),
+            sequence: 1,
+            source: crate::agent_sessions::domain::AgentRuntimeEventSource::Stdout,
+            raw_payload: serde_json::json!({"providerPayload": "never-retained"}),
+            normalized: Some(crate::agent_sessions::domain::NormalizedRuntimeEvent {
+                kind: NormalizedRuntimeEventKind::RuntimeContextEstablished,
+                text: Some("never-retained".into()),
+                external_context_id: None,
+                usage: None,
+                details: Some(serde_json::json!({"url": "never-retained"})),
+                tool_activity: None,
+            }),
+            recorded_at: chrono::Utc::now(),
+        };
+        assert_eq!(event_source_names(&[event.clone()]), vec!["stdout"]);
+        assert_eq!(
+            normalized_event_kind_names(&[event]),
+            vec!["runtimecontextestablished"]
+        );
     }
 
     #[test]

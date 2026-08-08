@@ -100,6 +100,49 @@ export interface NormalizedRuntimeEventDto {
   externalContextId: ExternalRuntimeContextIdDto | null;
   usage: AgentRuntimeUsageDto | null;
   details: unknown | null;
+  toolActivity: NormalizedToolActivityDto | null;
+}
+
+export type ToolActivityPhaseDto = 'started' | 'completed' | 'unknown';
+export type ToolResultClassificationDto = 'succeeded' | 'failed' | 'unknown';
+
+export interface NormalizedToolActivityDto {
+  phase: ToolActivityPhaseDto;
+  itemId: string | null;
+  server: string | null;
+  tool: string | null;
+  status: string | null;
+  resultClassification: ToolResultClassificationDto;
+}
+
+export interface RuntimeObservationCorrelationDto {
+  eventId: AgentRuntimeEventIdDto;
+  sequence: number;
+  recordedAt: IsoDateTimeDto;
+}
+
+export interface AgentInvocationObservationDto {
+  launchAcceptedAt: IsoDateTimeDto | null;
+  externalContext: {
+    externalContextId: ExternalRuntimeContextIdDto;
+    correlation: RuntimeObservationCorrelationDto;
+  } | null;
+  providerActivity: RuntimeObservationCorrelationDto | null;
+  providerTerminal: {
+    status: 'completed' | 'failed' | 'error';
+    correlation: RuntimeObservationCorrelationDto;
+  } | null;
+  processTerminal: {
+    status: AgentInvocationStatusDto;
+    completedAt: IsoDateTimeDto;
+    exitCode: number | null;
+    signal: string | null;
+  } | null;
+  mcpToolActivities: Array<{
+    activity: NormalizedToolActivityDto;
+    correlation: RuntimeObservationCorrelationDto;
+  }>;
+  mcpToolActivityPartial: boolean;
 }
 
 export interface AgentRuntimeEventDto {
@@ -114,6 +157,7 @@ export interface AgentRuntimeEventDto {
 
 export interface AgentInvocationDetailsDto {
   invocation: AgentInvocationDto;
+  observation: AgentInvocationObservationDto;
   events: AgentRuntimeEventDto[];
 }
 

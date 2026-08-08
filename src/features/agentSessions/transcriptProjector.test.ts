@@ -256,6 +256,11 @@ function invocation(
       createdAt,
       updatedAt: createdAt,
     },
+    observation: {
+      launchAcceptedAt: null, externalContext: null, providerActivity: null, providerTerminal: null,
+      processTerminal: status === 'running' ? null : { status, completedAt: createdAt, exitCode: status === 'completed' ? 0 : null, signal: null },
+      mcpToolActivities: [], mcpToolActivityPartial: false,
+    },
     events,
   };
 }
@@ -273,7 +278,7 @@ function event(
     sequence,
     source: 'stdout',
     rawPayload: { kind },
-    normalized: { kind, text, externalContextId: null, usage: null, details },
+    normalized: { kind, text, externalContextId: null, usage: null, details, toolActivity: null },
     recordedAt: new Date(Date.parse(timestamp) + sequence * 1000).toISOString(),
   };
 }

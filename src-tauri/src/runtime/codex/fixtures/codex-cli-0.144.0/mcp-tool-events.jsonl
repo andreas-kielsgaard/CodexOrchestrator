@@ -1,0 +1,2 @@
+{"type":"item.started","item":{"id":"mcp-submit-1","type":"mcp_tool_call","server":"orchestration","tool":"submit_epic_plan_proposal","arguments":{"title":"Sanitized proposal"}}}
+{"type":"item.completed","item":{"id":"mcp-submit-1","type":"mcp_tool_call","server":"orchestration","tool":"submit_epic_plan_proposal","result":{"status":"persisted","content":[{"type":"text","text":"sanitized"}]}}}

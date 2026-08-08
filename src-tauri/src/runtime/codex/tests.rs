@@ -10,6 +10,7 @@ use crate::{
         domain::{
             AgentInvocationId, AgentInvocationTerminalStatus, AgentRuntimeOptions, AgentSessionId,
             ExternalRuntimeContextId, NormalizedRuntimeEventKind, RuntimeSandboxMode,
+            ToolActivityPhase, ToolResultClassification,
         },
         ports::{
             AgentAccessCapabilities, AgentAccessCapabilityDiscovery, AgentAccessCapabilitySnapshot,
@@ -39,6 +40,36 @@ use std::{
 const FIRST_TURN: &str = include_str!("fixtures/codex-cli-0.144.0/first-turn.jsonl");
 const RESUME: &str = include_str!("fixtures/codex-cli-0.144.0/resume.jsonl");
 const MALFORMED: &str = include_str!("fixtures/codex-cli-0.144.0/malformed-and-unknown.jsonl");
+const MCP_TOOL_EVENTS: &str = include_str!("fixtures/codex-cli-0.144.0/mcp-tool-events.jsonl");
+
+#[test]
+fn normalizes_mcp_started_and_completed_without_requiring_raw_payload_parsing() {
+    let mut protocol = CodexJsonlProtocol::default();
+    let outputs = protocol.push(MCP_TOOL_EVENTS.as_bytes());
+    let activities = outputs
+        .into_iter()
+        .flat_map(|output| output.events)
+        .map(|event| {
+            event
+                .normalized
+                .expect("normalized")
+                .tool_activity
+                .expect("MCP semantic activity")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(activities.len(), 2);
+    assert_eq!(activities[0].phase, ToolActivityPhase::Started);
+    assert_eq!(activities[0].server.as_deref(), Some("orchestration"));
+    assert_eq!(
+        activities[0].tool.as_deref(),
+        Some("submit_epic_plan_proposal")
+    );
+    assert_eq!(activities[1].phase, ToolActivityPhase::Completed);
+    assert_eq!(
+        activities[1].result_classification,
+        ToolResultClassification::Succeeded
+    );
+}
 
 fn capabilities() -> CodexCliCapabilities {
     CodexCliCapabilities {
@@ -286,6 +317,20 @@ fn resume_assembles_sandbox_through_the_supported_strict_config_surface() {
 }
 
 #[test]
+fn launch_provenance_redacts_the_exact_workspace_from_project_trust_configuration() {
+    assert_eq!(
+        super::runtime::sanitized_configuration_key(
+            r#"projects.'c:\isolated\execution-workspace'.trust_level"#
+        ),
+        "projects.<application-bound-workspace>.trust_level"
+    );
+    assert_eq!(
+        super::runtime::sanitized_configuration_key("approval_policy"),
+        "approval_policy"
+    );
+}
+
+#[test]
 fn omits_optional_options_when_capability_data_is_absent() {
     let options = AgentRuntimeOptions {
         model: Some("unverified-model".to_string()),
@@ -344,6 +389,33 @@ fn assembles_enforced_plan_builder_runtime_and_child_configuration() {
             "-c",
             "mcp_servers.role.required=true",
             "plan",
+        ]
+    );
+}
+
+#[test]
+fn resume_places_child_configuration_before_the_session_id() {
+    let context = ExternalRuntimeContextId::new("thread-resume").unwrap();
+    let extension = RuntimeLaunchExtension {
+        additional_args: vec!["-c".into(), "mcp_servers.plan_builder.required=true".into()],
+        environment: vec![],
+        initial_prompt_prefix: None,
+    };
+    assert_eq!(
+        build_args_from_effective_options(
+            InvocationCommand::Resume(&context),
+            "build",
+            &AgentRuntimeOptions::default(),
+            Some(&extension),
+        ),
+        [
+            "exec",
+            "resume",
+            "--json",
+            "-c",
+            "mcp_servers.plan_builder.required=true",
+            "thread-resume",
+            "build",
         ]
     );
 }

@@ -15,17 +15,24 @@ pub(super) fn build_args_from_effective_options(
     launch_extension: Option<&crate::agent_sessions::ports::RuntimeLaunchExtension>,
 ) -> Vec<String> {
     let mut args = vec!["exec".to_string()];
-    if let InvocationCommand::Resume(context_id) = command {
-        args.push("resume".to_string());
-        push_supported_flag(&mut args, "--json", None);
-        push_effective_options(&mut args, effective_options, true);
-        args.push(context_id.as_str().to_string());
-    } else {
-        push_supported_flag(&mut args, "--json", None);
-        push_effective_options(&mut args, effective_options, false);
-    }
+    let resume_context = match command {
+        InvocationCommand::Resume(context_id) => {
+            args.push("resume".to_string());
+            push_supported_flag(&mut args, "--json", None);
+            push_effective_options(&mut args, effective_options, true);
+            Some(context_id)
+        }
+        InvocationCommand::Start => {
+            push_supported_flag(&mut args, "--json", None);
+            push_effective_options(&mut args, effective_options, false);
+            None
+        }
+    };
     if let Some(extension) = launch_extension {
         args.extend(extension.additional_args.iter().cloned());
+    }
+    if let Some(context_id) = resume_context {
+        args.push(context_id.as_str().to_string());
     }
     args.push(prompt.to_string());
     args

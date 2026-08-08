@@ -1,4 +1,0 @@
-interface:
-  display_name: "Sprint Runner"
-  short_description: "Manage one Sprint from forecast to handback"
-  default_prompt: "Use $sprint-runner to start from current Sprint reality and manage its execution flow."

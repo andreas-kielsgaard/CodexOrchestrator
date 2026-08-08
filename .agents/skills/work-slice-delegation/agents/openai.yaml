@@ -1,4 +1,0 @@
-interface:
-  display_name: "Work Slice Delegation"
-  short_description: "Stage workers from accepted planner output."
-  default_prompt: "Use $work-slice-delegation to stage a focused work-slice worker from accepted planner output."

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Resolve Epic Ambiguity"
-  short_description: "Make reviewable decisions during auto Epics"
-  default_prompt: "Use $resolve-epic-ambiguity to resolve and record this ambiguity for an automatic Epic run."

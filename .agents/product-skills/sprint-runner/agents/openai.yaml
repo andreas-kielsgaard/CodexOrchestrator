@@ -1,0 +1,4 @@
+interface:
+  display_name: "Product Sprint Runner"
+  short_description: "Manage a product Sprint through handback"
+  default_prompt: "Use $sprint-runner to start from current Sprint reality and manage its execution flow."

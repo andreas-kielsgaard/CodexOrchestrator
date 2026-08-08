@@ -8,6 +8,7 @@ mod capabilities;
 mod protocol;
 mod runtime;
 
+pub(crate) use capabilities::resolve_program;
 #[cfg(test)]
 pub(crate) use capabilities::{CodexCliCapabilities, CodexCliCapabilityProbe};
 #[allow(unused_imports)]

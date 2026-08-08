@@ -9,6 +9,7 @@ import type {
 } from '../orchestrationModel';
 import { SharedAgentSessionPanel } from './SharedAgentSessionPanel';
 import '../styles/orchestrationSubdetail.css';
+import type { ReactNode } from 'react';
 
 type RevisionWorkUnit = SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number];
 
@@ -28,6 +29,7 @@ export interface WorkSlicePlanningPointDetailWorkspaceProps {
   readonly onBack: () => void;
   readonly onOpenWorkUnit: (workUnitId: string) => void;
   readonly onOpenAgentSession?: (sessionId: string) => void;
+  readonly sprintControl?: ReactNode;
 }
 
 export function WorkSlicePlanningPointDetailWorkspace({
@@ -40,6 +42,7 @@ export function WorkSlicePlanningPointDetailWorkspace({
   onBack,
   onOpenWorkUnit,
   onOpenAgentSession,
+  sprintControl,
 }: WorkSlicePlanningPointDetailWorkspaceProps) {
   return (
     <DetailWorkspace
@@ -50,10 +53,13 @@ export function WorkSlicePlanningPointDetailWorkspace({
       onBack={onBack}
       focusBackOnMount
       control={
-        <span className="current-work-state">
-          <small>Current work</small>
-          <strong>{currentWorkState}</strong>
-        </span>
+        <div className="sprint-header-controls">
+          {sprintControl}
+          <span className="current-work-state">
+            <small>Current work</small>
+            <strong>{currentWorkState}</strong>
+          </span>
+        </div>
       }
       context={
         <div className="subdetail-context">

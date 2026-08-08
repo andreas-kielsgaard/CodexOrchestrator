@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Product Epic Bootstrap Generator'
+  short_description: 'Generate product-owned Epic materials'
+  default_prompt: 'Use $epic-bootstrap-generator to generate the approved startup materials for this Epic.'

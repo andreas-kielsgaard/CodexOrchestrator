@@ -38,6 +38,8 @@ const unit: SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][
   fixedExecutionScopeIds: ['execution-1'],
   dependencies: [],
   gateIds: [],
+  attemptHistory: [],
+  retryAttempts: [],
   attempts: [{ attemptId: 'attempt-1', workUnitExecutionId: 'execution-1', returned: true }],
   reviews: [],
   observed: {

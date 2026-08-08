@@ -1,7 +1,8 @@
 use crate::agent_sessions::{
     application::{
-        AgentSessionNotification, CancelAgentInvocationCommand, CreateAgentSessionCommand,
-        SendAgentSessionMessageCommand, SendAgentSessionMessageResult,
+        project_invocation_observation, AgentInvocationObservation, AgentSessionNotification,
+        CancelAgentInvocationCommand, CreateAgentSessionCommand, SendAgentSessionMessageCommand,
+        SendAgentSessionMessageResult,
     },
     domain::{
         AgentInvocation, AgentInvocationId, AgentRuntimeEvent, AgentRuntimeOptions, AgentSession,
@@ -112,6 +113,7 @@ impl From<SendAgentSessionMessageResult> for SendAgentSessionMessageResultDto {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentInvocationDetailsDto {
     pub(crate) invocation: AgentInvocationDto,
+    pub(crate) observation: AgentInvocationObservation,
     pub(crate) events: Vec<AgentRuntimeEventDto>,
 }
 
@@ -130,6 +132,7 @@ impl AgentSessionDetailsDto {
                 .invocations
                 .into_iter()
                 .map(|history| AgentInvocationDetailsDto {
+                    observation: project_invocation_observation(&history),
                     invocation: history.invocation,
                     events: history.events,
                 })
@@ -218,5 +221,69 @@ impl From<AgentSessionNotification> for AgentSessionUpdateDto {
                 invocation,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_sessions::{
+        domain::{
+            AgentInvocationInputProvenance, AgentInvocationStatus, AgentRuntimeBinding,
+            AgentSessionAvailability,
+        },
+        ports::{AgentInvocationHistory, AgentSessionHistory},
+    };
+    use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn serializes_observation_from_durable_history_without_application_acceptance() {
+        let at = Utc.with_ymd_and_hms(2026, 8, 2, 12, 0, 0).unwrap();
+        let session_id = AgentSessionId::new("session").unwrap();
+        let invocation_id = AgentInvocationId::new("invocation").unwrap();
+        let dto = AgentSessionDetailsDto::from_history(AgentSessionHistory {
+            session: AgentSession {
+                id: session_id.clone(),
+                title: "Session".into(),
+                availability: AgentSessionAvailability::Available,
+                runtime_binding: AgentRuntimeBinding {
+                    external_context_id: None,
+                    runtime_version: None,
+                },
+                working_directory: None,
+                requested_options: AgentRuntimeOptions::default(),
+                created_at: at,
+                updated_at: at,
+            },
+            invocations: vec![AgentInvocationHistory {
+                invocation: AgentInvocation {
+                    id: invocation_id,
+                    session_id,
+                    submitted_text: "Work".into(),
+                    input_provenance: AgentInvocationInputProvenance::User,
+                    status: AgentInvocationStatus::Pending,
+                    requested_options: AgentRuntimeOptions::default(),
+                    effective_options: None,
+                    started_at: None,
+                    completed_at: None,
+                    exit_code: None,
+                    signal: None,
+                    runtime_error: None,
+                    diagnostics: vec![],
+                    created_at: at,
+                    updated_at: at,
+                },
+                launch_accepted_at: Some(at),
+                events: vec![],
+            }],
+        });
+        let value = serde_json::to_value(dto).unwrap();
+        assert_eq!(
+            value["invocations"][0]["observation"]["launchAcceptedAt"],
+            "2026-08-02T12:00:00Z"
+        );
+        assert!(value["invocations"][0]["observation"]
+            .get("applicationAcceptance")
+            .is_none());
     }
 }

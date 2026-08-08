@@ -1,8 +1,15 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { AgentSessionClient } from '../application/agentSessions';
 import { sessionDetails } from '../features/agentSessions/testFixtures';
 import type { OrchestrationApplicationClient } from '../application/orchestrations';
-import { createRecordedFileReviewApplicationComposition } from '../dev/fileReview/recordedFileReviewClient';
+import {
+  createRecordedFileReviewApplicationComposition,
+  createRecordedFileReviewSource,
+} from '../dev/fileReview/recordedFileReviewClient';
+import type {
+  ContextualFileReviewClient,
+  ContextualFileReviewResult,
+} from '../application/contextualFileReview';
 import { App } from './App';
 import { createRecordedDevelopmentApplicationComposition } from '../dev/orchestrationSection/recordedOrchestrationClient';
 
@@ -38,7 +45,7 @@ describe('App application surfaces', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Agent Sessions' }));
-    expect(await screen.findByText('Start with a message')).toBeVisible();
+    await waitFor(() => expect(screen.getByText('Start with a message')).toBeVisible());
 
     fireEvent.click(screen.getByRole('button', { name: 'Files & diffs' }));
     expect(screen.getByRole('main', { name: 'Files and diffs' })).toBeVisible();
@@ -193,6 +200,50 @@ describe('App application surfaces', () => {
     expect(documentTitle).toBeVisible();
     expect(documentTitle.closest('article')).toBeVisible();
     expect(screen.queryByRole('button', { name: /Review files|View document/ })).toBeNull();
+  });
+
+  it('navigates from initiated Sprint context only after the scoped File Review source is ready', async () => {
+    const composition = createRecordedDevelopmentApplicationComposition();
+    let settle!: (
+      result: Awaited<ReturnType<ContextualFileReviewClient['requestForSprint']>>,
+    ) => void;
+    const contextualFileReviewClient: ContextualFileReviewClient = {
+      requestForSprint: vi.fn(
+        () =>
+          new Promise<ContextualFileReviewResult>((resolve) => {
+            settle = resolve;
+          }),
+      ),
+    };
+    render(<App {...composition} contextualFileReviewClient={contextualFileReviewClient} />);
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Open Codex Epic Runner workspace development',
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Sprint: Sprint Control Surface Discovery' }),
+    );
+
+    expect(screen.queryByRole('button', { name: 'Files & diffs' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Review files' }));
+    expect(screen.getByRole('main', { name: 'Sprint detail' })).toBeVisible();
+    expect(screen.getByText('Preparing File Review…')).toBeVisible();
+
+    await act(async () => {
+      settle({
+        status: 'ready',
+        source: createRecordedFileReviewSource('working-tree'),
+        idempotentReplay: false,
+      });
+    });
+
+    expect(await screen.findByRole('main', { name: 'Files and diffs' })).toBeVisible();
+    expect(await screen.findByText('5 changed files')).toBeVisible();
+    expect(contextualFileReviewClient.requestForSprint).toHaveBeenCalledWith(
+      'sprint-control-surface',
+    );
+    expect(screen.queryByRole('button', { name: 'Files & diffs' })).toBeNull();
   });
 });
 

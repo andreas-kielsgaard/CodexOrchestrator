@@ -1,7 +1,8 @@
 use crate::agent_sessions::{
     domain::{
         AgentRuntimeEventSource, AgentRuntimeUsage, ExternalRuntimeContextId,
-        NormalizedRuntimeEvent, NormalizedRuntimeEventKind,
+        NormalizedRuntimeEvent, NormalizedRuntimeEventKind, NormalizedToolActivity,
+        ToolActivityPhase, ToolResultClassification,
     },
     ports::RuntimeEventDraft,
 };
@@ -181,11 +182,11 @@ impl CodexJsonlProtocol {
                 if let Some(message) = self.take_agent_message("intermediate") {
                     events.push(message);
                 }
-                events.push(runtime_error(raw, "Codex reported turn.failed"));
+                events.push(runtime_error(raw, "Codex reported turn.failed", "failed"));
                 terminal = Some(JsonlTerminalEvidence::Failed);
             }
             "error" => {
-                events.push(runtime_error(raw, "Codex reported an error event"));
+                events.push(runtime_error(raw, "Codex reported an error event", "error"));
                 terminal = Some(JsonlTerminalEvidence::Error);
             }
             event if event.starts_with("item.") => {
@@ -241,8 +242,23 @@ impl CodexJsonlProtocol {
                             ),
                         ));
                     }
-                    "command_execution" | "file_change" | "mcp_tool_call" | "web_search"
-                    | "plan_update" => {
+                    "mcp_tool_call" => {
+                        let text = item_text(item);
+                        let details = json!({"itemType": item_type, "eventType": event});
+                        let activity = mcp_tool_activity(item, event);
+                        events.push(draft(
+                            raw,
+                            normalized_with_tool(
+                                NormalizedRuntimeEventKind::ToolActivity,
+                                text,
+                                None,
+                                None,
+                                Some(details),
+                                activity,
+                            ),
+                        ));
+                    }
+                    "command_execution" | "file_change" | "web_search" | "plan_update" => {
                         let text = item_text(item);
                         let details = json!({"itemType": item_type, "eventType": event});
                         events.push(draft(
@@ -324,7 +340,7 @@ fn diagnostic(raw: Value, line: u64, message: &str) -> RuntimeEventDraft {
     )
 }
 
-fn runtime_error(raw: Value, fallback: &str) -> RuntimeEventDraft {
+fn runtime_error(raw: Value, fallback: &str, terminal: &str) -> RuntimeEventDraft {
     let text = raw
         .get("message")
         .and_then(Value::as_str)
@@ -337,7 +353,7 @@ fn runtime_error(raw: Value, fallback: &str) -> RuntimeEventDraft {
             Some(text),
             None,
             None,
-            None,
+            Some(json!({"providerTerminal": terminal})),
         ),
     )
 }
@@ -376,7 +392,59 @@ fn normalized(
         external_context_id,
         usage,
         details,
+        tool_activity: None,
     }
+}
+
+fn normalized_with_tool(
+    kind: NormalizedRuntimeEventKind,
+    text: Option<String>,
+    external_context_id: Option<ExternalRuntimeContextId>,
+    usage: Option<AgentRuntimeUsage>,
+    details: Option<Value>,
+    tool_activity: NormalizedToolActivity,
+) -> NormalizedRuntimeEvent {
+    NormalizedRuntimeEvent {
+        kind,
+        text,
+        external_context_id,
+        usage,
+        details,
+        tool_activity: Some(tool_activity),
+    }
+}
+
+fn mcp_tool_activity(item: &Map<String, Value>, event: &str) -> NormalizedToolActivity {
+    let status = text_at(item, &["status", "result", "outcome"]).or_else(|| {
+        item.get("result")
+            .and_then(Value::as_object)
+            .and_then(|result| text_at(result, &["status", "outcome"]))
+    });
+    let phase = match event {
+        "item.started" => ToolActivityPhase::Started,
+        "item.completed" => ToolActivityPhase::Completed,
+        _ => ToolActivityPhase::Unknown,
+    };
+    let result_classification = match status.as_deref() {
+        Some("completed" | "success" | "succeeded" | "persisted") => {
+            ToolResultClassification::Succeeded
+        }
+        Some("failed" | "error" | "errored") => ToolResultClassification::Failed,
+        _ => ToolResultClassification::Unknown,
+    };
+    NormalizedToolActivity {
+        phase,
+        item_id: text_at(item, &["id"]),
+        server: text_at(item, &["server", "server_name", "serverName"]),
+        tool: text_at(item, &["tool", "tool_name", "toolName", "name"]),
+        status,
+        result_classification,
+    }
+}
+
+fn text_at(item: &Map<String, Value>, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| item.get(*key).and_then(Value::as_str).map(str::to_string))
 }
 
 fn item_text(item: &Map<String, Value>) -> Option<String> {

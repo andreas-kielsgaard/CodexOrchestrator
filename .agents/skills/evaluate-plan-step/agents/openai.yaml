@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evaluate Plan Step"
+  short_description: "Review a Plan Step and update its Slice Plan"
+  default_prompt: "Use $evaluate-plan-step to assess this returned Plan Step and continue the slice."

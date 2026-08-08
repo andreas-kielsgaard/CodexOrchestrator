@@ -421,6 +421,7 @@ impl AgentSessionRepository for FakeRepository {
             .filter(|invocation| &invocation.session_id == session_id)
             .cloned()
             .map(|invocation| AgentInvocationHistory {
+                launch_accepted_at: state.launch_acceptances.get(&invocation.id).copied(),
                 events: state
                     .events
                     .get(&invocation.id)
@@ -642,6 +643,28 @@ impl AgentSessionRepository for FakeRepository {
             .copied())
     }
 
+    fn recover_pre_acceptance_interruption(
+        &self,
+        invocation_id: &AgentInvocationId,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentInvocation, RepositoryError> {
+        let mut state = self.state.lock().expect("fake repository");
+        if state.launch_acceptances.contains_key(invocation_id) {
+            return Err(repository_error(
+                RepositoryErrorKind::Conflict,
+                "launch-accepted invocation cannot return to pre-acceptance state",
+            ));
+        }
+        let invocation = state.invocations.get_mut(invocation_id).ok_or_else(|| {
+            repository_error(RepositoryErrorKind::NotFound, "invocation not found")
+        })?;
+        let updated = invocation
+            .recover_pre_acceptance_interruption(updated_at)
+            .map_err(|error| repository_error(RepositoryErrorKind::InvalidState, error.to_string()))?;
+        *invocation = updated.clone();
+        Ok(updated)
+    }
+
     fn finish_invocation(
         &self,
         invocation_id: &AgentInvocationId,
@@ -852,6 +875,7 @@ fn event(id: &str, invocation: &str, sequence: u64) -> AgentRuntimeEvent {
             external_context_id: None,
             usage: None,
             details: None,
+            tool_activity: None,
         }),
         recorded_at: at(1),
     }
@@ -867,6 +891,7 @@ fn runtime_event_draft() -> RuntimeEventDraft {
             external_context_id: None,
             usage: None,
             details: None,
+            tool_activity: None,
         }),
     }
 }

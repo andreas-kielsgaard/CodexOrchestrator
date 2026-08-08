@@ -1,4 +1,0 @@
-interface:
-  display_name: "Merge Reconciliation"
-  short_description: "Resolve nontrivial merge or branch issues."
-  default_prompt: "Use $merge-reconciliation to reconcile nontrivial merge or branch state."

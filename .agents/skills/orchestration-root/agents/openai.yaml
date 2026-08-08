@@ -1,4 +1,0 @@
-interface:
-  display_name: "Orchestration Root"
-  short_description: "Run the root orchestration control thread."
-  default_prompt: "Use $orchestration-root to run the root orchestration thread."

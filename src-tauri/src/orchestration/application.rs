@@ -702,6 +702,32 @@ impl OrchestrationApplication {
         self.repository.load_harness_working_copy(harness_key)
     }
 
+    /// Publishes only the exact current draft selected by semantic preconditions. Repository
+    /// location, content bytes, and commit identity remain application-owned.
+    pub(crate) fn create_harness_revision(
+        &self,
+        command: super::conversation_harness_revision::CreateHarnessRevisionCommand,
+    ) -> Result<
+        super::conversation_harness_revision::CreateHarnessRevisionResult,
+        super::conversation_harness_revision::HarnessRevisionError,
+    > {
+        self.repository.create_harness_revision(command)
+    }
+
+    pub(crate) fn load_harness_revision(
+        &self,
+        revision_id: &str,
+    ) -> super::conversation_harness_revision::HarnessRevisionReadOutcome {
+        self.repository.load_harness_revision(revision_id)
+    }
+
+    pub(crate) fn load_harness_revision_history(
+        &self,
+        harness_key: &str,
+    ) -> super::conversation_harness_revision::HarnessRevisionHistoryOutcome {
+        self.repository.load_harness_revision_history(harness_key)
+    }
+
     pub(crate) fn load_scoped_file_review(
         &self,
         opaque_reference: &str,
@@ -1979,7 +2005,7 @@ mod tests {
         assert!(requests[0]
             .submitted_text
             .starts_with("<application_context provenance=\"product_initial_prompt_prefix\" source=\"epic_plan_builder\" version=\"4\">")
-            && requests[0].submitted_text.contains("canonical repository source: .agents/skills/epic-plan-builder/SKILL.md")
+            && requests[0].submitted_text.contains("canonical repository source: .agents/product-skills/epic-plan-builder/SKILL.md")
             && requests[0].submitted_text.contains("Request initiation only through request_epic_initiation")
             && requests[0].submitted_text.ends_with("<user_query>\nDiscuss goals, ambiguity, and risks.\n</user_query>"));
         assert_eq!(requests[1].submitted_text, "Build and structure the plan.");

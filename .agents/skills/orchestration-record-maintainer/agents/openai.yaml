@@ -1,4 +1,0 @@
-interface:
-  display_name: "Orchestration Record Maintainer"
-  short_description: "Maintain pruned orchestration records."
-  default_prompt: "Use $orchestration-record-maintainer to update orchestration records."

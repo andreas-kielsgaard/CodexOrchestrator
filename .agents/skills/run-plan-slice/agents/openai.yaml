@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Plan Slice"
+  short_description: "Coordinate one ad-hoc Plan Slice end to end"
+  default_prompt: "Use $run-plan-slice to coordinate this bounded Plan Slice through its Plan Steps and return."

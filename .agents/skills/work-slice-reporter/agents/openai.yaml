@@ -1,4 +1,0 @@
-interface:
-  display_name: "Work Slice Reporter"
-  short_description: "Write a completed work-slice report."
-  default_prompt: "Use $work-slice-reporter to produce a completed work-slice report."

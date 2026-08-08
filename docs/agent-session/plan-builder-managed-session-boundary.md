@@ -8,7 +8,7 @@ rename later sessions or claim that a declarative frontend field activates a ski
 The Plan Builder uses the narrow `send_managed_plan_builder_message` command: first send
 creates/acknowledges an Agent Session and later sends resume the acknowledged session ID. The
 orchestration service sets the Codex child working directory to the repository root after validating
-`.agents/skills/orchestration-plan-builder/SKILL.md` metadata. Ordinary Agent Session launches keep
+`.agents/product-skills/epic-plan-builder/SKILL.md` metadata. Ordinary Agent Session launches keep
 their own working-directory behavior.
 
 The Epic Plan Builder product context owns a versioned Conversation Harness configuration. In this implementation, a harness does one thing: it supplies a lightweight application-provenance prefix immediately before the first user query. Generic Agent Session code accepts only a neutral optional initial-prefix value and knows no Plan Builder role or harness schema. The user's submitted text is persisted unchanged, and durable invocation history prevents prefix reinjection after restart.
@@ -19,8 +19,9 @@ Skill guidance records canonical names, repository-relative sources, purposes, a
 without embedding `SKILL.md` or claiming that guidance loads a skill. Repository-local metadata and
 `codex debug prompt-input` can deterministically prove the catalog input. Only an authorized live
 managed child can prove model discovery or selection. Discussion may explore goals, scope,
-ambiguity, risks, and alternatives without structured state. `orchestration-plan-builder` applies
-when the user requests plan construction or revision. Instantiation and root startup remain later,
+ambiguity, risks, and alternatives without structured state. `run-overall-plan` applies
+when an ad-hoc Codex conversation owns planning outside the application. The Harness-selected `epic-plan-builder`
+applies to product proposal construction or revision. Instantiation and root startup remain later,
 unavailable product stages.
 
 MCP exposure and authorization, durable draft/session association, and invocation lifecycle stay in
