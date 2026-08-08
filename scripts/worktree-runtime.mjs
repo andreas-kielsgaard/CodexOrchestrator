@@ -132,6 +132,19 @@ export function isolatedEnvironment(source, manifest) {
   return { environment, scrubbed: scrubbed.sort() };
 }
 
+export function runtimeRustTestArguments() {
+  return [
+    'test',
+    '--manifest-path',
+    'src-tauri/Cargo.toml',
+    '--lib',
+    'runtime::',
+    '--',
+    '--skip',
+    'worktree_runtime::',
+  ];
+}
+
 async function main() {
   const [command, ...rawArgs] = process.argv.slice(2);
   if (!command || command === 'help' || command === '--help') {
@@ -297,7 +310,7 @@ async function prepare(args) {
         test: [
           'npm run test:worktree-runtime',
           'npm test -- src/app/App.test.tsx',
-          'cargo test --manifest-path src-tauri/Cargo.toml runtime::',
+          `cargo ${runtimeRustTestArguments().join(' ')}`,
         ],
         launch: 'npm run dev:tauri -- --config <instance-config>',
       },
@@ -444,7 +457,7 @@ async function test(manifest) {
     manifest,
     'test-rust',
     'cargo',
-    ['test', '--manifest-path', 'src-tauri/Cargo.toml', 'runtime::'],
+    runtimeRustTestArguments(),
     process.env,
     true,
   );

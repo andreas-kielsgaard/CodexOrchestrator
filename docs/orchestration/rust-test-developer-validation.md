@@ -1,6 +1,17 @@
 # Rust test developer validation
 
-This repository provides an opt-in reduced-debug test lane for short-lived developer validation:
+This repository provides two deterministic Rust test lanes. `npm run test:rust:fast` uses the
+named reduced-debug Cargo profile; `npm run test:rust:full` uses Cargo's ordinary test profile.
+Both run only the default library test surface, which excludes installed-Codex, live, and paid
+proof entry points.
+
+```powershell
+npm run test:rust:fast -- focused_test_name
+npm run test:rust:full -- focused_test_name
+```
+
+The older PowerShell helper remains an opt-in process-scoped developer tool for short-lived
+validation and explicit target directories:
 
 ```powershell
 .\scripts\cargo-test-fast.ps1 --lib --no-run --locked
@@ -14,9 +25,17 @@ target arguments, sets `CARGO_PROFILE_TEST_DEBUG=0`, removes ambient `RUSTC_WRAP
 Cargo's incremental setting and `PATH` unchanged. Its environment changes are process-scoped and
 the exact prior presence and values are restored after success, Cargo failure, or exception.
 
-This does not change `Cargo.toml` or the default test profile. Use normal Cargo with default debug
-information when diagnosing failures. The reduced-debug lane is explicit; nothing routes Cargo,
-CI, agents, or product workflows to it automatically.
+The helper does not alter the default test profile. Use normal Cargo with default debug information
+when diagnosing failures. Both reduced-debug lanes are explicit; nothing routes Cargo, CI, agents,
+or product workflows to them automatically.
+
+## Test tiers
+
+Default commands provide deterministic local coverage, including loopback HTTP/MCP and helper
+subprocess boundaries. `cargo test --manifest-path src-tauri/Cargo.toml --features live-tests --lib`
+also keeps all installed-Codex, live, and paid entries ignored; it compiles their opt-in surface but
+does not run them. Running an ignored entry requires both `--ignored` and that proof's documented
+environment opt-in, and remains outside ordinary developer validation.
 
 ## Returned performance evidence
 
@@ -40,6 +59,10 @@ The warm no-run and full execution reused preceding target output. A fresh Cargo
 make package, filesystem, OS, or linker caches cold. The reduced-debug cold run occurred later than
 the default-debug cold run, so their wall times are not a controlled profile comparison. Artifact
 sizes are snapshots at those checkpoints, and the Git child-process duration is approximate.
+
+A later fresh ordinary build at that historical checkpoint was reported as 119.3 seconds after the
+unused test-only Rustls graph was removed. It is a separate historical measurement, not a current
+profile comparison or a speed projection for this checkout.
 
 ## Local capability validation
 

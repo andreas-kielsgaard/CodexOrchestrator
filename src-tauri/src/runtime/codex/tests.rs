@@ -1164,6 +1164,7 @@ fn request(invocation: &str, prompt: &str) -> RuntimeInvocationRequest {
 }
 
 #[test]
+#[cfg(feature = "live-tests")]
 #[ignore = "non-agent compatibility probe; requires installed codex CLI"]
 fn installed_codex_help_is_compatible_without_running_an_agent_prompt() {
     let discovered = CodexCliCapabilityProbe::new("codex").discover();

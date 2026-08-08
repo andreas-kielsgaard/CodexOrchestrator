@@ -17,6 +17,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
+    "test:rust:fast": "cargo test --manifest-path src-tauri/Cargo.toml --profile test-fast --lib",
+    "test:rust:full": "cargo test --manifest-path src-tauri/Cargo.toml --lib",
     "test:worktree-runtime": "node --test scripts/worktree-runtime.node-test.mjs",
     "test:watch": "vitest"
   },

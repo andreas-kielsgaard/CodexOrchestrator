@@ -1300,8 +1300,11 @@ mod tests {
         },
         repository::SqliteAgentSessionRepository,
     };
+    #[cfg(feature = "live-tests")]
     use crate::runtime::codex::CodexCliRuntime;
+    #[cfg(feature = "live-tests")]
     use crate::runtime::processes::ProcessLaunchSpec;
+    #[cfg(feature = "live-tests")]
     use std::time::{Duration, Instant};
     use tempfile::tempdir;
 
@@ -1367,6 +1370,7 @@ mod tests {
         )
     }
 
+    #[cfg(feature = "live-tests")]
     fn live_command_state(
         path: &Path,
         launches: Arc<Mutex<Vec<ProcessLaunchSpec>>>,
@@ -1393,6 +1397,7 @@ mod tests {
         )
     }
 
+    #[cfg(feature = "live-tests")]
     fn wait_for_terminal_invocation(
         state: &ProductDecisionTauriState,
         session_id: &AgentSessionId,
@@ -1882,6 +1887,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "live-tests")]
     #[ignore = "requires CODEX_PRODUCT_DECISION_LIVE_SMOKE=true and launches a real decision-bound Codex Session"]
     fn product_decision_live_correction_retains_exact_final_response() {
         assert!(matches!(

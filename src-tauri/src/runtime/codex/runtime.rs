@@ -262,7 +262,7 @@ impl CodexCliRuntime {
 
     /// Test-only visibility into direct children owned by this runtime's supervisor. This makes
     /// no claim about descendants (notably on Windows, where `Child::kill` is not tree kill).
-    #[cfg(test)]
+    #[cfg(all(test, feature = "live-tests"))]
     pub(crate) fn active_direct_child_count(&self) -> Result<usize, RuntimePortError> {
         self.supervisor.active_count().map_err(map_supervisor_error)
     }
