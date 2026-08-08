@@ -52,7 +52,7 @@ interface RecordedProfile {
   };
 }
 
-const skillDocuments = import.meta.glob('../../../.agents/skills/*/SKILL.md', {
+const skillDocuments = import.meta.glob('../../../product/skills/*/SKILL.md', {
   eager: true,
   query: '?raw',
   import: 'default',
@@ -159,7 +159,7 @@ function buildSnapshot(sessionId: string): ConversationHarnessManagementSnapshot
     profile.skillGuidance.some(
       (skill) =>
         !skill.canonicalName.trim() ||
-        !skill.canonicalPath.startsWith('.agents/skills/') ||
+        !skill.canonicalPath.startsWith('product/skills/') ||
         !skill.purpose.trim() ||
         !skill.useWhen.trim(),
     ) ||
@@ -249,11 +249,11 @@ function buildCatalogs(): HarnessConfigurationCatalogs {
     .map(([sourcePath, document]) => {
       const pathMatch = sourcePath
         .replaceAll('\\', '/')
-        .match(/\.agents\/skills\/([^/]+)\/SKILL\.md$/);
+        .match(/product\/skills\/([^/]+)\/SKILL\.md$/);
       const name = frontmatterValue(document, 'name') ?? pathMatch?.[1] ?? '';
       return {
         name,
-        path: `.agents/skills/${pathMatch?.[1] ?? name}/SKILL.md`,
+        path: `product/skills/${pathMatch?.[1] ?? name}/SKILL.md`,
         description: frontmatterValue(document, 'description') ?? 'Product skill.',
         text: document,
       };

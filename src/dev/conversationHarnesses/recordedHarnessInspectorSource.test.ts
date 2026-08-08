@@ -71,7 +71,7 @@ describe('recorded Harness Management source', () => {
       },
     });
     expect(read.snapshot.catalogs.skills.source).toBe('checked_in_product_catalog');
-    expect(read.snapshot.catalogs.skills.items.length).toBeGreaterThan(20);
+    expect(read.snapshot.catalogs.skills.items).toHaveLength(7);
     expect(read.snapshot.catalogs.agentNames).toMatchObject({
       source: 'product_default_pool',
     });
@@ -79,6 +79,7 @@ describe('recorded Harness Management source', () => {
     expect(read.snapshot.catalogs.skills.items.map((skill) => skill.name)).toContain(
       'epic-plan-builder',
     );
+    expect(read.snapshot.catalogs.skills.items.every((skill) => skill.path.startsWith('product/skills/'))).toBe(true);
     expect(
       read.snapshot.catalogs.skills.items.find((skill) => skill.name === 'epic-plan-builder')?.text,
     ).toContain('# Epic Plan Builder');
