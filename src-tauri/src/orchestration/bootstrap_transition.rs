@@ -3185,7 +3185,7 @@ mod tests {
             .contains("Do not create or start a product Sprint"));
         assert!(runner_request
             .submitted_text
-            .contains("use request_next_sprint_runner exactly once"));
+            .contains("Use request_next_sprint_runner exactly once"));
         let runner_extension = runner_request.launch_extension.as_ref().unwrap();
         assert_eq!(runner_extension.environment.len(), 1);
         assert!(runner_extension
@@ -7459,7 +7459,7 @@ mod tests {
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_prerequisite_contributions", [], |row| row.get(0)).unwrap(), 2);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1", [&leaf], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id=?1", [&leaf], |row| row.get(0)).unwrap(), "active");
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sprint_settlements','epic_settlements')", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sprint_settlements','epic_settlements')", [], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_settlements", [], |row| row.get(0)).unwrap(), 0);
         assert_eq!(connection.query_row::<String, _, _>("SELECT accepted_revision_id FROM work_unit_execution_states WHERE work_unit_id=?1", [&leaf], |row| row.get(0)).unwrap(), materialization.1);
     }
@@ -7950,7 +7950,7 @@ mod tests {
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_decisions WHERE sprint_id=?1 AND decision_state='settled'", [&sprint_id], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_current_decisions current JOIN sprint_continuation_decisions decision ON decision.decision_id=current.decision_id WHERE current.sprint_id=?1 AND current.decision_state='settled' AND decision.decision_state='settled'", [&sprint_id], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_upward_results result JOIN sprint_continuation_decisions decision ON decision.decision_id=result.decision_id WHERE result.sprint_id=?1 AND result.result_kind='settled' AND decision.decision_state='settled'", [&sprint_id], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sprint_settlements','epic_settlements')", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sprint_settlements','epic_settlements')", [], |row| row.get(0)).unwrap(), 1);
         drop(connection);
 
         let (result_id, receiver): (String, String) = Connection::open(&fixture.database_path)
@@ -8008,7 +8008,7 @@ mod tests {
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_sessions WHERE id=?1", [&session], |row| row.get(0)).unwrap(), 1);
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1", [&invocation], |row| row.get(0)).unwrap(), 1);
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_sprint_result_terminal_readiness WHERE result_id=?1", [&result_id], |row| row.get(0)).unwrap(), 0);
-        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='epic_settlements'", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='epic_settlements'", [], |row| row.get(0)).unwrap(), 1);
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_slice_planning_requests WHERE sprint_id=?1", [&successor], |row| row.get(0)).unwrap(), 0);
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_units u JOIN work_unit_materializations m ON m.materialization_id=u.materialization_id WHERE m.sprint_id=?1", [&successor], |row| row.get(0)).unwrap(), 0);
         Connection::open(&fixture.database_path).unwrap().execute(

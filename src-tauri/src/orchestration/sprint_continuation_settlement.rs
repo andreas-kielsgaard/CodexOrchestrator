@@ -247,7 +247,17 @@ fn reconcile_one(connection: &mut Connection, sprint_id: &str) -> Result<(), Str
             if current_state != state {
                 return Err("Sprint continuation current-pointer state conflict".into());
             }
-        } else if current_sequence >= decision_sequence || current_state == "settled" {
+        } else if current_sequence > decision_sequence && current_state == state {
+            // A reopen can revisit an already-recorded older snapshot after a later decision
+            // of the same semantic state became current. Preserve that later durable pointer.
+            transaction.commit().map_err(|error| error.to_string())?;
+            return Ok(());
+        } else if current_sequence >= decision_sequence
+            || (current_state == "settled" && state != "settled")
+        {
+            // Recovery can restore missing durable readiness evidence after a settlement without
+            // reopening the Sprint. A refreshed settled snapshot remains terminal; only a move
+            // away from an established settlement is a forbidden current-pointer transition.
             return Err("Sprint continuation current-pointer transition conflict".into());
         }
     }

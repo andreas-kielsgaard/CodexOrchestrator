@@ -315,7 +315,18 @@ fn decode_git(bytes:Vec<u8>)->Result<String,String>{if bytes.len()>1024*1024{ret
 fn git(root:&Path,args:&[&str])->Result<String,String>{let out=Command::new("git").arg("--no-replace-objects").args(args).current_dir(root).env("GIT_TERMINAL_PROMPT","0").env("GIT_EDITOR","true").env("GIT_CONFIG_NOSYSTEM","1").env("GIT_CONFIG_GLOBAL","NUL").stdin(Stdio::null()).output().map_err(|_|"git_unavailable".to_string())?;if out.status.success(){Ok(decode_git(out.stdout)?.trim().to_owned())}else{Err("git_command_failed".into())}}
 fn git_path(root:&Path,arg:&str)->Result<String,String>{let path=PathBuf::from(git(root,&["rev-parse",arg])?);let resolved=if path.is_absolute(){path}else{root.join(path)};canon(&resolved)}
 fn git_index(root:&Path,args:&[&str],index:&Path)->Result<String,String>{let out=Command::new("git").arg("--no-replace-objects").args(args).env("GIT_INDEX_FILE",index).env("GIT_TERMINAL_PROMPT","0").env("GIT_EDITOR","true").env("GIT_CONFIG_NOSYSTEM","1").env("GIT_CONFIG_GLOBAL","NUL").current_dir(root).stdin(Stdio::null()).output().map_err(|_|"git_unavailable".to_string())?;if out.status.success(){Ok(decode_git(out.stdout)?.trim().to_owned())}else{Err("git_command_failed".into())}}
-fn canon(path:&Path)->Result<String,String>{path.canonicalize().map_err(|_|"path_unavailable".to_string()).map(|p|p.to_string_lossy().replace('\\',"/"))} fn safe_ref(value:&str)->bool{value.starts_with("refs/heads/")&&value.len()<256&&!value.contains("..")&&!value.ends_with('/')}fn oid(value:&str)->bool{(value.len()==40||value.len()==64)&&value.bytes().all(|byte|byte.is_ascii_hexdigit())}fn fingerprint(values:&[&str])->String{let mut hasher=Sha256::new();for value in values{hasher.update(value.as_bytes());hasher.update([0]);}format!("{:x}",hasher.finalize())}fn stable_id(domain:&str,value:&str)->String{fingerprint(&[domain,value])[..32].to_owned()}fn now()->String{chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()}
+fn canon(path:&Path)->Result<String,String>{path.canonicalize().map_err(|_|"path_unavailable".to_string()).map(|p|p.to_string_lossy().replace('\\',"/"))} fn safe_ref(value:&str)->bool{value.starts_with("refs/heads/")&&value.len()<256&&!value.contains("..")&&!value.ends_with('/')}fn oid(value:&str)->bool{(value.len()==40||value.len()==64)&&value.bytes().all(|byte|byte.is_ascii_hexdigit())}fn fingerprint(values:&[&str])->String{let mut hasher=Sha256::new();for value in values{hasher.update(value.as_bytes());hasher.update([0]);}format!("{:x}",hasher.finalize())}fn stable_id(domain:&str,value:&str)->String{fingerprint(&[domain,value])[..32].to_owned()}
+
+// Integration timestamps are persisted at second precision. Round up so a phase written
+// immediately after its reservation cannot sort before that reservation's durable time.
+fn now() -> String {
+    let actual = chrono::Utc::now();
+    let seconds = actual.timestamp() + i64::from(actual.timestamp_subsec_nanos() > 0);
+    chrono::DateTime::from_timestamp(seconds, 0)
+        .expect("rounded UTC timestamp")
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+}
 
 #[cfg(test)] mod tests { use super::*; use std::sync::{Arc,Barrier}; use tempfile::TempDir;
  fn run(root:&Path,args:&[&str]){assert!(Command::new("git").args(args).current_dir(root).env("GIT_CONFIG_NOSYSTEM","1").env("GIT_CONFIG_GLOBAL","NUL").status().unwrap().success(),"git {args:?}")}
