@@ -8,9 +8,9 @@ Categories: integrated_exactly, integrated_semantically_from_newer_canonical_con
 
 ## Category counts
 
-- integrated_exactly: 116
-- integrated_semantically_from_newer_canonical_content: 22
-- intentionally_superseded: 14
+- integrated_exactly: 123
+- integrated_semantically_from_newer_canonical_content: 35
+- intentionally_superseded: 16
 - intentionally_excluded_duplicate: 0
 - retained_external_to_this_slice: 8
 
