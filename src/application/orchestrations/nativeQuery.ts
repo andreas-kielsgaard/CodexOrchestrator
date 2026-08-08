@@ -337,6 +337,7 @@ export interface NativeInitiatedEpicV2 {
   readonly resultId: string;
   readonly eventId: string;
   readonly provenanceId: string;
+  readonly rootBranch: string;
 }
 export interface NativeInitiatedSprintV2 {
   readonly sprintId: string;
@@ -1295,6 +1296,7 @@ const revision = (value: unknown): NativeProposalRevisionV1 => {
       'proposal',
       'commandId',
       'provenanceId',
+      'rootBranch',
       'recordedAt',
     ],
     'proposalRevision',
@@ -1328,6 +1330,7 @@ const revision = (value: unknown): NativeProposalRevisionV1 => {
     },
     commandId: string(x.commandId, 'commandId'),
     provenanceId: string(x.provenanceId, 'provenanceId'),
+    rootBranch: boundedString(x.rootBranch, 240, 'Epic root branch'),
     recordedAt: string(x.recordedAt, 'recordedAt'),
   };
 };

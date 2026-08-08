@@ -305,6 +305,7 @@ impl PlanBuilderMcp {
             expected_revision_token,
             actor_id: "application-user".into(),
             idempotency_key: format!("managed-initiation-{:x}", digest.finalize()),
+            root_branch: None,
         };
         let request = match self.confirmations.request(
             InitiationRequestSource::Agent {

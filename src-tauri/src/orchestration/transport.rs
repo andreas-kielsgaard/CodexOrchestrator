@@ -178,6 +178,7 @@ pub(crate) struct RequestEpicInitiationConfirmationInput {
     epic_planning_draft_id: String,
     expected_revision_token: String,
     idempotency_key: String,
+    root_branch: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -251,6 +252,7 @@ pub(crate) fn request_epic_initiation_confirmation(
                 expected_revision_token: input.expected_revision_token,
                 actor_id: "application-user".into(),
                 idempotency_key: input.idempotency_key,
+                root_branch: Some(input.root_branch),
             },
         )
         .map_err(InitiationConfirmationTransportError::from)

@@ -80,6 +80,7 @@ export function useEpicInitiationConfirmation(
       epicPlanningDraftId: string;
       expectedRevisionToken: string;
       idempotencyKey: string;
+      rootBranch: string;
     }) => {
       if (!client) throw new EpicInitiationConfirmationError('unavailable');
       setReceiptError(null);

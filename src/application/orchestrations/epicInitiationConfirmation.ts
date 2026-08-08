@@ -67,6 +67,7 @@ export interface EpicInitiationConfirmationClient {
     epicPlanningDraftId: string;
     expectedRevisionToken: string;
     idempotencyKey: string;
+    rootBranch: string;
   }): Promise<EpicInitiationConfirmationRequest>;
   resolve(
     requestId: string,
